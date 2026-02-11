@@ -1,0 +1,57 @@
+<Project>
+    <PropertyGroup>
+        <TargetFramework Condition="'$(MSBuildProjectName)' != 'SharpLink.Generator'">net10.0</TargetFramework>
+        <TargetFramework Condition="'$(MSBuildProjectName)' == 'SharpLink.Generator'">netstandard2.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>disable</ImplicitUsings>
+    </PropertyGroup>
+    <!-- Nuget包信息 -->
+    <PropertyGroup>
+        <Version>0.1.0</Version>
+        <Authors>sunsi</Authors>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageTags>rpc;dotnet;source-generator;streaming;ipc;tcp</PackageTags>
+        <PackageReleaseNotes>See CHANGELOG.md for release details.</PackageReleaseNotes>
+        <RepositoryUrl>https://github.com/SunSi12138/SharpLink</RepositoryUrl>
+        <PackageProjectUrl>https://github.com/SunSi12138/SharpLink</PackageProjectUrl>
+        <RepositoryType>git</RepositoryType>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    </PropertyGroup>
+
+    <!-- 程序集信息 -->
+    <PropertyGroup>
+        <Company>sunsi</Company>
+        <AssemblyVersion>$(Version)</AssemblyVersion>
+        <AssemblyName>$(MSBuildProjectName)</AssemblyName>
+        <FileVersion>$(Version)</FileVersion>
+        <InformationalVersion>$(Version)</InformationalVersion>
+        <Copyright>© 2025 sunsi</Copyright>
+    </PropertyGroup>
+
+    <!-- 项目描述 -->
+    <PropertyGroup>
+        <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Generator'">框架生成器</Description>
+        <Description Condition="'$(Description)' == ''">SharpLink high-performance RPC components for .NET.</Description>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(IsPackable)' == 'true' and Exists('$(MSBuildThisFileDirectory)README.md')">
+        <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+    <!-- 项目配置 -->
+    <PropertyGroup>
+        <RootNamespace>$(MSBuildProjectName)</RootNamespace>
+        <Deterministic>true</Deterministic>
+    </PropertyGroup>
+    <!-- 调试配置 -->
+    <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+        <DebugType>full</DebugType>
+        <Optimize>false</Optimize>
+    </PropertyGroup>
+    <!-- 发布配置 -->
+    <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+        <DebugType>none</DebugType>
+        <Optimize>true</Optimize>
+    </PropertyGroup>
+</Project>

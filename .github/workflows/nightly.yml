@@ -1,0 +1,75 @@
+name: Nightly Regression
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  matrix-build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Build
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Integration Tests
+        run: dotnet run -c Release --project test/SharpLink.IntegrationTests
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+  aot-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish AOT Smoke
+        run: dotnet publish test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj -c Release -r linux-x64 /p:PublishAot=true -v minimal
+
+      - name: Run AOT Smoke
+        run: ./test/SharpLink.AotSmoke/bin/Release/net10.0/linux-x64/publish/SharpLink.AotSmoke
+
+  perf-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Load Test Smoke
+        run: dotnet run -c Release --project test/SharpLink.LoadTest -- --mode local --operation add --concurrency 1,8,32 --warmup 2 --duration 8 --metrics-port 0

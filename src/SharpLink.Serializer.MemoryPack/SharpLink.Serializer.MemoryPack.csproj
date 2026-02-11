@@ -1,0 +1,12 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <RootNamespace>SharpLink.Runtime</RootNamespace>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
+    </ItemGroup>
+    
+    <ItemGroup>
+      <PackageReference Include="MemoryPack" />
+    </ItemGroup>
+</Project>

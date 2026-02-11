@@ -1,0 +1,9 @@
+﻿{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "DebugRoslynGenerators": {
+      "commandName": "DebugRoslynComponent",
+      "targetProject": "../SharpLink.Test/SharpLink.Test.csproj"
+    }
+  }
+}

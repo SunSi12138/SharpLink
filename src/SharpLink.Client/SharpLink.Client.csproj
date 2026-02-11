@@ -1,0 +1,6 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+    <ItemGroup>
+      <ProjectReference Include="..\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
+      <ProjectReference Include="..\SharpLink.Runtime\SharpLink.Runtime.csproj" />
+    </ItemGroup>
+</Project>

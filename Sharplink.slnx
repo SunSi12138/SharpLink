@@ -1,0 +1,23 @@
+<Solution>
+    <Project Path="demo\DemoBase\DemoBase.csproj" />
+    <Project Path="src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+    <Project Path="src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <Project Path="src/SharpLink.Generator/SharpLink.Generator.csproj" />
+    <Project Path="demo/HelloWorld/HelloWorld.csproj" />
+    <Project Path="demo/HostApplication/HostApplication.csproj" />
+    <Project Path="demo/Streaming/Streaming.csproj" />
+    <Project Path="demo/Cancel/Cancel.csproj" />
+    <Project Path="demo/OnwWay/OnwWay.csproj" />
+    <Project Path="demo/Log/Log.csproj" />
+    <Project Path="src/SharpLink.Client/SharpLink.Client.csproj" />
+    <Project Path="src/SharpLink.Server/SharpLink.Server.csproj" />
+    <Project Path="src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
+    <Project Path="src/SharpLink.Hosting/SharpLink.Hosting.csproj" />
+    <Project Path="src/SharpLink.Serializer.MemoryPack/SharpLink.Serializer.MemoryPack.csproj" />
+    
+    <Project Path="test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" />
+    <Project Path="test/SharpLink.LoadTest/SharpLink.LoadTest.csproj" />
+    <Project Path="test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj" />
+    <Project Path="test/SharpLink.UnitTests/SharpLink.UnitTests.csproj" />
+    <Project Path="test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj" />
+</Solution>

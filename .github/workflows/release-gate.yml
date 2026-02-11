@@ -1,0 +1,98 @@
+name: Release Gate
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  matrix-build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Build
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Integration Tests
+        run: dotnet run -c Release --project test/SharpLink.IntegrationTests
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+  aot-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish AOT Smoke
+        run: dotnet publish test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj -c Release -r linux-x64 /p:PublishAot=true -v minimal
+
+      - name: Run AOT Smoke
+        run: ./test/SharpLink.AotSmoke/bin/Release/net10.0/linux-x64/publish/SharpLink.AotSmoke
+
+  pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Pack
+        run: dotnet pack Sharplink.slnx --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Verify packages exist
+        run: |
+          ls -lah artifacts/nuget
+          test -n "$(find artifacts/nuget -name '*.nupkg' -type f)"
+
+      - name: Upload NuGet artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: artifacts/nuget/*.nupkg
+
+  release-summary:
+    runs-on: ubuntu-latest
+    needs: [matrix-build-test, aot-smoke, pack]
+    if: ${{ success() }}
+    steps:
+      - name: Release gate passed
+        run: echo "Release gate passed on all required checks."

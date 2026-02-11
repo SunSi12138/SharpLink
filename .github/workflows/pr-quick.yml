@@ -1,0 +1,51 @@
+name: PR Quick
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Build
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Demo HelloWorld
+        run: dotnet run -c Release --project demo/HelloWorld
+
+      - name: Demo Streaming
+        run: dotnet run -c Release --project demo/Streaming
+
+      - name: Demo HostApplication
+        run: dotnet run -c Release --project demo/HostApplication
+
+      - name: Demo Cancel
+        run: dotnet run -c Release --project demo/Cancel
+
+      - name: Demo OnwWay
+        run: dotnet run -c Release --project demo/OnwWay
+
+      - name: Integration Tests
+        run: dotnet run -c Release --project test/SharpLink.IntegrationTests
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Load Smoke
+        run: dotnet run -c Release --project test/SharpLink.LoadTest -- --mode local --operation add --concurrency 1,4 --warmup 2 --duration 5 --metrics-port 0
