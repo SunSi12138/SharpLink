@@ -13,20 +13,28 @@ internal sealed class SharpLinkClient(ITransport transport, ISerializer serializ
     private readonly ConcurrentDictionary<long, byte> _locallyCanceledRequestIds = [];
     private readonly RequestManager _requestManager = new();
     private IRpcSession? _session;
-    private int _disconnectHandled;
+    private bool _disconnectHandled;
     private bool _disposed;
     private readonly TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(10);
     private readonly TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
+    private readonly bool _hasRequestTimeout;
+    private readonly TimeSpan _requestTimeoutValue;
     private readonly ILogger _logger = NullLogger<SharpLinkClient>.Instance;
     private readonly LogLevel _minimumLogLevel = LogLevel.Warning;
 
-    public SharpLinkClient(ITransport transport, ISerializer serializer, TimeSpan heartbeatInterval, TimeSpan heartbeatTimeout)
+    public SharpLinkClient(ITransport transport, ISerializer serializer, TimeSpan heartbeatInterval, TimeSpan heartbeatTimeout, TimeSpan? requestTimeout = null)
         : this(transport, serializer)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatTimeout, TimeSpan.Zero);
         if (heartbeatTimeout <= heartbeatInterval)
             throw new ArgumentException("Heartbeat timeout must be greater than interval.");
+        if (requestTimeout is { } timeout)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+            _hasRequestTimeout = true;
+            _requestTimeoutValue = timeout;
+        }
 
         _heartbeatInterval = heartbeatInterval;
         _heartbeatTimeout = heartbeatTimeout;
@@ -37,8 +45,9 @@ internal sealed class SharpLinkClient(ITransport transport, ISerializer serializ
         ISerializer serializer,
         TimeSpan heartbeatInterval,
         TimeSpan heartbeatTimeout,
-        SharpLinkLoggingOptions loggingOptions)
-        : this(transport, serializer, heartbeatInterval, heartbeatTimeout)
+        SharpLinkLoggingOptions loggingOptions,
+        TimeSpan? requestTimeout = null)
+        : this(transport, serializer, heartbeatInterval, heartbeatTimeout, requestTimeout)
     {
         ArgumentNullException.ThrowIfNull(loggingOptions);
         _logger = loggingOptions.LoggerFactory.CreateLogger<SharpLinkClient>();
@@ -109,6 +118,10 @@ internal sealed class SharpLinkClient(ITransport transport, ISerializer serializ
                                 _logger.LogDebug("Receive heartbeat from server {SessionId}", session.Id);
                             session.LastActive = DateTime.UtcNow;
                             break;
+                        case PacketType.Cancel:
+                            if (IsEnabled(LogLevel.Debug))
+                                _logger.LogDebug("Ignore cancel packet from server {SessionId}", session.Id);
+                            break;
                         case PacketType.RpcResponse:
                             DispatchRpc(header.RequestId,header.Flags,ref payload);
                             break;
@@ -122,7 +135,6 @@ internal sealed class SharpLinkClient(ITransport transport, ISerializer serializ
                             DispatchStreamError(session, header.RequestId, payload);
                             break;
                         case PacketType.RpcCall:
-                        case PacketType.Cancel:
                         case PacketType.Error:
                         case PacketType.DisConnect:
                         case PacketType.Handshake:
@@ -152,7 +164,7 @@ internal sealed class SharpLinkClient(ITransport transport, ISerializer serializ
             await session.SendPacketAsync(PacketType.Heartbeat, PacketFlags.None, 0);
             await Task.Delay(_heartbeatInterval,ct);
             var now = DateTime.UtcNow;
-            if (now - session.LastActive < _heartbeatTimeout && session.IsConnected)
+            if (now - session.LastActive <= _heartbeatTimeout && session.IsConnected)
                 continue;
             
             if (IsEnabled(LogLevel.Warning))
@@ -277,6 +289,9 @@ internal sealed class SharpLinkClient(ITransport transport, ISerializer serializ
         Func<long, CancellationToken, Task>? streamSender,
         bool isOneWay)
     {
+        var timeoutCts = CreateRequestTimeoutCts(!isOneWay || streamSender is not null);
+        var timeoutToken = timeoutCts?.Token ?? CancellationToken.None;
+
         var requestId = isOneWay ? _requestManager.AllocateRequestId() : 0;
         RpcRequestOperation<T>? op = null;
         if (!isOneWay)
@@ -285,15 +300,31 @@ internal sealed class SharpLinkClient(ITransport transport, ISerializer serializ
         }
 
         var packetFlags = isOneWay ? PacketFlags.IsOneWay : PacketFlags.None;
-        await SendRpcCallAsync(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
+        if (timeoutToken.CanBeCanceled)
+            packetFlags |= PacketFlags.IsCancellable;
 
-        if (streamSender is not null)
-            _ = RunStreamSenderAsync(streamSender, requestId, default);
+        try
+        {
+            await using var cancelRegistration = RegisterCancel(
+                timeoutToken,
+                requestId,
+                isOneWay,
+                CancellationToken.None,
+                timeoutToken);
+            await SendRpcCallAsync(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
 
-        if (isOneWay)
-            return default!;
+            if (streamSender is not null)
+                _ = RunStreamSenderAsync(streamSender, requestId, timeoutToken);
 
-        return await op!.AsValueTask();
+            if (isOneWay)
+                return default!;
+
+            return await op!.AsValueTask();
+        }
+        finally
+        {
+            timeoutCts?.Dispose();
+        }
     }
 
     private async ValueTask<T> InvokeCancellableCoreAsync<T>(
@@ -304,6 +335,17 @@ internal sealed class SharpLinkClient(ITransport transport, ISerializer serializ
         bool isOneWay,
         CancellationToken ct)
     {
+        var applyRequestTimeout = !isOneWay || streamSender is not null;
+        var timeoutCts = CreateRequestTimeoutCts(applyRequestTimeout);
+        CancellationTokenSource? linkedCts = null;
+        var timeoutToken = timeoutCts?.Token ?? CancellationToken.None;
+        if (timeoutToken.CanBeCanceled && ct.CanBeCanceled)
+        {
+            linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutToken);
+        }
+
+        var effectiveCt = linkedCts?.Token ?? (timeoutToken.CanBeCanceled ? timeoutToken : ct);
+
         var requestId = isOneWay ? _requestManager.AllocateRequestId() : 0;
         RpcRequestOperation<T>? op = null;
         if (!isOneWay)
@@ -312,19 +354,32 @@ internal sealed class SharpLinkClient(ITransport transport, ISerializer serializ
         }
 
         var packetFlags = isOneWay ? PacketFlags.IsOneWay : PacketFlags.None;
-        if (ct.CanBeCanceled)
+        if (effectiveCt.CanBeCanceled)
             packetFlags |= PacketFlags.IsCancellable;
 
-        await using var cancelRegistration = RegisterCancel(ct, requestId, isOneWay);
-        await SendRpcCallAsync(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
+        try
+        {
+            await using var cancelRegistration = RegisterCancel(
+                effectiveCt,
+                requestId,
+                isOneWay,
+                ct,
+                timeoutToken);
+            await SendRpcCallAsync(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
 
-        if (streamSender is not null)
-            _ = RunStreamSenderAsync(streamSender, requestId, ct);
+            if (streamSender is not null)
+                _ = RunStreamSenderAsync(streamSender, requestId, effectiveCt);
 
-        if (isOneWay)
-            return default!;
+            if (isOneWay)
+                return default!;
 
-        return await op!.AsValueTask();
+            return await op!.AsValueTask();
+        }
+        finally
+        {
+            linkedCts?.Dispose();
+            timeoutCts?.Dispose();
+        }
     }
 
     private IAsyncEnumerable<T> InvokeServerStreamCoreAsync<T>(
@@ -384,17 +439,32 @@ internal sealed class SharpLinkClient(ITransport transport, ISerializer serializ
         Action<IBufferWriter<byte>>? payloadWriter,
         Func<long, CancellationToken, Task>? streamSender)
     {
+        var timeoutCts = CreateRequestTimeoutCts(true);
+        var timeoutToken = timeoutCts?.Token ?? CancellationToken.None;
+
         try
         {
-            await SendRpcCallAsync(interfaceHash, methodHash, requestId, PacketFlags.None, payloadWriter);
+            await using var cancelRegistration = RegisterStreamCancel(
+                timeoutToken,
+                requestId,
+                CancellationToken.None,
+                timeoutToken);
+            var packetFlags = timeoutToken.CanBeCanceled
+                ? PacketFlags.IsCancellable
+                : PacketFlags.None;
+            await SendRpcCallAsync(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
 
             if (streamSender is not null)
-                await streamSender(requestId, default);
+                await streamSender(requestId, timeoutToken);
         }
         catch (Exception ex)
         {
             _serverStreamRequestIds.TryRemove(requestId, out _);
             _session!.StreamManager.CompleteStream(requestId, 0, true, ex.Message);
+        }
+        finally
+        {
+            timeoutCts?.Dispose();
         }
     }
 
@@ -406,39 +476,71 @@ internal sealed class SharpLinkClient(ITransport transport, ISerializer serializ
         Func<long, CancellationToken, Task>? streamSender,
         CancellationToken cancellationToken)
     {
+        var timeoutCts = CreateRequestTimeoutCts(true);
+        CancellationTokenSource? linkedCts = null;
+        var timeoutToken = timeoutCts?.Token ?? CancellationToken.None;
+        if (timeoutToken.CanBeCanceled && cancellationToken.CanBeCanceled)
+        {
+            linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutToken);
+        }
+
+        var effectiveCt = linkedCts?.Token ?? (timeoutToken.CanBeCanceled ? timeoutToken : cancellationToken);
+
         try
         {
-            await using var cancelRegistration = RegisterStreamCancel(cancellationToken, requestId);
-            var packetFlags = cancellationToken.CanBeCanceled
+            await using var cancelRegistration = RegisterStreamCancel(
+                effectiveCt,
+                requestId,
+                cancellationToken,
+                timeoutToken);
+            var packetFlags = effectiveCt.CanBeCanceled
                 ? PacketFlags.IsCancellable
                 : PacketFlags.None;
             await SendRpcCallAsync(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
 
             if (streamSender is not null)
-                await streamSender(requestId, cancellationToken);
+                await streamSender(requestId, effectiveCt);
         }
         catch (Exception ex)
         {
             _serverStreamRequestIds.TryRemove(requestId, out _);
             _session!.StreamManager.CompleteStream(requestId, 0, true, ex.Message);
         }
+        finally
+        {
+            linkedCts?.Dispose();
+            timeoutCts?.Dispose();
+        }
     }
 
-    private CancellationTokenRegistration RegisterCancel(CancellationToken ct, long requestId, bool isOneWay)
+    private CancellationTokenRegistration RegisterCancel(
+        CancellationToken ct,
+        long requestId,
+        bool isOneWay,
+        CancellationToken userToken,
+        CancellationToken timeoutToken)
     {
         if (!ct.CanBeCanceled)
             return default;
 
         return ct.Register(() =>
         {
-            _locallyCanceledRequestIds.TryAdd(requestId, 0);
+            if (!isOneWay)
+                _locallyCanceledRequestIds.TryAdd(requestId, 0);
             _ = _session?.SendCancelAsync(requestId);
             if (!isOneWay)
-                _requestManager.DispatchError(requestId, new OperationCanceledException(ct));
+            {
+                var ex = CreateCancellationException(userToken, timeoutToken);
+                _requestManager.DispatchError(requestId, ex);
+            }
         });
     }
 
-    private CancellationTokenRegistration RegisterStreamCancel(CancellationToken ct, long requestId)
+    private CancellationTokenRegistration RegisterStreamCancel(
+        CancellationToken ct,
+        long requestId,
+        CancellationToken userToken,
+        CancellationToken timeoutToken)
     {
         if (!ct.CanBeCanceled)
             return default;
@@ -447,8 +549,27 @@ internal sealed class SharpLinkClient(ITransport transport, ISerializer serializ
         {
             _locallyCanceledRequestIds.TryAdd(requestId, 0);
             _ = _session?.SendCancelAsync(requestId);
-            _session?.StreamManager.CompleteStream(requestId, 0, true, "Canceled");
+            var ex = CreateCancellationException(userToken, timeoutToken);
+            _session?.StreamManager.CompleteStream(requestId, 0, true, ex.Message);
         });
+    }
+
+    private Exception CreateCancellationException(CancellationToken userToken, CancellationToken timeoutToken)
+    {
+        if (timeoutToken is { CanBeCanceled: true, IsCancellationRequested: true } && !userToken.IsCancellationRequested)
+            return new TimeoutException($"Request timed out after {_requestTimeoutValue}.");
+
+        return userToken.CanBeCanceled
+            ? new OperationCanceledException(userToken)
+            : new OperationCanceledException();
+    }
+
+    private CancellationTokenSource? CreateRequestTimeoutCts(bool shouldApply)
+    {
+        if (!shouldApply || !_hasRequestTimeout)
+            return null;
+
+        return new CancellationTokenSource(_requestTimeoutValue);
     }
 
     private async Task SendRpcCallAsync(
@@ -559,14 +680,16 @@ internal sealed class SharpLinkClient(ITransport transport, ISerializer serializ
 
     private void HandleDisconnected(Exception ex)
     {
-        if (Interlocked.Exchange(ref _disconnectHandled, 1) != 0)
+        if (Interlocked.Exchange(ref _disconnectHandled, true))
             return;
 
         if (IsEnabled(LogLevel.Information))
             _logger.LogInformation(ex, "Client disconnected.");
 
-        _requestManager.FailAll(ex);
+        _requestManager.FailAllPendingRequests(ex);
         _session?.StreamManager.CompleteAll(true, ex.Message);
+        _serverStreamRequestIds.Clear();
+        _locallyCanceledRequestIds.Clear();
     }
 
     private bool IsEnabled(LogLevel level) => level >= _minimumLogLevel && _logger.IsEnabled(level);

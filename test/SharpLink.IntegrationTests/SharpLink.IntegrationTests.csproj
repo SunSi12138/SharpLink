@@ -16,5 +16,6 @@
 
   <ItemGroup>
     <PackageReference Include="MemoryPack" />
+    <PackageReference Include="TUnit" />
   </ItemGroup>
 </Project>

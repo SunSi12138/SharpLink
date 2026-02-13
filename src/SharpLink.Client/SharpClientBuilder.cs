@@ -16,6 +16,7 @@ public class SharpClientBuilder
     private ISerializer? _serializer;
     private TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(10);
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
+    private TimeSpan? _requestTimeout;
 
     public SharpClientBuilder UseSerializer(ISerializer serializer)
     {
@@ -88,6 +89,19 @@ public class SharpClientBuilder
         _heartbeatTimeout = timeout;
         return this;
     }
+
+    public SharpClientBuilder UseRequestTimeout(TimeSpan timeout)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        _requestTimeout = timeout;
+        return this;
+    }
+
+    public SharpClientBuilder DisableRequestTimeout()
+    {
+        _requestTimeout = null;
+        return this;
+    }
     
     public ISharpLinkClient Build(string pipeName = "SharpLinkPipe")
     {
@@ -102,7 +116,8 @@ public class SharpClientBuilder
             _serializer,
             _heartbeatInterval,
             _heartbeatTimeout,
-            _logging
+            _logging,
+            _requestTimeout
         );
     }
 }
