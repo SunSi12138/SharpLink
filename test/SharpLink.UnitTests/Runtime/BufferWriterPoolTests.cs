@@ -1,7 +1,11 @@
+using System.Threading;
+
 namespace SharpLink.UnitTests.Runtime;
 
 public class BufferWriterPoolTests
 {
+    private static readonly Lock PoolSync = new();
+
     [Test]
     public void ConfigureShouldThrowOnNullConfigure()
     {
@@ -22,44 +26,50 @@ public class BufferWriterPoolTests
     [Test]
     public void ReturnShouldPoolSmallWriterAndClearContent()
     {
-        try
+        lock (PoolSync)
         {
-            ConfigurePool(initialCapacity: 111, maxPooledWriters: 1, maxRetainedCapacityBytes: 1024);
-            DrainPool();
+            try
+            {
+                ConfigurePool(initialCapacity: 111, maxPooledWriters: 1, maxRetainedCapacityBytes: 1024);
+                DrainPool();
 
-            var writer = new ArrayBufferWriter<byte>(128);
-            writer.GetSpan(4);
-            writer.Advance(4);
-            BufferWriterPool.Return(writer);
-            Ensure(writer.WrittenCount == 0, "writer should be cleared on return");
-        }
-        finally
-        {
-            ResetDefaults();
+                var writer = new ArrayBufferWriter<byte>(128);
+                writer.GetSpan(4);
+                writer.Advance(4);
+                BufferWriterPool.Return(writer);
+                Ensure(writer.WrittenCount == 0, "writer should be cleared on return");
+            }
+            finally
+            {
+                ResetDefaults();
+            }
         }
     }
 
     [Test]
     public void ReturnShouldDropWriterAboveRetainedCapacity()
     {
-        try
+        lock (PoolSync)
         {
-            ConfigurePool(initialCapacity: 123, maxPooledWriters: 1, maxRetainedCapacityBytes: 64);
-            DrainPool();
+            try
+            {
+                ConfigurePool(initialCapacity: 123, maxPooledWriters: 1, maxRetainedCapacityBytes: 64);
+                DrainPool();
 
-            var tooLarge = new ArrayBufferWriter<byte>(256);
-            tooLarge.GetSpan(1);
-            tooLarge.Advance(1);
-            BufferWriterPool.Return(tooLarge);
-            Ensure(tooLarge.WrittenCount == 1, "oversized writer should not be cleared because it is not pooled");
+                var tooLarge = new ArrayBufferWriter<byte>(256);
+                tooLarge.GetSpan(1);
+                tooLarge.Advance(1);
+                BufferWriterPool.Return(tooLarge);
+                Ensure(tooLarge.WrittenCount == 1, "oversized writer should not be cleared because it is not pooled");
 
-            var rented = BufferWriterPool.Get();
-            Ensure(!ReferenceEquals(tooLarge, rented), "oversized writer should not be pooled");
-            Ensure(rented.Capacity == 123, "pool should allocate using configured initial capacity");
-        }
-        finally
-        {
-            ResetDefaults();
+                var rented = BufferWriterPool.Get();
+                Ensure(!ReferenceEquals(tooLarge, rented), "oversized writer should not be pooled");
+                Ensure(rented.Capacity == 123, "pool should allocate using configured initial capacity");
+            }
+            finally
+            {
+                ResetDefaults();
+            }
         }
     }
 
