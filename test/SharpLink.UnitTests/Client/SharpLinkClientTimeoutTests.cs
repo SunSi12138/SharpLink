@@ -43,11 +43,7 @@ public class SharpLinkClientTimeoutTests
         Ensure(await client.ConnectAsync(), "connect");
 
         using var cts = new CancellationTokenSource();
-        _ = Task.Run(async () =>
-        {
-            await Task.Delay(80);
-            cts.Cancel();
-        });
+        cts.CancelAfter(TimeSpan.FromMilliseconds(80));
 
         var invokeTask = client.InvokeCancellableNoPayloadAsync<int>(1, 2, cts.Token).AsTask();
         var callPacket = await transport.Session.WaitForSentPacket(PacketType.RpcCall);
