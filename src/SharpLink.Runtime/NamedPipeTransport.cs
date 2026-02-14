@@ -1,10 +1,11 @@
 namespace SharpLink.Runtime;
 
-public class NamedPipeTransport(NamedPipeServerStream? serverStream=null,NamedPipeClientStream? clientStream=null) : ITransport
+public class NamedPipeTransport(NamedPipeServerStream? serverStream=null,NamedPipeClientStream? clientStream=null) : ITransport, IRpcSessionFlushConfigurableTransport
 {
     private readonly PipeStream _pipe = ((PipeStream?)serverStream ?? clientStream ?? throw new ArgumentNullException());
     private readonly CancellationTokenSource _cts = new();
     private bool _disposed;
+    private RpcSessionFlushOptions? _rpcSessionFlushOptions;
     
 
     public bool IsConnected => _pipe is { IsConnected: true };
@@ -23,8 +24,20 @@ public class NamedPipeTransport(NamedPipeServerStream? serverStream=null,NamedPi
                 break;
         }
         
-        return new RpcSession(Guid.NewGuid().ToString("N"), PipeReader.Create(_pipe), PipeWriter.Create(_pipe),serializer,
-            _pipe.Close,()=>_pipe.IsConnected);
+        return new RpcSession(
+            Guid.NewGuid().ToString("N"),
+            PipeReader.Create(_pipe),
+            PipeWriter.Create(_pipe),
+            serializer,
+            _pipe.Close,
+            () => _pipe.IsConnected,
+            _rpcSessionFlushOptions);
+    }
+
+    public void ConfigureRpcSessionFlush(RpcSessionFlushOptions options)
+    {
+        RpcSessionFlushOptions.Validate(options.FlushSizeThreshold, options.MaxLatency);
+        _rpcSessionFlushOptions = options;
     }
 
     public Task CompleteAsync()

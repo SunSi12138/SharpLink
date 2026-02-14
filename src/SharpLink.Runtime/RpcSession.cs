@@ -16,11 +16,25 @@ public class RpcSession : IRpcSession
     public bool IsConnected => _isConnected();
     private readonly Action _disconnect;
     private readonly Func<bool> _isConnected;
+    private readonly long _maxLatencyTicks;
+    private readonly int _flushSizeThreshold;
 
-    public RpcSession(string id, PipeReader reader, PipeWriter writer, ISerializer serializer, Action disconnect, Func<bool> isConnected)
+    public RpcSession(
+        string id,
+        PipeReader reader,
+        PipeWriter writer,
+        ISerializer serializer,
+        Action disconnect,
+        Func<bool> isConnected,
+        RpcSessionFlushOptions? flushOptions = null)
     {
+        var effectiveFlushOptions = flushOptions ?? RpcSessionFlushOptions.Default;
+        RpcSessionFlushOptions.Validate(effectiveFlushOptions.FlushSizeThreshold, effectiveFlushOptions.MaxLatency);
+
         _disconnect = disconnect;
         _isConnected = isConnected;
+        _maxLatencyTicks = Math.Max(1L, (long)(effectiveFlushOptions.MaxLatency.TotalSeconds * Stopwatch.Frequency));
+        _flushSizeThreshold = effectiveFlushOptions.FlushSizeThreshold;
         Id = id;
         Input = reader;
         Output = writer;
@@ -34,10 +48,6 @@ public class RpcSession : IRpcSession
     }
 
     public ValueTask SendPacketAsync(ArrayBufferWriter<byte> packet) => _channel.Writer.WriteAsync(packet);
-
-    private static readonly long TimestampFrequency = Stopwatch.Frequency;
-    private static readonly long MaxLatencyTicks = (long)(0.001 * TimestampFrequency);
-    private const int FlushSizeThreshold = 1024 * 4;
 
     private async Task ProcessSendQueueLoop()
     {
@@ -64,7 +74,7 @@ public class RpcSession : IRpcSession
                     BufferWriterPool.Return(buffer);
 
                     var currentTimestamp = Stopwatch.GetTimestamp();
-                    if (bytesAccumulated < FlushSizeThreshold && (currentTimestamp - startTimestamp) < MaxLatencyTicks)
+                    if (bytesAccumulated < _flushSizeThreshold && (currentTimestamp - startTimestamp) < _maxLatencyTicks)
                         continue;
 
                     var singleRes = await Output.FlushAsync(_cts.Token);

@@ -3,12 +3,13 @@ namespace SharpLink.Runtime;
 /// <summary>
 /// 通用 Socket 传输层，支持 TCP 和 UDS (Unix Domain Socket)
 /// </summary>
-public class SocketTransport(Socket socket, bool isServer = true, EndPoint? remoteEndPoint = null) : ITransport
+public class SocketTransport(Socket socket, bool isServer = true, EndPoint? remoteEndPoint = null) : ITransport, IRpcSessionFlushConfigurableTransport
 {
     private readonly Socket _socket = socket ?? throw new ArgumentNullException(nameof(socket));
     private readonly CancellationTokenSource _cts = new();
     private NetworkStream? _networkStream;
     private bool _disposed;
+    private RpcSessionFlushOptions? _rpcSessionFlushOptions;
 
     // 客户端构造函数
     public SocketTransport(Socket socket, EndPoint remoteEndPoint) : this(socket, false, remoteEndPoint: remoteEndPoint) { }
@@ -49,8 +50,15 @@ public class SocketTransport(Socket socket, bool isServer = true, EndPoint? remo
             writer,
             serializer,
             () => _networkStream.Close(), // Disconnect Action
-            () => connectedSocket.Connected   // IsConnected Func
+            () => connectedSocket.Connected,   // IsConnected Func
+            _rpcSessionFlushOptions
         );
+    }
+
+    public void ConfigureRpcSessionFlush(RpcSessionFlushOptions options)
+    {
+        RpcSessionFlushOptions.Validate(options.FlushSizeThreshold, options.MaxLatency);
+        _rpcSessionFlushOptions = options;
     }
 
     public void Dispose()
