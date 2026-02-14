@@ -8,7 +8,7 @@ namespace SharpLink.UnitTests.Client;
 public class SharpLinkClientCancellationTests
 {
     [Test]
-    public async Task InvokeNoPayloadAsyncShouldTimeoutAndSendCancel()
+    public async Task InvokeWithDefaultTimeoutNoPayloadAsyncShouldTimeoutAndSendCancel()
     {
         var transport = new FakeTransport();
         var serializer = new NoopSerializer();
@@ -21,7 +21,7 @@ public class SharpLinkClientCancellationTests
 
         Ensure(await client.ConnectAsync(), "connect");
 
-        var invokeTask = client.InvokeNoPayloadAsync<int>(1, 2).AsTask();
+        var invokeTask = client.InvokeWithDefaultTimeoutNoPayloadAsync<int>(1, 2).AsTask();
         var callPacket = await transport.Session.WaitForSentPacket(PacketType.RpcCall);
         await EnsureThrows<TimeoutException>(invokeTask);
 
