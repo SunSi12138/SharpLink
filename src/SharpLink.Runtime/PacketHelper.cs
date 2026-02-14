@@ -6,26 +6,34 @@ public static class PacketHelper
     {
         payload = default;
         header = default;
-        
+
         if (buffer.Length < ProtocolConstants.HeaderBytes) return false;
 
-        Span<byte> headerBytes = stackalloc byte[ProtocolConstants.HeaderBytes];
-        buffer.Slice(0, ProtocolConstants.HeaderBytes).CopyTo(headerBytes);
+        var reader = new SequenceReader<byte>(buffer);
+        if (!reader.TryRead(out var magic))
+            return false;
 
-        if (headerBytes[ProtocolConstants.MagicNumberOffset] != ProtocolConstants.MagicNumber)
+        if (magic != ProtocolConstants.MagicNumber)
             throw new InvalidDataException("Bad Magic");
 
-        var packetLength = BinaryPrimitives.ReadInt32LittleEndian(headerBytes[ProtocolConstants.PacketLengthRange]);
+        if (!reader.TryReadLittleEndian(out int packetLength))
+            return false;
 
-        if (buffer.Length < 15 + packetLength) return false; // 半包，等待更多数据
+        if (!reader.TryRead(out var typeRaw))
+            return false;
 
-        var type = (PacketType)headerBytes[ProtocolConstants.PacketTypeOffset];
-        var flags = (PacketFlags)headerBytes[ProtocolConstants.PacketFlagsOffset];
-        var requestId = BinaryPrimitives.ReadInt64LittleEndian(headerBytes[ProtocolConstants.PacketRequestIdRange]);
+        if (!reader.TryRead(out var flagsRaw))
+            return false;
+
+        if (!reader.TryReadLittleEndian(out long requestId))
+            return false;
+
+        if (packetLength < 0 || reader.Remaining < packetLength) return false; // half packet, wait for more data
+
         payload = buffer.Slice(ProtocolConstants.HeaderBytes, packetLength);
-        header = new PacketHeader(type, flags, requestId);
+        header = new PacketHeader((PacketType)typeRaw, (PacketFlags)flagsRaw, requestId);
         buffer = buffer.Slice(ProtocolConstants.HeaderBytes + packetLength);
-        
+
         return true;
     }
 }
