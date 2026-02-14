@@ -8,5 +8,5 @@ public interface IRpcSession : IDisposable
     ISerializer Serializer { get; }
     IStreamManager StreamManager { get; }
     bool IsConnected { get; }
-    ValueTask SendPacketAsync(ArrayBufferWriter<byte> packet);
+    bool SendPacket(ArrayBufferWriter<byte> packet);
 }

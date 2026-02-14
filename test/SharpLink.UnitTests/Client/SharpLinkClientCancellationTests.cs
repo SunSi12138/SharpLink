@@ -141,13 +141,15 @@ public class SharpLinkClientCancellationTests
         public IStreamManager StreamManager { get; } = new StreamManager();
         public bool IsConnected => Volatile.Read(ref _disposed) == 0;
 
-        public async ValueTask SendPacketAsync(ArrayBufferWriter<byte> packet)
+        public bool SendPacket(ArrayBufferWriter<byte> packet)
         {
             var seq = new ReadOnlySequence<byte>(packet.WrittenMemory);
             var ok = PacketHelper.TryReadMessage(ref seq, out var header, out _);
+            var res = false;
             if (ok)
-                await _sentPackets.Writer.WriteAsync(header);
+                res = _sentPackets.Writer.TryWrite(header);
             BufferWriterPool.Return(packet);
+            return res;
         }
 
         public async Task InjectPacketAsync(PacketType type, PacketFlags flags, long requestId)

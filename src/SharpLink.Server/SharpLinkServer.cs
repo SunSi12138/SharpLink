@@ -89,7 +89,7 @@ public class SharpLinkServer(
             {
                 var verified = header.Type == PacketType.Handshake && HandshakeVerify(message);
                 
-                await session.SendStringPacketAsync(PacketType.Handshake,verified?PacketFlags.None:PacketFlags.IsError,header.RequestId,"handshake fail");
+                session.SendStringPacketAsync(PacketType.Handshake,verified?PacketFlags.None:PacketFlags.IsError,header.RequestId,"handshake fail");
             
                 handshakeResult = verified;
                 break;
@@ -132,7 +132,7 @@ public class SharpLinkServer(
                                 if (IsEnabled(LogLevel.Debug))
                                     _logger.LogDebug("Receive heartbeat from client {SessionId}", session.Id);
                                 session.LastActive = DateTime.UtcNow;
-                                await session.SendPacketAsync(PacketType.Heartbeat,PacketFlags.None,header.RequestId);
+                                session.SendPacketAsync(PacketType.Heartbeat,PacketFlags.None,header.RequestId);
                                 break;
                             case PacketType.RpcCall:
                                 //TODO:使用Channel进行异步处理防止大量的Task频繁创建
@@ -209,7 +209,7 @@ public class SharpLinkServer(
         if (!services.TryGetValue(interfaceHash, out var serviceInfo))
         {
             if (!isOneWay)
-                await session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,$"Service {interfaceHash} not found.");
+                session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,$"Service {interfaceHash} not found.");
             return;
         }
 
@@ -242,18 +242,18 @@ public class SharpLinkServer(
                 var token = writer.BeginPacket(PacketType.RpcResponse, PacketFlags.None, requestId);
                 await serviceInfo.stub.InvokeAsync(serviceInfo.service, session, methodHash,requestId, argsPayload, writer, invokeToken);
                 writer.EndPacket(token);
-                await session.SendPacketAsync(writer);
+                session.SendPacket(writer);
             }
         }
         catch (OperationCanceledException)
         {
             if (!isOneWay)
-                await session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,"Request canceled.");
+                session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,"Request canceled.");
         }
         catch (Exception e)
         {
             if (!isOneWay)
-                await session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,e.Message);
+                session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,e.Message);
         }
         finally
         {

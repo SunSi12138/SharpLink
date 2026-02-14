@@ -794,13 +794,13 @@ public class RpcGenerator : IIncrementalGenerator
                 sb.AppendLine("                    {");
                 sb.AppendLine("                        await foreach (var item in resultStream)");
                 sb.AppendLine("                        {");
-                sb.AppendLine("                            await SharpLink.Runtime.RpcSessionExtensions.SendStreamChunkAsync(session, requestId, 0, item);");
+                sb.AppendLine("                            SharpLink.Runtime.RpcSessionExtensions.SendStreamChunkAsync(session, requestId, 0, item);");
                 sb.AppendLine("                        }");
-                sb.AppendLine("                        await SharpLink.Runtime.RpcSessionExtensions.SendStreamCompleteAsync(session, requestId, 0);");
+                sb.AppendLine("                        SharpLink.Runtime.RpcSessionExtensions.SendStreamCompleteAsync(session, requestId, 0);");
                 sb.AppendLine("                    }");
                 sb.AppendLine("                    catch (Exception ex)");
                 sb.AppendLine("                    {");
-                sb.AppendLine("                        await SharpLink.Runtime.RpcSessionExtensions.SendStreamErrorAsync(session, requestId, 0, ex.Message);");
+                sb.AppendLine("                        SharpLink.Runtime.RpcSessionExtensions.SendStreamErrorAsync(session, requestId, 0, ex.Message);");
                 sb.AppendLine("                    }");
                 sb.AppendLine("                });");
             }

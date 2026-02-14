@@ -307,7 +307,7 @@ internal sealed partial class SharpLinkClient
         if (!hasTimeout)
         {
             var fastFlags = isOneWay ? PacketFlags.IsOneWay : PacketFlags.None;
-            await SendRpcCallAsync(interfaceHash, methodHash, requestId, fastFlags, payloadWriter);
+            SendRpcCall(interfaceHash, methodHash, requestId, fastFlags, payloadWriter);
 
             if (streamSender is not null)
                 _ = RunStreamSenderAsync(streamSender, requestId, CancellationToken.None);
@@ -325,7 +325,7 @@ internal sealed partial class SharpLinkClient
             timeout,
             requestId,
             isOneWay);
-        await SendRpcCallAsync(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
+        SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
 
         if (streamSender is not null)
             _ = RunStreamSenderAsync(streamSender, requestId, CancellationToken.None);
@@ -373,7 +373,7 @@ internal sealed partial class SharpLinkClient
             requestId,
             isOneWay,
             ct);
-        await SendRpcCallAsync(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
+        SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
 
         if (streamSender is not null)
             _ = RunStreamSenderAsync(streamSender, requestId, ct);
@@ -457,7 +457,7 @@ internal sealed partial class SharpLinkClient
         var hasTimeout = TryResolveRequestTimeout(true, useDefaultTimeout, timeoutOverride, out var timeout);
         if (!hasTimeout)
         {
-            await SendRpcCallAsync(interfaceHash, methodHash, requestId, PacketFlags.None, payloadWriter);
+            SendRpcCall(interfaceHash, methodHash, requestId, PacketFlags.None, payloadWriter);
             if (streamSender is not null)
                 await streamSender(requestId, CancellationToken.None);
             return;
@@ -467,7 +467,7 @@ internal sealed partial class SharpLinkClient
         try
         {
             var packetFlags = PacketFlags.IsCancellable;
-            await SendRpcCallAsync(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
+            SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
 
             if (streamSender is not null)
                 await streamSender(requestId, CancellationToken.None);
@@ -502,7 +502,7 @@ internal sealed partial class SharpLinkClient
             var packetFlags = (effectiveCt.CanBeCanceled || hasTimeout)
                 ? PacketFlags.IsCancellable
                 : PacketFlags.None;
-            await SendRpcCallAsync(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
+            SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
 
             if (streamSender is not null)
                 await streamSender(requestId, effectiveCt);
@@ -550,7 +550,7 @@ internal sealed partial class SharpLinkClient
 
     private bool TryResolveRequestTimeout(bool shouldApply, bool useDefaultTimeout, TimeSpan? timeoutOverride, out TimeSpan timeout)
     {
-        timeout = default;
+        timeout = TimeSpan.Zero;
         if (!shouldApply)
             return false;
 
@@ -560,13 +560,10 @@ internal sealed partial class SharpLinkClient
             return true;
         }
 
-        if (useDefaultTimeout && _hasRequestTimeout)
-        {
-            timeout = _requestTimeoutValue;
-            return true;
-        }
+        if (!useDefaultTimeout || !_hasRequestTimeout) return false;
+        timeout = _requestTimeoutValue;
+        return true;
 
-        return false;
     }
 
     private static TimeSpan EnsurePositiveTimeout(TimeSpan timeout)
@@ -575,8 +572,7 @@ internal sealed partial class SharpLinkClient
         return timeout;
     }
 
-    private async Task SendRpcCallAsync(
-        long interfaceHash,
+    private void SendRpcCall(long interfaceHash,
         long methodHash,
         long requestId,
         PacketFlags flags,
@@ -592,15 +588,7 @@ internal sealed partial class SharpLinkClient
             payloadWriter?.Invoke(writer);
         }
 
-        try
-        {
-            await _session!.SendPacketAsync(writer);
-        }
-        catch
-        {
-            BufferWriterPool.Return(writer);
-            throw;
-        }
+        _session!.SendPacket(writer);
     }
 
     public async Task SendClientStreamAsync<T>(long requestId, sbyte streamId, IAsyncEnumerable<T> stream, CancellationToken cancellationToken = default)
@@ -609,14 +597,14 @@ internal sealed partial class SharpLinkClient
         {
             await foreach (var item in stream.WithCancellation(cancellationToken))
             {
-                await _session!.SendStreamChunkAsync(requestId, streamId, item);
+                _session!.SendStreamChunkAsync(requestId, streamId, item);
             }
 
-            await _session!.SendStreamCompleteAsync(requestId, streamId);
+            _session!.SendStreamCompleteAsync(requestId, streamId);
         }
         catch (Exception ex)
         {
-            await _session!.SendStreamErrorAsync(requestId, streamId, ex.Message);
+            _session!.SendStreamErrorAsync(requestId, streamId, ex.Message);
             throw;
         }
     }
@@ -707,7 +695,7 @@ internal sealed partial class SharpLinkClient
         if (!state.IsOneWay && !_locallyCanceledRequestIds.Add(state.RequestId))
             return;
 
-        _ = _session?.SendCancelAsync(state.RequestId);
+        _session?.SendCancelAsync(state.RequestId);
 
         if (!state.IsOneWay)
         {
@@ -721,7 +709,7 @@ internal sealed partial class SharpLinkClient
         if (!_locallyCanceledRequestIds.Add(state.RequestId))
             return;
 
-        _ = _session?.SendCancelAsync(state.RequestId);
+        _session?.SendCancelAsync(state.RequestId);
         var ex = CreateCancellationException(state.UserToken);
         _session?.StreamManager.CompleteStream(state.RequestId, 0, true, ex.Message);
     }
@@ -731,7 +719,7 @@ internal sealed partial class SharpLinkClient
         if (!state.IsOneWay && !_locallyCanceledRequestIds.Add(state.RequestId))
             return;
 
-        _ = _session?.SendCancelAsync(state.RequestId);
+        _session?.SendCancelAsync(state.RequestId);
         if (!state.IsOneWay)
             _requestManager.DispatchError(state.RequestId, new TimeoutException("Request timed out."));
     }
@@ -741,7 +729,7 @@ internal sealed partial class SharpLinkClient
         if (!_locallyCanceledRequestIds.Add(state.RequestId))
             return;
 
-        _ = _session?.SendCancelAsync(state.RequestId);
+        _session?.SendCancelAsync(state.RequestId);
         _session?.StreamManager.CompleteStream(state.RequestId, 0, true, "Request timed out.");
     }
 

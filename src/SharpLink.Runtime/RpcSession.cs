@@ -42,12 +42,13 @@ public class RpcSession : IRpcSession
         _channel = Channel.CreateUnbounded<ArrayBufferWriter<byte>>(new UnboundedChannelOptions
         {
             SingleReader = true,
-            SingleWriter = false
+            SingleWriter = false,
+            AllowSynchronousContinuations = false
         });
         _ = Task.Run(ProcessSendQueueLoop);
     }
 
-    public ValueTask SendPacketAsync(ArrayBufferWriter<byte> packet) => _channel.Writer.WriteAsync(packet);
+    public bool SendPacket(ArrayBufferWriter<byte> packet) => _channel.Writer.TryWrite(packet);
 
     private async Task ProcessSendQueueLoop()
     {

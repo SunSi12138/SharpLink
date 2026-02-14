@@ -24,7 +24,7 @@ internal sealed partial class SharpLinkClient
 
     private static async Task<bool> ProcessHandshakeAsync(IRpcSession session, CancellationToken ct)
     {
-        await session.SendStringPacketAsync(PacketType.Handshake, PacketFlags.None, 0, "Password");
+        session.SendStringPacketAsync(PacketType.Handshake, PacketFlags.None, 0, "Password");
 
         var reader = session.Input;
         while (session.IsConnected && !ct.IsCancellationRequested)
@@ -112,7 +112,7 @@ internal sealed partial class SharpLinkClient
     {
         while (!ct.IsCancellationRequested)
         {
-            await session.SendPacketAsync(PacketType.Heartbeat, PacketFlags.None, 0);
+            session.SendPacketAsync(PacketType.Heartbeat, PacketFlags.None, 0);
             await Task.Delay(_heartbeatInterval, ct);
             var now = DateTime.UtcNow;
             if (now - session.LastActive <= _heartbeatTimeout && session.IsConnected)
