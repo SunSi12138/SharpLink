@@ -135,8 +135,15 @@ public class SharpLinkServer(
                                 session.SendPacketAsync(PacketType.Heartbeat,PacketFlags.None,header.RequestId);
                                 break;
                             case PacketType.RpcCall:
-                                //TODO:使用Channel进行异步处理防止大量的Task频繁创建
-                                _ =  DispatchRpcAsync(session, header.RequestId, header.Flags, payload, requestCancellationMap, ct); 
+                                if ((header.Flags & PacketFlags.IsOneWay) != 0)
+                                {
+                                    DispatchOneWayRpc(session, header.RequestId, header.Flags, payload, requestCancellationMap, ct);
+                                    break;
+                                }
+
+                                var dispatchTask = DispatchRpcAsync(session, header.RequestId, header.Flags, payload, requestCancellationMap, ct);
+                                if (!dispatchTask.IsCompletedSuccessfully)
+                                    _ = AwaitDispatchAsync(dispatchTask);
                                 break;
                             case PacketType.Cancel:
                                 if (requestCancellationMap.TryRemove(header.RequestId, out var cts))
@@ -186,8 +193,23 @@ public class SharpLinkServer(
             requestCancellationMap.Clear();
         }
     }
-    
-    private async Task DispatchRpcAsync(
+
+    private async Task AwaitDispatchAsync(ValueTask dispatchTask)
+    {
+        try
+        {
+            await dispatchTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,"Unhandled exception in RPC dispatch");
+        }
+    }
+
+    private void DispatchOneWayRpc(
         IRpcSession session,
         long requestId,
         PacketFlags flags,
@@ -195,8 +217,90 @@ public class SharpLinkServer(
         ConcurrentDictionary<long, CancellationTokenSource> requestCancellationMap,
         CancellationToken serverLoopToken)
     {
-        var isOneWay = flags.HasFlag(PacketFlags.IsOneWay);
-        var isCancellable = flags.HasFlag(PacketFlags.IsCancellable);
+        var isCancellable = (flags & PacketFlags.IsCancellable) != 0;
+        if (payload.Length < ProtocolConstants.RequestHeaderLength)
+            return;
+
+        var reader = new SequenceReader<byte>(payload);
+        reader.TryReadLittleEndian(out long interfaceHash);
+        reader.TryReadLittleEndian(out long methodHash);
+
+        var argsPayload = payload.Slice(ProtocolConstants.RequestHeaderLength);
+        if (!services.TryGetValue(interfaceHash, out var serviceInfo))
+            return;
+
+        CancellationTokenSource? linkedCts = null;
+        var invokeToken = serverLoopToken;
+        if (isCancellable)
+        {
+            linkedCts = CancellationTokenSource.CreateLinkedTokenSource(serverLoopToken);
+            requestCancellationMap[requestId] = linkedCts;
+            invokeToken = linkedCts.Token;
+        }
+
+        var discard = BufferWriterPool.Get();
+        try
+        {
+            var invokeTask = serviceInfo.stub.InvokeAsync(serviceInfo.service, session, methodHash, requestId, argsPayload, discard, invokeToken);
+            if (invokeTask.IsCompletedSuccessfully)
+            {
+                ReleaseOneWayDispatchResources(discard, linkedCts, requestId, requestCancellationMap);
+                return;
+            }
+
+            _ = AwaitOneWayDispatchAsync(invokeTask, discard, linkedCts, requestId, requestCancellationMap);
+        }
+        catch (Exception ex)
+        {
+            if (IsEnabled(LogLevel.Debug))
+                _logger.LogDebug(ex, "One-way RPC dispatch failed for request {RequestId}", requestId);
+            ReleaseOneWayDispatchResources(discard, linkedCts, requestId, requestCancellationMap);
+        }
+    }
+
+    private async Task AwaitOneWayDispatchAsync(
+        ValueTask invokeTask,
+        ArrayBufferWriter<byte> discard,
+        CancellationTokenSource? linkedCts,
+        long requestId,
+        ConcurrentDictionary<long, CancellationTokenSource> requestCancellationMap)
+    {
+        try
+        {
+            await invokeTask.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            if (IsEnabled(LogLevel.Debug))
+                _logger.LogDebug(ex, "One-way RPC dispatch failed for request {RequestId}", requestId);
+        }
+        finally
+        {
+            ReleaseOneWayDispatchResources(discard, linkedCts, requestId, requestCancellationMap);
+        }
+    }
+
+    private static void ReleaseOneWayDispatchResources(
+        ArrayBufferWriter<byte> discard,
+        CancellationTokenSource? linkedCts,
+        long requestId,
+        ConcurrentDictionary<long, CancellationTokenSource> requestCancellationMap)
+    {
+        BufferWriterPool.Return(discard);
+        linkedCts?.Dispose();
+        if (linkedCts is not null)
+            requestCancellationMap.TryRemove(requestId, out _);
+    }
+
+    private async ValueTask DispatchRpcAsync(
+        IRpcSession session,
+        long requestId,
+        PacketFlags flags,
+        ReadOnlySequence<byte> payload,
+        ConcurrentDictionary<long, CancellationTokenSource> requestCancellationMap,
+        CancellationToken serverLoopToken)
+    {
+        var isCancellable = (flags & PacketFlags.IsCancellable) != 0;
         
         if(payload.Length<ProtocolConstants.RequestHeaderLength) return;
         
@@ -208,8 +312,7 @@ public class SharpLinkServer(
         var argsPayload = payload.Slice(ProtocolConstants.RequestHeaderLength);
         if (!services.TryGetValue(interfaceHash, out var serviceInfo))
         {
-            if (!isOneWay)
-                session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,$"Service {interfaceHash} not found.");
+            session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,$"Service {interfaceHash} not found.");
             return;
         }
 
@@ -224,36 +327,19 @@ public class SharpLinkServer(
 
         try
         {
-            if (isOneWay)
-            {
-                var discard = BufferWriterPool.Get();
-                try
-                {
-                    await serviceInfo.stub.InvokeAsync(serviceInfo.service, session, methodHash,requestId, argsPayload, discard, invokeToken);
-                }
-                finally
-                {
-                    BufferWriterPool.Return(discard);
-                }
-            }
-            else
-            {
-                var writer = BufferWriterPool.Get();
-                var token = writer.BeginPacket(PacketType.RpcResponse, PacketFlags.None, requestId);
-                await serviceInfo.stub.InvokeAsync(serviceInfo.service, session, methodHash,requestId, argsPayload, writer, invokeToken);
-                writer.EndPacket(token);
-                session.SendPacket(writer);
-            }
+            var writer = BufferWriterPool.Get();
+            var token = writer.BeginPacket(PacketType.RpcResponse, PacketFlags.None, requestId);
+            await serviceInfo.stub.InvokeAsync(serviceInfo.service, session, methodHash,requestId, argsPayload, writer, invokeToken);
+            writer.EndPacket(token);
+            session.SendPacket(writer);
         }
         catch (OperationCanceledException)
         {
-            if (!isOneWay)
-                session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,"Request canceled.");
+            session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,"Request canceled.");
         }
         catch (Exception e)
         {
-            if (!isOneWay)
-                session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,e.Message);
+            session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,e.Message);
         }
         finally
         {
