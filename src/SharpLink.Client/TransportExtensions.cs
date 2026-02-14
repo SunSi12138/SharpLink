@@ -1,3 +1,5 @@
+using PipeOptions = System.IO.Pipes.PipeOptions;
+
 namespace SharpLink.Client;
 
 public static class TransportExtensions

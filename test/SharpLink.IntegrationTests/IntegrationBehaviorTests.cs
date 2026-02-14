@@ -47,6 +47,16 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    public async Task MethodWithoutTimeoutAttributeShouldIgnoreDefaultRequestTimeout()
+    {
+        await using var harness = await TestHarness.CreateAsync(requestTimeout: TimeSpan.FromMilliseconds(120));
+        var svc = harness.Client.Get<ITestService>();
+
+        var result = await svc.SlowAddWithoutTimeoutAsync(1, 2).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(result == 3, "SlowAddWithoutTimeoutAsync should complete successfully");
+    }
+
+    [Test]
     public async Task ServerDisconnectShouldFailFastPendingUnaryAndStream()
     {
         await using var harness = await TestHarness.CreateAsync();
@@ -241,7 +251,9 @@ public class IntegrationBehaviorTests
 public interface ITestService : IService
 {
     ValueTask<int> AddAsync(int left, int right);
+    [Sdk.Timeout]
     ValueTask<int> SlowAddAsync(int left, int right, CancellationToken cancellationToken);
+    ValueTask<int> SlowAddWithoutTimeoutAsync(int left, int right);
     ValueTask<Person> EchoAsync(Person person);
     ValueTask<int> UploadAsync(IAsyncEnumerable<int> values);
     IAsyncEnumerable<string> DownloadAsync(int count);
@@ -258,6 +270,12 @@ public class TestService : ITestService
     public async ValueTask<int> SlowAddAsync(int left, int right, CancellationToken cancellationToken)
     {
         await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+        return left + right;
+    }
+
+    public async ValueTask<int> SlowAddWithoutTimeoutAsync(int left, int right)
+    {
+        await Task.Delay(TimeSpan.FromMilliseconds(300));
         return left + right;
     }
 

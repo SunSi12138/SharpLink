@@ -1,5 +1,3 @@
-using System.Threading;
-
 namespace SharpLink.Client;
 
 internal class RequestManager

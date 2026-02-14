@@ -18,17 +18,15 @@ public class StreamManager : IStreamManager
         _dispatchers.TryRemove(new StreamKey(requestId, streamId), out _);
     }
 
-    public async ValueTask DispatchChunkAsync(long requestId, ReadOnlySequence<byte> payload)
-    {
-        await DispatchChunkAsync(requestId, 0, payload);
-    }
+    public ValueTask DispatchChunkAsync(long requestId, ReadOnlySequence<byte> payload)
+        => DispatchChunkAsync(requestId, 0, payload);
 
-    public async ValueTask DispatchChunkAsync(long requestId, sbyte streamId, ReadOnlySequence<byte> payload)
+    public ValueTask DispatchChunkAsync(long requestId, sbyte streamId, ReadOnlySequence<byte> payload)
     {
         if (_dispatchers.TryGetValue(new StreamKey(requestId, streamId), out var dispatcher))
-        {
-            await dispatcher.DispatchAsync(payload);
-        }
+            return dispatcher.DispatchAsync(payload);
+
+        return ValueTask.CompletedTask;
     }
 
     public void CompleteStream(long requestId, bool isError, string? msg)
