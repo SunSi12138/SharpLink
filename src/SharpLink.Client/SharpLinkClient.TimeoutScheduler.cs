@@ -171,11 +171,17 @@ internal sealed partial class SharpLinkClient
         private readonly record struct ScheduledTimeout(long Id, long DueTicks, Action<object?> Callback, object? State);
     }
 
-    private readonly struct TimeoutRegistration(RequestTimeoutScheduler scheduler, int stripe, long id, IPooledTimeoutState? state = null) : IDisposable
+    private readonly struct TimeoutRegistration(
+        RequestTimeoutScheduler? scheduler,
+        int stripe,
+        long id,
+        IPooledTimeoutState? state = null)
+        : IDisposable
     {
+
         public void Dispose()
         {
-            scheduler.Cancel(stripe, id);
+            scheduler?.Cancel(stripe, id);
             state?.ReturnOnDispose();
         }
     }
