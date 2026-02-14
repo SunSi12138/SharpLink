@@ -763,7 +763,19 @@ public class RpcGenerator : IIncrementalGenerator
                         """);
         AppendSizeFieldsByType(sb, model.Interface.Methods);
         sb.AppendLine($$"""
-                            public async ValueTask InvokeAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+                            private static async ValueTask __AwaitTaskResultAsync<T>(Task<T> task, IRpcSession session, IBufferWriter<byte> output)
+                            {
+                                var result = await task.ConfigureAwait(false);
+                                session.Serializer.Serialize(result, output);
+                            }
+
+                            private static async ValueTask __AwaitValueTaskResultAsync<T>(ValueTask<T> task, IRpcSession session, IBufferWriter<byte> output)
+                            {
+                                var result = await task.ConfigureAwait(false);
+                                session.Serializer.Serialize(result, output);
+                            }
+
+                            public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
                             {
                                 var impl = ({{model.Interface.FullName}})service;
                                 var reader = new SequenceReader<byte>(args);
@@ -859,12 +871,45 @@ public class RpcGenerator : IIncrementalGenerator
             }
             else if (method.IsVoid)
             {
-                sb.AppendLine($"                await {callLine};");
+                if (method.ReturnType.Contains("ValueTask"))
+                {
+                    sb.AppendLine($"                var pending = {callLine};");
+                    sb.AppendLine("                if (!pending.IsCompletedSuccessfully)");
+                    sb.AppendLine("                    return pending;");
+                }
+                else
+                {
+                    sb.AppendLine($"                var pending = {callLine};");
+                    sb.AppendLine("                if (!pending.IsCompletedSuccessfully)");
+                    sb.AppendLine("                    return new ValueTask(pending);");
+                }
             }
             else
             {
-                sb.AppendLine($"                var result = await {callLine};");
-                sb.AppendLine("                session.Serializer.Serialize(result, output);");
+                if (method.ReturnType.Contains("ValueTask"))
+                {
+                    sb.AppendLine($"                var pending = {callLine};");
+                    sb.AppendLine("                if (pending.IsCompletedSuccessfully)");
+                    sb.AppendLine("                {");
+                    sb.AppendLine("                    session.Serializer.Serialize(pending.Result, output);");
+                    sb.AppendLine("                }");
+                    sb.AppendLine("                else");
+                    sb.AppendLine("                {");
+                    sb.AppendLine("                    return __AwaitValueTaskResultAsync(pending, session, output);");
+                    sb.AppendLine("                }");
+                }
+                else
+                {
+                    sb.AppendLine($"                var pending = {callLine};");
+                    sb.AppendLine("                if (pending.IsCompletedSuccessfully)");
+                    sb.AppendLine("                {");
+                    sb.AppendLine("                    session.Serializer.Serialize(pending.GetAwaiter().GetResult(), output);");
+                    sb.AppendLine("                }");
+                    sb.AppendLine("                else");
+                    sb.AppendLine("                {");
+                    sb.AppendLine("                    return __AwaitTaskResultAsync(pending, session, output);");
+                    sb.AppendLine("                }");
+                }
             }
 
             sb.AppendLine("                break;");
@@ -874,6 +919,8 @@ public class RpcGenerator : IIncrementalGenerator
         sb.AppendLine("""
                                   default: throw new RpcException("Method not found");
                               }
+
+                              return ValueTask.CompletedTask;
                           }
 
                           internal static class __SharpLinkStubRegistration
