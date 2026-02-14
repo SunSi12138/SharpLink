@@ -56,13 +56,6 @@
   - 将分发改为 `ValueTask` 快路径（可同步完成时不分配 Task）。
   - 对 `oneway + 无流` 的简单场景走专用同步分支。
 
-2. 可取消请求为每个请求创建 linked CTS
-- 位置：`src/SharpLink.Server/SharpLinkServer.cs:216-223`
-- 问题：高频下 CTS 分配显著。
-- 优化：
-  - 仅在 `IsCancellable` 且服务方法实际需要取消 token 时创建。
-  - 取消映射结构从 `ConcurrentDictionary<long, CTS>` 优化为更轻结构。
-
 ### P1
 
 3. session 层任务创建策略
@@ -88,10 +81,6 @@
   - request 级别先定位，再到 streamId 的小表。
   - 对 `streamId = 0` 建立专门快路径。
 
-2. `TypedStreamDispatcher<T>.DispatchAsync` 不必要 async 状态机
-- 位置：`src/SharpLink.Runtime/TypedStreamDispatcher.cs:5-9`
-- 问题：当前 `async + await writer.WriteAsync`，可直接返回 `ValueTask`。
-- 优化：改为非 async 转发，减少状态机。
 
 ### P1
 
