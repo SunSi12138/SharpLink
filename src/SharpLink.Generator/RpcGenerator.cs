@@ -25,6 +25,13 @@ public class RpcGenerator : IIncrementalGenerator
         category: "SharpLink.Generator",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
+    private static readonly DiagnosticDescriptor TimeoutRequiresCancellationTokenRule = new(
+        id: "SHARPLINK004",
+        title: "Timeout Attribute Requires CancellationToken",
+        messageFormat: "RPC method '{0}' uses [Timeout] but does not declare a CancellationToken parameter",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -44,6 +51,9 @@ public class RpcGenerator : IIncrementalGenerator
             .Where(x => x.Length > 0);
         var invalidStreamCountMethods = context.SyntaxProvider
             .CreateSyntaxProvider(predicate: IsInterfaceCandidate, transform: GetInvalidStreamCountMethods)
+            .Where(x => x.Length > 0);
+        var invalidTimeoutCancellationMethods = context.SyntaxProvider
+            .CreateSyntaxProvider(predicate: IsInterfaceCandidate, transform: GetInvalidTimeoutCancellationMethods)
             .Where(x => x.Length > 0);
 
         context.RegisterSourceOutput(invalidMethods, static (spc, methods) =>
@@ -78,6 +88,17 @@ public class RpcGenerator : IIncrementalGenerator
                     method.Location,
                     method.MethodName,
                     method.StreamParameterCount);
+                spc.ReportDiagnostic(diagnostic);
+            }
+        });
+        context.RegisterSourceOutput(invalidTimeoutCancellationMethods, static (spc, methods) =>
+        {
+            foreach (var method in methods)
+            {
+                var diagnostic = Diagnostic.Create(
+                    TimeoutRequiresCancellationTokenRule,
+                    method.Location,
+                    method.MethodName);
                 spc.ReportDiagnostic(diagnostic);
             }
         });
@@ -208,12 +229,44 @@ public class RpcGenerator : IIncrementalGenerator
         return list.ToImmutable();
     }
 
+    private static ImmutableArray<InvalidTimeoutCancellationMethodModel> GetInvalidTimeoutCancellationMethods(GeneratorSyntaxContext context, CancellationToken _)
+    {
+        var interfaceDecl = (InterfaceDeclarationSyntax)context.Node;
+        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol)
+            return ImmutableArray<InvalidTimeoutCancellationMethodModel>.Empty;
+
+        if (!symbol.AllInterfaces.Any(i => i.ToDisplayString() == "SharpLink.Sdk.IService"))
+            return ImmutableArray<InvalidTimeoutCancellationMethodModel>.Empty;
+
+        var list = ImmutableArray.CreateBuilder<InvalidTimeoutCancellationMethodModel>();
+        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        {
+            var hasTimeout = method.GetAttributes().Any(IsTimeoutAttribute);
+            if (!hasTimeout)
+                continue;
+
+            var hasCancellationToken = method.Parameters.Any(IsCancellationTokenParameter);
+            if (hasCancellationToken)
+                continue;
+
+            list.Add(new InvalidTimeoutCancellationMethodModel(
+                method.Name,
+                method.Locations.FirstOrDefault()));
+        }
+
+        return list.ToImmutable();
+    }
+
     private static bool HasInvalidRpcMethod(INamedTypeSymbol interfaceSymbol)
     {
         return interfaceSymbol.GetMembers()
             .OfType<IMethodSymbol>()
             .Where(m => m.MethodKind == MethodKind.Ordinary)
-            .Any(m => !IsSupportedRpcReturnType(m.ReturnType) || m.Parameters.Count(IsCancellationTokenParameter) > 1 || m.Parameters.Count(p => IsAsyncEnumerable(p.Type, out _)) > sbyte.MaxValue);
+            .Any(m =>
+                !IsSupportedRpcReturnType(m.ReturnType) ||
+                m.Parameters.Count(IsCancellationTokenParameter) > 1 ||
+                m.Parameters.Count(p => IsAsyncEnumerable(p.Type, out _)) > sbyte.MaxValue ||
+                (m.GetAttributes().Any(IsTimeoutAttribute) && !m.Parameters.Any(IsCancellationTokenParameter)));
     }
 
     private static bool IsCancellationTokenParameter(IParameterSymbol parameter)
@@ -970,6 +1023,7 @@ internal record RpcParameterModel(
 internal readonly record struct InvalidRpcMethodModel(string MethodName, string ReturnType, Location? Location);
 internal readonly record struct InvalidCancellationTokenMethodModel(string MethodName, Location? Location);
 internal readonly record struct InvalidStreamCountMethodModel(string MethodName, int StreamParameterCount, Location? Location);
+internal readonly record struct InvalidTimeoutCancellationMethodModel(string MethodName, Location? Location);
 
 file static class Hashing
 {

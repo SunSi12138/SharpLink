@@ -59,7 +59,7 @@ internal sealed partial class SharpLinkClient
 
         private sealed class Stripe : IDisposable
         {
-            private readonly object _gate = new();
+            private readonly Lock _gate = new();
             private readonly PriorityQueue<ScheduledTimeout, long> _queue = new();
             private readonly HashSet<long> _canceled = [];
             private readonly Timer _timer;
@@ -173,18 +173,10 @@ internal sealed partial class SharpLinkClient
 
     private readonly struct TimeoutRegistration(RequestTimeoutScheduler scheduler, int stripe, long id, IPooledTimeoutState? state = null) : IDisposable
     {
-        private readonly RequestTimeoutScheduler _scheduler = scheduler;
-        private readonly int _stripe = stripe;
-        private readonly long _id = id;
-        private readonly IPooledTimeoutState? _state = state;
-
         public void Dispose()
         {
-            if (_scheduler is null)
-                return;
-
-            _scheduler.Cancel(_stripe, _id);
-            _state?.ReturnOnDispose();
+            scheduler.Cancel(stripe, id);
+            state?.ReturnOnDispose();
         }
     }
 }

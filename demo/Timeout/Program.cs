@@ -65,10 +65,10 @@ finally
 public interface ITimeoutService : IService
 {
     [Timeout]
-    ValueTask<int> WorkWithDefaultTimeout();
+    ValueTask<int> WorkWithDefaultTimeout(CancellationToken cancellationToken = default);
 
     [Timeout(0.05)]
-    ValueTask<int> WorkWithMethodTimeout();
+    ValueTask<int> WorkWithMethodTimeout(CancellationToken cancellationToken = default);
 
     ValueTask<int> WorkWithoutTimeoutAttribute();
 
@@ -78,15 +78,15 @@ public interface ITimeoutService : IService
 [RpcService]
 public class TimeoutService : ITimeoutService
 {
-    public async ValueTask<int> WorkWithDefaultTimeout()
+    public async ValueTask<int> WorkWithDefaultTimeout(CancellationToken cancellationToken = default)
     {
-        await Task.Delay(500);
+        await Task.Delay(500, cancellationToken);
         return 1;
     }
 
-    public async ValueTask<int> WorkWithMethodTimeout()
+    public async ValueTask<int> WorkWithMethodTimeout(CancellationToken cancellationToken = default)
     {
-        await Task.Delay(500);
+        await Task.Delay(500, cancellationToken);
         return 2;
     }
 
