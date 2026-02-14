@@ -368,26 +368,20 @@ internal sealed partial class SharpLinkClient
             timeout,
             requestId,
             isOneWay);
-        try
-        {
-            await using var cancelRegistration = RegisterCancel(
-                ct,
-                requestId,
-                isOneWay,
-                ct);
-            await SendRpcCallAsync(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
+        await using var cancelRegistration = RegisterCancel(
+            ct,
+            requestId,
+            isOneWay,
+            ct);
+        await SendRpcCallAsync(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
 
-            if (streamSender is not null)
-                _ = RunStreamSenderAsync(streamSender, requestId, ct);
+        if (streamSender is not null)
+            _ = RunStreamSenderAsync(streamSender, requestId, ct);
 
-            if (isOneWay)
-                return default!;
+        if (isOneWay)
+            return default!;
 
-            return await op!.AsValueTask();
-        }
-        finally
-        {
-        }
+        return await op!.AsValueTask();
     }
 
     private IAsyncEnumerable<T> InvokeServerStreamCoreAsync<T>(
@@ -517,9 +511,6 @@ internal sealed partial class SharpLinkClient
         {
             _serverStreamRequestIds.Remove(requestId);
             _session!.StreamManager.CompleteStream(requestId, 0, true, ex.Message);
-        }
-        finally
-        {
         }
     }
 
