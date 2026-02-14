@@ -87,16 +87,7 @@ public static class Program
         using var harness = CreateLocalHarness(options);
         var serverCts = new CancellationTokenSource();
         var serverToken = serverCts.Token;
-        var serverTask = Task.Run(async () =>
-        {
-            try
-            {
-                await harness.Server.Start(serverToken);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }, CancellationToken.None);
+        var serverTask = RunServerLoopAsync(harness.Server, serverToken);
 
         try
         {
@@ -111,29 +102,26 @@ public static class Program
         }
     }
 
+    private static async Task RunServerLoopAsync(ISharpLinkServer server, CancellationToken token)
+    {
+        try
+        {
+            await server.Start(token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
     private static async Task RunServerOnlyAsync(LoadTestOptions options)
     {
         if (options.Transport == TransportMode.AnonymousPipe)
             throw new InvalidOperationException("Anonymous pipe mode only supports --mode local.");
 
-        using var cts = new CancellationTokenSource();
-        ConsoleCancelEventHandler handler = (_, e) =>
-        {
-            e.Cancel = true;
-            cts.Cancel();
-        };
-        Console.CancelKeyPress += handler;
-
-        try
-        {
-            var server = CreateServer(options);
-            Console.WriteLine("[Server] started.");
-            await server.Start(cts.Token);
-        }
-        finally
-        {
-            Console.CancelKeyPress -= handler;
-        }
+        using var cancelScope = new ConsoleCancelScope();
+        var server = CreateServer(options);
+        Console.WriteLine("[Server] started.");
+        await server.Start(cancelScope.Token);
     }
 
     private static async Task RunClientOnlyAsync(LoadTestOptions options, MetricsRegistry metrics, ISharpLinkClient? clientOverride = null)
@@ -343,11 +331,7 @@ public static class Program
             .UseHeartbeat(TimeSpan.FromSeconds(options.HeartbeatIntervalSeconds), TimeSpan.FromSeconds(options.HeartbeatTimeoutSeconds))
             .Build();
 
-        return new LocalHarness(server, client, () =>
-        {
-            serverInput.Dispose();
-            serverOutput.Dispose();
-        });
+        return new LocalHarness(server, client, static () => { });
     }
 
     private static ISharpLinkServer CreateServer(LoadTestOptions options)
@@ -502,7 +486,7 @@ public sealed class LoadTestOptions
     private static string GetDefaultUdsPath()
     {
         if (OperatingSystem.IsWindows())
-            return System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sl_lt.sock");
+            return Path.Combine(Path.GetTempPath(), "sl_lt.sock");
 
         return "/tmp/sharplink-loadtest.sock";
     }
@@ -733,7 +717,7 @@ internal sealed class MetricsServer : IDisposable
             {
                 ctx = await _listener.GetContextAsync();
             }
-            catch
+            catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException)
             {
                 break;
             }
@@ -756,12 +740,15 @@ internal sealed class MetricsServer : IDisposable
         {
             _loop.Wait(TimeSpan.FromSeconds(1));
         }
-        catch
+        catch (AggregateException ex) when (IsIgnorable(ex))
         {
         }
 
         _cts.Dispose();
     }
+
+    private static bool IsIgnorable(AggregateException ex)
+        => ex.Flatten().InnerExceptions.All(e => e is OperationCanceledException or ObjectDisposedException or HttpListenerException);
 }
 
 internal sealed class LocalHarness(ISharpLinkServer server, ISharpLinkClient client, Action cleanup) : IDisposable
@@ -785,6 +772,37 @@ internal sealed class LocalHarness(ISharpLinkServer server, ISharpLinkClient cli
         (Client as IDisposable)?.Dispose();
         (Server as IDisposable)?.Dispose();
         cleanup();
+    }
+}
+
+internal sealed class ConsoleCancelScope : IDisposable
+{
+    private readonly CancellationTokenSource _cts = new();
+    private readonly ConsoleCancelEventHandler _handler;
+    private bool _disposed;
+
+    public ConsoleCancelScope()
+    {
+        _handler = OnCancelKeyPress;
+        Console.CancelKeyPress += _handler;
+    }
+
+    public CancellationToken Token => _cts.Token;
+
+    private void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e)
+    {
+        e.Cancel = true;
+        _cts.Cancel();
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        Console.CancelKeyPress -= _handler;
+        _cts.Dispose();
     }
 }
 
