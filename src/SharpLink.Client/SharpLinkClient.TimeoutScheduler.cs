@@ -41,11 +41,6 @@ internal sealed partial class SharpLinkClient
             _stripes[stripe].Cancel(id);
         }
 
-        public void Cancel(long id)
-        {
-            Cancel(GetStripe(id), id);
-        }
-
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0)
