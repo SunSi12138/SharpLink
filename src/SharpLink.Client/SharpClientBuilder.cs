@@ -17,7 +17,7 @@ public class SharpClientBuilder
     private TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(10);
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
     private TimeSpan? _requestTimeout;
-    private SharpLink.Runtime.RpcSessionFlushOptions? _rpcSessionFlushOptions;
+    private RpcSessionFlushOptions? _rpcSessionFlushOptions;
 
     public SharpClientBuilder UseSerializer(ISerializer serializer)
     {
@@ -106,7 +106,7 @@ public class SharpClientBuilder
 
     public SharpClientBuilder UseRpcSessionFlush(int flushSizeThreshold, TimeSpan maxLatency)
     {
-        _rpcSessionFlushOptions = SharpLink.Runtime.RpcSessionFlushOptions.Create(flushSizeThreshold, maxLatency);
+        _rpcSessionFlushOptions = RpcSessionFlushOptions.Create(flushSizeThreshold, maxLatency);
         return this;
     }
     
@@ -120,7 +120,7 @@ public class SharpClientBuilder
 
         if (_rpcSessionFlushOptions is { } flushOptions)
         {
-            if (_transport is not SharpLink.Runtime.IRpcSessionFlushConfigurableTransport configurableTransport)
+            if (_transport is not IRpcSessionFlushConfigurableTransport configurableTransport)
                 throw new InvalidOperationException("Configured RPC session flush options, but transport does not support flush configuration.");
 
             configurableTransport.ConfigureRpcSessionFlush(flushOptions);

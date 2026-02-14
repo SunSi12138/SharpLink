@@ -91,8 +91,8 @@ public class SharpClientBuilderTests
 
         _ = builder.Build();
         Ensure(transport.ConfiguredOptions.HasValue, "flush options should be configured");
-        Ensure(transport.ConfiguredOptions.Value.FlushSizeThreshold == 8192, "flush size should match");
-        Ensure(transport.ConfiguredOptions.Value.MaxLatency == TimeSpan.FromMilliseconds(2), "max latency should match");
+        Ensure(transport.ConfiguredOptions is { FlushSizeThreshold: 8192 }, "flush size should match");
+        Ensure(transport.ConfiguredOptions != null && transport.ConfiguredOptions.Value.MaxLatency == TimeSpan.FromMilliseconds(2), "max latency should match");
         return Task.CompletedTask;
     }
 
@@ -138,14 +138,14 @@ public class SharpClientBuilderTests
         }
     }
 
-    private sealed class FlushConfigurableNoopTransport : ITransport, SharpLink.Runtime.IRpcSessionFlushConfigurableTransport
+    private sealed class FlushConfigurableNoopTransport : ITransport, IRpcSessionFlushConfigurableTransport
     {
-        public SharpLink.Runtime.RpcSessionFlushOptions? ConfiguredOptions { get; private set; }
+        public RpcSessionFlushOptions? ConfiguredOptions { get; private set; }
 
         public Task<IRpcSession> ConnectAsync(ISerializer serializer, CancellationToken ct = default)
             => throw new NotSupportedException();
 
-        public void ConfigureRpcSessionFlush(SharpLink.Runtime.RpcSessionFlushOptions options)
+        public void ConfigureRpcSessionFlush(RpcSessionFlushOptions options)
         {
             ConfiguredOptions = options;
         }

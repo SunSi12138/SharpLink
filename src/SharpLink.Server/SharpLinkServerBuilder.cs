@@ -8,7 +8,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     private ISerializer? _serializer;
     private TimeSpan _heartbeatCheckInterval = TimeSpan.FromSeconds(10);
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
-    private SharpLink.Runtime.RpcSessionFlushOptions? _rpcSessionFlushOptions;
+    private RpcSessionFlushOptions? _rpcSessionFlushOptions;
     private readonly Dictionary<long, (IRpcStub stub, object service)> _services = [];
     private readonly SharpLinkLoggingOptions _logging = new();
 
@@ -95,7 +95,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
     public SharpLinkServerBuilder UseRpcSessionFlush(int flushSizeThreshold, TimeSpan maxLatency)
     {
-        _rpcSessionFlushOptions = SharpLink.Runtime.RpcSessionFlushOptions.Create(flushSizeThreshold, maxLatency);
+        _rpcSessionFlushOptions = RpcSessionFlushOptions.Create(flushSizeThreshold, maxLatency);
         return this;
     }
 
@@ -119,13 +119,19 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         if (_serializer == null)
             throw new InvalidOperationException("Serializer must be set before building the server.");
 
-        if (_rpcSessionFlushOptions is { } flushOptions)
-        {
-            if (_transport is not SharpLink.Runtime.IRpcSessionFlushConfigurableTransport configurableTransport)
-                throw new InvalidOperationException("Configured RPC session flush options, but transport does not support flush configuration.");
+        if (_rpcSessionFlushOptions is not { } flushOptions)
+            return new SharpLinkServer(
+                _transport,
+                _serializer,
+                _services.ToFrozenDictionary(),
+                _heartbeatCheckInterval,
+                _heartbeatTimeout,
+                _logging);
+        
+        if (_transport is not IRpcSessionFlushConfigurableTransport configurableTransport)
+            throw new InvalidOperationException("Configured RPC session flush options, but transport does not support flush configuration.");
 
-            configurableTransport.ConfigureRpcSessionFlush(flushOptions);
-        }
+        configurableTransport.ConfigureRpcSessionFlush(flushOptions);
 
         return new SharpLinkServer(
             _transport,
