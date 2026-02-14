@@ -6,12 +6,6 @@
 
 基于最新代码（重点是 `src/SharpLink.Client/SharpLinkClient.cs`）分析，性能回退最可能来自以下组合开销：
 
-1. 每次 RPC 额外创建超时相关对象
-- `CreateRequestTimeoutCts` 在开启默认请求超时后会为每次请求创建 `CancellationTokenSource`。
-- `InvokeCancellableCoreAsync` 在“用户取消 + 请求超时”并存时再创建 `CreateLinkedTokenSource`。
-- `RegisterCancel`/`RegisterStreamCancel` 每次注册回调。
-- 这些是纯增量开销（分配 + 回调注册 + finally 释放），在高 QPS 小包场景会非常明显。
-
 2. 服务端每个 `RpcCall` 仍可能触发额外调度开销
 - `src/SharpLink.Server/SharpLinkServer.cs:139` 当前是 `_ = DispatchRpcAsync(...)`，每次调用进入异步状态机。
 - 高并发下会产生大量任务调度与状态机成本。
@@ -25,14 +19,6 @@
 ## 2.1 Client（`src/SharpLink.Client`）
 
 ### P0
-
-1. 请求超时路径“每请求分配”
-- 位置：`src/SharpLink.Client/SharpLinkClient.cs:292-345`, `:442-485`, `:567-573`
-- 问题：超时 CTS + linked CTS + 注册回调导致每请求额外分配。
-- 优化：
-  - 只在“确实需要超时控制”的调用上启用（可增加按接口/方法粒度开关，默认关闭）。
-  - 优先使用“单 token 路径”，避免无条件 linked CTS。
-  - 对常见路径（无用户 token）走无 linked fast-path。
 
 2. `ConcurrentDictionary` 用于本地取消与服务端流请求跟踪
 - 位置：`src/SharpLink.Client/SharpLinkClient.cs:12-13`

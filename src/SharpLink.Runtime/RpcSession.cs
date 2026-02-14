@@ -9,7 +9,7 @@ public class RpcSession : IRpcSession
     private PipeWriter Output { get; }
 
     private readonly CancellationTokenSource _cts = new();
-    private int _disposed;
+    private bool _disposed;
     private readonly Channel<ArrayBufferWriter<byte>> _channel;
 
     public IStreamManager StreamManager { get; } = new StreamManager();
@@ -100,13 +100,18 @@ public class RpcSession : IRpcSession
         }
         finally
         {
+            while (_channel.Reader.TryRead(out var buf))
+                BufferWriterPool.Return(buf);
+            
+            _channel.Writer.Complete();
+            
             await Output.CompleteAsync();
         }
     }
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        if (Interlocked.Exchange(ref _disposed, true))
             return;
 
         try
