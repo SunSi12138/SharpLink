@@ -1,6 +1,6 @@
 namespace SharpLink.Runtime;
 
-public class RpcSession : IRpcSession
+public sealed partial class RpcSession : IRpcSession
 {
     public string Id { get; }
     public DateTime LastActive { get; set; } = DateTime.UtcNow;
@@ -10,14 +10,13 @@ public class RpcSession : IRpcSession
 
     private readonly CancellationTokenSource _cts = new();
     private bool _disposed;
-    private readonly Channel<ArrayBufferWriter<byte>> _channel;
 
     public IStreamManager StreamManager { get; } = new StreamManager();
     public bool IsConnected => _isConnected();
     private readonly Action _disconnect;
     private readonly Func<bool> _isConnected;
-    private readonly long _maxLatencyTicks;
-    private readonly int _flushSizeThreshold;
+
+    private readonly SendPump _pump;
 
     public RpcSession(
         string id,
@@ -31,82 +30,32 @@ public class RpcSession : IRpcSession
         var effectiveFlushOptions = flushOptions ?? RpcSessionFlushOptions.Default;
         RpcSessionFlushOptions.Validate(effectiveFlushOptions.FlushSizeThreshold, effectiveFlushOptions.MaxLatency);
 
-        _disconnect = disconnect;
-        _isConnected = isConnected;
-        _maxLatencyTicks = Math.Max(1L, (long)(effectiveFlushOptions.MaxLatency.TotalSeconds * Stopwatch.Frequency));
-        _flushSizeThreshold = effectiveFlushOptions.FlushSizeThreshold;
         Id = id;
         Input = reader;
         Output = writer;
         Serializer = serializer;
-        _channel = Channel.CreateUnbounded<ArrayBufferWriter<byte>>(new UnboundedChannelOptions
-        {
-            SingleReader = true,
-            SingleWriter = false,
-            AllowSynchronousContinuations = false
-        });
-        _ = Task.Run(ProcessSendQueueLoop);
+
+        _disconnect = disconnect;
+        _isConnected = isConnected;
+
+        _pump = new SendPump(
+            output: writer,
+            flushSizeThreshold: effectiveFlushOptions.FlushSizeThreshold,
+            maxLatency: effectiveFlushOptions.MaxLatency,
+            cts: _cts);
     }
 
-    public bool SendPacket(ArrayBufferWriter<byte> packet) => _channel.Writer.TryWrite(packet);
-
-    private async Task ProcessSendQueueLoop()
+    private int _droppedCount;
+    public void SendPacket(ArrayBufferWriter<byte> packet)
     {
-        try
+        if (Volatile.Read(ref _disposed))
         {
-            while (await _channel.Reader.WaitToReadAsync(_cts.Token))
-            {
-                var bytesAccumulated = 0;
-                var startTimestamp = Stopwatch.GetTimestamp();
-                var flushNeeded = false;
-
-                while (_channel.Reader.TryRead(out var buffer))
-                {
-                    var source = buffer.WrittenSpan;
-                    if (source.Length > 0)
-                    {
-                        var destination = Output.GetSpan(source.Length);
-                        source.CopyTo(destination);
-                        Output.Advance(source.Length);
-                        bytesAccumulated += source.Length;
-                        flushNeeded = true;
-                    }
-
-                    BufferWriterPool.Return(buffer);
-
-                    var currentTimestamp = Stopwatch.GetTimestamp();
-                    if (bytesAccumulated < _flushSizeThreshold && (currentTimestamp - startTimestamp) < _maxLatencyTicks)
-                        continue;
-
-                    var singleRes = await Output.FlushAsync(_cts.Token);
-                    if (singleRes.IsCanceled || singleRes.IsCompleted)
-                        return;
-
-                    bytesAccumulated = 0;
-                    startTimestamp = currentTimestamp;
-                    flushNeeded = false;
-                }
-
-                if (!flushNeeded)
-                    continue;
-
-                var result = await Output.FlushAsync(_cts.Token);
-                if (result.IsCanceled || result.IsCompleted)
-                    break;
-            }
+            BufferWriterPool.Return(packet);
+            _droppedCount++;
+            return;
         }
-        catch (OperationCanceledException)
-        {
-        }
-        finally
-        {
-            while (_channel.Reader.TryRead(out var buf))
-                BufferWriterPool.Return(buf);
-            
-            _channel.Writer.Complete();
-            
-            await Output.CompleteAsync();
-        }
+
+        _pump.Enqueue(packet);
     }
 
     public void Dispose()
@@ -114,16 +63,18 @@ public class RpcSession : IRpcSession
         if (Interlocked.Exchange(ref _disposed, true))
             return;
 
-        try
-        {
-            _cts.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-        }
+        _cts.Cancel();
 
         _disconnect();
+
+        // 清空队列归还 buffer，避免泄漏
+        _pump.Dispose();
+
+        Output.Complete();
+
         _cts.Dispose();
-        GC.SuppressFinalize(this);
+        
+        if(_droppedCount > 0)
+            throw new Exception($"Dropped {_droppedCount} packets");//暂时抛出异常测试，按理不应该在dispose以后继续写入
     }
 }
