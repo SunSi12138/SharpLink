@@ -902,8 +902,7 @@ public class RpcGenerator : IIncrementalGenerator
 
             foreach (var p in streamParams)
             {
-                sb.AppendLine($"                var ch_{p.Name} = System.Threading.Channels.Channel.CreateUnbounded<{p.StreamItemType}>();");
-                sb.AppendLine($"                var dispatcher_{p.Name} = new SharpLink.Runtime.TypedStreamDispatcher<{p.StreamItemType}>(ch_{p.Name}.Writer, session.Serializer);");
+                sb.AppendLine($"                var dispatcher_{p.Name} = SharpLink.Runtime.PooledAsyncStreamDispatcher<{p.StreamItemType}>.Rent(session.Serializer, cancellationToken);");
                 sb.AppendLine($"                session.StreamManager.Register(requestId, (sbyte){streamId}, dispatcher_{p.Name});");
                 streamId++;
             }
@@ -955,7 +954,7 @@ public class RpcGenerator : IIncrementalGenerator
                 sb.AppendLine($"                reader.Advance(len_{p.Name});");
             }
 
-            var callArgs = string.Join(", ", method.Parameters.Select(p => p.IsStream ? $"ch_{p.Name}.Reader.ReadAllAsync()" : $"arg_{p.Name}"));
+            var callArgs = string.Join(", ", method.Parameters.Select(p => p.IsStream ? $"dispatcher_{p.Name}" : $"arg_{p.Name}"));
             var callLine = $"impl.{method.Name}({callArgs})";
 
             if (method.IsStreamReturn)
