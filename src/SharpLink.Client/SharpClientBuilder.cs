@@ -118,14 +118,21 @@ public class SharpClientBuilder
         if (_serializer == null)
             throw new InvalidOperationException("Serializer must be set before building the server.");
 
-        if (_rpcSessionFlushOptions is { } flushOptions)
-        {
-            if (_transport is not IRpcSessionFlushConfigurableTransport configurableTransport)
-                throw new InvalidOperationException("Configured RPC session flush options, but transport does not support flush configuration.");
-
-            configurableTransport.ConfigureRpcSessionFlush(flushOptions);
-        }
+        if (_rpcSessionFlushOptions is not { } flushOptions)
+            return new SharpLinkClient(
+                _transport,
+                _serializer,
+                _heartbeatInterval,
+                _heartbeatTimeout,
+                _logging,
+                _requestTimeout
+            );
         
+        if (_transport is not IRpcSessionFlushConfigurableTransport configurableTransport)
+            throw new InvalidOperationException("Configured RPC session flush options, but transport does not support flush configuration.");
+
+        configurableTransport.ConfigureRpcSessionFlush(flushOptions);
+
         return new SharpLinkClient(
             _transport,
             _serializer,

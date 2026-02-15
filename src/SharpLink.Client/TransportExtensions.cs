@@ -13,8 +13,6 @@ public static class TransportExtensions
             return builder.UseTransport(new NamedPipeTransport(clientStream: pipe));
         }
 
-        public SharpClientBuilder UserNamedPipe(string name) => builder.UseNamedPipe(name);
-
         public SharpClientBuilder UseTcp(string ip, int port)
         {
             if (port is < IPEndPoint.MinPort or > IPEndPoint.MaxPort)

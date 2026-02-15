@@ -5,14 +5,14 @@ internal sealed partial class SharpLinkClient
     private sealed class LongConcurrentSet
     {
         private const int StripeCount = 32;
-        private readonly object[] _locks = new object[StripeCount];
+        private readonly Lock[] _locks = new Lock[StripeCount];
         private readonly HashSet<long>[] _sets = new HashSet<long>[StripeCount];
 
         public LongConcurrentSet()
         {
             for (var i = 0; i < StripeCount; i++)
             {
-                _locks[i] = new object();
+                _locks[i] = new Lock();
                 _sets[i] = [];
             }
         }

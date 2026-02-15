@@ -122,12 +122,10 @@ public class RpcGenerator : IIncrementalGenerator
     private static bool IsAsyncEnumerable(ITypeSymbol type, out ITypeSymbol? itemType)
     {
         itemType = null;
-        if (type is INamedTypeSymbol named && named.OriginalDefinition.ToDisplayString() == "System.Collections.Generic.IAsyncEnumerable<T>")
-        {
-            itemType = named.TypeArguments[0];
-            return true;
-        }
-        return false;
+        if (type is not INamedTypeSymbol named || named.OriginalDefinition.ToDisplayString() != "System.Collections.Generic.IAsyncEnumerable<T>") 
+            return false;
+        itemType = named.TypeArguments[0];
+        return true;
     }
 
     private static RpcInterfaceModel? GetInterfaceModelOrNull(GeneratorSyntaxContext context, CancellationToken _)

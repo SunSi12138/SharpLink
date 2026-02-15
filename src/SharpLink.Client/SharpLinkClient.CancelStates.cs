@@ -71,7 +71,7 @@ internal sealed partial class SharpLinkClient
             _client = null;
             RequestId = 0;
             IsOneWay = false;
-            UserToken = default;
+            UserToken = CancellationToken.None;
             SPool.Enqueue(this);
         }
     }
@@ -117,7 +117,7 @@ internal sealed partial class SharpLinkClient
         {
             _client = null;
             RequestId = 0;
-            UserToken = default;
+            UserToken = CancellationToken.None;
             SPool.Enqueue(this);
         }
     }

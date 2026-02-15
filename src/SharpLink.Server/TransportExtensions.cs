@@ -15,8 +15,6 @@ public static class TransportExtensions
             return builder.UseTransport(new NamedPipeTransport(serverStream: pipe));
         }
 
-        public SharpLinkServerBuilder UserNamedPipe(string name) => builder.UseNamedPipe(name);
-
         public SharpLinkServerBuilder UseTcp(int port, string ip = "0.0.0.0", int backlog = 512)
         {
             if (port is < IPEndPoint.MinPort or > IPEndPoint.MaxPort)

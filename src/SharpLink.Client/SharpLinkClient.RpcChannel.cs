@@ -490,7 +490,6 @@ internal sealed partial class SharpLinkClient
         TimeSpan? timeoutOverride)
     {
         var hasTimeout = TryResolveRequestTimeout(true, useDefaultTimeout, timeoutOverride, out var timeout);
-        var effectiveCt = cancellationToken;
 
         using var timeoutRegistration = RegisterStreamTimeout(hasTimeout, timeout, requestId);
         try
@@ -499,13 +498,13 @@ internal sealed partial class SharpLinkClient
                 cancellationToken,
                 requestId,
                 cancellationToken);
-            var packetFlags = (effectiveCt.CanBeCanceled || hasTimeout)
+            var packetFlags = (cancellationToken.CanBeCanceled || hasTimeout)
                 ? PacketFlags.IsCancellable
                 : PacketFlags.None;
             SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
 
             if (streamSender is not null)
-                await streamSender(requestId, effectiveCt);
+                await streamSender(requestId, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -541,7 +540,7 @@ internal sealed partial class SharpLinkClient
         return new PooledCancellationRegistration(registration, state);
     }
 
-    private static Exception CreateCancellationException(CancellationToken userToken)
+    private static OperationCanceledException CreateCancellationException(CancellationToken userToken)
     {
         return userToken.CanBeCanceled
             ? new OperationCanceledException(userToken)
@@ -623,23 +622,17 @@ internal sealed partial class SharpLinkClient
 
     private static ValueTask DispatchStreamChunkAsync(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
-        var firstSpan = payload.FirstSpan;
-        if (firstSpan.Length > 0)
-        {
-            var streamId = unchecked((sbyte)firstSpan[0]);
-            var streamPayload = payload.Slice(sizeof(sbyte));
-            return session.StreamManager.DispatchChunkAsync(requestId, streamId, streamPayload);
-        }
-
+        if(payload.IsEmpty)
+            return session.StreamManager.DispatchChunkAsync(requestId, payload);
+        
         var reader = new SequenceReader<byte>(payload);
-        if (reader.TryRead(out var streamIdRaw))
-        {
-            var streamId = unchecked((sbyte)streamIdRaw);
-            var streamPayload = payload.Slice(sizeof(sbyte));
-            return session.StreamManager.DispatchChunkAsync(requestId, streamId, streamPayload);
-        }
-
-        return session.StreamManager.DispatchChunkAsync(requestId, payload);
+        
+        if (!reader.TryRead(out var streamIdRaw))
+            return session.StreamManager.DispatchChunkAsync(requestId, payload);
+        
+        var streamId = unchecked((sbyte)streamIdRaw);
+        var streamPayload = payload.Slice(sizeof(sbyte));
+        return session.StreamManager.DispatchChunkAsync(requestId, streamId, streamPayload);
     }
 
     private static void DispatchStreamComplete(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
@@ -697,11 +690,9 @@ internal sealed partial class SharpLinkClient
 
         _session?.SendCancelAsync(state.RequestId);
 
-        if (!state.IsOneWay)
-        {
-            var ex = CreateCancellationException(state.UserToken);
-            _requestManager.DispatchError(state.RequestId, ex);
-        }
+        if (state.IsOneWay) return;
+        var ex = CreateCancellationException(state.UserToken);
+        _requestManager.DispatchError(state.RequestId, ex);
     }
 
     private void OnStreamCancel(StreamCancelState state)

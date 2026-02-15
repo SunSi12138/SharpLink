@@ -330,15 +330,14 @@ public class SharpLinkServer(
         try
         {
             var invokeTask = serviceInfo.stub.InvokeAsync(serviceInfo.service, session, methodHash, requestId, argsPayload, writer, invokeToken);
-            if (invokeTask.IsCompletedSuccessfully)
-            {
-                writer.EndPacket(token);
-                session.SendPacket(writer);
-                ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
-                return ValueTask.CompletedTask;
-            }
+            if (!invokeTask.IsCompletedSuccessfully)
+                return AwaitDispatchRpcAsync(invokeTask, session, requestId, writer, token, linkedCts,
+                    requestCancellationMap);
+            writer.EndPacket(token);
+            session.SendPacket(writer);
+            ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
+            return ValueTask.CompletedTask;
 
-            return AwaitDispatchRpcAsync(invokeTask, session, requestId, writer, token, linkedCts, requestCancellationMap);
         }
         catch (OperationCanceledException)
         {
