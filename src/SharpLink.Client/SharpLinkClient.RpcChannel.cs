@@ -474,12 +474,8 @@ internal sealed partial class SharpLinkClient
     {
         var requestId = _requestManager.AllocateRequestId();
         _serverStreamRequestIds.Add(requestId);
-        var channel = Channel.CreateUnbounded<T>(new UnboundedChannelOptions
-        {
-            SingleReader = true,
-            SingleWriter = true
-        });
-        _session!.StreamManager.Register(requestId, 0, new TypedStreamDispatcher<T>(channel.Writer, serializer));
+        var streamDispatcher = PooledAsyncStreamDispatcher<T>.Rent(serializer);
+        _session!.StreamManager.Register(requestId, 0, streamDispatcher);
         _ = StartServerStreamRequestAsync(
             interfaceHash,
             methodHash,
@@ -489,7 +485,7 @@ internal sealed partial class SharpLinkClient
             useDefaultTimeout,
             timeoutOverride);
 
-        return channel.Reader.ReadAllAsync();
+        return streamDispatcher;
     }
 
     private IAsyncEnumerable<T> InvokeCancellableServerStreamCoreAsync<T>(
@@ -506,12 +502,8 @@ internal sealed partial class SharpLinkClient
 
         var requestId = _requestManager.AllocateRequestId();
         _serverStreamRequestIds.Add(requestId);
-        var channel = Channel.CreateUnbounded<T>(new UnboundedChannelOptions
-        {
-            SingleReader = true,
-            SingleWriter = true
-        });
-        _session!.StreamManager.Register(requestId, 0, new TypedStreamDispatcher<T>(channel.Writer, serializer));
+        var streamDispatcher = PooledAsyncStreamDispatcher<T>.Rent(serializer, cancellationToken);
+        _session!.StreamManager.Register(requestId, 0, streamDispatcher);
         _ = StartCancellableServerStreamRequestAsync(
             interfaceHash,
             methodHash,
@@ -522,7 +514,7 @@ internal sealed partial class SharpLinkClient
             useDefaultTimeout,
             timeoutOverride);
 
-        return channel.Reader.ReadAllAsync(cancellationToken);
+        return streamDispatcher;
     }
 
     private async Task StartServerStreamRequestAsync(

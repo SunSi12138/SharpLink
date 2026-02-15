@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-
 namespace SharpLink.Runtime;
 
 public class StreamManager : IStreamManager

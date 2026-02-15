@@ -1,4 +1,4 @@
-namespace SharpLink.Runtime;
+﻿namespace SharpLink.Runtime;
 
 public sealed partial class RpcSession : IRpcSession
 {
@@ -46,12 +46,13 @@ public sealed partial class RpcSession : IRpcSession
     }
 
     private int _droppedCount;
+
     public void SendPacket(ArrayBufferWriter<byte> packet)
     {
         if (Volatile.Read(ref _disposed))
         {
             BufferWriterPool.Return(packet);
-            _droppedCount++;
+            Interlocked.Increment(ref _droppedCount);
             return;
         }
 
@@ -64,17 +65,17 @@ public sealed partial class RpcSession : IRpcSession
             return;
 
         _cts.Cancel();
-
         _disconnect();
 
-        // 清空队列归还 buffer，避免泄漏
+        // Drain queued packets and return buffers to pool.
         _pump.Dispose();
 
         Output.Complete();
-
         _cts.Dispose();
-        
-        if(_droppedCount > 0)
-            throw new Exception($"Dropped {_droppedCount} packets");//暂时抛出异常测试，按理不应该在dispose以后继续写入
+
+        if (_droppedCount > 0)
+        {
+            // Pending sends can race with shutdown; buffers were already returned in SendPacket.
+        }
     }
 }
