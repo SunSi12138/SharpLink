@@ -2,18 +2,14 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
-using System.IO.Pipes;
 using System.Linq;
 using System.Net;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Abstractions;
-using SharpLink.Client;
-using SharpLink.Runtime;
+using SharpLink.LoadTestBase;
 using SharpLink.Sdk;
-using SharpLink.Server;
 
 namespace SharpLink.LoadTest;
 
@@ -84,7 +80,17 @@ public static class Program
 
     private static async Task RunLocalAsync(LoadTestOptions options, MetricsRegistry metrics)
     {
-        using var harness = CreateLocalHarness(options);
+        using var harness = LoadTestTransportFactory.CreateLocalHarness(
+            options.Transport,
+            options.Host,
+            options.BindIp,
+            options.Port,
+            options.UdsPath,
+            options.PipeName,
+            options.HeartbeatIntervalSeconds,
+            options.HeartbeatCheckIntervalSeconds,
+            options.HeartbeatTimeoutSeconds,
+            static builder => builder.AddService<ILoadTestService, LoadTestService>());
         var serverCts = new CancellationTokenSource();
         var serverToken = serverCts.Token;
         var serverTask = RunServerLoopAsync(harness.Server, serverToken);
@@ -119,14 +125,31 @@ public static class Program
             throw new InvalidOperationException("Anonymous pipe mode only supports --mode local.");
 
         using var cancelScope = new ConsoleCancelScope();
-        var server = CreateServer(options);
+        var server = LoadTestTransportFactory.CreateServer(
+            options.Transport,
+            options.BindIp,
+            options.Port,
+            options.UdsPath,
+            options.PipeName,
+            options.HeartbeatCheckIntervalSeconds,
+            options.HeartbeatTimeoutSeconds,
+            static builder => builder.AddService<ILoadTestService, LoadTestService>());
         Console.WriteLine("[Server] started.");
         await server.Start(cancelScope.Token);
     }
 
     private static async Task RunClientOnlyAsync(LoadTestOptions options, MetricsRegistry metrics, ISharpLinkClient? clientOverride = null)
     {
-        var ownedClient = clientOverride is null ? CreateClient(options) : null;
+        var ownedClient = clientOverride is null
+            ? LoadTestTransportFactory.CreateClient(
+                options.Transport,
+                options.Host,
+                options.Port,
+                options.UdsPath,
+                options.PipeName,
+                options.HeartbeatIntervalSeconds,
+                options.HeartbeatTimeoutSeconds)
+            : null;
         var client = clientOverride ?? ownedClient!;
         try
         {
@@ -304,83 +327,6 @@ public static class Program
         return result;
     }
 
-    private static LocalHarness CreateLocalHarness(LoadTestOptions options)
-    {
-        if (options.Transport != TransportMode.AnonymousPipe)
-        {
-            var normalServer = CreateServer(options);
-            var normalClient = CreateClient(options);
-            return new LocalHarness(normalServer, normalClient, static () => { });
-        }
-
-        var serverInput = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable);
-        var serverOutput = new AnonymousPipeServerStream(PipeDirection.Out, HandleInheritability.Inheritable);
-        var clientInHandle = serverOutput.GetClientHandleAsString();
-        var clientOutHandle = serverInput.GetClientHandleAsString();
-
-        var server = SharpLinkServerBuilder.Create()
-            .AddService<ILoadTestService, LoadTestService>()
-            .UseAnonymousPipe(serverInput, serverOutput)
-            .UseSerializer(new MemoryPackSerializerAdaptor())
-            .UseHeartbeat(TimeSpan.FromSeconds(options.HeartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(options.HeartbeatTimeoutSeconds))
-            .Build();
-
-        var client = SharpClientBuilder.Create()
-            .UseAnonymousPipe(clientInHandle, clientOutHandle)
-            .UseSerializer(new MemoryPackSerializerAdaptor())
-            .UseHeartbeat(TimeSpan.FromSeconds(options.HeartbeatIntervalSeconds), TimeSpan.FromSeconds(options.HeartbeatTimeoutSeconds))
-            .Build();
-
-        return new LocalHarness(server, client, static () => { });
-    }
-
-    private static ISharpLinkServer CreateServer(LoadTestOptions options)
-    {
-        var builder = SharpLinkServerBuilder.Create()
-            .AddService<ILoadTestService, LoadTestService>()
-            .UseSerializer(new MemoryPackSerializerAdaptor())
-            .UseHeartbeat(TimeSpan.FromSeconds(options.HeartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(options.HeartbeatTimeoutSeconds));
-
-        return options.Transport switch
-        {
-            TransportMode.Tcp => builder.UseTcp(options.Port, options.BindIp).Build(),
-            TransportMode.Uds => builder.UseUds(options.UdsPath).Build(),
-            TransportMode.NamedPipe => builder.UseNamedPipe(options.PipeName).Build(),
-            TransportMode.AnonymousPipe => throw new InvalidOperationException("Anonymous pipe transport only supports --mode local."),
-            _ => throw new ArgumentOutOfRangeException()
-        };
-    }
-
-    private static ISharpLinkClient CreateClient(LoadTestOptions options)
-    {
-        var builder = SharpClientBuilder.Create()
-            .UseSerializer(new MemoryPackSerializerAdaptor())
-            .UseHeartbeat(TimeSpan.FromSeconds(options.HeartbeatIntervalSeconds), TimeSpan.FromSeconds(options.HeartbeatTimeoutSeconds));
-
-        return options.Transport switch
-        {
-            TransportMode.Tcp => builder.UseTcp(options.Host, options.Port).Build(),
-            TransportMode.Uds => builder.UseUds(options.UdsPath).Build(),
-            TransportMode.NamedPipe => builder.UseNamedPipe(options.PipeName).Build(),
-            TransportMode.AnonymousPipe => throw new InvalidOperationException("Anonymous pipe transport only supports --mode local."),
-            _ => throw new ArgumentOutOfRangeException()
-        };
-    }
-}
-
-public enum RunMode
-{
-    Local,
-    Server,
-    Client
-}
-
-public enum TransportMode
-{
-    Tcp,
-    Uds,
-    NamedPipe,
-    AnonymousPipe
 }
 
 public sealed class LoadTestOptions
@@ -390,8 +336,8 @@ public sealed class LoadTestOptions
     public string Host { get; private init; } = "127.0.0.1";
     public string BindIp { get; private init; } = "0.0.0.0";
     public int Port { get; private init; } = 19100;
-    public string UdsPath { get; private init; } = GetDefaultUdsPath();
-    public string PipeName { get; private init; } = GetDefaultPipeName();
+    public string UdsPath { get; private init; } = TransportDefaults.GetDefaultUdsPath("sharplink-loadtest");
+    public string PipeName { get; private init; } = TransportDefaults.GetDefaultPipeName("sharplink-loadtest");
     public int DurationSeconds { get; private init; } = 20;
     public int WarmupSeconds { get; private init; } = 5;
     public int[] ConcurrencyConfig { get; private init; } = [1, 2, 4, 8, 16, 32];
@@ -419,7 +365,7 @@ public sealed class LoadTestOptions
             ? parsedMode
             : RunMode.Local;
 
-        var transport = map.TryGetValue("transport", out var transportStr) && TryParseTransport(transportStr, out var parsedTransport)
+        var transport = map.TryGetValue("transport", out var transportStr) && TransportDefaults.TryParseTransport(transportStr, out var parsedTransport)
             ? parsedTransport
             : TransportMode.Tcp;
 
@@ -443,8 +389,8 @@ public sealed class LoadTestOptions
             Host = map.GetValueOrDefault("host", "127.0.0.1"),
             BindIp = map.GetValueOrDefault("bind-ip", "0.0.0.0"),
             Port = int.Parse(map.GetValueOrDefault("port", "19100")),
-            UdsPath = GetDefaultUdsPath(),
-            PipeName = GetDefaultPipeName(),
+            UdsPath = map.GetValueOrDefault("uds-path", TransportDefaults.GetDefaultUdsPath("sharplink-loadtest")),
+            PipeName = map.GetValueOrDefault("pipe-name", TransportDefaults.GetDefaultPipeName("sharplink-loadtest")),
             DurationSeconds = int.Parse(map.GetValueOrDefault("duration", "20")),
             WarmupSeconds = int.Parse(map.GetValueOrDefault("warmup", "5")),
             ConcurrencyConfig = concurrencyNum.Length == 0 ? [1] : concurrencyNum,
@@ -457,42 +403,6 @@ public sealed class LoadTestOptions
         };
     }
 
-    private static bool TryParseTransport(string value, out TransportMode mode)
-    {
-        switch (value.Trim().ToLowerInvariant())
-        {
-            case "tcp":
-                mode = TransportMode.Tcp;
-                return true;
-            case "uds":
-                mode = TransportMode.Uds;
-                return true;
-            case "namedpipe":
-            case "named-pipe":
-            case "pipe":
-                mode = TransportMode.NamedPipe;
-                return true;
-            case "anonymous":
-            case "anonymouspipe":
-            case "anonymous-pipe":
-                mode = TransportMode.AnonymousPipe;
-                return true;
-            default:
-                mode = TransportMode.Tcp;
-                return false;
-        }
-    }
-
-    private static string GetDefaultUdsPath()
-    {
-        if (OperatingSystem.IsWindows())
-            return Path.Combine(Path.GetTempPath(), "sl_lt.sock");
-
-        return "/tmp/sharplink-loadtest.sock";
-    }
-
-    private static string GetDefaultPipeName()
-        => "sharplink-loadtest";
 }
 
 public sealed record StageResult(
@@ -748,61 +658,6 @@ internal sealed class MetricsServer : IDisposable
 
     private static bool IsIgnorable(AggregateException ex)
         => ex.Flatten().InnerExceptions.All(e => e is OperationCanceledException or ObjectDisposedException or HttpListenerException);
-}
-
-internal sealed class LocalHarness(ISharpLinkServer server, ISharpLinkClient client, Action cleanup) : IDisposable
-{
-    private bool _disposed;
-
-    public ISharpLinkServer Server { get; } = server;
-    public ISharpLinkClient Client { get; } = client;
-
-    public void DisposeServer()
-    {
-        (Server as IDisposable)?.Dispose();
-    }
-
-    public void Dispose()
-    {
-        if (_disposed)
-            return;
-
-        _disposed = true;
-        (Client as IDisposable)?.Dispose();
-        (Server as IDisposable)?.Dispose();
-        cleanup();
-    }
-}
-
-internal sealed class ConsoleCancelScope : IDisposable
-{
-    private readonly CancellationTokenSource _cts = new();
-    private readonly ConsoleCancelEventHandler _handler;
-    private bool _disposed;
-
-    public ConsoleCancelScope()
-    {
-        _handler = OnCancelKeyPress;
-        Console.CancelKeyPress += _handler;
-    }
-
-    public CancellationToken Token => _cts.Token;
-
-    private void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e)
-    {
-        e.Cancel = true;
-        _cts.Cancel();
-    }
-
-    public void Dispose()
-    {
-        if (_disposed)
-            return;
-
-        _disposed = true;
-        Console.CancelKeyPress -= _handler;
-        _cts.Dispose();
-    }
 }
 
 public interface ILoadTestService : IService

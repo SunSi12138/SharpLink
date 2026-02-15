@@ -65,12 +65,20 @@ public sealed partial class RpcSession : IRpcSession
             return;
 
         _cts.Cancel();
-        _disconnect();
 
         // Drain queued packets and return buffers to pool.
         _pump.Dispose();
 
-        Output.Complete();
+        try
+        {
+            Output.Complete();
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or System.IO.IOException)
+        {
+            // Transport can be concurrently torn down during shutdown.
+        }
+
+        _disconnect();
         _cts.Dispose();
 
         if (_droppedCount > 0)
