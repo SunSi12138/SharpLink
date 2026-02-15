@@ -364,6 +364,12 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             if (Interlocked.CompareExchange(ref _waiterState, 1, 0) != 0)
                 throw new InvalidOperationException("Only one waiter is supported.");
 
+            if (Interlocked.Exchange(ref _signalState, 0) == 1)
+            {
+                Interlocked.Exchange(ref _waiterState, 0);
+                return ValueTask.FromResult(true);
+            }
+            
             _waitSource.Reset();
             return new ValueTask<bool>(this, _waitSource.Version);
         }
