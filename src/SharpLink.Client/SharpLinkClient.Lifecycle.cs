@@ -9,9 +9,46 @@ internal sealed partial class SharpLinkClient
         if (!res)
             return false;
 
-        _ = HeartbeatSendLoop(_session, ct);
-        _ = ProcessRequestLoop(_session, ct);
+        _ = RunHeartbeatSendLoopAsync(_session, ct);
+        _ = RunProcessRequestLoopAsync(_session, ct);
         return true;
+    }
+
+    private static bool IsExpectedCancellation(Exception ex, CancellationToken ct)
+        => ex is OperationCanceledException && ct.IsCancellationRequested;
+
+    private async Task RunHeartbeatSendLoopAsync(IRpcSession session, CancellationToken ct)
+    {
+        try
+        {
+            await HeartbeatSendLoop(session, ct);
+        }
+        catch (Exception ex) when (IsExpectedCancellation(ex, ct))
+        {
+        }
+        catch (Exception ex)
+        {
+            using var sessionScope = BeginSessionLogScope(_logger, session.Id);
+            LogClientBackgroundLoopUnhandledException(_logger, nameof(HeartbeatSendLoop), ex);
+            HandleDisconnected(ex);
+        }
+    }
+
+    private async Task RunProcessRequestLoopAsync(IRpcSession session, CancellationToken ct)
+    {
+        try
+        {
+            await ProcessRequestLoop(session, ct);
+        }
+        catch (Exception ex) when (IsExpectedCancellation(ex, ct))
+        {
+        }
+        catch (Exception ex)
+        {
+            using var sessionScope = BeginSessionLogScope(_logger, session.Id);
+            LogClientBackgroundLoopUnhandledException(_logger, nameof(ProcessRequestLoop), ex);
+            HandleDisconnected(ex);
+        }
     }
 
     public T Get<T>() where T : IService

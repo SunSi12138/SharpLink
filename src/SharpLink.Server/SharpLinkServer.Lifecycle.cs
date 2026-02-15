@@ -4,41 +4,77 @@ internal sealed partial class SharpLinkServer
 {
     public async Task Start(CancellationToken ct = default)
     {
-        _ = HeartbeatCheckLoop(ct);
+        _ = RunHeartbeatCheckLoopAsync(ct);
         
         while (!ct.IsCancellationRequested)
         {
             var session = await transport.ConnectAsync(serializer,ct);
-
-            if (_sessions.TryGetValue(session.Id, out var oldSession))
-            {
-                oldSession.Dispose();
-            }
-            _sessions[session.Id] = session;
-            
-            _ = Task.Run(async () =>
-            {
-                using var sessionScope = BeginSessionLogScope(_logger, session.Id);
-                var res = await ProcessHandshakeAsync(session, ct);
-                if (!res)
-                {
-                    LogHandshakeFailed(_logger);
-                    Disconnect();
-                    return;
-                }
-                LogClientConnected(_logger);
-                await ProcessRequestLoop(session, ct);
-                LogClientDisconnected(_logger);
-                Disconnect();
-                return;
-
-                void Disconnect()
-                {
-                    _sessions.TryRemove(session.Id, out var rpcSession);
-                    rpcSession?.Dispose();
-                }
-            }, ct);
+            ReplaceSession(session);
+            _ = HandleSessionLifecycleAsync(session, ct);
         }
+    }
+
+    private static bool IsExpectedCancellation(Exception ex, CancellationToken ct)
+        => ex is OperationCanceledException && ct.IsCancellationRequested;
+
+    private async Task RunHeartbeatCheckLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            await HeartbeatCheckLoop(ct);
+        }
+        catch (Exception ex) when (IsExpectedCancellation(ex, ct))
+        {
+        }
+        catch (Exception ex)
+        {
+            LogServerBackgroundLoopUnhandledException(_logger, nameof(HeartbeatCheckLoop), ex);
+        }
+    }
+
+    private async Task HandleSessionLifecycleAsync(IRpcSession session, CancellationToken ct)
+    {
+        var hasConnected = false;
+        using var sessionScope = BeginSessionLogScope(_logger, session.Id);
+        try
+        {
+            var res = await ProcessHandshakeAsync(session, ct);
+            if (!res)
+            {
+                LogHandshakeFailed(_logger);
+                return;
+            }
+
+            hasConnected = true;
+            LogClientConnected(_logger);
+            await ProcessRequestLoop(session, ct);
+        }
+        catch (Exception ex) when (IsExpectedCancellation(ex, ct))
+        {
+        }
+        catch (Exception ex)
+        {
+            LogServerBackgroundLoopUnhandledException(_logger, nameof(ProcessRequestLoop), ex);
+        }
+        finally
+        {
+            if (hasConnected)
+                LogClientDisconnected(_logger);
+            DisconnectSession(session.Id);
+        }
+    }
+
+    private void ReplaceSession(IRpcSession session)
+    {
+        if (_sessions.TryGetValue(session.Id, out var oldSession))
+            oldSession.Dispose();
+        _sessions[session.Id] = session;
+    }
+
+    private void DisconnectSession(string sessionId)
+    {
+        _sessions.TryRemove(sessionId, out var rpcSession);
+        rpcSession?.Dispose();
     }
 
     private async Task HeartbeatCheckLoop(CancellationToken ct)

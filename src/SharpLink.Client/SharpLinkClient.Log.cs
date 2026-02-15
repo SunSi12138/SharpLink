@@ -34,4 +34,7 @@ internal sealed partial class SharpLinkClient
 
     [LoggerMessage(EventId = LogEvents.Connection.ClientDisconnected, Level = LogLevel.Information, Message = "Client disconnected.")]
     private static partial void LogClientDisconnected(ILogger logger, Exception exception);
+
+    [LoggerMessage(EventId = LogEvents.Rpc.DispatchFailed, Level = LogLevel.Error, Message = "Client background loop {LoopName} failed.")]
+    private static partial void LogClientBackgroundLoopUnhandledException(ILogger logger, string loopName, Exception exception);
 }
