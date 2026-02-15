@@ -29,12 +29,12 @@ internal sealed partial class SharpLinkClient
     [LoggerMessage(EventId = LogEvents.Connection.HeartbeatTimeout, Level = LogLevel.Warning, Message = "Server disconnected due to heartbeat timeout.")]
     private static partial void LogServerHeartbeatTimeout(ILogger logger);
 
-    [LoggerMessage(EventId = LogEvents.Rpc.DispatchFailed, Level = LogLevel.Warning, Message = "Response for unknown or timed-out request.")]
+    [LoggerMessage(EventId = LogEvents.Client.UnknownOrTimedOutResponse, Level = LogLevel.Warning, Message = "Response for unknown or timed-out request.")]
     private static partial void LogUnknownOrTimedOutResponse(ILogger logger);
 
     [LoggerMessage(EventId = LogEvents.Connection.ClientDisconnected, Level = LogLevel.Information, Message = "Client disconnected.")]
     private static partial void LogClientDisconnected(ILogger logger, Exception exception);
 
-    [LoggerMessage(EventId = LogEvents.Rpc.DispatchFailed, Level = LogLevel.Error, Message = "Client background loop {LoopName} failed.")]
+    [LoggerMessage(EventId = LogEvents.Client.BackgroundLoopUnhandledException, Level = LogLevel.Error, Message = "Client background loop {LoopName} failed.")]
     private static partial void LogClientBackgroundLoopUnhandledException(ILogger logger, string loopName, Exception exception);
 }

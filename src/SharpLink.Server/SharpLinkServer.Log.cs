@@ -9,6 +9,10 @@ internal sealed partial class SharpLinkServer
 
     private static readonly Func<ILogger, long, IDisposable?> SRequestScope =
         LoggerMessage.DefineScope<long>("RequestId:{RequestId}");
+    
+    
+    [System.Diagnostics.Conditional(CompileSymbols.Debug)]
+    private static void DebugLogClientHeartbeatReceived(ILogger logger)=>LogClientHeartbeatReceived(logger);
 
     private static IDisposable? BeginSessionLogScope(ILogger logger, string sessionId) => SSessionScope(logger, sessionId);
 
@@ -32,15 +36,9 @@ internal sealed partial class SharpLinkServer
     [LoggerMessage(EventId = LogEvents.Rpc.DispatchFailed, Level = LogLevel.Error, Message = "Unhandled exception in RPC dispatch.")]
     private static partial void LogRpcDispatchUnhandledException(ILogger logger, Exception e);
 
-    [LoggerMessage(EventId = LogEvents.Rpc.DispatchFailed, Level = LogLevel.Error, Message = "Server background loop {LoopName} failed.")]
+    [LoggerMessage(EventId = LogEvents.Server.BackgroundLoopUnhandledException, Level = LogLevel.Error, Message = "Server background loop {LoopName} failed.")]
     private static partial void LogServerBackgroundLoopUnhandledException(ILogger logger, string loopName, Exception e);
-    
-    [System.Diagnostics.Conditional(CompileSymbols.Debug)]
-    private static void DebugLogClientHeartbeatReceived(ILogger logger)=>LogClientHeartbeatReceived(logger);
     
     [LoggerMessage(EventId = LogEvents.Connection.HeartbeatReceived, Level = LogLevel.Debug, Message = "Received client heartbeat.")]
     private static partial void LogClientHeartbeatReceived(ILogger logger);
-    
-    
-    
 }

@@ -22,6 +22,7 @@
     <Project Path="test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj" />
     <Project Path="test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj" />
     <Project Path="test/SharpLink.UnitTests/SharpLink.UnitTests.csproj" />
+    <Project Path="test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj" />
     <Project Path="test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj" />
 </Solution>
 

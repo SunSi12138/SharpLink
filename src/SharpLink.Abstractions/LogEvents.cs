@@ -52,4 +52,22 @@ public static class LogEvents
     {
         
     }
+    
+    /// <summary>
+    /// 5000-5999
+    /// </summary>
+    public static class Server
+    {
+        public const int BackgroundLoopUnhandledException = 5001;
+        public const int HeartbeatLoopUnhandledException = 5002;
+    }
+    
+    /// <summary>
+    /// 6000-6999
+    /// </summary>
+    public static class Client
+    {
+        public const int UnknownOrTimedOutResponse = 6001;
+        public const int BackgroundLoopUnhandledException = 6002;
+    }
 }
