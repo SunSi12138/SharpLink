@@ -25,6 +25,7 @@ public partial class RpcGenerator
                         public class {{model.Name}}_Proxy(IRpcChannel channel, ISerializer serializer) : {{model.FullName}}
                         {
                             const long _interfaceHash = {{model.Hash}}L;
+                            ISerializer Serializer { get; } = serializer;
                         """);
 
         AppendSizeFieldsByType(sb, model.Methods);
@@ -67,7 +68,7 @@ public partial class RpcGenerator
                     sb.AppendLine("            int lenOffset = writer.WrittenCount;");
                     sb.AppendLine("            writer.Advance(4);");
                     sb.AppendLine("            int start = writer.WrittenCount;");
-                    sb.AppendLine($"            serializer.Serialize({p.Name}, writer);");
+                    sb.AppendLine($"            Serializer.Serialize({p.Name}, writer);");
                     sb.AppendLine("            int len = writer.WrittenCount - start;");
                     sb.AppendLine("            var span = System.Runtime.InteropServices.MemoryMarshal.AsMemory(writer.WrittenMemory).Span;");
                     sb.AppendLine("            var lengthSlice = span.Slice(lenOffset, 4);");
