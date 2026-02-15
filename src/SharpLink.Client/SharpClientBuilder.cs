@@ -38,6 +38,12 @@ public class SharpClientBuilder
         return this;
     }
 
+    public SharpClientBuilder UseStateStoreConcurrency(Action<RuntimeConcurrencyOptions> configure)
+    {
+        RuntimeConcurrency.Configure(configure);
+        return this;
+    }
+
     public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);

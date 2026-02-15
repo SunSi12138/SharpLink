@@ -4,7 +4,7 @@ namespace SharpLink.Runtime;
 
 public class StreamManager : IStreamManager
 {
-    private readonly ConcurrentDictionary<long, RequestDispatchers> _dispatchersByRequestId = new();
+    private readonly StripedLongMap<RequestDispatchers> _dispatchersByRequestId = new();
 
     public void Register(long requestId, IStreamDispatcher dispatcher) => Register(requestId, 0, dispatcher);
 
@@ -22,7 +22,6 @@ public class StreamManager : IStreamManager
             return;
 
         requestDispatchers.Unregister(streamId);
-        TryCleanupRequestDispatchers(requestId, requestDispatchers);
     }
 
     public ValueTask DispatchChunkAsync(long requestId, ReadOnlySequence<byte> payload)
@@ -51,34 +50,21 @@ public class StreamManager : IStreamManager
 
         if (requestDispatchers.TryRemove(streamId, out var dispatcher))
             dispatcher.Complete(isError, msg);
-
-        TryCleanupRequestDispatchers(requestId, requestDispatchers);
     }
 
     public void CompleteAll(bool isError, string? msg)
     {
-        foreach (var (requestId, _) in _dispatchersByRequestId)
+        foreach (var requestDispatchers in _dispatchersByRequestId.DrainValues())
         {
-            if (_dispatchersByRequestId.TryRemove(requestId, out var requestDispatchers))
-                requestDispatchers.CompleteAll(isError, msg);
+            requestDispatchers.CompleteAll(isError, msg);
         }
-    }
-
-    private void TryCleanupRequestDispatchers(long requestId, RequestDispatchers requestDispatchers)
-    {
-        if (!requestDispatchers.IsEmpty)
-            return;
-
-        ((ICollection<KeyValuePair<long, RequestDispatchers>>)_dispatchersByRequestId)
-            .Remove(new KeyValuePair<long, RequestDispatchers>(requestId, requestDispatchers));
     }
 
     private sealed class RequestDispatchers
     {
         private IStreamDispatcher? _defaultDispatcher;
-        private readonly ConcurrentDictionary<sbyte, IStreamDispatcher> _byStreamId = new();
-
-        public bool IsEmpty => Volatile.Read(ref _defaultDispatcher) is null && _byStreamId.IsEmpty;
+        private readonly Lock _gate = new();
+        private readonly Dictionary<sbyte, IStreamDispatcher> _byStreamId = [];
 
         public void Register(sbyte streamId, IStreamDispatcher dispatcher)
         {
@@ -88,7 +74,8 @@ public class StreamManager : IStreamManager
                 return;
             }
 
-            _byStreamId[streamId] = dispatcher;
+            lock (_gate)
+                _byStreamId[streamId] = dispatcher;
         }
 
         public void Unregister(sbyte streamId)
@@ -99,12 +86,17 @@ public class StreamManager : IStreamManager
                 return;
             }
 
-            _byStreamId.TryRemove(streamId, out _);
+            lock (_gate)
+                _byStreamId.Remove(streamId);
         }
 
         public bool TryGet(sbyte streamId, out IStreamDispatcher dispatcher)
         {
-            if (streamId != 0) return _byStreamId.TryGetValue(streamId, out dispatcher!);
+            if (streamId != 0)
+            {
+                lock (_gate)
+                    return _byStreamId.TryGetValue(streamId, out dispatcher!);
+            }
             
             var defaultDispatcher = Volatile.Read(ref _defaultDispatcher);
             
@@ -134,7 +126,12 @@ public class StreamManager : IStreamManager
                 return true;
             }
 
-            return _byStreamId.TryRemove(streamId, out dispatcher!);
+            lock (_gate)
+            {
+                if (_byStreamId.TryGetValue(streamId, out dispatcher!))
+                    return _byStreamId.Remove(streamId);
+                return false;
+            }
         }
 
         public void CompleteAll(bool isError, string? msg)
@@ -142,10 +139,11 @@ public class StreamManager : IStreamManager
             var defaultDispatcher = Interlocked.Exchange(ref _defaultDispatcher, null);
             defaultDispatcher?.Complete(isError, msg);
 
-            foreach (var streamId in _byStreamId.Keys)
+            lock (_gate)
             {
-                if (_byStreamId.TryRemove(streamId, out var dispatcher))
+                foreach (var dispatcher in _byStreamId.Values)
                     dispatcher.Complete(isError, msg);
+                _byStreamId.Clear();
             }
         }
     }

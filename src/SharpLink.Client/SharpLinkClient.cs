@@ -5,8 +5,8 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient(ITransport transport, ISerializer serializer) : IRpcChannel, IDisposable, ISharpLinkClient
 {
-    private readonly LongConcurrentSet _serverStreamRequestIds = new();
-    private readonly LongConcurrentSet _locallyCanceledRequestIds = new();
+    private readonly StripedLongSet _serverStreamRequestIds = new();
+    private readonly StripedLongSet _locallyCanceledRequestIds = new();
     private readonly RequestManager _requestManager = new();
     private readonly RequestTimeoutScheduler _requestTimeoutScheduler = new();
     private IRpcSession? _session;

@@ -37,6 +37,12 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
+    public SharpLinkServerBuilder UseStateStoreConcurrency(Action<RuntimeConcurrencyOptions> configure)
+    {
+        RuntimeConcurrency.Configure(configure);
+        return this;
+    }
+
     public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);

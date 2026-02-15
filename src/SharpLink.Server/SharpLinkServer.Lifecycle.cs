@@ -130,7 +130,7 @@ internal sealed partial class SharpLinkServer
     private async Task ProcessRequestLoop(IRpcSession session,CancellationToken ct)
     {
         var reader = session.Input;
-        var requestCancellationMap = new ConcurrentDictionary<long, CancellationTokenSource>();
+        var requestCancellationMap = new StripedLongMap<CancellationTokenSource>();
         try
         {
             //处理握手
@@ -209,12 +209,11 @@ internal sealed partial class SharpLinkServer
         }
         finally
         {
-            foreach (var (_, cts) in requestCancellationMap)
+            foreach (var cts in requestCancellationMap.DrainValues())
             {
                 await cts.CancelAsync();
                 cts.Dispose();
             }
-            requestCancellationMap.Clear();
         }
     }
 
@@ -239,7 +238,7 @@ internal sealed partial class SharpLinkServer
         long requestId,
         PacketFlags flags,
         ReadOnlySequence<byte> payload,
-        ConcurrentDictionary<long, CancellationTokenSource> requestCancellationMap,
+        StripedLongMap<CancellationTokenSource> requestCancellationMap,
         CancellationToken serverLoopToken)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
@@ -260,7 +259,7 @@ internal sealed partial class SharpLinkServer
         if (isCancellable)
         {
             linkedCts = CancellationTokenSource.CreateLinkedTokenSource(serverLoopToken);
-            requestCancellationMap[requestId] = linkedCts;
+            requestCancellationMap.Set(requestId, linkedCts);
             invokeToken = linkedCts.Token;
         }
 
@@ -288,7 +287,7 @@ internal sealed partial class SharpLinkServer
         ArrayBufferWriter<byte> discard,
         CancellationTokenSource? linkedCts,
         long requestId,
-        ConcurrentDictionary<long, CancellationTokenSource> requestCancellationMap)
+        StripedLongMap<CancellationTokenSource> requestCancellationMap)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
         try
@@ -309,7 +308,7 @@ internal sealed partial class SharpLinkServer
         ArrayBufferWriter<byte> discard,
         CancellationTokenSource? linkedCts,
         long requestId,
-        ConcurrentDictionary<long, CancellationTokenSource> requestCancellationMap)
+        StripedLongMap<CancellationTokenSource> requestCancellationMap)
     {
         BufferWriterPool.Return(discard);
         linkedCts?.Dispose();
@@ -322,7 +321,7 @@ internal sealed partial class SharpLinkServer
         long requestId,
         PacketFlags flags,
         ReadOnlySequence<byte> payload,
-        ConcurrentDictionary<long, CancellationTokenSource> requestCancellationMap,
+        StripedLongMap<CancellationTokenSource> requestCancellationMap,
         CancellationToken serverLoopToken)
     {
         var isCancellable = (flags & PacketFlags.IsCancellable) != 0;
@@ -346,7 +345,7 @@ internal sealed partial class SharpLinkServer
         if (isCancellable)
         {
             linkedCts = CancellationTokenSource.CreateLinkedTokenSource(serverLoopToken);
-            requestCancellationMap[requestId] = linkedCts;
+            requestCancellationMap.Set(requestId, linkedCts);
             invokeToken = linkedCts.Token;
         }
 
@@ -387,7 +386,7 @@ internal sealed partial class SharpLinkServer
         ArrayBufferWriter<byte> writer,
         PacketToken token,
         CancellationTokenSource? linkedCts,
-        ConcurrentDictionary<long, CancellationTokenSource> requestCancellationMap)
+        StripedLongMap<CancellationTokenSource> requestCancellationMap)
     {
         try
         {
@@ -414,7 +413,7 @@ internal sealed partial class SharpLinkServer
     private static void ReleaseDispatchResources(
         CancellationTokenSource? linkedCts,
         long requestId,
-        ConcurrentDictionary<long, CancellationTokenSource> requestCancellationMap)
+        StripedLongMap<CancellationTokenSource> requestCancellationMap)
     {
         linkedCts?.Dispose();
         if (linkedCts is not null)
