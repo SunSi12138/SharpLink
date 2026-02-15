@@ -1,7 +1,5 @@
 using SharpLink.Abstractions;
 using System;
-using SharpLink.Client;
-using SharpLink.Server;
 
 namespace SharpLink.LoadTestBase;
 

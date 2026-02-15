@@ -73,7 +73,7 @@ public sealed partial class RpcSession : IRpcSession
         {
             Output.Complete();
         }
-        catch (Exception ex) when (ex is ObjectDisposedException or System.IO.IOException)
+        catch (Exception ex) when (ex is ObjectDisposedException or IOException)
         {
             // Transport can be concurrently torn down during shutdown.
         }
