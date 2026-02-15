@@ -1,4 +1,4 @@
-<Solution>
+﻿<Solution>
     <Project Path="demo\DemoBase\DemoBase.csproj" />
     <Project Path="src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
     <Project Path="src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
@@ -18,7 +18,10 @@
     
     <Project Path="test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" />
     <Project Path="test/SharpLink.LoadTest/SharpLink.LoadTest.csproj" />
+    <Project Path="test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj" />
     <Project Path="test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj" />
     <Project Path="test/SharpLink.UnitTests/SharpLink.UnitTests.csproj" />
     <Project Path="test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj" />
 </Solution>
+
+
