@@ -38,19 +38,20 @@ public class SocketTransport(Socket socket, bool isServer = true, EndPoint? remo
             connectedSocket.NoDelay = true;
         }
 
-        _networkStream = new NetworkStream(connectedSocket, ownsSocket: true);
+        var networkStream = new NetworkStream(connectedSocket, ownsSocket: true);
+        _networkStream = networkStream;
 
         // 创建 Pipelines
-        var reader = PipeReader.Create(_networkStream);
-        var writer = PipeWriter.Create(_networkStream);
+        var reader = PipeReader.Create(networkStream);
+        var writer = PipeWriter.Create(networkStream);
 
         return new RpcSession(
             Guid.NewGuid().ToString("N"),
             reader,
             writer,
             serializer,
-            () => _networkStream.Close(), // Disconnect Action
-            () => connectedSocket.Connected,   // IsConnected Func
+            () => networkStream.Dispose(), // Disconnect Action
+            () => !Volatile.Read(ref _disposed) && !_cts.IsCancellationRequested, // IsConnected Func
             _rpcSessionFlushOptions
         );
     }
