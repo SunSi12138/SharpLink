@@ -27,6 +27,9 @@ public partial class RpcGenerator : IIncrementalGenerator
         var invalidTimeoutCancellationMethods = context.SyntaxProvider
             .CreateSyntaxProvider(predicate: IsInterfaceCandidate, transform: GetInvalidTimeoutCancellationMethods)
             .Where(x => x.Length > 0);
+        var invalidGenericUsage = context.SyntaxProvider
+            .CreateSyntaxProvider(predicate: IsInterfaceCandidate, transform: GetInvalidGenericUsage)
+            .Where(x => x.Length > 0);
 
         context.RegisterSourceOutput(invalidMethods, static (spc, methods) =>
         {
@@ -71,6 +74,18 @@ public partial class RpcGenerator : IIncrementalGenerator
                     TimeoutRequiresCancellationTokenRule,
                     method.Location,
                     method.MethodName);
+                spc.ReportDiagnostic(diagnostic);
+            }
+        });
+        context.RegisterSourceOutput(invalidGenericUsage, static (spc, models) =>
+        {
+            foreach (var model in models)
+            {
+                var diagnostic = Diagnostic.Create(
+                    GenericUsageInRpcRule,
+                    model.Location,
+                    model.SymbolName,
+                    model.TypeName);
                 spc.ReportDiagnostic(diagnostic);
             }
         });

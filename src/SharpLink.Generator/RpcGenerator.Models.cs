@@ -38,6 +38,7 @@ internal readonly record struct InvalidRpcMethodModel(string MethodName, string 
 internal readonly record struct InvalidCancellationTokenMethodModel(string MethodName, Location? Location);
 internal readonly record struct InvalidStreamCountMethodModel(string MethodName, int StreamParameterCount, Location? Location);
 internal readonly record struct InvalidTimeoutCancellationMethodModel(string MethodName, Location? Location);
+internal readonly record struct InvalidGenericUsageModel(string SymbolName, string TypeName, Location? Location);
 
 internal static class Hashing
 {

@@ -19,7 +19,7 @@ public partial class RpcGenerator
         var interfaceDecl = (InterfaceDeclarationSyntax)context.Node;
         if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol) return null;
 
-        if (!symbol.AllInterfaces.Any(i => i.ToDisplayString() == "SharpLink.Sdk.IService"))
+        if (!InheritsIService(symbol))
             return null;
 
         return HasInvalidRpcMethod(symbol) ? null : CreateInterfaceModel(symbol);
@@ -33,8 +33,8 @@ public partial class RpcGenerator
         if (!symbol.GetAttributes().Any(IsRpcServiceAttribute)) return null;
 
         var interfaceSymbol = symbol.AllInterfaces.FirstOrDefault(i =>
-            i.ToDisplayString() != "SharpLink.Sdk.IService" &&
-            i.AllInterfaces.Any(baseI => baseI.ToDisplayString() == "SharpLink.Sdk.IService"));
+            !IsIService(i) &&
+            i.AllInterfaces.Any(IsIService));
         if (interfaceSymbol == null) return null;
         if (HasInvalidRpcMethod(interfaceSymbol)) return null;
 
@@ -46,10 +46,7 @@ public partial class RpcGenerator
     private static ImmutableArray<InvalidRpcMethodModel> GetInvalidRpcMethods(GeneratorSyntaxContext context, CancellationToken _)
     {
         var interfaceDecl = (InterfaceDeclarationSyntax)context.Node;
-        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol)
-            return ImmutableArray<InvalidRpcMethodModel>.Empty;
-
-        if (!symbol.AllInterfaces.Any(i => i.ToDisplayString() == "SharpLink.Sdk.IService"))
+        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol || !InheritsIService(symbol))
             return ImmutableArray<InvalidRpcMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidRpcMethodModel>();
@@ -70,10 +67,7 @@ public partial class RpcGenerator
     private static ImmutableArray<InvalidCancellationTokenMethodModel> GetInvalidCancellationTokenMethods(GeneratorSyntaxContext context, CancellationToken _)
     {
         var interfaceDecl = (InterfaceDeclarationSyntax)context.Node;
-        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol)
-            return ImmutableArray<InvalidCancellationTokenMethodModel>.Empty;
-
-        if (!symbol.AllInterfaces.Any(i => i.ToDisplayString() == "SharpLink.Sdk.IService"))
+        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol || !InheritsIService(symbol))
             return ImmutableArray<InvalidCancellationTokenMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidCancellationTokenMethodModel>();
@@ -94,7 +88,7 @@ public partial class RpcGenerator
     private static ImmutableArray<InvalidStreamCountMethodModel> GetInvalidStreamCountMethods(GeneratorSyntaxContext context, CancellationToken _)
     {
         var interfaceDecl = (InterfaceDeclarationSyntax)context.Node;
-        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol || !symbol.AllInterfaces.Any(i => i.ToDisplayString() == "SharpLink.Sdk.IService"))
+        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol || !InheritsIService(symbol))
             return ImmutableArray<InvalidStreamCountMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidStreamCountMethodModel>();
@@ -116,10 +110,7 @@ public partial class RpcGenerator
     private static ImmutableArray<InvalidTimeoutCancellationMethodModel> GetInvalidTimeoutCancellationMethods(GeneratorSyntaxContext context, CancellationToken _)
     {
         var interfaceDecl = (InterfaceDeclarationSyntax)context.Node;
-        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol)
-            return ImmutableArray<InvalidTimeoutCancellationMethodModel>.Empty;
-
-        if (!symbol.AllInterfaces.Any(i => i.ToDisplayString() == "SharpLink.Sdk.IService"))
+        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol || !InheritsIService(symbol))
             return ImmutableArray<InvalidTimeoutCancellationMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidTimeoutCancellationMethodModel>();
@@ -141,20 +132,81 @@ public partial class RpcGenerator
         return list.ToImmutable();
     }
 
+    private static ImmutableArray<InvalidGenericUsageModel> GetInvalidGenericUsage(GeneratorSyntaxContext context, CancellationToken _)
+    {
+        var interfaceDecl = (InterfaceDeclarationSyntax)context.Node;
+        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol || !InheritsIService(symbol))
+            return ImmutableArray<InvalidGenericUsageModel>.Empty;
+
+        var list = ImmutableArray.CreateBuilder<InvalidGenericUsageModel>();
+        if (symbol.Arity > 0)
+        {
+            list.Add(new InvalidGenericUsageModel(
+                symbol.Name,
+                symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+                symbol.Locations.FirstOrDefault()));
+        }
+
+        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        {
+            var hasGenericUsage = method.IsGenericMethod ||
+                                  HasTypeParameter(method.ReturnType) ||
+                                  method.Parameters.Any(p => HasTypeParameter(p.Type));
+            if (!hasGenericUsage)
+                continue;
+
+            list.Add(new InvalidGenericUsageModel(
+                method.Name,
+                method.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+                method.Locations.FirstOrDefault()));
+        }
+
+        return list.ToImmutable();
+    }
+
     private static bool HasInvalidRpcMethod(INamedTypeSymbol interfaceSymbol)
     {
+        if (interfaceSymbol.Arity > 0)
+            return true;
+
         return interfaceSymbol.GetMembers()
             .OfType<IMethodSymbol>()
             .Where(m => m.MethodKind == MethodKind.Ordinary)
             .Any(m =>
                 !IsSupportedRpcReturnType(m.ReturnType) ||
+                m.IsGenericMethod ||
+                HasTypeParameter(m.ReturnType) ||
+                m.Parameters.Any(p => HasTypeParameter(p.Type)) ||
                 m.Parameters.Count(IsCancellationTokenParameter) > 1 ||
                 m.Parameters.Count(p => IsAsyncEnumerable(p.Type, out _)) > sbyte.MaxValue ||
                 (m.GetAttributes().Any(IsTimeoutAttribute) && !m.Parameters.Any(IsCancellationTokenParameter)));
     }
 
+    private static bool HasTypeParameter(ITypeSymbol type)
+    {
+        if (type.TypeKind == TypeKind.TypeParameter)
+            return true;
+
+        return type switch
+        {
+            IArrayTypeSymbol arrayType => HasTypeParameter(arrayType.ElementType),
+            IPointerTypeSymbol pointerType => HasTypeParameter(pointerType.PointedAtType),
+            INamedTypeSymbol namedType => namedType.TypeArguments.Any(HasTypeParameter),
+            _ => false
+        };
+    }
+
     private static bool IsCancellationTokenParameter(IParameterSymbol parameter)
         => parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Threading.CancellationToken";
+
+    private static bool InheritsIService(INamedTypeSymbol symbol)
+        => symbol.AllInterfaces.Any(IsIService);
+
+    private static bool IsIService(INamedTypeSymbol symbol)
+    {
+        var fullName = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        return fullName == "global::SharpLink.Sdk.IService";
+    }
 
     private static bool IsRpcServiceAttribute(AttributeData attribute)
     {

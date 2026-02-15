@@ -33,4 +33,12 @@ public partial class RpcGenerator
         category: "SharpLink.Generator",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor GenericUsageInRpcRule = new(
+        id: "SHARPLINK005",
+        title: "Generic Type Parameter Not Supported in RPC Contract",
+        messageFormat: "RPC contract '{0}' contains unsupported generic type parameter usage in '{1}'",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
 }
