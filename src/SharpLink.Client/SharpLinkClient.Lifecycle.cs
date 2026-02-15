@@ -184,7 +184,7 @@ internal sealed partial class SharpLinkClient
             if (_requestManager.Dispatch(requestId, ref payload, serializer))
                 return;
 
-            // Server-stream will receive a RpcResponse ACK; swallow it.
+            // Server-stream receives a terminal RpcResponse ACK; swallow it.
             if (_serverStreamRequestIds.Remove(requestId))
                 return;
         }

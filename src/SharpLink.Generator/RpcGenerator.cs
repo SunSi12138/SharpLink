@@ -750,6 +750,7 @@ public class RpcGenerator : IIncrementalGenerator
                         using SharpLink.Abstractions;
                         using System;
                         using System.Buffers;
+                        using System.Collections.Generic;
                         using System.IO;
                         using System.Runtime.CompilerServices;
                         using System.Threading;
@@ -783,6 +784,21 @@ public class RpcGenerator : IIncrementalGenerator
                             private static async ValueTask __AwaitValueTaskIgnoreAsync<T>(ValueTask<T> task)
                             {
                                 _ = await task.ConfigureAwait(false);
+                            }
+
+                            private static async ValueTask __PumpStreamAsync<T>(IAsyncEnumerable<T> stream, IRpcSession session, long requestId)
+                            {
+                                try
+                                {
+                                    await foreach (var item in stream.ConfigureAwait(false))
+                                        SharpLink.Runtime.RpcSessionExtensions.SendStreamChunkAsync(session, requestId, 0, item);
+
+                                    SharpLink.Runtime.RpcSessionExtensions.SendStreamCompleteAsync(session, requestId, 0);
+                                }
+                                catch (Exception ex)
+                                {
+                                    SharpLink.Runtime.RpcSessionExtensions.SendStreamErrorAsync(session, requestId, 0, ex.Message);
+                                }
                             }
 
                             public ValueTask InvokeNoReturnAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args)
@@ -945,21 +961,7 @@ public class RpcGenerator : IIncrementalGenerator
             if (method.IsStreamReturn)
             {
                 sb.AppendLine($"                var resultStream = {callLine};");
-                sb.AppendLine("                _ = Task.Run(async () =>");
-                sb.AppendLine("                {");
-                sb.AppendLine("                    try");
-                sb.AppendLine("                    {");
-                sb.AppendLine("                        await foreach (var item in resultStream)");
-                sb.AppendLine("                        {");
-                sb.AppendLine("                            SharpLink.Runtime.RpcSessionExtensions.SendStreamChunkAsync(session, requestId, 0, item);");
-                sb.AppendLine("                        }");
-                sb.AppendLine("                        SharpLink.Runtime.RpcSessionExtensions.SendStreamCompleteAsync(session, requestId, 0);");
-                sb.AppendLine("                    }");
-                sb.AppendLine("                    catch (Exception ex)");
-                sb.AppendLine("                    {");
-                sb.AppendLine("                        SharpLink.Runtime.RpcSessionExtensions.SendStreamErrorAsync(session, requestId, 0, ex.Message);");
-                sb.AppendLine("                    }");
-                sb.AppendLine("                });");
+                sb.AppendLine("                return __PumpStreamAsync(resultStream, session, requestId);");
             }
             else if (method.IsVoid)
             {
@@ -1012,7 +1014,8 @@ public class RpcGenerator : IIncrementalGenerator
                 }
             }
 
-            sb.AppendLine("                break;");
+            if (!method.IsStreamReturn)
+                sb.AppendLine("                break;");
             sb.AppendLine("            }");
         }
     }

@@ -367,7 +367,7 @@ internal sealed partial class SharpLinkServer
                     ? serviceInfo.stub.InvokeNoReturnCancellableAsync(serviceInfo.service, session, methodHash, requestId, argsPayload, invokeToken)
                     : serviceInfo.stub.InvokeNoReturnAsync(serviceInfo.service, session, methodHash, requestId, argsPayload);
                 if (!invokeTask.IsCompletedSuccessfully)
-                    return AwaitDispatchRpcAckAsync(invokeTask, session, requestId, linkedCts, requestCancellationMap);
+                    return AwaitDispatchRpcNoReturnAsync(invokeTask, session, requestId, linkedCts, requestCancellationMap);
                 session.SendPacketAsync(PacketType.RpcResponse, PacketFlags.None, requestId);
                 ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
                 return ValueTask.CompletedTask;
@@ -418,13 +418,14 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private async ValueTask AwaitDispatchRpcAckAsync(
+    private async ValueTask AwaitDispatchRpcNoReturnAsync(
         ValueTask invokeTask,
         IRpcSession session,
         long requestId,
         CancellationTokenSource? linkedCts,
         StripedLongMap<CancellationTokenSource> requestCancellationMap)
     {
+        using var requestScope = BeginRequestLogScope(_logger, requestId);
         try
         {
             await invokeTask.ConfigureAwait(false);
@@ -432,11 +433,11 @@ internal sealed partial class SharpLinkServer
         }
         catch (OperationCanceledException)
         {
-            session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,"Request canceled.");
+            session.SendStringPacketAsync(PacketType.RpcResponse, PacketFlags.IsError, requestId, "Request canceled.");
         }
         catch (Exception e)
         {
-            session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,e.Message);
+            session.SendStringPacketAsync(PacketType.RpcResponse, PacketFlags.IsError, requestId, e.Message);
         }
         finally
         {
