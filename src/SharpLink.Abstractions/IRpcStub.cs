@@ -5,5 +5,8 @@ namespace SharpLink.Abstractions;
 public interface IRpcStub
 {
     long InterfaceHash { get; }
-    ValueTask InvokeAsync(object service,IRpcSession session, long methodHash,long requestId, ReadOnlySequence<byte> args,IBufferWriter<byte> output, CancellationToken cancellationToken);
+    ValueTask InvokeNoReturnAsync(object service,IRpcSession session, long methodHash,long requestId, ReadOnlySequence<byte> args);
+    ValueTask InvokeNoReturnCancellableAsync(object service,IRpcSession session, long methodHash,long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken);
+    ValueTask InvokeAsync(object service,IRpcSession session, long methodHash,long requestId, ReadOnlySequence<byte> args,IBufferWriter<byte> output);
+    ValueTask InvokeCancellableAsync(object service,IRpcSession session, long methodHash,long requestId, ReadOnlySequence<byte> args,IBufferWriter<byte> output, CancellationToken cancellationToken);
 }

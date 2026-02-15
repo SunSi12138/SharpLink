@@ -630,44 +630,44 @@ public class RpcGenerator : IIncrementalGenerator
                         sb.AppendLine(hasPayload
                             ? method.HasCancellationToken
                                 ? SelectByTimeout(
-                                    $"        await channel.InvokeCancellableClientStreamAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender, {cancellationTokenArg});",
-                                    $"        await channel.InvokeCancellableClientStreamWithDefaultTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender, {cancellationTokenArg});",
-                                    $"        await channel.InvokeCancellableClientStreamWithTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg}, {cancellationTokenArg});")
+                                    $"        await channel.InvokeCancellableClientStreamNoReturnAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender, {cancellationTokenArg});",
+                                    $"        await channel.InvokeCancellableClientStreamNoReturnWithDefaultTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender, {cancellationTokenArg});",
+                                    $"        await channel.InvokeCancellableClientStreamNoReturnWithTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg}, {cancellationTokenArg});")
                                 : SelectByTimeout(
-                                    $"        await channel.InvokeClientStreamAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
-                                    $"        await channel.InvokeClientStreamWithDefaultTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
-                                    $"        await channel.InvokeClientStreamWithTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg});")
+                                    $"        await channel.InvokeClientStreamNoReturnAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
+                                    $"        await channel.InvokeClientStreamNoReturnWithDefaultTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
+                                    $"        await channel.InvokeClientStreamNoReturnWithTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg});")
                             : method.HasCancellationToken
                                 ? SelectByTimeout(
-                                    $"        await channel.InvokeCancellableClientStreamNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender, {cancellationTokenArg});",
-                                    $"        await channel.InvokeCancellableClientStreamWithDefaultTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender, {cancellationTokenArg});",
-                                    $"        await channel.InvokeCancellableClientStreamWithTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender{timeoutArg}, {cancellationTokenArg});")
+                                    $"        await channel.InvokeCancellableClientStreamNoReturnNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender, {cancellationTokenArg});",
+                                    $"        await channel.InvokeCancellableClientStreamNoReturnWithDefaultTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender, {cancellationTokenArg});",
+                                    $"        await channel.InvokeCancellableClientStreamNoReturnWithTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender{timeoutArg}, {cancellationTokenArg});")
                                 : SelectByTimeout(
-                                    $"        await channel.InvokeClientStreamNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender);",
-                                    $"        await channel.InvokeClientStreamWithDefaultTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender);",
-                                    $"        await channel.InvokeClientStreamWithTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender{timeoutArg});"));
+                                    $"        await channel.InvokeClientStreamNoReturnNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender);",
+                                    $"        await channel.InvokeClientStreamNoReturnWithDefaultTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender);",
+                                    $"        await channel.InvokeClientStreamNoReturnWithTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender{timeoutArg});"));
                     }
                     else
                     {
                         sb.AppendLine(hasPayload
                             ? method.HasCancellationToken
                                 ? SelectByTimeout(
-                                    $"        await channel.InvokeCancellableAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, {cancellationTokenArg});",
-                                    $"        await channel.InvokeCancellableWithDefaultTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, {cancellationTokenArg});",
-                                    $"        await channel.InvokeCancellableWithTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg}, {cancellationTokenArg});")
+                                    $"        await channel.InvokeCancellableNoReturnAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, {cancellationTokenArg});",
+                                    $"        await channel.InvokeCancellableNoReturnWithDefaultTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, {cancellationTokenArg});",
+                                    $"        await channel.InvokeCancellableNoReturnWithTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg}, {cancellationTokenArg});")
                                 : SelectByTimeout(
-                                    $"        await channel.InvokeAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter);",
-                                    $"        await channel.InvokeWithDefaultTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter);",
-                                    $"        await channel.InvokeWithTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg});")
+                                    $"        await channel.InvokeNoReturnAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter);",
+                                    $"        await channel.InvokeNoReturnWithDefaultTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter);",
+                                    $"        await channel.InvokeNoReturnWithTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg});")
                             : method.HasCancellationToken
                                 ? SelectByTimeout(
-                                    $"        await channel.InvokeCancellableNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, {cancellationTokenArg});",
-                                    $"        await channel.InvokeCancellableWithDefaultTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, {cancellationTokenArg});",
-                                    $"        await channel.InvokeCancellableWithTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L{timeoutArg}, {cancellationTokenArg});")
+                                    $"        await channel.InvokeCancellableNoReturnNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, {cancellationTokenArg});",
+                                    $"        await channel.InvokeCancellableNoReturnWithDefaultTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, {cancellationTokenArg});",
+                                    $"        await channel.InvokeCancellableNoReturnWithTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L{timeoutArg}, {cancellationTokenArg});")
                                 : SelectByTimeout(
-                                    $"        await channel.InvokeNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L);",
-                                    $"        await channel.InvokeWithDefaultTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L);",
-                                    $"        await channel.InvokeWithTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L{timeoutArg});"));
+                                    $"        await channel.InvokeNoReturnNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L);",
+                                    $"        await channel.InvokeNoReturnWithDefaultTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L);",
+                                    $"        await channel.InvokeNoReturnWithTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L{timeoutArg});"));
                     }
                 }
             }
@@ -740,6 +740,8 @@ public class RpcGenerator : IIncrementalGenerator
     private static string GenerateStub(RpcServiceModel model)
     {
         var nsDeclaration = string.IsNullOrEmpty(model.ServiceNamespace) ? "" : $"namespace {model.ServiceNamespace};";
+        var noReturnMethods = model.Interface.Methods.Where(m => m.IsVoid || m.IsStreamReturn).ToArray();
+        var responseMethods = model.Interface.Methods.Where(m => !m.IsVoid && !m.IsStreamReturn).ToArray();
 
         var sb = new StringBuilder();
         sb.AppendLine($$"""
@@ -773,15 +775,107 @@ public class RpcGenerator : IIncrementalGenerator
                                 session.Serializer.Serialize(result, output);
                             }
 
-                            public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+                            private static async ValueTask __AwaitTaskIgnoreAsync<T>(Task<T> task)
+                            {
+                                _ = await task.ConfigureAwait(false);
+                            }
+
+                            private static async ValueTask __AwaitValueTaskIgnoreAsync<T>(ValueTask<T> task)
+                            {
+                                _ = await task.ConfigureAwait(false);
+                            }
+
+                            public ValueTask InvokeNoReturnAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args)
+                                => InvokeNoReturnCoreAsync(service, session, methodHash, requestId, args, CancellationToken.None);
+
+                            public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
+                                => InvokeNoReturnCoreAsync(service, session, methodHash, requestId, args, cancellationToken);
+
+                            private ValueTask InvokeNoReturnCoreAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
                             {
                                 var impl = ({{model.Interface.FullName}})service;
                                 var reader = new SequenceReader<byte>(args);
-                                switch (methodHash)
-                                {
                         """);
 
-        foreach (var method in model.Interface.Methods)
+        if (noReturnMethods.Length == 0)
+        {
+            sb.AppendLine("""
+                                throw new RpcException("Method not found");
+                            }
+""");
+        }
+        else
+        {
+            sb.AppendLine("""
+                                switch (methodHash)
+                                {
+""");
+            AppendStubDispatchCases(sb, noReturnMethods, writeResponse: false);
+            sb.AppendLine("""
+                                  default: throw new RpcException("Method not found");
+                              }
+
+                              return ValueTask.CompletedTask;
+                          }
+""");
+        }
+
+        sb.AppendLine($$"""
+                            public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
+                                => InvokeCoreAsync(service, session, methodHash, requestId, args, output, CancellationToken.None);
+
+                            public ValueTask InvokeCancellableAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+                                => InvokeCoreAsync(service, session, methodHash, requestId, args, output, cancellationToken);
+
+                            private ValueTask InvokeCoreAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+                            {
+                                var impl = ({{model.Interface.FullName}})service;
+                                var reader = new SequenceReader<byte>(args);
+                        """);
+
+        if (responseMethods.Length == 0)
+        {
+            sb.AppendLine("""
+                                throw new RpcException("Method not found");
+                            }
+""");
+        }
+        else
+        {
+            sb.AppendLine("""
+                                switch (methodHash)
+                                {
+""");
+            AppendStubDispatchCases(sb, responseMethods, writeResponse: true);
+            sb.AppendLine("""
+                                  default: throw new RpcException("Method not found");
+                              }
+
+                              return ValueTask.CompletedTask;
+                          }
+""");
+        }
+
+        sb.AppendLine("""
+
+                          internal static class __SharpLinkStubRegistration
+                          {
+                              [ModuleInitializer]
+                              internal static void Register()
+                              {
+                                  SharpLink.Abstractions.GeneratedStubRegistry.Register(typeof(__SERVICE_TYPE__), () => new __STUB_TYPE__());
+                              }
+                          }
+                      }
+                      """);
+        return sb.ToString()
+            .Replace("__SERVICE_TYPE__", model.ServiceFullName)
+            .Replace("__STUB_TYPE__", $"{model.ServiceName}_Stub");
+    }
+
+    private static void AppendStubDispatchCases(StringBuilder sb, IEnumerable<RpcMethodModel> methods, bool writeResponse)
+    {
+        foreach (var method in methods)
         {
             sb.AppendLine($"            case {method.Hash}L:");
             sb.AppendLine("            {");
@@ -889,11 +983,15 @@ public class RpcGenerator : IIncrementalGenerator
                     sb.AppendLine($"                var pending = {callLine};");
                     sb.AppendLine("                if (pending.IsCompletedSuccessfully)");
                     sb.AppendLine("                {");
-                    sb.AppendLine("                    session.Serializer.Serialize(pending.Result, output);");
+                    if (writeResponse)
+                        sb.AppendLine("                    session.Serializer.Serialize(pending.Result, output);");
                     sb.AppendLine("                }");
                     sb.AppendLine("                else");
                     sb.AppendLine("                {");
-                    sb.AppendLine("                    return __AwaitValueTaskResultAsync(pending, session, output);");
+                    if (writeResponse)
+                        sb.AppendLine("                    return __AwaitValueTaskResultAsync(pending, session, output);");
+                    else
+                        sb.AppendLine("                    return __AwaitValueTaskIgnoreAsync(pending);");
                     sb.AppendLine("                }");
                 }
                 else
@@ -901,11 +999,15 @@ public class RpcGenerator : IIncrementalGenerator
                     sb.AppendLine($"                var pending = {callLine};");
                     sb.AppendLine("                if (pending.IsCompletedSuccessfully)");
                     sb.AppendLine("                {");
-                    sb.AppendLine("                    session.Serializer.Serialize(pending.GetAwaiter().GetResult(), output);");
+                    if (writeResponse)
+                        sb.AppendLine("                    session.Serializer.Serialize(pending.GetAwaiter().GetResult(), output);");
                     sb.AppendLine("                }");
                     sb.AppendLine("                else");
                     sb.AppendLine("                {");
-                    sb.AppendLine("                    return __AwaitTaskResultAsync(pending, session, output);");
+                    if (writeResponse)
+                        sb.AppendLine("                    return __AwaitTaskResultAsync(pending, session, output);");
+                    else
+                        sb.AppendLine("                    return __AwaitTaskIgnoreAsync(pending);");
                     sb.AppendLine("                }");
                 }
             }
@@ -913,27 +1015,6 @@ public class RpcGenerator : IIncrementalGenerator
             sb.AppendLine("                break;");
             sb.AppendLine("            }");
         }
-
-        sb.AppendLine("""
-                                  default: throw new RpcException("Method not found");
-                              }
-
-                              return ValueTask.CompletedTask;
-                          }
-
-                          internal static class __SharpLinkStubRegistration
-                          {
-                              [ModuleInitializer]
-                              internal static void Register()
-                              {
-                                  SharpLink.Abstractions.GeneratedStubRegistry.Register(typeof(__SERVICE_TYPE__), () => new __STUB_TYPE__());
-                              }
-                          }
-                      }
-                      """);
-        return sb.ToString()
-            .Replace("__SERVICE_TYPE__", model.ServiceFullName)
-            .Replace("__STUB_TYPE__", $"{model.ServiceName}_Stub");
     }
 
     private static void AppendSizeFieldsByType(StringBuilder sb, EquatableArray<RpcMethodModel> methods)

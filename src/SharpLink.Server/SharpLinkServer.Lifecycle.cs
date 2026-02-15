@@ -263,28 +263,39 @@ internal sealed partial class SharpLinkServer
             invokeToken = linkedCts.Token;
         }
 
-        var discard = BufferWriterPool.Get();
         try
         {
-            var invokeTask = serviceInfo.stub.InvokeAsync(serviceInfo.service, session, methodHash, requestId, argsPayload, discard, invokeToken);
+            var invokeTask = isCancellable
+                ? serviceInfo.stub.InvokeNoReturnCancellableAsync(
+                    serviceInfo.service,
+                    session,
+                    methodHash,
+                    requestId,
+                    argsPayload,
+                    invokeToken)
+                : serviceInfo.stub.InvokeNoReturnAsync(
+                    serviceInfo.service,
+                    session,
+                    methodHash,
+                    requestId,
+                    argsPayload);
             if (invokeTask.IsCompletedSuccessfully)
             {
-                ReleaseOneWayDispatchResources(discard, linkedCts, requestId, requestCancellationMap);
+                ReleaseOneWayDispatchResources(linkedCts, requestId, requestCancellationMap);
                 return;
             }
 
-            _ = AwaitOneWayDispatchAsync(invokeTask, discard, linkedCts, requestId, requestCancellationMap);
+            _ = AwaitOneWayDispatchAsync(invokeTask, linkedCts, requestId, requestCancellationMap);
         }
         catch (Exception ex)
         {
             LogOnewayRpcDispatchFailed(_logger, ex);
-            ReleaseOneWayDispatchResources(discard, linkedCts, requestId, requestCancellationMap);
+            ReleaseOneWayDispatchResources(linkedCts, requestId, requestCancellationMap);
         }
     }
 
     private async Task AwaitOneWayDispatchAsync(
         ValueTask invokeTask,
-        ArrayBufferWriter<byte> discard,
         CancellationTokenSource? linkedCts,
         long requestId,
         StripedLongMap<CancellationTokenSource> requestCancellationMap)
@@ -300,17 +311,15 @@ internal sealed partial class SharpLinkServer
         }
         finally
         {
-            ReleaseOneWayDispatchResources(discard, linkedCts, requestId, requestCancellationMap);
+            ReleaseOneWayDispatchResources(linkedCts, requestId, requestCancellationMap);
         }
     }
 
     private static void ReleaseOneWayDispatchResources(
-        ArrayBufferWriter<byte> discard,
         CancellationTokenSource? linkedCts,
         long requestId,
         StripedLongMap<CancellationTokenSource> requestCancellationMap)
     {
-        BufferWriterPool.Return(discard);
         linkedCts?.Dispose();
         if (linkedCts is not null)
             requestCancellationMap.TryRemove(requestId, out _);
@@ -325,6 +334,7 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken)
     {
         var isCancellable = (flags & PacketFlags.IsCancellable) != 0;
+        var hasReturnPayload = (flags & PacketFlags.HasReturn) != 0;
         
         if(payload.Length<ProtocolConstants.RequestHeaderLength) return ValueTask.CompletedTask;
         
@@ -349,11 +359,40 @@ internal sealed partial class SharpLinkServer
             invokeToken = linkedCts.Token;
         }
 
+        if (!hasReturnPayload)
+        {
+            try
+            {
+                var invokeTask = isCancellable
+                    ? serviceInfo.stub.InvokeNoReturnCancellableAsync(serviceInfo.service, session, methodHash, requestId, argsPayload, invokeToken)
+                    : serviceInfo.stub.InvokeNoReturnAsync(serviceInfo.service, session, methodHash, requestId, argsPayload);
+                if (!invokeTask.IsCompletedSuccessfully)
+                    return AwaitDispatchRpcAckAsync(invokeTask, session, requestId, linkedCts, requestCancellationMap);
+                session.SendPacketAsync(PacketType.RpcResponse, PacketFlags.None, requestId);
+                ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
+                return ValueTask.CompletedTask;
+            }
+            catch (OperationCanceledException)
+            {
+                session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,"Request canceled.");
+                ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
+                return ValueTask.CompletedTask;
+            }
+            catch (Exception e)
+            {
+                session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,e.Message);
+                ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
+                return ValueTask.CompletedTask;
+            }
+        }
+
         var writer = BufferWriterPool.Get();
         var token = writer.BeginPacket(PacketType.RpcResponse, PacketFlags.None, requestId);
         try
         {
-            var invokeTask = serviceInfo.stub.InvokeAsync(serviceInfo.service, session, methodHash, requestId, argsPayload, writer, invokeToken);
+            var invokeTask = isCancellable
+                ? serviceInfo.stub.InvokeCancellableAsync(serviceInfo.service, session, methodHash, requestId, argsPayload, writer, invokeToken)
+                : serviceInfo.stub.InvokeAsync(serviceInfo.service, session, methodHash, requestId, argsPayload, writer);
             if (!invokeTask.IsCompletedSuccessfully)
                 return AwaitDispatchRpcAsync(invokeTask, session, requestId, writer, token, linkedCts,
                     requestCancellationMap);
@@ -376,6 +415,32 @@ internal sealed partial class SharpLinkServer
             session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,e.Message);
             ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private async ValueTask AwaitDispatchRpcAckAsync(
+        ValueTask invokeTask,
+        IRpcSession session,
+        long requestId,
+        CancellationTokenSource? linkedCts,
+        StripedLongMap<CancellationTokenSource> requestCancellationMap)
+    {
+        try
+        {
+            await invokeTask.ConfigureAwait(false);
+            session.SendPacketAsync(PacketType.RpcResponse, PacketFlags.None, requestId);
+        }
+        catch (OperationCanceledException)
+        {
+            session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,"Request canceled.");
+        }
+        catch (Exception e)
+        {
+            session.SendStringPacketAsync(PacketType.RpcResponse,PacketFlags.IsError,requestId,e.Message);
+        }
+        finally
+        {
+            ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
         }
     }
 
