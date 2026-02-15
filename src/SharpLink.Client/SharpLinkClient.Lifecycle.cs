@@ -51,6 +51,7 @@ internal sealed partial class SharpLinkClient
     private async Task ProcessRequestLoop(IRpcSession session, CancellationToken ct)
     {
         var reader = session.Input;
+        using var sessionScope = BeginSessionLogScope(_logger, session.Id);
 
         while (session.IsConnected && !ct.IsCancellationRequested)
         {
@@ -64,12 +65,10 @@ internal sealed partial class SharpLinkClient
                     switch (header.Type)
                     {
                         case PacketType.Heartbeat:
-                            if (IsEnabled(LogLevel.Debug))
-                                _logger.LogDebug("Receive heartbeat from server {SessionId}", session.Id);
+                            DebugLogServerHeartbeatReceived(_logger);
                             break;
                         case PacketType.Cancel:
-                            if (IsEnabled(LogLevel.Debug))
-                                _logger.LogDebug("Ignore cancel packet from server {SessionId}", session.Id);
+                            DebugLogServerCancelIgnored(_logger);
                             break;
                         case PacketType.RpcResponse:
                             DispatchRpc(header.RequestId, header.Flags, ref payload);
@@ -110,6 +109,7 @@ internal sealed partial class SharpLinkClient
 
     private async Task HeartbeatSendLoop(IRpcSession session, CancellationToken ct)
     {
+        using var sessionScope = BeginSessionLogScope(_logger, session.Id);
         while (!ct.IsCancellationRequested)
         {
             session.SendPacketAsync(PacketType.Heartbeat, PacketFlags.None, 0);
@@ -118,8 +118,7 @@ internal sealed partial class SharpLinkClient
             if (now - session.LastActive <= _heartbeatTimeout && session.IsConnected)
                 continue;
 
-            if (IsEnabled(LogLevel.Warning))
-                _logger.LogWarning("Server disconnected due to heartbeat timeout.");
+            LogServerHeartbeatTimeout(_logger);
 
             session.Dispose();
             HandleDisconnected(new IOException("Server heartbeat timeout."));
@@ -156,7 +155,7 @@ internal sealed partial class SharpLinkClient
         if (_locallyCanceledRequestIds.Remove(requestId))
             return;
 
-        if (IsEnabled(LogLevel.Warning))
-            _logger.LogWarning("Response for unknown or timed-out request ID: {RequestId}", requestId);
+        using var requestScope = BeginRequestLogScope(_logger, requestId);
+        LogUnknownOrTimedOutResponse(_logger);
     }
 }

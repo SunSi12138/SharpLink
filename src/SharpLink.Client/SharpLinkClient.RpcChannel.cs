@@ -674,8 +674,10 @@ internal sealed partial class SharpLinkClient
         if (Interlocked.Exchange(ref _disconnectHandled, true))
             return;
 
-        if (IsEnabled(LogLevel.Information))
-            _logger.LogInformation(ex, "Client disconnected.");
+        using var sessionScope = _session is { } session
+            ? BeginSessionLogScope(_logger, session.Id)
+            : null;
+        LogClientDisconnected(_logger, ex);
 
         _requestManager.FailAllPendingRequests(ex);
         _session?.StreamManager.CompleteAll(true, ex.Message);
@@ -742,5 +744,4 @@ internal sealed partial class SharpLinkClient
         return _requestTimeoutScheduler.Schedule(timeout, SStreamTimeoutCallback, state);
     }
 
-    private bool IsEnabled(LogLevel level) => level >= _minimumLogLevel && _logger.IsEnabled(level);
 }

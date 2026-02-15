@@ -10,7 +10,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
     private RpcSessionFlushOptions? _rpcSessionFlushOptions;
     private readonly Dictionary<long, (IRpcStub stub, object service)> _services = [];
-    private readonly SharpLinkLoggingOptions _logging = new();
+    private ILoggerFactory? _loggerFactory;
 
     public SharpLinkServerBuilder UseTransport(ITransport transport)
     {
@@ -26,26 +26,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
     public SharpLinkServerBuilder UseLoggerFactory(ILoggerFactory loggerFactory)
     {
-        _logging.UseLoggerFactory(loggerFactory);
-        return this;
-    }
-
-    public SharpLinkServerBuilder UseLogger(ILogger logger)
-    {
-        _logging.UseLogger(logger);
-        return this;
-    }
-
-    public SharpLinkServerBuilder UseMinimumLogLevel(LogLevel minimumLogLevel)
-    {
-        _logging.UseMinimumLogLevel(minimumLogLevel);
-        return this;
-    }
-
-    public SharpLinkServerBuilder UseLogging(Action<SharpLinkLoggingOptions> configure)
-    {
-        ArgumentNullException.ThrowIfNull(configure);
-        configure(_logging);
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+        _loggerFactory = loggerFactory;
         return this;
     }
 
@@ -56,7 +38,10 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     }
 
     public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
-        => _logging.UseLoggerFactoryIfUnset(loggerFactory);
+    {
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+        _loggerFactory ??= loggerFactory;
+    }
 
     public SharpLinkServerBuilder UseHeartbeat(TimeSpan checkInterval, TimeSpan timeout)
     {
@@ -73,8 +58,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
     public SharpLinkServerBuilder UseHeartbeatCheckInterval(TimeSpan checkInterval)
     {
-        if (checkInterval <= TimeSpan.Zero)
-            throw new ArgumentOutOfRangeException(nameof(checkInterval));
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(checkInterval, TimeSpan.Zero);
         if (_heartbeatTimeout <= checkInterval)
             throw new ArgumentException("Heartbeat timeout must be greater than check interval.");
 
@@ -84,8 +68,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
     public SharpLinkServerBuilder UseHeartbeatTimeout(TimeSpan timeout)
     {
-        if (timeout <= TimeSpan.Zero)
-            throw new ArgumentOutOfRangeException(nameof(timeout));
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
         if (timeout <= _heartbeatCheckInterval)
             throw new ArgumentException("Heartbeat timeout must be greater than check interval.");
 
@@ -126,7 +109,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                 _services.ToFrozenDictionary(),
                 _heartbeatCheckInterval,
                 _heartbeatTimeout,
-                _logging);
+                _loggerFactory ?? NullLoggerFactory.Instance);
         
         if (_transport is not IRpcSessionFlushConfigurableTransport configurableTransport)
             throw new InvalidOperationException("Configured RPC session flush options, but transport does not support flush configuration.");
@@ -139,7 +122,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             _services.ToFrozenDictionary(),
             _heartbeatCheckInterval,
             _heartbeatTimeout,
-            _logging);
+            _loggerFactory ?? NullLoggerFactory.Instance);
     }
 
 }
