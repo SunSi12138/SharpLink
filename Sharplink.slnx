@@ -5,10 +5,10 @@
     <Project Path="src/SharpLink.Generator/SharpLink.Generator.csproj" />
     <Project Path="demo/HelloWorld/HelloWorld.csproj" />
     <Project Path="demo/HostApplication/HostApplication.csproj" />
+    <Project Path="demo/OneWay/OneWay.csproj" />
     <Project Path="demo/Streaming/Streaming.csproj" />
     <Project Path="demo/Cancel/Cancel.csproj" />
     <Project Path="demo/Timeout/Timeout.csproj" />
-    <Project Path="demo/OnwWay/OnwWay.csproj" />
     <Project Path="demo/Log/Log.csproj" />
     <Project Path="src/SharpLink.Client/SharpLink.Client.csproj" />
     <Project Path="src/SharpLink.Server/SharpLink.Server.csproj" />
