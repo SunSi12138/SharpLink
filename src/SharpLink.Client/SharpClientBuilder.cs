@@ -6,7 +6,7 @@ public class SharpClientBuilder
     
     
     private ITransport? _transport;
-    private readonly SharpLinkLoggingOptions _logging = new();
+    private ILoggerFactory? _loggerFactory;
 
     public SharpClientBuilder UseTransport(ITransport transport)
     {
@@ -27,26 +27,8 @@ public class SharpClientBuilder
 
     public SharpClientBuilder UseLoggerFactory(ILoggerFactory loggerFactory)
     {
-        _logging.UseLoggerFactory(loggerFactory);
-        return this;
-    }
-
-    public SharpClientBuilder UseLogger(ILogger logger)
-    {
-        _logging.UseLogger(logger);
-        return this;
-    }
-
-    public SharpClientBuilder UseMinimumLogLevel(LogLevel minimumLogLevel)
-    {
-        _logging.UseMinimumLogLevel(minimumLogLevel);
-        return this;
-    }
-
-    public SharpClientBuilder UseLogging(Action<SharpLinkLoggingOptions> configure)
-    {
-        ArgumentNullException.ThrowIfNull(configure);
-        configure(_logging);
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+        _loggerFactory = loggerFactory;
         return this;
     }
 
@@ -57,7 +39,10 @@ public class SharpClientBuilder
     }
 
     public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
-        => _logging.UseLoggerFactoryIfUnset(loggerFactory);
+    {
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+        _loggerFactory ??= loggerFactory;
+    }
 
     public SharpClientBuilder UseHeartbeat(TimeSpan interval, TimeSpan timeout)
     {
@@ -110,7 +95,7 @@ public class SharpClientBuilder
         return this;
     }
     
-    public ISharpLinkClient Build(string pipeName = "SharpLinkPipe")
+    public ISharpLinkClient Build()
     {
         if (_transport == null)
             throw new InvalidOperationException("Transport must be set before building the server.");
@@ -124,7 +109,7 @@ public class SharpClientBuilder
                 _serializer,
                 _heartbeatInterval,
                 _heartbeatTimeout,
-                _logging,
+                _loggerFactory ?? NullLoggerFactory.Instance,
                 _requestTimeout
             );
         
@@ -138,7 +123,7 @@ public class SharpClientBuilder
             _serializer,
             _heartbeatInterval,
             _heartbeatTimeout,
-            _logging,
+            _loggerFactory ?? NullLoggerFactory.Instance,
             _requestTimeout
         );
     }

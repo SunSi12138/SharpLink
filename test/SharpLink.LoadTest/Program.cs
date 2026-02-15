@@ -532,8 +532,7 @@ internal sealed class LatencyHistogram
 
     public LatencyHistogram(int bucketCount = DefaultBucketCount)
     {
-        if (bucketCount <= 0)
-            throw new ArgumentOutOfRangeException(nameof(bucketCount));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bucketCount);
 
         _buckets = new long[bucketCount];
     }

@@ -17,7 +17,6 @@ internal sealed partial class SharpLinkClient(ITransport transport, ISerializer 
     private readonly bool _hasRequestTimeout;
     private readonly TimeSpan _requestTimeoutValue;
     private readonly ILogger _logger = NullLogger<SharpLinkClient>.Instance;
-    private readonly LogLevel _minimumLogLevel = LogLevel.Warning;
 
     public SharpLinkClient(ITransport transport, ISerializer serializer, TimeSpan heartbeatInterval, TimeSpan heartbeatTimeout, TimeSpan? requestTimeout = null)
         : this(transport, serializer)
@@ -42,13 +41,12 @@ internal sealed partial class SharpLinkClient(ITransport transport, ISerializer 
         ISerializer serializer,
         TimeSpan heartbeatInterval,
         TimeSpan heartbeatTimeout,
-        SharpLinkLoggingOptions loggingOptions,
+        ILoggerFactory loggerFactory,
         TimeSpan? requestTimeout = null)
         : this(transport, serializer, heartbeatInterval, heartbeatTimeout, requestTimeout)
     {
-        ArgumentNullException.ThrowIfNull(loggingOptions);
-        _logger = loggingOptions.LoggerFactory.CreateLogger<SharpLinkClient>();
-        _minimumLogLevel = loggingOptions.MinimumLogLevel;
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+        _logger = loggerFactory.CreateLogger<SharpLinkClient>();
     }
     
     public void Dispose()

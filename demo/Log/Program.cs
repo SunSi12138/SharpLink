@@ -18,18 +18,14 @@ var loggerFactory = LoggerFactory.Create(builder =>
 
 var server = DemoTcp.CreateServer<ILogService, LogService>(port, builder =>
 {
-    builder.UseLogging(logging => logging
-        .UseLoggerFactory(loggerFactory)
-        .UseMinimumLogLevel(LogLevel.Information));
+    builder.UseLoggerFactory(loggerFactory);
 });
 var serverTask = DemoTcp.StartServerAsync(server, appCts.Token);
 
 var silentClient = DemoTcp.CreateClient(port);
 var loggedClient = DemoTcp.CreateClient(port, builder =>
 {
-    builder.UseLogging(logging => logging
-        .UseLoggerFactory(loggerFactory)
-        .UseMinimumLogLevel(LogLevel.Information));
+    builder.UseLoggerFactory(loggerFactory);
 });
 
 try
@@ -40,7 +36,7 @@ try
     var pongSilent = await silentService.PingAsync();
     Console.WriteLine($"silent call result: {pongSilent}");
 
-    Console.WriteLine("2) logged client: framework logs enabled via UseLogging.");
+    Console.WriteLine("2) logged client: framework logs enabled via UseLoggerFactory.");
     await DemoTcp.EnsureConnectedAsync(loggedClient, appCts.Token, "Logged client failed to connect.");
     var loggedService = loggedClient.Get<ILogService>();
     var pongLogged = await loggedService.PingAsync();

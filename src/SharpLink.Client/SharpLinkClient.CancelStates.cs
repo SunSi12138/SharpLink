@@ -9,19 +9,18 @@ internal sealed partial class SharpLinkClient
 
     private struct PooledCancellationRegistration(CancellationTokenRegistration registration, IPooledCancelState? state) : IDisposable, IAsyncDisposable
     {
-        private CancellationTokenRegistration _registration = registration;
         private IPooledCancelState? _state = state;
 
         public void Dispose()
         {
-            _registration.Dispose();
+            registration.Dispose();
             _state?.ReturnOnDispose();
             _state = null;
         }
 
         public async ValueTask DisposeAsync()
         {
-            await _registration.DisposeAsync();
+            await registration.DisposeAsync();
             _state?.ReturnOnDispose();
             _state = null;
         }

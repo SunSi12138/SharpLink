@@ -1,14 +1,22 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using SharpLink.Client;
 using SharpLink.Hosting;
-using SharpLink.Sdk;
 using SharpLink.Runtime;
+using SharpLink.Sdk;
 using SharpLink.Server;
 
 const int port = 19191;
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.Logging.ClearProviders();
+builder.Logging.AddSimpleConsole(options =>
+{
+    options.SingleLine = true;
+    options.TimestampFormat = "HH:mm:ss ";
+});
+builder.Logging.SetMinimumLevel(LogLevel.Information);
 
 builder.Services.AddSharpLinkServer(server =>
 {
@@ -29,16 +37,20 @@ builder.Services.AddHostedService<HostRpcDemoService>();
 
 await builder.Build().RunAsync();
 
-public sealed class HostRpcDemoService(ISharpLinkClientAccessor clientAccessor, IHostApplicationLifetime appLifetime) : IHostedService
+public sealed class HostRpcDemoService(
+    ISharpLinkClientAccessor clientAccessor,
+    IHostApplicationLifetime appLifetime,
+    ILogger<HostRpcDemoService> logger) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         var client = clientAccessor.Client
                      ?? throw new InvalidOperationException("SharpLink client is not ready.");
 
+        logger.LogInformation("Host RPC demo starting.");
         var hello = client.Get<IHelloService>();
         var result = await hello.Echo("HostApplication");
-        Console.WriteLine($"RPC Result: {result}");
+        logger.LogInformation("RPC result: {Result}", result);
 
         appLifetime.StopApplication();
     }
