@@ -1,5 +1,4 @@
 
-
 using System.IO;
 
 namespace SharpLink.Server;
@@ -45,11 +44,13 @@ public static class TransportExtensions
             return builder.UseTransport(new SocketTransport(socket));
         }
 
-        public SharpLinkServerBuilder UseAnonymousPipe(PipeStream input, PipeStream output)
+        public SharpLinkServerBuilder UseAnonymousPipe(
+            Func<AnonymousPipeOffer, CancellationToken, ValueTask> onOffer,
+            TimeSpan? offerTimeout = null)
         {
-            ArgumentNullException.ThrowIfNull(input);
-            ArgumentNullException.ThrowIfNull(output);
-            return builder.UseTransport(new AnonymousPipeTransport(input, output));
+            ArgumentNullException.ThrowIfNull(onOffer);
+            return builder.UseTransport(new AnonymousPipeTransport(onOffer, offerTimeout));
         }
+
     }
 }

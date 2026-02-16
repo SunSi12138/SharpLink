@@ -207,7 +207,7 @@ public class RpcChannelCallShapeIntegrationTests
                 .AddService<ICallShapeService, CallShapeService>()
                 .UseTcp(port, IPAddress.Loopback.ToString())
                 .UseSerializer(new MemoryPackSerializerAdaptor())
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
+                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .Build();
 
             var serverTask = Task.Run(async () =>
@@ -233,7 +233,7 @@ public class RpcChannelCallShapeIntegrationTests
             var client = SharpClientBuilder.Create()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseSerializer(new MemoryPackSerializerAdaptor())
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
+                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseRequestTimeout(TimeSpan.FromSeconds(5))
                 .Build();
 

@@ -1,10 +1,10 @@
 ﻿using SharpLink.Runtime;
 using SharpLink.Abstractions;
 using System;
-using System.IO;
-using System.IO.Pipes;
 using SharpLink.Client;
 using SharpLink.Server;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SharpLink.LoadTestBase;
 
@@ -76,18 +76,20 @@ public static class LoadTestTransportFactory
             return new LocalHarness(server, client, static () => { });
         }
 
-        var serverInput = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable);
-        var serverOutput = new AnonymousPipeServerStream(PipeDirection.Out, HandleInheritability.Inheritable);
-        var clientInHandle = serverOutput.GetClientHandleAsString();
-        var clientOutHandle = serverInput.GetClientHandleAsString();
+        var offerTcs = new TaskCompletionSource<AnonymousPipeOffer>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var serverBuilder = configure(SharpLinkServerBuilder.Create())
             .UseSerializer(new MemoryPackSerializerAdaptor())
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
-        var serverAnonymous = serverBuilder.UseAnonymousPipe(serverInput, serverOutput).Build();
+        var serverAnonymous = serverBuilder.UseAnonymousPipe(
+            (offer, _) =>
+            {
+                offerTcs.TrySetResult(offer);
+                return ValueTask.CompletedTask;
+            }).Build();
 
         var clientAnonymous = SharpClientBuilder.Create()
-            .UseAnonymousPipe(clientInHandle, clientOutHandle)
+            .UseTransport(new DeferredAnonymousPipeClientTransport(offerTcs.Task))
             .UseSerializer(new MemoryPackSerializerAdaptor())
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds))
             .Build();
@@ -96,5 +98,30 @@ public static class LoadTestTransportFactory
     }
 }
 
+internal sealed class DeferredAnonymousPipeClientTransport(Task<AnonymousPipeOffer> offerTask) : ITransport
+{
+    private readonly Task<AnonymousPipeOffer> _offerTask = offerTask ?? throw new ArgumentNullException(nameof(offerTask));
+    private AnonymousPipeTransport? _inner;
+    private int _connected;
+    private bool _disposed;
 
+    public async Task<IRpcSession> ConnectAsync(ISerializer serializer, CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (Interlocked.Exchange(ref _connected, 1) != 0)
+            throw new InvalidOperationException("Deferred anonymous pipe transport only supports one connection.");
 
+        var offer = await _offerTask.WaitAsync(ct);
+        _inner = new AnonymousPipeTransport(offer.InHandle, offer.OutHandle);
+        return await _inner.ConnectAsync(serializer, ct);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        _inner?.Dispose();
+    }
+}

@@ -601,19 +601,43 @@ public class TransportConnectionIntegrationTests
                 }
                 case TransportKind.AnonymousPipe:
                 {
-                    var serverInput = new System.IO.Pipes.AnonymousPipeServerStream(
-                        System.IO.Pipes.PipeDirection.In,
-                        HandleInheritability.Inheritable);
-                    var serverOutput = new System.IO.Pipes.AnonymousPipeServerStream(
-                        System.IO.Pipes.PipeDirection.Out,
-                        HandleInheritability.Inheritable);
-                    var clientInHandle = serverOutput.GetClientHandleAsString();
-                    var clientOutHandle = serverInput.GetClientHandleAsString();
-
-                    serverBuilder.UseAnonymousPipe(serverInput, serverOutput);
-                    clientBuilder.UseAnonymousPipe(clientInHandle, clientOutHandle);
+                    var offerTcs = new TaskCompletionSource<AnonymousPipeOffer>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    serverBuilder.UseAnonymousPipe(
+                        onOffer: (offer, _) =>
+                        {
+                            offerTcs.TrySetResult(offer);
+                            return ValueTask.CompletedTask;
+                        },
+                        offerTimeout: TimeSpan.FromSeconds(5));
                     resolvedEndpoint = new TransportEndpoint(kind, 0, string.Empty, string.Empty);
-                    break;
+                    cleanup = () =>
+                    {
+                        if (!offerTcs.Task.IsCompleted)
+                            offerTcs.TrySetCanceled();
+                    };
+
+                    // Delay client transport binding until server publishes per-connection handles.
+                    var anonServer = serverBuilder.Build();
+                    var anonServerTask = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await anonServer.Start(cts.Token);
+                        }
+                        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
+                        {
+                            IgnoreExpectedException(ex);
+                        }
+                    }, CancellationToken.None);
+
+                    var offer = await offerTcs.Task.WaitAsync(TimeSpan.FromSeconds(5), cts.Token);
+                    clientBuilder.UseAnonymousPipe(offer);
+                    var anonClient = clientBuilder.Build();
+                    var anonConnected = await anonClient.ConnectAsync(cts.Token);
+                    if (!anonConnected)
+                        throw new Exception("client connect failed");
+
+                    return new TransportHarness(anonServer, anonServerTask, cts, anonClient, resolvedEndpoint, cleanup);
                 }
             }
 
