@@ -21,7 +21,7 @@ public class SharpLinkClientCancellationTests
 
         Ensure(await client.ConnectAsync(), "connect");
 
-        var invokeTask = client.InvokeWithDefaultTimeoutNoPayloadAsync<int>(1, 2).AsTask();
+        var invokeTask = client.InvokeCancellableWithDefaultTimeoutNoPayloadAsync<int>(1, 2, CancellationToken.None).AsTask();
         var callPacket = await transport.Session.WaitForSentPacket(PacketType.RpcCall);
         await EnsureThrows<TimeoutException>(invokeTask);
 
@@ -219,3 +219,4 @@ public class SharpLinkClientCancellationTests
         public T? Deserialize<T>(ref ReadOnlySequence<byte> sequence) => default;
     }
 }
+

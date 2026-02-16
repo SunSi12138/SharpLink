@@ -20,7 +20,7 @@ public class SharpLinkClientTimeoutTests
 
         Ensure(await client.ConnectAsync(), "connect");
 
-        var invokeTask = client.InvokeWithTimeoutNoPayloadAsync<int>(1, 2, TimeSpan.FromMilliseconds(80)).AsTask();
+        var invokeTask = client.InvokeCancellableWithTimeoutNoPayloadAsync<int>(1, 2, TimeSpan.FromMilliseconds(80), CancellationToken.None).AsTask();
         var callPacket = await transport.Session.WaitForSentPacket(PacketType.RpcCall);
         await EnsureThrows<TimeoutException>(invokeTask);
 
@@ -181,3 +181,4 @@ public class SharpLinkClientTimeoutTests
         public T? Deserialize<T>(ref ReadOnlySequence<byte> sequence) => default;
     }
 }
+

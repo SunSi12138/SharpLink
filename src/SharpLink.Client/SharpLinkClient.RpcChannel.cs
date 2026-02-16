@@ -1,4 +1,4 @@
-﻿
+
 
 
 namespace SharpLink.Client;
@@ -75,35 +75,11 @@ internal sealed partial class SharpLinkClient
     public ValueTask<T> InvokeNoPayloadAsync<T>(long interfaceHash, long methodHash)
         => InvokeCoreAsync<T>(interfaceHash, methodHash, null, null, false, true, false, null);
 
-    public ValueTask<T> InvokeWithDefaultTimeoutAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, true, true, null);
-
-    public ValueTask<T> InvokeWithDefaultTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, null, null, false, true, true, null);
-
-    public ValueTask<T> InvokeWithTimeoutAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, TimeSpan timeout)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, true, false, EnsurePositiveTimeout(timeout));
-
-    public ValueTask<T> InvokeWithTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, TimeSpan timeout)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, null, null, false, true, false, EnsurePositiveTimeout(timeout));
-
     public ValueTask<T> InvokeNoReturnAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter)
         => InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, false, false, null);
 
     public ValueTask<T> InvokeNoReturnNoPayloadAsync<T>(long interfaceHash, long methodHash)
         => InvokeCoreAsync<T>(interfaceHash, methodHash, null, null, false, false, false, null);
-
-    public ValueTask<T> InvokeNoReturnWithDefaultTimeoutAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, false, true, null);
-
-    public ValueTask<T> InvokeNoReturnWithDefaultTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, null, null, false, false, true, null);
-
-    public ValueTask<T> InvokeNoReturnWithTimeoutAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, TimeSpan timeout)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, false, false, EnsurePositiveTimeout(timeout));
-
-    public ValueTask<T> InvokeNoReturnWithTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, TimeSpan timeout)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, null, null, false, false, false, EnsurePositiveTimeout(timeout));
 
     public ValueTask<T> InvokeCancellableAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, CancellationToken cancellationToken = default)
         => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, true, cancellationToken, false, null);
@@ -147,35 +123,11 @@ internal sealed partial class SharpLinkClient
     public async ValueTask InvokeOneWayNoPayloadAsync(long interfaceHash, long methodHash)
         => await InvokeCoreAsync<byte>(interfaceHash, methodHash, null, null, true, false, false, null);
 
-    public async ValueTask InvokeOneWayWithDefaultTimeoutAsync(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter)
-        => await InvokeCoreAsync<byte>(interfaceHash, methodHash, payloadWriter, null, true, false, true, null);
-
-    public async ValueTask InvokeOneWayWithDefaultTimeoutNoPayloadAsync(long interfaceHash, long methodHash)
-        => await InvokeCoreAsync<byte>(interfaceHash, methodHash, null, null, true, false, true, null);
-
-    public async ValueTask InvokeOneWayWithTimeoutAsync(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, TimeSpan timeout)
-        => await InvokeCoreAsync<byte>(interfaceHash, methodHash, payloadWriter, null, true, false, false, EnsurePositiveTimeout(timeout));
-
-    public async ValueTask InvokeOneWayWithTimeoutNoPayloadAsync(long interfaceHash, long methodHash, TimeSpan timeout)
-        => await InvokeCoreAsync<byte>(interfaceHash, methodHash, null, null, true, false, false, EnsurePositiveTimeout(timeout));
-
     public async ValueTask InvokeOneWayClientStreamAsync(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender)
         => await InvokeCoreAsync<byte>(interfaceHash, methodHash, payloadWriter, streamSender, true, false, false, null);
 
     public async ValueTask InvokeOneWayClientStreamNoPayloadAsync(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender)
         => await InvokeCoreAsync<byte>(interfaceHash, methodHash, null, streamSender, true, false, false, null);
-
-    public async ValueTask InvokeOneWayClientStreamWithDefaultTimeoutAsync(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender)
-        => await InvokeCoreAsync<byte>(interfaceHash, methodHash, payloadWriter, streamSender, true, false, true, null);
-
-    public async ValueTask InvokeOneWayClientStreamWithDefaultTimeoutNoPayloadAsync(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender)
-        => await InvokeCoreAsync<byte>(interfaceHash, methodHash, null, streamSender, true, false, true, null);
-
-    public async ValueTask InvokeOneWayClientStreamWithTimeoutAsync(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout)
-        => await InvokeCoreAsync<byte>(interfaceHash, methodHash, payloadWriter, streamSender, true, false, false, EnsurePositiveTimeout(timeout));
-
-    public async ValueTask InvokeOneWayClientStreamWithTimeoutNoPayloadAsync(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout)
-        => await InvokeCoreAsync<byte>(interfaceHash, methodHash, null, streamSender, true, false, false, EnsurePositiveTimeout(timeout));
 
     public async ValueTask InvokeCancellableOneWayAsync(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, CancellationToken cancellationToken = default)
         => await InvokeCancellableCoreAsync<byte>(interfaceHash, methodHash, payloadWriter, null, true, false, cancellationToken, false, null);
@@ -219,35 +171,11 @@ internal sealed partial class SharpLinkClient
     public ValueTask<T> InvokeClientStreamNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender)
         => InvokeCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, true, false, null);
 
-    public ValueTask<T> InvokeClientStreamWithDefaultTimeoutAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, true, true, null);
-
-    public ValueTask<T> InvokeClientStreamWithDefaultTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, true, true, null);
-
-    public ValueTask<T> InvokeClientStreamWithTimeoutAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, true, false, EnsurePositiveTimeout(timeout));
-
-    public ValueTask<T> InvokeClientStreamWithTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, true, false, EnsurePositiveTimeout(timeout));
-
     public ValueTask<T> InvokeClientStreamNoReturnAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender)
         => InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, false, false, null);
 
     public ValueTask<T> InvokeClientStreamNoReturnNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender)
         => InvokeCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, false, false, null);
-
-    public ValueTask<T> InvokeClientStreamNoReturnWithDefaultTimeoutAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, false, true, null);
-
-    public ValueTask<T> InvokeClientStreamNoReturnWithDefaultTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, false, true, null);
-
-    public ValueTask<T> InvokeClientStreamNoReturnWithTimeoutAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, false, false, EnsurePositiveTimeout(timeout));
-
-    public ValueTask<T> InvokeClientStreamNoReturnWithTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, false, false, EnsurePositiveTimeout(timeout));
 
     public ValueTask<T> InvokeCancellableClientStreamAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
         => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, true, cancellationToken, false, null);
@@ -291,18 +219,6 @@ internal sealed partial class SharpLinkClient
     public IAsyncEnumerable<T> InvokeServerStreamNoPayloadAsync<T>(long interfaceHash, long methodHash)
         => InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, null, null, false, null);
 
-    public IAsyncEnumerable<T> InvokeServerStreamWithDefaultTimeoutAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter)
-        => InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, true, null);
-
-    public IAsyncEnumerable<T> InvokeServerStreamWithDefaultTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash)
-        => InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, null, null, true, null);
-
-    public IAsyncEnumerable<T> InvokeServerStreamWithTimeoutAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, TimeSpan timeout)
-        => InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, EnsurePositiveTimeout(timeout));
-
-    public IAsyncEnumerable<T> InvokeServerStreamWithTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, TimeSpan timeout)
-        => InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, null, null, false, EnsurePositiveTimeout(timeout));
-
     public IAsyncEnumerable<T> InvokeCancellableServerStreamAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, CancellationToken cancellationToken = default)
         => InvokeCancellableServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, cancellationToken, false, null);
 
@@ -326,18 +242,6 @@ internal sealed partial class SharpLinkClient
 
     public IAsyncEnumerable<T> InvokeDuplexStreamNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender)
         => InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, null);
-
-    public IAsyncEnumerable<T> InvokeDuplexStreamWithDefaultTimeoutAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender)
-        => InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, true, null);
-
-    public IAsyncEnumerable<T> InvokeDuplexStreamWithDefaultTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender)
-        => InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, null, streamSender, true, null);
-
-    public IAsyncEnumerable<T> InvokeDuplexStreamWithTimeoutAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout)
-        => InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, EnsurePositiveTimeout(timeout));
-
-    public IAsyncEnumerable<T> InvokeDuplexStreamWithTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout)
-        => InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, EnsurePositiveTimeout(timeout));
 
     public IAsyncEnumerable<T> InvokeCancellableDuplexStreamAsync<T>(long interfaceHash, long methodHash, Action<IBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
         => InvokeCancellableServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, cancellationToken, false, null);

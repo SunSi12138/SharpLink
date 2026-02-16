@@ -138,8 +138,8 @@ public partial class RpcGenerator
                                 $"        return channel.InvokeCancellableDuplexStreamWithTimeoutAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg}, {cancellationTokenArg});")
                             : SelectByTimeout(
                                 $"        return channel.InvokeDuplexStreamAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
-                                $"        return channel.InvokeDuplexStreamWithDefaultTimeoutAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
-                                $"        return channel.InvokeDuplexStreamWithTimeoutAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg});")
+                                $"        return channel.InvokeCancellableDuplexStreamWithDefaultTimeoutAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
+                                $"        return channel.InvokeCancellableDuplexStreamWithTimeoutAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg});")
                         : method.HasCancellationToken
                             ? SelectByTimeout(
                                 $"        return channel.InvokeCancellableDuplexStreamNoPayloadAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, streamSender, {cancellationTokenArg});",
@@ -147,8 +147,8 @@ public partial class RpcGenerator
                                 $"        return channel.InvokeCancellableDuplexStreamWithTimeoutNoPayloadAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, streamSender{timeoutArg}, {cancellationTokenArg});")
                             : SelectByTimeout(
                                 $"        return channel.InvokeDuplexStreamNoPayloadAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, streamSender);",
-                                $"        return channel.InvokeDuplexStreamWithDefaultTimeoutNoPayloadAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, streamSender);",
-                                $"        return channel.InvokeDuplexStreamWithTimeoutNoPayloadAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, streamSender{timeoutArg});"));
+                                $"        return channel.InvokeCancellableDuplexStreamWithDefaultTimeoutNoPayloadAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, streamSender);",
+                                $"        return channel.InvokeCancellableDuplexStreamWithTimeoutNoPayloadAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, streamSender{timeoutArg});"));
                 }
                 else
                 {
@@ -160,8 +160,8 @@ public partial class RpcGenerator
                                 $"        return channel.InvokeCancellableServerStreamWithTimeoutAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg}, {cancellationTokenArg});")
                             : SelectByTimeout(
                                 $"        return channel.InvokeServerStreamAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, payloadWriter);",
-                                $"        return channel.InvokeServerStreamWithDefaultTimeoutAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, payloadWriter);",
-                                $"        return channel.InvokeServerStreamWithTimeoutAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg});")
+                                $"        return channel.InvokeCancellableServerStreamWithDefaultTimeoutAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, payloadWriter);",
+                                $"        return channel.InvokeCancellableServerStreamWithTimeoutAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg});")
                         : method.HasCancellationToken
                             ? SelectByTimeout(
                                 $"        return channel.InvokeCancellableServerStreamNoPayloadAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, {cancellationTokenArg});",
@@ -169,8 +169,8 @@ public partial class RpcGenerator
                                 $"        return channel.InvokeCancellableServerStreamWithTimeoutNoPayloadAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L{timeoutArg}, {cancellationTokenArg});")
                             : SelectByTimeout(
                                 $"        return channel.InvokeServerStreamNoPayloadAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L);",
-                                $"        return channel.InvokeServerStreamWithDefaultTimeoutNoPayloadAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L);",
-                                $"        return channel.InvokeServerStreamWithTimeoutNoPayloadAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L{timeoutArg});"));
+                                $"        return channel.InvokeCancellableServerStreamWithDefaultTimeoutNoPayloadAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L);",
+                                $"        return channel.InvokeCancellableServerStreamWithTimeoutNoPayloadAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L{timeoutArg});"));
                 }
             }
             else if (method.IsVoid)
@@ -187,8 +187,8 @@ public partial class RpcGenerator
                                     $"        await channel.InvokeCancellableOneWayClientStreamWithTimeoutAsync(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg}, {cancellationTokenArg});")
                                 : SelectByTimeout(
                                     $"        await channel.InvokeOneWayClientStreamAsync(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
-                                    $"        await channel.InvokeOneWayClientStreamWithDefaultTimeoutAsync(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
-                                    $"        await channel.InvokeOneWayClientStreamWithTimeoutAsync(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg});")
+                                    $"        await channel.InvokeCancellableOneWayClientStreamWithDefaultTimeoutAsync(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
+                                    $"        await channel.InvokeCancellableOneWayClientStreamWithTimeoutAsync(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg});")
                             : method.HasCancellationToken
                                 ? SelectByTimeout(
                                     $"        await channel.InvokeCancellableOneWayClientStreamNoPayloadAsync(_interfaceHash, {method.Hash}L, streamSender, {cancellationTokenArg});",
@@ -196,8 +196,8 @@ public partial class RpcGenerator
                                     $"        await channel.InvokeCancellableOneWayClientStreamWithTimeoutNoPayloadAsync(_interfaceHash, {method.Hash}L, streamSender{timeoutArg}, {cancellationTokenArg});")
                                 : SelectByTimeout(
                                     $"        await channel.InvokeOneWayClientStreamNoPayloadAsync(_interfaceHash, {method.Hash}L, streamSender);",
-                                    $"        await channel.InvokeOneWayClientStreamWithDefaultTimeoutNoPayloadAsync(_interfaceHash, {method.Hash}L, streamSender);",
-                                    $"        await channel.InvokeOneWayClientStreamWithTimeoutNoPayloadAsync(_interfaceHash, {method.Hash}L, streamSender{timeoutArg});"));
+                                    $"        await channel.InvokeCancellableOneWayClientStreamWithDefaultTimeoutNoPayloadAsync(_interfaceHash, {method.Hash}L, streamSender);",
+                                    $"        await channel.InvokeCancellableOneWayClientStreamWithTimeoutNoPayloadAsync(_interfaceHash, {method.Hash}L, streamSender{timeoutArg});"));
                     }
                     else
                     {
@@ -209,8 +209,8 @@ public partial class RpcGenerator
                                     $"        await channel.InvokeCancellableOneWayWithTimeoutAsync(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg}, {cancellationTokenArg});")
                                 : SelectByTimeout(
                                     $"        await channel.InvokeOneWayAsync(_interfaceHash, {method.Hash}L, payloadWriter);",
-                                    $"        await channel.InvokeOneWayWithDefaultTimeoutAsync(_interfaceHash, {method.Hash}L, payloadWriter);",
-                                    $"        await channel.InvokeOneWayWithTimeoutAsync(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg});")
+                                    $"        await channel.InvokeCancellableOneWayWithDefaultTimeoutAsync(_interfaceHash, {method.Hash}L, payloadWriter);",
+                                    $"        await channel.InvokeCancellableOneWayWithTimeoutAsync(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg});")
                             : method.HasCancellationToken
                                 ? SelectByTimeout(
                                     $"        await channel.InvokeCancellableOneWayNoPayloadAsync(_interfaceHash, {method.Hash}L, {cancellationTokenArg});",
@@ -218,8 +218,8 @@ public partial class RpcGenerator
                                     $"        await channel.InvokeCancellableOneWayWithTimeoutNoPayloadAsync(_interfaceHash, {method.Hash}L{timeoutArg}, {cancellationTokenArg});")
                                 : SelectByTimeout(
                                     $"        await channel.InvokeOneWayNoPayloadAsync(_interfaceHash, {method.Hash}L);",
-                                    $"        await channel.InvokeOneWayWithDefaultTimeoutNoPayloadAsync(_interfaceHash, {method.Hash}L);",
-                                    $"        await channel.InvokeOneWayWithTimeoutNoPayloadAsync(_interfaceHash, {method.Hash}L{timeoutArg});"));
+                                    $"        await channel.InvokeCancellableOneWayWithDefaultTimeoutNoPayloadAsync(_interfaceHash, {method.Hash}L);",
+                                    $"        await channel.InvokeCancellableOneWayWithTimeoutNoPayloadAsync(_interfaceHash, {method.Hash}L{timeoutArg});"));
                     }
                 }
                 else
@@ -234,8 +234,8 @@ public partial class RpcGenerator
                                     $"        await channel.InvokeCancellableClientStreamNoReturnWithTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg}, {cancellationTokenArg});")
                                 : SelectByTimeout(
                                     $"        await channel.InvokeClientStreamNoReturnAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
-                                    $"        await channel.InvokeClientStreamNoReturnWithDefaultTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
-                                    $"        await channel.InvokeClientStreamNoReturnWithTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg});")
+                                    $"        await channel.InvokeCancellableClientStreamNoReturnWithDefaultTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
+                                    $"        await channel.InvokeCancellableClientStreamNoReturnWithTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg});")
                             : method.HasCancellationToken
                                 ? SelectByTimeout(
                                     $"        await channel.InvokeCancellableClientStreamNoReturnNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender, {cancellationTokenArg});",
@@ -243,8 +243,8 @@ public partial class RpcGenerator
                                     $"        await channel.InvokeCancellableClientStreamNoReturnWithTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender{timeoutArg}, {cancellationTokenArg});")
                                 : SelectByTimeout(
                                     $"        await channel.InvokeClientStreamNoReturnNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender);",
-                                    $"        await channel.InvokeClientStreamNoReturnWithDefaultTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender);",
-                                    $"        await channel.InvokeClientStreamNoReturnWithTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender{timeoutArg});"));
+                                    $"        await channel.InvokeCancellableClientStreamNoReturnWithDefaultTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender);",
+                                    $"        await channel.InvokeCancellableClientStreamNoReturnWithTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, streamSender{timeoutArg});"));
                     }
                     else
                     {
@@ -256,8 +256,8 @@ public partial class RpcGenerator
                                     $"        await channel.InvokeCancellableNoReturnWithTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg}, {cancellationTokenArg});")
                                 : SelectByTimeout(
                                     $"        await channel.InvokeNoReturnAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter);",
-                                    $"        await channel.InvokeNoReturnWithDefaultTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter);",
-                                    $"        await channel.InvokeNoReturnWithTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg});")
+                                    $"        await channel.InvokeCancellableNoReturnWithDefaultTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter);",
+                                    $"        await channel.InvokeCancellableNoReturnWithTimeoutAsync<byte>(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg});")
                             : method.HasCancellationToken
                                 ? SelectByTimeout(
                                     $"        await channel.InvokeCancellableNoReturnNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L, {cancellationTokenArg});",
@@ -265,8 +265,8 @@ public partial class RpcGenerator
                                     $"        await channel.InvokeCancellableNoReturnWithTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L{timeoutArg}, {cancellationTokenArg});")
                                 : SelectByTimeout(
                                     $"        await channel.InvokeNoReturnNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L);",
-                                    $"        await channel.InvokeNoReturnWithDefaultTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L);",
-                                    $"        await channel.InvokeNoReturnWithTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L{timeoutArg});"));
+                                    $"        await channel.InvokeCancellableNoReturnWithDefaultTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L);",
+                                    $"        await channel.InvokeCancellableNoReturnWithTimeoutNoPayloadAsync<byte>(_interfaceHash, {method.Hash}L{timeoutArg});"));
                     }
                 }
             }
@@ -282,8 +282,8 @@ public partial class RpcGenerator
                                 $"        return await channel.InvokeCancellableClientStreamWithTimeoutAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg}, {cancellationTokenArg});")
                             : SelectByTimeout(
                                 $"        return await channel.InvokeClientStreamAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
-                                $"        return await channel.InvokeClientStreamWithDefaultTimeoutAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
-                                $"        return await channel.InvokeClientStreamWithTimeoutAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg});")
+                                $"        return await channel.InvokeCancellableClientStreamWithDefaultTimeoutAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender);",
+                                $"        return await channel.InvokeCancellableClientStreamWithTimeoutAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, payloadWriter, streamSender{timeoutArg});")
                         : method.HasCancellationToken
                             ? SelectByTimeout(
                                 $"        return await channel.InvokeCancellableClientStreamNoPayloadAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, streamSender, {cancellationTokenArg});",
@@ -291,8 +291,8 @@ public partial class RpcGenerator
                                 $"        return await channel.InvokeCancellableClientStreamWithTimeoutNoPayloadAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, streamSender{timeoutArg}, {cancellationTokenArg});")
                             : SelectByTimeout(
                                 $"        return await channel.InvokeClientStreamNoPayloadAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, streamSender);",
-                                $"        return await channel.InvokeClientStreamWithDefaultTimeoutNoPayloadAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, streamSender);",
-                                $"        return await channel.InvokeClientStreamWithTimeoutNoPayloadAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, streamSender{timeoutArg});"));
+                                $"        return await channel.InvokeCancellableClientStreamWithDefaultTimeoutNoPayloadAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, streamSender);",
+                                $"        return await channel.InvokeCancellableClientStreamWithTimeoutNoPayloadAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, streamSender{timeoutArg});"));
                 }
                 else
                 {
@@ -304,8 +304,8 @@ public partial class RpcGenerator
                                 $"        return await channel.InvokeCancellableWithTimeoutAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg}, {cancellationTokenArg});")
                             : SelectByTimeout(
                                 $"        return await channel.InvokeAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, payloadWriter);",
-                                $"        return await channel.InvokeWithDefaultTimeoutAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, payloadWriter);",
-                                $"        return await channel.InvokeWithTimeoutAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg});")
+                                $"        return await channel.InvokeCancellableWithDefaultTimeoutAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, payloadWriter);",
+                                $"        return await channel.InvokeCancellableWithTimeoutAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, payloadWriter{timeoutArg});")
                         : method.HasCancellationToken
                             ? SelectByTimeout(
                                 $"        return await channel.InvokeCancellableNoPayloadAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L, {cancellationTokenArg});",
@@ -313,8 +313,8 @@ public partial class RpcGenerator
                                 $"        return await channel.InvokeCancellableWithTimeoutNoPayloadAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L{timeoutArg}, {cancellationTokenArg});")
                             : SelectByTimeout(
                                 $"        return await channel.InvokeNoPayloadAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L);",
-                                $"        return await channel.InvokeWithDefaultTimeoutNoPayloadAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L);",
-                                $"        return await channel.InvokeWithTimeoutNoPayloadAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L{timeoutArg});"));
+                                $"        return await channel.InvokeCancellableWithDefaultTimeoutNoPayloadAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L);",
+                                $"        return await channel.InvokeCancellableWithTimeoutNoPayloadAsync<{method.GenericArgumentType}>(_interfaceHash, {method.Hash}L{timeoutArg});"));
                 }
             }
 
