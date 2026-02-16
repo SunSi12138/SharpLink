@@ -9,7 +9,7 @@ internal sealed partial class SharpLinkServer
         while (!ct.IsCancellationRequested)
         {
             var session = await transport.ConnectAsync(serializer,ct);
-            ReplaceSession(session);
+            await ReplaceSessionAsync(session);
             _ = HandleSessionLifecycleAsync(session, ct);
         }
     }
@@ -60,21 +60,22 @@ internal sealed partial class SharpLinkServer
         {
             if (hasConnected)
                 LogClientDisconnected(_logger);
-            DisconnectSession(session.Id);
+            await DisconnectSessionAsync(session.Id);
         }
     }
 
-    private void ReplaceSession(IRpcSession session)
+    private async ValueTask ReplaceSessionAsync(IRpcSession session)
     {
         if (_sessions.TryGetValue(session.Id, out var oldSession))
-            oldSession.Dispose();
+            await oldSession.DisposeAsync();
         _sessions[session.Id] = session;
     }
 
-    private void DisconnectSession(string sessionId)
+    private async ValueTask DisconnectSessionAsync(string sessionId)
     {
         _sessions.TryRemove(sessionId, out var rpcSession);
-        rpcSession?.Dispose();
+        if (rpcSession is not null)
+            await rpcSession.DisposeAsync();
     }
 
     private async Task HeartbeatCheckLoop(CancellationToken ct)
@@ -92,7 +93,7 @@ internal sealed partial class SharpLinkServer
                 LogClientHeartbeatTimeout(_logger);
                 
                 if(_sessions.TryRemove(id,out var oldSession))
-                    oldSession.Dispose();
+                    await oldSession.DisposeAsync();
             }
         }
     }
@@ -191,7 +192,7 @@ internal sealed partial class SharpLinkServer
                             case PacketType.RpcResponse:
                             default:
                             {
-                                session.Dispose();
+                                await session.DisposeAsync();
                                 break;
                             }
                         }

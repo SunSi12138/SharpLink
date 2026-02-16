@@ -59,21 +59,22 @@ public sealed partial class RpcSession : IRpcSession
         _pump.Enqueue(packet);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, true))
             return;
 
         _cts.Cancel();
 
-        // Drain queued packets and return buffers to pool.
+        // Stop accepting new packets and return queued buffers.
         _pump.Dispose();
+        await _pump.WaitForStopAsync().ConfigureAwait(false);
 
         try
         {
-            Output.Complete();
+            await Output.CompleteAsync().ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is ObjectDisposedException or IOException)
+        catch (Exception ex) when (ex is ObjectDisposedException or IOException or ArgumentNullException)
         {
             // Transport can be concurrently torn down during shutdown.
         }

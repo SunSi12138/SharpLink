@@ -126,7 +126,7 @@ internal sealed partial class SharpLinkClient
                         case PacketType.DisConnect:
                         case PacketType.Handshake:
                         default:
-                            session.Dispose();
+                            await session.DisposeAsync();
                             HandleDisconnected(new IOException("Received unexpected packet from server."));
                             break;
                     }
@@ -157,7 +157,7 @@ internal sealed partial class SharpLinkClient
 
             LogServerHeartbeatTimeout(_logger);
 
-            session.Dispose();
+            await session.DisposeAsync();
             HandleDisconnected(new IOException("Server heartbeat timeout."));
             break;
         }

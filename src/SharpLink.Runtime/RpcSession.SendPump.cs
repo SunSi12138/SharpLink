@@ -5,8 +5,10 @@ public sealed partial class RpcSession
     private sealed class SendPump(PipeWriter output, int flushSizeThreshold, TimeSpan maxLatency, CancellationTokenSource cts) : IDisposable
     {
         private readonly ConcurrentQueue<ArrayBufferWriter<byte>> _q = new();
+        private readonly TaskCompletionSource<bool> _stoppedTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         private int _wip;
+        private int _activeDrains;
         private bool _disposed;
 
         private readonly long _maxLatencyTicks = Math.Max(1L, (long)(maxLatency.TotalSeconds * Stopwatch.Frequency));
@@ -22,21 +24,18 @@ public sealed partial class RpcSession
             _q.Enqueue(packet);
 
             // 只有 0->1 时启动一次 drain
-            if (Interlocked.Increment(ref _wip) == 1)
+            if (Interlocked.Increment(ref _wip) != 1) return;
+            Interlocked.Increment(ref _activeDrains);
+            ThreadPool.UnsafeQueueUserWorkItem(static state =>
             {
-                // 关键：把 drain 放到线程池，避免在 Enqueue 线程同步跑 drain
-                ThreadPool.UnsafeQueueUserWorkItem(static state =>
-                {
-                    var self = (SendPump)state!;
-                    _ = self.DrainAsync();
-                }, this);
-            }
+                var self = (SendPump)state!;
+                _ = self.DrainAsync();
+            }, this);
         }
 
         private async Task DrainAsync()
         {
             var missed = 1;
-
             var bytesAccumulated = 0;
             var batchStart = Stopwatch.GetTimestamp();
 
@@ -46,6 +45,12 @@ public sealed partial class RpcSession
                 {
                     while (_q.TryDequeue(out var buffer))
                     {
+                        if (Volatile.Read(ref _disposed))
+                        {
+                            BufferWriterPool.Return(buffer);
+                            continue;
+                        }
+
                         var span = buffer.WrittenSpan;
                         if (!span.IsEmpty)
                         {
@@ -82,8 +87,9 @@ public sealed partial class RpcSession
 
                     if (bytesAccumulated > 0)
                     {
-                        var r = await output.FlushAsync(cts.Token).ConfigureAwait(false);
-                        if (r.IsCanceled || r.IsCompleted) return;
+                        var flush = await output.FlushAsync(cts.Token).ConfigureAwait(false);
+                        if (flush.IsCanceled || flush.IsCompleted)
+                            return;
 
                         bytesAccumulated = 0;
                         batchStart = Stopwatch.GetTimestamp();
@@ -99,6 +105,11 @@ public sealed partial class RpcSession
             catch (OperationCanceledException)
             {
             }
+            finally
+            {
+                if (Interlocked.Decrement(ref _activeDrains) == 0 && Volatile.Read(ref _disposed))
+                    _stoppedTcs.TrySetResult(true);
+            }
         }
 
         public void Dispose()
@@ -110,7 +121,11 @@ public sealed partial class RpcSession
             while (_q.TryDequeue(out var buf))
                 BufferWriterPool.Return(buf);
 
-            // 注意：_cts 由外层 RpcSession 管，别在这里 Dispose
+            if (Volatile.Read(ref _activeDrains) == 0)
+                _stoppedTcs.TrySetResult(true);
         }
+
+        public ValueTask WaitForStopAsync()
+            => _stoppedTcs.Task.IsCompletedSuccessfully ? ValueTask.CompletedTask : new ValueTask(_stoppedTcs.Task);
     }
 }

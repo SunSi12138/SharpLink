@@ -12,6 +12,17 @@
     <ProjectReference Include="..\..\src\SharpLink.Server\SharpLink.Server.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Sdk\SharpLink.Sdk.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Serializer.MemoryPack\SharpLink.Serializer.MemoryPack.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(PublishAot)' != 'true'">
     <ProjectReference Include="..\..\src\SharpLink.Generator\SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  
+  <ItemGroup Condition="'$(PublishAot)' == 'true'">
+    <Analyzer Include="..\..\src\SharpLink.Generator\bin\Release\netstandard2.0\SharpLink.Generator.dll" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <Folder Include="publish\" />
   </ItemGroup>
 </Project>

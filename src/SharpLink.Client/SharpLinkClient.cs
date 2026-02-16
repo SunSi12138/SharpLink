@@ -54,7 +54,7 @@ internal sealed partial class SharpLinkClient(ITransport transport, ISerializer 
         if (Interlocked.Exchange(ref _disposed, true))
             return;
 
-        _session?.Dispose();
+        _session?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         HandleDisconnected(new ObjectDisposedException(nameof(SharpLinkClient)));
         _requestTimeoutScheduler.Dispose();
         transport.Dispose();

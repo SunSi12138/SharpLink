@@ -202,6 +202,12 @@ public class SharpLinkClientCancellationTests
             _pipe.Reader.Complete();
             _sentPackets.Writer.TryComplete();
         }
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class NoopSerializer : ISerializer

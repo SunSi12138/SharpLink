@@ -1,6 +1,6 @@
 namespace SharpLink.Abstractions;
 
-public interface IRpcSession : IDisposable
+public interface IRpcSession : IAsyncDisposable
 {
     string Id { get; }
     DateTime LastActive { get; set; }
