@@ -114,6 +114,29 @@ public class RpcChannelCallShapeIntegrationTests
         Ensure((await CollectAsync(svc.DuplexCancellableTimeoutNoPayloadAsync(ToAsyncEnumerable([10]), CancellationToken.None), CancellationToken.None)).SequenceEqual([10]), "DuplexCancellableTimeoutNoPayloadAsync");
     }
 
+    [Test]
+    public async Task GeneratedProxyCancellableCallShouldThrowOperationCanceledException()
+    {
+        await using var harness = await CallShapeHarness.CreateAsync();
+        var svc = harness.Client.Get<ICallShapeService>();
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(120));
+
+        await EnsureThrows<OperationCanceledException>(
+            svc.UnaryWaitForCancellationAsync(cts.Token).AsTask(),
+            "UnaryWaitForCancellationAsync");
+    }
+
+    [Test]
+    public async Task GeneratedProxyTimeoutCallShouldThrowTimeoutException()
+    {
+        await using var harness = await CallShapeHarness.CreateAsync();
+        var svc = harness.Client.Get<ICallShapeService>();
+
+        await EnsureThrows<TimeoutException>(
+            svc.UnaryAlwaysSlowWithTimeoutAsync().AsTask(),
+            "UnaryAlwaysSlowWithTimeoutAsync");
+    }
+
     private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> stream, CancellationToken ct)
     {
         var list = new List<T>();
@@ -135,6 +158,18 @@ public class RpcChannelCallShapeIntegrationTests
     {
         if (!condition)
             throw new Exception($"assert failed: {name}");
+    }
+
+    private static async Task EnsureThrows<TException>(Task task, string name) where TException : Exception
+    {
+        try
+        {
+            await task;
+            throw new Exception($"assert failed: {name}, expected {typeof(TException).Name}");
+        }
+        catch (TException)
+        {
+        }
     }
 
     private static int GetFreePort()
@@ -245,6 +280,9 @@ public interface ICallShapeService : IService
     ValueTask<int> UnaryCancellableDefaultTimeoutAsync(int payload, CancellationToken cancellationToken = default);
     [Timeout(1)]
     ValueTask<int> UnaryCancellableTimeoutAsync(int payload, CancellationToken cancellationToken = default);
+    ValueTask<int> UnaryWaitForCancellationAsync(CancellationToken cancellationToken = default);
+    [Timeout(0.2)]
+    ValueTask<int> UnaryAlwaysSlowWithTimeoutAsync(CancellationToken cancellationToken = default);
 
     ValueTask VoidPayloadAsync(int payload);
     ValueTask VoidNoPayloadAsync();
@@ -440,6 +478,16 @@ public sealed class CallShapeService : ICallShapeService
     public ValueTask<int> UnaryCancellableNoPayloadAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult(111);
     public ValueTask<int> UnaryCancellableDefaultTimeoutAsync(int payload, CancellationToken cancellationToken = default) => ValueTask.FromResult(payload + 10);
     public ValueTask<int> UnaryCancellableTimeoutAsync(int payload, CancellationToken cancellationToken = default) => ValueTask.FromResult(payload + 10);
+    public async ValueTask<int> UnaryWaitForCancellationAsync(CancellationToken cancellationToken = default)
+    {
+        await Task.Delay(global::System.Threading.Timeout.InfiniteTimeSpan, cancellationToken);
+        return 0;
+    }
+    public async ValueTask<int> UnaryAlwaysSlowWithTimeoutAsync(CancellationToken cancellationToken = default)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(5), CancellationToken.None);
+        return 1;
+    }
 
     public ValueTask VoidPayloadAsync(int payload)
     {
