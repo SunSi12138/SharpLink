@@ -11,8 +11,10 @@ public static class TransportExtensions
         public SharpLinkServerBuilder UseNamedPipe(string name)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(name);
-            var pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-            return builder.UseTransport(new NamedPipeTransport(serverStream: pipe));
+            return builder.UseTransport(new NamedPipeTransport(
+                name,
+                isServer: true,
+                maxServerInstances: NamedPipeServerStream.MaxAllowedServerInstances));
         }
 
         public SharpLinkServerBuilder UseTcp(int port, string ip = "0.0.0.0", int backlog = 512)

@@ -1,5 +1,3 @@
-using PipeOptions = System.IO.Pipes.PipeOptions;
-
 namespace SharpLink.Client;
 
 public static class TransportExtensions
@@ -9,8 +7,7 @@ public static class TransportExtensions
         public SharpClientBuilder UseNamedPipe(string name)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(name);
-            var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
-            return builder.UseTransport(new NamedPipeTransport(clientStream: pipe));
+            return builder.UseTransport(new NamedPipeTransport(name, isServer: false));
         }
 
         public SharpClientBuilder UseTcp(string ip, int port)
