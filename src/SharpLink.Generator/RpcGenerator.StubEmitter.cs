@@ -161,9 +161,7 @@ public partial class RpcGenerator
 
             foreach (var p in streamParams)
             {
-                sb.AppendLine($"                var dispatcher_{p.Name} = SharpLink.Runtime.PooledAsyncStreamDispatcher<{p.StreamItemType}>.Rent(session.Serializer, cancellationToken);");
-                sb.AppendLine($"                session.StreamManager.Register(requestId, (sbyte){streamId}, dispatcher_{p.Name});");
-                streamId++;
+                sb.AppendLine($"                SharpLink.Runtime.PooledAsyncStreamDispatcher<{p.StreamItemType}> dispatcher_{p.Name};");
             }
 
             foreach (var p in method.Parameters.Where(p => !p.IsStream))
@@ -208,6 +206,15 @@ public partial class RpcGenerator
                 }
 
                 sb.AppendLine($"                reader.Advance(len_{p.Name});");
+            }
+
+            sb.AppendLine("                if (reader.Remaining != 0) throw new InvalidDataException();");
+
+            foreach (var p in streamParams)
+            {
+                sb.AppendLine($"                dispatcher_{p.Name} = SharpLink.Runtime.PooledAsyncStreamDispatcher<{p.StreamItemType}>.Rent(session.Serializer, cancellationToken);");
+                sb.AppendLine($"                session.StreamManager.Register(requestId, (sbyte){streamId}, dispatcher_{p.Name});");
+                streamId++;
             }
 
             var callArgs = string.Join(", ", method.Parameters.Select(p => p.IsStream ? $"dispatcher_{p.Name}" : $"arg_{p.Name}"));

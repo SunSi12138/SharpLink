@@ -44,9 +44,8 @@ public partial class RpcGenerator
             sb.AppendLine("    {");
             if (payloadParams.Count > 0)
             {
-                sb.AppendLine("        Action<IBufferWriter<byte>> payloadWriter = (ibw) =>");
+                sb.AppendLine("        Action<ArrayBufferWriter<byte>> payloadWriter = (writer) =>");
                 sb.AppendLine("        {");
-                sb.AppendLine("            var writer = (ArrayBufferWriter<byte>)ibw;");
 
                 if (blittablePayloadParams.Count > 0)
                 {
