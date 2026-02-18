@@ -1,0 +1,13 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Runtime\SharpLink.Runtime.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Client\SharpLink.Client.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Server\SharpLink.Server.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Serializer.MemoryPack\SharpLink.Serializer.MemoryPack.csproj" />
+  </ItemGroup>
+</Project>

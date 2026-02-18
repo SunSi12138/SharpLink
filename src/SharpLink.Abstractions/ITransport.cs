@@ -4,5 +4,5 @@ namespace SharpLink.Abstractions;
 /// </summary>
 public interface ITransport : IDisposable
 {
-    Task<IRpcSession> ConnectAsync(ISerializer serializer,CancellationToken ct=default);
+    Task<IRpcSession> ConnectAsync(CancellationToken ct=default);
 }

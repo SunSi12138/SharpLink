@@ -1,5 +1,4 @@
 
-
 using System.IO;
 
 namespace SharpLink.Server;
@@ -11,11 +10,11 @@ public static class TransportExtensions
         public SharpLinkServerBuilder UseNamedPipe(string name)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(name);
-            var pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-            return builder.UseTransport(new NamedPipeTransport(serverStream: pipe));
+            return builder.UseTransport(new NamedPipeTransport(
+                name,
+                isServer: true,
+                maxServerInstances: NamedPipeServerStream.MaxAllowedServerInstances));
         }
-
-        public SharpLinkServerBuilder UserNamedPipe(string name) => builder.UseNamedPipe(name);
 
         public SharpLinkServerBuilder UseTcp(int port, string ip = "0.0.0.0", int backlog = 512)
         {
@@ -45,11 +44,13 @@ public static class TransportExtensions
             return builder.UseTransport(new SocketTransport(socket));
         }
 
-        public SharpLinkServerBuilder UseAnonymousPipe(PipeStream input, PipeStream output)
+        public SharpLinkServerBuilder UseAnonymousPipe(
+            Func<AnonymousPipeOffer, CancellationToken, ValueTask> onOffer,
+            TimeSpan? offerTimeout = null)
         {
-            ArgumentNullException.ThrowIfNull(input);
-            ArgumentNullException.ThrowIfNull(output);
-            return builder.UseTransport(new AnonymousPipeTransport(input, output));
+            ArgumentNullException.ThrowIfNull(onOffer);
+            return builder.UseTransport(new AnonymousPipeTransport(onOffer, offerTimeout));
         }
+
     }
 }

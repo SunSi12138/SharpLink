@@ -6,45 +6,29 @@ public class SharpClientBuilder
     
     
     private ITransport? _transport;
-    private readonly SharpLinkLoggingOptions _logging = new();
+    private ILoggerFactory? _loggerFactory;
 
     public SharpClientBuilder UseTransport(ITransport transport)
     {
         _transport = transport;
         return this;
     }
-    private ISerializer? _serializer;
+    private Func<Type,IRpcCodec?>? _codecResolver;
     private TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(10);
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
+    private TimeSpan? _requestTimeout;
+    private RpcSessionFlushOptions? _rpcSessionFlushOptions;
 
-    public SharpClientBuilder UseSerializer(ISerializer serializer)
+    public SharpClientBuilder UseSerializer(Func<Type,IRpcCodec?>? codecResolver)
     {
-        _serializer = serializer;
+        _codecResolver = codecResolver;
         return this;
     }
 
     public SharpClientBuilder UseLoggerFactory(ILoggerFactory loggerFactory)
     {
-        _logging.UseLoggerFactory(loggerFactory);
-        return this;
-    }
-
-    public SharpClientBuilder UseLogger(ILogger logger)
-    {
-        _logging.UseLogger(logger);
-        return this;
-    }
-
-    public SharpClientBuilder UseMinimumLogLevel(LogLevel minimumLogLevel)
-    {
-        _logging.UseMinimumLogLevel(minimumLogLevel);
-        return this;
-    }
-
-    public SharpClientBuilder UseLogging(Action<SharpLinkLoggingOptions> configure)
-    {
-        ArgumentNullException.ThrowIfNull(configure);
-        configure(_logging);
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+        _loggerFactory = loggerFactory;
         return this;
     }
 
@@ -54,8 +38,17 @@ public class SharpClientBuilder
         return this;
     }
 
+    public SharpClientBuilder UseStateStoreConcurrency(Action<RuntimeConcurrencyOptions> configure)
+    {
+        RuntimeConcurrency.Configure(configure);
+        return this;
+    }
+
     public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
-        => _logging.UseLoggerFactoryIfUnset(loggerFactory);
+    {
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+        _loggerFactory ??= loggerFactory;
+    }
 
     public SharpClientBuilder UseHeartbeat(TimeSpan interval, TimeSpan timeout)
     {
@@ -88,21 +81,54 @@ public class SharpClientBuilder
         _heartbeatTimeout = timeout;
         return this;
     }
+
+    public SharpClientBuilder UseRequestTimeout(TimeSpan timeout)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        _requestTimeout = timeout;
+        return this;
+    }
+
+    public SharpClientBuilder DisableRequestTimeout()
+    {
+        _requestTimeout = null;
+        return this;
+    }
+
+    public SharpClientBuilder UseRpcSessionFlush(int flushSizeThreshold, TimeSpan maxLatency)
+    {
+        _rpcSessionFlushOptions = RpcSessionFlushOptions.Create(flushSizeThreshold, maxLatency);
+        return this;
+    }
     
-    public ISharpLinkClient Build(string pipeName = "SharpLinkPipe")
+    public ISharpLinkClient Build()
     {
         if (_transport == null)
             throw new InvalidOperationException("Transport must be set before building the server.");
+
+        if (_rpcSessionFlushOptions is not { } flushOptions)
+            return new SharpLinkClient(
+                _transport,
+                _heartbeatInterval,
+                _heartbeatTimeout,
+                _loggerFactory ?? NullLoggerFactory.Instance,
+                _requestTimeout
+            );
         
-        if (_serializer == null)
-            throw new InvalidOperationException("Serializer must be set before building the server.");
+        if (_transport is not IRpcSessionFlushConfigurableTransport configurableTransport)
+            throw new InvalidOperationException("Configured RPC session flush options, but transport does not support flush configuration.");
+
+        if(_codecResolver is not null)
+            RpcCodecRegistry.Initialize(_codecResolver);
         
+        configurableTransport.ConfigureRpcSessionFlush(flushOptions);
+
         return new SharpLinkClient(
             _transport,
-            _serializer,
             _heartbeatInterval,
             _heartbeatTimeout,
-            _logging
+            _loggerFactory ?? NullLoggerFactory.Instance,
+            _requestTimeout
         );
     }
 }

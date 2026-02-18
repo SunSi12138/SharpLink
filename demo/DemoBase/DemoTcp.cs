@@ -18,7 +18,7 @@ public static class DemoTcp
         var builder = SharpLinkServerBuilder.Create()
             .AddService<TInterface, TService>()
             .UseTcp(port, IPAddress.Loopback.ToString())
-            .UseSerializer(new MemoryPackSerializerAdaptor());
+            .UseSerializer(MemoryPackCodec.Resolver);
 
         configure?.Invoke(builder);
         return builder.Build();
@@ -30,7 +30,7 @@ public static class DemoTcp
     {
         var builder = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(new MemoryPackSerializerAdaptor());
+            .UseSerializer(MemoryPackCodec.Resolver);
 
         configure?.Invoke(builder);
         return builder.Build();

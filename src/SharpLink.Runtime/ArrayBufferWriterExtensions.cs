@@ -4,6 +4,7 @@ namespace SharpLink.Runtime;
 
 public static class ArrayBufferWriterExtensions
 {
+
     extension(ArrayBufferWriter<byte> writer)
     {
         private PacketToken WriteHeaderCore(PacketType packetType, PacketFlags flags, long requestId)
@@ -49,15 +50,15 @@ public static class ArrayBufferWriterExtensions
 
     extension(IBufferWriter<byte> writer)
     {
-        public void WriteUtf8String(string value)
+        public void WriteUtf8String(string? value)
         {
             if (string.IsNullOrEmpty(value))
                 return;
 
             var maxLen = Encoding.UTF8.GetMaxByteCount(value.Length);
             var span = writer.GetSpan(maxLen);
-            var written = Encoding.UTF8.GetBytes(value, span);
-            writer.Advance(written);
+            var longWritten = Encoding.UTF8.GetBytes(value, span);
+            writer.Advance(longWritten);
         }
     }
 }

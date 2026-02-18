@@ -38,7 +38,7 @@ public class PacketHelperTests
             var ok = PacketHelper.TryReadMessage(ref seq, out var header, out _);
 
             Ensure(ok, "decode cancellable packet");
-            Ensure(header.Flags.HasFlag(PacketFlags.IsCancellable), "cancellable flag");
+            Ensure((header.Flags&PacketFlags.IsCancellable)!=0, "cancellable flag");
         }
         finally
         {

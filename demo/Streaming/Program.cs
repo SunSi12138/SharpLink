@@ -1,9 +1,12 @@
 using DemoBase;
 using SharpLink.Sdk;
 using MemoryPack;
+using SharpLink.Runtime;
 
 var port = DemoStream.GetFreePort();
 using var cts = new CancellationTokenSource();
+
+RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
 
 var server = DemoTcp.CreateServer<IStreamingService, StreamingService>(port);
 var serverTask = DemoTcp.StartServerAsync(server, cts.Token);
@@ -21,7 +24,7 @@ try
     var labels = await DemoStream.CollectAsync(streamService.DownloadLabels(3), cts.Token);
     Console.WriteLine($"2) Server->Client stream values = [{string.Join(", ", labels)}]");
 
-    var duplex = await DemoStream.CollectAsync(streamService.Chat(DemoStream.ToAsyncEnumerable(new[] { "a", "b", "c" }, cancellationToken: cts.Token)), cts.Token);
+    var duplex = await DemoStream.CollectAsync(streamService.Chat(DemoStream.ToAsyncEnumerable(["a", "b", "c"], cancellationToken: cts.Token)), cts.Token);
     Console.WriteLine($"3) Bidirectional stream values = [{string.Join(", ", duplex)}]");
 
     var multiSum = await streamService.MergeSums(
@@ -32,42 +35,37 @@ try
     var mixed = await streamService.ScaleAndSum(3, DemoStream.ToAsyncEnumerable([2, 4, 6], cancellationToken: cts.Token));
     Console.WriteLine($"5) Mixed (scalar + stream) result = {mixed}");
 
-    var classSum = await streamService.UploadClassItems(DemoStream.ToAsyncEnumerable(new[]
-    {
+    var classSum = await streamService.UploadClassItems(DemoStream.ToAsyncEnumerable([
         new BatchEnvelope { BatchId = 1, Source = "A", Values = [1, 2, 3] },
         new BatchEnvelope { BatchId = 2, Source = "B", Values = [4, 5] }
-    }, cancellationToken: cts.Token));
+    ], cancellationToken: cts.Token));
     Console.WriteLine($"6) Class stream sum = {classSum}");
 
     var tupleItems = await DemoStream.CollectAsync(streamService.DownloadTupleItems(3), cts.Token);
     Console.WriteLine($"7) ValueTuple stream values = [{string.Join(", ", tupleItems.Select(x => $"({x.Index},{x.Label})"))}]");
 
-    var structSum = await streamService.UploadStructPoints(DemoStream.ToAsyncEnumerable(new[]
-    {
+    var structSum = await streamService.UploadStructPoints(DemoStream.ToAsyncEnumerable([
         new SamplePoint { X = 2, Y = 3 },
         new SamplePoint { X = 4, Y = 5 }
-    }, cancellationToken: cts.Token));
+    ], cancellationToken: cts.Token));
     Console.WriteLine($"8) Struct stream sum = {structSum}");
 
-    var arrayBatchSum = await streamService.SumArrayBatches(DemoStream.ToAsyncEnumerable(new[]
-    {
+    var arrayBatchSum = await streamService.SumArrayBatches(DemoStream.ToAsyncEnumerable([
         new[] { 1, 2, 3 },
-        new[] { 4, 5, 6 }
-    }, cancellationToken: cts.Token));
+        [4, 5, 6]
+    ], cancellationToken: cts.Token));
     Console.WriteLine($"9) Array batch stream sum = {arrayBatchSum}");
 
-    var listBatchSum = await streamService.SumListBatches(DemoStream.ToAsyncEnumerable(new[]
-    {
+    var listBatchSum = await streamService.SumListBatches(DemoStream.ToAsyncEnumerable([
         new List<int> { 1, 3, 5 },
-        new List<int> { 2, 4, 6 }
-    }, cancellationToken: cts.Token));
+        [2, 4, 6]
+    ], cancellationToken: cts.Token));
     Console.WriteLine($"10) List batch stream sum = {listBatchSum}");
 
-    var memoryBatchSum = await streamService.SumMemoryBatches(DemoStream.ToAsyncEnumerable(new[]
-    {
+    var memoryBatchSum = await streamService.SumMemoryBatches(DemoStream.ToAsyncEnumerable([
         new Memory<byte>([1, 2, 3]),
         new Memory<byte>([4, 5, 6])
-    }, cancellationToken: cts.Token));
+    ], cancellationToken: cts.Token));
     Console.WriteLine($"11) Memory batch stream sum = {memoryBatchSum}");
 }
 finally
@@ -230,6 +228,6 @@ public partial class BatchEnvelope
 [MemoryPackable]
 public partial struct SamplePoint
 {
-    public int X { get; set; }
-    public int Y { get; set; }
+    public int X { get; init; }
+    public int Y { get; init; }
 }

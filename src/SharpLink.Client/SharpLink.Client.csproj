@@ -3,4 +3,7 @@
       <ProjectReference Include="..\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
       <ProjectReference Include="..\SharpLink.Runtime\SharpLink.Runtime.csproj" />
     </ItemGroup>
+    <ItemGroup>
+      <InternalsVisibleTo Include="SharpLink.UnitTests" />
+    </ItemGroup>
 </Project>

@@ -1,12 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Client\SharpLink.Client.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Hosting\SharpLink.Hosting.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Runtime\SharpLink.Runtime.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Server\SharpLink.Server.csproj" />
   </ItemGroup>
 
   <ItemGroup>

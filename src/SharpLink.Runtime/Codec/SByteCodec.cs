@@ -1,0 +1,61 @@
+namespace SharpLink.Runtime;
+
+internal sealed class SByteCodec : IRpcCodec<sbyte>
+{
+    internal static readonly SByteCodec Instance = new();
+    private const int Size = 1;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Serialize(in sbyte value, in ArrayBufferWriter<byte> writer)
+    {
+        Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
+        writer.Advance(Size);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public sbyte Deserialize(in ReadOnlySequence<byte> buffer)
+    {
+        return Unsafe.ReadUnaligned<sbyte>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
+    }
+}
+
+internal sealed class NullableSByteCodec : IRpcCodec<sbyte?>
+{
+    internal static readonly NullableSByteCodec Instance = new();
+    private const int Size = 2; // 1 Tag + 1 Value
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Serialize(in sbyte? value, in ArrayBufferWriter<byte> writer)
+    {
+        ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
+
+        if (value.HasValue)
+        {
+            start = 1;
+            Unsafe.Add(ref start, 1) = (byte)value.GetValueOrDefault();
+        }
+        else
+        {
+            Unsafe.WriteUnaligned(ref start, (ushort)0);
+        }
+        writer.Advance(Size);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public sbyte? Deserialize(in ReadOnlySequence<byte> buffer)
+    {
+        if (buffer.FirstSpan.Length >= Size)
+        {
+            ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
+            if (start == 0) return null;
+            return (sbyte)Unsafe.Add(ref start, 1);
+        }
+
+        Span<byte> temp = stackalloc byte[Size];
+        buffer.CopyTo(temp);
+        ref var tempStart = ref MemoryMarshal.GetReference(temp);
+        
+        if (tempStart == 0) return null;
+        return (sbyte)Unsafe.Add(ref tempStart, 1);
+    }
+}

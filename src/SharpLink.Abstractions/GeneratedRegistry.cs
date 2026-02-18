@@ -2,20 +2,20 @@ namespace SharpLink.Abstractions;
 
 public static class GeneratedProxyRegistry
 {
-    private static readonly ConcurrentDictionary<Type, Func<IRpcChannel, ISerializer, object>> Factories = new();
+    private static readonly ConcurrentDictionary<Type, Func<IRpcChannel, object>> Factories = new();
 
-    public static void Register(Type serviceInterfaceType, Func<IRpcChannel, ISerializer, object> factory)
+    public static void Register(Type serviceInterfaceType, Func<IRpcChannel, object> factory)
     {
         ArgumentNullException.ThrowIfNull(serviceInterfaceType);
         ArgumentNullException.ThrowIfNull(factory);
         Factories[serviceInterfaceType] = factory;
     }
 
-    public static bool TryCreate(Type serviceInterfaceType, IRpcChannel channel, ISerializer serializer, out object? proxy)
+    public static bool TryCreate(Type serviceInterfaceType, IRpcChannel channel, out object? proxy)
     {
         if (Factories.TryGetValue(serviceInterfaceType, out var factory))
         {
-            proxy = factory(channel, serializer);
+            proxy = factory(channel);
             return true;
         }
 

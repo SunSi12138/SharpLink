@@ -7,11 +7,8 @@ public static class TransportExtensions
         public SharpClientBuilder UseNamedPipe(string name)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(name);
-            var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
-            return builder.UseTransport(new NamedPipeTransport(clientStream: pipe));
+            return builder.UseTransport(new NamedPipeTransport(name, isServer: false));
         }
-
-        public SharpClientBuilder UserNamedPipe(string name) => builder.UseNamedPipe(name);
 
         public SharpClientBuilder UseTcp(string ip, int port)
         {
@@ -31,13 +28,16 @@ public static class TransportExtensions
             return builder.UseTransport(new SocketTransport(socket, endPoint));
         }
 
-        public SharpClientBuilder UseAnonymousPipe(string inHandle, string outHandle)
+        private SharpClientBuilder UseAnonymousPipe(string inHandle, string outHandle)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(inHandle);
             ArgumentException.ThrowIfNullOrWhiteSpace(outHandle);
-            var input = new AnonymousPipeClientStream(PipeDirection.In, inHandle);
-            var output = new AnonymousPipeClientStream(PipeDirection.Out, outHandle);
-            return builder.UseTransport(new AnonymousPipeTransport(input, output));
+            return builder.UseTransport(new AnonymousPipeTransport(inHandle, outHandle));
+        }
+
+        public SharpClientBuilder UseAnonymousPipe(AnonymousPipeOffer offer)
+        {
+            return builder.UseAnonymousPipe(offer.InHandle, offer.OutHandle);
         }
     }
 }

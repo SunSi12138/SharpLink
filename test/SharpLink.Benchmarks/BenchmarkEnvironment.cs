@@ -45,7 +45,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         var server = SharpLinkServerBuilder.Create()
             .AddService<IBenchmarkRpc, BenchmarkRpcService>()
             .UseTcp(port, IPAddress.Loopback.ToString())
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .Build();
 
         var shutdown = new CancellationTokenSource();
@@ -58,11 +58,11 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             catch (OperationCanceledException)
             {
             }
-        });
+        }, shutdown.Token);
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .Build();
 
         var connected = await client.ConnectAsync(shutdown.Token);
@@ -103,10 +103,10 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         IReadOnlyList<T> values,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        for (var i = 0; i < values.Count; i++)
+        foreach (var t in values)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            yield return values[i];
+            yield return t;
             await Task.CompletedTask;
         }
     }
