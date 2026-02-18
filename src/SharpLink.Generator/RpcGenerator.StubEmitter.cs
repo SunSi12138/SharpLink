@@ -1,5 +1,3 @@
-using System.Text.RegularExpressions;
-
 namespace SharpLink.Generator;
 
 public partial class RpcGenerator

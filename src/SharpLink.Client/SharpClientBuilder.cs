@@ -19,7 +19,7 @@ public class SharpClientBuilder
     private TimeSpan? _requestTimeout;
     private RpcSessionFlushOptions? _rpcSessionFlushOptions;
 
-    public SharpClientBuilder UseSerializer(Func<Type,IRpcCodec?> codecResolver)
+    public SharpClientBuilder UseSerializer(Func<Type,IRpcCodec?>? codecResolver)
     {
         _codecResolver = codecResolver;
         return this;

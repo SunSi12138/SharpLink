@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using MemoryPack;
 using SharpLink.Abstractions;
@@ -9,7 +10,7 @@ namespace SharpLink.Runtime;
 public abstract class MemoryPackCodec
 {   
     // ❌ AOT 環境
-    public static Func<Type,IRpcCodec?> Resolver=>RuntimeFeature.IsDynamicCodeSupported?Resolve:_=>null;
+    public static Func<Type,IRpcCodec?>? Resolver=>RuntimeFeature.IsDynamicCodeSupported?Resolve:null;
     
     private static IRpcCodec Resolve(Type type)
     {
@@ -23,7 +24,7 @@ public abstract class MemoryPackCodec
 /// Serializer 兜底适配
 /// </summary>
 /// <typeparam name="T"></typeparam>
-public sealed class MemoryPackCodec<T> : IRpcCodec<T>
+public sealed class MemoryPackCodec<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)]T> : IRpcCodec<T>
 {
     public static readonly MemoryPackCodec<T> Instance = new();
     private MemoryPackCodec(){}

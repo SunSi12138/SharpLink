@@ -18,7 +18,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
-    public SharpLinkServerBuilder UseSerializer(Func<Type,IRpcCodec?> codecResolver)
+    public SharpLinkServerBuilder UseSerializer(Func<Type,IRpcCodec?>? codecResolver)
     {
         _codecResolver = codecResolver;
         return this;

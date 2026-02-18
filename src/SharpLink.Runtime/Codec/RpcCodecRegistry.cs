@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace SharpLink.Runtime;
 
 public static class RpcCodecRegistry
@@ -7,6 +9,7 @@ public static class RpcCodecRegistry
     static RpcCodecRegistry()
     {
         RegisterBuiltinCodec();
+        RegisterBuiltinArrayCodec();
     }
     
     public static void Register<T>(IRpcCodec<T> codec)
@@ -16,7 +19,7 @@ public static class RpcCodecRegistry
         RpcCodec<T>.Codec = codec;
     }
     public static void Initialize(){}
-    public static void Initialize(Func<Type,IRpcCodec?> codecResolver) => _codecResolver = codecResolver;
+    public static void Initialize(Func<Type,IRpcCodec?>? codecResolver) => _codecResolver = codecResolver;
     internal static IRpcCodec<T> Create<T>()
     {
         if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
@@ -24,16 +27,15 @@ public static class RpcCodecRegistry
             return UnsafeBlitCodec<T>.Instance;
         }
         
+
+        //JIT模式使用Resolver
+        var codec =  _codecResolver?.Invoke(typeof(T));
+        if(codec != null) return (IRpcCodec<T>)codec;
         
-        if (_codecResolver is null)
-            throw new InvalidOperationException($"No codec registered for {typeof(T)} and no DefaultCodecResolver set.");
-        
-        var codec =  _codecResolver(typeof(T));
-        
-        if(codec is null)
-            throw new NotSupportedException($"No codec found for type {typeof(T)}");
-        
-        return codec as IRpcCodec<T> ?? throw new InvalidOperationException($"Default provider returned wrong type for {typeof(T)}");
+        //AOT 模式：必须手动注册
+        throw new NotSupportedException(
+            $"Codec for '{typeof(T).Name}' not found. " +
+            $"In NativeAOT, you must explicitly register types using RpcCodecRegistry.Register<T>().");
     }
 
 
@@ -71,6 +73,31 @@ public static class RpcCodecRegistry
         Register(TimeSpanCodec.Instance);       Register(NullableTimeSpanCodec.Instance);
         
         Register(StringCodec.Instance);
-        
+    }
+
+    private static void RegisterBuiltinArrayCodec()
+    {
+        RegisterBlitArray<bool>();             RegisterBlitArray<byte>();
+        RegisterBlitArray<sbyte>();            RegisterBlitArray<short>();
+        RegisterBlitArray<ushort>();           RegisterBlitArray<char>();
+        RegisterBlitArray<Half>();             RegisterBlitArray<int>();
+        RegisterBlitArray<uint>();             RegisterBlitArray<float>();
+        RegisterBlitArray<Rune>();             RegisterBlitArray<long>();
+        RegisterBlitArray<ulong>();            RegisterBlitArray<double>();
+        RegisterBlitArray<Guid>();             RegisterBlitArray<decimal>();
+        RegisterBlitArray<DateTimeOffset>();   RegisterBlitArray<DateTime>();         
+        RegisterBlitArray<DateOnly>();         RegisterBlitArray<TimeOnly>();
+        RegisterBlitArray<TimeSpan>(); 
+        RegisterBlitArray<Int128>();           RegisterBlitArray<UInt128>(); 
+        RegisterBlitArray<Index>();            RegisterBlitArray<Range>();
+    }
+
+    public static void RegisterBlitArray<T>() where T : unmanaged
+    {
+        Register(BlitArrayCodec<T>.Instance);
+        Register(BlitImmutableArrayCodec<T>.Instance);
+        Register(BlitListCodec<T>.Instance);
+        Register(BlitMemoryCodec<T>.Instance);
+        Register(BlitReadOnlyMemoryCodec<T>.Instance);
     }
 }
