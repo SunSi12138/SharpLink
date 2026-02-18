@@ -45,13 +45,13 @@ public sealed class AnonymousPipeTransport : ITransport, IRpcSessionFlushConfigu
         _offerTimeout = offerTimeout ?? Timeout.InfiniteTimeSpan;
     }
 
-    public async Task<IRpcSession> ConnectAsync(ISerializer serializer, CancellationToken ct = default)
+    public async Task<IRpcSession> ConnectAsync(CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         return _mode switch
         {
-            Mode.ClientHandles => ConnectClient(serializer),
-            Mode.ServerOffer => await ConnectServerAsync(serializer, ct),
+            Mode.ClientHandles => ConnectClient(),
+            Mode.ServerOffer => await ConnectServerAsync(ct),
             _ => throw new InvalidOperationException("Unknown anonymous pipe mode.")
         };
     }
@@ -87,15 +87,15 @@ public sealed class AnonymousPipeTransport : ITransport, IRpcSessionFlushConfigu
 
     }
 
-    private IRpcSession ConnectClient(ISerializer serializer)
+    private IRpcSession ConnectClient()
     {
         var input = new AnonymousPipeClientStream(PipeDirection.In, _inHandle!);
         var output = new AnonymousPipeClientStream(PipeDirection.Out, _outHandle!);
         RegisterStreams(input, output);
-        return CreateSession(serializer, input, output);
+        return CreateSession(input, output);
     }
 
-    private async Task<IRpcSession> ConnectServerAsync(ISerializer serializer, CancellationToken ct)
+    private async Task<IRpcSession> ConnectServerAsync(CancellationToken ct)
     {
         var input = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable);
         var output = new AnonymousPipeServerStream(PipeDirection.Out, HandleInheritability.Inheritable);
@@ -113,7 +113,7 @@ public sealed class AnonymousPipeTransport : ITransport, IRpcSessionFlushConfigu
             await WaitForConnectedAsync(input, output, ct);
 
             RegisterStreams(input, output);
-            return CreateSession(serializer, input, output);
+            return CreateSession(input, output);
         }
         catch
         {
@@ -162,13 +162,12 @@ public sealed class AnonymousPipeTransport : ITransport, IRpcSessionFlushConfigu
         }
     }
 
-    private IRpcSession CreateSession(ISerializer serializer, PipeStream input, PipeStream output)
+    private RpcSession CreateSession(PipeStream input, PipeStream output)
     {
         return new RpcSession(
             Guid.NewGuid().ToString("N"),
             PipeReader.Create(input),
             PipeWriter.Create(output),
-            serializer,
             () => ReleaseStreams(input, output),
             () => !_disposed && input.IsConnected && output.IsConnected,
             _rpcSessionFlushOptions);

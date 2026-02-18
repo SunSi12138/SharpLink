@@ -12,8 +12,7 @@ public class SharpLinkServerHostedServiceTests
     {
         var transport = new BlockingTransport();
         var builder = SharpLinkServerBuilder.Create()
-            .UseTransport(transport)
-            .UseSerializer(new NoopSerializer());
+            .UseTransport(transport);
         var hosted = new SharpLinkServerHostedService(builder, NullLoggerFactory.Instance);
 
         await hosted.StartAsync(CancellationToken.None);
@@ -34,7 +33,7 @@ public class SharpLinkServerHostedServiceTests
         private int _disposed;
         public bool DisposeCalled => Volatile.Read(ref _disposed) == 1;
 
-        public async Task<IRpcSession> ConnectAsync(ISerializer serializer, CancellationToken ct = default)
+        public async Task<IRpcSession> ConnectAsync(CancellationToken ct = default)
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, ct);
             throw new InvalidOperationException("unreachable");
@@ -44,14 +43,5 @@ public class SharpLinkServerHostedServiceTests
         {
             Interlocked.Exchange(ref _disposed, 1);
         }
-    }
-
-    private sealed class NoopSerializer : ISerializer
-    {
-        public void Serialize<T>(in T value, IBufferWriter<byte> writer)
-        {
-        }
-
-        public T? Deserialize<T>(ref ReadOnlySequence<byte> sequence) => default;
     }
 }

@@ -33,10 +33,10 @@ internal class RequestManager
 
     }
 
-    public bool Dispatch(long id, ref ReadOnlySequence<byte> payload, ISerializer serializer)
+    public bool Dispatch(long id, ref ReadOnlySequence<byte> payload)
     {
         if (!TryTakeMatchingOperation(id, out var op)) return false;
-        op!.SetResult(ref payload, serializer);
+        op!.SetResult(ref payload);
         return true;
 
     }

@@ -2,7 +2,6 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer(
     ITransport transport,
-    ISerializer serializer,
     FrozenDictionary<long, (IRpcStub stub,object service)> services,
     TimeSpan heartbeatCheckInterval,
     TimeSpan heartbeatTimeout,

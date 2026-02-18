@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace SharpLink.Generator;
 
 public partial class RpcGenerator
@@ -29,16 +31,16 @@ public partial class RpcGenerator
                         """);
         AppendSizeFieldsByType(sb, model.Interface.Methods);
         sb.AppendLine($$"""
-                            private static async ValueTask __AwaitTaskResultAsync<T>(Task<T> task, IRpcSession session, IBufferWriter<byte> output)
+                            private static async ValueTask __AwaitTaskResultAsync<T>(Task<T> task, IRpcSession session, ArrayBufferWriter<byte> output)
                             {
                                 var result = await task.ConfigureAwait(false);
-                                session.Serializer.Serialize(result, output);
+                                SharpLink.Runtime.RpcCodec.Serialize(result, output);
                             }
 
-                            private static async ValueTask __AwaitValueTaskResultAsync<T>(ValueTask<T> task, IRpcSession session, IBufferWriter<byte> output)
+                            private static async ValueTask __AwaitValueTaskResultAsync<T>(ValueTask<T> task, IRpcSession session, ArrayBufferWriter<byte> output)
                             {
                                 var result = await task.ConfigureAwait(false);
-                                session.Serializer.Serialize(result, output);
+                                SharpLink.Runtime.RpcCodec.Serialize(result, output);
                             }
 
                             private static async ValueTask __AwaitTaskIgnoreAsync<T>(Task<T> task)
@@ -101,13 +103,13 @@ public partial class RpcGenerator
         }
 
         sb.AppendLine($$"""
-                            public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
+                            public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, ArrayBufferWriter<byte> output)
                                 => InvokeCoreAsync(service, session, methodHash, requestId, args, output, CancellationToken.None);
 
-                            public ValueTask InvokeCancellableAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+                            public ValueTask InvokeCancellableAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, ArrayBufferWriter<byte> output, CancellationToken cancellationToken)
                                 => InvokeCoreAsync(service, session, methodHash, requestId, args, output, cancellationToken);
 
-                            private ValueTask InvokeCoreAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+                            private ValueTask InvokeCoreAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, ArrayBufferWriter<byte> output, CancellationToken cancellationToken)
                             {
                                 var impl = ({{model.Interface.FullName}})service;
                                 var reader = new SequenceReader<byte>(args);
@@ -180,13 +182,13 @@ public partial class RpcGenerator
                 sb.AppendLine($"                if (reader.Remaining < {sizeToken}) throw new InvalidDataException();");
                 sb.AppendLine($"                if (reader.UnreadSpan.Length >= {sizeToken})");
                 sb.AppendLine("                {");
-                sb.AppendLine($"                    arg_{p.Name} = System.Runtime.CompilerServices.Unsafe.ReadUnaligned<{p.Type}>(ref System.Runtime.InteropServices.MemoryMarshal.GetReference(reader.UnreadSpan));");
+                sb.AppendLine($"                    arg_{p.Name} = System.Runtime.CompilerServices.Unsafe.ReadUnaligned<{p.Type}>(in System.Runtime.InteropServices.MemoryMarshal.GetReference(reader.UnreadSpan));");
                 sb.AppendLine("                }");
                 sb.AppendLine("                else");
                 sb.AppendLine("                {");
                 sb.AppendLine($"                    byte[] tmp_{p.Name} = new byte[{sizeToken}];");
                 sb.AppendLine($"                    if (!reader.TryCopyTo(tmp_{p.Name})) throw new InvalidDataException();");
-                sb.AppendLine($"                    arg_{p.Name} = System.Runtime.CompilerServices.Unsafe.ReadUnaligned<{p.Type}>(ref tmp_{p.Name}[0]);");
+                sb.AppendLine($"                    arg_{p.Name} = System.Runtime.CompilerServices.Unsafe.ReadUnaligned<{p.Type}>(in tmp_{p.Name}[0]);");
                 sb.AppendLine("                }");
                 sb.AppendLine($"                reader.Advance({sizeToken});");
             }
@@ -198,11 +200,11 @@ public partial class RpcGenerator
                 sb.AppendLine($"                var seq_{p.Name} = reader.UnreadSequence.Slice(0, len_{p.Name});");
                 if (p.IsValueType || p.IsNullableReference)
                 {
-                    sb.AppendLine($"                arg_{p.Name} = session.Serializer.Deserialize<{p.Type}>(ref seq_{p.Name});");
+                    sb.AppendLine($"                arg_{p.Name} = SharpLink.Runtime.RpcCodec.Deserialize<{p.Type}>(in seq_{p.Name});");
                 }
                 else
                 {
-                    sb.AppendLine($"                arg_{p.Name} = session.Serializer.Deserialize<{p.Type}>(ref seq_{p.Name}) ?? throw new InvalidDataException(\"Argument {p.Name} is null.\");");
+                    sb.AppendLine($"                arg_{p.Name} = SharpLink.Runtime.RpcCodec.Deserialize<{p.Type}>(in seq_{p.Name}) ?? throw new InvalidDataException(\"Argument {p.Name} is null.\");");
                 }
 
                 sb.AppendLine($"                reader.Advance(len_{p.Name});");
@@ -212,7 +214,7 @@ public partial class RpcGenerator
 
             foreach (var p in streamParams)
             {
-                sb.AppendLine($"                dispatcher_{p.Name} = SharpLink.Runtime.PooledAsyncStreamDispatcher<{p.StreamItemType}>.Rent(session.Serializer, cancellationToken);");
+                sb.AppendLine($"                dispatcher_{p.Name} = SharpLink.Runtime.PooledAsyncStreamDispatcher<{p.StreamItemType}>.Rent(cancellationToken);");
                 sb.AppendLine($"                session.StreamManager.Register(requestId, (sbyte){streamId}, dispatcher_{p.Name});");
                 streamId++;
             }
@@ -248,7 +250,7 @@ public partial class RpcGenerator
                     sb.AppendLine("                if (pending.IsCompletedSuccessfully)");
                     sb.AppendLine("                {");
                     if (writeResponse)
-                        sb.AppendLine("                    session.Serializer.Serialize(pending.Result, output);");
+                        sb.AppendLine($"                    SharpLink.Runtime.RpcCodec.Serialize(pending.Result, output);");
                     sb.AppendLine("                }");
                     sb.AppendLine("                else");
                     sb.AppendLine("                {");
@@ -263,7 +265,7 @@ public partial class RpcGenerator
                     sb.AppendLine("                if (pending.IsCompletedSuccessfully)");
                     sb.AppendLine("                {");
                     if (writeResponse)
-                        sb.AppendLine("                    session.Serializer.Serialize(pending.GetAwaiter().GetResult(), output);");
+                        sb.AppendLine($"                    SharpLink.Runtime.RpcCodec.Serialize(pending.GetAwaiter().GetResult(), output);");
                     sb.AppendLine("                }");
                     sb.AppendLine("                else");
                     sb.AppendLine("                {");

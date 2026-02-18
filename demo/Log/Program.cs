@@ -1,9 +1,12 @@
 using DemoBase;
 using Microsoft.Extensions.Logging;
+using SharpLink.Runtime;
 using SharpLink.Sdk;
 
 const int port = 19393;
 var appCts = new CancellationTokenSource();
+
+RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
 
 var loggerFactory = LoggerFactory.Create(builder =>
 {

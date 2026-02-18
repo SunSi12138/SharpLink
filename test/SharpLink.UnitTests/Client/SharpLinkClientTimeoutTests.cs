@@ -11,10 +11,8 @@ public class SharpLinkClientTimeoutTests
     public async Task InvokeWithTimeoutNoPayloadAsyncShouldTimeoutAndSendCancel()
     {
         var transport = new FakeTransport();
-        var serializer = new NoopSerializer();
         using var client = new SharpLinkClient(
             transport,
-            serializer,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30));
 
@@ -32,10 +30,8 @@ public class SharpLinkClientTimeoutTests
     public async Task InvokeCancellableNoPayloadAsyncTimeoutAndUserCancelShouldSendSingleCancel()
     {
         var transport = new FakeTransport();
-        var serializer = new NoopSerializer();
         using var client = new SharpLinkClient(
             transport,
-            serializer,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
             TimeSpan.FromMilliseconds(80));
@@ -77,9 +73,8 @@ public class SharpLinkClientTimeoutTests
     {
         public FakeSession Session { get; } = new();
 
-        public async Task<IRpcSession> ConnectAsync(ISerializer serializer, CancellationToken ct = default)
+        public async Task<IRpcSession> ConnectAsync(CancellationToken ct = default)
         {
-            Session.Serializer = serializer;
             await Session.InjectPacketAsync(PacketType.Handshake, PacketFlags.None, 0);
             return Session;
         }
@@ -99,7 +94,6 @@ public class SharpLinkClientTimeoutTests
         public string Id { get; } = Guid.NewGuid().ToString("N");
         public DateTime LastActive { get; set; } = DateTime.UtcNow;
         public PipeReader Input => _pipe.Reader;
-        public ISerializer Serializer { get; set; } = new NoopSerializer();
         public IStreamManager StreamManager { get; } = new StreamManager();
         public bool IsConnected => Volatile.Read(ref _disposed) == 0;
 
@@ -172,13 +166,5 @@ public class SharpLinkClientTimeoutTests
         }
     }
 
-    private sealed class NoopSerializer : ISerializer
-    {
-        public void Serialize<T>(in T value, IBufferWriter<byte> writer)
-        {
-        }
-
-        public T? Deserialize<T>(ref ReadOnlySequence<byte> sequence) => default;
-    }
 }
 

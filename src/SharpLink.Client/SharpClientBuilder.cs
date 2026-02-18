@@ -13,15 +13,15 @@ public class SharpClientBuilder
         _transport = transport;
         return this;
     }
-    private ISerializer? _serializer;
+    private Func<Type,IRpcCodec?>? _codecResolver;
     private TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(10);
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
     private TimeSpan? _requestTimeout;
     private RpcSessionFlushOptions? _rpcSessionFlushOptions;
 
-    public SharpClientBuilder UseSerializer(ISerializer serializer)
+    public SharpClientBuilder UseSerializer(Func<Type,IRpcCodec?> codecResolver)
     {
-        _serializer = serializer;
+        _codecResolver = codecResolver;
         return this;
     }
 
@@ -105,14 +105,10 @@ public class SharpClientBuilder
     {
         if (_transport == null)
             throw new InvalidOperationException("Transport must be set before building the server.");
-        
-        if (_serializer == null)
-            throw new InvalidOperationException("Serializer must be set before building the server.");
 
         if (_rpcSessionFlushOptions is not { } flushOptions)
             return new SharpLinkClient(
                 _transport,
-                _serializer,
                 _heartbeatInterval,
                 _heartbeatTimeout,
                 _loggerFactory ?? NullLoggerFactory.Instance,
@@ -122,11 +118,13 @@ public class SharpClientBuilder
         if (_transport is not IRpcSessionFlushConfigurableTransport configurableTransport)
             throw new InvalidOperationException("Configured RPC session flush options, but transport does not support flush configuration.");
 
+        if(_codecResolver is not null)
+            RpcCodecRegistry.Initialize(_codecResolver);
+        
         configurableTransport.ConfigureRpcSessionFlush(flushOptions);
 
         return new SharpLinkClient(
             _transport,
-            _serializer,
             _heartbeatInterval,
             _heartbeatTimeout,
             _loggerFactory ?? NullLoggerFactory.Instance,

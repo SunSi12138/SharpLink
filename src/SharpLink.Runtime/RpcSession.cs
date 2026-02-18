@@ -5,7 +5,6 @@ public sealed partial class RpcSession : IRpcSession
     public string Id { get; }
     public DateTime LastActive { get; set; } = DateTime.UtcNow;
     public PipeReader Input { get; }
-    public ISerializer Serializer { get; }
     private PipeWriter Output { get; }
 
     private readonly CancellationTokenSource _cts = new();
@@ -22,7 +21,6 @@ public sealed partial class RpcSession : IRpcSession
         string id,
         PipeReader reader,
         PipeWriter writer,
-        ISerializer serializer,
         Action disconnect,
         Func<bool> isConnected,
         RpcSessionFlushOptions? flushOptions = null)
@@ -33,7 +31,6 @@ public sealed partial class RpcSession : IRpcSession
         Id = id;
         Input = reader;
         Output = writer;
-        Serializer = serializer;
 
         _disconnect = disconnect;
         _isConnected = isConnected;

@@ -21,8 +21,4 @@
   <ItemGroup Condition="'$(PublishAot)' == 'true'">
     <Analyzer Include="..\..\src\SharpLink.Generator\bin\Release\netstandard2.0\SharpLink.Generator.dll" />
   </ItemGroup>
-  
-  <ItemGroup>
-    <Folder Include="publish\" />
-  </ItemGroup>
 </Project>

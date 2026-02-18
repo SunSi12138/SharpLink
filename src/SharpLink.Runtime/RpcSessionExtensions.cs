@@ -32,7 +32,7 @@ public static class RpcSessionExtensions
                 var idSpan = writer.GetSpan(sizeof(sbyte));
                 idSpan[0] = unchecked((byte)streamId);
                 writer.Advance(sizeof(sbyte));
-                session.Serializer.Serialize(item, writer);
+                RpcCodec<T>.Codec.Serialize(item, writer);
             }
 
             session.SendPacket(writer);

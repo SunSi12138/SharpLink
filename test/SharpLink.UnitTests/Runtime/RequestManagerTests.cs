@@ -11,11 +11,10 @@ public class RequestManagerTests
     public async Task DispatchShouldNotDropCurrentPendingWhenStaleResponseArrives()
     {
         var manager = new RequestManager();
-        var serializer = new NoopSerializer();
 
         var op1 = manager.Rent<int>(out var requestId1);
         var emptyPayload = ReadOnlySequence<byte>.Empty;
-        Ensure(manager.Dispatch(requestId1, ref emptyPayload, serializer), "request1 should dispatch");
+        Ensure(manager.Dispatch(requestId1, ref emptyPayload), "request1 should dispatch");
         _ = await op1.AsValueTask();
 
         SetNextId(manager, requestId1 + RingBufferSize - 1);
@@ -23,10 +22,10 @@ public class RequestManagerTests
         Ensure(requestId2 - requestId1 == RingBufferSize, "request ids should reuse same slot");
 
         emptyPayload = ReadOnlySequence<byte>.Empty;
-        Ensure(!manager.Dispatch(requestId1, ref emptyPayload, serializer), "stale response should be rejected");
+        Ensure(!manager.Dispatch(requestId1, ref emptyPayload), "stale response should be rejected");
 
         emptyPayload = ReadOnlySequence<byte>.Empty;
-        Ensure(manager.Dispatch(requestId2, ref emptyPayload, serializer), "current pending should still dispatch");
+        Ensure(manager.Dispatch(requestId2, ref emptyPayload), "current pending should still dispatch");
         _ = await op2.AsValueTask();
     }
 
@@ -34,11 +33,10 @@ public class RequestManagerTests
     public async Task DispatchErrorShouldNotDropCurrentPendingWhenStaleErrorArrives()
     {
         var manager = new RequestManager();
-        var serializer = new NoopSerializer();
 
         var op1 = manager.Rent<int>(out var requestId1);
         var emptyPayload = ReadOnlySequence<byte>.Empty;
-        Ensure(manager.Dispatch(requestId1, ref emptyPayload, serializer), "request1 should dispatch");
+        Ensure(manager.Dispatch(requestId1, ref emptyPayload), "request1 should dispatch");
         _ = await op1.AsValueTask();
 
         SetNextId(manager, requestId1 + RingBufferSize - 1);
@@ -90,17 +88,5 @@ public class RequestManagerTests
     {
         if (!condition)
             throw new Exception(message);
-    }
-
-    private sealed class NoopSerializer : ISerializer
-    {
-        public void Serialize<T>(in T value, IBufferWriter<byte> writer)
-        {
-        }
-
-        public T Deserialize<T>(ref ReadOnlySequence<byte> sequence)
-        {
-            throw new InvalidOperationException("Deserialize should not be called for empty payload.");
-        }
     }
 }

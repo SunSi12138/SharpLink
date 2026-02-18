@@ -5,7 +5,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     public static SharpLinkServerBuilder Create() => new();
 
     private ITransport? _transport;
-    private ISerializer? _serializer;
+    private Func<Type,IRpcCodec?>? _codecResolver;
     private TimeSpan _heartbeatCheckInterval = TimeSpan.FromSeconds(10);
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
     private RpcSessionFlushOptions? _rpcSessionFlushOptions;
@@ -18,9 +18,9 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
-    public SharpLinkServerBuilder UseSerializer(ISerializer serializer)
+    public SharpLinkServerBuilder UseSerializer(Func<Type,IRpcCodec?> codecResolver)
     {
-        _serializer = serializer;
+        _codecResolver = codecResolver;
         return this;
     }
 
@@ -105,13 +105,9 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         if (_transport == null)
             throw new InvalidOperationException("Transport must be set before building the server.");
 
-        if (_serializer == null)
-            throw new InvalidOperationException("Serializer must be set before building the server.");
-
         if (_rpcSessionFlushOptions is not { } flushOptions)
             return new SharpLinkServer(
                 _transport,
-                _serializer,
                 _services.ToFrozenDictionary(),
                 _heartbeatCheckInterval,
                 _heartbeatTimeout,
@@ -122,9 +118,10 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
         configurableTransport.ConfigureRpcSessionFlush(flushOptions);
 
+        if(_codecResolver is not null) RpcCodecRegistry.Initialize(_codecResolver);
+        
         return new SharpLinkServer(
             _transport,
-            _serializer,
             _services.ToFrozenDictionary(),
             _heartbeatCheckInterval,
             _heartbeatTimeout,

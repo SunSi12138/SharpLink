@@ -4,7 +4,7 @@ internal sealed partial class SharpLinkClient
 {
     public async Task<bool> ConnectAsync(CancellationToken ct = default)
     {
-        _session = await transport.ConnectAsync(serializer, ct);
+        _session = await transport.ConnectAsync(ct);
         var res = await ProcessHandshakeAsync(_session, ct);
         if (!res)
             return false;
@@ -53,7 +53,7 @@ internal sealed partial class SharpLinkClient
 
     public T Get<T>() where T : IService
     {
-        if (GeneratedProxyRegistry.TryCreate(typeof(T), this, serializer, out var proxy))
+        if (GeneratedProxyRegistry.TryCreate(typeof(T), this, out var proxy))
             return (T)proxy!;
 
         throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
@@ -181,7 +181,7 @@ internal sealed partial class SharpLinkClient
         }
         else
         {
-            if (_requestManager.Dispatch(requestId, ref payload, serializer))
+            if (_requestManager.Dispatch(requestId, ref payload))
                 return;
 
             // Server-stream receives a terminal RpcResponse ACK; swallow it.

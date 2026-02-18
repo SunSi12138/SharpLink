@@ -179,7 +179,7 @@ public class IntegrationBehaviorTests
             var server = SharpLinkServerBuilder.Create()
                 .AddService<ITestService, TestService>()
                 .UseTcp(port, IPAddress.Loopback.ToString())
-                .UseSerializer(new MemoryPackSerializerAdaptor())
+                .UseSerializer(MemoryPackCodec.Resolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .Build();
 
@@ -205,7 +205,7 @@ public class IntegrationBehaviorTests
 
             var clientBuilder = SharpClientBuilder.Create()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
-                .UseSerializer(new MemoryPackSerializerAdaptor())
+                .UseSerializer(MemoryPackCodec.Resolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
 
             if (requestTimeout is { } timeout)

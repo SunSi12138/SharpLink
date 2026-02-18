@@ -3,7 +3,7 @@
 
 namespace SharpLink.Client;
 
-internal sealed partial class SharpLinkClient(ITransport transport, ISerializer serializer) : IRpcChannel, IDisposable, ISharpLinkClient
+internal sealed partial class SharpLinkClient(ITransport transport) : IRpcChannel, IDisposable, ISharpLinkClient
 {
     private readonly StripedLongSet _serverStreamRequestIds = new();
     private readonly StripedLongSet _locallyCanceledRequestIds = new();
@@ -18,8 +18,8 @@ internal sealed partial class SharpLinkClient(ITransport transport, ISerializer 
     private readonly TimeSpan _requestTimeoutValue;
     private readonly ILogger _logger = NullLogger<SharpLinkClient>.Instance;
 
-    public SharpLinkClient(ITransport transport, ISerializer serializer, TimeSpan heartbeatInterval, TimeSpan heartbeatTimeout, TimeSpan? requestTimeout = null)
-        : this(transport, serializer)
+    public SharpLinkClient(ITransport transport, TimeSpan heartbeatInterval, TimeSpan heartbeatTimeout, TimeSpan? requestTimeout = null)
+        : this(transport)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatTimeout, TimeSpan.Zero);
@@ -38,12 +38,11 @@ internal sealed partial class SharpLinkClient(ITransport transport, ISerializer 
 
     public SharpLinkClient(
         ITransport transport,
-        ISerializer serializer,
         TimeSpan heartbeatInterval,
         TimeSpan heartbeatTimeout,
         ILoggerFactory loggerFactory,
         TimeSpan? requestTimeout = null)
-        : this(transport, serializer, heartbeatInterval, heartbeatTimeout, requestTimeout)
+        : this(transport,  heartbeatInterval, heartbeatTimeout, requestTimeout)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _logger = loggerFactory.CreateLogger<SharpLinkClient>();

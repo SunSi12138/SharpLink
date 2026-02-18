@@ -1,9 +1,11 @@
 using DemoBase;
+using SharpLink.Runtime;
 using SharpLink.Sdk;
 
 const int port = 19293;
 using var appCts = new CancellationTokenSource();
 
+RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
 var server = DemoTcp.CreateServer<ITimeoutService, TimeoutService>(port);
 var serverTask = DemoTcp.StartServerAsync(server, appCts.Token);
 var client = DemoTcp.CreateClient(port, builder => builder.UseRequestTimeout(TimeSpan.FromMilliseconds(120)));

@@ -1,9 +1,13 @@
 using DemoBase;
+using SharpLink.Runtime;
 using SharpLink.Sdk;
 
 const int port = 19093;
 
 using var cts = new CancellationTokenSource();
+
+RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
+
 
 var server = DemoTcp.CreateServer<IOnewayService, OnewayService>(port);
 var serverTask = DemoTcp.StartServerAsync(server, cts.Token);

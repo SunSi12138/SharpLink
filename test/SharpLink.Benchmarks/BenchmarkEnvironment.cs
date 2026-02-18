@@ -45,7 +45,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         var server = SharpLinkServerBuilder.Create()
             .AddService<IBenchmarkRpc, BenchmarkRpcService>()
             .UseTcp(port, IPAddress.Loopback.ToString())
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .Build();
 
         var shutdown = new CancellationTokenSource();
@@ -62,7 +62,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .Build();
 
         var connected = await client.ConnectAsync(shutdown.Token);

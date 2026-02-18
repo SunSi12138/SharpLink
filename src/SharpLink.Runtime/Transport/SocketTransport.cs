@@ -15,7 +15,7 @@ public class SocketTransport(Socket socket, bool isServer = true, EndPoint? remo
     public SocketTransport(Socket socket, EndPoint remoteEndPoint) : this(socket, false, remoteEndPoint: remoteEndPoint) { }
     // 服务端构造函数 (Socket 必须由外部 Bind/Listen)
 
-    public async Task<IRpcSession> ConnectAsync(ISerializer serializer,CancellationToken ct = default)
+    public async Task<IRpcSession> ConnectAsync(CancellationToken ct = default)
     {
         Socket connectedSocket;
 
@@ -49,7 +49,6 @@ public class SocketTransport(Socket socket, bool isServer = true, EndPoint? remo
             Guid.NewGuid().ToString("N"),
             reader,
             writer,
-            serializer,
             () => networkStream.Dispose(), // Disconnect Action
             () => !Volatile.Read(ref _disposed) && !_cts.IsCancellationRequested, // IsConnected Func
             _rpcSessionFlushOptions

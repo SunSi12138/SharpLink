@@ -8,7 +8,7 @@ internal sealed partial class SharpLinkServer
         
         while (!ct.IsCancellationRequested)
         {
-            var session = await transport.ConnectAsync(serializer,ct);
+            var session = await transport.ConnectAsync(ct);
             await ReplaceSessionAsync(session);
             _ = HandleSessionLifecycleAsync(session, ct);
         }

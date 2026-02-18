@@ -35,7 +35,7 @@ public sealed class NamedPipeTransport : ITransport, IRpcSessionFlushConfigurabl
         _pipeOptions = pipeOptions;
     }
 
-    public async Task<IRpcSession> ConnectAsync(ISerializer serializer, CancellationToken ct = default)
+    public async Task<IRpcSession> ConnectAsync(CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -86,7 +86,6 @@ public sealed class NamedPipeTransport : ITransport, IRpcSessionFlushConfigurabl
             Guid.NewGuid().ToString("N"),
             PipeReader.Create(pipe),
             PipeWriter.Create(pipe),
-            serializer,
             () => ReleasePipe(pipe),
             () => !_disposed && pipe.IsConnected,
             _rpcSessionFlushOptions);

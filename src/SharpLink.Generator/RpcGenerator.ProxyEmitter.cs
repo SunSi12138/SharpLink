@@ -22,10 +22,9 @@ public partial class RpcGenerator
 
                         {{nsDeclaration}}
 
-                        public class {{model.Name}}_Proxy(IRpcChannel channel, ISerializer serializer) : {{model.FullName}}
+                        public class {{model.Name}}_Proxy(IRpcChannel channel) : {{model.FullName}}
                         {
                             const long _interfaceHash = {{model.Hash}}L;
-                            ISerializer Serializer { get; } = serializer;
                         """);
 
         AppendSizeFieldsByType(sb, model.Methods);
@@ -67,7 +66,7 @@ public partial class RpcGenerator
                     sb.AppendLine("            int lenOffset = writer.WrittenCount;");
                     sb.AppendLine("            writer.Advance(4);");
                     sb.AppendLine("            int start = writer.WrittenCount;");
-                    sb.AppendLine($"            Serializer.Serialize({p.Name}, writer);");
+                    sb.AppendLine($"            SharpLink.Runtime.RpcCodec.Serialize({p.Name}, writer);");
                     sb.AppendLine("            int len = writer.WrittenCount - start;");
                     sb.AppendLine("            var span = System.Runtime.InteropServices.MemoryMarshal.AsMemory(writer.WrittenMemory).Span;");
                     sb.AppendLine("            var lengthSlice = span.Slice(lenOffset, 4);");
@@ -328,7 +327,7 @@ public partial class RpcGenerator
                             [ModuleInitializer]
                             internal static void Register()
                             {
-                                SharpLink.Abstractions.GeneratedProxyRegistry.Register(typeof({{model.FullName}}), (channel, serializer) => new {{model.Name}}_Proxy(channel, serializer));
+                                SharpLink.Abstractions.GeneratedProxyRegistry.Register(typeof({{model.FullName}}), (channel) => new {{model.Name}}_Proxy(channel));
                             }
                         }
                         """);

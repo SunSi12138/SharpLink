@@ -378,7 +378,7 @@ internal sealed partial class SharpLinkClient
     {
         var requestId = _requestManager.AllocateRequestId();
         _serverStreamRequestIds.Add(requestId);
-        var streamDispatcher = PooledAsyncStreamDispatcher<T>.Rent(serializer);
+        var streamDispatcher = PooledAsyncStreamDispatcher<T>.Rent();
         _session!.StreamManager.Register(requestId, 0, streamDispatcher);
         _ = StartServerStreamRequestAsync(
             interfaceHash,
@@ -406,7 +406,7 @@ internal sealed partial class SharpLinkClient
 
         var requestId = _requestManager.AllocateRequestId();
         _serverStreamRequestIds.Add(requestId);
-        var streamDispatcher = PooledAsyncStreamDispatcher<T>.Rent(serializer, cancellationToken);
+        var streamDispatcher = PooledAsyncStreamDispatcher<T>.Rent(cancellationToken);
         _session!.StreamManager.Register(requestId, 0, streamDispatcher);
         _ = StartCancellableServerStreamRequestAsync(
             interfaceHash,

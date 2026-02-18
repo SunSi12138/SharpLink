@@ -11,7 +11,6 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     // 仅用于 WaitSource 的一致性（不是热路径锁）
     private readonly Lock _waitGate = new();
 
-    private ISerializer? _serializer;
 
     private ManualResetValueTaskSourceCore<bool> _waitSource;
 
@@ -62,21 +61,19 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _mask = _buffer.Length - 1;
     }
 
-    public static PooledAsyncStreamDispatcher<T> Rent(ISerializer serializer, CancellationToken enumerationToken = default)
+    public static PooledAsyncStreamDispatcher<T> Rent(CancellationToken enumerationToken = default)
     {
         if (!Pool.TryTake(out var dispatcher))
             dispatcher = new PooledAsyncStreamDispatcher<T>();
 
-        dispatcher.Reset(serializer, enumerationToken);
+        dispatcher.Reset(enumerationToken);
         return dispatcher;
     }
 
-    [MemberNotNull(nameof(_serializer))]
-    private void Reset(ISerializer serializer, CancellationToken enumerationToken)
+    private void Reset(CancellationToken enumerationToken)
     {
         _enumerationCancellationRegistration.Dispose();
 
-        _serializer = serializer;
         _enumerationToken = enumerationToken;
 
         _waitSource = new ManualResetValueTaskSourceCore<bool>
@@ -111,12 +108,9 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
     public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
     {
-        var serializer = _serializer;
-        if (serializer is null)
-            return ValueTask.CompletedTask;
 
         // 反序列化可能很重：尽量让队列/锁不要挡它（这里本来就无锁）
-        var item = serializer.Deserialize<T>(ref payload);
+        var item = RpcCodec.Deserialize<T>(payload);
 
         // 生产者侧：如果已结束/已释放，直接丢弃（读用 Volatile 对称）
         if (Volatile.Read(ref _completed) || Volatile.Read(ref _disposed))
@@ -409,7 +403,6 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             return;
 
         _enumerationCancellationRegistration.Dispose();
-        _serializer = null;
         _error = null;
 
         // 复位枚举器占用标记

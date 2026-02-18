@@ -1,9 +1,12 @@
 using DemoBase;
 using SharpLink.Sdk;
 using MemoryPack;
+using SharpLink.Runtime;
 
 var port = DemoStream.GetFreePort();
 using var cts = new CancellationTokenSource();
+
+RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
 
 var server = DemoTcp.CreateServer<IStreamingService, StreamingService>(port);
 var serverTask = DemoTcp.StartServerAsync(server, cts.Token);

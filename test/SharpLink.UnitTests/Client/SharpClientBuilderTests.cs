@@ -22,7 +22,6 @@ public class SharpClientBuilderTests
     {
         var builder = SharpClientBuilder.Create()
             .UseTransport(new NoopTransport())
-            .UseSerializer(new NoopSerializer())
             .UseRequestTimeout(TimeSpan.FromSeconds(2));
 
         var client = builder.Build();
@@ -37,7 +36,6 @@ public class SharpClientBuilderTests
     {
         var builder = SharpClientBuilder.Create()
             .UseTransport(new NoopTransport())
-            .UseSerializer(new NoopSerializer())
             .UseRequestTimeout(TimeSpan.FromSeconds(2))
             .DisableRequestTimeout();
 
@@ -70,7 +68,6 @@ public class SharpClientBuilderTests
     {
         var builder = SharpClientBuilder.Create()
             .UseTransport(new NoopTransport())
-            .UseSerializer(new NoopSerializer())
             .UseRpcSessionFlush(8192, TimeSpan.FromMilliseconds(2));
 
         await EnsureThrows<InvalidOperationException>(() =>
@@ -86,7 +83,6 @@ public class SharpClientBuilderTests
         var transport = new FlushConfigurableNoopTransport();
         var builder = SharpClientBuilder.Create()
             .UseTransport(transport)
-            .UseSerializer(new NoopSerializer())
             .UseRpcSessionFlush(8192, TimeSpan.FromMilliseconds(2));
 
         _ = builder.Build();
@@ -130,7 +126,7 @@ public class SharpClientBuilderTests
 
     private sealed class NoopTransport : ITransport
     {
-        public Task<IRpcSession> ConnectAsync(ISerializer serializer, CancellationToken ct = default)
+        public Task<IRpcSession> ConnectAsync(CancellationToken ct = default)
             => throw new NotSupportedException();
 
         public void Dispose()
@@ -142,7 +138,7 @@ public class SharpClientBuilderTests
     {
         public RpcSessionFlushOptions? ConfiguredOptions { get; private set; }
 
-        public Task<IRpcSession> ConnectAsync(ISerializer serializer, CancellationToken ct = default)
+        public Task<IRpcSession> ConnectAsync(CancellationToken ct = default)
             => throw new NotSupportedException();
 
         public void ConfigureRpcSessionFlush(RpcSessionFlushOptions options)
@@ -153,14 +149,5 @@ public class SharpClientBuilderTests
         public void Dispose()
         {
         }
-    }
-
-    private sealed class NoopSerializer : ISerializer
-    {
-        public void Serialize<T>(in T value, IBufferWriter<byte> writer)
-        {
-        }
-
-        public T Deserialize<T>(ref ReadOnlySequence<byte> sequence) => default!;
     }
 }

@@ -4,7 +4,6 @@ namespace SharpLink.Runtime;
 
 public static class ArrayBufferWriterExtensions
 {
-    private const int StackallocUtf8CharThreshold = 128;
 
     extension(ArrayBufferWriter<byte> writer)
     {
@@ -51,25 +50,13 @@ public static class ArrayBufferWriterExtensions
 
     extension(IBufferWriter<byte> writer)
     {
-        public void WriteUtf8String(string value)
+        public void WriteUtf8String(string? value)
         {
             if (string.IsNullOrEmpty(value))
                 return;
 
-            if (value.Length <= StackallocUtf8CharThreshold)
-            {
-                var maxLen = Encoding.UTF8.GetMaxByteCount(value.Length);
-                Span<byte> utf8Buffer = stackalloc byte[maxLen];
-                var written = Encoding.UTF8.GetBytes(value.AsSpan(), utf8Buffer);
-
-                var destination = writer.GetSpan(written);
-                utf8Buffer[..written].CopyTo(destination);
-                writer.Advance(written);
-                return;
-            }
-
-            var longMaxLen = Encoding.UTF8.GetMaxByteCount(value.Length);
-            var span = writer.GetSpan(longMaxLen);
+            var maxLen = Encoding.UTF8.GetMaxByteCount(value.Length);
+            var span = writer.GetSpan(maxLen);
             var longWritten = Encoding.UTF8.GetBytes(value, span);
             writer.Advance(longWritten);
         }

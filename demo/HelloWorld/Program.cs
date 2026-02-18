@@ -2,10 +2,15 @@
 using System.Runtime.InteropServices;
 using DemoBase;
 using MemoryPack;
+using SharpLink.Runtime;
 
 const int port = 19090;
 
 using var cts = new CancellationTokenSource();
+
+
+RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
+
 
 var server = DemoTcp.CreateServer<IHelloService, HelloService>(port);
 var serverTask = DemoTcp.StartServerAsync(server, cts.Token);

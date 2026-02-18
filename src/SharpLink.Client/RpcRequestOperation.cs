@@ -7,7 +7,7 @@ internal interface IRpcOperation
 {
     // 在 IO 线程被调用
     public long Id { get; }
-    void SetResult(ref ReadOnlySequence<byte> payload, ISerializer serializer);
+    void SetResult(ref ReadOnlySequence<byte> payload);
     void SetError(Exception ex);
 }
 
@@ -48,7 +48,7 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
     
-    public void SetResult(ref ReadOnlySequence<byte> payload, ISerializer serializer)
+    public void SetResult(ref ReadOnlySequence<byte> payload)
     {
         try
         {
@@ -59,7 +59,7 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
             }
             // 【IO线程反序列化】
             // 此时 payload 有效，直接转为 T 对象，不拷贝 bytes
-            var result = serializer.Deserialize<T>(ref payload);
+            var result = RpcCodec.Deserialize<T>(payload);
             _core.SetResult(result!);
         }
         catch (Exception ex)

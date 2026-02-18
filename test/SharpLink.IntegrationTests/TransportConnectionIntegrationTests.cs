@@ -161,7 +161,7 @@ public class TransportConnectionIntegrationTests
         var port = GetFreePort();
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -181,7 +181,7 @@ public class TransportConnectionIntegrationTests
         var pipeName = $"sharplink-int-no-server-{Guid.NewGuid():N}";
         var client = SharpClientBuilder.Create()
             .UseNamedPipe(pipeName)
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -207,7 +207,7 @@ public class TransportConnectionIntegrationTests
         var socketPath = GetUniqueUdsPath();
         var client = SharpClientBuilder.Create()
             .UseUds(socketPath)
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -228,7 +228,7 @@ public class TransportConnectionIntegrationTests
         var port = GetFreePort();
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -275,7 +275,7 @@ public class TransportConnectionIntegrationTests
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -299,7 +299,7 @@ public class TransportConnectionIntegrationTests
         var server = SharpLinkServerBuilder.Create()
             .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
             .UseTcp(port, IPAddress.Loopback.ToString())
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -321,7 +321,7 @@ public class TransportConnectionIntegrationTests
         var server = SharpLinkServerBuilder.Create()
             .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
             .UseNamedPipe(pipeName)
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -342,7 +342,7 @@ public class TransportConnectionIntegrationTests
         var server = SharpLinkServerBuilder.Create()
             .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
             .UseTransport(new ThrowingConnectTransport(new IOException("accept failed")))
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -478,7 +478,7 @@ public class TransportConnectionIntegrationTests
     private static ISharpLinkClient BuildClientForEndpoint(TransportEndpoint endpoint)
     {
         var builder = SharpClientBuilder.Create()
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
         switch (endpoint.Kind)
@@ -511,7 +511,7 @@ public class TransportConnectionIntegrationTests
 
     private sealed class ThrowingConnectTransport(Exception exception) : ITransport
     {
-        public Task<IRpcSession> ConnectAsync(ISerializer serializer, CancellationToken ct = default)
+        public Task<IRpcSession> ConnectAsync(CancellationToken ct = default)
             => Task.FromException<IRpcSession>(exception);
 
         public void Dispose()
@@ -555,11 +555,11 @@ public class TransportConnectionIntegrationTests
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
                 .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
-                .UseSerializer(new MemoryPackSerializerAdaptor())
+                .UseSerializer(MemoryPackCodec.Resolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
             var clientBuilder = SharpClientBuilder.Create()
-                .UseSerializer(new MemoryPackSerializerAdaptor())
+                .UseSerializer(MemoryPackCodec.Resolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
             Action cleanup = static () => { };

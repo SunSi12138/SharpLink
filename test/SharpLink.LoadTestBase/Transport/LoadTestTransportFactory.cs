@@ -21,7 +21,7 @@ public static class LoadTestTransportFactory
         Func<SharpLinkServerBuilder, SharpLinkServerBuilder> configure)
     {
         var builder = configure(SharpLinkServerBuilder.Create())
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
 
         return transport switch
@@ -44,7 +44,7 @@ public static class LoadTestTransportFactory
         int heartbeatTimeoutSeconds)
     {
         var builder = SharpClientBuilder.Create()
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
 
         return transport switch
@@ -79,7 +79,7 @@ public static class LoadTestTransportFactory
         var offerTcs = new TaskCompletionSource<AnonymousPipeOffer>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var serverBuilder = configure(SharpLinkServerBuilder.Create())
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
         var serverAnonymous = serverBuilder.UseAnonymousPipe(
             (offer, _) =>
@@ -90,7 +90,7 @@ public static class LoadTestTransportFactory
 
         var clientAnonymous = SharpClientBuilder.Create()
             .UseTransport(new DeferredAnonymousPipeClientTransport(offerTcs.Task))
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds))
             .Build();
 
@@ -105,7 +105,7 @@ internal sealed class DeferredAnonymousPipeClientTransport(Task<AnonymousPipeOff
     private int _connected;
     private bool _disposed;
 
-    public async Task<IRpcSession> ConnectAsync(ISerializer serializer, CancellationToken ct = default)
+    public async Task<IRpcSession> ConnectAsync(CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (Interlocked.Exchange(ref _connected, 1) != 0)
@@ -113,7 +113,7 @@ internal sealed class DeferredAnonymousPipeClientTransport(Task<AnonymousPipeOff
 
         var offer = await _offerTask.WaitAsync(ct);
         _inner = new AnonymousPipeTransport(offer.InHandle, offer.OutHandle);
-        return await _inner.ConnectAsync(serializer, ct);
+        return await _inner.ConnectAsync(ct);
     }
 
     public void Dispose()

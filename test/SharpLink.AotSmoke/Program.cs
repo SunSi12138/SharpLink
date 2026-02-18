@@ -21,7 +21,7 @@ public static class Program
         var server = SharpLinkServerBuilder.Create()
             .AddService<IAotService, AotService>()
             .UseTcp(port, IPAddress.Loopback.ToString())
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .Build();
 
         var serverTask = Task.Run(async () =>
@@ -37,7 +37,7 @@ public static class Program
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(new MemoryPackSerializerAdaptor())
+            .UseSerializer(MemoryPackCodec.Resolver)
             .Build();
 
         try
