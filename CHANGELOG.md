@@ -25,3 +25,26 @@
 ### 修复
 - 修复多处生命周期与释放路径上的取消/断连边界问题。
 - 修复若干 Builder、日志配置、Demo 编译与运行问题。
+
+
+## [0.2.0] - 2026-02-18
+
+### 新增
+- 引入 `RpcCodecRegistry` 体系，支持统一注册与复用类型编解码器。
+- 对于引用类型需要使用MemoryPack作为fallout支持`RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver)`。
+- 增强 `StructCodec`：增加 `blittable` 类型容器的高性能序列化/反序列化支持。 
+
+### 变更
+- 编解码流程支持 fallback 到配置的序列化器（`MemoryPackCodec.Resolver`），
+  提升兼容性。
+- 连接断开处理增加“正常关闭”路径，区分 graceful shutdown 与异常断连。
+- 客户端断连日志分流：新增 `LogClientDisconnectedWithError`，用于异常场景单
+  独记录错误级日志。
+
+### 修复
+- 修复 Host 场景中正常停机被当作异常断连输出的问题
+  （`ObjectDisposedException` 日志噪音）。
+- 优化断连时 pending request 的失败传播路径，避免关闭流程语义混淆。
+
+### 兼容性说明
+- 本版本为破坏性变更。
