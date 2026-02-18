@@ -57,10 +57,7 @@ internal class RequestManager
         for (var i = 0; i < _slots.Length; i++)
         {
             var op = Interlocked.Exchange(ref _slots[i], null);
-            if (op is not null)
-            {
-                op.SetError(ex);
-            }
+            op?.SetError(ex);
         }
     }
 

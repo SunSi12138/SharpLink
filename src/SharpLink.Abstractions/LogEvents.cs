@@ -14,6 +14,7 @@ public static class LogEvents
         public const int HandshakeFailed = 1101;
         public const int HeartbeatTimeout = 1102;
         //Error
+        public const int ClientDisConnectedWithError = 1201;
         //Critical
         //Debug
         public const int HeartbeatReceived = 1401;

@@ -54,7 +54,7 @@ internal sealed partial class SharpLinkClient(ITransport transport) : IRpcChanne
             return;
 
         _session?.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        HandleDisconnected(new ObjectDisposedException(nameof(SharpLinkClient)));
+        HandleDisconnected();
         _requestTimeoutScheduler.Dispose();
         transport.Dispose();
     }

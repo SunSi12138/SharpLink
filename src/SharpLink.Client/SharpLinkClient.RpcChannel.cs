@@ -645,7 +645,7 @@ internal sealed partial class SharpLinkClient
         return streamId;
     }
 
-    private void HandleDisconnected(Exception ex)
+    private void HandleDisconnected(Exception? ex=null)
     {
         if (Interlocked.Exchange(ref _disconnectHandled, true))
             return;
@@ -653,10 +653,14 @@ internal sealed partial class SharpLinkClient
         using var sessionScope = _session is { } session
             ? BeginSessionLogScope(_logger, session.Id)
             : null;
-        LogClientDisconnected(_logger, ex);
+        if (ex is null)
+            LogClientDisconnected(_logger);
+        else
+            LogClientDisconnectedWithError(_logger, ex);
 
-        _requestManager.FailAllPendingRequests(ex);
-        _session?.StreamManager.CompleteAll(true, ex.Message);
+        var failEx = ex ?? new OperationCanceledException("client is shutting down");
+        _requestManager.FailAllPendingRequests(failEx);
+        _session?.StreamManager.CompleteAll(true,failEx.Message);
         _serverStreamRequestIds.Clear();
         _locallyCanceledRequestIds.Clear();
     }
