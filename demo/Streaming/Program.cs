@@ -73,6 +73,7 @@ finally
     await DemoTcp.ShutdownAsync(cts, serverTask, client as IDisposable, server as IDisposable);
 }
 
+[RpcContract]
 public interface IStreamingService : IService
 {
     ValueTask<int> UploadNumbers(IAsyncEnumerable<int> numbers);

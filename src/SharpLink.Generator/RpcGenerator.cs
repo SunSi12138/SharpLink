@@ -4,31 +4,52 @@ namespace SharpLink.Generator;
 public partial class RpcGenerator : IIncrementalGenerator
 {
     private static readonly CultureInfo InvariantCulture = CultureInfo.InvariantCulture;
+    private const string RpcContractAttributeMetadataName = "SharpLink.Sdk.RpcContractAttribute";
+    private const string RpcServiceAttributeMetadataName = "SharpLink.Sdk.RpcServiceAttribute";
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        var interfaces = context.SyntaxProvider
-            .CreateSyntaxProvider(predicate: IsInterfaceCandidate, transform: GetInterfaceModelOrNull)
+        var interfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RpcContractAttributeMetadataName,
+                static (node, _) => node is InterfaceDeclarationSyntax,
+                static (attributeContext, ct) => GetInterfaceModelOrNull(attributeContext, ct))
             .Where(m => m != null);
 
-        var services = context.SyntaxProvider
-            .CreateSyntaxProvider(predicate: IsClassCandidate, transform: GetServiceModelOrNull)
+        var referencedInterfaces = context.CompilationProvider.Select(static (compilation, ct) =>
+            GetReferencedInterfaceModels(compilation, ct));
+        var referencedServices = context.CompilationProvider.Select(static (compilation, ct) =>
+            GetReferencedServiceModels(compilation, ct));
+
+        var services = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RpcServiceAttributeMetadataName,
+                static (node, _) => node is ClassDeclarationSyntax,
+                static (attributeContext, ct) => GetServiceModelOrNull(attributeContext, ct))
             .Where(m => m != null);
 
-        var invalidMethods = context.SyntaxProvider
-            .CreateSyntaxProvider(predicate: IsInterfaceCandidate, transform: GetInvalidRpcMethods)
+        var invalidMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RpcContractAttributeMetadataName,
+                static (node, _) => node is InterfaceDeclarationSyntax,
+                static (attributeContext, ct) => GetInvalidRpcMethods(attributeContext, ct))
             .Where(x => x.Length > 0);
-        var invalidCancellationTokenMethods = context.SyntaxProvider
-            .CreateSyntaxProvider(predicate: IsInterfaceCandidate, transform: GetInvalidCancellationTokenMethods)
+        var invalidCancellationTokenMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RpcContractAttributeMetadataName,
+                static (node, _) => node is InterfaceDeclarationSyntax,
+                static (attributeContext, ct) => GetInvalidCancellationTokenMethods(attributeContext, ct))
             .Where(x => x.Length > 0);
-        var invalidStreamCountMethods = context.SyntaxProvider
-            .CreateSyntaxProvider(predicate: IsInterfaceCandidate, transform: GetInvalidStreamCountMethods)
+        var invalidStreamCountMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RpcContractAttributeMetadataName,
+                static (node, _) => node is InterfaceDeclarationSyntax,
+                static (attributeContext, ct) => GetInvalidStreamCountMethods(attributeContext, ct))
             .Where(x => x.Length > 0);
-        var invalidTimeoutCancellationMethods = context.SyntaxProvider
-            .CreateSyntaxProvider(predicate: IsInterfaceCandidate, transform: GetInvalidTimeoutCancellationMethods)
+        var invalidTimeoutCancellationMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RpcContractAttributeMetadataName,
+                static (node, _) => node is InterfaceDeclarationSyntax,
+                static (attributeContext, ct) => GetInvalidTimeoutCancellationMethods(attributeContext, ct))
             .Where(x => x.Length > 0);
-        var invalidGenericUsage = context.SyntaxProvider
-            .CreateSyntaxProvider(predicate: IsInterfaceCandidate, transform: GetInvalidGenericUsage)
+        var invalidGenericUsage = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RpcContractAttributeMetadataName,
+                static (node, _) => node is InterfaceDeclarationSyntax,
+                static (attributeContext, ct) => GetInvalidGenericUsage(attributeContext, ct))
             .Where(x => x.Length > 0);
 
         context.RegisterSourceOutput(invalidMethods, static (spc, methods) =>
@@ -93,13 +114,30 @@ public partial class RpcGenerator : IIncrementalGenerator
         context.RegisterSourceOutput(services, (spc, model) =>
         {
             var code = GenerateStub(model!);
-            spc.AddSource($"{model!.ServiceName}_Stub.g.cs", SourceText.From(code, Encoding.UTF8));
+            spc.AddSource(GetStubHintName(model!), SourceText.From(code, Encoding.UTF8));
+        });
+        context.RegisterSourceOutput(referencedServices, (spc, models) =>
+        {
+            foreach (var model in models)
+            {
+                var code = GenerateStub(model);
+                spc.AddSource(GetStubHintName(model), SourceText.From(code, Encoding.UTF8));
+            }
         });
 
         context.RegisterSourceOutput(interfaces, (spc, model) =>
         {
             var code = GenerateProxy(model!);
-            spc.AddSource($"{model!.Name}_Proxy.g.cs", SourceText.From(code, Encoding.UTF8));
+            spc.AddSource(GetProxyHintName(model!), SourceText.From(code, Encoding.UTF8));
+        });
+
+        context.RegisterSourceOutput(referencedInterfaces, (spc, models) =>
+        {
+            foreach (var model in models)
+            {
+                var code = GenerateProxy(model);
+                spc.AddSource(GetProxyHintName(model), SourceText.From(code, Encoding.UTF8));
+            }
         });
     }
 }

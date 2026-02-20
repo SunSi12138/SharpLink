@@ -38,6 +38,7 @@ public class OnewayService : IOnewayService
     }
 }
 
+[RpcContract]
 public interface IOnewayService : IService
 {
     [Oneway]

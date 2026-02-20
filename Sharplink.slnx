@@ -10,6 +10,9 @@
     <Project Path="demo/Cancel/Cancel.csproj" />
     <Project Path="demo/Timeout/Timeout.csproj" />
     <Project Path="demo/Log/Log.csproj" />
+    <Project Path="demo/SeparatedContracts/SeparatedContracts.csproj" />
+    <Project Path="demo/SeparatedServer/SeparatedServer.csproj" />
+    <Project Path="demo/SeparatedClient/SeparatedClient.csproj" />
     <Project Path="src/SharpLink.Client/SharpLink.Client.csproj" />
     <Project Path="src/SharpLink.Server/SharpLink.Server.csproj" />
     <Project Path="src/SharpLink.Sdk/SharpLink.Sdk.csproj" />

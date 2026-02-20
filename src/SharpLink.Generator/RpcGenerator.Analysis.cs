@@ -2,9 +2,6 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private static bool IsInterfaceCandidate(SyntaxNode node, CancellationToken _) => node is InterfaceDeclarationSyntax;
-    private static bool IsClassCandidate(SyntaxNode node, CancellationToken _) => node is ClassDeclarationSyntax { AttributeLists.Count: > 0 };
-
     private static bool IsAsyncEnumerable(ITypeSymbol type, out ITypeSymbol? itemType)
     {
         itemType = null;
@@ -14,27 +11,20 @@ public partial class RpcGenerator
         return true;
     }
 
-    private static RpcInterfaceModel? GetInterfaceModelOrNull(GeneratorSyntaxContext context, CancellationToken _)
+    private static RpcInterfaceModel? GetInterfaceModelOrNull(GeneratorAttributeSyntaxContext context, CancellationToken _)
     {
-        var interfaceDecl = (InterfaceDeclarationSyntax)context.Node;
-        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol) return null;
-
-        if (!InheritsIService(symbol))
+        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface)
             return null;
 
         return HasInvalidRpcMethod(symbol) ? null : CreateInterfaceModel(symbol);
     }
 
-    private static RpcServiceModel? GetServiceModelOrNull(GeneratorSyntaxContext context, CancellationToken _)
+    private static RpcServiceModel? GetServiceModelOrNull(GeneratorAttributeSyntaxContext context, CancellationToken _)
     {
-        var classDecl = (ClassDeclarationSyntax)context.Node;
-        if (context.SemanticModel.GetDeclaredSymbol(classDecl) is not INamedTypeSymbol symbol) return null;
+        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Class)
+            return null;
 
-        if (!symbol.GetAttributes().Any(IsRpcServiceAttribute)) return null;
-
-        var interfaceSymbol = symbol.AllInterfaces.FirstOrDefault(i =>
-            !IsIService(i) &&
-            i.AllInterfaces.Any(IsIService));
+        var interfaceSymbol = FindRpcContractInterface(symbol);
         if (interfaceSymbol == null) return null;
         if (HasInvalidRpcMethod(interfaceSymbol)) return null;
 
@@ -43,10 +33,9 @@ public partial class RpcGenerator
         return new RpcServiceModel(symbol.Name, ns, fullName, CreateInterfaceModel(interfaceSymbol));
     }
 
-    private static ImmutableArray<InvalidRpcMethodModel> GetInvalidRpcMethods(GeneratorSyntaxContext context, CancellationToken _)
+    private static ImmutableArray<InvalidRpcMethodModel> GetInvalidRpcMethods(GeneratorAttributeSyntaxContext context, CancellationToken _)
     {
-        var interfaceDecl = (InterfaceDeclarationSyntax)context.Node;
-        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol || !InheritsIService(symbol))
+        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface)
             return ImmutableArray<InvalidRpcMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidRpcMethodModel>();
@@ -64,10 +53,9 @@ public partial class RpcGenerator
         return list.ToImmutable();
     }
 
-    private static ImmutableArray<InvalidCancellationTokenMethodModel> GetInvalidCancellationTokenMethods(GeneratorSyntaxContext context, CancellationToken _)
+    private static ImmutableArray<InvalidCancellationTokenMethodModel> GetInvalidCancellationTokenMethods(GeneratorAttributeSyntaxContext context, CancellationToken _)
     {
-        var interfaceDecl = (InterfaceDeclarationSyntax)context.Node;
-        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol || !InheritsIService(symbol))
+        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface)
             return ImmutableArray<InvalidCancellationTokenMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidCancellationTokenMethodModel>();
@@ -85,10 +73,9 @@ public partial class RpcGenerator
         return list.ToImmutable();
     }
 
-    private static ImmutableArray<InvalidStreamCountMethodModel> GetInvalidStreamCountMethods(GeneratorSyntaxContext context, CancellationToken _)
+    private static ImmutableArray<InvalidStreamCountMethodModel> GetInvalidStreamCountMethods(GeneratorAttributeSyntaxContext context, CancellationToken _)
     {
-        var interfaceDecl = (InterfaceDeclarationSyntax)context.Node;
-        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol || !InheritsIService(symbol))
+        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface)
             return ImmutableArray<InvalidStreamCountMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidStreamCountMethodModel>();
@@ -107,10 +94,9 @@ public partial class RpcGenerator
         return list.ToImmutable();
     }
 
-    private static ImmutableArray<InvalidTimeoutCancellationMethodModel> GetInvalidTimeoutCancellationMethods(GeneratorSyntaxContext context, CancellationToken _)
+    private static ImmutableArray<InvalidTimeoutCancellationMethodModel> GetInvalidTimeoutCancellationMethods(GeneratorAttributeSyntaxContext context, CancellationToken _)
     {
-        var interfaceDecl = (InterfaceDeclarationSyntax)context.Node;
-        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol || !InheritsIService(symbol))
+        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface)
             return ImmutableArray<InvalidTimeoutCancellationMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidTimeoutCancellationMethodModel>();
@@ -132,10 +118,9 @@ public partial class RpcGenerator
         return list.ToImmutable();
     }
 
-    private static ImmutableArray<InvalidGenericUsageModel> GetInvalidGenericUsage(GeneratorSyntaxContext context, CancellationToken _)
+    private static ImmutableArray<InvalidGenericUsageModel> GetInvalidGenericUsage(GeneratorAttributeSyntaxContext context, CancellationToken _)
     {
-        var interfaceDecl = (InterfaceDeclarationSyntax)context.Node;
-        if (context.SemanticModel.GetDeclaredSymbol(interfaceDecl) is not INamedTypeSymbol symbol || !InheritsIService(symbol))
+        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface)
             return ImmutableArray<InvalidGenericUsageModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidGenericUsageModel>();
@@ -199,31 +184,22 @@ public partial class RpcGenerator
     private static bool IsCancellationTokenParameter(IParameterSymbol parameter)
         => parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Threading.CancellationToken";
 
-    private static bool InheritsIService(INamedTypeSymbol symbol)
-        => symbol.AllInterfaces.Any(IsIService);
-
-    private static bool IsIService(INamedTypeSymbol symbol)
-    {
-        var fullName = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        return fullName == "global::SharpLink.Sdk.IService";
-    }
-
     private static bool IsRpcServiceAttribute(AttributeData attribute)
     {
-        var fullName = attribute.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        return fullName is "global::SharpLink.Sdk.RpcServiceAttribute" or "global::SharpLink.Abstractions.RpcServiceAttribute";
+        return IsAttribute(attribute, "SharpLink.Sdk", "RpcServiceAttribute") ||
+               IsAttribute(attribute, "SharpLink.Abstractions", "RpcServiceAttribute");
     }
 
     private static bool IsOnewayAttribute(AttributeData attribute)
     {
-        var fullName = attribute.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        return fullName is "global::SharpLink.Sdk.OnewayAttribute" or "global::SharpLink.Abstractions.OnewayAttribute";
+        return IsAttribute(attribute, "SharpLink.Sdk", "OnewayAttribute") ||
+               IsAttribute(attribute, "SharpLink.Abstractions", "OnewayAttribute");
     }
 
     private static bool IsTimeoutAttribute(AttributeData attribute)
     {
-        var fullName = attribute.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        return fullName is "global::SharpLink.Sdk.TimeoutAttribute" or "global::SharpLink.Abstractions.TimeoutAttribute";
+        return IsAttribute(attribute, "SharpLink.Sdk", "TimeoutAttribute") ||
+               IsAttribute(attribute, "SharpLink.Abstractions", "TimeoutAttribute");
     }
 
     private static double? GetTimeoutSecondsOrNull(IMethodSymbol method, out bool hasTimeoutAttribute)
@@ -340,6 +316,240 @@ public partial class RpcGenerator
 
         var fullname = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         return new RpcInterfaceModel(symbol.Name, ns, fullname, Hashing.GetInterfaceHash(fullname), methods);
+    }
+
+    private static ImmutableArray<RpcInterfaceModel> GetReferencedInterfaceModels(
+        Compilation compilation,
+        CancellationToken _)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var models = ImmutableArray.CreateBuilder<RpcInterfaceModel>();
+        var candidateAssemblyNames = ResolveReferenceAssemblyNames(compilation);
+
+        foreach (var reference in compilation.References)
+        {
+            if (compilation.GetAssemblyOrModuleSymbol(reference) is not IAssemblySymbol assembly)
+                continue;
+
+            if (!candidateAssemblyNames.Contains(assembly.Identity.Name))
+                continue;
+
+            CollectReferencedInterfaces(assembly.GlobalNamespace, models, seen);
+        }
+
+        return models
+            .OrderBy(static m => m.FullName, StringComparer.Ordinal)
+            .ToImmutableArray();
+    }
+
+    private static ImmutableArray<RpcServiceModel> GetReferencedServiceModels(
+        Compilation compilation,
+        CancellationToken _)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var models = ImmutableArray.CreateBuilder<RpcServiceModel>();
+        var candidateAssemblyNames = ResolveReferenceAssemblyNames(compilation);
+
+        foreach (var reference in compilation.References)
+        {
+            if (compilation.GetAssemblyOrModuleSymbol(reference) is not IAssemblySymbol assembly)
+                continue;
+
+            if (!candidateAssemblyNames.Contains(assembly.Identity.Name))
+                continue;
+
+            CollectReferencedServices(assembly.GlobalNamespace, models, seen);
+        }
+
+        return models
+            .OrderBy(static m => m.ServiceFullName, StringComparer.Ordinal)
+            .ToImmutableArray();
+    }
+
+    private static HashSet<string> ResolveReferenceAssemblyNames(Compilation compilation)
+    {
+        var explicitAssemblies = GetExplicitContractAssemblies(compilation);
+        if (explicitAssemblies is not null)
+            return explicitAssemblies;
+
+        var assemblyNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var reference in compilation.References)
+        {
+            if (compilation.GetAssemblyOrModuleSymbol(reference) is not IAssemblySymbol assembly)
+                continue;
+
+            if (ReferencesSharpLinkSdk(assembly))
+                assemblyNames.Add(assembly.Identity.Name);
+        }
+
+        return assemblyNames;
+    }
+
+    private static HashSet<string>? GetExplicitContractAssemblies(Compilation compilation)
+    {
+        HashSet<string>? assemblyNames = null;
+        foreach (var attribute in compilation.Assembly.GetAttributes())
+        {
+            if (!IsAttribute(attribute, "SharpLink.Sdk", "SharpLinkRpcContractsAttribute"))
+                continue;
+
+            if (attribute.ConstructorArguments.Length == 0)
+                continue;
+
+            var argument = attribute.ConstructorArguments[0];
+            if (argument.Kind != TypedConstantKind.Array)
+                continue;
+
+            foreach (var item in argument.Values)
+            {
+                if (item.Value is INamedTypeSymbol type && type.ContainingAssembly is { } containingAssembly)
+                {
+                    assemblyNames ??= new HashSet<string>(StringComparer.Ordinal);
+                    assemblyNames.Add(containingAssembly.Identity.Name);
+                }
+            }
+        }
+
+        return assemblyNames;
+    }
+
+    private static bool ReferencesSharpLinkSdk(IAssemblySymbol assembly)
+    {
+        foreach (var module in assembly.Modules)
+        {
+            foreach (var referencedAssembly in module.ReferencedAssemblySymbols)
+            {
+                if (string.Equals(referencedAssembly.Name, "SharpLink.Sdk", StringComparison.Ordinal))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void CollectReferencedInterfaces(
+        INamespaceSymbol namespaceSymbol,
+        ImmutableArray<RpcInterfaceModel>.Builder models,
+        HashSet<string> seen)
+    {
+        foreach (var type in namespaceSymbol.GetTypeMembers())
+            CollectReferencedInterfaces(type, models, seen, containingTypesArePublic: true);
+
+        foreach (var nestedNamespace in namespaceSymbol.GetNamespaceMembers())
+            CollectReferencedInterfaces(nestedNamespace, models, seen);
+    }
+
+    private static void CollectReferencedInterfaces(
+        INamedTypeSymbol typeSymbol,
+        ImmutableArray<RpcInterfaceModel>.Builder models,
+        HashSet<string> seen,
+        bool containingTypesArePublic)
+    {
+        var isPubliclyReachable = containingTypesArePublic && IsPubliclyReachableType(typeSymbol);
+        if (isPubliclyReachable &&
+            typeSymbol.TypeKind == TypeKind.Interface &&
+            HasRpcContractAttribute(typeSymbol) &&
+            !HasInvalidRpcMethod(typeSymbol))
+        {
+            var fullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            if (seen.Add(fullName))
+                models.Add(CreateInterfaceModel(typeSymbol));
+        }
+
+        if (!isPubliclyReachable)
+            return;
+
+        foreach (var nested in typeSymbol.GetTypeMembers())
+            CollectReferencedInterfaces(nested, models, seen, containingTypesArePublic: isPubliclyReachable);
+    }
+
+    private static void CollectReferencedServices(
+        INamespaceSymbol namespaceSymbol,
+        ImmutableArray<RpcServiceModel>.Builder models,
+        HashSet<string> seen)
+    {
+        foreach (var type in namespaceSymbol.GetTypeMembers())
+            CollectReferencedServices(type, models, seen, containingTypesArePublic: true);
+
+        foreach (var nestedNamespace in namespaceSymbol.GetNamespaceMembers())
+            CollectReferencedServices(nestedNamespace, models, seen);
+    }
+
+    private static void CollectReferencedServices(
+        INamedTypeSymbol typeSymbol,
+        ImmutableArray<RpcServiceModel>.Builder models,
+        HashSet<string> seen,
+        bool containingTypesArePublic)
+    {
+        var isPubliclyReachable = containingTypesArePublic && IsPubliclyReachableType(typeSymbol);
+        if (isPubliclyReachable &&
+            typeSymbol.TypeKind == TypeKind.Class &&
+            !typeSymbol.IsAbstract &&
+            typeSymbol.GetAttributes().Any(IsRpcServiceAttribute))
+        {
+            var interfaceSymbol = FindRpcContractInterface(typeSymbol);
+            if (interfaceSymbol is not null && !HasInvalidRpcMethod(interfaceSymbol))
+            {
+                var fullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                if (seen.Add(fullName))
+                {
+                    var ns = typeSymbol.ContainingNamespace.IsGlobalNamespace ? "" : typeSymbol.ContainingNamespace.ToDisplayString();
+                    models.Add(new RpcServiceModel(
+                        typeSymbol.Name,
+                        ns,
+                        fullName,
+                        CreateInterfaceModel(interfaceSymbol)));
+                }
+            }
+        }
+
+        if (!isPubliclyReachable)
+            return;
+
+        foreach (var nested in typeSymbol.GetTypeMembers())
+            CollectReferencedServices(nested, models, seen, containingTypesArePublic: isPubliclyReachable);
+    }
+
+    private static bool IsPubliclyReachableType(INamedTypeSymbol typeSymbol)
+        => typeSymbol.DeclaredAccessibility == Accessibility.Public;
+
+    private static bool HasRpcContractAttribute(INamedTypeSymbol symbol)
+        => symbol.GetAttributes().Any(static a => IsAttribute(a, "SharpLink.Sdk", "RpcContractAttribute"));
+
+    private static INamedTypeSymbol? FindRpcContractInterface(INamedTypeSymbol serviceSymbol)
+        => serviceSymbol.AllInterfaces.FirstOrDefault(HasRpcContractAttribute);
+
+    private static bool IsAttribute(AttributeData attribute, string ns, string name)
+    {
+        if (attribute.AttributeClass is not { } attrClass)
+            return false;
+        if (!string.Equals(attrClass.Name, name, StringComparison.Ordinal))
+            return false;
+        return string.Equals(attrClass.ContainingNamespace.ToDisplayString(), ns, StringComparison.Ordinal);
+    }
+
+    private static string GetProxyHintName(RpcInterfaceModel model)
+    {
+        var fullName = model.FullName;
+        if (fullName.StartsWith("global::", StringComparison.Ordinal))
+            fullName = fullName.Substring("global::".Length);
+        var name = new StringBuilder(fullName.Length + 16);
+        foreach (var ch in fullName)
+            name.Append(char.IsLetterOrDigit(ch) ? ch : '_');
+        name.Append("_Proxy.g.cs");
+        return name.ToString();
+    }
+
+    private static string GetStubHintName(RpcServiceModel model)
+    {
+        var fullName = model.ServiceFullName;
+        if (fullName.StartsWith("global::", StringComparison.Ordinal))
+            fullName = fullName.Substring("global::".Length);
+        var name = new StringBuilder(fullName.Length + 16);
+        foreach (var ch in fullName)
+            name.Append(char.IsLetterOrDigit(ch) ? ch : '_');
+        name.Append("_Stub.g.cs");
+        return name.ToString();
     }
 
 }

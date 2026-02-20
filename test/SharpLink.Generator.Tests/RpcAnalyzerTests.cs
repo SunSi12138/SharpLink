@@ -20,6 +20,7 @@ public interface IHelloService : SharpLink.Sdk.IService
     int Echo(int value);
 }
 """);
+        source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
 
         EnsureHasRule(source, "SHARPLINK001");
         return Task.CompletedTask;
@@ -34,6 +35,7 @@ public interface IHelloService : SharpLink.Sdk.IService
     ValueTask<int> Echo(int value, CancellationToken ct1, CancellationToken ct2);
 }
 """);
+        source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
 
         EnsureHasRule(source, "SHARPLINK002");
         return Task.CompletedTask;
@@ -50,6 +52,7 @@ public interface IHelloService : SharpLink.Sdk.IService
     ValueTask<int> Echo({{parameters}});
 }
 """);
+        source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
 
         EnsureHasRule(source, "SHARPLINK003");
         return Task.CompletedTask;
@@ -65,6 +68,7 @@ public interface IHelloService : SharpLink.Sdk.IService
     ValueTask<int> Echo(int value);
 }
 """);
+        source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
 
         EnsureHasRule(source, "SHARPLINK004");
         return Task.CompletedTask;
@@ -79,6 +83,7 @@ public interface IHelloService : SharpLink.Sdk.IService
     ValueTask<T> Echo<T>(T value);
 }
 """);
+        source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
 
         var diagnostics = RunGenerator(source);
         var hits = diagnostics.Where(d => d.Id == "SHARPLINK005").ToArray();
@@ -97,6 +102,11 @@ using System.Threading.Tasks;
 namespace SharpLink.Sdk
 {
     public interface IService
+    {
+    }
+
+    [AttributeUsage(AttributeTargets.Interface)]
+    public sealed class RpcContractAttribute : Attribute
     {
     }
 

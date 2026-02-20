@@ -1,4 +1,4 @@
-﻿using SharpLink.Sdk;
+using SharpLink.Sdk;
 using System.Runtime.InteropServices;
 using DemoBase;
 using MemoryPack;
@@ -134,6 +134,7 @@ public class HelloService : IHelloService
     }
 }
 
+[RpcContract]
 public interface IHelloService : IService
 {
     ValueTask Notify();

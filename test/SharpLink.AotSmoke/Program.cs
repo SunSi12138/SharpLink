@@ -107,6 +107,7 @@ public static class Program
     }
 }
 
+[RpcContract]
 public interface IAotService : IService
 {
     ValueTask<string> PingAsync();

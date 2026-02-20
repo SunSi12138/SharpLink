@@ -725,6 +725,7 @@ public class TransportConnectionIntegrationTests
     }
 }
 
+[RpcContract]
 public interface IConnectionBehaviorService : IService
 {
     ValueTask<int> PingAsync(int value);

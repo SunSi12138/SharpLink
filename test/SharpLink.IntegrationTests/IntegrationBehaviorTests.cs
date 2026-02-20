@@ -248,6 +248,7 @@ public class IntegrationBehaviorTests
     }
 }
 
+[RpcContract]
 public interface ITestService : IService
 {
     ValueTask<int> AddAsync(int left, int right);

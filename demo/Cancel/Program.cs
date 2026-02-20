@@ -31,6 +31,7 @@ finally
     await DemoTcp.ShutdownAsync(appCts, serverTask, client as IDisposable, server as IDisposable);
 }
 
+[RpcContract]
 public interface ICancelService : IService
 {
     ValueTask<int> SlowCountAsync(int count, CancellationToken cancellationToken);

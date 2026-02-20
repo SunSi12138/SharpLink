@@ -60,6 +60,7 @@ public sealed class HostRpcDemoService(
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
+[RpcContract]
 public interface IHelloService : IService
 {
     ValueTask<string> Echo(string name);

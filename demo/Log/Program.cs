@@ -51,7 +51,7 @@ finally
 {
     await DemoTcp.ShutdownAsync(appCts, serverTask, silentClient as IDisposable, loggedClient as IDisposable, server as IDisposable);
 }
-
+[RpcContract]
 public interface ILogService : IService
 {
     ValueTask<string> PingAsync();

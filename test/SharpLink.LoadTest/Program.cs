@@ -660,6 +660,7 @@ internal sealed class MetricsServer : IDisposable
         => ex.Flatten().InnerExceptions.All(e => e is OperationCanceledException or ObjectDisposedException or HttpListenerException);
 }
 
+[RpcContract]
 public interface ILoadTestService : IService
 {
     ValueTask<int> AddAsync(int left, int right);

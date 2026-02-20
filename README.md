@@ -57,7 +57,23 @@ dotnet run --project demo/HostApplication
 dotnet run --project demo/Cancel
 dotnet run --project demo/OnwWay
 dotnet run --project demo/Log
+# split contract/server/client (run server first)
+dotnet run --project demo/SeparatedServer
+dotnet run --project demo/SeparatedClient
 ```
+
+## Contract Discovery (Generator)
+
+- RPC contract interfaces must be marked with `[RpcContract]`.
+- RPC service classes must be marked with `[RpcService]`.
+- By default, the generator scans referenced assemblies that reference `SharpLink.Sdk`.
+- You can override scan scope with an assembly-level attribute:
+
+```csharp
+[assembly: SharpLinkRpcContracts(typeof(MyContract1), typeof(MyContract2))]
+```
+
+- The attribute above limits reference scanning to the assemblies that contain those contract types.
 
 运行基准：
 

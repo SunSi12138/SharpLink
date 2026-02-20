@@ -1,4 +1,4 @@
-﻿using Timeout = SharpLink.Sdk.TimeoutAttribute;
+using Timeout = SharpLink.Sdk.TimeoutAttribute;
 
 namespace SharpLink.IntegrationTests;
 
@@ -262,6 +262,7 @@ public class RpcChannelCallShapeIntegrationTests
     }
 }
 
+[RpcContract]
 public interface ICallShapeService : IService
 {
     ValueTask<int> UnaryPayloadAsync(int payload);

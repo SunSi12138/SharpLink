@@ -6,6 +6,7 @@ using SharpLink.Sdk;
 
 namespace SharpLink.Benchmarks;
 
+[RpcContract]
 public interface IBenchmarkRpc : IService
 {
     ValueTask<int> AddAsync(int left, int right);
