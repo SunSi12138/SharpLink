@@ -61,16 +61,20 @@ public partial class RpcGenerator
                     sb.AppendLine("            writer.Advance(fixedSize);");
                 }
 
-                foreach (var p in complexPayloadParams)
+                for (var complexIndex = 0; complexIndex < complexPayloadParams.Count; complexIndex++)
                 {
-                    sb.AppendLine("            int lenOffset = writer.WrittenCount;");
-                    sb.AppendLine("            writer.Advance(4);");
-                    sb.AppendLine("            int start = writer.WrittenCount;");
-                    sb.AppendLine($"            SharpLink.Runtime.RpcCodec.Serialize({p.Name}, writer);");
-                    sb.AppendLine("            int len = writer.WrittenCount - start;");
-                    sb.AppendLine("            var span = System.Runtime.InteropServices.MemoryMarshal.AsMemory(writer.WrittenMemory).Span;");
-                    sb.AppendLine("            var lengthSlice = span.Slice(lenOffset, 4);");
-                    sb.AppendLine("            BinaryPrimitives.WriteInt32LittleEndian(lengthSlice, len);");
+                    var p = complexPayloadParams[complexIndex];
+                    var suffix = complexIndex.ToString(CultureInfo.InvariantCulture);
+                    sb.AppendLine("            {");
+                    sb.AppendLine($"                int lenOffset_{suffix} = writer.WrittenCount;");
+                    sb.AppendLine("                writer.Advance(4);");
+                    sb.AppendLine($"                int start_{suffix} = writer.WrittenCount;");
+                    sb.AppendLine($"                SharpLink.Runtime.RpcCodec.Serialize({p.Name}, writer);");
+                    sb.AppendLine($"                int len_{suffix} = writer.WrittenCount - start_{suffix};");
+                    sb.AppendLine("                var writtenSpan = System.Runtime.InteropServices.MemoryMarshal.AsMemory(writer.WrittenMemory).Span;");
+                    sb.AppendLine($"                var lengthSlice_{suffix} = writtenSpan.Slice(lenOffset_{suffix}, 4);");
+                    sb.AppendLine($"                BinaryPrimitives.WriteInt32LittleEndian(lengthSlice_{suffix}, len_{suffix});");
+                    sb.AppendLine("            }");
                 }
 
                 sb.AppendLine("        };");
