@@ -32,7 +32,6 @@ catch (OperationCanceledException)
 }
 finally
 {
-    cts.Dispose();
     Console.CancelKeyPress -= cancelHandler;
     await DemoTcp.ShutdownAsync(cts, serverTask, server as IDisposable);
 }

@@ -91,6 +91,21 @@ public interface IHelloService : SharpLink.Sdk.IService
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task RpcContractWithoutIServiceShouldReportSharplink006()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IHelloService
+{
+    ValueTask<int> Echo(int value);
+}
+""");
+
+        EnsureHasRule(source, "SHARPLINK006");
+        return Task.CompletedTask;
+    }
+
     private static string BuildSource(string contract)
     {
         return $$"""

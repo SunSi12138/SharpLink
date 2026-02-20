@@ -51,6 +51,11 @@ public partial class RpcGenerator : IIncrementalGenerator
                 static (node, _) => node is InterfaceDeclarationSyntax,
                 static (attributeContext, ct) => GetInvalidGenericUsage(attributeContext, ct))
             .Where(x => x.Length > 0);
+        var invalidRpcContractInheritance = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RpcContractAttributeMetadataName,
+                static (node, _) => node is InterfaceDeclarationSyntax,
+                static (attributeContext, ct) => GetInvalidRpcContractInheritance(attributeContext, ct))
+            .Where(static x => x is not null);
 
         context.RegisterSourceOutput(invalidMethods, static (spc, methods) =>
         {
@@ -109,6 +114,14 @@ public partial class RpcGenerator : IIncrementalGenerator
                     model.TypeName);
                 spc.ReportDiagnostic(diagnostic);
             }
+        });
+        context.RegisterSourceOutput(invalidRpcContractInheritance, static (spc, model) =>
+        {
+            var diagnostic = Diagnostic.Create(
+                RpcContractMustInheritIServiceRule,
+                model!.Value.Location,
+                model.Value.InterfaceName);
+            spc.ReportDiagnostic(diagnostic);
         });
 
         context.RegisterSourceOutput(services, (spc, model) =>

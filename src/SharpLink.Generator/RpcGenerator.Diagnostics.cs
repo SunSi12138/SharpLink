@@ -41,4 +41,12 @@ public partial class RpcGenerator
         category: "SharpLink.Generator",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor RpcContractMustInheritIServiceRule = new(
+        id: "SHARPLINK006",
+        title: "RPC Contract Must Inherit IService",
+        messageFormat: "RPC contract interface '{0}' must inherit SharpLink.Sdk.IService",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
 }

@@ -7,3 +7,4 @@
  SHARPLINK003 | SharpLink.Generator | Error    | Stream parameter count exceeds sbyte range              
  SHARPLINK004 | SharpLink.Generator | Error    | Timeout Attribute Requires CancellationToken            
  SHARPLINK005 | SharpLink.Generator | Error    | Generic Type Parameter Not Supported in RPC Contract    
+ SHARPLINK006 | SharpLink.Generator | Error    | RpcContract Interface Must Inherit IService             
