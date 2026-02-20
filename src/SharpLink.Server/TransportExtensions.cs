@@ -44,12 +44,9 @@ public static class TransportExtensions
             return builder.UseTransport(new SocketTransport(socket));
         }
 
-        public SharpLinkServerBuilder UseAnonymousPipe(
-            Func<AnonymousPipeOffer, CancellationToken, ValueTask> onOffer,
-            TimeSpan? offerTimeout = null)
+        public SharpLinkServerBuilder UseAnonymousPipe()
         {
-            ArgumentNullException.ThrowIfNull(onOffer);
-            return builder.UseTransport(new AnonymousPipeTransport(onOffer, offerTimeout));
+            return builder.UseTransport(new AnonymousPipeTransport());
         }
 
     }

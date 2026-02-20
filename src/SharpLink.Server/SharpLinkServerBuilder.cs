@@ -5,6 +5,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     public static SharpLinkServerBuilder Create() => new();
 
     private ITransport? _transport;
+    public ITransport? Transport=>_transport;
     private Func<Type,IRpcCodec?>? _codecResolver;
     private TimeSpan _heartbeatCheckInterval = TimeSpan.FromSeconds(10);
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);

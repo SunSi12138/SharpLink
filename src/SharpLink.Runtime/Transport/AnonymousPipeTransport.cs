@@ -1,6 +1,6 @@
 namespace SharpLink.Runtime;
 
-public sealed class AnonymousPipeTransport : ITransport, IRpcSessionFlushConfigurableTransport
+public sealed class AnonymousPipeTransport : ITransport, IRpcSessionFlushConfigurableTransport,IAnonymousPipeAllocator
 {
     private enum Mode
     {
@@ -9,13 +9,11 @@ public sealed class AnonymousPipeTransport : ITransport, IRpcSessionFlushConfigu
     }
 
     private readonly Mode _mode;
-    private readonly Func<AnonymousPipeOffer, CancellationToken, ValueTask>? _onOffer;
     private readonly string? _inHandle;
     private readonly string? _outHandle;
-    private readonly TimeSpan _offerTimeout;
     private readonly Lock _gate = new();
     private readonly HashSet<PipeStream> _activePipes = [];
-    private long _nextConnectionId;
+    private readonly Channel<AnonymousPipeDuplexStream> _sessionQueue = Channel.CreateUnbounded<AnonymousPipeDuplexStream>();
     private bool _disposed;
     private RpcSessionFlushOptions? _rpcSessionFlushOptions;
 
@@ -29,20 +27,11 @@ public sealed class AnonymousPipeTransport : ITransport, IRpcSessionFlushConfigu
         _mode = Mode.ClientHandles;
         _inHandle = inHandle;
         _outHandle = outHandle;
-        _offerTimeout = Timeout.InfiniteTimeSpan;
     }
 
-    public AnonymousPipeTransport(
-        Func<AnonymousPipeOffer, CancellationToken, ValueTask> onOffer,
-        TimeSpan? offerTimeout = null)
+    public AnonymousPipeTransport()
     {
-        ArgumentNullException.ThrowIfNull(onOffer);
-        if (offerTimeout is { } timeout && timeout <= TimeSpan.Zero)
-            throw new ArgumentOutOfRangeException(nameof(offerTimeout));
-
         _mode = Mode.ServerOffer;
-        _onOffer = onOffer;
-        _offerTimeout = offerTimeout ?? Timeout.InfiniteTimeSpan;
     }
 
     public async Task<IRpcSession> ConnectAsync(CancellationToken ct = default)
@@ -87,7 +76,7 @@ public sealed class AnonymousPipeTransport : ITransport, IRpcSessionFlushConfigu
 
     }
 
-    private IRpcSession ConnectClient()
+    private RpcSession ConnectClient()
     {
         var input = new AnonymousPipeClientStream(PipeDirection.In, _inHandle!);
         var output = new AnonymousPipeClientStream(PipeDirection.Out, _outHandle!);
@@ -95,73 +84,19 @@ public sealed class AnonymousPipeTransport : ITransport, IRpcSessionFlushConfigu
         return CreateSession(input, output);
     }
 
-    private async Task<IRpcSession> ConnectServerAsync(CancellationToken ct)
+    private async Task<RpcSession> ConnectServerAsync(CancellationToken ct = default)
     {
-        var input = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable);
-        var output = new AnonymousPipeServerStream(PipeDirection.Out, HandleInheritability.Inheritable);
-
-        var inHandle = output.GetClientHandleAsString();
-        var outHandle = input.GetClientHandleAsString();
-        Interlocked.Increment(ref _nextConnectionId);
-        var offer = new AnonymousPipeOffer(
-            InHandle: inHandle,
-            OutHandle: outHandle);
-
-        try
+        var sessionStream = await _sessionQueue.Reader.ReadAsync(ct);
+        var session = CreateSession(sessionStream.Input, sessionStream.Output);
+        RegisterStreams(sessionStream.Input,sessionStream.Output);
+        session.OnConnected += () =>
         {
-            await _onOffer!(offer, ct);
-            await WaitForConnectedAsync(input, output, ct);
-
-            RegisterStreams(input, output);
-            return CreateSession(input, output);
-        }
-        catch
-        {
-            try
-            {
-                input.DisposeLocalCopyOfClientHandle();
-            }
-            catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
-            {
-            }
-
-            try
-            {
-                output.DisposeLocalCopyOfClientHandle();
-            }
-            catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
-            {
-            }
-
-            input.Dispose();
-            output.Dispose();
-            throw;
-        }
+            sessionStream.Input.DisposeLocalCopyOfClientHandle();
+            sessionStream.Output.DisposeLocalCopyOfClientHandle();
+        };
+        return session;
     }
-
-    private async Task WaitForConnectedAsync(
-        AnonymousPipeServerStream input,
-        AnonymousPipeServerStream output,
-        CancellationToken ct)
-    {
-        if (input.IsConnected && output.IsConnected)
-            return;
-
-        using var timeoutCts = _offerTimeout == Timeout.InfiniteTimeSpan
-            ? null
-            : new CancellationTokenSource(_offerTimeout);
-        using var linkedCts = timeoutCts is null
-            ? CancellationTokenSource.CreateLinkedTokenSource(ct)
-            : CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
-        var token = linkedCts.Token;
-
-        while (!input.IsConnected || !output.IsConnected)
-        {
-            token.ThrowIfCancellationRequested();
-            await Task.Delay(10, token);
-        }
-    }
-
+    
     private RpcSession CreateSession(PipeStream input, PipeStream output)
     {
         return new RpcSession(
@@ -169,7 +104,7 @@ public sealed class AnonymousPipeTransport : ITransport, IRpcSessionFlushConfigu
             PipeReader.Create(input),
             PipeWriter.Create(output),
             () => ReleaseStreams(input, output),
-            () => !_disposed && input.IsConnected && output.IsConnected,
+            () => !_disposed&&input.IsConnected && output.IsConnected,
             _rpcSessionFlushOptions);
     }
 
@@ -213,4 +148,19 @@ public sealed class AnonymousPipeTransport : ITransport, IRpcSessionFlushConfigu
         {
         }
     }
+
+    public (string InHandle, string OutHandle) AllocateNewSession()
+    {
+        
+        var input = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable);
+        var output = new AnonymousPipeServerStream(PipeDirection.Out, HandleInheritability.Inheritable);
+
+        var inHandle = output.GetClientHandleAsString();
+        var outHandle = input.GetClientHandleAsString();
+        _sessionQueue.Writer.TryWrite(new AnonymousPipeDuplexStream(input, output));
+        
+        return (inHandle, outHandle);
+    }
+    
+    private record AnonymousPipeDuplexStream(AnonymousPipeServerStream Input, AnonymousPipeServerStream Output);
 }

@@ -39,7 +39,9 @@ public sealed partial class RpcSession : IRpcSession
             output: writer,
             flushSizeThreshold: effectiveFlushOptions.FlushSizeThreshold,
             maxLatency: effectiveFlushOptions.MaxLatency,
-            cts: _cts);
+            cts: _cts,
+            Abort
+            );
     }
 
     private int _droppedCount;
@@ -56,6 +58,21 @@ public sealed partial class RpcSession : IRpcSession
         _pump.Enqueue(packet);
     }
 
+    public event Action? OnConnected;
+    public void NotifyConnected()=>OnConnected?.Invoke();
+    public event Action<Exception?>? OnDisconnected;
+    public void NotifyDisconnected(Exception? e=null)=>OnDisconnected?.Invoke(e);
+
+    private bool _aborted;
+    private void Abort()
+    {
+        if(Interlocked.Exchange(ref _aborted, true))
+            return;
+        
+        _cts.Cancel();
+        
+        NotifyDisconnected(new IOException("transport closed"));
+    }
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, true))

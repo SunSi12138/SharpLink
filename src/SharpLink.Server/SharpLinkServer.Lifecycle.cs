@@ -44,8 +44,9 @@ internal sealed partial class SharpLinkServer
                 LogHandshakeFailed(_logger);
                 return;
             }
-
+            
             hasConnected = true;
+            session.NotifyConnected();
             LogClientConnected(_logger);
             await ProcessRequestLoop(session, ct);
         }
@@ -75,7 +76,9 @@ internal sealed partial class SharpLinkServer
     {
         _sessions.TryRemove(sessionId, out var rpcSession);
         if (rpcSession is not null)
+        {
             await rpcSession.DisposeAsync();
+        }
     }
 
     private async Task HeartbeatCheckLoop(CancellationToken ct)

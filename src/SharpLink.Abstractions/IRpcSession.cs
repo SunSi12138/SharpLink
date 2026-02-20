@@ -8,4 +8,9 @@ public interface IRpcSession : IAsyncDisposable
     IStreamManager StreamManager { get; }
     bool IsConnected { get; }
     void SendPacket(ArrayBufferWriter<byte> packet);
+
+    event Action OnConnected;
+    void NotifyConnected();
+    event Action<Exception?> OnDisconnected;
+    void NotifyDisconnected(Exception? exception=null);
 }

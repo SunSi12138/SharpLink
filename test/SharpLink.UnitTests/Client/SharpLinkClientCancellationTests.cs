@@ -139,6 +139,11 @@ public class SharpLinkClientCancellationTests
             BufferWriterPool.Return(packet);
         }
 
+        public event Action? OnConnected;
+        public void NotifyConnected()=>OnConnected?.Invoke();
+        public event Action<Exception?>? OnDisconnected;
+        public void NotifyDisconnected(Exception? e=null)=>OnDisconnected?.Invoke(e);
+
         public async Task InjectPacketAsync(PacketType type, PacketFlags flags, long requestId)
         {
             var writer = BufferWriterPool.Get();
