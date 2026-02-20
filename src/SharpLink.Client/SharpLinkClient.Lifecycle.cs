@@ -5,6 +5,7 @@ internal sealed partial class SharpLinkClient
     public async Task<bool> ConnectAsync(CancellationToken ct = default)
     {
         _session = await transport.ConnectAsync(ct);
+        _session.OnDisconnected += HandleDisconnected;
         var res = await ProcessHandshakeAsync(_session, ct);
         if (!res)
             return false;
@@ -100,7 +101,7 @@ internal sealed partial class SharpLinkClient
                 {
                     session.LastActive = DateTime.UtcNow;
                     switch (header.Type)
-                    {
+                    { 
                         case PacketType.Heartbeat:
                             DebugLogServerHeartbeatReceived(_logger);
                             break;

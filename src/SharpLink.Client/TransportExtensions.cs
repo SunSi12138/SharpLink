@@ -28,16 +28,11 @@ public static class TransportExtensions
             return builder.UseTransport(new SocketTransport(socket, endPoint));
         }
 
-        private SharpClientBuilder UseAnonymousPipe(string inHandle, string outHandle)
+        public SharpClientBuilder UseAnonymousPipe(string inHandle, string outHandle)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(inHandle);
             ArgumentException.ThrowIfNullOrWhiteSpace(outHandle);
             return builder.UseTransport(new AnonymousPipeTransport(inHandle, outHandle));
-        }
-
-        public SharpClientBuilder UseAnonymousPipe(AnonymousPipeOffer offer)
-        {
-            return builder.UseAnonymousPipe(offer.InHandle, offer.OutHandle);
         }
     }
 }

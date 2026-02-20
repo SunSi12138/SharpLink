@@ -2,7 +2,7 @@ namespace SharpLink.Runtime;
 
 public sealed partial class RpcSession
 {
-    private sealed class SendPump(PipeWriter output, int flushSizeThreshold, TimeSpan maxLatency, CancellationTokenSource cts) : IDisposable
+    private sealed class SendPump(PipeWriter output, int flushSizeThreshold, TimeSpan maxLatency, CancellationTokenSource cts,Action onTransportFaulted) : IDisposable
     {
         private readonly ConcurrentQueue<ArrayBufferWriter<byte>> _q = new();
         private readonly TaskCompletionSource<bool> _stoppedTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -70,7 +70,10 @@ public sealed partial class RpcSession
 
                             var timedFlush = await output.FlushAsync(cts.Token).ConfigureAwait(false);
                             if (timedFlush.IsCanceled || timedFlush.IsCompleted)
+                            {
+                                ReportFaultOnce();
                                 return;
+                            }
 
                             bytesAccumulated = 0;
                             batchStart = now;
@@ -79,7 +82,10 @@ public sealed partial class RpcSession
 
                         var sizeFlush = await output.FlushAsync(cts.Token).ConfigureAwait(false);
                         if (sizeFlush.IsCanceled || sizeFlush.IsCompleted)
+                        {
+                            ReportFaultOnce();
                             return;
+                        }
 
                         bytesAccumulated = 0;
                         batchStart = Stopwatch.GetTimestamp();
@@ -89,7 +95,10 @@ public sealed partial class RpcSession
                     {
                         var flush = await output.FlushAsync(cts.Token).ConfigureAwait(false);
                         if (flush.IsCanceled || flush.IsCompleted)
+                        {
+                            ReportFaultOnce();
                             return;
+                        }
 
                         bytesAccumulated = 0;
                         batchStart = Stopwatch.GetTimestamp();
@@ -125,6 +134,15 @@ public sealed partial class RpcSession
                 _stoppedTcs.TrySetResult(true);
         }
 
+        private bool _faulted;
+
+        private void ReportFaultOnce()
+        {
+            if(Interlocked.Exchange(ref _faulted,true))
+                return;
+            onTransportFaulted();
+        }
+        
         public ValueTask WaitForStopAsync()
             => _stoppedTcs.Task.IsCompletedSuccessfully ? ValueTask.CompletedTask : new ValueTask(_stoppedTcs.Task);
     }

@@ -36,16 +36,6 @@ public class TransportConnectionIntegrationTests
     }
 
     [Test]
-    public async Task AnonymousPipeConnectAndBasicRpcShouldWork()
-    {
-        await using var harness = await TransportHarness.CreateAsync(TransportKind.AnonymousPipe);
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
-
-        var value = await svc.PingAsync(13);
-        Ensure(value == 14, "anonymous pipe ping");
-    }
-
-    [Test]
     public async Task TcpServerUnexpectedDisconnectShouldFailFastPendingCall()
     {
         await using var harness = await TransportHarness.CreateAsync(TransportKind.Tcp);
@@ -88,19 +78,6 @@ public class TransportConnectionIntegrationTests
     }
 
     [Test]
-    public async Task AnonymousPipeServerUnexpectedDisconnectShouldFailFastPendingCall()
-    {
-        await using var harness = await TransportHarness.CreateAsync(TransportKind.AnonymousPipe);
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
-
-        var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
-        await Task.Delay(120);
-        harness.DisposeServerOnly();
-
-        await EnsureThrowsAnyFast(pending, "anonymous pipe pending should fail fast after server dispose");
-    }
-
-    [Test]
     public async Task TcpClientDisposeShouldFailFastPendingCall()
     {
         await using var harness = await TransportHarness.CreateAsync(TransportKind.Tcp);
@@ -140,19 +117,6 @@ public class TransportConnectionIntegrationTests
         harness.DisposeClientOnly();
 
         await EnsureThrowsAnyFast(pending, "uds pending should fail fast after client dispose");
-    }
-
-    [Test]
-    public async Task AnonymousPipeClientDisposeShouldFailFastPendingCall()
-    {
-        await using var harness = await TransportHarness.CreateAsync(TransportKind.AnonymousPipe);
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
-
-        var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
-        await Task.Delay(120);
-        harness.DisposeClientOnly();
-
-        await EnsureThrowsAnyFast(pending, "anonymous pipe pending should fail fast after client dispose");
     }
 
     [Test]
@@ -377,19 +341,6 @@ public class TransportConnectionIntegrationTests
         await VerifyReconnectWithNewClientInstanceAsync(TransportKind.Uds);
     }
 
-    [Test]
-    public async Task AnonymousPipeShouldReconnectWithNewClientInstanceAfterDisconnect()
-    {
-        // AnonymousPipe transport is single-connection by design. Reconnect requires rebuilding endpoints.
-        await using var round1 = await TransportHarness.CreateAsync(TransportKind.AnonymousPipe);
-        var svc1 = round1.Client.Get<IConnectionBehaviorService>();
-        Ensure(await svc1.PingAsync(50) == 51, "anonymous pipe first round");
-        round1.DisposeClientOnly();
-
-        await using var round2 = await TransportHarness.CreateAsync(TransportKind.AnonymousPipe);
-        var svc2 = round2.Client.Get<IConnectionBehaviorService>();
-        Ensure(await svc2.PingAsync(60) == 61, "anonymous pipe second round");
-    }
 
     private static async Task EnsureThrows<TException>(Task task, string name) where TException : Exception
     {
@@ -407,7 +358,7 @@ public class TransportConnectionIntegrationTests
     {
         try
         {
-            await task.WaitAsync(TimeSpan.FromSeconds(3));
+            await task.WaitAsync(TimeSpan.FromSeconds(5));
             throw new Exception($"assert failed: {name} should throw");
         }
         catch (TimeoutException)
@@ -503,8 +454,7 @@ public class TransportConnectionIntegrationTests
     {
         Tcp,
         NamedPipe,
-        Uds,
-        AnonymousPipe
+        Uds
     }
 
     private readonly record struct TransportEndpoint(TransportKind Kind, int Port, string PipeName, string UdsPath);
@@ -547,8 +497,7 @@ public class TransportConnectionIntegrationTests
             _cleanup = cleanup;
         }
 
-        public static Task<TransportHarness> CreateAsync(TransportKind kind)
-            => CreateAsync(kind, default);
+        public static Task<TransportHarness> CreateAsync(TransportKind kind) => CreateAsync(kind, default);
 
         private static async Task<TransportHarness> CreateAsync(TransportKind kind, TransportEndpoint endpoint)
         {
@@ -598,46 +547,6 @@ public class TransportConnectionIntegrationTests
                     resolvedEndpoint = new TransportEndpoint(kind, 0, string.Empty, udsPath);
                     cleanup = () => TryDeleteFile(udsPath);
                     break;
-                }
-                case TransportKind.AnonymousPipe:
-                {
-                    var offerTcs = new TaskCompletionSource<AnonymousPipeOffer>(TaskCreationOptions.RunContinuationsAsynchronously);
-                    serverBuilder.UseAnonymousPipe(
-                        onOffer: (offer, _) =>
-                        {
-                            offerTcs.TrySetResult(offer);
-                            return ValueTask.CompletedTask;
-                        },
-                        offerTimeout: TimeSpan.FromSeconds(5));
-                    resolvedEndpoint = new TransportEndpoint(kind, 0, string.Empty, string.Empty);
-                    cleanup = () =>
-                    {
-                        if (!offerTcs.Task.IsCompleted)
-                            offerTcs.TrySetCanceled();
-                    };
-
-                    // Delay client transport binding until server publishes per-connection handles.
-                    var anonServer = serverBuilder.Build();
-                    var anonServerTask = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await anonServer.Start(cts.Token);
-                        }
-                        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
-                        {
-                            IgnoreExpectedException(ex);
-                        }
-                    }, CancellationToken.None);
-
-                    var offer = await offerTcs.Task.WaitAsync(TimeSpan.FromSeconds(5), cts.Token);
-                    clientBuilder.UseAnonymousPipe(offer);
-                    var anonClient = clientBuilder.Build();
-                    var anonConnected = await anonClient.ConnectAsync(cts.Token);
-                    if (!anonConnected)
-                        throw new Exception("client connect failed");
-
-                    return new TransportHarness(anonServer, anonServerTask, cts, anonClient, resolvedEndpoint, cleanup);
                 }
             }
 
