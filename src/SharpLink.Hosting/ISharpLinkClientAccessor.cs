@@ -2,5 +2,5 @@ namespace SharpLink.Hosting;
 
 public interface ISharpLinkClientAccessor
 {
-    ISharpLinkClient? Client { get; }
+    ValueTask<ISharpLinkClient> GetClientAsync(CancellationToken cancellationToken = default);
 }

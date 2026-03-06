@@ -46,8 +46,9 @@ public sealed class HostRpcDemoService(
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        var client = clientAccessor.Client
-                     ?? throw new InvalidOperationException("SharpLink client is not ready.");
+        var clientGetter = clientAccessor.GetClientAsync(cancellationToken);
+        var client = clientGetter.IsCompleted ? clientGetter.Result : await clientGetter;
+            
 
         logger.LogInformation("Host RPC demo starting.");
         var hello = client.Get<IHelloService>();

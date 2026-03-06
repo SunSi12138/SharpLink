@@ -9,17 +9,27 @@ internal sealed class SharpLinkClientHostedService(
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        builder.UseLoggerFactoryIfUnset(loggerFactory);
-        _client = builder.Build();
-        var connected = await _client.ConnectAsync(cancellationToken);
-        if (!connected)
-            throw new InvalidOperationException("Failed to connect SharpLink client during host startup.");
-        accessor.Client = _client;
+        try
+        {
+            builder.UseLoggerFactoryIfUnset(loggerFactory);
+            _client = builder.Build();
+            var connected = await _client.ConnectAsync(cancellationToken);
+            if (!connected)
+                throw new InvalidOperationException("Failed to connect SharpLink client during host startup.");
+
+            accessor.SetClient(_client);
+        }
+        catch (Exception ex)
+        {
+            accessor.Fail(ex);
+            Dispose();
+            throw;
+        }
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
-        accessor.Client = null;
+        accessor.Stop();
         Dispose();
         return Task.CompletedTask;
     }
