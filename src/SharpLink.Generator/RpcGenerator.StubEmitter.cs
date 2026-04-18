@@ -248,7 +248,7 @@ public partial class RpcGenerator
                     sb.AppendLine("                if (pending.IsCompletedSuccessfully)");
                     sb.AppendLine("                {");
                     if (writeResponse)
-                        sb.AppendLine($"                    SharpLink.Runtime.RpcCodec.Serialize(pending.Result, output);");
+                        sb.AppendLine("                    SharpLink.Runtime.RpcCodec.Serialize(pending.Result, output);");
                     sb.AppendLine("                }");
                     sb.AppendLine("                else");
                     sb.AppendLine("                {");
@@ -263,7 +263,7 @@ public partial class RpcGenerator
                     sb.AppendLine("                if (pending.IsCompletedSuccessfully)");
                     sb.AppendLine("                {");
                     if (writeResponse)
-                        sb.AppendLine($"                    SharpLink.Runtime.RpcCodec.Serialize(pending.GetAwaiter().GetResult(), output);");
+                        sb.AppendLine("                    SharpLink.Runtime.RpcCodec.Serialize(pending.GetAwaiter().GetResult(), output);");
                     sb.AppendLine("                }");
                     sb.AppendLine("                else");
                     sb.AppendLine("                {");

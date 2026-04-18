@@ -1,5 +1,7 @@
 
 
+using System.Diagnostics;
+
 namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
@@ -11,7 +13,7 @@ internal sealed partial class SharpLinkServer
         LoggerMessage.DefineScope<long>("RequestId:{RequestId}");
     
     
-    [System.Diagnostics.Conditional(CompileSymbols.Debug)]
+    [Conditional(CompileSymbols.Debug)]
     private static void DebugLogClientHeartbeatReceived(ILogger logger)=>LogClientHeartbeatReceived(logger);
 
     private static IDisposable? BeginSessionLogScope(ILogger logger, string sessionId) => SSessionScope(logger, sessionId);

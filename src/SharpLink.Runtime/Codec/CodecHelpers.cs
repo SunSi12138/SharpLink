@@ -17,7 +17,7 @@ internal static class CodecHelpers
     public static void Serialize(in ReadOnlySpan<short?> src, in ArrayBufferWriter<byte> writer)
     {
         var count = src.Length;
-        CodecHelpers.WriteInt32(writer, count);
+        WriteInt32(writer, count);
         if (count == 0) return;
 
         // pass1: count non-null

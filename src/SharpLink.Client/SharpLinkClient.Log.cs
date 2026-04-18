@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
@@ -12,10 +14,10 @@ internal sealed partial class SharpLinkClient
 
     private static IDisposable? BeginRequestLogScope(ILogger logger, long requestId) => SRequestScope(logger, requestId);
 
-    [System.Diagnostics.Conditional(CompileSymbols.Debug)]
+    [Conditional(CompileSymbols.Debug)]
     private static void DebugLogServerHeartbeatReceived(ILogger logger) => LogServerHeartbeatReceived(logger);
 
-    [System.Diagnostics.Conditional(CompileSymbols.Debug)]
+    [Conditional(CompileSymbols.Debug)]
     private static void DebugLogServerCancelIgnored(ILogger logger) => LogServerCancelIgnored(logger);
     
     
