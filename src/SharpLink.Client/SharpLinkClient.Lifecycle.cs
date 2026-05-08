@@ -4,19 +4,39 @@ internal sealed partial class SharpLinkClient
 {
     public async Task<bool> ConnectAsync(CancellationToken ct = default)
     {
-        _session = await transport.ConnectAsync(ct);
+        LastConnectionException = null;
+        try
+        {
+            _session = await transport.ConnectAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            LastConnectionException = ex;
+            throw;
+        }
         _session.OnDisconnected += HandleDisconnected;
-        var res = await ProcessHandshakeAsync(_session, ct);
-        if (!res)
+        var handshakeException = await ProcessHandshakeAsync(_session, ct);
+        if (handshakeException is not null)
+        {
+            LastConnectionException = handshakeException;
+            await _session.DisposeAsync();
+            _session = null;
+            if (handshakeException is OperationCanceledException operationCanceledException && ct.IsCancellationRequested)
+                throw operationCanceledException;
             return false;
+        }
 
-        _ = RunHeartbeatSendLoopAsync(_session, ct);
-        _ = RunProcessRequestLoopAsync(_session, ct);
+        var loopToken = _lifecycleCts.Token;
+        TrackBackgroundTask(RunHeartbeatSendLoopAsync(_session, loopToken));
+        TrackBackgroundTask(RunProcessRequestLoopAsync(_session, loopToken));
         return true;
     }
 
     private static bool IsExpectedCancellation(Exception ex, CancellationToken ct)
         => ex is OperationCanceledException && ct.IsCancellationRequested;
+
+    private static bool IsTransportFault(Exception ex)
+        => ex is IOException or ObjectDisposedException or SocketException;
 
     private async Task RunHeartbeatSendLoopAsync(IRpcSession session, CancellationToken ct)
     {
@@ -31,7 +51,9 @@ internal sealed partial class SharpLinkClient
         {
             using var sessionScope = BeginSessionLogScope(_logger, session.Id);
             LogClientBackgroundLoopUnhandledException(_logger, nameof(HeartbeatSendLoop), ex);
-            HandleDisconnected(ex);
+            HandleDisconnected(IsTransportFault(ex)
+                ? CreateConnectionClosedException("Transport closed.", ex)
+                : ex);
         }
     }
 
@@ -48,7 +70,9 @@ internal sealed partial class SharpLinkClient
         {
             using var sessionScope = BeginSessionLogScope(_logger, session.Id);
             LogClientBackgroundLoopUnhandledException(_logger, nameof(ProcessRequestLoop), ex);
-            HandleDisconnected(ex);
+            HandleDisconnected(IsTransportFault(ex)
+                ? CreateConnectionClosedException("Transport closed.", ex)
+                : ex);
         }
     }
 
@@ -60,30 +84,46 @@ internal sealed partial class SharpLinkClient
         throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
     }
 
-    private static async Task<bool> ProcessHandshakeAsync(IRpcSession session, CancellationToken ct)
+    private async Task<Exception?> ProcessHandshakeAsync(IRpcSession session, CancellationToken ct)
     {
-        session.SendStringPacketAsync(PacketType.Handshake, PacketFlags.None, 0, "Password");
+        session.SendStringPacketAsync(PacketType.Handshake, PacketFlags.None, 0, _handshakeMessage);
 
         var reader = session.Input;
+        Exception? handshakeException = null;
+        var handshakeCompleted = false;
         while (session.IsConnected && !ct.IsCancellationRequested)
         {
             var result = await reader.ReadAsync(ct);
             var buffer = result.Buffer;
-            bool? handshakeResult = null;
-            while (PacketHelper.TryReadMessage(ref buffer, out var header, out var _))
+            while (PacketHelper.TryReadMessage(ref buffer, out var header, out var payload))
             {
-                handshakeResult = header.Type == PacketType.Handshake && (header.Flags & PacketFlags.IsError) == 0;
+                if (header.Type != PacketType.Handshake)
+                    handshakeException = CreateProtocolViolationException("Received unexpected packet during handshake.");
+                else if ((header.Flags & PacketFlags.IsError) == 0)
+                    handshakeException = null;
+                else
+                {
+                    var message = payload.Length > 0 ? Encoding.UTF8.GetString(payload) : "Authentication rejected.";
+                    handshakeException = SharpLinkAuthenticationResult.TryParsePayloadMessage(message, out var authResult)
+                        ? new SharpLinkException(authResult.ErrorCode, authResult.ErrorMessage ?? "Authentication rejected.")
+                        : CreateAuthenticationRejectedException(message);
+                }
+
+                handshakeCompleted = true;
                 break;
             }
             reader.AdvanceTo(buffer.Start, buffer.End);
 
-            if (handshakeResult.HasValue)
-                return handshakeResult.Value;
+            if (handshakeCompleted)
+                return handshakeException;
 
             if (result.IsCompleted)
                 break;
         }
-        return false;
+
+        return ct.IsCancellationRequested
+            ? new OperationCanceledException(ct)
+            : CreateConnectionClosedException("Server disconnected during handshake.");
     }
 
     private async Task ProcessRequestLoop(IRpcSession session, CancellationToken ct)
@@ -128,7 +168,7 @@ internal sealed partial class SharpLinkClient
                         case PacketType.Handshake:
                         default:
                             await session.DisposeAsync();
-                            HandleDisconnected(new IOException("Received unexpected packet from server."));
+                            HandleDisconnected(CreateProtocolViolationException("Received unexpected packet from server."));
                             break;
                     }
                 }
@@ -142,7 +182,7 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        HandleDisconnected(new IOException("Server disconnected."));
+        HandleDisconnected(CreateConnectionClosedException("Server disconnected."));
     }
 
     private async Task HeartbeatSendLoop(IRpcSession session, CancellationToken ct)
@@ -159,7 +199,7 @@ internal sealed partial class SharpLinkClient
             LogServerHeartbeatTimeout(_logger);
 
             await session.DisposeAsync();
-            HandleDisconnected(new IOException("Server heartbeat timeout."));
+            HandleDisconnected(CreateHeartbeatTimeoutException("Server heartbeat timeout."));
             break;
         }
     }
@@ -171,12 +211,13 @@ internal sealed partial class SharpLinkClient
         if (isError)
         {
             var message = payload.Length > 0 ? Encoding.UTF8.GetString(payload) : "Remote Error";
-            if (_requestManager.DispatchError(requestId, new Exception(message)))
+            var remoteException = CreateRemoteErrorException(message);
+            if (_requestManager.DispatchError(requestId, remoteException))
                 return;
 
             if (_serverStreamRequestIds.Remove(requestId))
             {
-                _session?.StreamManager.CompleteStream(requestId, 0, true, message);
+                _session?.StreamManager.CompleteStream(requestId, remoteException);
                 return;
             }
         }

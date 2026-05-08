@@ -114,6 +114,10 @@ public sealed partial class RpcSession
             catch (OperationCanceledException)
             {
             }
+            catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException)
+            {
+                ReportFaultOnce();
+            }
             finally
             {
                 if (Interlocked.Decrement(ref _activeDrains) == 0 && Volatile.Read(ref _disposed))

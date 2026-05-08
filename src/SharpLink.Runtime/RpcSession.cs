@@ -58,6 +58,33 @@ public sealed partial class RpcSession : IRpcSession
         _pump.Enqueue(packet);
     }
 
+    public async ValueTask SendPacketAndFlushAsync(ArrayBufferWriter<byte> packet, CancellationToken ct = default)
+    {
+        if (Volatile.Read(ref _disposed))
+        {
+            BufferWriterPool.Return(packet);
+            Interlocked.Increment(ref _droppedCount);
+            return;
+        }
+
+        try
+        {
+            await Output.WriteAsync(packet.WrittenMemory, ct).ConfigureAwait(false);
+            var flushResult = await Output.FlushAsync(ct).ConfigureAwait(false);
+            if (flushResult.IsCanceled || flushResult.IsCompleted)
+                Abort();
+        }
+        catch
+        {
+            Abort();
+            throw;
+        }
+        finally
+        {
+            BufferWriterPool.Return(packet);
+        }
+    }
+
     public event Action? OnConnected;
     public void NotifyConnected()=>OnConnected?.Invoke();
     public event Action<Exception?>? OnDisconnected;
@@ -71,7 +98,7 @@ public sealed partial class RpcSession : IRpcSession
         
         _cts.Cancel();
         
-        NotifyDisconnected(new IOException("transport closed"));
+        NotifyDisconnected(new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Transport closed."));
     }
     public async ValueTask DisposeAsync()
     {

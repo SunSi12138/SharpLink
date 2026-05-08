@@ -6,4 +6,5 @@ public interface IStreamDispatcher
 {
     ValueTask DispatchAsync(ReadOnlySequence<byte> payload);
     void Complete(bool isError, string? errorMessage);
+    void Complete(Exception? exception);
 }

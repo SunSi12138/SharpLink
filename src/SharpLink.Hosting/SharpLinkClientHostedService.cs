@@ -13,10 +13,7 @@ internal sealed class SharpLinkClientHostedService(
         {
             builder.UseLoggerFactoryIfUnset(loggerFactory);
             _client = builder.Build();
-            var connected = await _client.ConnectAsync(cancellationToken);
-            if (!connected)
-                throw new InvalidOperationException("Failed to connect SharpLink client during host startup.");
-
+            await _client.ConnectOrThrowAsync(cancellationToken);
             accessor.SetClient(_client);
         }
         catch (Exception ex)

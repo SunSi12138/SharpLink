@@ -68,8 +68,8 @@ public class IntegrationBehaviorTests
         await Task.Delay(100);
         harness.DisposeServerOnly();
 
-        await EnsureThrowsAnyFast(unaryTask, "unary fail-fast");
-        await EnsureThrowsAnyFast(streamTask, "stream fail-fast");
+        await EnsureThrowsSharpLinkFast(unaryTask, "unary fail-fast", SharpLinkErrorCode.ConnectionClosed);
+        await EnsureThrowsSharpLinkFast(streamTask, "stream fail-fast", SharpLinkErrorCode.ConnectionClosed);
     }
 
     [Test]
@@ -84,8 +84,8 @@ public class IntegrationBehaviorTests
         await Task.Delay(100);
         harness.DisposeClientOnly();
 
-        await EnsureThrowsAnyFast(unaryTask, "unary fail-fast after client dispose");
-        await EnsureThrowsAnyFast(streamTask, "stream fail-fast after client dispose");
+        await EnsureThrowsSharpLinkFast(unaryTask, "unary fail-fast after client dispose", SharpLinkErrorCode.ConnectionClosed);
+        await EnsureThrowsSharpLinkFast(streamTask, "stream fail-fast after client dispose", SharpLinkErrorCode.ConnectionClosed);
     }
 
     private static async Task EnsureThrows<TException>(Task task, string name) where TException : Exception
@@ -100,7 +100,7 @@ public class IntegrationBehaviorTests
         }
     }
 
-    private static async Task EnsureThrowsAnyFast(Task task, string name)
+    private static async Task EnsureThrowsSharpLinkFast(Task task, string name, SharpLinkErrorCode errorCode)
     {
         try
         {
@@ -111,9 +111,9 @@ public class IntegrationBehaviorTests
         {
             throw new Exception($"assert failed: {name} did not fail fast");
         }
-        catch (Exception)
+        catch (SharpLinkException ex)
         {
-            // ignored
+            Ensure(ex.Code == errorCode, $"{name} error code");
         }
     }
 
@@ -174,14 +174,15 @@ public class IntegrationBehaviorTests
 
         public static async Task<TestHarness> CreateAsync(TimeSpan? requestTimeout = null)
         {
-            var port = GetFreePort();
             var cts = new CancellationTokenSource();
-            var server = SharpLinkServerBuilder.Create()
+            var serverBuilder = SharpLinkServerBuilder.Create()
                 .AddService<ITestService, TestService>()
-                .UseTcp(port, IPAddress.Loopback.ToString())
+                .UseTcp(0, IPAddress.Loopback.ToString())
                 .UseSerializer(MemoryPackCodec.Resolver)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
-                .Build();
+                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
+
+            var port = ((IPEndPoint)((ILocalEndPointTransport)serverBuilder.Transport!).LocalEndPoint!).Port;
+            var server = serverBuilder.Build();
 
             var serverTask = Task.Run(async () =>
             {

@@ -130,13 +130,22 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
     public void Complete(bool isError, string? errorMessage)
     {
+        var message = string.IsNullOrWhiteSpace(errorMessage) ? "Remote Error" : errorMessage;
+        Complete(isError
+            ? SharpLinkException.TryParsePayloadMessage(message, out var structuredException)
+                ? structuredException
+                : new SharpLinkException(SharpLinkErrorCode.RemoteError, message)
+            : null);
+    }
+
+    public void Complete(Exception? exception)
+    {
         // 已完成则忽略
         if (Volatile.Read(ref _completed))
             return;
 
         // 审核 #1：先写 error，最后发布 completed（release）
-        if (isError)
-            _error = new Exception(errorMessage ?? "Remote Error");
+        _error = exception;
 
         Volatile.Write(ref _completed, true);
         Signal();

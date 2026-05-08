@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MemoryPack;
 using MemoryPack.Formatters;
+using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
@@ -17,16 +18,18 @@ public static class Program
     public static async Task<int> Main()
     {
         MemoryPackFormatterProvider.Register(new ValueTupleFormatter<int,string>());
+        RegisterAotCodecs();
         
-        var port = GetFreePort();
         var cts = new CancellationTokenSource();
         var runToken = cts.Token;
 
-        var server = SharpLinkServerBuilder.Create()
+        var serverBuilder = SharpLinkServerBuilder.Create()
             .AddService<IAotService, AotService>()
-            .UseTcp(port, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver)
-            .Build();
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseSerializer(MemoryPackCodec.Resolver);
+
+        var port = ((IPEndPoint)((ILocalEndPointTransport)serverBuilder.Transport!).LocalEndPoint!).Port;
+        var server = serverBuilder.Build();
 
         var serverTask = Task.Run(async () =>
         {
@@ -96,14 +99,12 @@ public static class Program
             cts.Dispose();
         }
     }
-
-    private static int GetFreePort()
+    private static void RegisterAotCodecs()
     {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
+        RpcCodecRegistry.Register(MemoryPackCodec<UserProfile>.Instance);
+        RpcCodecRegistry.Register(MemoryPackCodec<string[]>.Instance);
+        RpcCodecRegistry.Register(MemoryPackCodec<string[][]>.Instance);
+        RpcCodecRegistry.Register(MemoryPackCodec<(int, string)>.Instance);
     }
 }
 

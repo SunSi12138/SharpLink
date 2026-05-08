@@ -4,6 +4,9 @@ namespace SharpLink.Runtime;
 
 public sealed class NamedPipeTransport : ITransport, IRpcSessionFlushConfigurableTransport
 {
+    // Keep one byte of headroom for the underlying Unix domain socket path validation.
+    private const int UnixDomainSocketPathLengthLimit = 103;
+    private const string UnixNamedPipePrefix = "CoreFxPipe_";
     private readonly string _pipeName;
     private readonly bool _isServer;
     private readonly string _serverName;
@@ -27,7 +30,7 @@ public sealed class NamedPipeTransport : ITransport, IRpcSessionFlushConfigurabl
         ArgumentException.ThrowIfNullOrWhiteSpace(serverName);
         ArgumentOutOfRangeException.ThrowIfZero(maxServerInstances);
 
-        _pipeName = pipeName;
+        _pipeName = NormalizePipeName(pipeName);
         _isServer = isServer;
         _serverName = serverName;
         _maxServerInstances = maxServerInstances;
@@ -147,5 +150,28 @@ public sealed class NamedPipeTransport : ITransport, IRpcSessionFlushConfigurabl
         catch (Exception ex) when (ex is IOException or ObjectDisposedException or ArgumentException)
         {
         }
+    }
+
+    private static string NormalizePipeName(string pipeName)
+    {
+        if (OperatingSystem.IsWindows())
+            return pipeName;
+
+        var tempPath = Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var maxPipeNameLength = UnixDomainSocketPathLengthLimit - tempPath.Length - 1 - UnixNamedPipePrefix.Length;
+        if (maxPipeNameLength <= 0)
+            throw new PlatformNotSupportedException("Current temporary directory leaves no room for Unix named pipe paths.");
+
+        if (pipeName.Length <= maxPipeNameLength)
+            return pipeName;
+
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(pipeName)))
+            .ToLowerInvariant();
+        var hashLength = Math.Min(hash.Length, maxPipeNameLength);
+        var prefixLength = Math.Max(0, maxPipeNameLength - hashLength - 1);
+        if (prefixLength == 0)
+            return hash[..hashLength];
+
+        return $"{pipeName[..prefixLength]}-{hash[..hashLength]}";
     }
 }

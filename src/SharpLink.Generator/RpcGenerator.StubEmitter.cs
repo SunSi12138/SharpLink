@@ -62,7 +62,7 @@ public partial class RpcGenerator
                                 }
                                 catch (Exception ex)
                                 {
-                                    SharpLink.Runtime.RpcSessionExtensions.SendStreamErrorAsync(session, requestId, 0, ex.Message);
+                                    SharpLink.Runtime.RpcSessionExtensions.SendStreamErrorAsync(session, requestId, 0, ex);
                                 }
                             }
 

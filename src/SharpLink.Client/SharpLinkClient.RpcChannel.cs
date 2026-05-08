@@ -289,7 +289,12 @@ internal sealed partial class SharpLinkClient
             SendRpcCall(interfaceHash, methodHash, requestId, fastFlags, payloadWriter);
 
             if (streamSender is not null)
-                _ = RunStreamSenderAsync(streamSender, requestId, CancellationToken.None);
+            {
+                if (isOneWay)
+                    await streamSender(requestId, CancellationToken.None);
+                else
+                    _ = RunStreamSenderAsync(streamSender, requestId, CancellationToken.None);
+            }
 
             if (isOneWay)
                 return default!;
@@ -309,7 +314,12 @@ internal sealed partial class SharpLinkClient
         SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
 
         if (streamSender is not null)
-            _ = RunStreamSenderAsync(streamSender, requestId, CancellationToken.None);
+        {
+            if (isOneWay)
+                await streamSender(requestId, CancellationToken.None);
+            else
+                _ = RunStreamSenderAsync(streamSender, requestId, CancellationToken.None);
+        }
 
         if (isOneWay)
             return default!;
@@ -360,7 +370,12 @@ internal sealed partial class SharpLinkClient
         SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
 
         if (streamSender is not null)
-            _ = RunStreamSenderAsync(streamSender, requestId, ct);
+        {
+            if (isOneWay)
+                await streamSender(requestId, ct);
+            else
+                _ = RunStreamSenderAsync(streamSender, requestId, ct);
+        }
 
         if (isOneWay)
             return default!;
@@ -451,7 +466,7 @@ internal sealed partial class SharpLinkClient
         catch (Exception ex)
         {
             _serverStreamRequestIds.Remove(requestId);
-            _session!.StreamManager.CompleteStream(requestId, 0, true, ex.Message);
+            _session!.StreamManager.CompleteStream(requestId, ex);
         }
     }
 
@@ -485,7 +500,7 @@ internal sealed partial class SharpLinkClient
         catch (Exception ex)
         {
             _serverStreamRequestIds.Remove(requestId);
-            _session!.StreamManager.CompleteStream(requestId, 0, true, ex.Message);
+            _session!.StreamManager.CompleteStream(requestId, ex);
         }
     }
 
@@ -579,7 +594,7 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception ex)
         {
-            _session!.SendStreamErrorAsync(requestId, streamId, ex.Message);
+            _session!.SendStreamErrorAsync(requestId, streamId, ex);
             throw;
         }
     }
@@ -614,14 +629,19 @@ internal sealed partial class SharpLinkClient
     private static void DispatchStreamComplete(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
         var streamId = TryReadStreamId(ref payload);
-        session.StreamManager.CompleteStream(requestId, streamId, false, null);
+        session.StreamManager.CompleteStream(requestId, streamId, exception: null);
     }
 
     private static void DispatchStreamError(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
         var streamId = TryReadStreamId(ref payload);
         var message = payload.Length > 0 ? Encoding.UTF8.GetString(payload) : "Remote Error";
-        session.StreamManager.CompleteStream(requestId, streamId, true, message);
+        session.StreamManager.CompleteStream(
+            requestId,
+            streamId,
+            SharpLinkException.TryParsePayloadMessage(message, out var structuredException)
+                ? structuredException
+                : new SharpLinkException(SharpLinkErrorCode.RemoteError, message));
     }
 
     private static sbyte TryReadStreamId(ref ReadOnlySequence<byte> payload)
@@ -658,9 +678,9 @@ internal sealed partial class SharpLinkClient
         else
             LogClientDisconnectedWithError(_logger, ex);
 
-        var failEx = ex ?? new OperationCanceledException("client is shutting down");
+        var failEx = ex ?? CreateConnectionClosedException("Client is shutting down.");
         _requestManager.FailAllPendingRequests(failEx);
-        _session?.StreamManager.CompleteAll(true,failEx.Message);
+        _session?.StreamManager.CompleteAll(failEx);
         _serverStreamRequestIds.Clear();
         _locallyCanceledRequestIds.Clear();
     }
@@ -684,7 +704,7 @@ internal sealed partial class SharpLinkClient
 
         _session?.SendCancelAsync(state.RequestId);
         var ex = CreateCancellationException(state.UserToken);
-        _session?.StreamManager.CompleteStream(state.RequestId, 0, true, ex.Message);
+        _session?.StreamManager.CompleteStream(state.RequestId, ex);
     }
 
     private void OnRequestTimeout(RequestTimeoutState state)
@@ -703,7 +723,7 @@ internal sealed partial class SharpLinkClient
             return;
 
         _session?.SendCancelAsync(state.RequestId);
-        _session?.StreamManager.CompleteStream(state.RequestId, 0, true, "Request timed out.");
+        _session?.StreamManager.CompleteStream(state.RequestId, new TimeoutException("Request timed out."));
     }
 
     private TimeoutRegistration RegisterRequestTimeout(bool enabled, TimeSpan timeout, long requestId, bool isOneWay)

@@ -23,7 +23,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
         await Task.Delay(120);
         harness.DisposeServerOnly();
 
-        await EnsureThrowsAnyFast(pending, "anonymous pipe pending should fail fast after server dispose");
+        await EnsureThrowsSharpLinkFast(pending, "anonymous pipe pending should fail fast after server dispose", SharpLinkErrorCode.ConnectionClosed);
     }
 
     [Test]
@@ -37,10 +37,10 @@ public class AnonymousPipeTransportConnectionIntegrationTests
         await Task.Delay(120);
         harness.DisposeClientOnly();
 
-        await EnsureThrowsAnyFast(pending, "anonymous pipe pending should fail fast after client dispose");
+        await EnsureThrowsSharpLinkFast(pending, "anonymous pipe pending should fail fast after client dispose", SharpLinkErrorCode.ConnectionClosed);
     }
 
-    private static async Task EnsureThrowsAnyFast(Task task, string name)
+    private static async Task EnsureThrowsSharpLinkFast(Task task, string name, SharpLinkErrorCode errorCode)
     {
         try
         {
@@ -51,9 +51,9 @@ public class AnonymousPipeTransportConnectionIntegrationTests
         {
             throw new Exception($"assert failed: {name} did not fail fast");
         }
-        catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException or OperationCanceledException or InvalidOperationException)
+        catch (SharpLinkException ex)
         {
-            IgnoreExpectedException(ex);
+            Ensure(ex.Code == errorCode, $"{name} error code");
         }
     }
 
@@ -94,6 +94,15 @@ public class AnonymousPipeTransportConnectionIntegrationTests
                 .UseSerializer(MemoryPackCodec.Resolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
+            var allocator = (IAnonymousPipeAllocator)serverBuilder.Transport!;
+            var (inHandle, outHandle) = allocator.AllocateNewSession();
+
+            var client = SharpClientBuilder.Create()
+                .UseAnonymousPipe(inHandle, outHandle)
+                .UseSerializer(MemoryPackCodec.Resolver)
+                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
+                .Build();
+
             var server = serverBuilder.Build();
             var serverTask = Task.Run(async () =>
             {
@@ -106,15 +115,6 @@ public class AnonymousPipeTransportConnectionIntegrationTests
                     IgnoreExpectedException(ex);
                 }
             }, CancellationToken.None);
-
-            var allocator = (IAnonymousPipeAllocator)serverBuilder.Transport!;
-            var (inHandle, outHandle) = allocator.AllocateNewSession();
-
-            var client = SharpClientBuilder.Create()
-                .UseAnonymousPipe(inHandle, outHandle)
-                .UseSerializer(MemoryPackCodec.Resolver)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
-                .Build();
 
             var connected = await client.ConnectAsync(cts.Token);
             if (!connected)

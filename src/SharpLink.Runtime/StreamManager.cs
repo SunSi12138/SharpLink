@@ -38,24 +38,50 @@ public class StreamManager : IStreamManager
 
     public void CompleteStream(long requestId, bool isError, string? msg)
     {
-        CompleteStream(requestId, 0, isError, msg);
+        CompleteStream(requestId, 0, CreateCompletionException(isError, msg));
     }
 
     public void CompleteStream(long requestId, sbyte streamId, bool isError, string? msg)
+    {
+        CompleteStream(requestId, streamId, CreateCompletionException(isError, msg));
+    }
+
+    public void CompleteAll(bool isError, string? msg)
+    {
+        CompleteAll(CreateCompletionException(isError, msg));
+    }
+
+    public void CompleteStream(long requestId, Exception? exception)
+    {
+        CompleteStream(requestId, 0, exception);
+    }
+
+    public void CompleteStream(long requestId, sbyte streamId, Exception? exception)
     {
         if (!_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
             return;
 
         if (requestDispatchers.TryRemove(streamId, out var dispatcher))
-            dispatcher.Complete(isError, msg);
+            dispatcher.Complete(exception);
     }
 
-    public void CompleteAll(bool isError, string? msg)
+    public void CompleteAll(Exception? exception)
     {
         foreach (var requestDispatchers in _dispatchersByRequestId.DrainValues())
         {
-            requestDispatchers.CompleteAll(isError, msg);
+            requestDispatchers.CompleteAll(exception);
         }
+    }
+
+    private static Exception? CreateCompletionException(bool isError, string? msg)
+    {
+        if (!isError)
+            return null;
+
+        var message = string.IsNullOrWhiteSpace(msg) ? "Remote Error" : msg;
+        return SharpLinkException.TryParsePayloadMessage(message, out var structuredException)
+            ? structuredException
+            : new SharpLinkException(SharpLinkErrorCode.RemoteError, message);
     }
 
     private sealed class RequestDispatchers
@@ -132,15 +158,15 @@ public class StreamManager : IStreamManager
             }
         }
 
-        public void CompleteAll(bool isError, string? msg)
+        public void CompleteAll(Exception? exception)
         {
             var defaultDispatcher = Interlocked.Exchange(ref _defaultDispatcher, null);
-            defaultDispatcher?.Complete(isError, msg);
+            defaultDispatcher?.Complete(exception);
 
             lock (_gate)
             {
                 foreach (var dispatcher in _byStreamId.Values)
-                    dispatcher.Complete(isError, msg);
+                    dispatcher.Complete(exception);
                 _byStreamId.Clear();
             }
         }

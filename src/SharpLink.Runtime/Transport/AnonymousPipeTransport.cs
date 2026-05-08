@@ -89,11 +89,6 @@ public sealed class AnonymousPipeTransport : ITransport, IRpcSessionFlushConfigu
         var sessionStream = await _sessionQueue.Reader.ReadAsync(ct);
         var session = CreateSession(sessionStream.Input, sessionStream.Output);
         RegisterStreams(sessionStream.Input,sessionStream.Output);
-        session.OnConnected += () =>
-        {
-            sessionStream.Input.DisposeLocalCopyOfClientHandle();
-            sessionStream.Output.DisposeLocalCopyOfClientHandle();
-        };
         return session;
     }
     

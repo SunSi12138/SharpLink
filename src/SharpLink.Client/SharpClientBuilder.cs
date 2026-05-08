@@ -7,12 +7,21 @@ public class SharpClientBuilder
     
     private ITransport? _transport;
     private ILoggerFactory? _loggerFactory;
+    private string _handshakeMessage = "Password";
 
     public SharpClientBuilder UseTransport(ITransport transport)
     {
         _transport = transport;
         return this;
     }
+
+    public SharpClientBuilder UseAuthenticator(string handshakeMessage)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(handshakeMessage);
+        _handshakeMessage = handshakeMessage;
+        return this;
+    }
+
     private Func<Type,IRpcCodec?>? _codecResolver;
     private TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(10);
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
@@ -106,20 +115,21 @@ public class SharpClientBuilder
         if (_transport == null)
             throw new InvalidOperationException("Transport must be set before building the server.");
 
+        if (_codecResolver is not null)
+            RpcCodecRegistry.Initialize(_codecResolver);
+
         if (_rpcSessionFlushOptions is not { } flushOptions)
             return new SharpLinkClient(
                 _transport,
                 _heartbeatInterval,
                 _heartbeatTimeout,
                 _loggerFactory ?? NullLoggerFactory.Instance,
-                _requestTimeout
+                _requestTimeout,
+                _handshakeMessage
             );
         
         if (_transport is not IRpcSessionFlushConfigurableTransport configurableTransport)
             throw new InvalidOperationException("Configured RPC session flush options, but transport does not support flush configuration.");
-
-        if(_codecResolver is not null)
-            RpcCodecRegistry.Initialize(_codecResolver);
         
         configurableTransport.ConfigureRpcSessionFlush(flushOptions);
 
@@ -128,7 +138,8 @@ public class SharpClientBuilder
             _heartbeatInterval,
             _heartbeatTimeout,
             _loggerFactory ?? NullLoggerFactory.Instance,
-            _requestTimeout
+            _requestTimeout,
+            _handshakeMessage
         );
     }
 }

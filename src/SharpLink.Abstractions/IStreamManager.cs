@@ -11,4 +11,7 @@ public interface IStreamManager
     void CompleteStream(long requestId, bool isError, string? msg);
     void CompleteStream(long requestId, sbyte streamId, bool isError, string? msg);
     void CompleteAll(bool isError, string? msg);
+    void CompleteStream(long requestId, Exception? exception);
+    void CompleteStream(long requestId, sbyte streamId, Exception? exception);
+    void CompleteAll(Exception? exception);
 }

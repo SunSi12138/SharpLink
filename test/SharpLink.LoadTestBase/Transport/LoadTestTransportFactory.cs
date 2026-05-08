@@ -74,12 +74,12 @@ public static class LoadTestTransportFactory
             return new LocalHarness(server, client, static () => { });
         }
 
-        var anonymousPipeAllocator = new AnonymousPipeTransport();
         var serverBuilder = configure(SharpLinkServerBuilder.Create())
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseTransport(anonymousPipeAllocator)
+            .UseAnonymousPipe()
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
-        var serverAnonymous = serverBuilder.UseAnonymousPipe().Build();
+        var anonymousPipeAllocator = (IAnonymousPipeAllocator)serverBuilder.Transport!;
+        var serverAnonymous = serverBuilder.Build();
         
         var (inHandler, outHandler) = anonymousPipeAllocator.AllocateNewSession();
         var clientAnonymous = SharpClientBuilder.Create()

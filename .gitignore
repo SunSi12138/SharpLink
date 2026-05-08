@@ -60,6 +60,9 @@ dlldata.c
 # Benchmark Results
 BenchmarkDotNet.Artifacts/
 
+# Local Prometheus TSDB data from load/metrics runs
+data/
+
 # .NET
 project.lock.json
 project.fragment.lock.json

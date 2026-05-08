@@ -14,11 +14,41 @@ public static class RpcSessionExtensions
 
             session.SendPacket(writer);
         }
+
+        public async ValueTask SendStringPacketAndFlushAsync(PacketType packetType, PacketFlags flags, long requestId, string message, CancellationToken ct = default)
+        {
+            var writer = BufferWriterPool.Get();
+            using (writer.BeginPacketScope(packetType, flags, requestId))
+            {
+                writer.WriteUtf8String(message);
+            }
+
+            if (session is RpcSession rpcSession)
+            {
+                await rpcSession.SendPacketAndFlushAsync(writer, ct).ConfigureAwait(false);
+                return;
+            }
+
+            session.SendPacket(writer);
+        }
+
         public void SendPacketAsync(PacketType packetType, PacketFlags flags, long requestId)
         {
             var writer = BufferWriterPool.Get();
             writer.WritePacket(packetType, flags, requestId);
             session.SendPacket(writer);
+        }
+
+        public void SendRpcErrorAsync(long requestId, Exception exception)
+        {
+            ArgumentNullException.ThrowIfNull(exception);
+            session.SendStringPacketAsync(
+                PacketType.RpcResponse,
+                PacketFlags.IsError,
+                requestId,
+                exception is SharpLinkException sharpLinkException
+                    ? sharpLinkException.ToPayloadMessage()
+                    : exception.Message);
         }
 
         public void SendCancelAsync(long requestId)
@@ -63,6 +93,17 @@ public static class RpcSessionExtensions
             }
 
             session.SendPacket(writer);
+        }
+
+        public void SendStreamErrorAsync(long requestId, sbyte streamId, Exception exception)
+        {
+            ArgumentNullException.ThrowIfNull(exception);
+            session.SendStreamErrorAsync(
+                requestId,
+                streamId,
+                exception is SharpLinkException sharpLinkException
+                    ? sharpLinkException.ToPayloadMessage()
+                    : exception.Message);
         }
     }
 }

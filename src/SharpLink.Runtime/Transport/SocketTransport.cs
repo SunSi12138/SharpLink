@@ -3,7 +3,7 @@ namespace SharpLink.Runtime;
 /// <summary>
 /// 通用 Socket 传输层，支持 TCP 和 UDS (Unix Domain Socket)
 /// </summary>
-public class SocketTransport(Socket socket, bool isServer = true, EndPoint? remoteEndPoint = null) : ITransport, IRpcSessionFlushConfigurableTransport
+public class SocketTransport(Socket socket, bool isServer = true, EndPoint? remoteEndPoint = null) : ITransport, IRpcSessionFlushConfigurableTransport, ILocalEndPointTransport
 {
     private readonly Socket _socket = socket ?? throw new ArgumentNullException(nameof(socket));
     private readonly CancellationTokenSource _cts = new();
@@ -76,4 +76,6 @@ public class SocketTransport(Socket socket, bool isServer = true, EndPoint? remo
         _cts.Dispose();
         GC.SuppressFinalize(this);
     }
+
+    public EndPoint? LocalEndPoint => _socket.LocalEndPoint;
 }

@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Runtime;
 using SharpLink.Server;
@@ -39,14 +40,15 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
 
     public static async Task<BenchmarkEnvironment> CreateAsync()
     {
-        var port = GetFreePort();
         var localService = new BenchmarkRpcService();
 
-        var server = SharpLinkServerBuilder.Create()
+        var serverBuilder = SharpLinkServerBuilder.Create()
             .AddService<IBenchmarkRpc, BenchmarkRpcService>()
-            .UseTcp(port, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver)
-            .Build();
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseSerializer(MemoryPackCodec.Resolver);
+
+        var port = ((IPEndPoint)((ILocalEndPointTransport)serverBuilder.Transport!).LocalEndPoint!).Port;
+        var server = serverBuilder.Build();
 
         var shutdown = new CancellationTokenSource();
         var serverTask = Task.Run(async () =>

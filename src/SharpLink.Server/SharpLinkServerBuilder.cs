@@ -2,6 +2,10 @@ namespace SharpLink.Server;
 
 public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 {
+    private static readonly Func<string, SharpLinkAuthenticationResult> SDefaultAuthValidator = static message =>
+        !string.IsNullOrWhiteSpace(message)
+            ? SharpLinkAuthenticationResult.Success
+            : SharpLinkAuthenticationResult.Reject();
     public static SharpLinkServerBuilder Create() => new();
 
     private ITransport? _transport;
@@ -12,10 +16,27 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     private RpcSessionFlushOptions? _rpcSessionFlushOptions;
     private readonly Dictionary<long, (IRpcStub stub, object service)> _services = [];
     private ILoggerFactory? _loggerFactory;
+    private Func<string, SharpLinkAuthenticationResult> _authValidator = SDefaultAuthValidator;
 
     public SharpLinkServerBuilder UseTransport(ITransport transport)
     {
         _transport = transport;
+        return this;
+    }
+
+    public SharpLinkServerBuilder UseAuthenticator(Func<string, bool> authValidator)
+    {
+        ArgumentNullException.ThrowIfNull(authValidator);
+        _authValidator = message => authValidator(message)
+            ? SharpLinkAuthenticationResult.Success
+            : SharpLinkAuthenticationResult.Reject();
+        return this;
+    }
+
+    public SharpLinkServerBuilder UseAuthenticator(Func<string, SharpLinkAuthenticationResult> authValidator)
+    {
+        ArgumentNullException.ThrowIfNull(authValidator);
+        _authValidator = authValidator;
         return this;
     }
 
@@ -106,27 +127,30 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         if (_transport == null)
             throw new InvalidOperationException("Transport must be set before building the server.");
 
+        if (_codecResolver is not null)
+            RpcCodecRegistry.Initialize(_codecResolver);
+
         if (_rpcSessionFlushOptions is not { } flushOptions)
             return new SharpLinkServer(
                 _transport,
                 _services.ToFrozenDictionary(),
                 _heartbeatCheckInterval,
                 _heartbeatTimeout,
-                _loggerFactory ?? NullLoggerFactory.Instance);
+                _loggerFactory ?? NullLoggerFactory.Instance,
+                _authValidator);
         
         if (_transport is not IRpcSessionFlushConfigurableTransport configurableTransport)
             throw new InvalidOperationException("Configured RPC session flush options, but transport does not support flush configuration.");
 
         configurableTransport.ConfigureRpcSessionFlush(flushOptions);
-
-        if(_codecResolver is not null) RpcCodecRegistry.Initialize(_codecResolver);
         
         return new SharpLinkServer(
             _transport,
             _services.ToFrozenDictionary(),
             _heartbeatCheckInterval,
             _heartbeatTimeout,
-            _loggerFactory ?? NullLoggerFactory.Instance);
+            _loggerFactory ?? NullLoggerFactory.Instance,
+            _authValidator);
     }
 
 }

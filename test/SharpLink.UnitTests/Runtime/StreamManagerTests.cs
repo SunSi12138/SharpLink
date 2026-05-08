@@ -40,11 +40,10 @@ public class StreamManagerTests
         manager.Register(20, 3, dispatcher);
 
         manager.CompleteStream(20, 3, true, "boom");
-        manager.CompleteStream(20, 3, false, null);
+        manager.CompleteStream(20, 3, exception: null);
 
         Ensure(dispatcher.CompleteCount == 1, "complete called once");
-        Ensure(dispatcher.LastIsError, "isError");
-        Ensure(dispatcher.LastErrorMessage == "boom", "error message");
+        Ensure(dispatcher.LastException is SharpLinkException { Code: SharpLinkErrorCode.RemoteError, Message: "boom" }, "error should preserve SharpLinkException");
     }
 
     [Test]
@@ -64,6 +63,22 @@ public class StreamManagerTests
         Ensure(d1.CompleteCount == 1, "d1 completed");
         Ensure(d2.CompleteCount == 1, "d2 completed");
         Ensure(d3.CompleteCount == 1, "d3 completed");
+        Ensure(d1.LastException is SharpLinkException { Code: SharpLinkErrorCode.RemoteError, Message: "shutdown" }, "d1 error");
+        Ensure(d2.LastException is SharpLinkException { Code: SharpLinkErrorCode.RemoteError, Message: "shutdown" }, "d2 error");
+        Ensure(d3.LastException is SharpLinkException { Code: SharpLinkErrorCode.RemoteError, Message: "shutdown" }, "d3 error");
+    }
+
+    [Test]
+    public void CompleteStreamShouldPreserveSuppliedException()
+    {
+        var manager = new StreamManager();
+        var dispatcher = new RecordingDispatcher();
+        var exception = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "transport closed");
+        manager.Register(30, dispatcher);
+
+        manager.CompleteStream(30, exception);
+
+        Ensure(ReferenceEquals(exception, dispatcher.LastException), "manager should pass through supplied exception");
     }
 
     private static void Ensure(bool condition, string message)
@@ -77,8 +92,7 @@ public class StreamManagerTests
         public int DispatchCount { get; private set; }
         public long LastPayloadLength { get; private set; }
         public int CompleteCount { get; private set; }
-        public bool LastIsError { get; private set; }
-        public string? LastErrorMessage { get; private set; }
+        public Exception? LastException { get; private set; }
 
         public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
         {
@@ -89,9 +103,17 @@ public class StreamManagerTests
 
         public void Complete(bool isError, string? errorMessage)
         {
+            Complete(isError
+                ? new SharpLinkException(
+                    SharpLinkErrorCode.RemoteError,
+                    string.IsNullOrWhiteSpace(errorMessage) ? "Remote Error" : errorMessage)
+                : null);
+        }
+
+        public void Complete(Exception? exception)
+        {
             CompleteCount++;
-            LastIsError = isError;
-            LastErrorMessage = errorMessage;
+            LastException = exception;
         }
     }
 }

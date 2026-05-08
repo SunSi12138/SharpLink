@@ -47,8 +47,9 @@ public class RpcChannelCallShapeIntegrationTests
         await svc.OneWayCancellableNoPayloadAsync(CancellationToken.None);
         await svc.OneWayCancellableDefaultTimeoutNoPayloadAsync(CancellationToken.None);
         await svc.OneWayCancellableTimeoutNoPayloadAsync(CancellationToken.None);
-        await Task.Delay(100);
-        Ensure(await svc.GetOneWayTotalAsync() == 2 + 1 + 3 + 4 + 5 + 6 + 1 + 7 + 1 + 1 + 1 + 1, "OneWay totals");
+        await EnsureEventuallyAsync(
+            async () => await svc.GetOneWayTotalAsync() == 2 + 1 + 3 + 4 + 5 + 6 + 1 + 7 + 1 + 1 + 1 + 1,
+            "OneWay totals");
 
         Ensure(await svc.ClientStreamPayloadAsync(10, ToAsyncEnumerable([1, 2, 3])) == 16, "ClientStreamPayloadAsync");
         Ensure(await svc.ClientStreamNoPayloadAsync(ToAsyncEnumerable([4, 5])) == 9, "ClientStreamNoPayloadAsync");
@@ -85,7 +86,9 @@ public class RpcChannelCallShapeIntegrationTests
         await svc.OneWayClientStreamCancellableWithDefaultTimeoutNoPayloadAsync(ToAsyncEnumerable([10]), CancellationToken.None);
         await svc.OneWayClientStreamCancellableWithTimeoutPayloadAsync(10, ToAsyncEnumerable([11]), CancellationToken.None);
         await svc.OneWayClientStreamCancellableWithTimeoutNoPayloadAsync(ToAsyncEnumerable([12]), CancellationToken.None);
-        Ensure(await svc.GetClientStreamNoReturnTotalAsync() == 103 + 3 + 71 + 2 + 83 + 4 + 91 + 2 + 103 + 4 + 115 + 6 + 6 + 2 + 9 + 4 + 12 + 6 + 15 + 8 + 18 + 10 + 21 + 12, "ClientStreamNoReturn totals");
+        await EnsureEventuallyAsync(
+            async () => await svc.GetClientStreamNoReturnTotalAsync() == 103 + 3 + 71 + 2 + 83 + 4 + 91 + 2 + 103 + 4 + 115 + 6 + 6 + 2 + 9 + 4 + 12 + 6 + 15 + 8 + 18 + 10 + 21 + 12,
+            "ClientStreamNoReturn totals");
 
         Ensure((await CollectAsync(svc.ServerStreamPayloadAsync(3), CancellationToken.None)).SequenceEqual([0, 1, 2]), "ServerStreamPayloadAsync");
         Ensure((await CollectAsync(svc.ServerStreamNoPayloadAsync(), CancellationToken.None)).SequenceEqual([9, 8]), "ServerStreamNoPayloadAsync");
@@ -160,6 +163,21 @@ public class RpcChannelCallShapeIntegrationTests
             throw new Exception($"assert failed: {name}");
     }
 
+    private static async Task EnsureEventuallyAsync(Func<Task<bool>> condition, string name)
+    {
+        var deadline = TimeProvider.System.GetTimestamp() + TimeProvider.System.TimestampFrequency;
+
+        while (TimeProvider.System.GetTimestamp() < deadline)
+        {
+            if (await condition())
+                return;
+
+            await Task.Delay(10);
+        }
+
+        Ensure(await condition(), name);
+    }
+
     private static async Task EnsureThrows<TException>(Task task, string name) where TException : Exception
     {
         try
@@ -201,14 +219,15 @@ public class RpcChannelCallShapeIntegrationTests
 
         public static async Task<CallShapeHarness> CreateAsync()
         {
-            var port = GetFreePort();
             var cts = new CancellationTokenSource();
-            var server = SharpLinkServerBuilder.Create()
+            var serverBuilder = SharpLinkServerBuilder.Create()
                 .AddService<ICallShapeService, CallShapeService>()
-                .UseTcp(port, IPAddress.Loopback.ToString())
+                .UseTcp(0, IPAddress.Loopback.ToString())
                 .UseSerializer(MemoryPackCodec.Resolver)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
-                .Build();
+                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
+
+            var port = ((IPEndPoint)((ILocalEndPointTransport)serverBuilder.Transport!).LocalEndPoint!).Port;
+            var server = serverBuilder.Build();
 
             var serverTask = Task.Run(async () =>
             {
