@@ -15,12 +15,15 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
     private readonly RequestTimeoutScheduler _requestTimeoutScheduler = new();
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly Lock _stateGate = new();
+    private readonly Lock _poolGate = new();
     private readonly Lock _backgroundTasksGate = new();
     private readonly HashSet<Task> _backgroundTasks = [];
     private RpcSession? _session;
-    private CancellationTokenSource? _sessionCts;
+    private RpcSession[] _readySessions = [];
+    private readonly Dictionary<RpcSession, CancellationTokenSource> _sessionCancellations = [];
     private Task? _connectTask;
     private Task? _reconnectTask;
+    private Task? _expansionTask;
     private Task? _stopTask;
     private TaskCompletionSource<bool> _readySignal = CreateReadySignal();
     private int _state = (int)SharpLinkConnectionState.Created;
@@ -34,6 +37,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
     private readonly SharpLinkProtocolOptions _protocolOptions = new();
     private readonly ILogger _logger = NullLogger<SharpLinkClient>.Instance;
     private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions;
+    private readonly SharpLinkConnectionPoolOptions _connectionPoolOptions = new();
 
     public SharpLinkClient(
         IClientTransportFactory transportFactory,
@@ -43,7 +47,8 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         string handshakeMessage = DefaultHandshakeMessage,
         SharpLinkProtocolOptions? protocolOptions = null,
         SharpLinkRuntimeContext? runtimeContext = null,
-        RpcSessionFlushOptions? rpcSessionFlushOptions = null)
+        RpcSessionFlushOptions? rpcSessionFlushOptions = null,
+        SharpLinkConnectionPoolOptions? connectionPoolOptions = null)
         : this(transportFactory)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
@@ -64,6 +69,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         _runtimeContext = runtimeContext ?? new SharpLinkRuntimeContextBuilder().Build();
         _protocolOptions = (protocolOptions ?? _runtimeContext.Protocol).CloneValidated();
         _rpcSessionFlushOptions = rpcSessionFlushOptions;
+        _connectionPoolOptions = (connectionPoolOptions ?? new SharpLinkConnectionPoolOptions()).CloneValidated();
         _serverStreamRequestIds = new StripedLongSet(_runtimeContext.Concurrency);
         _locallyCanceledRequestIds = new StripedLongSet(_runtimeContext.Concurrency);
         _requestManager = new PendingRequestTable(_protocolOptions.MaxPendingRequestsPerConnection, _runtimeContext.Codecs);
@@ -78,9 +84,10 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         string handshakeMessage = DefaultHandshakeMessage,
         SharpLinkProtocolOptions? protocolOptions = null,
         SharpLinkRuntimeContext? runtimeContext = null,
-        RpcSessionFlushOptions? rpcSessionFlushOptions = null)
+        RpcSessionFlushOptions? rpcSessionFlushOptions = null,
+        SharpLinkConnectionPoolOptions? connectionPoolOptions = null)
         : this(transportFactory, heartbeatInterval, heartbeatTimeout, requestTimeout, handshakeMessage, protocolOptions,
-            runtimeContext, rpcSessionFlushOptions)
+            runtimeContext, rpcSessionFlushOptions, connectionPoolOptions)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _logger = loggerFactory.CreateLogger<SharpLinkClient>();
@@ -114,33 +121,47 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         Volatile.Read(ref _readySignal).TrySetResult(true);
 
         var stoppingException = CreateConnectionClosedException("Client is stopping.");
-        var sessionCts = Interlocked.Exchange(ref _sessionCts, null);
-        if (sessionCts is not null)
+        RpcSession[] sessions;
+        CancellationTokenSource[] sessionCancellations;
+        lock (_poolGate)
         {
-            await sessionCts.CancelAsync().ConfigureAwait(false);
-            sessionCts.Dispose();
+            sessions = [.. _sessionCancellations.Keys];
+            sessionCancellations = [.. _sessionCancellations.Values];
+            _sessionCancellations.Clear();
+            Volatile.Write(ref _readySessions, []);
+            Volatile.Write(ref _session, null);
         }
-
-        var session = Interlocked.Exchange(ref _session, null);
+        for (var index = 0; index < sessionCancellations.Length; index++)
+        {
+            await sessionCancellations[index].CancelAsync().ConfigureAwait(false);
+            sessionCancellations[index].Dispose();
+        }
         _requestManager.FailAllPendingRequests(stoppingException);
-        session?.StreamManager.CompleteAll(stoppingException);
+        foreach (var requestId in _requestSessions.Keys)
+            TryUnbindRequest(requestId, out _);
+        for (var index = 0; index < sessions.Length; index++)
+            sessions[index].StreamManager.CompleteAll(stoppingException);
         _serverStreamRequestIds.Clear();
         _locallyCanceledRequestIds.Clear();
         foreach (var requestId in _streamCallLifetimes.Keys)
             CompleteStreamLifetime(requestId);
-        if (session is not null)
-            await session.DisposeAsync().ConfigureAwait(false);
+        for (var index = 0; index < sessions.Length; index++)
+            await sessions[index].DisposeAsync().ConfigureAwait(false);
 
         Task? connectTask;
         Task? reconnectTask;
+        Task? expansionTask;
         lock (_stateGate)
         {
             connectTask = _connectTask;
             reconnectTask = _reconnectTask;
+            expansionTask = _expansionTask;
         }
         await IgnoreExpectedStopExceptionAsync(connectTask).ConfigureAwait(false);
         if (!ReferenceEquals(reconnectTask, connectTask))
             await IgnoreExpectedStopExceptionAsync(reconnectTask).ConfigureAwait(false);
+        if (!ReferenceEquals(expansionTask, connectTask) && !ReferenceEquals(expansionTask, reconnectTask))
+            await IgnoreExpectedStopExceptionAsync(expansionTask).ConfigureAwait(false);
         await WaitForBackgroundTasksAsync().ConfigureAwait(false);
 
         _requestTimeoutScheduler.Dispose();
@@ -227,6 +248,37 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
             if (_readySignal.Task.IsCompleted)
                 _readySignal = CreateReadySignal();
         }
+    }
+
+    internal int ReadyConnectionCount => Volatile.Read(ref _readySessions).Length;
+
+    private void BindRequestToSession(long requestId, RpcSession session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        try
+        {
+            session.AddActiveRequest();
+        }
+        catch (Exception exception)
+        {
+            _requestManager.DispatchError(requestId, exception);
+            throw;
+        }
+        if (_requestSessions.TryAdd(requestId, session))
+            return;
+        session.ReleaseActiveRequest();
+        var duplicate = new InvalidOperationException($"Request {requestId} is already bound to a connection.");
+        _requestManager.DispatchError(requestId, duplicate);
+        throw duplicate;
+    }
+
+    private bool TryUnbindRequest(long requestId, out RpcSession session)
+    {
+        if (!_requestSessions.TryRemove(requestId, out session!))
+            return false;
+        session.ReleaseActiveRequest();
+        RetireDrainingSessionIfIdle(session);
+        return true;
     }
 
 }

@@ -161,3 +161,17 @@ Protocol v2 握手现在协商 `FlowControl` capability。每个 stream 与 conn
 | 32 | 595.33k QPS / P99 76 μs | 595.35k QPS / P99 76 μs | 通过（QPS 100.0%，P99 100.0%） |
 
 c8 另以 2 秒 warmup、5 秒测量执行五组严格交替 A/B：基线中位数 174.59k QPS / P99 62 μs，0.5.5 为 172.89k QPS / P99 63 μs，分别为 99.0% 与 101.6%，通过门禁。BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 均保持 832 B/op。
+
+## 0.5.6 有界连接池回归（2026-07-17，同一 runner）
+
+每个 Client endpoint 现在持有不可变的 `MinConnections/MaxConnections` 快照。默认 1/1 路径直接使用唯一 ready session；多连接才执行 power-of-two choices。请求与 stream 固定绑定所选 session，`GoAway` session 从选择快照移除并在 active request 归零后释放。压力扩容由单一合并 worker 执行。
+
+以 `6b77684` 作为 0.5.5 基线，使用 1 秒 warmup、3 秒测量，严格交替 A/B，每档五次取中位数：
+
+| 并发 | 0.5.5 同时段基线 | 0.5.6 默认 1/1 | 门禁结论 |
+|---:|---:|---:|---|
+| 1 | 25.59k QPS / P99 70 μs | 25.52k QPS / P99 71 μs | 通过（QPS 99.7%，P99 101.4%） |
+| 8 | 170.02k QPS / P99 68 μs | 171.13k QPS / P99 64 μs | 通过（QPS 100.7%，P99 94.1%） |
+| 32 | 593.26k QPS / P99 76 μs | 592.90k QPS / P99 76 μs | 通过（QPS 99.9%，P99 100.0%） |
+
+BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 仍均为 832 B/op。额外的本机 TCP c128 诊断中，1/1 为 1.248M QPS / P99 314 μs，1/2 为 1.086M QPS / P99 258 μs：第二条本机连接降低尾延迟但增加调度成本，因此默认仍为 1/1；是否扩池应按真实跨进程网络与 payload 矩阵验证，不把单次本机吞吐结果写成通用收益承诺。

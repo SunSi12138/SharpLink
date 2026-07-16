@@ -40,10 +40,17 @@ public static class LoadTestTransportFactory
         string udsPath,
         string pipeName,
         int heartbeatIntervalSeconds,
-        int heartbeatTimeoutSeconds)
+        int heartbeatTimeoutSeconds,
+        int minConnections,
+        int maxConnections)
     {
         var builder = SharpClientBuilder.Create()
             .UseSerializer(MemoryPackCodec.Resolver)
+            .UseConnectionPool(options =>
+            {
+                options.MinConnections = minConnections;
+                options.MaxConnections = maxConnections;
+            })
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
 
         return transport switch
@@ -66,12 +73,23 @@ public static class LoadTestTransportFactory
         int heartbeatIntervalSeconds,
         int heartbeatCheckIntervalSeconds,
         int heartbeatTimeoutSeconds,
+        int minConnections,
+        int maxConnections,
         Func<SharpLinkServerBuilder, SharpLinkServerBuilder> configure)
     {
         if (transport != TransportMode.AnonymousPipe)
         {
             var server = CreateServer(transport, bindIp, port, udsPath, pipeName, heartbeatCheckIntervalSeconds, heartbeatTimeoutSeconds, configure);
-            var client = CreateClient(transport, host, port, udsPath, pipeName, heartbeatIntervalSeconds, heartbeatTimeoutSeconds);
+            var client = CreateClient(
+                transport,
+                host,
+                port,
+                udsPath,
+                pipeName,
+                heartbeatIntervalSeconds,
+                heartbeatTimeoutSeconds,
+                minConnections,
+                maxConnections);
             return new LocalHarness(server, client, static () => { });
         }
 
@@ -86,6 +104,11 @@ public static class LoadTestTransportFactory
         var clientAnonymous = SharpClientBuilder.Create()
             .UseTransport(new AnonymousPipeClientTransportFactory(inHandler, outHandler))
             .UseSerializer(MemoryPackCodec.Resolver)
+            .UseConnectionPool(options =>
+            {
+                options.MinConnections = minConnections;
+                options.MaxConnections = maxConnections;
+            })
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds))
             .Build();
         

@@ -30,19 +30,29 @@ internal sealed partial class SharpLinkClient
 
     private async Task ConnectInitialAsync(CancellationToken cancellationToken)
     {
+        var connected = new List<RpcSession>(_connectionPoolOptions.MinConnections);
         try
         {
-            await ConnectCoreAsync(cancellationToken).ConfigureAwait(false);
+            for (var index = 0; index < _connectionPoolOptions.MinConnections; index++)
+                connected.Add(await ConnectOneAsync(cancellationToken).ConfigureAwait(false));
+            PublishReadyState();
         }
         catch
         {
+            for (var index = 0; index < connected.Count; index++)
+            {
+                RemoveReadySession(connected[index], out var cancellation);
+                cancellation?.Cancel();
+                cancellation?.Dispose();
+                await connected[index].DisposeAsync().ConfigureAwait(false);
+            }
             if (!_shutdownCts.IsCancellationRequested)
                 TransitionTo(SharpLinkConnectionState.Faulted);
             throw;
         }
     }
 
-    private async Task ConnectCoreAsync(CancellationToken cancellationToken)
+    private async Task<RpcSession> ConnectOneAsync(CancellationToken cancellationToken)
     {
         using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
@@ -91,31 +101,29 @@ internal sealed partial class SharpLinkClient
                 readySession,
                 exception ?? CreateConnectionClosedException("Transport closed."));
 
-            lock (_stateGate)
+            lock (_poolGate)
             {
                 if (_shutdownCts.IsCancellationRequested ||
-                    State is SharpLinkConnectionState.Draining or SharpLinkConnectionState.Stopped)
+                    State is SharpLinkConnectionState.Stopped)
                 {
                     sessionCts.Dispose();
                     throw CreateConnectionClosedException("Client stopped while connecting.");
                 }
-                if (_session is not null)
+                if (CountReadyConnectionsLocked() >= _connectionPoolOptions.MaxConnections)
                 {
                     sessionCts.Dispose();
-                    throw new InvalidOperationException("A ready session is already installed.");
+                    throw new InvalidOperationException("The connection pool is already at capacity.");
                 }
 
-                _session = readySession;
-                _sessionCts = sessionCts;
-                _readyTimestamp = Stopwatch.GetTimestamp();
-                TransitionTo(SharpLinkConnectionState.Ready);
-                _readySignal.TrySetResult(true);
+                _sessionCancellations.Add(readySession, sessionCts);
+                PublishReadySnapshotLocked();
             }
 
             readySession.NotifyConnected();
             TrackBackgroundTask(RunHeartbeatSendLoopAsync(readySession, sessionCts.Token));
             TrackBackgroundTask(RunProcessRequestLoopAsync(readySession, sessionCts.Token));
             session = null;
+            return readySession;
         }
         catch
         {
@@ -125,6 +133,44 @@ internal sealed partial class SharpLinkClient
                 await session.DisposeAsync().ConfigureAwait(false);
             throw;
         }
+    }
+
+    private void PublishReadyState()
+    {
+        lock (_stateGate)
+        {
+            if (_shutdownCts.IsCancellationRequested)
+                return;
+            _readyTimestamp = Stopwatch.GetTimestamp();
+            TransitionTo(SharpLinkConnectionState.Ready);
+            _readySignal.TrySetResult(true);
+        }
+    }
+
+    private void PublishReadySnapshotLocked()
+    {
+        var snapshot = new RpcSession[_sessionCancellations.Count];
+        var index = 0;
+        foreach (var candidate in _sessionCancellations.Keys)
+        {
+            if (candidate.CanAcceptCalls)
+                snapshot[index++] = candidate;
+        }
+        if (index != snapshot.Length)
+            Array.Resize(ref snapshot, index);
+        Volatile.Write(ref _readySessions, snapshot);
+        Volatile.Write(ref _session, snapshot.Length == 0 ? null : snapshot[0]);
+    }
+
+    private int CountReadyConnectionsLocked()
+    {
+        var count = 0;
+        foreach (var candidate in _sessionCancellations.Keys)
+        {
+            if (candidate.CanAcceptCalls)
+                count++;
+        }
+        return count;
     }
 
     private static bool IsExpectedCancellation(Exception ex, CancellationToken ct)
@@ -296,8 +342,7 @@ internal sealed partial class SharpLinkClient
                                 payload.Slice(sizeof(ulong)),
                                 header.Flags | ProtocolV2FrameFlags.Error,
                                 _protocolOptions.MaxErrorMessageBytes);
-                            ResetReadySignal();
-                            TransitionTo(SharpLinkConnectionState.Draining);
+                            MarkSessionDraining(session);
                             using (BeginRequestLogScope(_logger, unchecked((long)header.RequestId)))
                                 LogClientDisconnectedWithError(
                                     _logger,
@@ -354,13 +399,13 @@ internal sealed partial class SharpLinkClient
             var remoteException = new SharpLinkException(error.Code, error.Message);
             if (_requestManager.DispatchError(requestId, remoteException))
             {
-                _requestSessions.TryRemove(requestId, out _);
+                TryUnbindRequest(requestId, out _);
                 return;
             }
 
             if (_serverStreamRequestIds.Remove(requestId))
             {
-                if (_requestSessions.TryRemove(requestId, out var requestSession))
+                if (TryUnbindRequest(requestId, out var requestSession))
                     requestSession.StreamManager.CompleteStream(requestId, remoteException);
                 CompleteStreamLifetime(requestId);
                 return;
@@ -370,15 +415,13 @@ internal sealed partial class SharpLinkClient
         {
             if (_requestManager.Dispatch(requestId, ref payload))
             {
-                _requestSessions.TryRemove(requestId, out _);
+                TryUnbindRequest(requestId, out _);
                 return;
             }
 
             // Server-stream receives a terminal RpcResponse ACK; swallow it.
-            if (_serverStreamRequestIds.Remove(requestId))
+            if (_serverStreamRequestIds.Contains(requestId))
             {
-                _requestSessions.TryRemove(requestId, out _);
-                CompleteStreamLifetime(requestId);
                 return;
             }
         }

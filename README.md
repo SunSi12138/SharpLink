@@ -214,6 +214,11 @@ SharpLinkAuthorization.RequireActiveToken();
 - `BufferWriterPool`：`UseBufferWriterPool(...)`
 - 运行时并发容器：`UseStateStoreConcurrency(...)`
 - 性能预设与流控边界：`UseRuntime(options => options.PerformanceProfile = SharpLinkPerformanceProfile.LowLatency)`
+- 客户端连接池：`UseConnectionPool(options => { options.MinConnections = 1; options.MaxConnections = 4; })`
+
+客户端默认使用 `1/1` 单连接池，单连接选择路径不产生随机选择或临时集合。只有在已有连接承载在途请求时，池才会按压力异步扩容；多连接使用 power-of-two choices 比较在途请求数。stream 在创建时固定到同一连接，收到 `GoAway` 的连接停止接收新调用并在在途请求归零后退出。`Throughput` 预设在用户未显式配置连接池时使用 `1/min(Environment.ProcessorCount, 4)`，其他预设保持 `1/1`。
+
+`AnonymousPipe` 的一次句柄 offer 只支持一个客户端连接，因此其 `MaxConnections` 必须为 `1`。
 
 如果你使用 `UseTcp(0, "127.0.0.1")` 让系统自动分配端口，可以在 `Build()` 前通过 `serverBuilder.Transport.LocalEndPoint` 读取实际监听端口。
 

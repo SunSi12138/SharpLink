@@ -143,6 +143,59 @@ public class SharpClientBuilderTests
         await client.DisposeAsync();
     }
 
+    [Test]
+    public async Task ConnectionPoolShouldDefaultToOneAndFreezeExplicitBounds()
+    {
+        var builder = SharpClientBuilder.Create()
+            .UseTransport(new NoopTransport());
+        var defaultClient = builder.Build();
+        Ensure(ReadConnectionPool(defaultClient) is { MinConnections: 1, MaxConnections: 1 },
+            "balanced default pool");
+
+        builder.UseConnectionPool(options =>
+        {
+            options.MinConnections = 2;
+            options.MaxConnections = 4;
+        });
+        var configuredClient = builder.Build();
+        builder.UseConnectionPool(options => options.MaxConnections = 6);
+        Ensure(ReadConnectionPool(configuredClient) is { MinConnections: 2, MaxConnections: 4 },
+            "built client should own a frozen pool snapshot");
+
+        await defaultClient.DisposeAsync();
+        await configuredClient.DisposeAsync();
+    }
+
+    [Test]
+    public async Task ThroughputProfileShouldUseBoundedMultiConnectionDefault()
+    {
+        var client = SharpClientBuilder.Create()
+            .UseTransport(new NoopTransport())
+            .UseRuntime(options => options.PerformanceProfile = SharpLinkPerformanceProfile.Throughput)
+            .Build();
+        var pool = ReadConnectionPool(client);
+        Ensure(pool.MinConnections == 1, "throughput minimum");
+        Ensure(pool.MaxConnections == Math.Min(Environment.ProcessorCount, 4), "throughput maximum");
+        await client.DisposeAsync();
+    }
+
+    [Test]
+    public async Task BuildShouldRejectInvalidConnectionPoolBounds()
+    {
+        var builder = SharpClientBuilder.Create()
+            .UseTransport(new NoopTransport())
+            .UseConnectionPool(options =>
+            {
+                options.MinConnections = 2;
+                options.MaxConnections = 1;
+            });
+        await EnsureThrows<ArgumentException>(() =>
+        {
+            _ = builder.Build();
+            return Task.CompletedTask;
+        });
+    }
+
     private static TimeSpan? ReadRequestTimeout(ISharpLinkClient client)
     {
         var hasField = client.GetType().GetField("_hasRequestTimeout", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -170,6 +223,13 @@ public class SharpClientBuilderTests
     {
         var field = client.GetType().GetField("_rpcSessionFlushOptions", BindingFlags.Instance | BindingFlags.NonPublic);
         return field?.GetValue(client) as RpcSessionFlushOptions?;
+    }
+
+    private static SharpLinkConnectionPoolOptions ReadConnectionPool(ISharpLinkClient client)
+    {
+        var field = client.GetType().GetField("_connectionPoolOptions", BindingFlags.Instance | BindingFlags.NonPublic);
+        return field?.GetValue(client) as SharpLinkConnectionPoolOptions ??
+               throw new Exception("cannot find connection-pool options");
     }
 
     private static async Task EnsureThrows<TException>(Func<Task> func) where TException : Exception

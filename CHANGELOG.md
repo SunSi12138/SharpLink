@@ -10,6 +10,7 @@
 - `[RpcSerializable]`、`[RpcMember]`、`[RpcIgnore]`、`[RpcRequired]`、`[RpcExternalCodec]`。
 - append-only generated Codec manifest；Runtime Context 在 Build 时冻结 manifest 快照。
 - Protocol v2 stream/connection 双层字节窗口、`WindowUpdate` 与单个大帧临时借用。
+- 每 Endpoint 有界客户端连接池、压力扩容与 power-of-two choices 连接选择。
 
 ### 变更
 
@@ -17,6 +18,8 @@
 - AOT Smoke 不再依赖 MemoryPack，覆盖 class、record、struct、嵌套数组和生成 manifest。
 - client/server stream sender 在额度不足时异步等待；消费、取消、超时和断连统一释放额度等待者。
 - stream dispatcher 按已编码字节记账，迟到的已取消 stream data 只丢弃并计数，不重建 dispatcher。
+- stream 调用固定绑定创建时的连接；`GoAway` 连接停止接收新请求并在变为空闲后退出，其他健康连接继续服务。
+- LoadTest 与 StreamLoadTest 支持 `--min-connections` / `--max-connections`。
 
 ## [0.4.0] - 2026-07-17
 

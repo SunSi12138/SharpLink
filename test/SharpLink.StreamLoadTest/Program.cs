@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Abstractions;
+using SharpLink.Client;
 using SharpLink.LoadTestBase;
 using SharpLink.Sdk;
 
@@ -47,6 +48,7 @@ public static class Program
         Console.WriteLine("  --duration 20 --warmup 5 --concurrency 1,2,4,8,16");
         Console.WriteLine("  --operation all|unary|c2s|s2c|duplex");
         Console.WriteLine("  --stream-size 256");
+        Console.WriteLine("  --min-connections 1 --max-connections 1");
         Console.WriteLine("  --heartbeat-interval 10 --heartbeat-check-interval 10 --heartbeat-timeout 120");
         Console.WriteLine();
         Console.WriteLine("Examples:");
@@ -59,7 +61,7 @@ public static class Program
     private static void PrintConfig(StreamLoadOptions options)
     {
         Console.WriteLine($"[Config] mode={options.Mode} transport={options.Transport} op={options.Operation} duration={options.DurationSeconds}s warmup={options.WarmupSeconds}s streamSize={options.StreamSize}");
-        Console.WriteLine($"[Config] concurrency=[{string.Join(',', options.ConcurrencyConfig)}]");
+        Console.WriteLine($"[Config] concurrency=[{string.Join(',', options.ConcurrencyConfig)}] pool={options.MinConnections}/{options.MaxConnections}");
 
         if (options.Transport == TransportMode.Tcp)
             Console.WriteLine($"[Config] tcp://{options.Host}:{options.Port} (bind={options.BindIp})");
@@ -83,6 +85,8 @@ public static class Program
             options.HeartbeatIntervalSeconds,
             options.HeartbeatCheckIntervalSeconds,
             options.HeartbeatTimeoutSeconds,
+            options.MinConnections,
+            options.MaxConnections,
             static builder => builder.AddService<IStreamLoadService, StreamLoadService>());
 
         using var serverCts = new CancellationTokenSource();
@@ -144,7 +148,9 @@ public static class Program
             options.UdsPath,
             options.PipeName,
             options.HeartbeatIntervalSeconds,
-            options.HeartbeatTimeoutSeconds);
+            options.HeartbeatTimeoutSeconds,
+            options.MinConnections,
+            options.MaxConnections);
 
         try
         {
@@ -302,6 +308,8 @@ public sealed class StreamLoadOptions
     public int HeartbeatIntervalSeconds { get; private init; } = 10;
     public int HeartbeatCheckIntervalSeconds { get; private init; } = 10;
     public int HeartbeatTimeoutSeconds { get; private init; } = 120;
+    public int MinConnections { get; private init; } = 1;
+    public int MaxConnections { get; private init; } = 1;
 
     public static StreamLoadOptions Parse(string[] args)
     {
@@ -336,6 +344,16 @@ public sealed class StreamLoadOptions
                 .ToArray()
             : [1, 2, 4, 8, 16];
 
+        var minConnections = int.Parse(map.GetValueOrDefault("min-connections", "1"));
+        var maxConnections = int.Parse(map.GetValueOrDefault("max-connections", "1"));
+        new SharpLinkConnectionPoolOptions
+        {
+            MinConnections = minConnections,
+            MaxConnections = maxConnections
+        }.Validate();
+        if (transport == TransportMode.AnonymousPipe && maxConnections != 1)
+            throw new ArgumentException("Anonymous-pipe load tests require --max-connections 1.");
+
         return new StreamLoadOptions
         {
             Mode = mode,
@@ -352,7 +370,9 @@ public sealed class StreamLoadOptions
             StreamSize = int.Parse(map.GetValueOrDefault("stream-size", "256")),
             HeartbeatIntervalSeconds = int.Parse(map.GetValueOrDefault("heartbeat-interval", "10")),
             HeartbeatCheckIntervalSeconds = int.Parse(map.GetValueOrDefault("heartbeat-check-interval", "10")),
-            HeartbeatTimeoutSeconds = int.Parse(map.GetValueOrDefault("heartbeat-timeout", "120"))
+            HeartbeatTimeoutSeconds = int.Parse(map.GetValueOrDefault("heartbeat-timeout", "120")),
+            MinConnections = minConnections,
+            MaxConnections = maxConnections
         };
     }
 }

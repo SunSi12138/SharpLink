@@ -29,6 +29,8 @@ public sealed partial class RpcSession : IRpcSession
     private readonly RpcSessionFlushOptions? _flushOptions;
     private SendPump? _pump;
     private StreamFlowController? _streamFlowControl;
+    private int _activeRequests;
+    private int _draining;
 
     public RpcSession(
         string id,
@@ -225,6 +227,38 @@ public sealed partial class RpcSession : IRpcSession
     }
 
     internal long QueuedSendBytes => Volatile.Read(ref _pump)?.QueuedBytes ?? 0;
+
+    internal int ActiveRequestCount => Volatile.Read(ref _activeRequests);
+
+    internal bool IsDraining => Volatile.Read(ref _draining) != 0;
+
+    internal bool CanAcceptCalls =>
+        !IsDraining && IsConnected;
+
+    internal void AddActiveRequest()
+    {
+        if (!CanAcceptCalls)
+            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The connection is draining.");
+        Interlocked.Increment(ref _activeRequests);
+        if (!CanAcceptCalls)
+        {
+            Interlocked.Decrement(ref _activeRequests);
+            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The connection is draining.");
+        }
+    }
+
+    internal void ReleaseActiveRequest()
+    {
+        var remaining = Interlocked.Decrement(ref _activeRequests);
+        if (remaining < 0)
+        {
+            Interlocked.Exchange(ref _activeRequests, 0);
+            throw new InvalidOperationException("Connection active request count became negative.");
+        }
+    }
+
+    internal void MarkDraining()
+        => Volatile.Write(ref _draining, 1);
 
     public event Action? OnConnected;
     public void NotifyConnected()=>OnConnected?.Invoke();

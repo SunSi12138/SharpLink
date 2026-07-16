@@ -117,6 +117,10 @@ dotnet run -c Release --project test/SharpLink.LoadTest -- \
 - `--heartbeat-interval`: client 心跳间隔秒
 - `--heartbeat-check-interval`: server 心跳检查间隔秒
 - `--heartbeat-timeout`: 心跳超时秒
+- `--min-connections`: Client 初始连接数（默认 `1`）
+- `--max-connections`: Client 压力扩容上限（默认 `1`，范围 `1..64`）
+
+`anonymous` 传输的 `--max-connections` 必须为 `1`。验证连接池时可在 TCP/UDS/NamedPipe 模式增加 `--min-connections 1 --max-connections 4`；最终实际连接数仍由并发压力触发，不会按每次 RPC 新建连接。
 
 LoadTest 专有：
 

@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Abstractions;
+using SharpLink.Client;
 using SharpLink.LoadTestBase;
 using SharpLink.Sdk;
 
@@ -50,7 +51,7 @@ public static class Program
         Console.WriteLine(
             $"[Config] mode={options.Mode} transport={options.Transport} operation={options.Operation} " +
             $"duration={options.DurationSeconds}s warmup={options.WarmupSeconds}s concurrency=[{string.Join(",", options.ConcurrencyConfig)}] " +
-            $"payload={options.PayloadSize}B");
+            $"payload={options.PayloadSize}B pool={options.MinConnections}/{options.MaxConnections}");
 
         if (options.Transport == TransportMode.Tcp)
             Console.WriteLine($"[Config] tcp://{options.Host}:{options.Port} (bind={options.BindIp})");
@@ -68,6 +69,7 @@ public static class Program
         Console.WriteLine("  --host 127.0.0.1 --bind-ip 0.0.0.0 --port 19100");
         Console.WriteLine("  --duration 20 --warmup 5 --concurrency 1,2,4,8,16,32");
         Console.WriteLine("  --operation add|echo --payload-size 64");
+        Console.WriteLine("  --min-connections 1 --max-connections 1");
         Console.WriteLine("  --metrics-port 9464");
         Console.WriteLine("  --heartbeat-interval 10 --heartbeat-check-interval 10 --heartbeat-timeout 120");
         Console.WriteLine();
@@ -90,6 +92,8 @@ public static class Program
             options.HeartbeatIntervalSeconds,
             options.HeartbeatCheckIntervalSeconds,
             options.HeartbeatTimeoutSeconds,
+            options.MinConnections,
+            options.MaxConnections,
             static builder => builder.AddService<ILoadTestService, LoadTestService>());
         var serverCts = new CancellationTokenSource();
         var serverToken = serverCts.Token;
@@ -148,7 +152,9 @@ public static class Program
                 options.UdsPath,
                 options.PipeName,
                 options.HeartbeatIntervalSeconds,
-                options.HeartbeatTimeoutSeconds)
+                options.HeartbeatTimeoutSeconds,
+                options.MinConnections,
+                options.MaxConnections)
             : null;
         var client = clientOverride ?? ownedClient!;
         try
@@ -346,6 +352,8 @@ public sealed class LoadTestOptions
     public int HeartbeatIntervalSeconds { get; private init; } = 10;
     public int HeartbeatCheckIntervalSeconds { get; private init; } = 10;
     public int HeartbeatTimeoutSeconds { get; private init; } = 120;
+    public int MinConnections { get; private init; } = 1;
+    public int MaxConnections { get; private init; } = 1;
 
     public static LoadTestOptions Parse(string[] args)
     {
@@ -381,6 +389,17 @@ public sealed class LoadTestOptions
         if (operation is not ("add" or "echo"))
             throw new ArgumentException($"Unsupported operation: {operation}. Supported: add, echo.");
 
+        var minConnections = int.Parse(map.GetValueOrDefault("min-connections", "1"));
+        var maxConnections = int.Parse(map.GetValueOrDefault("max-connections", "1"));
+        var connectionPool = new SharpLinkConnectionPoolOptions
+        {
+            MinConnections = minConnections,
+            MaxConnections = maxConnections
+        };
+        connectionPool.Validate();
+        if (transport == TransportMode.AnonymousPipe && maxConnections != 1)
+            throw new ArgumentException("Anonymous-pipe load tests require --max-connections 1.");
+
         return new LoadTestOptions
         {
             Mode = mode,
@@ -398,7 +417,9 @@ public sealed class LoadTestOptions
             MetricsPort = int.Parse(map.GetValueOrDefault("metrics-port", "9464")),
             HeartbeatIntervalSeconds = int.Parse(map.GetValueOrDefault("heartbeat-interval", "10")),
             HeartbeatCheckIntervalSeconds = int.Parse(map.GetValueOrDefault("heartbeat-check-interval", "10")),
-            HeartbeatTimeoutSeconds = int.Parse(map.GetValueOrDefault("heartbeat-timeout", "120"))
+            HeartbeatTimeoutSeconds = int.Parse(map.GetValueOrDefault("heartbeat-timeout", "120")),
+            MinConnections = minConnections,
+            MaxConnections = maxConnections
         };
     }
 

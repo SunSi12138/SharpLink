@@ -193,9 +193,9 @@ internal sealed partial class SharpLinkClient
             requestId,
             isOneWay: false,
             cancellationToken);
-        _requestSessions[requestId] = session;
         try
         {
+            BindRequestToSession(requestId, session);
             SendRpcCall(
                 session,
                 contractId,
@@ -209,7 +209,7 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception exception)
         {
-            _requestSessions.TryRemove(requestId, out _);
+            TryUnbindRequest(requestId, out _);
             _requestManager.DispatchError(requestId, exception);
         }
 
@@ -248,7 +248,7 @@ internal sealed partial class SharpLinkClient
         await using (cancelRegistration)
         {
             if (hasClientStreams)
-                _requestSessions[requestId] = session;
+                BindRequestToSession(requestId, session);
             try
             {
                 SendRpcCall(
@@ -267,7 +267,7 @@ internal sealed partial class SharpLinkClient
             finally
             {
                 if (hasClientStreams)
-                    _requestSessions.TryRemove(requestId, out _);
+                    TryUnbindRequest(requestId, out _);
             }
         }
     }
@@ -315,9 +315,9 @@ internal sealed partial class SharpLinkClient
             requestId,
             isOneWay: false,
             cancellationToken);
-        _requestSessions[requestId] = session;
         try
         {
+            BindRequestToSession(requestId, session);
             SendRpcCall(
                 session,
                 contractId,
@@ -332,7 +332,7 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception exception)
         {
-            _requestSessions.TryRemove(requestId, out _);
+            TryUnbindRequest(requestId, out _);
             _requestManager.DispatchError(requestId, exception);
         }
 
@@ -351,7 +351,7 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception exception)
         {
-            _requestSessions.TryRemove(requestId, out _);
+            TryUnbindRequest(requestId, out _);
             _requestManager.DispatchError(requestId, exception);
         }
     }
@@ -449,7 +449,7 @@ internal sealed partial class SharpLinkClient
         }
 
         session.StreamManager.Register(requestId, 0, dispatcher);
-        _requestSessions[requestId] = session;
+        BindRequestToSession(requestId, session);
         return session;
     }
 
@@ -459,7 +459,7 @@ internal sealed partial class SharpLinkClient
         Exception exception)
     {
         _serverStreamRequestIds.Remove(requestId);
-        _requestSessions.TryRemove(requestId, out _);
+        TryUnbindRequest(requestId, out _);
         CompleteStreamLifetime(requestId);
         dispatcher.Complete(exception);
     }

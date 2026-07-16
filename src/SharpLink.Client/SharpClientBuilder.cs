@@ -29,6 +29,8 @@ public class SharpClientBuilder
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
     private TimeSpan? _requestTimeout = TimeSpan.FromSeconds(30);
     private RpcSessionFlushOptions? _rpcSessionFlushOptions;
+    private readonly SharpLinkConnectionPoolOptions _connectionPool = new();
+    private bool _connectionPoolConfigured;
 
     /// <summary>Configures instance-scoped runtime behavior.</summary>
     public SharpClientBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)
@@ -133,6 +135,16 @@ public class SharpClientBuilder
         _rpcSessionFlushOptions = RpcSessionFlushOptions.Create(flushSizeThreshold, maxLatency);
         return this;
     }
+
+    /// <summary>Configures the bounded connection pool for the selected endpoint.</summary>
+    /// <param name="configure">Mutates builder-owned options that are frozen by <see cref="Build"/>.</param>
+    public SharpClientBuilder UseConnectionPool(Action<SharpLinkConnectionPoolOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        configure(_connectionPool);
+        _connectionPoolConfigured = true;
+        return this;
+    }
     
     public ISharpLinkClient Build()
     {
@@ -141,6 +153,12 @@ public class SharpClientBuilder
 
         var runtimeContext = _runtimeContextBuilder.Build();
         var protocolOptions = runtimeContext.Protocol;
+        var connectionPool = CreateConnectionPoolSnapshot(runtimeContext);
+        if (_transport is AnonymousPipeClientTransportFactory && connectionPool.MaxConnections != 1)
+        {
+            throw new InvalidOperationException(
+                "Anonymous-pipe handle offers support exactly one client connection.");
+        }
 
         return new SharpLinkClient(
             _transport,
@@ -151,7 +169,23 @@ public class SharpClientBuilder
             _handshakeMessage,
             protocolOptions,
             runtimeContext,
-            _rpcSessionFlushOptions
+            _rpcSessionFlushOptions,
+            connectionPool
         );
+    }
+
+    private SharpLinkConnectionPoolOptions CreateConnectionPoolSnapshot(SharpLinkRuntimeContext runtimeContext)
+    {
+        if (_connectionPoolConfigured)
+            return _connectionPool.CloneValidated();
+
+        var maxConnections = runtimeContext.Options.PerformanceProfile == SharpLinkPerformanceProfile.Throughput
+            ? Math.Min(Environment.ProcessorCount, 4)
+            : 1;
+        return new SharpLinkConnectionPoolOptions
+        {
+            MinConnections = 1,
+            MaxConnections = Math.Max(1, maxConnections)
+        }.CloneValidated();
     }
 }

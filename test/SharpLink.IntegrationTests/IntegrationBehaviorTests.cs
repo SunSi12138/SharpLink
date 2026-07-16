@@ -66,6 +66,26 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    public async Task ConnectionPoolShouldExpandOnceUnderConcurrentPressure()
+    {
+        await using var harness = await TestHarness.CreateAsync(poolConfigure: options =>
+        {
+            options.MinConnections = 1;
+            options.MaxConnections = 2;
+        });
+        var client = (SharpLinkClient)harness.Client;
+        var svc = harness.Client.Get<ITestService>();
+
+        var first = svc.SlowAddWithoutTimeoutAsync(20, 1).AsTask();
+        await Task.Delay(20);
+        var second = svc.SlowAddWithoutTimeoutAsync(20, 1).AsTask();
+        await WaitUntilAsync(() => client.ReadyConnectionCount == 2);
+
+        Ensure(await first == 21 && await second == 21, "concurrent calls should complete across the pool");
+        Ensure(client.ReadyConnectionCount == 2, "pressure should create one bounded expansion connection");
+    }
+
+    [Test]
     public async Task TwoClientServerPairsShouldUseIndependentDtoCodecs()
     {
         var firstCodec = new MarkerPersonCodec(0xA1);
@@ -346,7 +366,8 @@ public class IntegrationBehaviorTests
         public static async Task<TestHarness> CreateAsync(
             TimeSpan? requestTimeout = null,
             Func<Type, IRpcCodec?>? codecResolver = null,
-            Action<SharpLinkRuntimeOptions>? runtimeConfigure = null)
+            Action<SharpLinkRuntimeOptions>? runtimeConfigure = null,
+            Action<SharpLinkConnectionPoolOptions>? poolConfigure = null)
         {
             codecResolver ??= MemoryPackCodec.Resolver;
             var cts = new CancellationTokenSource();
@@ -387,6 +408,8 @@ public class IntegrationBehaviorTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
             if (runtimeConfigure is not null)
                 clientBuilder.UseRuntime(runtimeConfigure);
+            if (poolConfigure is not null)
+                clientBuilder.UseConnectionPool(poolConfigure);
 
             if (requestTimeout is { } timeout)
                 clientBuilder.UseRequestTimeout(timeout);

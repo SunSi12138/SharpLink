@@ -52,10 +52,10 @@ internal sealed partial class SharpLinkClient
             isOneWay,
             cancellationToken);
 
-        if (!isOneWay || streamSender is not null)
-            _requestSessions[requestId] = session;
         try
         {
+            if (!isOneWay || streamSender is not null)
+                BindRequestToSession(requestId, session);
             SendRpcCall(
                 session,
                 interfaceHash,
@@ -68,7 +68,7 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception exception)
         {
-            _requestSessions.TryRemove(requestId, out _);
+            TryUnbindRequest(requestId, out _);
             if (operation is null)
                 throw;
             _requestManager.DispatchError(requestId, exception);
@@ -78,15 +78,23 @@ internal sealed partial class SharpLinkClient
         if (streamSender is not null)
         {
             if (isOneWay)
-                await streamSender(requestId, cancellationToken).ConfigureAwait(false);
+            {
+                try
+                {
+                    await streamSender(requestId, cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    TryUnbindRequest(requestId, out _);
+                }
+            }
             else
                 TrackBackgroundTask(RunStreamSenderAsync(streamSender, requestId, cancellationToken));
         }
 
         if (isOneWay)
         {
-            if (streamSender is null)
-                _requestSessions.TryRemove(requestId, out _);
+            TryUnbindRequest(requestId, out _);
             return default!;
         }
         return await operation!.AsValueTask().ConfigureAwait(false);
@@ -155,7 +163,7 @@ internal sealed partial class SharpLinkClient
             }
 
             session.StreamManager.Register(requestId, 0, dispatcher);
-            _requestSessions[requestId] = session;
+            BindRequestToSession(requestId, session);
             var flags = cancellationToken.CanBeCanceled || control.Deadline is not null
                 ? ProtocolV2FrameFlags.Cancellable
                 : ProtocolV2FrameFlags.None;
@@ -174,7 +182,7 @@ internal sealed partial class SharpLinkClient
         catch (Exception exception)
         {
             _serverStreamRequestIds.Remove(requestId);
-            _requestSessions.TryRemove(requestId, out _);
+            TryUnbindRequest(requestId, out _);
             CompleteStreamLifetime(requestId);
             dispatcher.Complete(exception);
         }
@@ -222,9 +230,8 @@ internal sealed partial class SharpLinkClient
     {
         while (true)
         {
-            var session = Volatile.Read(ref _session);
-            if (State == SharpLinkConnectionState.Ready && session is { IsConnected: true })
-                return session;
+            if (State == SharpLinkConnectionState.Ready && ReadyConnectionCount != 0)
+                return GetReadySession();
 
             if (!waitForReady)
                 return GetReadySession();

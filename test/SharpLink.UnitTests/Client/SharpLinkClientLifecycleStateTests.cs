@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Threading;
 using SharpLink.Client;
@@ -69,6 +70,80 @@ public class SharpLinkClientLifecycleStateTests
 
         var second = await transport.WaitForConnectionAsync(1);
         Ensure(!ReferenceEquals(first, second), "reconnect must own a fresh transport connection");
+    }
+
+    [Test]
+    public async Task ConnectShouldEstablishConfiguredMinimumPoolSize()
+    {
+        var transport = new SequenceClientTransportFactory();
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            connectionPoolOptions: new SharpLinkConnectionPoolOptions
+            {
+                MinConnections = 2,
+                MaxConnections = 2
+            });
+
+        await client.ConnectAsync();
+        Ensure(transport.ConnectCount == 2, "minimum pool should be ready when ConnectAsync returns");
+        Ensure(client.ReadyConnectionCount == 2, "ready pool size");
+    }
+
+    [Test]
+    public async Task PowerOfTwoChoiceShouldSelectLowerActiveConnection()
+    {
+        var firstConnection = new TestTransportConnection();
+        var secondConnection = new TestTransportConnection();
+        await using var first = new RpcSession(firstConnection);
+        await using var second = new RpcSession(secondConnection);
+        first.AddActiveRequest();
+        first.AddActiveRequest();
+        second.AddActiveRequest();
+
+        var selected = SharpLinkClient.SelectLeastLoaded([first, second], 0, 1);
+        Ensure(ReferenceEquals(selected, second), "power-of-two should select the lower active count");
+
+        first.ReleaseActiveRequest();
+        first.ReleaseActiveRequest();
+        second.ReleaseActiveRequest();
+    }
+
+    [Test]
+    public async Task GoAwayShouldDrainOnlyItsConnectionAndRefillMinimumPool()
+    {
+        var transport = new SequenceClientTransportFactory();
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            connectionPoolOptions: new SharpLinkConnectionPoolOptions
+            {
+                MinConnections = 2,
+                MaxConnections = 2
+            });
+        await client.ConnectAsync();
+        var drainingConnection = await transport.WaitForConnectionAsync(0);
+        var payload = new PooledByteBufferWriter();
+        var lastAccepted = payload.GetSpan(sizeof(ulong));
+        BinaryPrimitives.WriteUInt64LittleEndian(lastAccepted, 0);
+        payload.Advance(sizeof(ulong));
+        ProtocolV2PayloadCodec.WriteError(
+            payload,
+            SharpLinkErrorCode.Unavailable,
+            "rolling restart",
+            1024,
+            out _);
+
+        await drainingConnection.InjectFrameAsync(
+            ProtocolV2FrameType.GoAway,
+            ProtocolV2FrameFlags.Error,
+            0,
+            payload.WrittenMemory);
+        await WaitUntilAsync(() => transport.ConnectCount >= 3 && client.ReadyConnectionCount == 2);
+
+        Ensure(client.State == SharpLinkConnectionState.Ready, "another ready connection should keep the client ready");
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

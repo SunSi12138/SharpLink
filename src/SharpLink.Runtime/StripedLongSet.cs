@@ -38,6 +38,14 @@ public sealed class StripedLongSet
             return _sets[stripe].Remove(value);
     }
 
+    /// <summary>Returns whether the set currently contains <paramref name="value"/>.</summary>
+    public bool Contains(long value)
+    {
+        var stripe = GetStripe(value);
+        lock (_locks[stripe])
+            return _sets[stripe].Contains(value);
+    }
+
     public void Clear()
     {
         for (var i = 0; i < _sets.Length; i++)

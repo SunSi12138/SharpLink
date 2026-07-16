@@ -85,6 +85,15 @@ SharpLink.Serializer.MemoryPack
 - dispatcher 保存 decoded item 对应的 encoded byte count；消费者成功取走或丢弃 item 后累计 credit，达到半窗口时发送 `WindowUpdate`。
 - 未知或已取消 stream 的迟到数据不会创建新 dispatcher；窗口溢出、重复 credit 和连续越窗均作为 `ProtocolViolation` 关闭连接。
 
+## 客户端连接池
+
+- 每个 Client endpoint 拥有一个冻结配置的有界池；默认 `MinConnections=1 / MaxConnections=1`。
+- 单连接快路径直接返回唯一 session；多连接使用 power-of-two choices，从两个随机候选中选择 active request 较少者。
+- 请求 ID 与创建时选中的 session 绑定，Unary、client/server stream 与 duplex 的响应、取消、超时和断连都通过同一绑定释放 active 计数。
+- 只有当前候选已有在途请求时才合并触发一个扩容 worker，不能按每次调用创建连接。
+- `GoAway` 将单条 session 标为 draining 并立即从选择快照移除；已有请求完成后释放该连接，池在后台恢复最小连接数。
+- Client Stop 取消并等待 connect、reconnect、expand、heartbeat 与 read-loop worker，再释放所有 session 和 transport factory。
+
 ## 取消与超时
 
 1. 调用侧 `CancellationToken` 触发，或请求超时调度器命中。
