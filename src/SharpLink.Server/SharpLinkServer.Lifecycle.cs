@@ -250,11 +250,17 @@ internal sealed partial class SharpLinkServer
                 {
                     request = ProtocolV2PayloadCodec.ReadHandshakeRequest(message, _protocolOptions);
                     var unsupportedRequired = request.RequiredCapabilities & ~supportedCapabilities;
-                    authResult = unsupportedRequired != ProtocolV2Capabilities.None
-                        ? SharpLinkAuthenticationResult.Reject(
+                    if (unsupportedRequired != ProtocolV2Capabilities.None)
+                    {
+                        authResult = SharpLinkAuthenticationResult.Reject(
                             SharpLinkErrorCode.Unimplemented,
-                            $"Required capabilities are unsupported: {unsupportedRequired}.")
-                        : _authValidator(Encoding.UTF8.GetString(request.AuthenticationPayload.Span));
+                            $"Required capabilities are unsupported: {unsupportedRequired}.");
+                    }
+                    else
+                    {
+                        authResult = await AuthenticateAsync(session, request.AuthenticationPayload, ct)
+                            .ConfigureAwait(false);
+                    }
                 }
 
                 if (authResult.IsAuthenticated)
@@ -298,6 +304,55 @@ internal sealed partial class SharpLinkServer
         return SharpLinkAuthenticationResult.Reject(
             SharpLinkErrorCode.ConnectionClosed,
             "Client disconnected during handshake.");
+    }
+
+    private async ValueTask<SharpLinkAuthenticationResult> AuthenticateAsync(
+        IRpcSession session,
+        ReadOnlyMemory<byte> payload,
+        CancellationToken cancellationToken)
+    {
+        if (_authenticator is null)
+        {
+            return _authenticationRequired
+                ? SharpLinkAuthenticationResult.Reject()
+                : SharpLinkAuthenticationResult.Success;
+        }
+
+        try
+        {
+            var rpcSession = (RpcSession)session;
+            var result = await _authenticator.AuthenticateAsync(
+                new SharpLinkAuthenticationRequest(
+                    session.Id,
+                    payload,
+                    rpcSession.LocalEndPoint,
+                    rpcSession.RemoteEndPoint),
+                cancellationToken).ConfigureAwait(false);
+            if (result.IsAuthenticated && result.Context?.IsExpired() == true)
+            {
+                return SharpLinkAuthenticationResult.Reject(
+                    SharpLinkErrorCode.AuthenticationExpired,
+                    "Authentication token has expired.");
+            }
+            if (!result.IsAuthenticated && result.ErrorCode == SharpLinkErrorCode.Unknown)
+            {
+                return SharpLinkAuthenticationResult.Reject(
+                    SharpLinkErrorCode.AuthenticationRejected,
+                    result.ErrorMessage);
+            }
+            return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            LogAuthenticationProviderFailed(_logger, exception);
+            return SharpLinkAuthenticationResult.Reject(
+                SharpLinkErrorCode.AuthenticationRejected,
+                "Authentication failed.");
+        }
     }
     private async Task ProcessRequestLoop(IRpcSession session,CancellationToken ct)
     {

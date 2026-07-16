@@ -39,14 +39,14 @@ SharpLink.Serializer.MemoryPack
 - `SharpLink.Client`
   - `SharpClientBuilder`
   - 连接、心跳、请求跟踪、超时/取消管理
-  - 客户端握手消息配置（`UseAuthenticator("token")`）
+  - 每次连接通过 `ISharpLinkClientAuthenticator` 异步创建认证 payload
   - 原子连接状态机、自动重连、`ConnectAsync / StopAsync` 生命周期
   - 承载生成代理最终调用的 `IRpcChannel` 实现
 
 - `SharpLink.Server`
   - `SharpLinkServerBuilder`
   - 连接接受、会话生命周期、服务分发
-  - 服务端握手校验配置（`UseAuthenticator(message => bool/result)`）
+  - `ISharpLinkServerAuthenticator` 与显式 `RequireAuthentication()`
   - 将当前 `sessionId + 认证上下文 + deadline + metadata` 挂入 `SharpLinkCallContext`
   - 通过 `SharpLinkAuthorization` 在服务方法内部执行 `scope / tenant / expiry` 校验
   - 调用 `IRpcStub` 执行真实服务方法
@@ -136,3 +136,12 @@ SharpLink.Serializer.MemoryPack
 - TLS handshake 默认 10 秒并可独立配置；timeout、server stop 与 caller cancellation 都会释放 socket、SslStream 和 Pipe。
 - mTLS 直接使用 `SslServerAuthenticationOptions.ClientCertificateRequired` 与客户端证书集合；默认服务器证书验证不被框架放宽。
 - 非 TCP transport 不创建 `SslStream`。协商后的 TLS protocol/cipher 可用于日志和后续 telemetry，但认证 payload、token 和证书敏感数据不写日志。
+
+## 连接认证
+
+- 默认无 provider 时为 Anonymous；要求身份的 Server 必须显式调用 `RequireAuthentication()`，否则 Build 不允许遗漏 provider。
+- Client provider 每次连接尝试都会在 RPC handshake timeout 内重新执行，断线重连不会复用已过期 payload。
+- Server provider 接收复制后的有界二进制 payload、connection ID 与 peer endpoint；异步执行期间不会持有 Pipe buffer。
+- provider 返回的 `SharpLinkAuthenticationContext` 归属 session，并在每次调用创建 `SharpLinkCallContextSnapshot` 时传递。
+- handshake 自动拒绝已过期 context；需要授权的业务调用可使用 `SharpLinkAuthorization` 或下一阶段 Server Interceptor 再次检查 token expiry。
+- provider 未映射异常记录无 payload 的结构化日志，并向客户端返回不含内部细节的 `AuthenticationRejected`。

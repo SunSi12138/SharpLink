@@ -148,20 +148,35 @@ var client = SharpClientBuilder.Create()
 
 ## 认证
 
-- 默认认证模式为 Anonymous，不存在默认密码；需要认证时客户端可用 `UseAuthenticator("token")` 发送握手消息
-- 服务端支持两种写法：
+- 默认模式明确为 Anonymous，不存在默认密码。`RequireAuthentication()` 后没有注册服务端 provider 会在 Build 阶段失败。
+- client provider 会为每次连接/重连重新创建有界二进制 payload，适合刷新短期 token：
 
 ```csharp
-builder.UseAuthenticator(static message => message == "expected-token");
+var clientAuthenticator = SharpLinkAuthenticator.CreateClient(async cancellationToken =>
+    await tokenProvider.GetPayloadAsync(cancellationToken));
 
-builder.UseAuthenticator(static message => message == "expected-token"
-    ? SharpLinkAuthenticationResult.Success
-    : SharpLinkAuthenticationResult.Reject(
-        SharpLinkErrorCode.AuthenticationExpired,
-        "token expired"));
+var serverAuthenticator = SharpLinkAuthenticator.CreateServer(async (request, cancellationToken) =>
+{
+    var identity = await tokenValidator.ValidateAsync(request.Payload, cancellationToken);
+    return identity is null
+        ? SharpLinkAuthenticationResult.Reject()
+        : SharpLinkAuthenticationResult.Authenticate(
+            new SharpLinkAuthenticationContext(
+                subject: identity.Subject,
+                tenantId: identity.TenantId,
+                scopes: identity.Scopes,
+                expiresAt: identity.ExpiresAt));
+});
+
+var client = SharpClientBuilder.Create()
+    .UseAuthenticator(clientAuthenticator);
+
+var server = SharpLinkServerBuilder.Create()
+    .UseAuthenticator(serverAuthenticator)
+    .RequireAuthentication();
 ```
 
-- 第二种写法适合需要返回明确拒绝原因、错误码，或区分过期/权限不足等场景
+认证 payload 受 handshake/metadata 上限约束，provider 异常只向客户端公开通用认证失败。payload、token 和证书内容不会写入普通日志。认证上下文如果在 handshake 时已经过期会直接返回 `AuthenticationExpired`。
 
 如果你还需要在服务方法内部读取当前身份上下文，可以直接访问：
 
@@ -232,7 +247,7 @@ SharpLinkAuthorization.RequireActiveToken();
 
 - 日志：`UseLoggerFactory(...)`
 - 心跳：`UseHeartbeat(...)`
-- 握手认证：客户端 `UseAuthenticator("token")`，服务端 `UseAuthenticator(message => bool/result)`
+- 握手认证：`ISharpLinkClientAuthenticator` / `ISharpLinkServerAuthenticator` 与 `RequireAuthentication()`
 - 请求超时：`UseRequestTimeout(...)`
 - `RpcSession` flush：`UseRpcSessionFlush(...)`
 - `BufferWriterPool`：`UseBufferWriterPool(...)`

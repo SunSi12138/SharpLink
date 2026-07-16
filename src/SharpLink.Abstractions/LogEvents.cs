@@ -14,6 +14,7 @@ public static class LogEvents
         public const int HandshakeFailed = 1101;
         public const int HeartbeatTimeout = 1102;
         public const int TlsHandshakeFailed = 1103;
+        public const int AuthenticationProviderFailed = 1104;
         //Error
         public const int ClientDisConnectedWithError = 1201;
         //Critical

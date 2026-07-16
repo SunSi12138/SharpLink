@@ -229,7 +229,15 @@ internal sealed partial class SharpLinkClient
 
     private async Task<Exception?> ProcessHandshakeAsync(IRpcSession session, CancellationToken ct)
     {
-        var authPayload = Encoding.UTF8.GetBytes(_handshakeMessage);
+        var authPayload = _authenticator is null
+            ? ReadOnlyMemory<byte>.Empty
+            : await _authenticator.CreatePayloadAsync(ct).ConfigureAwait(false);
+        if (authPayload.Length > _protocolOptions.MaxMetadataBytes)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.ResourceExhausted,
+                $"Authentication payload exceeds {_protocolOptions.MaxMetadataBytes} bytes.");
+        }
         var handshakeRequest = new ProtocolV2HandshakeRequest(
             ProtocolV2Constants.MinorVersion,
             ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.FlowControl,

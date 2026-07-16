@@ -8,6 +8,13 @@
 
 - TCP TLS 与双向证书认证，TLS 在 Protocol v2 handshake 前完成并使用独立超时。
 - TLS 协议/cipher 结构化日志；默认保留平台证书链和 hostname 校验。
+- `ISharpLinkClientAuthenticator`、`ISharpLinkServerAuthenticator`、二进制认证请求与 delegate adapter。
+- 显式 `RequireAuthentication()` Build 校验；默认模式保持 Anonymous。
+
+### 变更
+
+- 删除 string/bool authenticator Builder API；认证 payload 在每次重连时异步创建并受 handshake 上限约束。
+- 认证上下文挂入每次服务调用；handshake 自动拒绝已过期 context，授权 helper 可在调用前再次校验 expiry/scope/tenant。
 
 ### 修复
 

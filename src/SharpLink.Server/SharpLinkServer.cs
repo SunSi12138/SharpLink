@@ -6,7 +6,8 @@ internal sealed partial class SharpLinkServer(
     TimeSpan heartbeatCheckInterval,
     TimeSpan heartbeatTimeout,
     ILoggerFactory loggerFactory,
-    Func<string, SharpLinkAuthenticationResult>? authValidator = null,
+    ISharpLinkServerAuthenticator? authenticator = null,
+    bool authenticationRequired = false,
     SharpLinkProtocolOptions? protocolOptions = null,
     SharpLinkRuntimeContext? runtimeContext = null,
     RpcSessionFlushOptions? rpcSessionFlushOptions = null) : ISharpLinkServer
@@ -26,7 +27,8 @@ internal sealed partial class SharpLinkServer(
     private readonly ConcurrentDictionary<string, SharpLinkAuthenticationContext?> _sessionAuthContexts = [];
     private readonly ConcurrentDictionary<string, long> _lastAcceptedRequestIds = [];
     private readonly ILogger _logger = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory))).CreateLogger<SharpLinkServer>();
-    private readonly Func<string, SharpLinkAuthenticationResult> _authValidator = authValidator ?? DefaultAuthValidator;
+    private readonly ISharpLinkServerAuthenticator? _authenticator = authenticator;
+    private readonly bool _authenticationRequired = authenticationRequired;
     private readonly CancellationTokenSource _acceptCts = new();
     private readonly CancellationTokenSource _forceStopCts = new();
     private readonly Lock _stateGate = new();
@@ -46,9 +48,6 @@ internal sealed partial class SharpLinkServer(
     private readonly int _globalMaxConcurrentCalls = (int)Math.Min(
         (long)Environment.ProcessorCount * 1024,
         65_536L);
-
-    private static SharpLinkAuthenticationResult DefaultAuthValidator(string message)
-        => SharpLinkAuthenticationResult.Success;
 
     public ValueTask DisposeAsync() => StopAsync(TimeSpan.Zero);
 

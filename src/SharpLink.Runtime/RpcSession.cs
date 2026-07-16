@@ -12,6 +12,8 @@ public sealed partial class RpcSession : IRpcSession
 
     private readonly CancellationTokenSource _cts = new();
     private readonly ITransportConnection? _transportConnection;
+    internal EndPoint? LocalEndPoint => _transportConnection?.LocalEndPoint;
+    internal EndPoint? RemoteEndPoint => _transportConnection?.RemoteEndPoint;
     private SessionTerminal? _terminal;
     private int _cleanupStarted;
     private int _stopped;

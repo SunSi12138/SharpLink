@@ -7,7 +7,7 @@ public class SharpClientBuilder
     
     private IClientTransportFactory? _transport;
     private ILoggerFactory? _loggerFactory;
-    private string _handshakeMessage = string.Empty;
+    private ISharpLinkClientAuthenticator? _authenticator;
 
     /// <summary>Uses an outbound transport factory owned by the built client.</summary>
     /// <param name="transport">The factory used for initial connections and reconnects.</param>
@@ -17,10 +17,10 @@ public class SharpClientBuilder
         return this;
     }
 
-    public SharpClientBuilder UseAuthenticator(string handshakeMessage)
+    /// <summary>Configures an instance-scoped client authentication payload provider.</summary>
+    public SharpClientBuilder UseAuthenticator(ISharpLinkClientAuthenticator authenticator)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(handshakeMessage);
-        _handshakeMessage = handshakeMessage;
+        _authenticator = authenticator ?? throw new ArgumentNullException(nameof(authenticator));
         return this;
     }
 
@@ -166,7 +166,7 @@ public class SharpClientBuilder
             _heartbeatTimeout,
             _loggerFactory ?? NullLoggerFactory.Instance,
             _requestTimeout,
-            _handshakeMessage,
+            _authenticator,
             protocolOptions,
             runtimeContext,
             _rpcSessionFlushOptions,

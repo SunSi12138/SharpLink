@@ -5,7 +5,6 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient(IClientTransportFactory transportFactory) : IRpcChannel, ISharpLinkClient
 {
-    private const string DefaultHandshakeMessage = "";
     private readonly SharpLinkRuntimeContext _runtimeContext = new SharpLinkRuntimeContextBuilder().Build();
     private readonly StripedLongSet _serverStreamRequestIds = new();
     private readonly StripedLongSet _locallyCanceledRequestIds = new();
@@ -33,7 +32,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
     private readonly TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
     private readonly bool _hasRequestTimeout;
     private readonly TimeSpan _requestTimeoutValue;
-    private readonly string _handshakeMessage = DefaultHandshakeMessage;
+    private readonly ISharpLinkClientAuthenticator? _authenticator;
     private readonly SharpLinkProtocolOptions _protocolOptions = new();
     private readonly ILogger _logger = NullLogger<SharpLinkClient>.Instance;
     private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions;
@@ -44,7 +43,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         TimeSpan heartbeatInterval,
         TimeSpan heartbeatTimeout,
         TimeSpan? requestTimeout = null,
-        string handshakeMessage = DefaultHandshakeMessage,
+        ISharpLinkClientAuthenticator? authenticator = null,
         SharpLinkProtocolOptions? protocolOptions = null,
         SharpLinkRuntimeContext? runtimeContext = null,
         RpcSessionFlushOptions? rpcSessionFlushOptions = null,
@@ -53,7 +52,6 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatTimeout, TimeSpan.Zero);
-        ArgumentNullException.ThrowIfNull(handshakeMessage);
         if (heartbeatTimeout <= heartbeatInterval)
             throw new ArgumentException("Heartbeat timeout must be greater than interval.");
         if (requestTimeout is { } timeout)
@@ -65,7 +63,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
 
         _heartbeatInterval = heartbeatInterval;
         _heartbeatTimeout = heartbeatTimeout;
-        _handshakeMessage = handshakeMessage;
+        _authenticator = authenticator;
         _runtimeContext = runtimeContext ?? new SharpLinkRuntimeContextBuilder().Build();
         _protocolOptions = (protocolOptions ?? _runtimeContext.Protocol).CloneValidated();
         _rpcSessionFlushOptions = rpcSessionFlushOptions;
@@ -81,12 +79,12 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         TimeSpan heartbeatTimeout,
         ILoggerFactory loggerFactory,
         TimeSpan? requestTimeout = null,
-        string handshakeMessage = DefaultHandshakeMessage,
+        ISharpLinkClientAuthenticator? authenticator = null,
         SharpLinkProtocolOptions? protocolOptions = null,
         SharpLinkRuntimeContext? runtimeContext = null,
         RpcSessionFlushOptions? rpcSessionFlushOptions = null,
         SharpLinkConnectionPoolOptions? connectionPoolOptions = null)
-        : this(transportFactory, heartbeatInterval, heartbeatTimeout, requestTimeout, handshakeMessage, protocolOptions,
+        : this(transportFactory, heartbeatInterval, heartbeatTimeout, requestTimeout, authenticator, protocolOptions,
             runtimeContext, rpcSessionFlushOptions, connectionPoolOptions)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
@@ -171,7 +169,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         TransitionTo(SharpLinkConnectionState.Stopped);
     }
 
-    private static async Task IgnoreExpectedStopExceptionAsync(Task? task)
+    private async Task IgnoreExpectedStopExceptionAsync(Task? task)
     {
         if (task is null)
             return;
@@ -179,7 +177,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         {
             await task.ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException or AuthenticationException or SharpLinkException)
+        catch (Exception) when (_shutdownCts.IsCancellationRequested)
         {
         }
     }

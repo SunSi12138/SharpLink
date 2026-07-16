@@ -541,7 +541,10 @@ public class TransportConnectionIntegrationTests
             .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
             .UseTcp(0, IPAddress.Loopback.ToString())
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseAuthenticator(static message => message == "expected-token")
+            .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
+                ? SharpLinkAuthenticationResult.Success
+                : SharpLinkAuthenticationResult.Reject()))
+            .RequireAuthentication()
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
@@ -562,7 +565,7 @@ public class TransportConnectionIntegrationTests
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseAuthenticator("expected-token")
+            .UseAuthenticator(CreateClientAuthenticator("expected-token"))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -590,7 +593,10 @@ public class TransportConnectionIntegrationTests
             .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
             .UseTcp(0, IPAddress.Loopback.ToString())
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseAuthenticator(static message => message == "expected-token")
+            .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
+                ? SharpLinkAuthenticationResult.Success
+                : SharpLinkAuthenticationResult.Reject()))
+            .RequireAuthentication()
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
@@ -611,7 +617,7 @@ public class TransportConnectionIntegrationTests
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseAuthenticator("unexpected-token")
+            .UseAuthenticator(CreateClientAuthenticator("unexpected-token"))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -639,11 +645,12 @@ public class TransportConnectionIntegrationTests
             .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
             .UseTcp(0, IPAddress.Loopback.ToString())
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseAuthenticator(static message => message == "expected-token"
+            .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
                 ? SharpLinkAuthenticationResult.Success
                 : SharpLinkAuthenticationResult.Reject(
                     SharpLinkErrorCode.AuthenticationExpired,
-                    "token expired"))
+                    "token expired")))
+            .RequireAuthentication()
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
@@ -664,7 +671,7 @@ public class TransportConnectionIntegrationTests
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseAuthenticator("expired-token")
+            .UseAuthenticator(CreateClientAuthenticator("expired-token"))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -686,26 +693,103 @@ public class TransportConnectionIntegrationTests
     }
 
     [Test]
-    public async Task TcpStructuredAuthenticatorShouldExposeAuthenticationContextToService()
+    public async Task TcpAuthenticatorShouldRejectExpiredContextDuringHandshake()
     {
-        var expiresAt = new DateTimeOffset(2026, 4, 19, 12, 34, 56, TimeSpan.Zero);
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
             .UseTcp(0, IPAddress.Loopback.ToString())
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseAuthenticator(static message => message == "expected-token"
+            .UseAuthenticator(SharpLinkAuthenticator.CreateServer(static (_, _) => ValueTask.FromResult(
+                SharpLinkAuthenticationResult.Authenticate(
+                    new SharpLinkAuthenticationContext(expiresAt: DateTimeOffset.UtcNow.AddMinutes(-1))))))
+            .RequireAuthentication()
+            .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
+
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        var server = serverBuilder.Build();
+        var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
+        var client = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), port)
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .Build();
+
+        try
+        {
+            var exception = await CaptureSharpLinkException(
+                client.ConnectAsync(cts.Token).AsTask(),
+                "expired authentication context");
+            Ensure(exception.Code == SharpLinkErrorCode.AuthenticationExpired, "expired context code");
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await cts.CancelAsync();
+            await server.DisposeAsync();
+            await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
+        }
+    }
+
+    [Test]
+    public async Task TcpClientShouldRejectOversizedAuthenticationPayloadBeforeSend()
+    {
+        const int maxAuthenticationBytes = 32;
+        using var cts = new CancellationTokenSource();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseProtocol(static options => options.MaxMetadataBytes = maxAuthenticationBytes);
+
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        var server = serverBuilder.Build();
+        var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
+        var client = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), port)
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseProtocol(static options => options.MaxMetadataBytes = maxAuthenticationBytes)
+            .UseAuthenticator(SharpLinkAuthenticator.CreateClient(static _ =>
+                ValueTask.FromResult<ReadOnlyMemory<byte>>(new byte[maxAuthenticationBytes + 1])))
+            .Build();
+
+        try
+        {
+            var exception = await CaptureSharpLinkException(
+                client.ConnectAsync(cts.Token).AsTask(),
+                "oversized authentication payload");
+            Ensure(exception.Code == SharpLinkErrorCode.ResourceExhausted, "authentication payload limit code");
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await cts.CancelAsync();
+            await server.DisposeAsync();
+            await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
+        }
+    }
+
+    [Test]
+    public async Task TcpStructuredAuthenticatorShouldExposeAuthenticationContextToService()
+    {
+        var expiresAt = new DateTimeOffset(2030, 4, 19, 12, 34, 56, TimeSpan.Zero);
+        using var cts = new CancellationTokenSource();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
                 ? SharpLinkAuthenticationResult.Authenticate(
                     new SharpLinkAuthenticationContext(
                         subject: "user-42",
                         tenantId: "tenant-a",
                         scopes: ["rpc.read", "rpc.write"],
-                        expiresAt: new DateTimeOffset(2026, 4, 19, 12, 34, 56, TimeSpan.Zero),
+                        expiresAt: new DateTimeOffset(2030, 4, 19, 12, 34, 56, TimeSpan.Zero),
                         claims: new Dictionary<string, string>(StringComparer.Ordinal)
                         {
                             ["role"] = "admin"
                         }))
-                : SharpLinkAuthenticationResult.Reject())
+                : SharpLinkAuthenticationResult.Reject()))
+            .RequireAuthentication()
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
@@ -726,7 +810,7 @@ public class TransportConnectionIntegrationTests
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseAuthenticator("expected-token")
+            .UseAuthenticator(CreateClientAuthenticator("expected-token"))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -752,24 +836,25 @@ public class TransportConnectionIntegrationTests
     [Test]
     public async Task TcpAuthorizationGuardsShouldReturnStructuredRemoteErrors()
     {
-        var expiresAt = new DateTimeOffset(2026, 4, 19, 12, 34, 56, TimeSpan.Zero);
+        var expiresAt = new DateTimeOffset(2030, 4, 19, 12, 34, 56, TimeSpan.Zero);
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
             .UseTcp(0, IPAddress.Loopback.ToString())
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseAuthenticator(static message => message == "expected-token"
+            .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
                 ? SharpLinkAuthenticationResult.Authenticate(
                     new SharpLinkAuthenticationContext(
                         subject: "user-42",
                         tenantId: "tenant-a",
                         scopes: ["rpc.read"],
-                        expiresAt: new DateTimeOffset(2026, 4, 19, 12, 34, 56, TimeSpan.Zero),
+                        expiresAt: new DateTimeOffset(2030, 4, 19, 12, 34, 56, TimeSpan.Zero),
                         claims: new Dictionary<string, string>(StringComparer.Ordinal)
                         {
                             ["role"] = "admin"
                         }))
-                : SharpLinkAuthenticationResult.Reject())
+                : SharpLinkAuthenticationResult.Reject()))
+            .RequireAuthentication()
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
@@ -790,7 +875,7 @@ public class TransportConnectionIntegrationTests
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseAuthenticator("expected-token")
+            .UseAuthenticator(CreateClientAuthenticator("expected-token"))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -911,6 +996,20 @@ public class TransportConnectionIntegrationTests
         await VerifyReconnectWithNewClientInstanceAsync(TransportKind.Uds);
     }
 
+
+    private static ISharpLinkClientAuthenticator CreateClientAuthenticator(string token)
+    {
+        var payload = System.Text.Encoding.UTF8.GetBytes(token);
+        return SharpLinkAuthenticator.CreateClient(
+            _ => ValueTask.FromResult<ReadOnlyMemory<byte>>(payload));
+    }
+
+    private static ISharpLinkServerAuthenticator CreateServerAuthenticator(
+        Func<string, SharpLinkAuthenticationResult> authenticate)
+    {
+        return SharpLinkAuthenticator.CreateServer((request, _) => ValueTask.FromResult(
+            authenticate(System.Text.Encoding.UTF8.GetString(request.Payload.Span))));
+    }
 
     private static async Task EnsureThrows<TException>(Task task, string name) where TException : Exception
     {

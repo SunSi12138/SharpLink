@@ -2,8 +2,6 @@ namespace SharpLink.Server;
 
 public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 {
-    private static readonly Func<string, SharpLinkAuthenticationResult> SDefaultAuthValidator =
-        static _ => SharpLinkAuthenticationResult.Success;
     public static SharpLinkServerBuilder Create() => new();
 
     private IServerTransportListener? _transport;
@@ -14,7 +12,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     private RpcSessionFlushOptions? _rpcSessionFlushOptions;
     private readonly Dictionary<long, (IRpcStub stub, object service)> _services = [];
     private ILoggerFactory? _loggerFactory;
-    private Func<string, SharpLinkAuthenticationResult> _authValidator = SDefaultAuthValidator;
+    private ISharpLinkServerAuthenticator? _authenticator;
+    private bool _authenticationRequired;
 
     /// <summary>Uses a server listener owned by the built server.</summary>
     /// <param name="transport">The listener used to accept independent connections.</param>
@@ -24,19 +23,17 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
-    public SharpLinkServerBuilder UseAuthenticator(Func<string, bool> authValidator)
+    /// <summary>Configures an instance-scoped server authenticator.</summary>
+    public SharpLinkServerBuilder UseAuthenticator(ISharpLinkServerAuthenticator authenticator)
     {
-        ArgumentNullException.ThrowIfNull(authValidator);
-        _authValidator = message => authValidator(message)
-            ? SharpLinkAuthenticationResult.Success
-            : SharpLinkAuthenticationResult.Reject();
+        _authenticator = authenticator ?? throw new ArgumentNullException(nameof(authenticator));
         return this;
     }
 
-    public SharpLinkServerBuilder UseAuthenticator(Func<string, SharpLinkAuthenticationResult> authValidator)
+    /// <summary>Requires authentication and fails <see cref="Build"/> when no authenticator is registered.</summary>
+    public SharpLinkServerBuilder RequireAuthentication()
     {
-        ArgumentNullException.ThrowIfNull(authValidator);
-        _authValidator = authValidator;
+        _authenticationRequired = true;
         return this;
     }
 
@@ -148,6 +145,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     {
         if (_transport == null)
             throw new InvalidOperationException("Transport must be set before building the server.");
+        if (_authenticationRequired && _authenticator is null)
+            throw new InvalidOperationException("RequireAuthentication needs an ISharpLinkServerAuthenticator.");
 
         var runtimeContext = _runtimeContextBuilder.Build();
         var protocolOptions = runtimeContext.Protocol;
@@ -158,7 +157,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             _heartbeatCheckInterval,
             _heartbeatTimeout,
             _loggerFactory ?? NullLoggerFactory.Instance,
-            _authValidator,
+            _authenticator,
+            _authenticationRequired,
             protocolOptions,
             runtimeContext,
             _rpcSessionFlushOptions);

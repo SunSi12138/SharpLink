@@ -8,6 +8,31 @@ namespace SharpLink.UnitTests.Builder;
 public class SerializerBuilderTests
 {
     [Test]
+    public async Task RequiredAuthenticationShouldNeedServerProviderWhileAnonymousRemainsDefault()
+    {
+        var anonymous = SharpLinkServerBuilder.Create()
+            .UseTransport(new NoopTransport())
+            .Build();
+        await DisposeAsync(anonymous);
+
+        await EnsureThrows<InvalidOperationException>(() =>
+        {
+            _ = SharpLinkServerBuilder.Create()
+                .UseTransport(new NoopTransport())
+                .RequireAuthentication()
+                .Build();
+        });
+
+        var authenticated = SharpLinkServerBuilder.Create()
+            .UseTransport(new NoopTransport())
+            .UseAuthenticator(SharpLinkAuthenticator.CreateServer(
+                static (_, _) => ValueTask.FromResult(SharpLinkAuthenticationResult.Success)))
+            .RequireAuthentication()
+            .Build();
+        await DisposeAsync(authenticated);
+    }
+
+    [Test]
     public async Task ClientsAndServersShouldOwnIndependentCodecProviders()
     {
         var firstCodec = new TaggedCodec("first");
@@ -65,6 +90,19 @@ public class SerializerBuilderTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private static async Task EnsureThrows<TException>(Action action) where TException : Exception
+    {
+        try
+        {
+            action();
+            throw new Exception($"expected {typeof(TException).Name}");
+        }
+        catch (TException)
+        {
+        }
+        await Task.CompletedTask;
     }
 
     private sealed class Payload;
