@@ -133,3 +133,17 @@ Runtime 与 Generator 不再直接依赖 `ArrayBufferWriter<byte>`：Codec 顺�
 | 32 | 580.81k QPS / P99 81 μs | 573.92k QPS / P99 82 μs | 通过（QPS 98.8%，P99 101.2%） |
 
 BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 均为 832 B/op，与 0.5.2 持平；没有因 owner 抽象或池化 writer 增加每调用托管分配。
+
+## 0.5.4 原生 DTO Codec Generator 回归（2026-07-17，同一 runner）
+
+Generator 自动发现 RPC 参数、返回值、stream item 与 `[RpcSerializable]` 入口，生成字段 ID 驱动的 DTO Codec、闭合集合 Codec 和 assembly manifest。manifest 是进程级 append-only 元数据，但每个 `SharpLinkRuntimeContext` 只导入 Build 时快照；显式 Context Codec 优先，`[MemoryPackable]`/`[RpcExternalCodec]` 类型不由原生生成器接管。生成路径不扫描程序集、不调用 `MakeGenericType`，AOT Smoke 已移除 MemoryPack 引用并完成无 warning native publish/run。
+
+在临时 detached worktree 构建 `d7d20e1` 作为 0.5.3 基线，随后与 0.5.4 使用相同机器、相同时段、1 秒 warmup、3 秒测量、每档五次取中位数：
+
+| 并发 | 0.5.3 同时段基线 | 0.5.4 五轮中位数 | 门禁结论 |
+|---:|---:|---:|---|
+| 1 | 26.03k QPS / P99 70 μs | 25.95k QPS / P99 70 μs | 通过（QPS 99.7%，P99 100.0%） |
+| 8 | 169.88k QPS / P99 63 μs | 172.14k QPS / P99 62 μs | 通过（QPS 101.3%，P99 98.4%） |
+| 32 | 589.86k QPS / P99 76 μs | 592.54k QPS / P99 76 μs | 通过（QPS 100.5%，P99 100.0%） |
+
+BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 仍均为 832 B/op，说明 manifest 快照与生成 Codec 优先级没有增加基础 Unary 每调用分配。

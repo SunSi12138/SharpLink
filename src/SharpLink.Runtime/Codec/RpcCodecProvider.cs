@@ -4,7 +4,8 @@ namespace SharpLink.Runtime;
 
 internal sealed class RpcCodecProvider(
     Func<Type, IRpcCodec?>? resolver,
-    IReadOnlyDictionary<Type, IRpcCodec> explicitCodecs) : IRpcCodecProvider
+    IReadOnlyDictionary<Type, IRpcCodec> explicitCodecs,
+    IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> generatedFactories) : IRpcCodecProvider
 {
     private readonly ConcurrentDictionary<Type, IRpcCodec> _resolvedCodecs = new(explicitCodecs);
 
@@ -20,16 +21,26 @@ internal sealed class RpcCodecProvider(
         if (_resolvedCodecs.TryGetValue(typeof(T), out var registered))
             return Cast<T>(registered);
 
-        var resolved = resolver?.Invoke(typeof(T));
-        if (resolved is null)
+        if (generatedFactories.TryGetValue(typeof(T), out var generatedFactory))
         {
-            throw new NotSupportedException(
-                $"Codec for '{typeof(T).FullName}' was not registered in this SharpLink runtime context.");
+            var generated = generatedFactory.Create(this);
+            var selected = _resolvedCodecs.GetOrAdd(typeof(T), generated);
+            return Cast<T>(selected);
         }
 
-        var typed = Cast<T>(resolved);
-        _resolvedCodecs.TryAdd(typeof(T), typed);
-        return typed;
+        var resolved = resolver?.Invoke(typeof(T));
+        if (resolved is not null)
+        {
+            var typed = Cast<T>(resolved);
+            _resolvedCodecs.TryAdd(typeof(T), typed);
+            return typed;
+        }
+
+        if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+            return UnsafeBlitCodec<T>.Instance;
+
+        throw new NotSupportedException(
+            $"Codec for '{typeof(T).FullName}' was not registered in this SharpLink runtime context.");
     }
 
     private static IRpcCodec<T> Cast<T>(IRpcCodec codec)
@@ -45,10 +56,6 @@ internal static class SharedRpcCodec<T>
     {
         if (BuiltinRpcCodecs.TryGet(typeof(T), out var builtin))
             return (IRpcCodec<T>)builtin;
-
-        if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
-            return UnsafeBlitCodec<T>.Instance;
-
         return null;
     }
 }

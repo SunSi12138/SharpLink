@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### 新增
+
+- Source Generator 原生 DTO/闭合集合 Codec、稳定字段 ID、未知字段跳过、required 校验与 64 层类型图边界。
+- `[RpcSerializable]`、`[RpcMember]`、`[RpcIgnore]`、`[RpcRequired]`、`[RpcExternalCodec]`。
+- append-only generated Codec manifest；Runtime Context 在 Build 时冻结 manifest 快照。
+
+### 变更
+
+- `IRpcCodec<T>.Serialize` 统一写入 `IBufferWriter<byte>`；协议回填使用 `IRpcByteBufferWriter`。
+- AOT Smoke 不再依赖 MemoryPack，覆盖 class、record、struct、嵌套数组和生成 manifest。
+
 ## [0.4.0] - 2026-07-17
 
 本版本合并原实施路线图的 0.4 安全基线与 0.5 Runtime/Protocol v2 重构。

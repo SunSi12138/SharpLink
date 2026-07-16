@@ -3,8 +3,6 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-using MemoryPack;
-using MemoryPack.Formatters;
 using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Runtime;
@@ -17,17 +15,12 @@ public static class Program
 {
     public static async Task<int> Main()
     {
-        MemoryPackFormatterProvider.Register(new ValueTupleFormatter<int,string>());
         var cts = new CancellationTokenSource();
         var runToken = cts.Token;
 
         var serverBuilder = SharpLinkServerBuilder.Create()
             .AddService<IAotService, AotService>()
-            .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseCodec(MemoryPackCodec<UserProfile>.Instance)
-            .UseCodec(MemoryPackCodec<string[]>.Instance)
-            .UseCodec(MemoryPackCodec<string[][]>.Instance)
-            .UseCodec(MemoryPackCodec<(int, string)>.Instance);
+            .UseTcp(0, IPAddress.Loopback.ToString());
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
@@ -45,10 +38,6 @@ public static class Program
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseCodec(MemoryPackCodec<UserProfile>.Instance)
-            .UseCodec(MemoryPackCodec<string[]>.Instance)
-            .UseCodec(MemoryPackCodec<string[][]>.Instance)
-            .UseCodec(MemoryPackCodec<(int, string)>.Instance)
             .Build();
 
         try
@@ -81,9 +70,9 @@ public static class Program
             if (moved.X != 5 || moved.Y != 2)
                 throw new Exception("unexpected struct result");
 
-            var tuple = await svc.EchoTupleAsync((7, "tuple"));
-            if (tuple.Item1 != 14 || tuple.Item2 != "tuple-ok")
-                throw new Exception("unexpected tuple result");
+            var pair = await svc.EchoPairAsync(new AotPair(7, "pair"));
+            if (pair.Number != 14 || pair.Text != "pair-ok")
+                throw new Exception("unexpected pair result");
 
             Console.WriteLine("AOT_SMOKE_PASS");
             return 0;
@@ -112,7 +101,7 @@ public interface IAotService : IService
     ValueTask<int[]> ReverseIntsAsync(int[] values);
     ValueTask<string[][]> EchoNestedStringsAsync(string[][] values);
     ValueTask<Point2D> OffsetAsync(Point2D point, int dx, int dy);
-    ValueTask<(int, string)> EchoTupleAsync((int, string) value);
+    ValueTask<AotPair> EchoPairAsync(AotPair value);
 }
 
 [RpcService]
@@ -133,16 +122,17 @@ public class AotService : IAotService
     public ValueTask<Point2D> OffsetAsync(Point2D point, int dx, int dy)
         => ValueTask.FromResult(new Point2D { X = point.X + dx, Y = point.Y + dy });
 
-    public ValueTask<(int, string)> EchoTupleAsync((int, string) value)
-        => ValueTask.FromResult((value.Item1 * 2, value.Item2 + "-ok"));
+    public ValueTask<AotPair> EchoPairAsync(AotPair value)
+        => ValueTask.FromResult(value with { Number = value.Number * 2, Text = value.Text + "-ok" });
 }
 
-[MemoryPackable]
-public partial class UserProfile
+public sealed class UserProfile
 {
     public string Name { get; set; } = string.Empty;
     public string[] Tags { get; set; } = Array.Empty<string>();
 }
+
+public sealed record AotPair(int Number, string Text);
 
 public struct Point2D
 {

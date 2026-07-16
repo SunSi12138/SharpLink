@@ -99,9 +99,11 @@ SharpLink.Serializer.MemoryPack
 
 ## 序列化策略
 
-- 默认内置基础类型与 blittable 容器编解码器
-- JIT 场景通过 Client/Server Builder 的 `UseSerializer(MemoryPackCodec.Resolver)` 为当前实例启用 MemoryPack 兜底
-- NativeAOT 场景通过 Builder 的 `UseCodec(MemoryPackCodec<T>.Instance)` 为当前实例显式注册复杂类型
+- 默认内置基础类型与 blittable 容器 Codec；RPC 可达的封闭 DTO/集合由 Source Generator 生成字段 ID Codec
+- 生成 assembly manifest 只允许按 type/schema 幂等追加；冲突 schema 立即抛出
+- 每个 Runtime Context 在 Build 时导入 manifest 快照，之后的注册不会改变已构建实例
+- `[MemoryPackable]`、`[RpcExternalCodec]`、循环/多态图与第三方类型保留为显式插件边界
+- 显式 Context Codec 优先于生成 Codec，MemoryPack resolver 只处理未生成且用户明确选择的类型
 - Codec Provider、Buffer Pool、状态容器配置都冻结在各自的 `SharpLinkRuntimeContext` 中，不允许 Builder 覆盖进程级可变配置
 
 ## 平台约束

@@ -14,7 +14,10 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext
     {
         _options = options.CloneValidated();
         Concurrency = concurrency.CloneValidated();
-        Codecs = new RpcCodecProvider(resolver, codecs);
+        Codecs = new RpcCodecProvider(
+            resolver,
+            codecs,
+            RpcGeneratedCodecRegistry.CreateSnapshot());
         Buffers = new SharpLinkBufferWriterPool(bufferPool);
     }
 

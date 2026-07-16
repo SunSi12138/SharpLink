@@ -19,6 +19,8 @@ public partial class RpcGenerator : IIncrementalGenerator
             GetReferencedInterfaceModels(compilation, ct));
         var referencedServices = context.CompilationProvider.Select(static (compilation, ct) =>
             GetReferencedServiceModels(compilation, ct));
+        var generatedCodecs = context.CompilationProvider.Select(static (compilation, ct) =>
+            AnalyzeGeneratedCodecs(compilation, ct));
 
         var services = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcServiceAttributeMetadataName,
@@ -154,6 +156,33 @@ public partial class RpcGenerator : IIncrementalGenerator
             {
                 var code = GenerateProxy(model);
                 spc.AddSource(GetProxyHintName(model), SourceText.From(code, Encoding.UTF8));
+            }
+        });
+
+        context.RegisterSourceOutput(generatedCodecs, static (spc, result) =>
+        {
+            foreach (var diagnostic in result.Diagnostics)
+            {
+                var descriptor = diagnostic.Kind switch
+                {
+                    DtoDiagnosticKind.Cycle => CyclicDtoGraphRule,
+                    DtoDiagnosticKind.MemberIdCollision => DuplicateDtoMemberIdRule,
+                    DtoDiagnosticKind.Constructor => DtoConstructionRule,
+                    DtoDiagnosticKind.Depth => DtoDepthRule,
+                    _ => UnsupportedGeneratedDtoRule
+                };
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    descriptor,
+                    diagnostic.Location,
+                    diagnostic.TypeName,
+                    diagnostic.Detail));
+            }
+
+            if (!result.Codecs.IsDefaultOrEmpty)
+            {
+                spc.AddSource(
+                    "SharpLink.GeneratedCodecs.g.cs",
+                    SourceText.From(GenerateCodecs(result.Codecs), Encoding.UTF8));
             }
         });
     }

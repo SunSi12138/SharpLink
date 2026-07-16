@@ -57,4 +57,44 @@ public partial class RpcGenerator
         category: "SharpLink.Generator",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor UnsupportedGeneratedDtoRule = new(
+        id: "SHARPLINK009",
+        title: "DTO Type Is Not Supported by the Native Codec Generator",
+        messageFormat: "DTO type '{0}' cannot use the native generated Codec: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor CyclicDtoGraphRule = new(
+        id: "SHARPLINK010",
+        title: "Cyclic DTO Graph Is Not Supported",
+        messageFormat: "DTO type '{0}' participates in a cyclic generated Codec graph: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor DuplicateDtoMemberIdRule = new(
+        id: "SHARPLINK011",
+        title: "DTO Member IDs Must Be Unique",
+        messageFormat: "DTO type '{0}' has duplicate wire member ID: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor DtoConstructionRule = new(
+        id: "SHARPLINK012",
+        title: "DTO Cannot Be Constructed by Generated Code",
+        messageFormat: "DTO type '{0}' has no supported constructor/member assignment plan: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor DtoDepthRule = new(
+        id: "SHARPLINK013",
+        title: "DTO Graph Is Too Deep",
+        messageFormat: "DTO type '{0}' exceeds the generated Codec depth limit: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
 }

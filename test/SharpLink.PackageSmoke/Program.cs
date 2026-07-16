@@ -12,12 +12,24 @@ namespace SharpLink.PackageSmoke;
 public interface IPackageSmokeService : IService
 {
     ValueTask<int> AddAsync(int left, int right);
+
+    ValueTask<PackageSmokeEnvelope> EchoAsync(PackageSmokeEnvelope value);
 }
+
+public sealed record PackageSmokeAddress(string City, int PostalCode);
+
+public sealed record PackageSmokeEnvelope(
+    string Name,
+    PackageSmokeAddress Address,
+    List<int> Values);
 
 [RpcService]
 public sealed class PackageSmokeService : IPackageSmokeService
 {
     public ValueTask<int> AddAsync(int left, int right) => ValueTask.FromResult(left + right);
+
+    public ValueTask<PackageSmokeEnvelope> EchoAsync(PackageSmokeEnvelope value) =>
+        ValueTask.FromResult(value);
 }
 
 public static class Program
@@ -46,6 +58,16 @@ public static class Program
             var result = await proxy.AddAsync(20, 22);
             if (result != 42)
                 throw new InvalidOperationException($"Package smoke returned {result} instead of 42.");
+
+            var expected = new PackageSmokeEnvelope(
+                "native-codec",
+                new PackageSmokeAddress("Shanghai", 200000),
+                [1, 2, 3]);
+            var actual = await proxy.EchoAsync(expected);
+            if (actual.Name != expected.Name ||
+                actual.Address != expected.Address ||
+                !actual.Values.SequenceEqual(expected.Values))
+                throw new InvalidOperationException("Package smoke generated DTO codec round-trip failed.");
         }
         finally
         {

@@ -5,7 +5,18 @@ public class IntegrationBehaviorTests
     [Test]
     public async Task BasicRpcAndStreamingShouldWork()
     {
-        await using var harness = await TestHarness.CreateAsync();
+        static IRpcCodec? Resolver(Type type)
+        {
+            if (type == typeof(GeneratedEnvelope) ||
+                type == typeof(GeneratedAddress) ||
+                type == typeof(List<string>))
+            {
+                throw new Exception($"Generated Codec unexpectedly fell through to resolver: {type}.");
+            }
+            return MemoryPackCodec.Resolver?.Invoke(type);
+        }
+
+        await using var harness = await TestHarness.CreateAsync(codecResolver: Resolver);
         var svc = harness.Client.Get<ITestService>();
 
         var add = await svc.AddAsync(10, 20);
@@ -13,6 +24,19 @@ public class IntegrationBehaviorTests
 
         var echo = await svc.EchoAsync(new Person { Name = "s", Age = 1, Tags = ["x"] });
         Ensure(echo is { Name: "s-r", Age: 2 }, "EchoAsync");
+
+        var generated = await svc.EchoGeneratedAsync(new GeneratedEnvelope(
+            "native",
+            7,
+            new GeneratedAddress("Shanghai"),
+            ["rpc", "aot"]));
+        Ensure(generated is
+        {
+            Name: "native-r",
+            Age: 8,
+            Address.City: "Shanghai",
+            Tags.Count: 2
+        }, "EchoGeneratedAsync");
 
         var sum = await svc.UploadAsync(ToAsyncEnumerable([1, 2, 3, 4], CancellationToken.None));
         Ensure(sum == 10, "UploadAsync");
@@ -422,6 +446,7 @@ public interface ITestService : IService
         SharpLinkCallOptions options,
         CancellationToken cancellationToken);
     ValueTask<Person> EchoAsync(Person person);
+    ValueTask<GeneratedEnvelope> EchoGeneratedAsync(GeneratedEnvelope value);
     ValueTask<int> UploadAsync(IAsyncEnumerable<int> values);
     IAsyncEnumerable<string> DownloadAsync(int count);
     IAsyncEnumerable<int> SlowDownloadAsync(int count, int delayMs, CancellationToken cancellationToken);
@@ -476,6 +501,9 @@ public class TestService : ITestService
         return ValueTask.FromResult(person);
     }
 
+    public ValueTask<GeneratedEnvelope> EchoGeneratedAsync(GeneratedEnvelope value)
+        => ValueTask.FromResult(value with { Name = value.Name + "-r", Age = value.Age + 1 });
+
     public async ValueTask<int> UploadAsync(IAsyncEnumerable<int> values)
     {
         var sum = 0;
@@ -516,3 +544,12 @@ public partial class Person
     public int Age { get; set; }
     public List<string> Tags { get; set; } = [];
 }
+
+public sealed record GeneratedAddress(
+    [property: RpcMember(1)] string City);
+
+public sealed record GeneratedEnvelope(
+    [property: RpcRequired] string Name,
+    int Age,
+    GeneratedAddress Address,
+    List<string> Tags);

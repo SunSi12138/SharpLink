@@ -82,31 +82,36 @@ dotnet run --project demo/SeparatedClient/SeparatedClient.csproj
 
 ## 序列化与 AOT
 
-SharpLink 默认内置基础类型与 blittable 容器编解码；复杂引用类型通常需要显式接入序列化器。
-
-JIT 场景推荐：
+RPC 可达的常规 DTO 会自动生成无反射 Codec，不需要注册序列化器：
 
 ```csharp
+public sealed record Address([property: RpcMember(1)] string City);
+
+public sealed class WorkOrder
+{
+    [RpcRequired]
+    public string Number { get; init; } = string.Empty;
+    public Address Address { get; init; } = new("");
+    public List<string> Tags { get; init; } = [];
+    [RpcIgnore]
+    public string LocalCacheKey { get; init; } = string.Empty;
+}
+```
+
+原生子集包含 primitive、enum、nullable、string、数组、`List`、`Dictionary`、`Memory`、`ReadOnlyMemory`、`ImmutableArray`、class/struct/record 及无环嵌套。未直接出现在 RPC 签名中的入口可标记 `[RpcSerializable]`。默认成员 ID 来自稳定成员名 hash；重命名同时要求 wire 兼容时，应保留显式 `[RpcMember(id)]`。
+
+循环/多态对象图、任意 `object` 和第三方运行时类型继续交给显式 Codec。`[MemoryPackable]` 会自动退出原生生成；其他类型可使用 `[RpcExternalCodec]` 或程序集级声明：
+
+```csharp
+[assembly: RpcExternalCodec(typeof(ThirdPartyGraph))]
+
 var client = SharpClientBuilder.Create()
     .UseTcp("127.0.0.1", 5000)
-    .UseSerializer(MemoryPackCodec.Resolver)
+    .UseCodec(MemoryPackCodec<ThirdPartyGraph>.Instance)
     .Build();
 ```
 
-NativeAOT 场景：
-
-- `MemoryPackCodec.Resolver` 不可依赖反射回退
-- 需要为每个非 blittable 的契约参数/返回类型显式注册编解码器
-
-```csharp
-var client = SharpClientBuilder.Create()
-    .UseTcp("127.0.0.1", 5000)
-    .UseCodec(MemoryPackCodec<MyDto>.Instance)
-    .UseCodec(MemoryPackCodec<MyDto[]>.Instance)
-    .Build();
-```
-
-Codec 注册属于当前 Client/Server 的 `SharpLinkRuntimeContext`，同一进程内的实例不会互相覆盖。`test/SharpLink.AotSmoke` 展示了 AOT 下显式注册复杂类型编解码器的最小用法。
+生成 manifest 是幂等、不可重配置的进程元数据；Codec 实例与依赖仍在每个 Client/Server 的 `SharpLinkRuntimeContext` 构建时冻结，因此同进程实例不会互相覆盖。`test/SharpLink.AotSmoke` 使用纯生成 Codec 完成 NativeAOT publish/run，不扫描程序集或调用 `MakeGenericType`。
 
 ## 传输说明
 

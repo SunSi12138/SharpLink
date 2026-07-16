@@ -26,6 +26,21 @@ public class GeneratedRegistryTests
             GeneratedStubRegistry.Register(typeof(RegistryService), static () => new ConflictingStubMarker()));
     }
 
+    [Test]
+    public void GeneratedCodecRegistrationShouldBeIdempotentRejectConflictsAndFreezePerContext()
+    {
+        var beforeRegistration = new SharpLinkRuntimeContextBuilder().Build();
+        var factory = new RegistryCodecFactory("registry-schema-v1");
+        RpcGeneratedCodecRegistry.Register(factory);
+        RpcGeneratedCodecRegistry.Register(new RegistryCodecFactory("registry-schema-v1"));
+
+        AssertThrows<NotSupportedException>(() => beforeRegistration.Codecs.GetCodec<RegistryDto>());
+        var afterRegistration = new SharpLinkRuntimeContextBuilder().Build();
+        Ensure(afterRegistration.Codecs.GetCodec<RegistryDto>() is RegistryDtoCodec, "generated context codec");
+        AssertThrows<InvalidOperationException>(() =>
+            RpcGeneratedCodecRegistry.Register(new RegistryCodecFactory("registry-schema-v2")));
+    }
+
     private static void AssertThrows<TException>(Action action) where TException : Exception
     {
         try
@@ -63,5 +78,29 @@ public class GeneratedRegistryTests
 
     private sealed class ConflictingStubMarker : StubMarker
     {
+    }
+
+    private sealed class RegistryDto;
+
+    private sealed class RegistryDtoCodec : IRpcCodec<RegistryDto>
+    {
+        public void Serialize(in RegistryDto value, IBufferWriter<byte> buffer)
+        {
+        }
+
+        public RegistryDto Deserialize(in ReadOnlySequence<byte> buffer) => new();
+    }
+
+    private sealed class RegistryCodecFactory(string schemaId) : IRpcGeneratedCodecFactory
+    {
+        public Type TargetType => typeof(RegistryDto);
+        public string SchemaId { get; } = schemaId;
+        public IRpcCodec Create(IRpcCodecProvider provider) => new RegistryDtoCodec();
+    }
+
+    private static void Ensure(bool condition, string message)
+    {
+        if (!condition)
+            throw new Exception(message);
     }
 }

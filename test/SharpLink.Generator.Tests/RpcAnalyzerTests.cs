@@ -168,6 +168,82 @@ public interface IHelloService : SharpLink.Sdk.IService
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task ReachableDtoShouldGenerateCodecAndManifest()
+    {
+        var source = BuildSource("""
+public sealed record Address([property: SharpLink.Sdk.RpcMember(7)] string City);
+
+public sealed class Person
+{
+    [SharpLink.Sdk.RpcRequired]
+    public string Name { get; init; } = string.Empty;
+    public int Age { get; init; }
+    public Address Address { get; init; } = new Address(string.Empty);
+    public List<string> Tags { get; init; } = new();
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    ValueTask<Person> Echo(Person value);
+}
+""");
+
+        var generated = RunGeneratorAndGetSources(source);
+        var codecs = generated.FirstOrDefault(static text => text.Contains("__SharpLinkGeneratedCodecManifest"));
+        if (codecs is null)
+            throw new Exception("Expected generated DTO codec manifest source.");
+        Ensure(codecs.Contains("IRpcCodec<global::Person>"), "Person codec");
+        Ensure(codecs.Contains("IRpcCodec<global::Address>"), "nested record codec");
+        Ensure(codecs.Contains("IRpcCodec<global::System.Collections.Generic.List<string>>"), "collection codec");
+        Ensure(codecs.Contains("RpcGeneratedCodecRegistry.Register"), "manifest registration");
+        Ensure(codecs.Contains("case 7U:"), "explicit field ID");
+        Ensure(codecs.Contains("Missing required RPC member 'Name'"), "required member validation");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task CyclicDtoGraphShouldReportSharplink010()
+    {
+        var source = BuildSource("""
+public sealed class Node
+{
+    public Node? Next { get; set; }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    ValueTask<Node> Echo(Node value);
+}
+""");
+
+        EnsureHasRule(source, "SHARPLINK010");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task DuplicateDtoMemberIdShouldReportSharplink011()
+    {
+        var source = BuildSource("""
+public sealed class Collision
+{
+    [SharpLink.Sdk.RpcMember(1)] public int First { get; set; }
+    [SharpLink.Sdk.RpcMember(1)] public int Second { get; set; }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    ValueTask<Collision> Echo(Collision value);
+}
+""");
+
+        EnsureHasRule(source, "SHARPLINK011");
+        return Task.CompletedTask;
+    }
+
     private static string BuildSource(string contract)
     {
         return $$"""
@@ -201,6 +277,28 @@ namespace SharpLink.Sdk
     }
 
     public readonly record struct SharpLinkCallOptions;
+
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct)]
+    public sealed class RpcSerializableAttribute : Attribute;
+
+    [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
+    public sealed class RpcMemberAttribute(int id) : Attribute
+    {
+        public int Id { get; } = id;
+    }
+
+    [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
+    public sealed class RpcIgnoreAttribute : Attribute;
+
+    [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
+    public sealed class RpcRequiredAttribute : Attribute;
+
+    [AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true)]
+    public sealed class RpcExternalCodecAttribute : Attribute
+    {
+        public RpcExternalCodecAttribute() { }
+        public RpcExternalCodecAttribute(Type type) { }
+    }
 }
 
 {{contract}}

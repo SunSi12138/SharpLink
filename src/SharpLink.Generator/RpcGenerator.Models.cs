@@ -44,6 +44,70 @@ internal readonly record struct InvalidStreamCountMethodModel(string MethodName,
 internal readonly record struct InvalidGenericUsageModel(string SymbolName, string TypeName, Location? Location);
 internal readonly record struct InvalidRpcContractInheritanceModel(string InterfaceName, Location? Location);
 
+internal enum GeneratedCodecKind
+{
+    Dto,
+    Array,
+    List,
+    Dictionary,
+    Memory,
+    ReadOnlyMemory,
+    ImmutableArray,
+    Nullable
+}
+
+internal enum GeneratedMemberKind
+{
+    Fixed,
+    NullableFixed,
+    String,
+    Complex
+}
+
+internal sealed record GeneratedMemberModel(
+    string Name,
+    string Identifier,
+    string TypeName,
+    uint FieldId,
+    GeneratedMemberKind Kind,
+    string? FixedTypeName,
+    int FixedSize,
+    bool Required,
+    bool NonNullableReference,
+    bool ConstructorBound,
+    bool InitializerBound);
+
+internal sealed record GeneratedCodecModel(
+    string TypeName,
+    string CodecName,
+    string SchemaId,
+    GeneratedCodecKind Kind,
+    bool IsReferenceType,
+    ImmutableArray<GeneratedMemberModel> Members,
+    ImmutableArray<string> ConstructorMembers,
+    string? ElementType,
+    string? KeyType,
+    string? ValueType);
+
+internal enum DtoDiagnosticKind
+{
+    Unsupported,
+    Cycle,
+    MemberIdCollision,
+    Constructor,
+    Depth
+}
+
+internal readonly record struct DtoDiagnosticModel(
+    DtoDiagnosticKind Kind,
+    string TypeName,
+    string Detail,
+    Location? Location);
+
+internal sealed record DtoGenerationResult(
+    ImmutableArray<GeneratedCodecModel> Codecs,
+    ImmutableArray<DtoDiagnosticModel> Diagnostics);
+
 internal static class Hashing
 {
     private const ulong FnvPrime = 1099511628211;
