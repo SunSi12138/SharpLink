@@ -400,7 +400,7 @@ public class TransportConnectionIntegrationTests
             await socket.ConnectAsync(IPAddress.Loopback, port);
             await using var stream = new NetworkStream(socket, ownsSocket: false);
 
-            var requestWriter = new ArrayBufferWriter<byte>();
+            var requestWriter = new PooledByteBufferWriter();
             var requestToken = ProtocolV2FrameWriter.BeginFrame(
                 requestWriter,
                 ProtocolV2FrameType.HandshakeRequest,
@@ -471,7 +471,7 @@ public class TransportConnectionIntegrationTests
             using var socket = await listener.AcceptSocketAsync();
             await using var stream = new NetworkStream(socket, ownsSocket: true);
 
-            var handshake = new ArrayBufferWriter<byte>();
+            var handshake = new PooledByteBufferWriter();
             var handshakeToken = ProtocolV2FrameWriter.BeginFrame(
                 handshake,
                 ProtocolV2FrameType.HandshakeResponse,

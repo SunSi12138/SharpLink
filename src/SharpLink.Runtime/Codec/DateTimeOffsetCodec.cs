@@ -6,7 +6,7 @@ internal sealed class DateTimeOffsetCodec : IRpcCodec<DateTimeOffset>
     private const int Size = 10; 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in DateTimeOffset value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in DateTimeOffset value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
         
@@ -49,7 +49,7 @@ internal sealed class NullableDateTimeOffsetCodec : IRpcCodec<DateTimeOffset?>
     private const int Size = 11;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in DateTimeOffset? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in DateTimeOffset? value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
 

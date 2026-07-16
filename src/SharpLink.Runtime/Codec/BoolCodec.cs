@@ -6,7 +6,7 @@ internal sealed class BoolCodec : IRpcCodec<bool>
     private const int Size = 1;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in bool value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in bool value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned( ref MemoryMarshal.GetReference(writer.GetSpan(Size)), Unsafe.As<bool, byte>(ref Unsafe.AsRef(in value)));
         writer.Advance(Size);
@@ -31,7 +31,7 @@ internal sealed class NullableBoolCodec : IRpcCodec<bool?>
     private const byte NullTag = 0xFF; 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in bool? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in bool? value, IBufferWriter<byte> writer)
     {
         ref var dest = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
 

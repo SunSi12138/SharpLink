@@ -384,7 +384,7 @@ public class IntegrationBehaviorTests
         public int SerializeCount;
         public int DeserializeCount;
 
-        public void Serialize(in Person value, in ArrayBufferWriter<byte> buffer)
+        public void Serialize(in Person value, IBufferWriter<byte> buffer)
         {
             var markerSpan = buffer.GetSpan(1);
             markerSpan[0] = _marker;

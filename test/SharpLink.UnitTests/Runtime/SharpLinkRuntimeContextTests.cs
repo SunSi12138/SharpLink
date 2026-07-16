@@ -65,8 +65,8 @@ public class SharpLinkRuntimeContextTests
 
         Ensure(first.Options.Protocol.MaxFramePayloadBytes == 2048, "first protocol snapshot");
         Ensure(second.Options.Protocol.MaxFramePayloadBytes == 4096, "second protocol snapshot");
-        Ensure(first.Buffers.Rent().Capacity == 1234, "first pool snapshot");
-        Ensure(second.Buffers.Rent().Capacity == 2345, "second pool snapshot");
+        Ensure(first.Buffers.InitialCapacity == 1234, "first pool snapshot");
+        Ensure(second.Buffers.InitialCapacity == 2345, "second pool snapshot");
         Ensure(first.Concurrency.StripeCount == 8, "first stripe snapshot");
         Ensure(second.Concurrency.StripeCount == 16, "second stripe snapshot");
 
@@ -99,7 +99,7 @@ public class SharpLinkRuntimeContextTests
         {
             var context = contexts[index];
             Ensure(context.Options.Protocol.MaxMetadataBytes == 1024 + index, $"metadata snapshot {index}");
-            Ensure(context.Buffers.Rent().Capacity == 1024 + index, $"pool snapshot {index}");
+            Ensure(context.Buffers.InitialCapacity == 1024 + index, $"pool snapshot {index}");
             Ensure(context.Codecs.GetCodec<TaggedValue>() is TaggedCodec { Tag: var tag } && tag == index,
                 $"codec snapshot {index}");
             Ensure(context.Concurrency.StripeCount == (index % 2 == 0 ? 8 : 16), $"stripe snapshot {index}");
@@ -112,7 +112,7 @@ public class SharpLinkRuntimeContextTests
     {
         public int Tag { get; } = tag;
 
-        public void Serialize(in TaggedValue value, in ArrayBufferWriter<byte> buffer)
+        public void Serialize(in TaggedValue value, IBufferWriter<byte> buffer)
         {
         }
 
@@ -121,7 +121,7 @@ public class SharpLinkRuntimeContextTests
 
     private sealed class ReplacementInt32Codec : IRpcCodec<int>
     {
-        public void Serialize(in int value, in ArrayBufferWriter<byte> buffer)
+        public void Serialize(in int value, IBufferWriter<byte> buffer)
         {
         }
 

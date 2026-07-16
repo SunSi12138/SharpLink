@@ -5,7 +5,7 @@ internal sealed partial class SharpLinkClient
     public async ValueTask<T> InvokeWithCallOptionsAsync<T>(
         long interfaceHash,
         long methodHash,
-        Action<ArrayBufferWriter<byte>>? payloadWriter,
+        Action<IBufferWriter<byte>>? payloadWriter,
         Func<long, CancellationToken, Task>? streamSender,
         bool isOneWay,
         bool hasReturnPayload,
@@ -95,7 +95,7 @@ internal sealed partial class SharpLinkClient
     public IAsyncEnumerable<T> InvokeStreamingWithCallOptionsAsync<T>(
         long interfaceHash,
         long methodHash,
-        Action<ArrayBufferWriter<byte>>? payloadWriter,
+        Action<IBufferWriter<byte>>? payloadWriter,
         Func<long, CancellationToken, Task>? streamSender,
         SharpLinkCallOptions options,
         bool hasMethodTimeout,
@@ -129,7 +129,7 @@ internal sealed partial class SharpLinkClient
         long interfaceHash,
         long methodHash,
         long requestId,
-        Action<ArrayBufferWriter<byte>>? payloadWriter,
+        Action<IBufferWriter<byte>>? payloadWriter,
         Func<long, CancellationToken, Task>? streamSender,
         ResolvedCallControl control,
         CancellationToken cancellationToken)

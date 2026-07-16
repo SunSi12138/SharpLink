@@ -6,7 +6,7 @@ internal sealed class Int16Codec : IRpcCodec<short>
     private const int Size = 2;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in short value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in short value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
@@ -32,7 +32,7 @@ internal sealed class NullableInt16Codec : IRpcCodec<short?>
     private const int Size = 3; // 1 byte tag + 2 bytes value
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in short? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in short? value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
 

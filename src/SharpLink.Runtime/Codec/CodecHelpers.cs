@@ -158,7 +158,7 @@ internal static class CodecHelpers
         }
     }
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void WriteInt32(in ArrayBufferWriter<byte> writer, in int value)
+    public static void WriteInt32(IBufferWriter<byte> writer, in int value)
     {
         var span = writer.GetSpan(4);
         BinaryPrimitives.WriteInt32LittleEndian(span, value);
@@ -168,7 +168,7 @@ internal static class CodecHelpers
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int BitmapLen(int count) => (count + 7) >> 3;
 
-    public static void Serialize(in ReadOnlySpan<short?> src, in ArrayBufferWriter<byte> writer)
+    public static void Serialize(in ReadOnlySpan<short?> src, IBufferWriter<byte> writer)
     {
         var count = src.Length;
         WriteInt32(writer, count);

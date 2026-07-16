@@ -194,7 +194,7 @@ public partial class RpcGenerator
             sb.AppendLine($"        __codec_{parameter.Name} = codecs.GetCodec<{parameter.Type}>();");
         sb.AppendLine("    }");
 
-        sb.AppendLine($"    public void Serialize(in {requestType} value, in ArrayBufferWriter<byte> writer)");
+        sb.AppendLine($"    public void Serialize(in {requestType} value, IBufferWriter<byte> writer)");
         sb.AppendLine("    {");
         if (blittable.Length != 0)
         {
@@ -210,15 +210,17 @@ public partial class RpcGenerator
             }
             sb.AppendLine("        writer.Advance(fixedSize);");
         }
+        if (complex.Length != 0)
+            sb.AppendLine("        var rpcWriter = writer as IRpcByteBufferWriter ?? throw new InvalidOperationException(\"Generated request codecs require the SharpLink packet writer.\");");
         for (var index = 0; index < complex.Length; index++)
         {
             var parameter = complex[index];
-            sb.AppendLine($"        var lengthOffset_{index} = writer.WrittenCount;");
+            sb.AppendLine($"        var lengthOffset_{index} = rpcWriter.WrittenCount;");
             sb.AppendLine("        writer.Advance(sizeof(int));");
-            sb.AppendLine($"        var start_{index} = writer.WrittenCount;");
+            sb.AppendLine($"        var start_{index} = rpcWriter.WrittenCount;");
             sb.AppendLine($"        __codec_{parameter.Name}.Serialize(value.{parameter.Name}, writer);");
-            sb.AppendLine($"        var length_{index} = writer.WrittenCount - start_{index};");
-            sb.AppendLine($"        var written_{index} = System.Runtime.InteropServices.MemoryMarshal.AsMemory(writer.WrittenMemory).Span;");
+            sb.AppendLine($"        var length_{index} = rpcWriter.WrittenCount - start_{index};");
+            sb.AppendLine($"        var written_{index} = rpcWriter.WrittenSpan;");
             sb.AppendLine($"        BinaryPrimitives.WriteInt32LittleEndian(written_{index}.Slice(lengthOffset_{index}, sizeof(int)), length_{index});");
         }
         sb.AppendLine("    }");

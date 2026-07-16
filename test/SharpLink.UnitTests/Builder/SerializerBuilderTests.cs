@@ -73,7 +73,7 @@ public class SerializerBuilderTests
     {
         public string Tag { get; } = tag;
 
-        public void Serialize(in Payload value, in ArrayBufferWriter<byte> buffer)
+        public void Serialize(in Payload value, IBufferWriter<byte> buffer)
         {
         }
 

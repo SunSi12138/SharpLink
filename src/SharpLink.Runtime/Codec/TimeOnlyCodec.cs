@@ -6,7 +6,7 @@ internal sealed class TimeOnlyCodec : IRpcCodec<TimeOnly>
     private const int Size = 8;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in TimeOnly value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in TimeOnly value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
@@ -35,7 +35,7 @@ internal sealed class NullableTimeOnlyCodec : IRpcCodec<TimeOnly?>
     private const int Size = 9;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in TimeOnly? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in TimeOnly? value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
 

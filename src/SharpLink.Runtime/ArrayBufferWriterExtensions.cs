@@ -2,10 +2,10 @@ using System.Text;
 
 namespace SharpLink.Runtime;
 
-public static class ArrayBufferWriterExtensions
+public static class RpcBufferWriterExtensions
 {
 
-    extension(ArrayBufferWriter<byte> writer)
+    extension(IRpcByteBufferWriter writer)
     {
         private PacketToken WriteHeaderCore(ProtocolV2FrameType frameType, ProtocolV2FrameFlags flags, ulong requestId)
         {
@@ -45,7 +45,7 @@ public static class ArrayBufferWriterExtensions
         public void EndPacket(PacketToken token)
         {
             var bodyLength = writer.WrittenCount - token.StartOffset - ProtocolV2Constants.HeaderBytes;
-            var span = MemoryMarshal.AsMemory(writer.WrittenMemory).Span;
+            var span = writer.WrittenSpan;
             var lengthSlice = span.Slice(token.StartOffset + 1, sizeof(int));
             BinaryPrimitives.WriteInt32LittleEndian(lengthSlice, bodyLength);
         }

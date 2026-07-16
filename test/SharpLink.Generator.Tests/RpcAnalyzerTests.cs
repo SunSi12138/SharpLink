@@ -163,7 +163,7 @@ public interface IHelloService : SharpLink.Sdk.IService
         Ensure(proxy.Contains("InvokeDuplexStreamingAsync"), "DuplexStreaming invoker");
         Ensure(proxy.Contains("readonly struct __SharpLinkRequest_"), "Generated request struct");
         Ensure(proxy.Contains("IRpcCodec<__SharpLinkRequest_"), "Generated request codec");
-        Ensure(!proxy.Contains("Action<ArrayBufferWriter<byte>>"), "Captured payload delegate must not be generated");
+        Ensure(!proxy.Contains("Action<IBufferWriter<byte>>"), "Captured payload delegate must not be generated");
         Ensure(!proxy.Contains("InvokeCancellableWithTimeoutAsync"), "Legacy combinatorial API must not be generated");
         return Task.CompletedTask;
     }

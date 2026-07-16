@@ -11,7 +11,7 @@ public class ProtocolV2Tests
     [Test]
     public void WriterAndParserShouldRoundTripFrame()
     {
-        var writer = new ArrayBufferWriter<byte>();
+        var writer = new PooledByteBufferWriter();
         var token = ProtocolV2FrameWriter.BeginFrame(
             writer, ProtocolV2FrameType.Request, ProtocolV2FrameFlags.HasReturn, ulong.MaxValue);
         writer.Write(new byte[ProtocolV2Constants.RequestPrefixBytes + 3]);
@@ -29,7 +29,7 @@ public class ProtocolV2Tests
     [Test]
     public void ZeroThroughFourteenHeaderBytesShouldRemainPartial()
     {
-        var writer = new ArrayBufferWriter<byte>();
+        var writer = new PooledByteBufferWriter();
         ProtocolV2FrameWriter.WriteEmptyFrame(writer, ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 1);
         for (var length = 0; length < ProtocolV2Constants.HeaderBytes; length++)
         {
@@ -41,7 +41,7 @@ public class ProtocolV2Tests
     [Test]
     public void HeaderWithEveryByteInSeparateSegmentShouldParse()
     {
-        var writer = new ArrayBufferWriter<byte>();
+        var writer = new PooledByteBufferWriter();
         ProtocolV2FrameWriter.WriteEmptyFrame(writer, ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 9);
         var sequence = CreateSegmented(writer.WrittenMemory.ToArray(), 1);
         Ensure(ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out var header, out _), "segmented header");
@@ -90,7 +90,7 @@ public class ProtocolV2Tests
     [Test]
     public void HandshakeRequestAndResponseShouldRoundTrip()
     {
-        var requestPayload = new ArrayBufferWriter<byte>();
+        var requestPayload = new PooledByteBufferWriter();
         var request = new ProtocolV2HandshakeRequest(
             ProtocolV2Constants.MinorVersion,
             ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.FlowControl,
@@ -110,7 +110,7 @@ public class ProtocolV2Tests
         Ensure(decodedRequest.ConnectionReceiveWindowBytes == request.ConnectionReceiveWindowBytes, "handshake connection window");
         Ensure(decodedRequest.AuthenticationPayload.Span.SequenceEqual(request.AuthenticationPayload.Span), "handshake auth payload");
 
-        var responsePayload = new ArrayBufferWriter<byte>();
+        var responsePayload = new PooledByteBufferWriter();
         var response = new ProtocolV2HandshakeResponse(
             0,
             ProtocolV2Capabilities.FlowControl,
@@ -126,7 +126,7 @@ public class ProtocolV2Tests
     [Test]
     public void BinaryErrorShouldRoundTripAndTruncateOnUtf8Boundary()
     {
-        var payload = new ArrayBufferWriter<byte>();
+        var payload = new PooledByteBufferWriter();
         ProtocolV2PayloadCodec.WriteError(
             payload,
             SharpLinkErrorCode.ResourceExhausted,
@@ -147,7 +147,7 @@ public class ProtocolV2Tests
     [Test]
     public async Task RequestMetadataMustBeBoundedBeforeSlice()
     {
-        var payload = new ArrayBufferWriter<byte>();
+        var payload = new PooledByteBufferWriter();
         payload.Write(new byte[ProtocolV2Constants.RequestPrefixBytes]);
         ProtocolV2PayloadCodec.WriteVarUInt32(payload, checked((uint)Limits.MaxMetadataBytes + 1));
         var frame = CreateFrame(
@@ -157,7 +157,7 @@ public class ProtocolV2Tests
             payload.WrittenMemory.ToArray());
         await ExpectProtocolViolation(frame);
 
-        var errorPayload = new ArrayBufferWriter<byte>();
+        var errorPayload = new PooledByteBufferWriter();
         errorPayload.Write(new byte[sizeof(ushort)]);
         ProtocolV2PayloadCodec.WriteVarUInt32(
             errorPayload, checked((uint)Limits.MaxErrorMessageBytes + 1));
@@ -174,13 +174,13 @@ public class ProtocolV2Tests
         var metadata = new SharpLinkMetadata(
             new KeyValuePair<string, string>("tenant", "factory-a"),
             new KeyValuePair<string, string>("trace", "42"));
-        var payload = new ArrayBufferWriter<byte>();
+        var payload = new PooledByteBufferWriter();
         ProtocolV2PayloadCodec.WriteMetadata(payload, metadata);
         var decoded = ProtocolV2PayloadCodec.ReadMetadata(
             CreateSegmented(payload.WrittenMemory.ToArray(), 1));
         Ensure(decoded.Count == 2 && decoded[0].Value == "factory-a", "segmented metadata round-trip");
 
-        var invalid = new ArrayBufferWriter<byte>();
+        var invalid = new PooledByteBufferWriter();
         ProtocolV2PayloadCodec.WriteVarUInt32(invalid, uint.MaxValue);
         try
         {
@@ -252,7 +252,7 @@ public class ProtocolV2Tests
         ulong requestId,
         byte[] payload)
     {
-        var writer = new ArrayBufferWriter<byte>();
+        var writer = new PooledByteBufferWriter();
         var token = ProtocolV2FrameWriter.BeginFrame(writer, type, flags, requestId);
         writer.Write(payload);
         ProtocolV2FrameWriter.EndFrame(writer, token);

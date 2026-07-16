@@ -14,7 +14,7 @@ internal sealed class TestClientTransportFactory : IClientTransportFactory
     public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _connectCount);
-        var payload = new ArrayBufferWriter<byte>();
+        var payload = new PooledByteBufferWriter();
         ProtocolV2PayloadCodec.WriteHandshakeResponse(payload, new ProtocolV2HandshakeResponse(
             ProtocolV2Constants.MinorVersion,
             ProtocolV2Capabilities.None,
@@ -67,7 +67,7 @@ internal sealed class TestTransportConnection : ITransportConnection
         ReadOnlyMemory<byte> payload,
         CancellationToken cancellationToken = default)
     {
-        var writer = new ArrayBufferWriter<byte>();
+        var writer = new PooledByteBufferWriter();
         var token = ProtocolV2FrameWriter.BeginFrame(writer, type, flags, requestId);
         writer.Write(payload.Span);
         ProtocolV2FrameWriter.EndFrame(writer, token);

@@ -6,7 +6,7 @@ internal sealed class DateTimeCodec : IRpcCodec<DateTime>
     private const int Size = 8;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in DateTime value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in DateTime value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(
             ref MemoryMarshal.GetReference(writer.GetSpan(Size)), 
@@ -47,7 +47,7 @@ internal sealed class NullableDateTimeCodec : IRpcCodec<DateTime?>
     private const int Size = 9; // 1 byte Tag + 8 bytes Value (long)
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in DateTime? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in DateTime? value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
 

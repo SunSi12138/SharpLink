@@ -647,7 +647,7 @@ internal sealed partial class SharpLinkServer
         ValueTask invokeTask,
         IRpcSession session,
         long requestId,
-        ArrayBufferWriter<byte> writer,
+        IRpcByteBufferWriter writer,
         PacketToken token,
         CancellationTokenSource? linkedCts,
         StripedLongMap<CancellationTokenSource> requestCancellationMap,

@@ -6,7 +6,7 @@ internal sealed class DateOnlyCodec : IRpcCodec<DateOnly>
     private const int Size = 4; // DateOnly 内部是 int (DayNumber)
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in DateOnly value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in DateOnly value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value.DayNumber);
         writer.Advance(Size);
@@ -38,7 +38,7 @@ internal sealed class NullableDateOnlyCodec : IRpcCodec<DateOnly?>
     private const int Size = 5; // 1 Tag + 4 Value
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in DateOnly? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in DateOnly? value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
 

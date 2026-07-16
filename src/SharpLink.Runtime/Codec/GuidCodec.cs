@@ -6,7 +6,7 @@ internal sealed class GuidCodec : IRpcCodec<Guid>
     private const int Size = 16;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in Guid value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in Guid value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
@@ -31,7 +31,7 @@ internal sealed class NullableGuidCodec : IRpcCodec<Guid?>
     private const int Size = 17; // 1 byte Tag + 16 bytes Value
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in Guid? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in Guid? value, IBufferWriter<byte> writer)
     {
         var span = writer.GetSpan(Size);
         if (value.HasValue)

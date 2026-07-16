@@ -137,7 +137,7 @@ public class RpcSessionLifecycleTests
         }
     }
 
-    private static ArrayBufferWriter<byte> CreatePacket()
+    private static IRpcByteBufferWriter CreatePacket()
     {
         var writer = BufferWriterPool.Get();
         writer.WritePacket(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 1);

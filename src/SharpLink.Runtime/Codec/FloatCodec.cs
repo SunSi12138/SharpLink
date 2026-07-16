@@ -6,7 +6,7 @@ internal sealed class FloatCodec : IRpcCodec<float>
     private const int Size = 4;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in float value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in float value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
@@ -31,7 +31,7 @@ internal sealed class NullableFloatCodec : IRpcCodec<float?>
     private const int Size = 5; // 1 byte Tag + 4 bytes Value
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in float? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in float? value, IBufferWriter<byte> writer)
     {
         var span = writer.GetSpan(Size);
         if (value.HasValue)

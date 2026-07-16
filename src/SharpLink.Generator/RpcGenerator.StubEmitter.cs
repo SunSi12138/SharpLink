@@ -30,13 +30,13 @@ public partial class RpcGenerator
         AppendSizeFieldsByType(sb, model.Interface.Methods);
         AppendCancellationSupport(sb, model.Interface.Methods);
         sb.AppendLine($$"""
-                            private static async ValueTask __AwaitTaskResultAsync<T>(Task<T> task, IRpcSession session, ArrayBufferWriter<byte> output)
+                            private static async ValueTask __AwaitTaskResultAsync<T>(Task<T> task, IRpcSession session, IRpcByteBufferWriter output)
                             {
                                 var result = await task.ConfigureAwait(false);
                                 session.RuntimeContext.Codecs.GetCodec<T>().Serialize(result, output);
                             }
 
-                            private static async ValueTask __AwaitValueTaskResultAsync<T>(ValueTask<T> task, IRpcSession session, ArrayBufferWriter<byte> output)
+                            private static async ValueTask __AwaitValueTaskResultAsync<T>(ValueTask<T> task, IRpcSession session, IRpcByteBufferWriter output)
                             {
                                 var result = await task.ConfigureAwait(false);
                                 session.RuntimeContext.Codecs.GetCodec<T>().Serialize(result, output);
@@ -102,13 +102,13 @@ public partial class RpcGenerator
         }
 
         sb.AppendLine($$"""
-                            public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, ArrayBufferWriter<byte> output)
+                            public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output)
                                 => InvokeCoreAsync(service, session, methodHash, requestId, args, output, CancellationToken.None);
 
-                            public ValueTask InvokeCancellableAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, ArrayBufferWriter<byte> output, CancellationToken cancellationToken)
+                            public ValueTask InvokeCancellableAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output, CancellationToken cancellationToken)
                                 => InvokeCoreAsync(service, session, methodHash, requestId, args, output, cancellationToken);
 
-                            private ValueTask InvokeCoreAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, ArrayBufferWriter<byte> output, CancellationToken cancellationToken)
+                            private ValueTask InvokeCoreAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output, CancellationToken cancellationToken)
                             {
                                 var impl = ({{model.Interface.FullName}})service;
                                 var reader = new SequenceReader<byte>(args);

@@ -22,17 +22,18 @@ public class SendPumpTests
             var rejected = CreateFrame(session, 800, requestId: 2);
             var exception = CaptureSharpLinkException(() => session.SendPacket(rejected));
             Ensure(exception.Code == SharpLinkErrorCode.ResourceExhausted, "queue-full error code");
-            Ensure(rejected.WrittenCount == 0, "rejected owner should be returned");
+            EnsureReturned(rejected, "rejected owner should be returned");
             Ensure(session.IsConnected, "queue exhaustion must not close a healthy session");
 
             await ConsumeAvailableAsync(output.Reader);
             await WaitUntilAsync(() => session.QueuedSendBytes == 0);
-            Ensure(first.WrittenCount == 0, "flushed owner should be returned");
+            EnsureReturned(first, "flushed owner should be returned");
 
             var afterRecovery = CreateFrame(session, 32, requestId: 3);
             session.SendPacket(afterRecovery);
             await ConsumeAvailableAsync(output.Reader);
-            await WaitUntilAsync(() => afterRecovery.WrittenCount == 0);
+            await WaitUntilAsync(() => session.QueuedSendBytes == 0);
+            EnsureReturned(afterRecovery, "recovered frame owner should be returned");
             Ensure(session.IsConnected, "session should accept frames after capacity recovers");
         }
         finally
@@ -68,7 +69,7 @@ public class SendPumpTests
 
             await ConsumeAvailableAsync(output.Reader);
             await WaitUntilAsync(() => session.QueuedSendBytes == 0);
-            Ensure(waitingFrame.WrittenCount == 0, "waiting frame owner should be returned after flush");
+            EnsureReturned(waitingFrame, "waiting frame owner should be returned after flush");
         }
         finally
         {
@@ -104,7 +105,7 @@ public class SendPumpTests
             {
             }
 
-            Ensure(cancelledFrame.WrittenCount == 0, "cancelled admission should return its owner");
+            EnsureReturned(cancelledFrame, "cancelled admission should return its owner");
             Ensure(session.IsConnected, "admission cancellation must not close the session");
             await ConsumeAvailableAsync(output.Reader);
         }
@@ -131,7 +132,7 @@ public class SendPumpTests
             var frame = CreateFrame(session, 32, requestId: 1);
             await session.SendPacketAndFlushAsync(frame).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
 
-            Ensure(frame.WrittenCount == 0, "force-flushed owner should be returned before completion");
+            EnsureReturned(frame, "force-flushed owner should be returned before completion");
             var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
             Ensure(read.Buffer.Length > ProtocolV2Constants.HeaderBytes, "force-flushed bytes should be visible");
             output.Reader.AdvanceTo(read.Buffer.End);
@@ -157,7 +158,7 @@ public class SendPumpTests
     private static Pipe CreateBackpressuredPipe()
         => new(new PipeOptions(pauseWriterThreshold: 1, resumeWriterThreshold: 0));
 
-    private static ArrayBufferWriter<byte> CreateFrame(RpcSession session, int payloadBytes, ulong requestId)
+    private static IRpcByteBufferWriter CreateFrame(RpcSession session, int payloadBytes, ulong requestId)
     {
         var writer = session.RuntimeContext.Buffers.Rent();
         using (writer.BeginPacketScope(
@@ -168,6 +169,20 @@ public class SendPumpTests
             writer.Write(new byte[payloadBytes]);
         }
         return writer;
+    }
+
+    private static void EnsureReturned(IRpcByteBufferWriter writer, string message)
+    {
+        try
+        {
+            _ = writer.WrittenCount;
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
+        throw new Exception(message);
     }
 
     private static SharpLinkException CaptureSharpLinkException(Action action)

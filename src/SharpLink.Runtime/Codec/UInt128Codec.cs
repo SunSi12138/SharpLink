@@ -6,7 +6,7 @@ internal sealed class UInt128Codec : IRpcCodec<UInt128>
     private const int Size = 16;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in UInt128 value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in UInt128 value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
@@ -33,7 +33,7 @@ internal sealed class NullableUInt128Codec : IRpcCodec<UInt128?>
     private const int Size = 17;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in UInt128? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in UInt128? value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
         if (value.HasValue)

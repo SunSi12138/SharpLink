@@ -14,7 +14,7 @@ public class BufferWriterPoolTests
     }
 
     [Test]
-    public void ReturnShouldPoolSmallWriterAndClearContent()
+    public void ReturnShouldReuseBoundedWriterStorage()
     {
         var pool = CreatePool(options =>
         {
@@ -22,19 +22,22 @@ public class BufferWriterPoolTests
             options.MaxPooledWriters = 1;
             options.MaxRetainedCapacityBytes = 1024;
         });
-        var writer = new ArrayBufferWriter<byte>(128);
+        var writer = pool.Rent();
         writer.GetSpan(4);
         writer.Advance(4);
 
         pool.Return(writer);
+        AssertThrows<ObjectDisposedException>(() => _ = writer.WrittenCount);
         var rented = pool.Rent();
 
-        Ensure(writer.WrittenCount == 0, "writer should be cleared on return");
-        Ensure(ReferenceEquals(writer, rented), "small writer should be retained by its context pool");
+        Ensure(ReferenceEquals(writer, rented), "the allocation-free writer shell should be reused");
+        Ensure(rented.WrittenCount == 0, "a new lease should not expose bytes from its previous use");
+        Ensure(rented.Capacity >= 111, "the new array lease should honor the configured initial capacity");
+        pool.Return(rented);
     }
 
     [Test]
-    public void ReturnShouldDropWriterAboveRetainedCapacity()
+    public void LargeLeaseShouldReturnStorageBeforeWriterShellIsReused()
     {
         var pool = CreatePool(options =>
         {
@@ -42,16 +45,36 @@ public class BufferWriterPoolTests
             options.MaxPooledWriters = 1;
             options.MaxRetainedCapacityBytes = 64;
         });
-        var tooLarge = new ArrayBufferWriter<byte>(256);
-        tooLarge.GetSpan(1);
-        tooLarge.Advance(1);
+        var tooLarge = pool.Rent();
+        tooLarge.GetSpan(256);
+        tooLarge.Advance(256);
 
         pool.Return(tooLarge);
         var rented = pool.Rent();
 
-        Ensure(tooLarge.WrittenCount == 1, "oversized writer should not be retained or mutated");
-        Ensure(!ReferenceEquals(tooLarge, rented), "oversized writer should not be pooled");
-        Ensure(rented.Capacity == 123, "new writer should use the context snapshot");
+        Ensure(ReferenceEquals(tooLarge, rented), "large storage must not prevent reuse of the writer shell");
+        Ensure(rented.WrittenCount == 0, "large frame bytes must not survive into the next lease");
+        Ensure(rented.Capacity < 256, "the large backing array must have been returned to ArrayPool");
+        pool.Return(rented);
+    }
+
+    [Test]
+    public void PooledWriterShouldGrowPreserveBytesAndDisposeIdempotently()
+    {
+        var writer = new PooledByteBufferWriter(16);
+        var first = writer.GetSpan(16);
+        for (var index = 0; index < 16; index++)
+            first[index] = (byte)index;
+        writer.Advance(16);
+
+        writer.GetSpan(80);
+        Ensure(writer.Capacity >= 96, "growth should satisfy the requested contiguous capacity");
+        for (var index = 0; index < 16; index++)
+            Ensure(writer.WrittenSpan[index] == (byte)index, "growth must preserve written bytes");
+
+        writer.Dispose();
+        writer.Dispose();
+        AssertThrows<ObjectDisposedException>(() => writer.GetSpan());
     }
 
     private static SharpLinkBufferWriterPool CreatePool(Action<BufferWriterPoolOptions> configure)

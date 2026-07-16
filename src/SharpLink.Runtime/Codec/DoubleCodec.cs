@@ -6,7 +6,7 @@ internal sealed class DoubleCodec : IRpcCodec<double>
     private const int Size = 8;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in double value, in ArrayBufferWriter<byte> writer) { Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value); writer.Advance(Size); }
+    public void Serialize(in double value, IBufferWriter<byte> writer) { Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value); writer.Advance(Size); }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public double Deserialize(in ReadOnlySequence<byte> buffer)
@@ -26,7 +26,7 @@ internal sealed class NullableDoubleCodec : IRpcCodec<double?>
     private const int Size = 9; // 1 byte Tag + 8 bytes Value
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in double? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in double? value, IBufferWriter<byte> writer)
     {
         var span = writer.GetSpan(Size);
         if (value.HasValue)

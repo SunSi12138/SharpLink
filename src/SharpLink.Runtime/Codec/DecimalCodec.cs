@@ -6,7 +6,7 @@ internal sealed class DecimalCodec : IRpcCodec<decimal>
     private const int Size = 16;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in decimal value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in decimal value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
@@ -35,7 +35,7 @@ internal sealed class NullableDecimalCodec : IRpcCodec<decimal?>
     private const int Size = 17;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in decimal? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in decimal? value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
 

@@ -117,3 +117,19 @@ Generator 不再创建捕获业务参数的 payload/stream delegate。每个方�
 | 32 | 582.69k QPS / P99 81 μs | 575.37k QPS / P99 83 μs | 通过（QPS 98.7%，P99 102.5%） |
 
 BenchmarkDotNet `UnaryBenchmarks.Rpc_Add`（1024 invocation、3 warmup、10 iteration）A/B 结果：0.5.1 在两个 PayloadSize 参数下均为 856 B/op；0.5.2 均为 832 B/op，下降 2.8%。测量均值受本机调度抖动影响较大，因此吞吐/延迟门禁以五轮 LoadTest 中位数为准，allocation 以 MemoryDiagnoser 为准。
+
+## 0.5.3 PooledByteBufferWriter 回归（2026-07-17，同一 runner）
+
+Runtime 与 Generator 不再直接依赖 `ArrayBufferWriter<byte>`：Codec 顺序写入统一使用 `IBufferWriter<byte>`，协议层通过 `IRpcByteBufferWriter` 回填固定头，`OwnedFrame` 将唯一 owner 移交 SendPump，只有 flush 或 drain 后才能归还 Context 池。大于配置保留上限（硬上限 64 KiB）的数组立即归还 `ArrayPool<byte>`。
+
+首次实现每帧都直接向共享 `ArrayPool<byte>` 租还数组，c32 中位数仅为 550.29k QPS、P99 86 μs，相对基线分别为 94.7% 和 106.2%，未通过门禁。最终实现只在 Context 的有界 writer pool 内保留不超过 64 KiB 的数组租约；直接 `Dispose()` 和超大数组仍归还 `ArrayPool<byte>`。
+
+在临时 detached worktree 构建 `64be6ad` 作为 0.5.2 基线，随后与 0.5.3 使用相同机器、相同时段、1 秒 warmup、3 秒测量、每档五次取中位数：
+
+| 并发 | 0.5.2 同时段基线 | 0.5.3 五轮中位数 | 门禁结论 |
+|---:|---:|---:|---|
+| 1 | 25.66k QPS / P99 72 μs | 25.29k QPS / P99 73 μs | 通过（QPS 98.5%，P99 101.4%） |
+| 8 | 169.06k QPS / P99 66 μs | 168.75k QPS / P99 66 μs | 通过（QPS 99.8%，P99 100.0%） |
+| 32 | 580.81k QPS / P99 81 μs | 573.92k QPS / P99 82 μs | 通过（QPS 98.8%，P99 101.2%） |
+
+BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 均为 832 B/op，与 0.5.2 持平；没有因 owner 抽象或池化 writer 增加每调用托管分配。

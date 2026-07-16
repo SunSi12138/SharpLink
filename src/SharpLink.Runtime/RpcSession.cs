@@ -85,7 +85,7 @@ public sealed partial class RpcSession : IRpcSession
         }
     }
 
-    internal void SendPacket(ArrayBufferWriter<byte> packet)
+    internal void SendPacket(IRpcByteBufferWriter packet)
     {
         ArgumentNullException.ThrowIfNull(packet);
         if (Volatile.Read(ref _terminal) is { } terminal)
@@ -106,7 +106,7 @@ public sealed partial class RpcSession : IRpcSession
     }
 
     internal async ValueTask SendPacketAndFlushAsync(
-        ArrayBufferWriter<byte> packet,
+        IRpcByteBufferWriter packet,
         CancellationToken ct = default)
         => await SendPacketAsync(packet, waitForCapacity: true, forceFlush: true, ct).ConfigureAwait(false);
 
@@ -117,7 +117,7 @@ public sealed partial class RpcSession : IRpcSession
     }
 
     internal async ValueTask SendPacketAsync(
-        ArrayBufferWriter<byte> packet,
+        IRpcByteBufferWriter packet,
         bool waitForCapacity,
         bool forceFlush,
         CancellationToken ct = default)
@@ -241,7 +241,7 @@ public sealed partial class RpcSession : IRpcSession
         => Volatile.Read(ref _terminal)?.Exception ??
            new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Session is closed.");
 
-    private void ReturnBuffer(ArrayBufferWriter<byte> writer)
+    private void ReturnBuffer(IRpcByteBufferWriter writer)
         => RuntimeContext.Buffers.Return(writer);
 
     private SendPump GetOrCreatePump()

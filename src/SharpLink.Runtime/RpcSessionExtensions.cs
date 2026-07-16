@@ -309,9 +309,9 @@ public static class RpcSessionExtensions
         }
     }
 
-    private static void SetTruncatedFlag(ArrayBufferWriter<byte> writer, PacketToken token)
+    private static void SetTruncatedFlag(IRpcByteBufferWriter writer, PacketToken token)
     {
-        var span = MemoryMarshal.AsMemory(writer.WrittenMemory).Span;
+        var span = writer.WrittenSpan;
         span[token.StartOffset + 6] |= (byte)ProtocolV2FrameFlags.Truncated;
     }
 

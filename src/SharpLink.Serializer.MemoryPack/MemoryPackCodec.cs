@@ -34,7 +34,7 @@ public sealed class MemoryPackCodec<[DynamicallyAccessedMembers(DynamicallyAcces
     public static readonly MemoryPackCodec<T> Instance = new();
     private MemoryPackCodec(){}
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in T value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in T value, IBufferWriter<byte> writer)
     {
         try
         {

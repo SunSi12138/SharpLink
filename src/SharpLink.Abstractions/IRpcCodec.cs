@@ -6,7 +6,8 @@ public interface IRpcCodec
 
 public interface IRpcCodec<T>:IRpcCodec
 {
-    void Serialize(in T value, in ArrayBufferWriter<byte> buffer);
+    /// <summary>Serializes a value to a sequential byte writer.</summary>
+    void Serialize(in T value, IBufferWriter<byte> buffer);
     
     T? Deserialize(in ReadOnlySequence<byte> buffer);
 }

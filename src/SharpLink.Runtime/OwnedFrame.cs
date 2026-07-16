@@ -5,11 +5,11 @@ namespace SharpLink.Runtime;
 /// Only the pump may return the owner after the frame has been flushed or drained.
 /// </summary>
 internal readonly struct OwnedFrame(
-    ArrayBufferWriter<byte> owner,
+    IRpcByteBufferWriter owner,
     bool forceFlush,
     TaskCompletionSource<bool>? flushCompletion)
 {
-    public ArrayBufferWriter<byte> Owner { get; } = owner;
+    public IRpcByteBufferWriter Owner { get; } = owner;
 
     public ReadOnlyMemory<byte> Memory { get; } = owner.WrittenMemory;
 

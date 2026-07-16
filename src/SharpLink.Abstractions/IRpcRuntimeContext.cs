@@ -23,9 +23,31 @@ public interface IRpcCodecProvider
 public interface IRpcBufferWriterPool
 {
     /// <summary>Rents a cleared byte writer.</summary>
-    ArrayBufferWriter<byte> Rent();
+    IRpcByteBufferWriter Rent();
 
     /// <summary>Returns a writer after its final consumer has finished.</summary>
     /// <param name="writer">The writer whose ownership is returned.</param>
-    void Return(ArrayBufferWriter<byte> writer);
+    void Return(IRpcByteBufferWriter writer);
+}
+
+/// <summary>
+/// Represents an owned, contiguous RPC packet buffer. Codecs should depend only on
+/// <see cref="IBufferWriter{T}"/>; the additional members exist for protocol header backfilling.
+/// </summary>
+public interface IRpcByteBufferWriter : IBufferWriter<byte>, IDisposable
+{
+    /// <summary>Gets the number of bytes written to the current lease.</summary>
+    int WrittenCount { get; }
+
+    /// <summary>Gets the current written bytes without transferring ownership.</summary>
+    ReadOnlyMemory<byte> WrittenMemory { get; }
+
+    /// <summary>Gets the mutable written region used by the protocol framing layer.</summary>
+    Span<byte> WrittenSpan { get; }
+
+    /// <summary>Gets the capacity of the current array lease.</summary>
+    int Capacity { get; }
+
+    /// <summary>Clears the written region while retaining the active lease.</summary>
+    void Clear();
 }

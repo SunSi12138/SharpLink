@@ -239,7 +239,7 @@ public static class ProtocolV2FrameWriter
 {
     /// <summary>Begins a frame and returns a token that must be ended after writing its payload.</summary>
     public static ProtocolV2FrameToken BeginFrame(
-        ArrayBufferWriter<byte> writer,
+        IRpcByteBufferWriter writer,
         ProtocolV2FrameType type,
         ProtocolV2FrameFlags flags,
         ulong requestId)
@@ -257,19 +257,19 @@ public static class ProtocolV2FrameWriter
     }
 
     /// <summary>Finishes a frame by backfilling its bounded Int32 payload length.</summary>
-    public static void EndFrame(ArrayBufferWriter<byte> writer, ProtocolV2FrameToken token)
+    public static void EndFrame(IRpcByteBufferWriter writer, ProtocolV2FrameToken token)
     {
         ArgumentNullException.ThrowIfNull(writer);
         var length = writer.WrittenCount - token.StartOffset - ProtocolV2Constants.HeaderBytes;
         if (length < 0)
             throw new ArgumentException("Frame token does not belong to this writer.", nameof(token));
-        var span = MemoryMarshal.AsMemory(writer.WrittenMemory).Span;
+        var span = writer.WrittenSpan;
         BinaryPrimitives.WriteInt32LittleEndian(span.Slice(token.StartOffset + 1, sizeof(int)), length);
     }
 
     /// <summary>Writes a frame with no payload.</summary>
     public static void WriteEmptyFrame(
-        ArrayBufferWriter<byte> writer,
+        IRpcByteBufferWriter writer,
         ProtocolV2FrameType type,
         ProtocolV2FrameFlags flags,
         ulong requestId)

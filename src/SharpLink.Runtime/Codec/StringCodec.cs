@@ -5,7 +5,7 @@ internal sealed class StringCodec : IRpcCodec<string?>
     internal static readonly StringCodec Instance = new();
     private const int CharSize = 2;
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in string? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in string? value, IBufferWriter<byte> writer)
     {
         if (value is null)
         {

@@ -17,7 +17,7 @@ internal sealed class UnsafeBlitCodec<T> : IRpcCodec<T>
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in T value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in T value, IBufferWriter<byte> writer)
     {
         var size = Unsafe.SizeOf<T>(); 
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(size)), value);
@@ -43,7 +43,7 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in T[]? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in T[]? value, IBufferWriter<byte> writer)
     {
         if (value is null)
         {
@@ -128,7 +128,7 @@ internal sealed class BlitListCodec<T> : IRpcCodec<List<T>?> where T:unmanaged
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in List<T>? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in List<T>? value, IBufferWriter<byte> writer)
     {
         if (value is null)
         {
@@ -179,7 +179,7 @@ internal sealed class BlitMemoryCodec<T> : IRpcCodec<Memory<T>>  where T:unmanag
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in Memory<T> value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in Memory<T> value, IBufferWriter<byte> writer)
     {
         ReadOnlySpan<T> span = value.Span;
         
@@ -215,7 +215,7 @@ internal sealed class BlitReadOnlyMemoryCodec<T> : IRpcCodec<ReadOnlyMemory<T>> 
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in ReadOnlyMemory<T> value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in ReadOnlyMemory<T> value, IBufferWriter<byte> writer)
     {
         var span = value.Span;
         
@@ -249,7 +249,7 @@ internal sealed class BlitImmutableArrayCodec<T> : IRpcCodec<ImmutableArray<T>> 
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in ImmutableArray<T> value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in ImmutableArray<T> value, IBufferWriter<byte> writer)
     {
         if (value.IsDefault)
         {

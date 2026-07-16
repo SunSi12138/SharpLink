@@ -50,7 +50,7 @@ public sealed class RpcEmptyRequestCodec : IRpcCodec<RpcEmptyRequest>
     }
 
     /// <inheritdoc />
-    public void Serialize(in RpcEmptyRequest value, in ArrayBufferWriter<byte> buffer)
+    public void Serialize(in RpcEmptyRequest value, IBufferWriter<byte> buffer)
     {
     }
 

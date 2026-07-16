@@ -6,7 +6,7 @@ internal sealed class TimeSpanCodec : IRpcCodec<TimeSpan>
     private const int Size = 8;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in TimeSpan value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in TimeSpan value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
@@ -33,7 +33,7 @@ internal sealed class NullableTimeSpanCodec : IRpcCodec<TimeSpan?>
     private const int Size = 9;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in TimeSpan? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in TimeSpan? value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
 

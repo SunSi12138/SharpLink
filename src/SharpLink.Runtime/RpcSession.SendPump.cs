@@ -17,7 +17,7 @@ public sealed partial class RpcSession
         private readonly long _maxLatencyTicks;
         private readonly int _maxQueuedBytes;
         private readonly CancellationToken _sessionCancellation;
-        private readonly Action<ArrayBufferWriter<byte>> _returnBuffer;
+        private readonly Action<IRpcByteBufferWriter> _returnBuffer;
         private readonly Action<Exception> _onTransportFaulted;
         private readonly Channel<OwnedFrame> _queue;
         private readonly Lock _admissionGate = new();
@@ -33,7 +33,7 @@ public sealed partial class RpcSession
             int maxQueuedBytes,
             RpcSessionFlushOptions? flushOptions,
             CancellationToken sessionCancellation,
-            Action<ArrayBufferWriter<byte>> returnBuffer,
+            Action<IRpcByteBufferWriter> returnBuffer,
             Action<Exception> onTransportFaulted)
         {
             ArgumentNullException.ThrowIfNull(output);
