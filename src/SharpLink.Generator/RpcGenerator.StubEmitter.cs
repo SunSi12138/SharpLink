@@ -52,12 +52,17 @@ public partial class RpcGenerator
                                 _ = await task.ConfigureAwait(false);
                             }
 
-                            private static async ValueTask __PumpStreamAsync<T>(IAsyncEnumerable<T> stream, IRpcSession session, long requestId)
+                            private static async ValueTask __PumpStreamAsync<T>(
+                                IAsyncEnumerable<T> stream,
+                                IRpcSession session,
+                                long requestId,
+                                CancellationToken cancellationToken)
                             {
                                 try
                                 {
-                                    await foreach (var item in stream.ConfigureAwait(false))
-                                        SharpLink.Runtime.RpcSessionExtensions.SendStreamChunkAsync(session, requestId, 0, item);
+                                    await foreach (var item in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
+                                        await SharpLink.Runtime.RpcSessionExtensions.SendStreamChunkAsync(
+                                            session, requestId, 0, item, cancellationToken).ConfigureAwait(false);
 
                                     SharpLink.Runtime.RpcSessionExtensions.SendStreamCompleteAsync(session, requestId, 0);
                                 }
@@ -254,7 +259,7 @@ public partial class RpcGenerator
             if (method.IsStreamReturn)
             {
                 sb.AppendLine($"                var resultStream = {callLine};");
-                sb.AppendLine("                return __PumpStreamAsync(resultStream, session, requestId);");
+                sb.AppendLine("                return __PumpStreamAsync(resultStream, session, requestId, cancellationToken);");
             }
             else if (method.IsVoid)
             {

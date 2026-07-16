@@ -28,7 +28,7 @@ Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容�
 | `Cancel` | 非 0 | 空 |
 | `StreamData` | 非 0 | `streamId:uint16 + item payload` |
 | `StreamComplete` | 非 0 | `streamId:uint16`；`Error` 时追加二进制错误 |
-| `WindowUpdate` | 0 或非 0 | `streamId:uint16 + credit:uint32` |
+| `WindowUpdate` | 非 0 | `streamId:uint16 + credit:uint32`，credit 必须在 `1..int32.MaxValue` |
 | `GoAway` | 0 | `lastAcceptedRequestId:uint64 + binary error/reason` |
 
 Stream ID 0 表示默认返回流，1–65535 表示显式流参数。Request ID 0 仅用于连接控制帧；溢出分配时必须跳过 0。
@@ -55,6 +55,12 @@ Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `H
 - bit 2: flow control
 
 对端缺少任一 required capability 时，Server 返回 `Unimplemented` 错误并关闭连接。认证载荷不得超过握手/metadata 上限。
+
+## 流量控制
+
+协商 `flow control` 后，每个 `StreamData` 的 item payload 同时消耗所属 stream 和 connection 的发送额度。额度不足时 producer 异步等待；`WindowUpdate` 的 request ID 与 stream ID 精确定位原 stream，credit 同时补充两级窗口。
+
+接收端只在消费者实际取得或明确丢弃 item 后归还 encoded byte credit，默认达到任一半窗口阈值后批量发送更新。大于 stream window 的单个 item 在不超过 `MaxFramePayloadBytes` 时允许从空窗口临时借用一次；借用未归还前继续发送即为 `ProtocolViolation`。任何 credit 加法溢出、重复归还或超过协商初始窗口也按连接级协议错误处理。
 
 ## 二进制错误
 

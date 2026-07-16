@@ -28,6 +28,7 @@ public sealed partial class RpcSession : IRpcSession
     private readonly Lock _pumpGate = new();
     private readonly RpcSessionFlushOptions? _flushOptions;
     private SendPump? _pump;
+    private StreamFlowController? _streamFlowControl;
 
     public RpcSession(
         string id,
@@ -81,7 +82,80 @@ public sealed partial class RpcSession : IRpcSession
             if (_pump is not null)
                 throw new InvalidOperationException("Runtime context must be bound before the first outbound frame.");
             RuntimeContext = runtimeContext;
-            StreamManager = new StreamManager(runtimeContext.Concurrency);
+            StreamManager = new StreamManager(
+                runtimeContext.Concurrency,
+                AcceptReceivedStreamBytes,
+                OnStreamBytesConsumed,
+                OnReceiveStreamCompleted);
+        }
+    }
+
+    internal void EnableStreamFlowControl(int streamWindowBytes, int connectionWindowBytes)
+    {
+        if ((NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) == 0)
+            throw new InvalidOperationException("Flow control was not negotiated for this session.");
+        var controller = new StreamFlowController(
+            streamWindowBytes,
+            connectionWindowBytes,
+            RuntimeContext.Protocol.MaxFramePayloadBytes,
+            RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection);
+        if (Interlocked.CompareExchange(ref _streamFlowControl, controller, null) is not null)
+            throw new InvalidOperationException("Stream flow control is already enabled for this session.");
+    }
+
+    internal ValueTask AcquireStreamSendCreditAsync(
+        long requestId,
+        ushort streamId,
+        int encodedBytes,
+        CancellationToken cancellationToken)
+    {
+        var controller = Volatile.Read(ref _streamFlowControl);
+        return controller is null
+            ? ValueTask.CompletedTask
+            : controller.AcquireSendCreditAsync(requestId, streamId, encodedBytes, cancellationToken);
+    }
+
+    internal void ApplyWindowUpdate(long requestId, in ProtocolV2WindowUpdate update)
+    {
+        var controller = Volatile.Read(ref _streamFlowControl) ??
+            throw new SharpLinkException(
+                SharpLinkErrorCode.ProtocolViolation,
+                "WindowUpdate was received without negotiated flow control.");
+        controller.ApplyWindowUpdate(requestId, update.StreamId, checked((int)update.Credit));
+    }
+
+    internal void CompleteSendStream(long requestId, ushort streamId, Exception? exception = null)
+        => Volatile.Read(ref _streamFlowControl)?.CompleteSendStream(requestId, streamId, exception);
+
+    private void AcceptReceivedStreamBytes(long requestId, ushort streamId, int encodedBytes)
+        => Volatile.Read(ref _streamFlowControl)?.AcceptReceived(requestId, streamId, encodedBytes);
+
+    private void OnStreamBytesConsumed(long requestId, ushort streamId, int encodedBytes)
+    {
+        var controller = Volatile.Read(ref _streamFlowControl);
+        var credit = controller?.RecordConsumed(requestId, streamId, encodedBytes) ?? 0;
+        if (credit != 0)
+            TrySendWindowUpdate(requestId, streamId, credit);
+    }
+
+    private void OnReceiveStreamCompleted(long requestId, ushort streamId)
+    {
+        var controller = Volatile.Read(ref _streamFlowControl);
+        var credit = controller?.FlushConsumed(requestId, streamId) ?? 0;
+        if (credit != 0)
+            TrySendWindowUpdate(requestId, streamId, credit);
+    }
+
+    private void TrySendWindowUpdate(long requestId, ushort streamId, int credit)
+    {
+        try
+        {
+            this.SendWindowUpdate(requestId, streamId, credit);
+        }
+        catch (SharpLinkException exception) when (
+            exception.Code is SharpLinkErrorCode.ConnectionClosed or SharpLinkErrorCode.ResourceExhausted)
+        {
+            Fault(exception);
         }
     }
 
@@ -167,6 +241,7 @@ public sealed partial class RpcSession : IRpcSession
             return;
 
         _cts.Cancel();
+        Volatile.Read(ref _streamFlowControl)?.Complete(structured);
         Volatile.Read(ref _pump)?.Stop();
         StreamManager.CompleteAll(structured);
         _ = StartTransportDispose();
@@ -186,6 +261,7 @@ public sealed partial class RpcSession : IRpcSession
             new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Session is stopping."));
         if (Interlocked.CompareExchange(ref _terminal, stopping, null) is null)
         {
+            Volatile.Read(ref _streamFlowControl)?.Complete(stopping.Exception);
             StreamManager.CompleteAll(stopping.Exception);
             try
             {

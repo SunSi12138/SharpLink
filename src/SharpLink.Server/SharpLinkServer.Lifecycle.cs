@@ -210,6 +210,8 @@ internal sealed partial class SharpLinkServer
             {
                 SharpLinkAuthenticationResult authResult;
                 ProtocolV2HandshakeRequest request = default;
+                var supportedCapabilities =
+                    ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.FlowControl;
                 if (header.Type != ProtocolV2FrameType.HandshakeRequest)
                 {
                     authResult = SharpLinkAuthenticationResult.Reject(
@@ -219,7 +221,7 @@ internal sealed partial class SharpLinkServer
                 else
                 {
                     request = ProtocolV2PayloadCodec.ReadHandshakeRequest(message, _protocolOptions);
-                    var unsupportedRequired = request.RequiredCapabilities & ~ProtocolV2Capabilities.Metadata;
+                    var unsupportedRequired = request.RequiredCapabilities & ~supportedCapabilities;
                     authResult = unsupportedRequired != ProtocolV2Capabilities.None
                         ? SharpLinkAuthenticationResult.Reject(
                             SharpLinkErrorCode.Unimplemented,
@@ -231,11 +233,17 @@ internal sealed partial class SharpLinkServer
                 {
                     var response = new ProtocolV2HandshakeResponse(
                         Math.Min(request.MinorVersion, ProtocolV2Constants.MinorVersion),
-                        request.SupportedCapabilities & ProtocolV2Capabilities.Metadata,
+                        request.SupportedCapabilities & supportedCapabilities,
                         Math.Min(request.MaxFramePayloadBytes, _protocolOptions.MaxFramePayloadBytes),
                         Math.Min(request.StreamReceiveWindowBytes, _runtimeContext.FlowControl.StreamReceiveWindowBytes),
                         Math.Min(request.ConnectionReceiveWindowBytes, _runtimeContext.FlowControl.ConnectionReceiveWindowBytes));
                     ((RpcSession)session).NegotiatedCapabilities = response.NegotiatedCapabilities;
+                    if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
+                    {
+                        ((RpcSession)session).EnableStreamFlowControl(
+                            response.StreamReceiveWindowBytes,
+                            response.ConnectionReceiveWindowBytes);
+                    }
                     await session.SendHandshakeResponseAndFlushAsync(response, ct).ConfigureAwait(false);
                 }
                 else
@@ -341,13 +349,17 @@ internal sealed partial class SharpLinkServer
                                 DispatchStreamComplete(
                                     session, unchecked((long)header.RequestId), header.Flags, payload, _protocolOptions);
                                 break;
+                            case ProtocolV2FrameType.WindowUpdate:
+                                ((RpcSession)session).ApplyWindowUpdate(
+                                    unchecked((long)header.RequestId),
+                                    ProtocolV2PayloadCodec.ReadWindowUpdate(payload));
+                                break;
                             case ProtocolV2FrameType.GoAway:
                                 await session.DisposeAsync();
                                 return;
                             case ProtocolV2FrameType.HandshakeRequest:
                             case ProtocolV2FrameType.HandshakeResponse:
                             case ProtocolV2FrameType.Response:
-                            case ProtocolV2FrameType.WindowUpdate:
                             default:
                             {
                                 await session.DisposeAsync();

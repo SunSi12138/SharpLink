@@ -107,6 +107,41 @@ public class StreamManagerTests
         Ensure(received == 4096, "dispatcher should stop growth at 4096 buffered elements");
     }
 
+    [Test]
+    public async Task FlowControlledDispatcherShouldReturnBytesOnlyAfterConsumption()
+    {
+        var accepted = 0;
+        var consumed = 0;
+        var manager = new StreamManager(
+            new RuntimeConcurrencyOptions(),
+            (_, _, bytes) => accepted += bytes,
+            (_, _, bytes) => consumed += bytes,
+            null);
+        var dispatcher = PooledAsyncStreamDispatcher<int>.Rent();
+        manager.Register(40, 2, dispatcher);
+        var writer = new ArrayBufferWriter<byte>();
+        RpcCodec.Serialize(42, writer);
+
+        await manager.DispatchChunkAsync(40, 2, new ReadOnlySequence<byte>(writer.WrittenMemory));
+        Ensure(accepted == writer.WrittenCount, "encoded bytes should be admitted before decode");
+        Ensure(consumed == 0, "queued bytes must not be returned before consumption");
+
+        var enumerator = dispatcher.GetAsyncEnumerator();
+        Ensure(await enumerator.MoveNextAsync(), "stream item should be available");
+        Ensure(consumed == writer.WrittenCount, "consumer should return the exact encoded byte count");
+        dispatcher.Complete(exception: null);
+        await enumerator.DisposeAsync();
+    }
+
+    [Test]
+    public async Task UnknownStreamDataShouldBeDroppedWithoutRecreatingDispatcher()
+    {
+        var manager = new StreamManager();
+        await manager.DispatchChunkAsync(404, 7, new ReadOnlySequence<byte>(new byte[] { 1 }));
+        await manager.DispatchChunkAsync(404, 7, new ReadOnlySequence<byte>(new byte[] { 2 }));
+        Ensure(manager.DroppedStreamFrames == 2, "late stream data should be counted and dropped");
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)

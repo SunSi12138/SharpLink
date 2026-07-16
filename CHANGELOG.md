@@ -9,11 +9,14 @@
 - Source Generator 原生 DTO/闭合集合 Codec、稳定字段 ID、未知字段跳过、required 校验与 64 层类型图边界。
 - `[RpcSerializable]`、`[RpcMember]`、`[RpcIgnore]`、`[RpcRequired]`、`[RpcExternalCodec]`。
 - append-only generated Codec manifest；Runtime Context 在 Build 时冻结 manifest 快照。
+- Protocol v2 stream/connection 双层字节窗口、`WindowUpdate` 与单个大帧临时借用。
 
 ### 变更
 
 - `IRpcCodec<T>.Serialize` 统一写入 `IBufferWriter<byte>`；协议回填使用 `IRpcByteBufferWriter`。
 - AOT Smoke 不再依赖 MemoryPack，覆盖 class、record、struct、嵌套数组和生成 manifest。
+- client/server stream sender 在额度不足时异步等待；消费、取消、超时和断连统一释放额度等待者。
+- stream dispatcher 按已编码字节记账，迟到的已取消 stream data 只丢弃并计数，不重建 dispatcher。
 
 ## [0.4.0] - 2026-07-17
 

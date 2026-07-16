@@ -733,7 +733,11 @@ internal sealed partial class SharpLinkClient
         {
             await foreach (var item in stream.WithCancellation(cancellationToken))
             {
-                session.SendStreamChunkAsync(requestId, streamId, item);
+                await session.SendStreamChunkAsync(
+                    requestId,
+                    streamId,
+                    item,
+                    cancellationToken).ConfigureAwait(false);
             }
 
             session.SendStreamCompleteAsync(requestId, streamId);

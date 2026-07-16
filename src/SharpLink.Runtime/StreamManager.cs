@@ -3,22 +3,41 @@ namespace SharpLink.Runtime;
 public class StreamManager : IStreamManager
 {
     private readonly StripedLongMap<RequestDispatchers> _dispatchersByRequestId;
+    private readonly Action<long, ushort, int>? _acceptBytes;
+    private readonly Action<long, ushort, int>? _bytesConsumed;
+    private readonly Action<long, ushort>? _streamCompleted;
+    private long _droppedStreamFrames;
 
     public StreamManager() : this(new RuntimeConcurrencyOptions())
     {
     }
 
     public StreamManager(RuntimeConcurrencyOptions concurrencyOptions)
+        : this(concurrencyOptions, null, null, null)
+    {
+    }
+
+    internal StreamManager(
+        RuntimeConcurrencyOptions concurrencyOptions,
+        Action<long, ushort, int>? acceptBytes,
+        Action<long, ushort, int>? bytesConsumed,
+        Action<long, ushort>? streamCompleted)
     {
         _dispatchersByRequestId = new StripedLongMap<RequestDispatchers>(concurrencyOptions);
+        _acceptBytes = acceptBytes;
+        _bytesConsumed = bytesConsumed;
+        _streamCompleted = streamCompleted;
     }
 
     public void Register(long requestId, IStreamDispatcher dispatcher) => Register(requestId, 0, dispatcher);
 
     public void Register(long requestId, ushort streamId, IStreamDispatcher dispatcher)
     {
+        ArgumentNullException.ThrowIfNull(dispatcher);
         var requestDispatchers = _dispatchersByRequestId.GetOrAdd(requestId, static _ => new RequestDispatchers());
         requestDispatchers.Register(streamId, dispatcher);
+        if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+            consumptionAware.SetBytesConsumedCallback(_bytesConsumed, requestId, streamId);
     }
 
     public void Unregister(long requestId) => Unregister(requestId, 0);
@@ -28,7 +47,13 @@ public class StreamManager : IStreamManager
         if (!_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
             return;
 
-        requestDispatchers.Unregister(streamId);
+        if (requestDispatchers.TryRemove(streamId, out var dispatcher))
+        {
+            if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+                consumptionAware.SetBytesConsumedCallback(null, 0, 0);
+            _streamCompleted?.Invoke(requestId, streamId);
+            RemoveEmptyRequest(requestId, requestDispatchers);
+        }
     }
 
     public ValueTask DispatchChunkAsync(long requestId, ReadOnlySequence<byte> payload)
@@ -39,9 +64,16 @@ public class StreamManager : IStreamManager
         if (_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
             requestDispatchers.TryGet(streamId, out var dispatcher))
         {
+            if (_acceptBytes is not null && dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+            {
+                var encodedByteCount = Math.Max(1, checked((int)payload.Length));
+                _acceptBytes(requestId, streamId, encodedByteCount);
+                return consumptionAware.DispatchAsync(payload, encodedByteCount);
+            }
             return dispatcher.DispatchAsync(payload);
         }
 
+        Interlocked.Increment(ref _droppedStreamFrames);
         return ValueTask.CompletedTask;
     }
 
@@ -71,7 +103,11 @@ public class StreamManager : IStreamManager
             return;
 
         if (requestDispatchers.TryRemove(streamId, out var dispatcher))
+        {
             dispatcher.Complete(exception);
+            _streamCompleted?.Invoke(requestId, streamId);
+            RemoveEmptyRequest(requestId, requestDispatchers);
+        }
     }
 
     public void CompleteAll(Exception? exception)
@@ -80,6 +116,14 @@ public class StreamManager : IStreamManager
         {
             requestDispatchers.CompleteAll(exception);
         }
+    }
+
+    internal long DroppedStreamFrames => Volatile.Read(ref _droppedStreamFrames);
+
+    private void RemoveEmptyRequest(long requestId, RequestDispatchers requestDispatchers)
+    {
+        if (requestDispatchers.IsEmpty)
+            _dispatchersByRequestId.TryRemove(requestId, requestDispatchers);
     }
 
     private static Exception? CreateCompletionException(bool isError, string? msg)
@@ -175,6 +219,17 @@ public class StreamManager : IStreamManager
                 foreach (var dispatcher in _byStreamId.Values)
                     dispatcher.Complete(exception);
                 _byStreamId.Clear();
+            }
+        }
+
+        public bool IsEmpty
+        {
+            get
+            {
+                if (Volatile.Read(ref _defaultDispatcher) is not null)
+                    return false;
+                lock (_gate)
+                    return _defaultDispatcher is null && _byStreamId.Count == 0;
             }
         }
     }

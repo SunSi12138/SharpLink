@@ -116,6 +116,36 @@ public static class ProtocolV2PayloadCodec
             connectionWindow);
     }
 
+    /// <summary>Writes a non-zero stream credit update.</summary>
+    public static void WriteWindowUpdate(
+        IBufferWriter<byte> writer,
+        in ProtocolV2WindowUpdate update)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        if (update.Credit == 0 || update.Credit > int.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(update), "Window credit must be between 1 and Int32.MaxValue.");
+        WriteUInt16(writer, update.StreamId);
+        var span = writer.GetSpan(sizeof(uint));
+        BinaryPrimitives.WriteUInt32LittleEndian(span, update.Credit);
+        writer.Advance(sizeof(uint));
+    }
+
+    /// <summary>Reads one complete stream credit update.</summary>
+    public static ProtocolV2WindowUpdate ReadWindowUpdate(ReadOnlySequence<byte> payload)
+    {
+        if (payload.Length != sizeof(ushort) + sizeof(uint))
+            throw ProtocolV2FrameParser.Violation("WindowUpdate payload must contain UInt16 stream ID and UInt32 credit.");
+        var reader = new SequenceReader<byte>(payload);
+        if (!reader.TryReadLittleEndian(out short streamIdBits) ||
+            !reader.TryReadLittleEndian(out int creditBits) || creditBits <= 0)
+        {
+            throw ProtocolV2FrameParser.Violation("WindowUpdate credit must be between 1 and Int32.MaxValue.");
+        }
+        return new ProtocolV2WindowUpdate(
+            unchecked((ushort)streamIdBits),
+            checked((uint)creditBits));
+    }
+
     /// <summary>Writes a binary error payload and reports whether the UTF-8 message was truncated.</summary>
     public static void WriteError(
         IBufferWriter<byte> writer,

@@ -184,7 +184,7 @@ internal sealed partial class SharpLinkClient
         var authPayload = Encoding.UTF8.GetBytes(_handshakeMessage);
         var handshakeRequest = new ProtocolV2HandshakeRequest(
             ProtocolV2Constants.MinorVersion,
-            ProtocolV2Capabilities.Metadata,
+            ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.FlowControl,
             ProtocolV2Capabilities.None,
             _protocolOptions.MaxFramePayloadBytes,
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
@@ -214,6 +214,12 @@ internal sealed partial class SharpLinkClient
                     else
                     {
                         ((RpcSession)session).NegotiatedCapabilities = response.NegotiatedCapabilities;
+                        if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
+                        {
+                            ((RpcSession)session).EnableStreamFlowControl(
+                                response.StreamReceiveWindowBytes,
+                                response.ConnectionReceiveWindowBytes);
+                        }
                         handshakeException = null;
                     }
                 }
@@ -278,6 +284,11 @@ internal sealed partial class SharpLinkClient
                             DispatchStreamComplete(
                                 session, unchecked((long)header.RequestId), header.Flags, payload, _protocolOptions);
                             break;
+                        case ProtocolV2FrameType.WindowUpdate:
+                            session.ApplyWindowUpdate(
+                                unchecked((long)header.RequestId),
+                                ProtocolV2PayloadCodec.ReadWindowUpdate(payload));
+                            break;
                         case ProtocolV2FrameType.GoAway:
                             if (payload.Length < sizeof(ulong))
                                 throw CreateProtocolViolationException("GoAway last accepted request ID is truncated.");
@@ -295,7 +306,6 @@ internal sealed partial class SharpLinkClient
                         case ProtocolV2FrameType.HandshakeRequest:
                         case ProtocolV2FrameType.HandshakeResponse:
                         case ProtocolV2FrameType.Request:
-                        case ProtocolV2FrameType.WindowUpdate:
                         default:
                             await session.DisposeAsync();
                             HandleDisconnected(session, CreateProtocolViolationException("Received unexpected packet from server."));

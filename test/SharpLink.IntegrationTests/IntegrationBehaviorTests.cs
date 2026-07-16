@@ -48,6 +48,24 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    public async Task OneByteFlowWindowsShouldResumeBothStreamDirections()
+    {
+        await using var harness = await TestHarness.CreateAsync(runtimeConfigure: options =>
+        {
+            options.FlowControl.StreamReceiveWindowBytes = 1;
+            options.FlowControl.ConnectionReceiveWindowBytes = 1;
+        });
+        var svc = harness.Client.Get<ITestService>();
+
+        var upload = await svc.UploadAsync(
+            ToAsyncEnumerable(Enumerable.Range(1, 64), CancellationToken.None));
+        Ensure(upload == 2080, "one-byte client stream flow control");
+
+        var download = await CollectAsync(svc.DownloadAsync(64), CancellationToken.None);
+        Ensure(download.Count == 64 && download[63] == "v-63", "one-byte server stream flow control");
+    }
+
+    [Test]
     public async Task TwoClientServerPairsShouldUseIndependentDtoCodecs()
     {
         var firstCodec = new MarkerPersonCodec(0xA1);
@@ -327,7 +345,8 @@ public class IntegrationBehaviorTests
 
         public static async Task<TestHarness> CreateAsync(
             TimeSpan? requestTimeout = null,
-            Func<Type, IRpcCodec?>? codecResolver = null)
+            Func<Type, IRpcCodec?>? codecResolver = null,
+            Action<SharpLinkRuntimeOptions>? runtimeConfigure = null)
         {
             codecResolver ??= MemoryPackCodec.Resolver;
             var cts = new CancellationTokenSource();
@@ -336,6 +355,8 @@ public class IntegrationBehaviorTests
                 .UseTcp(0, IPAddress.Loopback.ToString())
                 .UseSerializer(codecResolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
+            if (runtimeConfigure is not null)
+                serverBuilder.UseRuntime(runtimeConfigure);
 
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
@@ -364,6 +385,8 @@ public class IntegrationBehaviorTests
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseSerializer(codecResolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
+            if (runtimeConfigure is not null)
+                clientBuilder.UseRuntime(runtimeConfigure);
 
             if (requestTimeout is { } timeout)
                 clientBuilder.UseRequestTimeout(timeout);

@@ -1,7 +1,7 @@
 namespace SharpLink.Runtime;
 
 public sealed class PooledAsyncStreamDispatcher<T> :
-    IStreamDispatcher,
+    IStreamConsumptionAwareDispatcher,
     IAsyncEnumerable<T>,
     IAsyncEnumerator<T>,
     IValueTaskSource<bool>
@@ -17,6 +17,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     // SPSC ring buffer: _head 仅消费者写，_tail 仅生产者写
     // 双方会读对方的值，因此使用 Volatile.Read/Write 保证可见性与顺序
     private T[] _buffer = new T[16]; // 2 的幂
+    private int[] _encodedByteCounts = new int[16];
     private int _mask;               // _buffer.Length - 1
     private int _head;               // consumer owned
     private int _tail;               // producer owned
@@ -50,6 +51,9 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
     private T? _current;
     private IRpcCodec<T>? _codec;
+    private Action<long, ushort, int>? _bytesConsumed;
+    private long _flowControlRequestId;
+    private ushort _flowControlStreamId;
 
     private const int InitialCapacity = 16;
     private const int ShrinkThreshold = 4096;
@@ -99,6 +103,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         if (_buffer.Length > ShrinkThreshold)
         {
             _buffer = new T[InitialCapacity];
+            _encodedByteCounts = new int[InitialCapacity];
             _mask = _buffer.Length - 1;
         }
 
@@ -119,18 +124,36 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
         _error = null;
         _current = default;
+        _bytesConsumed = null;
+        _flowControlRequestId = 0;
+        _flowControlStreamId = 0;
     }
 
     public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
-    {
+        => DispatchAsync(payload, checked((int)payload.Length));
 
-        // 反序列化可能很重：尽量让队列/锁不要挡它（这里本来就无锁）
-        var item = (_codec ?? throw new InvalidOperationException("Stream dispatcher has no codec."))
-            .Deserialize(payload);
+    public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(encodedByteCount);
+        T? item;
+        try
+        {
+            // 反序列化可能很重：尽量让队列/锁不要挡它（这里本来就无锁）
+            item = (_codec ?? throw new InvalidOperationException("Stream dispatcher has no codec."))
+                .Deserialize(payload);
+        }
+        catch
+        {
+            NotifyBytesConsumed(encodedByteCount);
+            throw;
+        }
 
         // 生产者侧：如果已结束/已释放，直接丢弃（读用 Volatile 对称）
         if (Volatile.Read(ref _completed) || Volatile.Read(ref _disposed))
+        {
+            NotifyBytesConsumed(encodedByteCount);
             return ValueTask.CompletedTask;
+        }
 
         if (Interlocked.Increment(ref _bufferedCount) > MaxBufferedElements)
         {
@@ -138,19 +161,30 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             Complete(new SharpLinkException(
                 SharpLinkErrorCode.ResourceExhausted,
                 $"Stream receive buffer exceeded {MaxBufferedElements} elements."));
+            NotifyBytesConsumed(encodedByteCount);
             return ValueTask.CompletedTask;
         }
 
         // 快路径：尝试写入 ring
-        if (!TryEnqueue(item!))
+        if (!TryEnqueue(item!, encodedByteCount))
         {
             // 满了：扩容（慢路径）
-            GrowAndEnqueue(item!);
+            GrowAndEnqueue(item!, encodedByteCount);
         }
 
         // 审核 #2：扩容路径不再内部 Signal，统一在外层一次
         Signal();
         return ValueTask.CompletedTask;
+    }
+
+    public void SetBytesConsumedCallback(
+        Action<long, ushort, int>? callback,
+        long requestId,
+        ushort streamId)
+    {
+        _bytesConsumed = callback;
+        _flowControlRequestId = requestId;
+        _flowControlStreamId = streamId;
     }
 
     public void Complete(bool isError, string? errorMessage)
@@ -202,9 +236,10 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             if (Volatile.Read(ref _resizeInProgress) == 1)
                 await Task.Yield();
 
-            if (TryDequeue(out var value))
+            if (TryDequeue(out var value, out var encodedByteCount))
             {
                 _current = value;
+                NotifyBytesConsumed(encodedByteCount);
 
                 // 如果已经 complete 且队列空且已 Dispose，则回收
                 if (Volatile.Read(ref _completed) && IsEmpty() && Volatile.Read(ref _disposed))
@@ -238,6 +273,12 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         Volatile.Write(ref _disposed, true);
         _current = default;
 
+        var discardedBytes = 0;
+        while (TryDequeue(out _, out var encodedByteCount))
+            discardedBytes = checked(discardedBytes + encodedByteCount);
+        if (discardedBytes != 0)
+            NotifyBytesConsumed(discardedBytes);
+
         // 安全策略：不保证生产者停止 -> 仍需 completed && empty 才回池
         TryReturnToPool();
 
@@ -262,7 +303,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     // --------------------------
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool TryEnqueue(T item)
+    private bool TryEnqueue(T item, int encodedByteCount)
     {
         // tail 是生产者私有写
         var tail = _tail;
@@ -274,6 +315,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             return false;
 
         _buffer[tail] = item;
+        _encodedByteCounts[tail] = encodedByteCount;
 
         // publish tail：让消费者可见（release）
         Volatile.Write(ref _tail, next);
@@ -281,12 +323,13 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool TryDequeue(out T value)
+    private bool TryDequeue(out T value, out int encodedByteCount)
     {
         // 如果正在扩容，让上层去 Yield（慢路径）
         if (Volatile.Read(ref _resizeInProgress) == 1)
         {
             value = default!;
+            encodedByteCount = 0;
             return false;
         }
 
@@ -299,6 +342,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             if (Volatile.Read(ref _resizeInProgress) == 1)
             {
                 value = default!;
+                encodedByteCount = 0;
                 return false;
             }
 
@@ -307,13 +351,16 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             if (head == tail)
             {
                 value = default!;
+                encodedByteCount = 0;
                 return false;
             }
 
             value = _buffer[head];
+            encodedByteCount = _encodedByteCounts[head];
 
             if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
                 _buffer[head] = default!;
+            _encodedByteCounts[head] = 0;
 
             // publish head：让生产者可见（release）
             Volatile.Write(ref _head, (head + 1) & _mask);
@@ -330,7 +377,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     private bool IsEmpty()
         => Volatile.Read(ref _head) == Volatile.Read(ref _tail);
 
-    private void GrowAndEnqueue(T item)
+    private void GrowAndEnqueue(T item, int encodedByteCount)
     {
         // 开始扩容：告诉消费者暂避
         Volatile.Write(ref _resizeInProgress, 1);
@@ -341,6 +388,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             sw.SpinOnce();
 
         var old = _buffer;
+        var oldEncodedByteCounts = _encodedByteCounts;
         var oldMask = _mask;
 
         var head = Volatile.Read(ref _head);
@@ -349,13 +397,18 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         var count = tail >= head ? (tail - head) : (old.Length - head + tail);
         var newSize = old.Length << 1;
         var newBuf = new T[newSize];
+        var newEncodedByteCounts = new int[newSize];
         var newMask = newSize - 1;
 
         for (var i = 0; i < count; i++)
+        {
             newBuf[i] = old[(head + i) & oldMask];
+            newEncodedByteCounts[i] = oldEncodedByteCounts[(head + i) & oldMask];
+        }
 
         // 交换 buffer + 指针（消费者此时不在 dequeue 临界段）
         _buffer = newBuf;
+        _encodedByteCounts = newEncodedByteCounts;
         _mask = newMask;
 
         // 重置 head/tail 到新布局
@@ -364,6 +417,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
         // enqueue 新元素（必有空间）
         newBuf[count] = item;
+        newEncodedByteCounts[count] = encodedByteCount;
         Volatile.Write(ref _tail, (count + 1) & newMask);
 
         // 扩容结束
@@ -438,6 +492,9 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _enumerationCancellationRegistration.Dispose();
         _error = null;
         _codec = null;
+        _bytesConsumed = null;
+        _flowControlRequestId = 0;
+        _flowControlStreamId = 0;
 
         // 复位枚举器占用标记
         Volatile.Write(ref _enumeratorTaken, 0);
@@ -452,4 +509,8 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _inPool = true;
         Pool.Add(this);
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void NotifyBytesConsumed(int encodedByteCount)
+        => _bytesConsumed?.Invoke(_flowControlRequestId, _flowControlStreamId, encodedByteCount);
 }

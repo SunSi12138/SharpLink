@@ -109,7 +109,11 @@ public static class RpcSessionExtensions
         public void SendPongAsync(long timestamp)
             => SendTimestampFrame(session, ProtocolV2FrameType.Pong, timestamp);
 
-        public void SendStreamChunkAsync<T>(long requestId, ushort streamId, T item)
+        public async ValueTask SendStreamChunkAsync<T>(
+            long requestId,
+            ushort streamId,
+            T item,
+            CancellationToken cancellationToken = default)
         {
             var writer = session.RuntimeContext.Buffers.Rent();
             var ownsWriter = true;
@@ -125,8 +129,17 @@ public static class RpcSessionExtensions
                     writer.Advance(sizeof(ushort));
                     session.RuntimeContext.Codecs.GetCodec<T>().Serialize(item, writer);
                 }
+                var encodedBytes = Math.Max(
+                    1,
+                    writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort));
+                var runtimeSession = GetRuntimeSession(session);
+                await runtimeSession.AcquireStreamSendCreditAsync(
+                    requestId,
+                    streamId,
+                    encodedBytes,
+                    cancellationToken).ConfigureAwait(false);
                 ownsWriter = false;
-                GetRuntimeSession(session).SendPacket(writer);
+                runtimeSession.SendPacket(writer);
             }
             finally
             {
@@ -151,7 +164,9 @@ public static class RpcSessionExtensions
                     writer.Advance(sizeof(ushort));
                 }
                 ownsWriter = false;
-                GetRuntimeSession(session).SendPacket(writer);
+                var runtimeSession = GetRuntimeSession(session);
+                runtimeSession.SendPacket(writer);
+                runtimeSession.CompleteSendStream(requestId, streamId);
             }
             finally
             {
@@ -184,7 +199,9 @@ public static class RpcSessionExtensions
                 if (truncated)
                     SetTruncatedFlag(writer, token);
                 ownsWriter = false;
-                GetRuntimeSession(session).SendPacket(writer);
+                var runtimeSession = GetRuntimeSession(session);
+                runtimeSession.SendPacket(writer);
+                runtimeSession.CompleteSendStream(requestId, streamId, exception);
             }
             finally
             {
@@ -219,6 +236,30 @@ public static class RpcSessionExtensions
                 await GetRuntimeSession(session)
                     .SendPacketAndFlushAsync(writer, cancellationToken)
                     .ConfigureAwait(false);
+            }
+            finally
+            {
+                if (ownsWriter)
+                    session.RuntimeContext.Buffers.Return(writer);
+            }
+        }
+
+        internal void SendWindowUpdate(long requestId, ushort streamId, int credit)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(credit);
+            var writer = session.RuntimeContext.Buffers.Rent();
+            var ownsWriter = true;
+            try
+            {
+                var token = writer.BeginPacket(
+                    ProtocolV2FrameType.WindowUpdate,
+                    ProtocolV2FrameFlags.None,
+                    unchecked((ulong)requestId));
+                var update = new ProtocolV2WindowUpdate(streamId, checked((uint)credit));
+                ProtocolV2PayloadCodec.WriteWindowUpdate(writer, update);
+                writer.EndPacket(token);
+                ownsWriter = false;
+                GetRuntimeSession(session).SendPacket(writer);
             }
             finally
             {

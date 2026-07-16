@@ -8,3 +8,18 @@ public interface IStreamDispatcher
     void Complete(bool isError, string? errorMessage);
     void Complete(Exception? exception);
 }
+
+/// <summary>
+/// Optional dispatcher capability that accounts for encoded bytes only after the consumer takes an item.
+/// </summary>
+public interface IStreamConsumptionAwareDispatcher : IStreamDispatcher
+{
+    /// <summary>Dispatches one item together with the byte credit charged on the wire.</summary>
+    ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount);
+
+    /// <summary>Registers the callback used to return consumed byte credit.</summary>
+    void SetBytesConsumedCallback(
+        Action<long, ushort, int>? callback,
+        long requestId,
+        ushort streamId);
+}

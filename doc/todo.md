@@ -23,7 +23,7 @@
 2. `0.5.2`（已完成）：将生成代理收敛为 Unary、OneWay、ClientStreaming、ServerStreaming、DuplexStreaming 五类 Invoker。
 3. `0.5.3`（已完成）：实现 `PooledByteBufferWriter`，统一 payload owner 与 SendPump 归还时机；Codec 仅依赖 `IBufferWriter<byte>`，协议回填通过 `IRpcByteBufferWriter` 完成。
 4. `0.5.4`（已完成）：实现 Source Generator DTO Codec 的封闭稳定子集、append-only manifest 与 Context 快照；MemoryPack/外部类型保持显式插件边界。
-5. `0.5.5`：实现 stream/connection 按字节窗口与 `WindowUpdate`。
+5. `0.5.5`（已完成）：实现 stream/connection 按字节窗口、`WindowUpdate`、公平等待与取消/断连收敛。
 6. `0.5.6`：实现每 Endpoint 连接池与 power-of-two choices。
 7. 完成 Release、AOT、PackageSmoke、LoadTest/Benchmark 五轮门禁后，才进入 0.6。
 

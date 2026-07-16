@@ -82,6 +82,11 @@ public readonly record struct ProtocolV2HandshakeResponse(
     int StreamReceiveWindowBytes,
     int ConnectionReceiveWindowBytes);
 
+/// <summary>Returns consumed byte credit for one request stream.</summary>
+public readonly record struct ProtocolV2WindowUpdate(
+    ushort StreamId,
+    uint Credit);
+
 /// <summary>Decoded binary error payload.</summary>
 public readonly record struct ProtocolV2Error(
     SharpLinkErrorCode Code,

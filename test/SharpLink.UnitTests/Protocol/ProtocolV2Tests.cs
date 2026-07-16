@@ -214,6 +214,20 @@ public class ProtocolV2Tests
             1,
             windowPayload);
         await ExpectProtocolViolation(invalidWindow);
+
+        var validWindowPayload = new PooledByteBufferWriter();
+        var expectedUpdate = new ProtocolV2WindowUpdate(65_535, 1234);
+        ProtocolV2PayloadCodec.WriteWindowUpdate(validWindowPayload, expectedUpdate);
+        var updateFrame = CreateFrame(
+            ProtocolV2FrameType.WindowUpdate,
+            ProtocolV2FrameFlags.None,
+            9,
+            validWindowPayload.WrittenMemory.ToArray());
+        var updateSequence = new ReadOnlySequence<byte>(updateFrame);
+        Ensure(ProtocolV2FrameParser.TryReadFrame(ref updateSequence, Limits, out _, out var updatePayload),
+            "valid WindowUpdate should parse");
+        Ensure(ProtocolV2PayloadCodec.ReadWindowUpdate(updatePayload) == expectedUpdate,
+            "WindowUpdate should round-trip");
     }
 
     [Test]

@@ -77,6 +77,14 @@ SharpLink.Serializer.MemoryPack
 - 双向流：客户端流上传与服务端流下发同时存在
 - 多流参数：同一请求内通过不同 `streamId` 区分
 
+## Stream 字节流控
+
+- Protocol v2 握手协商 `FlowControl` capability 以及 stream/connection receive window。
+- 每个 `StreamData` 在进入 SendPump 前同时预留两级字节额度；额度不足的 producer 按 FIFO 异步等待，并受 cancellation、deadline 与 session 终态控制。
+- 单个 item 只要未超过协商帧上限，可以在空窗口上临时借用一次，消费后必须完整归还。
+- dispatcher 保存 decoded item 对应的 encoded byte count；消费者成功取走或丢弃 item 后累计 credit，达到半窗口时发送 `WindowUpdate`。
+- 未知或已取消 stream 的迟到数据不会创建新 dispatcher；窗口溢出、重复 credit 和连续越窗均作为 `ProtocolViolation` 关闭连接。
+
 ## 取消与超时
 
 1. 调用侧 `CancellationToken` 触发，或请求超时调度器命中。

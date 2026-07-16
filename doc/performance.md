@@ -147,3 +147,17 @@ Generator 自动发现 RPC 参数、返回值、stream item 与 `[RpcSerializabl
 | 32 | 589.86k QPS / P99 76 μs | 592.54k QPS / P99 76 μs | 通过（QPS 100.5%，P99 100.0%） |
 
 BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 仍均为 832 B/op，说明 manifest 快照与生成 Codec 优先级没有增加基础 Unary 每调用分配。
+
+## 0.5.5 Stream/Connection 字节流控回归（2026-07-17，同一 runner）
+
+Protocol v2 握手现在协商 `FlowControl` capability。每个 stream 与 connection 同时维护有界 byte credit；正常发送快路径无 Task 分配，额度耗尽时才创建 FIFO waiter。dispatcher 在消费者实际取得 item 后按 encoded byte count 归还额度，取消、deadline 和 session fault 会完成全部等待者。一字节窗口的真实 client/server stream Integration 已验证暂停与恢复，单个合法大 item 使用一次临时借用。
+
+以 `cbcacc1` 作为 0.5.4 基线，使用 1 秒 warmup、3 秒测量、每档五次取中位数：
+
+| 并发 | 0.5.4 同时段基线 | 0.5.5 五轮中位数 | 门禁结论 |
+|---:|---:|---:|---|
+| 1 | 25.59k QPS / P99 71 μs | 25.45k QPS / P99 71 μs | 通过（QPS 99.4%，P99 100.0%） |
+| 8 | 171.14k QPS / P99 66 μs | 170.20k QPS / P99 70 μs | 短窗 P99 边界抖动，长窗复核通过 |
+| 32 | 595.33k QPS / P99 76 μs | 595.35k QPS / P99 76 μs | 通过（QPS 100.0%，P99 100.0%） |
+
+c8 另以 2 秒 warmup、5 秒测量执行五组严格交替 A/B：基线中位数 174.59k QPS / P99 62 μs，0.5.5 为 172.89k QPS / P99 63 μs，分别为 99.0% 与 101.6%，通过门禁。BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 均保持 832 B/op。

@@ -64,6 +64,18 @@ public sealed class StripedLongMap<TValue> where TValue : class
             return _maps[stripe].TryGetValue(key, out value!) && _maps[stripe].Remove(key);
     }
 
+    public bool TryRemove(long key, TValue expected)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        var stripe = GetStripe(key);
+        lock (_locks[stripe])
+        {
+            return _maps[stripe].TryGetValue(key, out var existing) &&
+                   ReferenceEquals(existing, expected) &&
+                   _maps[stripe].Remove(key);
+        }
+    }
+
     public List<TValue> DrainValues()
     {
         var values = new List<TValue>();

@@ -98,7 +98,7 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.GoAway;
         if (controlFrame && requestId != 0)
             throw Violation($"Connection-control frame {type} must use request ID 0.");
-        if (!controlFrame && type != ProtocolV2FrameType.WindowUpdate && requestId == 0)
+        if (!controlFrame && requestId == 0)
             throw Violation($"Frame {type} must use a non-zero request ID.");
 
         var allowed = type switch
@@ -187,7 +187,7 @@ public static class ProtocolV2FrameParser
                 }
                 break;
             case ProtocolV2FrameType.WindowUpdate:
-                ValidateWindowUpdate(payload);
+                _ = ProtocolV2PayloadCodec.ReadWindowUpdate(payload);
                 break;
             case ProtocolV2FrameType.GoAway:
                 if (payload.Length < sizeof(ulong) + 3)
@@ -219,15 +219,6 @@ public static class ProtocolV2FrameParser
             throw Violation("Request metadata payload is truncated.");
         _ = ProtocolV2PayloadCodec.ReadMetadata(
             reader.Sequence.Slice(reader.Position, metadataLength));
-    }
-
-    private static void ValidateWindowUpdate(ReadOnlySequence<byte> payload)
-    {
-        if (payload.Length != sizeof(ushort) + sizeof(uint))
-            throw Violation("WindowUpdate payload must contain UInt16 stream ID and UInt32 credit.");
-        var reader = new SequenceReader<byte>(payload);
-        if (!reader.TryReadLittleEndian(out short _) || !reader.TryReadLittleEndian(out int deltaBits) || deltaBits == 0)
-            throw Violation("WindowUpdate credit must be non-zero.");
     }
 
     internal static SharpLinkException Violation(string message)
