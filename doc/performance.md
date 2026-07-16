@@ -189,3 +189,17 @@ Client/Server interceptor 只在 Builder 显式注册后构建调用上下文和
 | 32 | 591.24k QPS / P99 76 μs | 589.23k QPS / P99 76 μs | 通过（QPS 99.7%，P99 100.0%） |
 
 BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 在基线与最终实现中均为 832 B/op。启用 interceptor 的路径有意为可变上下文、短路和 pipeline 支付额外成本，不计入默认空管线门禁。
+
+## 0.6.4 OpenTelemetry 空监听路径回归（2026-07-17，同一 runner）
+
+Activity 与调用级 Meter 只在对应 listener 启用时构造调用 observer、tag collection 和计时状态；连接、队列、pending、stream 与字节指标在 instrument 未启用时直接返回。默认应用未接入 OpenTelemetry 时继续走原有直接调用路径。
+
+以 `fc0a5cc`（0.6.3）作为基线，使用 1 秒 warmup、3 秒测量，严格交替 A/B，每档五次取中位数：
+
+| 并发 | 0.6.3 同时段基线 | 0.6.4 无 listener | 门禁结论 |
+|---:|---:|---:|---|
+| 1 | 25.95k QPS / P99 71 μs | 25.93k QPS / P99 71 μs | 通过（QPS 99.9%，P99 100.0%） |
+| 8 | 170.32k QPS / P99 63 μs | 170.08k QPS / P99 62 μs | 通过（QPS 99.9%，P99 98.4%） |
+| 32 | 591.71k QPS / P99 76 μs | 587.94k QPS / P99 76 μs | 通过（QPS 99.4%，P99 100.0%） |
+
+BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 均保持 832 B/op；启用 listener 后的 Activity/tag 成本属于显式可观测性成本，不计入默认热路径门禁。

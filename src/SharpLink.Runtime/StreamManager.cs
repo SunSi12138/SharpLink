@@ -36,6 +36,7 @@ public class StreamManager : IStreamManager
         ArgumentNullException.ThrowIfNull(dispatcher);
         var requestDispatchers = _dispatchersByRequestId.GetOrAdd(requestId, static _ => new RequestDispatchers());
         requestDispatchers.Register(streamId, dispatcher);
+        SharpLinkTelemetry.AddActiveStreams(1);
         if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
             consumptionAware.SetBytesConsumedCallback(_bytesConsumed, requestId, streamId);
     }
@@ -49,6 +50,7 @@ public class StreamManager : IStreamManager
 
         if (requestDispatchers.TryRemove(streamId, out var dispatcher))
         {
+            SharpLinkTelemetry.AddActiveStreams(-1);
             if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
                 consumptionAware.SetBytesConsumedCallback(null, 0, 0);
             _streamCompleted?.Invoke(requestId, streamId);
@@ -104,6 +106,7 @@ public class StreamManager : IStreamManager
 
         if (requestDispatchers.TryRemove(streamId, out var dispatcher))
         {
+            SharpLinkTelemetry.AddActiveStreams(-1);
             dispatcher.Complete(exception);
             _streamCompleted?.Invoke(requestId, streamId);
             RemoveEmptyRequest(requestId, requestDispatchers);
@@ -114,7 +117,7 @@ public class StreamManager : IStreamManager
     {
         foreach (var requestDispatchers in _dispatchersByRequestId.DrainValues())
         {
-            requestDispatchers.CompleteAll(exception);
+            SharpLinkTelemetry.AddActiveStreams(-requestDispatchers.CompleteAll(exception));
         }
     }
 
@@ -145,12 +148,13 @@ public class StreamManager : IStreamManager
         {
             if (streamId == 0)
             {
-                _defaultDispatcher = dispatcher;
+                if (Interlocked.CompareExchange(ref _defaultDispatcher, dispatcher, null) is not null)
+                    throw new InvalidOperationException("The default stream is already registered.");
                 return;
             }
 
             lock (_gate)
-                _byStreamId[streamId] = dispatcher;
+                _byStreamId.Add(streamId, dispatcher);
         }
 
         public void Unregister(ushort streamId)
@@ -209,17 +213,20 @@ public class StreamManager : IStreamManager
             }
         }
 
-        public void CompleteAll(Exception? exception)
+        public int CompleteAll(Exception? exception)
         {
             var defaultDispatcher = Interlocked.Exchange(ref _defaultDispatcher, null);
             defaultDispatcher?.Complete(exception);
+            var count = defaultDispatcher is null ? 0 : 1;
 
             lock (_gate)
             {
+                count += _byStreamId.Count;
                 foreach (var dispatcher in _byStreamId.Values)
                     dispatcher.Complete(exception);
                 _byStreamId.Clear();
             }
+            return count;
         }
 
         public bool IsEmpty

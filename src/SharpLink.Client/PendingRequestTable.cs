@@ -179,7 +179,10 @@ internal sealed class PendingRequestTable : IDisposable
         operation.Initialize(id, responseCodec);
         var index = (int)(id & _indexMask);
         if (Interlocked.CompareExchange(ref _slots[index], operation, null) is null)
+        {
+            SharpLinkTelemetry.AddPendingRequests(1);
             return true;
+        }
 
         for (var attempt = 1; attempt < _slots.Length; attempt++)
         {
@@ -187,7 +190,10 @@ internal sealed class PendingRequestTable : IDisposable
             operation.Initialize(id, responseCodec);
             index = (int)(id & _indexMask);
             if (Interlocked.CompareExchange(ref _slots[index], operation, null) is null)
+            {
+                SharpLinkTelemetry.AddPendingRequests(1);
                 return true;
+            }
         }
 
         operation.ReturnError();
@@ -220,6 +226,7 @@ internal sealed class PendingRequestTable : IDisposable
 
     private void ReleaseSlot()
     {
+        SharpLinkTelemetry.AddPendingRequests(-1);
         if (Volatile.Read(ref _waiterCount) == 0)
             return;
 

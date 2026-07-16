@@ -31,7 +31,7 @@
 1. `0.6.1`（已完成）：TCP TLS、双向证书与独立握手超时。
 2. `0.6.2`（已完成）：Anonymous/自定义认证、Authentication Context 与 token expiry。
 3. `0.6.3`（已完成）：Client/Server Interceptor、`IRpcExceptionMapper` 与 `[Idempotent]`。
-4. `0.6.4`：OpenTelemetry Activity、Meter 与预编译结构化日志。
+4. `0.6.4`（已完成）：OpenTelemetry Activity、Meter 与预编译结构化日志。
 5. `0.6.5`：DI 服务生命周期、健康检查、readiness 与优雅排空。
 
 ## 0.7.0：官方企业扩展包

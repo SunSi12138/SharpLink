@@ -105,6 +105,7 @@ internal sealed partial class SharpLinkServer
 
             var session = new RpcSession(connection, _rpcSessionFlushOptions);
             connection = null;
+            session.SetTelemetrySide("server");
             session.BindRuntimeContext(_runtimeContext);
             session.ServiceExceptionMapper = (requestId, contractId, methodId, exception) =>
                 MapStreamServiceException(session, requestId, contractId, methodId, exception);
@@ -179,6 +180,8 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception ex)
         {
+            if (ex is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation })
+                SharpLinkTelemetry.RecordProtocolFailure("server");
             LogServerBackgroundLoopUnhandledException(_logger, nameof(ProcessRequestLoop), ex);
         }
         finally
@@ -238,6 +241,7 @@ internal sealed partial class SharpLinkServer
             var buffer =  result.Buffer;
             while (ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var message))
             {
+                SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + message.Length);
                 SharpLinkAuthenticationResult authResult;
                 ProtocolV2HandshakeRequest request = default;
                 var supportedCapabilities =
@@ -284,6 +288,13 @@ internal sealed partial class SharpLinkServer
                 }
                 else
                 {
+                    if (authResult.ErrorCode == SharpLinkErrorCode.ProtocolViolation)
+                        SharpLinkTelemetry.RecordProtocolFailure("server");
+                    else if (authResult.ErrorCode is SharpLinkErrorCode.AuthenticationRejected or
+                             SharpLinkErrorCode.AuthenticationExpired or
+                             SharpLinkErrorCode.AuthorizationDenied or
+                             SharpLinkErrorCode.PermissionDenied)
+                        SharpLinkTelemetry.RecordAuthenticationFailure("server");
                     await session.SendHandshakeErrorAndFlushAsync(
                         authResult.ErrorCode,
                         authResult.ErrorMessage,
@@ -375,6 +386,7 @@ internal sealed partial class SharpLinkServer
                     // 2. 循环解析 buffer 中的数据包 (可能包含多个包)
                     while (ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
                     {
+                        SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                         session.LastActive = DateTime.UtcNow;
                         // 3. 处理完整的消息 (这里不需要 await 阻塞网络读取，最好由 Task.Run 处理业务)
                         // 注意：messagePayload 在 Advance 之后就会失效，如果需要异步处理，必须 Copy
@@ -447,6 +459,7 @@ internal sealed partial class SharpLinkServer
                             case ProtocolV2FrameType.Response:
                             default:
                             {
+                                SharpLinkTelemetry.RecordProtocolFailure("server");
                                 await session.DisposeAsync();
                                 break;
                             }
@@ -508,6 +521,7 @@ internal sealed partial class SharpLinkServer
 
         if (!TryAcquireCall(callAdmission))
         {
+            SharpLinkTelemetry.RecordResourceExhausted("server");
             Interlocked.Increment(ref _rejectedOneWayCalls);
             LogOnewayRpcResourceExhausted(_logger);
             return;
@@ -639,6 +653,7 @@ internal sealed partial class SharpLinkServer
 
         if (!TryAcquireCall(callAdmission))
         {
+            SharpLinkTelemetry.RecordResourceExhausted("server");
             session.SendRpcErrorAsync(requestId, new SharpLinkException(
                 SharpLinkErrorCode.ResourceExhausted,
                 "Server call capacity is exhausted."));

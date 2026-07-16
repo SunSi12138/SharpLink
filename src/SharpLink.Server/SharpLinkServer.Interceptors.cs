@@ -13,6 +13,47 @@ internal sealed partial class SharpLinkServer
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context)
     {
+        var telemetry = SharpLinkTelemetry.StartServerCall(
+            GetMethodDescriptor(stub, methodId), requestId);
+        try
+        {
+            var invocation = InvokeServiceCoreAsync(
+                stub,
+                service,
+                session,
+                methodId,
+                requestId,
+                arguments,
+                output,
+                cancellationToken,
+                context);
+            if (!telemetry.IsEnabled)
+                return invocation;
+            if (invocation.IsCompletedSuccessfully)
+            {
+                telemetry.Complete();
+                return invocation;
+            }
+            return ObserveServerCallAsync(invocation, telemetry);
+        }
+        catch (Exception exception)
+        {
+            telemetry.Complete(exception);
+            throw;
+        }
+    }
+
+    private ValueTask InvokeServiceCoreAsync(
+        IRpcStub stub,
+        object service,
+        IRpcSession session,
+        long methodId,
+        long requestId,
+        ReadOnlySequence<byte> arguments,
+        IRpcByteBufferWriter? output,
+        CancellationToken cancellationToken,
+        SharpLinkCallContextSnapshot context)
+    {
         if (context.Authentication?.IsExpired() == true)
         {
             return ValueTask.FromException(new SharpLinkException(
@@ -38,6 +79,22 @@ internal sealed partial class SharpLinkServer
             arguments,
             output,
             cancellationToken).InvokeAsync((SharpLinkServerInvocationContext)context);
+    }
+
+    private static async ValueTask ObserveServerCallAsync(
+        ValueTask invocation,
+        SharpLinkTelemetry.CallScope telemetry)
+    {
+        try
+        {
+            await invocation.ConfigureAwait(false);
+            telemetry.Complete();
+        }
+        catch (Exception exception)
+        {
+            telemetry.Complete(exception);
+            throw;
+        }
     }
 
     private SharpLinkException MapServiceException(

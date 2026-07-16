@@ -267,12 +267,27 @@ var server = SharpLinkServerBuilder.Create()
 
 `[Idempotent]` 只把重试资格写入生成的 `RpcMethodDescriptor`，核心不会自动重试；后续 Resilience 扩展也只允许显式标记的 Unary 方法参与重试。
 
+## OpenTelemetry
+
+`SharpLinkTelemetry` 暴露两个 ActivitySource 和一个 Meter，可直接加入现有 OpenTelemetry pipeline：
+
+```csharp
+tracerProviderBuilder
+    .AddSource("SharpLink.Client", "SharpLink.Server");
+
+meterProviderBuilder
+    .AddMeter("SharpLink");
+```
+
+内置指标覆盖 active connections、reconnect、started/completed/failed/active calls、duration、sent/received bytes、send queue bytes、pending requests、active streams，以及 protocol/auth/resource-exhausted failures。Activity 和指标不记录完整 payload、token、证书或未审核的业务异常消息。没有 listener 时不会创建 TagList、Activity、Stopwatch 对象或额外调用 observer。
+
 ## 可调优配置
 
 - 日志：`UseLoggerFactory(...)`
 - 心跳：`UseHeartbeat(...)`
 - 握手认证：`ISharpLinkClientAuthenticator` / `ISharpLinkServerAuthenticator` 与 `RequireAuthentication()`
 - 调用管线：Client/Server `AddInterceptor(...)` 与 Server `UseExceptionMapper(...)`
+- 遥测：`SharpLinkTelemetry.ClientActivitySource`、`ServerActivitySource` 与 `Meter`
 - 请求超时：`UseRequestTimeout(...)`
 - `RpcSession` flush：`UseRpcSessionFlush(...)`
 - `BufferWriterPool`：`UseBufferWriterPool(...)`

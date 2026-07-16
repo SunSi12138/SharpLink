@@ -153,3 +153,11 @@ SharpLink.Serializer.MemoryPack
 - Server context 包含 method descriptor、request ID、deadline、metadata、peer、auth、status 与 elapsed，适合授权、限流与审计。
 - `IRpcExceptionMapper` 属于 Server 实例。默认 mapper 保留显式 `SharpLinkException`，其余业务异常统一为不含内部消息的 `Internal`；Unary 与 stream 共用该边界。
 - `[Idempotent]` 只写入生成 descriptor，核心不会自动重试；新版 0.7 Resilience 扩展只会把该标记作为 Unary 重试资格。
+
+## 遥测
+
+- 公共 `SharpLinkTelemetry` 暴露 `SharpLink.Client`、`SharpLink.Server` 两个 `ActivitySource` 和名为 `SharpLink` 的 `Meter`。
+- Activity 只在 source 有 listener 时创建，并携带 contract ID、method ID、method kind、server request ID 与结构化状态；不写入 payload、token、证书或业务异常消息。
+- Meter 覆盖 active connections、reconnect、calls started/completed/failed/active/duration、sent/received bytes、send queue bytes、pending requests、active streams、protocol/auth/resource-exhausted failures。
+- Counter/Histogram/Activity 均先检查 listener/instrument；无 listener 时不创建 TagList、Activity、Stopwatch 对象或 observer state machine。
+- 日志全部使用 `LoggerMessage` source-generated 方法；普通日志不包含 payload、token 或证书内容。

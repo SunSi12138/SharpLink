@@ -188,6 +188,7 @@ public sealed partial class RpcSession
             var source = frame.Memory.Span;
             if (source.IsEmpty)
                 return;
+            SharpLinkTelemetry.RecordSentBytes(source.Length);
             var destination = _output.GetSpan(source.Length);
             source.CopyTo(destination);
             _output.Advance(source.Length);
@@ -237,7 +238,10 @@ public sealed partial class RpcSession
                 if (!canReserve)
                     return false;
                 if (Interlocked.CompareExchange(ref _queuedBytes, current + bytes, current) == current)
+                {
+                    SharpLinkTelemetry.AddSendQueueBytes(bytes);
                     return true;
+                }
             }
         }
 
@@ -291,6 +295,7 @@ public sealed partial class RpcSession
             finally
             {
                 Interlocked.Add(ref _queuedBytes, -frame.Length);
+                SharpLinkTelemetry.AddSendQueueBytes(-frame.Length);
                 if (completeFlushWaiter)
                 {
                     if (exception is null)

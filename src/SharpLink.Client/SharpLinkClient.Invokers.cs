@@ -13,6 +13,11 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        if (SharpLinkTelemetry.ClientCallsEnabled)
+        {
+            return InvokeUnaryWithTelemetryAsync(
+                method, request, requestCodec, responseCodec, options, cancellationToken);
+        }
         if (_clientInterceptors.Length != 0)
         {
             return InvokeUnaryInterceptedAsync(
@@ -45,6 +50,11 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        if (SharpLinkTelemetry.ClientCallsEnabled)
+        {
+            return InvokeOneWayWithTelemetryAsync(
+                method, request, requestCodec, streams, options, cancellationToken);
+        }
         if (_clientInterceptors.Length != 0)
         {
             return InvokeOneWayInterceptedAsync(
@@ -79,6 +89,11 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        if (SharpLinkTelemetry.ClientCallsEnabled)
+        {
+            return InvokeClientStreamingWithTelemetryAsync(
+                method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+        }
         if (_clientInterceptors.Length != 0)
         {
             return InvokeClientStreamingInterceptedAsync(
@@ -111,6 +126,11 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
+        if (SharpLinkTelemetry.ClientCallsEnabled)
+        {
+            return InvokeServerStreamingWithTelemetry(
+                method, request, requestCodec, responseCodec, options, cancellationToken);
+        }
         if (_clientInterceptors.Length != 0)
         {
             return InvokeServerStreamingIntercepted(
@@ -159,6 +179,11 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
+        if (SharpLinkTelemetry.ClientCallsEnabled)
+        {
+            return InvokeDuplexStreamingWithTelemetry(
+                method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+        }
         if (_clientInterceptors.Length != 0)
         {
             return InvokeDuplexStreamingIntercepted(

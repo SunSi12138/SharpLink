@@ -66,6 +66,7 @@ internal sealed partial class SharpLinkClient
                 LogTlsEstablished(_logger, securityInfo.Protocol, securityInfo.CipherSuite);
             session = new RpcSession(connection, _rpcSessionFlushOptions);
             connection = null;
+            session.SetTelemetrySide("client");
             session.BindRuntimeContext(_runtimeContext);
 
             using var handshakeTimeoutCts = new CancellationTokenSource(_protocolOptions.HandshakeTimeout);
@@ -211,6 +212,8 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception ex)
         {
+            if (ex is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation })
+                SharpLinkTelemetry.RecordProtocolFailure("client");
             using var sessionScope = BeginSessionLogScope(_logger, session.Id);
             LogClientBackgroundLoopUnhandledException(_logger, nameof(ProcessRequestLoop), ex);
             HandleDisconnected(session, IsTransportFault(ex)
@@ -257,6 +260,7 @@ internal sealed partial class SharpLinkClient
             var buffer = result.Buffer;
             while (ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
             {
+                SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                 if (header.Type != ProtocolV2FrameType.HandshakeResponse)
                     handshakeException = CreateProtocolViolationException("Received unexpected packet during handshake.");
                 else if ((header.Flags & ProtocolV2FrameFlags.Error) == 0)
@@ -284,6 +288,13 @@ internal sealed partial class SharpLinkClient
                     var error = ProtocolV2PayloadCodec.ReadError(
                         payload, header.Flags, _protocolOptions.MaxErrorMessageBytes);
                     handshakeException = new SharpLinkException(error.Code, error.Message);
+                    if (error.Code is SharpLinkErrorCode.AuthenticationRejected or
+                        SharpLinkErrorCode.AuthenticationExpired or
+                        SharpLinkErrorCode.AuthorizationDenied or
+                        SharpLinkErrorCode.PermissionDenied)
+                    {
+                        SharpLinkTelemetry.RecordAuthenticationFailure("client");
+                    }
                 }
 
                 handshakeCompleted = true;
@@ -292,7 +303,11 @@ internal sealed partial class SharpLinkClient
             reader.AdvanceTo(buffer.Start, buffer.End);
 
             if (handshakeCompleted)
+            {
+                if (handshakeException is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation })
+                    SharpLinkTelemetry.RecordProtocolFailure("client");
                 return handshakeException;
+            }
 
             if (result.IsCompleted)
                 break;
@@ -316,6 +331,7 @@ internal sealed partial class SharpLinkClient
             {
                 while (ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
                 {
+                    SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                     session.LastActive = DateTime.UtcNow;
                     switch (header.Type)
                     { 
@@ -362,6 +378,7 @@ internal sealed partial class SharpLinkClient
                         case ProtocolV2FrameType.HandshakeResponse:
                         case ProtocolV2FrameType.Request:
                         default:
+                            SharpLinkTelemetry.RecordProtocolFailure("client");
                             await session.DisposeAsync();
                             HandleDisconnected(session, CreateProtocolViolationException("Received unexpected packet from server."));
                             return;

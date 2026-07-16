@@ -939,6 +939,7 @@ internal sealed partial class SharpLinkClient
             try
             {
                 await Task.Delay(delay, _shutdownCts.Token).ConfigureAwait(false);
+                SharpLinkTelemetry.ReconnectAttempt();
                 await ConnectOneAsync(_shutdownCts.Token).ConfigureAwait(false);
                 PublishReadyState();
                 if (ReadyConnectionCount >= _connectionPoolOptions.MinConnections)

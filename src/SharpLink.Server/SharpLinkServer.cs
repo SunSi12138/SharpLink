@@ -224,17 +224,7 @@ internal sealed partial class SharpLinkServer(
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken)
     {
-        if (!stub.TryGetMethodDescriptor(methodId, out var method))
-        {
-            method = new RpcMethodDescriptor(
-                stub.InterfaceHash,
-                methodId,
-                RpcMethodKind.Unary,
-                HasResponsePayload: false,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
-        }
+        var method = GetMethodDescriptor(stub, methodId);
         var rpcSession = (RpcSession)session;
         return new SharpLinkServerInvocationContext(
             method,
@@ -246,6 +236,22 @@ internal sealed partial class SharpLinkServer(
             deadline,
             metadata,
             cancellationToken);
+    }
+
+    private static RpcMethodDescriptor GetMethodDescriptor(IRpcStub stub, long methodId)
+    {
+        if (!stub.TryGetMethodDescriptor(methodId, out var method))
+        {
+            method = new RpcMethodDescriptor(
+                stub.InterfaceHash,
+                methodId,
+                RpcMethodKind.Unary,
+                HasResponsePayload: false,
+                HasClientStreams: false,
+                HasMethodTimeout: false,
+                MethodTimeout: null);
+        }
+        return method;
     }
 
     private bool TryAcquireCall(SessionCallAdmission sessionAdmission)

@@ -33,7 +33,15 @@ public sealed partial class RpcSession : IRpcSession
     private StreamFlowController? _streamFlowControl;
     private int _activeRequests;
     private int _draining;
+    private string _telemetrySide = "unknown";
+    private int _telemetryConnected;
     internal Func<long, long, long, Exception, SharpLinkException>? ServiceExceptionMapper { get; set; }
+
+    internal void SetTelemetrySide(string side)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(side);
+        _telemetrySide = side;
+    }
 
     internal SharpLinkException MapServiceException(
         long requestId,
@@ -288,7 +296,12 @@ public sealed partial class RpcSession : IRpcSession
         => Volatile.Write(ref _draining, 1);
 
     public event Action? OnConnected;
-    public void NotifyConnected()=>OnConnected?.Invoke();
+    public void NotifyConnected()
+    {
+        if (Interlocked.Exchange(ref _telemetryConnected, 1) == 0)
+            SharpLinkTelemetry.ConnectionOpened(_telemetrySide);
+        OnConnected?.Invoke();
+    }
     public event Action<Exception?>? OnDisconnected;
     public void NotifyDisconnected(Exception? exception = null)
         => Fault(exception ?? new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Transport closed."));
@@ -301,6 +314,7 @@ public sealed partial class RpcSession : IRpcSession
         if (Interlocked.CompareExchange(ref _terminal, terminal, null) is not null)
             return;
 
+        RecordTelemetryConnectionClosed();
         _cts.Cancel();
         Volatile.Read(ref _streamFlowControl)?.Complete(structured);
         Volatile.Read(ref _pump)?.Stop();
@@ -322,6 +336,7 @@ public sealed partial class RpcSession : IRpcSession
             new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Session is stopping."));
         if (Interlocked.CompareExchange(ref _terminal, stopping, null) is null)
         {
+            RecordTelemetryConnectionClosed();
             Volatile.Read(ref _streamFlowControl)?.Complete(stopping.Exception);
             StreamManager.CompleteAll(stopping.Exception);
             try
@@ -372,6 +387,12 @@ public sealed partial class RpcSession : IRpcSession
             _cts.Dispose();
             _stoppedTcs.TrySetResult(true);
         }
+    }
+
+    private void RecordTelemetryConnectionClosed()
+    {
+        if (Interlocked.Exchange(ref _telemetryConnected, 0) != 0)
+            SharpLinkTelemetry.ConnectionClosed(_telemetrySide);
     }
 
     private Exception GetTerminalException()
