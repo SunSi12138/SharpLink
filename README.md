@@ -243,11 +243,36 @@ SharpLinkAuthorization.RequireActiveToken();
 
 这些 helper 失败时会抛出带正确 `SharpLinkErrorCode` 的 `SharpLinkException`，客户端会收到对应结构化错误，而不是退化成普通字符串异常。
 
+## Interceptor 与业务异常
+
+Client/Server interceptor 按注册顺序冻结到实例。没有注册 interceptor 时，调用仍直接进入生成的泛型 invoker/stub，不构建 delegate 链：
+
+```csharp
+var client = SharpClientBuilder.Create()
+    .UseTcp("rpc.example.internal", 5000)
+    .AddInterceptor(clientInterceptor)
+    .Build();
+
+var server = SharpLinkServerBuilder.Create()
+    .AddService<IMyService, MyService>()
+    .UseTcp(5000)
+    .AddInterceptor(serverInterceptor)
+    .UseExceptionMapper(exceptionMapper)
+    .Build();
+```
+
+客户端 interceptor 可通过 `SharpLinkClientInvocationContext.Options` 增加 metadata，也可以直接返回 `SharpLinkClientInvocationResult` 短路调用。服务端 context 包含 method descriptor、request ID、deadline、metadata、peer、auth、status 和 elapsed，可用于授权、限流与审计。
+
+默认异常 mapper 会保留显式的 `SharpLinkException`；其他业务异常只向客户端返回 `Internal` 与通用消息，Unary 和 stream 使用同一规则。仅在受控开发环境中可显式调用 `EnableDetailedErrors()`。生产环境建议实现 `IRpcExceptionMapper`，只公开经过审核的业务状态与消息。
+
+`[Idempotent]` 只把重试资格写入生成的 `RpcMethodDescriptor`，核心不会自动重试；后续 Resilience 扩展也只允许显式标记的 Unary 方法参与重试。
+
 ## 可调优配置
 
 - 日志：`UseLoggerFactory(...)`
 - 心跳：`UseHeartbeat(...)`
 - 握手认证：`ISharpLinkClientAuthenticator` / `ISharpLinkServerAuthenticator` 与 `RequireAuthentication()`
+- 调用管线：Client/Server `AddInterceptor(...)` 与 Server `UseExceptionMapper(...)`
 - 请求超时：`UseRequestTimeout(...)`
 - `RpcSession` flush：`UseRpcSessionFlush(...)`
 - `BufferWriterPool`：`UseBufferWriterPool(...)`

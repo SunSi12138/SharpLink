@@ -29,6 +29,7 @@ public partial class RpcGenerator
                         """);
         AppendSizeFieldsByType(sb, model.Interface.Methods);
         AppendCancellationSupport(sb, model.Interface.Methods);
+        AppendMethodDescriptors(sb, model.Interface);
         sb.AppendLine($$"""
                             private static async ValueTask __AwaitTaskResultAsync<T>(Task<T> task, IRpcSession session, IRpcByteBufferWriter output)
                             {
@@ -56,6 +57,8 @@ public partial class RpcGenerator
                                 IAsyncEnumerable<T> stream,
                                 IRpcSession session,
                                 long requestId,
+                                long contractId,
+                                long methodId,
                                 CancellationToken cancellationToken)
                             {
                                 try
@@ -68,7 +71,8 @@ public partial class RpcGenerator
                                 }
                                 catch (Exception ex)
                                 {
-                                    SharpLink.Runtime.RpcSessionExtensions.SendStreamErrorAsync(session, requestId, 0, ex);
+                                    SharpLink.Runtime.RpcSessionExtensions.SendStreamErrorAsync(
+                                        session, requestId, 0, ex, contractId, methodId);
                                 }
                             }
 
@@ -98,7 +102,7 @@ public partial class RpcGenerator
         switch (methodHash)
         {
 """);
-            AppendStubDispatchCases(sb, noReturnMethods, writeResponse: false);
+            AppendStubDispatchCases(sb, noReturnMethods, model.Interface.Hash, writeResponse: false);
             sb.AppendLine("            default: throw new SharpLinkException(SharpLinkErrorCode.Unimplemented, \"Method is not implemented.\");");
             sb.AppendLine("        }");
             if (needsCompletedReturn)
@@ -132,7 +136,7 @@ public partial class RpcGenerator
         switch (methodHash)
         {
 """);
-            AppendStubDispatchCases(sb, responseMethods, writeResponse: true);
+            AppendStubDispatchCases(sb, responseMethods, model.Interface.Hash, writeResponse: true);
             sb.AppendLine("            default: throw new SharpLinkException(SharpLinkErrorCode.Unimplemented, \"Method is not implemented.\");");
             sb.AppendLine("        }");
             sb.AppendLine("        return ValueTask.CompletedTask;");
@@ -175,7 +179,36 @@ public partial class RpcGenerator
         sb.AppendLine("        };");
     }
 
-    private static void AppendStubDispatchCases(StringBuilder sb, IEnumerable<RpcMethodModel> methods, bool writeResponse)
+    private static void AppendMethodDescriptors(StringBuilder sb, RpcInterfaceModel model)
+    {
+        sb.AppendLine("    public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        switch (methodHash)");
+        sb.AppendLine("        {");
+        foreach (var method in model.Methods)
+        {
+            var kind = GetMethodKind(method);
+            var hasPayloadResponse = !method.IsOneWay && !method.IsVoid;
+            var hasClientStreams = method.Parameters.Any(static parameter => parameter.IsStream);
+            var methodTimeout = method.TimeoutSeconds is { } seconds
+                ? $"TimeSpan.FromSeconds({seconds.ToString("R", InvariantCulture)}d)"
+                : "null";
+            sb.AppendLine($"            case {method.Hash}L:");
+            sb.AppendLine($"                descriptor = new RpcMethodDescriptor({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")});");
+            sb.AppendLine("                return true;");
+        }
+        sb.AppendLine("            default:");
+        sb.AppendLine("                descriptor = default;");
+        sb.AppendLine("                return false;");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+    }
+
+    private static void AppendStubDispatchCases(
+        StringBuilder sb,
+        IEnumerable<RpcMethodModel> methods,
+        long interfaceHash,
+        bool writeResponse)
     {
         foreach (var method in methods)
         {
@@ -259,7 +292,7 @@ public partial class RpcGenerator
             if (method.IsStreamReturn)
             {
                 sb.AppendLine($"                var resultStream = {callLine};");
-                sb.AppendLine("                return __PumpStreamAsync(resultStream, session, requestId, cancellationToken);");
+                sb.AppendLine($"                return __PumpStreamAsync(resultStream, session, requestId, {interfaceHash}L, {method.Hash}L, cancellationToken);");
             }
             else if (method.IsVoid)
             {

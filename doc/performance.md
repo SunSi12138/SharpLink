@@ -175,3 +175,17 @@ c8 另以 2 秒 warmup、5 秒测量执行五组严格交替 A/B：基线中位�
 | 32 | 593.26k QPS / P99 76 μs | 592.90k QPS / P99 76 μs | 通过（QPS 99.9%，P99 100.0%） |
 
 BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 仍均为 832 B/op。额外的本机 TCP c128 诊断中，1/1 为 1.248M QPS / P99 314 μs，1/2 为 1.086M QPS / P99 258 μs：第二条本机连接降低尾延迟但增加调度成本，因此默认仍为 1/1；是否扩池应按真实跨进程网络与 payload 矩阵验证，不把单次本机吞吐结果写成通用收益承诺。
+
+## 0.6.3 Interceptor 空管线回归（2026-07-17，同一 runner）
+
+Client/Server interceptor 只在 Builder 显式注册后构建调用上下文和 delegate 链。首次实现为所有服务调用创建完整 Server context，使 `UnaryBenchmarks.Rpc_Add` 从 832 B/op 增至 944 B/op，未通过 allocation 门禁；最终改为默认路径继续使用轻量 ambient context，完整 context 仅在启用 interceptor 或映射异常时创建。
+
+以 `f33e40b`（0.6.2）作为基线，使用 1 秒 warmup、3 秒测量，严格交替 A/B，每档五次取中位数：
+
+| 并发 | 0.6.2 同时段基线 | 0.6.3 空管线 | 门禁结论 |
+|---:|---:|---:|---|
+| 1 | 25.63k QPS / P99 71 μs | 26.16k QPS / P99 70 μs | 通过（QPS 102.1%，P99 98.6%） |
+| 8 | 171.08k QPS / P99 62 μs | 171.18k QPS / P99 62 μs | 通过（QPS 100.1%，P99 100.0%） |
+| 32 | 591.24k QPS / P99 76 μs | 589.23k QPS / P99 76 μs | 通过（QPS 99.7%，P99 100.0%） |
+
+BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 在基线与最终实现中均为 832 B/op。启用 interceptor 的路径有意为可变上下文、短路和 pipeline 支付额外成本，不计入默认空管线门禁。

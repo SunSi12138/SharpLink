@@ -175,9 +175,16 @@ public static class RpcSessionExtensions
             }
         }
 
-        public void SendStreamErrorAsync(long requestId, ushort streamId, Exception exception)
+        public void SendStreamErrorAsync(
+            long requestId,
+            ushort streamId,
+            Exception exception,
+            long contractId = 0,
+            long methodId = 0)
         {
             ArgumentNullException.ThrowIfNull(exception);
+            exception = GetRuntimeSession(session).MapServiceException(
+                requestId, contractId, methodId, exception);
             var writer = session.RuntimeContext.Buffers.Rent();
             var ownsWriter = true;
             try

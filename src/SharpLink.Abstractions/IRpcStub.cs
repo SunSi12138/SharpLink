@@ -4,6 +4,13 @@ namespace SharpLink.Abstractions;
 /// </summary>
 public interface IRpcStub
 {
+    /// <summary>Gets generated metadata for a method when it exists.</summary>
+    bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+    {
+        descriptor = default;
+        return false;
+    }
+
     /// <summary>Gets whether a method consumes a per-call cancellation token or cancellable input stream.</summary>
     /// <param name="methodHash">The generated method identifier.</param>
     /// <returns><see langword="true"/> when the server must create per-call cancellation state.</returns>

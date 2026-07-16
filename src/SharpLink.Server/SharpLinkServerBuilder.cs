@@ -14,6 +14,9 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     private ILoggerFactory? _loggerFactory;
     private ISharpLinkServerAuthenticator? _authenticator;
     private bool _authenticationRequired;
+    private readonly List<ISharpLinkServerInterceptor> _interceptors = [];
+    private IRpcExceptionMapper? _exceptionMapper;
+    private bool _includeExceptionDetails;
 
     /// <summary>Uses a server listener owned by the built server.</summary>
     /// <param name="transport">The listener used to accept independent connections.</param>
@@ -34,6 +37,27 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     public SharpLinkServerBuilder RequireAuthentication()
     {
         _authenticationRequired = true;
+        return this;
+    }
+
+    /// <summary>Adds a server interceptor in registration order.</summary>
+    public SharpLinkServerBuilder AddInterceptor(ISharpLinkServerInterceptor interceptor)
+    {
+        _interceptors.Add(interceptor ?? throw new ArgumentNullException(nameof(interceptor)));
+        return this;
+    }
+
+    /// <summary>Configures an instance-scoped business exception mapper.</summary>
+    public SharpLinkServerBuilder UseExceptionMapper(IRpcExceptionMapper exceptionMapper)
+    {
+        _exceptionMapper = exceptionMapper ?? throw new ArgumentNullException(nameof(exceptionMapper));
+        return this;
+    }
+
+    /// <summary>Includes service exception messages in default Internal responses. Disabled by default.</summary>
+    public SharpLinkServerBuilder EnableDetailedErrors(bool enabled = true)
+    {
+        _includeExceptionDetails = enabled;
         return this;
     }
 
@@ -161,7 +185,9 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             _authenticationRequired,
             protocolOptions,
             runtimeContext,
-            _rpcSessionFlushOptions);
+            _rpcSessionFlushOptions,
+            _interceptors.ToArray(),
+            _exceptionMapper ?? new DefaultRpcExceptionMapper(_includeExceptionDetails));
     }
 
 }

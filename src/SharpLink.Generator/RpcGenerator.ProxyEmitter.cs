@@ -82,7 +82,7 @@ public partial class RpcGenerator
             ? $"TimeSpan.FromSeconds({seconds.ToString("R", InvariantCulture)}d)"
             : "null";
         sb.AppendLine(
-            $"    private static readonly RpcMethodDescriptor __method_{suffix} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout});");
+            $"    private static readonly RpcMethodDescriptor __method_{suffix} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")});");
 
         if (GetPayloadParameters(method).Length != 0)
             sb.AppendLine($"    private readonly IRpcCodec<{GetRequestType(model, method)}> __requestCodec_{suffix};");

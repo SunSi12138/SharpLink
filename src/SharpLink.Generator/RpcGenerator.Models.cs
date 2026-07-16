@@ -22,6 +22,7 @@ internal record RpcMethodModel(
     bool HasCallOptions,
     bool HasTimeoutAttribute,
     double? TimeoutSeconds,
+    bool IsIdempotent,
     long Hash,
     EquatableArray<RpcParameterModel> Parameters);
 

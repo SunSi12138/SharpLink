@@ -5,7 +5,7 @@ namespace SharpLink.Abstractions;
 /// <param name="authentication">The authenticated identity, when present.</param>
 /// <param name="deadline">The negotiated absolute deadline, when present.</param>
 /// <param name="metadata">The immutable request metadata, when present.</param>
-public sealed class SharpLinkCallContextSnapshot(
+public class SharpLinkCallContextSnapshot(
     string sessionId,
     SharpLinkAuthenticationContext? authentication,
     DateTimeOffset? deadline = null,

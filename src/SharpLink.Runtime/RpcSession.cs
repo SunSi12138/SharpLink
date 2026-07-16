@@ -33,6 +33,31 @@ public sealed partial class RpcSession : IRpcSession
     private StreamFlowController? _streamFlowControl;
     private int _activeRequests;
     private int _draining;
+    internal Func<long, long, long, Exception, SharpLinkException>? ServiceExceptionMapper { get; set; }
+
+    internal SharpLinkException MapServiceException(
+        long requestId,
+        long contractId,
+        long methodId,
+        Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        if (ServiceExceptionMapper is { } mapper)
+        {
+            try
+            {
+                return mapper(requestId, contractId, methodId, exception);
+            }
+            catch
+            {
+                // A mapper is never allowed to break the session write path.
+            }
+        }
+        return exception as SharpLinkException ?? new SharpLinkException(
+            SharpLinkErrorCode.Internal,
+            "Internal service error.",
+            exception);
+    }
 
     public RpcSession(
         string id,

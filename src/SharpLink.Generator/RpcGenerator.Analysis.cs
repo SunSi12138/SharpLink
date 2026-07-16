@@ -279,6 +279,12 @@ public partial class RpcGenerator
                IsAttribute(attribute, "SharpLink.Abstractions", "TimeoutAttribute");
     }
 
+    private static bool IsIdempotentAttribute(AttributeData attribute)
+    {
+        return IsAttribute(attribute, "SharpLink.Sdk", "IdempotentAttribute") ||
+               IsAttribute(attribute, "SharpLink.Abstractions", "IdempotentAttribute");
+    }
+
     private static double? GetTimeoutSecondsOrNull(IMethodSymbol method, out bool hasTimeoutAttribute)
     {
         hasTimeoutAttribute = false;
@@ -342,6 +348,7 @@ public partial class RpcGenerator
 
                 var isNonGenericTaskLike = m.ReturnType.ToDisplayString() is "System.Threading.Tasks.Task" or "System.Threading.Tasks.ValueTask";
                 var isOneWay = m.GetAttributes().Any(IsOnewayAttribute);
+                var isIdempotent = m.GetAttributes().Any(IsIdempotentAttribute);
                 var timeoutSeconds = GetTimeoutSecondsOrNull(m, out var hasTimeoutAttribute);
 
                 var isStreamReturn = false;
@@ -393,6 +400,7 @@ public partial class RpcGenerator
                     HasCallOptions: paramArray.Any(p => p.IsCallOptions),
                     HasTimeoutAttribute: hasTimeoutAttribute,
                     TimeoutSeconds: timeoutSeconds,
+                    IsIdempotent: isIdempotent,
                     Hash: methodHash,
                     Parameters: paramArray);
             }).ToImmutableArray();

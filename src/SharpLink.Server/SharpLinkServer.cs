@@ -10,7 +10,9 @@ internal sealed partial class SharpLinkServer(
     bool authenticationRequired = false,
     SharpLinkProtocolOptions? protocolOptions = null,
     SharpLinkRuntimeContext? runtimeContext = null,
-    RpcSessionFlushOptions? rpcSessionFlushOptions = null) : ISharpLinkServer
+    RpcSessionFlushOptions? rpcSessionFlushOptions = null,
+    ISharpLinkServerInterceptor[]? serverInterceptors = null,
+    IRpcExceptionMapper? exceptionMapper = null) : ISharpLinkServer
 {
     private enum ServerState
     {
@@ -43,6 +45,10 @@ internal sealed partial class SharpLinkServer(
     private readonly int _maxConcurrentCallsPerConnection =
         (runtimeContext?.FlowControl.MaxConcurrentCallsPerConnection ?? 1024);
     private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions = rpcSessionFlushOptions;
+    private readonly ISharpLinkServerInterceptor[] _serverInterceptors =
+        serverInterceptors is { Length: > 0 } ? [.. serverInterceptors] : [];
+    private readonly IRpcExceptionMapper _exceptionMapper =
+        exceptionMapper ?? new DefaultRpcExceptionMapper(includeDetails: false);
     private int _globalActiveCalls;
     private long _rejectedOneWayCalls;
     private readonly int _globalMaxConcurrentCalls = (int)Math.Min(
@@ -186,11 +192,60 @@ internal sealed partial class SharpLinkServer(
 
     private SharpLinkCallContextSnapshot CreateCallContext(
         IRpcSession session,
+        IRpcStub stub,
+        long methodId,
+        long requestId,
         DateTimeOffset? deadline,
-        SharpLinkMetadata? metadata)
+        SharpLinkMetadata? metadata,
+        CancellationToken cancellationToken)
     {
         _sessionAuthContexts.TryGetValue(session.Id, out var authenticationContext);
-        return new SharpLinkCallContextSnapshot(session.Id, authenticationContext, deadline, metadata);
+        if (_serverInterceptors.Length == 0)
+            return new SharpLinkCallContextSnapshot(session.Id, authenticationContext, deadline, metadata);
+
+        return CreateServerInvocationContext(
+            session,
+            stub,
+            methodId,
+            requestId,
+            authenticationContext,
+            deadline,
+            metadata,
+            cancellationToken);
+    }
+
+    private static SharpLinkServerInvocationContext CreateServerInvocationContext(
+        IRpcSession session,
+        IRpcStub stub,
+        long methodId,
+        long requestId,
+        SharpLinkAuthenticationContext? authenticationContext,
+        DateTimeOffset? deadline,
+        SharpLinkMetadata? metadata,
+        CancellationToken cancellationToken)
+    {
+        if (!stub.TryGetMethodDescriptor(methodId, out var method))
+        {
+            method = new RpcMethodDescriptor(
+                stub.InterfaceHash,
+                methodId,
+                RpcMethodKind.Unary,
+                HasResponsePayload: false,
+                HasClientStreams: false,
+                HasMethodTimeout: false,
+                MethodTimeout: null);
+        }
+        var rpcSession = (RpcSession)session;
+        return new SharpLinkServerInvocationContext(
+            method,
+            requestId,
+            session.Id,
+            rpcSession.LocalEndPoint,
+            rpcSession.RemoteEndPoint,
+            authenticationContext,
+            deadline,
+            metadata,
+            cancellationToken);
     }
 
     private bool TryAcquireCall(SessionCallAdmission sessionAdmission)

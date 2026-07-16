@@ -8,6 +8,7 @@ public class SharpClientBuilder
     private IClientTransportFactory? _transport;
     private ILoggerFactory? _loggerFactory;
     private ISharpLinkClientAuthenticator? _authenticator;
+    private readonly List<ISharpLinkClientInterceptor> _interceptors = [];
 
     /// <summary>Uses an outbound transport factory owned by the built client.</summary>
     /// <param name="transport">The factory used for initial connections and reconnects.</param>
@@ -21,6 +22,13 @@ public class SharpClientBuilder
     public SharpClientBuilder UseAuthenticator(ISharpLinkClientAuthenticator authenticator)
     {
         _authenticator = authenticator ?? throw new ArgumentNullException(nameof(authenticator));
+        return this;
+    }
+
+    /// <summary>Adds a client interceptor in registration order.</summary>
+    public SharpClientBuilder AddInterceptor(ISharpLinkClientInterceptor interceptor)
+    {
+        _interceptors.Add(interceptor ?? throw new ArgumentNullException(nameof(interceptor)));
         return this;
     }
 
@@ -170,7 +178,8 @@ public class SharpClientBuilder
             protocolOptions,
             runtimeContext,
             _rpcSessionFlushOptions,
-            connectionPool
+            connectionPool,
+            _interceptors.ToArray()
         );
     }
 

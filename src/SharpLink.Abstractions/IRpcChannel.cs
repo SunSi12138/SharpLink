@@ -27,6 +27,7 @@ public enum RpcMethodKind : byte
 /// <param name="HasClientStreams">Whether the request owns one or more client streams.</param>
 /// <param name="HasMethodTimeout">Whether the contract method declares <c>[Timeout]</c>.</param>
 /// <param name="MethodTimeout">Explicit method timeout, or <see langword="null"/> to use the client default.</param>
+/// <param name="IsIdempotent">Whether the contract explicitly permits idempotent retry policies.</param>
 public readonly record struct RpcMethodDescriptor(
     long ContractId,
     long MethodId,
@@ -34,7 +35,8 @@ public readonly record struct RpcMethodDescriptor(
     bool HasResponsePayload,
     bool HasClientStreams,
     bool HasMethodTimeout,
-    TimeSpan? MethodTimeout);
+    TimeSpan? MethodTimeout,
+    bool IsIdempotent = false);
 
 /// <summary>Represents a generated request with no business fields.</summary>
 public readonly struct RpcEmptyRequest;

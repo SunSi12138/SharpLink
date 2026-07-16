@@ -37,6 +37,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
     private readonly ILogger _logger = NullLogger<SharpLinkClient>.Instance;
     private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions;
     private readonly SharpLinkConnectionPoolOptions _connectionPoolOptions = new();
+    private readonly ISharpLinkClientInterceptor[] _clientInterceptors = [];
 
     public SharpLinkClient(
         IClientTransportFactory transportFactory,
@@ -47,7 +48,8 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         SharpLinkProtocolOptions? protocolOptions = null,
         SharpLinkRuntimeContext? runtimeContext = null,
         RpcSessionFlushOptions? rpcSessionFlushOptions = null,
-        SharpLinkConnectionPoolOptions? connectionPoolOptions = null)
+        SharpLinkConnectionPoolOptions? connectionPoolOptions = null,
+        ISharpLinkClientInterceptor[]? clientInterceptors = null)
         : this(transportFactory)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
@@ -68,6 +70,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         _protocolOptions = (protocolOptions ?? _runtimeContext.Protocol).CloneValidated();
         _rpcSessionFlushOptions = rpcSessionFlushOptions;
         _connectionPoolOptions = (connectionPoolOptions ?? new SharpLinkConnectionPoolOptions()).CloneValidated();
+        _clientInterceptors = clientInterceptors is { Length: > 0 } ? [.. clientInterceptors] : [];
         _serverStreamRequestIds = new StripedLongSet(_runtimeContext.Concurrency);
         _locallyCanceledRequestIds = new StripedLongSet(_runtimeContext.Concurrency);
         _requestManager = new PendingRequestTable(_protocolOptions.MaxPendingRequestsPerConnection, _runtimeContext.Codecs);
@@ -83,9 +86,10 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         SharpLinkProtocolOptions? protocolOptions = null,
         SharpLinkRuntimeContext? runtimeContext = null,
         RpcSessionFlushOptions? rpcSessionFlushOptions = null,
-        SharpLinkConnectionPoolOptions? connectionPoolOptions = null)
+        SharpLinkConnectionPoolOptions? connectionPoolOptions = null,
+        ISharpLinkClientInterceptor[]? clientInterceptors = null)
         : this(transportFactory, heartbeatInterval, heartbeatTimeout, requestTimeout, authenticator, protocolOptions,
-            runtimeContext, rpcSessionFlushOptions, connectionPoolOptions)
+            runtimeContext, rpcSessionFlushOptions, connectionPoolOptions, clientInterceptors)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _logger = loggerFactory.CreateLogger<SharpLinkClient>();

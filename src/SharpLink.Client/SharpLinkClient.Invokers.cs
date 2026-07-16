@@ -13,6 +13,11 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        if (_clientInterceptors.Length != 0)
+        {
+            return InvokeUnaryInterceptedAsync(
+                method, request, requestCodec, responseCodec, options, cancellationToken);
+        }
         var control = ResolveCallControl(
             options,
             includeClientDefault: true,
@@ -40,6 +45,11 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        if (_clientInterceptors.Length != 0)
+        {
+            return InvokeOneWayInterceptedAsync(
+                method, request, requestCodec, streams, options, cancellationToken);
+        }
         var control = ResolveCallControl(
             options,
             includeClientDefault: false,
@@ -69,6 +79,11 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
+        if (_clientInterceptors.Length != 0)
+        {
+            return InvokeClientStreamingInterceptedAsync(
+                method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+        }
         var control = ResolveCallControl(
             options,
             includeClientDefault: false,
@@ -96,6 +111,22 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
+        if (_clientInterceptors.Length != 0)
+        {
+            return InvokeServerStreamingIntercepted(
+                method, request, requestCodec, responseCodec, options, cancellationToken);
+        }
+        return InvokeServerStreamingCore(method, request, requestCodec, responseCodec, options, cancellationToken);
+    }
+
+    private IAsyncEnumerable<TResponse> InvokeServerStreamingCore<TRequest, TResponse>(
+        RpcMethodDescriptor method,
+        TRequest request,
+        IRpcCodec<TRequest> requestCodec,
+        IRpcCodec<TResponse> responseCodec,
+        SharpLinkCallOptions options,
+        CancellationToken cancellationToken)
+    {
         var control = ResolveCallControl(
             options,
             includeClientDefault: false,
@@ -128,6 +159,25 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
+        if (_clientInterceptors.Length != 0)
+        {
+            return InvokeDuplexStreamingIntercepted(
+                method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+        }
+        return InvokeDuplexStreamingCore(
+            method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+    }
+
+    private IAsyncEnumerable<TResponse> InvokeDuplexStreamingCore<TRequest, TResponse, TStreams>(
+        RpcMethodDescriptor method,
+        TRequest request,
+        IRpcCodec<TRequest> requestCodec,
+        IRpcCodec<TResponse> responseCodec,
+        TStreams streams,
+        SharpLinkCallOptions options,
+        CancellationToken cancellationToken)
+        where TStreams : struct, IRpcClientStreamWriter
+    {
         var control = ResolveCallControl(
             options,
             includeClientDefault: false,

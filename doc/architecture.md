@@ -47,7 +47,7 @@ SharpLink.Serializer.MemoryPack
   - `SharpLinkServerBuilder`
   - 连接接受、会话生命周期、服务分发
   - `ISharpLinkServerAuthenticator` 与显式 `RequireAuthentication()`
-  - 将当前 `sessionId + 认证上下文 + deadline + metadata` 挂入 `SharpLinkCallContext`
+  - 将当前 `sessionId + requestId + method descriptor + peer + 认证上下文 + deadline + metadata` 挂入 `SharpLinkCallContext`
   - 通过 `SharpLinkAuthorization` 在服务方法内部执行 `scope / tenant / expiry` 校验
   - 调用 `IRpcStub` 执行真实服务方法
 
@@ -143,5 +143,13 @@ SharpLink.Serializer.MemoryPack
 - Client provider 每次连接尝试都会在 RPC handshake timeout 内重新执行，断线重连不会复用已过期 payload。
 - Server provider 接收复制后的有界二进制 payload、connection ID 与 peer endpoint；异步执行期间不会持有 Pipe buffer。
 - provider 返回的 `SharpLinkAuthenticationContext` 归属 session，并在每次调用创建 `SharpLinkCallContextSnapshot` 时传递。
-- handshake 自动拒绝已过期 context；需要授权的业务调用可使用 `SharpLinkAuthorization` 或下一阶段 Server Interceptor 再次检查 token expiry。
+- handshake 自动拒绝已过期 context；每次业务调用会再次拒绝已过期身份，Server Interceptor 和 `SharpLinkAuthorization` 可执行更细粒度的 scope/tenant 策略。
 - provider 未映射异常记录无 payload 的结构化日志，并向客户端返回不含内部细节的 `AuthenticationRejected`。
+
+## 调用拦截与异常边界
+
+- Client/Server interceptor 按 Builder 注册顺序在 Build 时冻结；空 pipeline 直接进入生成 invoker/stub，不创建 delegate 链。
+- Client context 可替换 `SharpLinkCallOptions` 以增加 metadata，也可返回 `SharpLinkClientInvocationResult` 短路调用。
+- Server context 包含 method descriptor、request ID、deadline、metadata、peer、auth、status 与 elapsed，适合授权、限流与审计。
+- `IRpcExceptionMapper` 属于 Server 实例。默认 mapper 保留显式 `SharpLinkException`，其余业务异常统一为不含内部消息的 `Internal`；Unary 与 stream 共用该边界。
+- `[Idempotent]` 只写入生成 descriptor，核心不会自动重试；新版 0.7 Resilience 扩展只会把该标记作为 Unary 重试资格。
