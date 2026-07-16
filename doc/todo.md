@@ -15,9 +15,9 @@
 - Release、Unit、Generator、Integration、NativeAOT、NuGet PackageSmoke 已通过。
 - c32 Unary QPS 为前一基线的 96.75%，保留原基线并在 0.5.1 优先解决。
 
-## 0.5 调整后顺序
+## 0.5.0 实施顺序
 
-原路线图 0.6 整体改名为 0.5。每个编号独立提交；前一项未通过正确性与性能验收，不开始后一项。
+从本版本开始只使用当前版本号，不再同时引用旧路线图编号。每个编号独立提交；前一项未通过正确性与性能验收，不开始后一项。
 
 1. `0.5.1`：重写 PendingRequestTable，把 admission、response/error/cancel/timeout/disconnect 完成仲裁与默认 deadline 登记整合进同一槽位生命周期。
 2. `0.5.2`：将生成代理收敛为 Unary、OneWay、ClientStreaming、ServerStreaming、DuplexStreaming 五类 Invoker。
@@ -27,11 +27,12 @@
 6. `0.5.6`：实现每 Endpoint 连接池与 power-of-two choices。
 7. 完成 Release、AOT、PackageSmoke、LoadTest/Benchmark 五轮门禁后，才进入 0.6。
 
-## 后续版本映射
+## 后续版本
 
-- 原路线图 0.7（TLS、认证、拦截器、遥测、Hosting）改为 0.6。
-- 原路线图 0.8（Discovery、Load Balancing、Resilience）改为 0.7。
-- 原路线图 0.9 RC 与 v1 门禁改为 0.8 RC。
+- `0.6.0`：TLS、认证、Interceptor、业务异常、OpenTelemetry、Hosting、健康检查与优雅排空。
+- `0.7.0`：Discovery、Load Balancing 与 Resilience 官方扩展包。
+- `0.8.0-rc`：Chaos、长稳、跨平台/AOT/Package/性能 Release Gate，只修复正确性、稳定性、性能回退和文档问题。
+- `1.0.0`：通过 RC 接受标准后发布稳定 API 与 Protocol v2。
 
 ## 提交规则
 

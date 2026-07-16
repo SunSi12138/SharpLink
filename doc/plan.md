@@ -1,42 +1,64 @@
-# SharpLink 计划
+# SharpLink 版本路线图
 
-## 目标
+本文档是版本号与范围的唯一事实来源。实施顺序见 `todo.md`，协议定义见 `protocol-v2.md`，性能数据见 `performance.md`。
 
-- 形成稳定的分层架构：`Abstractions / Runtime / Sdk / Client / Server / Hosting / Generator`
-- 提供可直接落地的开发体验：仅依赖 `Sdk` 定义服务契约，按需引入 `Client` 或 `Server`
-- 在流式和取消场景下保证协议闭环与行为一致性
-- 提供可持续的性能基线与回归验证体系
+## 总体目标
 
-## 当前阶段（已完成）
+- `.NET 10 LTS`、Windows/Linux/macOS 与 NativeAOT 一等支持。
+- TCP/UDS、NamedPipe、AnonymousPipe 使用统一会话、错误与生命周期语义。
+- 默认单连接复用，可配置连接池；默认 `Balanced`，提供 `LowLatency` 与 `Throughput`。
+- SDK 内置无反射 DTO Source Generator Codec；MemoryPack 保持可选插件。
+- 核心提供 TLS、认证、Interceptor、deadline、背压、健康检查、遥测与优雅停机。
+- Discovery、Load Balancing、Retry 与 Circuit Breaker 位于官方扩展包。
 
-- Client/Server 共享能力下沉到 Runtime/Abstractions
-- 生成器支持：
-  - `[Oneway]`
-  - `Task/ValueTask/IAsyncEnumerable` 返回约束诊断（`SHARPLINK001`）
-  - 多调用入口生成（无 payload、流式、oneway）
-- 协议新增 `Cancel` 包，支持请求级取消链路
-- 增加多套 Demo（HelloWorld/Streaming/Host/Cancel/Oneway）
-- 基准项目重写为 Unary/Streaming 两类场景
+## 0.4.0：Runtime 与 Protocol v2 基线（已发布）
 
-## 下一阶段（1-2 个迭代）
+- Parser/Codec 安全边界、资源上限、生命周期收敛与 PackageSmoke。
+- 实例级 Runtime Context、Transport Factory/Listener/Connection 拆分。
+- Protocol v2、字节有界 SendPump、CallOptions、deadline、metadata、GoAway 与自动重连。
 
-1. 稳定性收敛
-- 断连后的 pending 请求与流统一 fail-fast
-- 心跳、取消、超时在客户端/服务端行为一致
-- 连接关闭过程的资源释放与异常边界统一
+## 0.5.0：原生 Codec 与热路径优化（开发中）
 
-2. 传输层能力增强
-- 统一 transport 配置模型（超时、buffer、backlog、keepalive）
-- 明确 TCP/UDS/NamedPipe 的平台行为差异与约束
-- 补齐断网/半开连接的自动恢复策略（可选）
+1. `0.5.1`：PendingRequestTable、异步 admission 与统一完成仲裁。
+2. `0.5.2`：Unary、OneWay、ClientStreaming、ServerStreaming、DuplexStreaming 五类内部 Invoker。
+3. `0.5.3`：`PooledByteBufferWriter`、`ArrayPool<byte>` 与明确的 payload ownership。
+4. `0.5.4`：受限、无反射、AOT 友好的 DTO Codec Generator；MemoryPack 承接复杂对象图和显式自定义类型。
+5. `0.5.5`：stream/connection 按字节窗口、`WindowUpdate` 与慢消费者背压。
+6. `0.5.6`：每 Endpoint 连接池、power-of-two choices 与完整性能矩阵。
 
-3. 可观测性
-- 增加请求 ID、方法哈希、耗时、异常类型等结构化日志
-- 增加最小指标（QPS、P99、失败率）输出
+## 0.6.0：企业核心能力
 
-## 中期方向
+1. `0.6.1`：TCP TLS、双向证书与独立握手超时。
+2. `0.6.2`：Anonymous/自定义认证、Authentication Context 与 token expiry。
+3. `0.6.3`：Client/Server Interceptor、`IRpcExceptionMapper` 与 `[Idempotent]`。
+4. `0.6.4`：OpenTelemetry Activity、Meter 与预编译结构化日志。
+5. `0.6.5`：DI 服务生命周期、健康检查、readiness 与优雅排空。
 
-- 协议演进（版本协商、能力协商）
-- Serializer/Transport 扩展点正式化
-- 安全能力（认证、鉴权、可选加密）
-- 文档和示例从“能跑”升级到“可生产参考”
+## 0.7.0：官方企业扩展包
+
+1. `0.7.1`：Discovery 与不可变 Endpoint snapshot/watch。
+2. `0.7.2`：RoundRobin、LeastPending 与默认 PowerOfTwoChoices。
+3. `0.7.3`：只针对 `[Idempotent]` Unary 的 Retry 与 Circuit Breaker。
+
+## 0.8.0-rc：发布门禁
+
+- Unit、Generator、Integration、AOT、Package、Load、StreamLoad、Benchmark 与 Chaos 分层测试。
+- Windows/Linux/macOS Transport matrix，Linux/Windows 72 小时长稳与固定 runner 性能基线。
+- SourceLink、符号包、确定性构建、SBOM、公共 API diff、协议文档与迁移指南。
+- RC 期间不再增加功能，只修复正确性、稳定性、性能回退和文档问题。
+
+## 1.0.0：稳定版
+
+- 无 crash、deadlock、未观察后台异常或非注入调用失败。
+- 故障收敛后 pending request、stream 与后台任务在 timeout 内归零。
+- NativeAOT 无 runtime reflection fallback；SDK 单包引用即可生成契约与 DTO Codec。
+- 固化公共 API 与 Protocol v2；不提供 Protocol v1 长期兼容层。
+
+## 不进入 1.0 的范围
+
+- 非 .NET 客户端与跨语言 IDL。
+- HTTP/REST/WebSocket/浏览器网关。
+- 分布式事务与服务网格控制面。
+- 任意运行时反射序列化。
+- Streaming/OneWay 自动重试。
+- 内置具体注册中心客户端。
