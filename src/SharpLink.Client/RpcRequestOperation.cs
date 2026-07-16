@@ -15,7 +15,7 @@ internal interface IRpcOperation
 internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperation 
 {
     private ManualResetValueTaskSourceCore<T> _core;
-    private IRpcCodecProvider? _codecProvider;
+    private IRpcCodec<T>? _codec;
     
     private readonly Action<RpcRequestOperation<T>> _returnAction;
 
@@ -29,8 +29,14 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     public void Initialize(long id, IRpcCodecProvider codecProvider)
     {
         ArgumentNullException.ThrowIfNull(codecProvider);
+        Initialize(id, codecProvider.GetCodec<T>());
+    }
+
+    public void Initialize(long id, IRpcCodec<T> codec)
+    {
+        ArgumentNullException.ThrowIfNull(codec);
         Id = id;
-        _codecProvider = codecProvider;
+        _codec = codec;
         _core.Reset(); // 重置状态机
     }
     // 【新增】发送失败时的手动归还
@@ -62,8 +68,7 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
             }
             // 【IO线程反序列化】
             // 此时 payload 有效，直接转为 T 对象，不拷贝 bytes
-            var result = (_codecProvider ?? throw new InvalidOperationException("Request operation has no codec provider."))
-                .GetCodec<T>()
+            var result = (_codec ?? throw new InvalidOperationException("Request operation has no response codec."))
                 .Deserialize(payload);
             _core.SetResult(result!);
         }
@@ -80,7 +85,7 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
 
     private void ReturnToPool()
     {
-        _codecProvider = null;
+        _codec = null;
         _returnAction(this);
     }
 

@@ -749,10 +749,6 @@ internal sealed partial class SharpLinkClient
             }
             throw;
         }
-        finally
-        {
-            _requestSessions.TryRemove(requestId, out _);
-        }
     }
 
     private async Task RunStreamSenderAsync(Func<long, CancellationToken, Task> streamSender, long requestId, CancellationToken ct)
@@ -764,6 +760,10 @@ internal sealed partial class SharpLinkClient
         catch (Exception ex)
         {
             _requestManager.DispatchError(requestId, ex);
+        }
+        finally
+        {
+            _requestSessions.TryRemove(requestId, out _);
         }
     }
 

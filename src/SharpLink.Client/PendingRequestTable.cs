@@ -46,21 +46,37 @@ internal sealed class PendingRequestTable : IDisposable
     }
 
     public RpcRequestOperation<T> Rent<T>(out long id)
+        => Rent(_codecProvider.GetCodec<T>(), out id);
+
+    public RpcRequestOperation<T> Rent<T>(IRpcCodec<T> responseCodec, out long id)
     {
+        ArgumentNullException.ThrowIfNull(responseCodec);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (TryRent(out id, out RpcRequestOperation<T> operation))
+        if (TryRent(responseCodec, out id, out RpcRequestOperation<T> operation))
             return operation;
 
         throw CreateResourceExhaustedException();
     }
 
+    public ValueTask<PendingRequestLease<T>> RentAsync<T>(
+        bool waitForSlot,
+        DateTimeOffset? deadline,
+        CancellationToken cancellationToken)
+        => RentAsync(
+            _codecProvider.GetCodec<T>(),
+            waitForSlot,
+            deadline,
+            cancellationToken);
+
     public async ValueTask<PendingRequestLease<T>> RentAsync<T>(
+        IRpcCodec<T> responseCodec,
         bool waitForSlot,
         DateTimeOffset? deadline,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(responseCodec);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (TryRent(out var id, out RpcRequestOperation<T> operation))
+        if (TryRent(responseCodec, out var id, out RpcRequestOperation<T> operation))
             return new PendingRequestLease<T>(id, operation);
         if (!waitForSlot)
             throw CreateResourceExhaustedException();
@@ -74,7 +90,7 @@ internal sealed class PendingRequestTable : IDisposable
             try
             {
                 // Close the release-before-wait race without charging the normal path.
-                if (TryRent(out id, out operation))
+                if (TryRent(responseCodec, out id, out operation))
                     return new PendingRequestLease<T>(id, operation);
 
                 if (deadline is not { } absoluteDeadline)
@@ -101,7 +117,7 @@ internal sealed class PendingRequestTable : IDisposable
                 Interlocked.Decrement(ref _waiterCount);
             }
 
-            if (TryRent(out id, out operation))
+            if (TryRent(responseCodec, out id, out operation))
                 return new PendingRequestLease<T>(id, operation);
         }
     }
@@ -156,11 +172,11 @@ internal sealed class PendingRequestTable : IDisposable
         _slotAvailable.Dispose();
     }
 
-    private bool TryRent<T>(out long id, out RpcRequestOperation<T> operation)
+    private bool TryRent<T>(IRpcCodec<T> responseCodec, out long id, out RpcRequestOperation<T> operation)
     {
         operation = RpcOperationPool<T>.Rent();
         id = NextRequestId();
-        operation.Initialize(id, _codecProvider);
+        operation.Initialize(id, responseCodec);
         var index = (int)(id & _indexMask);
         if (Interlocked.CompareExchange(ref _slots[index], operation, null) is null)
             return true;
@@ -168,7 +184,7 @@ internal sealed class PendingRequestTable : IDisposable
         for (var attempt = 1; attempt < _slots.Length; attempt++)
         {
             id = NextRequestId();
-            operation.Initialize(id, _codecProvider);
+            operation.Initialize(id, responseCodec);
             index = (int)(id & _indexMask);
             if (Interlocked.CompareExchange(ref _slots[index], operation, null) is null)
                 return true;

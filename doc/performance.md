@@ -103,3 +103,17 @@ c32 的 97% 阈值为 587.01k QPS，当前中位数低 1.52k QPS，即差 0.25 �
 | 32 | 569.43k QPS / P99 83 μs | 566.75k QPS / P99 83 μs | 通过（QPS 99.5%，P99 100.0%） |
 
 满表等待、deadline/cancellation、request ID 回绕、迟到响应与 response/cancel 竞态由 UnitTests 覆盖；本次不更新既有基线。
+
+## 0.5.2 五类 Invoker 回归（2026-07-17，同一 runner）
+
+Generator 不再创建捕获业务参数的 payload/stream delegate。每个方法生成静态 `RpcMethodDescriptor`、readonly request struct、缓存的 request/response Codec 和值类型 client-stream writer；`IRpcChannel` 收敛为 Unary、OneWay、ClientStreaming、ServerStreaming、DuplexStreaming 五类入口。
+
+在临时 detached worktree 构建 `3c142fe` 作为 0.5.1 基线，随后与 0.5.2 使用相同机器、相同时段、1 秒 warmup、3 秒测量、每档五次取中位数：
+
+| 并发 | 0.5.1 同时段基线 | 0.5.2 五轮中位数 | 门禁结论 |
+|---:|---:|---:|---|
+| 1 | 25.68k QPS / P99 73 μs | 25.65k QPS / P99 72 μs | 通过（QPS 99.9%，P99 98.6%） |
+| 8 | 170.29k QPS / P99 65 μs | 169.14k QPS / P99 65 μs | 通过（QPS 99.3%，P99 100.0%） |
+| 32 | 582.69k QPS / P99 81 μs | 575.37k QPS / P99 83 μs | 通过（QPS 98.7%，P99 102.5%） |
+
+BenchmarkDotNet `UnaryBenchmarks.Rpc_Add`（1024 invocation、3 warmup、10 iteration）A/B 结果：0.5.1 在两个 PayloadSize 参数下均为 856 B/op；0.5.2 均为 832 B/op，下降 2.8%。测量均值受本机调度抖动影响较大，因此吞吐/延迟门禁以五轮 LoadTest 中位数为准，allocation 以 MemoryDiagnoser 为准。

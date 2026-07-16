@@ -136,6 +136,38 @@ public interface IHelloService
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task ProxyShouldUseFiveInvokerShapesWithoutCapturedPayloadDelegate()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Unary(int value);
+    [SharpLink.Sdk.Oneway]
+    ValueTask Notify(string value);
+    ValueTask<int> Upload(IAsyncEnumerable<int> values);
+    IAsyncEnumerable<int> Download(int count);
+    IAsyncEnumerable<int> Duplex(IAsyncEnumerable<int> values);
+}
+""");
+
+        var generated = RunGeneratorAndGetSources(source);
+        var proxy = generated.FirstOrDefault(static text => text.Contains("IHelloService_Proxy"));
+        if (proxy is null)
+            throw new Exception("Expected generated proxy source.");
+        Ensure(proxy.Contains("InvokeUnaryAsync"), "Unary invoker");
+        Ensure(proxy.Contains("InvokeOneWayAsync"), "OneWay invoker");
+        Ensure(proxy.Contains("InvokeClientStreamingAsync"), "ClientStreaming invoker");
+        Ensure(proxy.Contains("InvokeServerStreamingAsync"), "ServerStreaming invoker");
+        Ensure(proxy.Contains("InvokeDuplexStreamingAsync"), "DuplexStreaming invoker");
+        Ensure(proxy.Contains("readonly struct __SharpLinkRequest_"), "Generated request struct");
+        Ensure(proxy.Contains("IRpcCodec<__SharpLinkRequest_"), "Generated request codec");
+        Ensure(!proxy.Contains("Action<ArrayBufferWriter<byte>>"), "Captured payload delegate must not be generated");
+        Ensure(!proxy.Contains("InvokeCancellableWithTimeoutAsync"), "Legacy combinatorial API must not be generated");
+        return Task.CompletedTask;
+    }
+
     private static string BuildSource(string contract)
     {
         return $$"""
@@ -161,6 +193,11 @@ namespace SharpLink.Sdk
         public TimeoutAttribute(double seconds)
         {
         }
+    }
+
+    [AttributeUsage(AttributeTargets.Method)]
+    public sealed class OnewayAttribute : Attribute
+    {
     }
 
     public readonly record struct SharpLinkCallOptions;
@@ -197,6 +234,23 @@ namespace SharpLink.Sdk
         GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
         driver = driver.RunGenerators(compilation);
         return driver.GetRunResult().Diagnostics;
+    }
+
+    private static string[] RunGeneratorAndGetSources(string source)
+    {
+        var syntaxTree = CSharpSyntaxTree.ParseText(source, CSharpParseOptions.Default);
+        var compilation = CSharpCompilation.Create(
+            assemblyName: "GeneratorShapeTestAssembly",
+            syntaxTrees: [syntaxTree],
+            references: GetPlatformReferences(),
+            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        IIncrementalGenerator generator = new RpcGenerator();
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
+        driver = driver.RunGenerators(compilation);
+        return driver.GetRunResult().GeneratedTrees
+            .Select(static tree => tree.GetText().ToString())
+            .ToArray();
     }
 
     private static IEnumerable<MetadataReference> GetPlatformReferences()

@@ -49,7 +49,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     private CancellationTokenRegistration _enumerationCancellationRegistration;
 
     private T? _current;
-    private IRpcCodecProvider? _codecProvider;
+    private IRpcCodec<T>? _codec;
 
     private const int InitialCapacity = 16;
     private const int ShrinkThreshold = 4096;
@@ -67,20 +67,28 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     public static PooledAsyncStreamDispatcher<T> Rent(
         CancellationToken enumerationToken = default,
         IRpcCodecProvider? codecProvider = null)
+        => Rent(
+            enumerationToken,
+            (codecProvider ?? SharpLinkRuntimeContext.Default.Codecs).GetCodec<T>());
+
+    public static PooledAsyncStreamDispatcher<T> Rent(
+        CancellationToken enumerationToken,
+        IRpcCodec<T> codec)
     {
+        ArgumentNullException.ThrowIfNull(codec);
         if (!Pool.TryTake(out var dispatcher))
             dispatcher = new PooledAsyncStreamDispatcher<T>();
 
-        dispatcher.Reset(enumerationToken, codecProvider ?? SharpLinkRuntimeContext.Default.Codecs);
+        dispatcher.Reset(enumerationToken, codec);
         return dispatcher;
     }
 
-    private void Reset(CancellationToken enumerationToken, IRpcCodecProvider codecProvider)
+    private void Reset(CancellationToken enumerationToken, IRpcCodec<T> codec)
     {
         _enumerationCancellationRegistration.Dispose();
 
         _enumerationToken = enumerationToken;
-        _codecProvider = codecProvider;
+        _codec = codec;
 
         _waitSource = new ManualResetValueTaskSourceCore<bool>
         {
@@ -117,8 +125,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     {
 
         // 反序列化可能很重：尽量让队列/锁不要挡它（这里本来就无锁）
-        var item = (_codecProvider ?? throw new InvalidOperationException("Stream dispatcher has no codec provider."))
-            .GetCodec<T>()
+        var item = (_codec ?? throw new InvalidOperationException("Stream dispatcher has no codec."))
             .Deserialize(payload);
 
         // 生产者侧：如果已结束/已释放，直接丢弃（读用 Volatile 对称）
@@ -430,7 +437,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
         _enumerationCancellationRegistration.Dispose();
         _error = null;
-        _codecProvider = null;
+        _codec = null;
 
         // 复位枚举器占用标记
         Volatile.Write(ref _enumeratorTaken, 0);
