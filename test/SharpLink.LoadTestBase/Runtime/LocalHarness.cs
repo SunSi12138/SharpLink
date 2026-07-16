@@ -1,30 +1,29 @@
 using SharpLink.Abstractions;
 using System;
+using System.Threading.Tasks;
 
 namespace SharpLink.LoadTestBase;
 
-public sealed class LocalHarness(ISharpLinkServer server, ISharpLinkClient client, Action cleanup) : IDisposable
+public sealed class LocalHarness(ISharpLinkServer server, ISharpLinkClient client, Action cleanup) : IAsyncDisposable
 {
     private bool _disposed;
 
     public ISharpLinkServer Server { get; } = server;
     public ISharpLinkClient Client { get; } = client;
 
-    public void DisposeServer()
+    public ValueTask DisposeServerAsync()
     {
-        (Server as IDisposable)?.Dispose();
+        return Server.StopAsync(TimeSpan.Zero);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         if (_disposed)
             return;
 
         _disposed = true;
-        (Client as IDisposable)?.Dispose();
-        (Server as IDisposable)?.Dispose();
+        await Client.StopAsync();
+        await Server.StopAsync(TimeSpan.Zero);
         cleanup();
     }
 }
-
-

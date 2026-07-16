@@ -35,6 +35,9 @@ internal sealed partial class SharpLinkServer
     [LoggerMessage(EventId = LogEvents.Rpc.OneWayDispatchFailed, Level = LogLevel.Warning, Message = "One-way RPC dispatch failed.")]
     private static partial void LogOnewayRpcDispatchFailed(ILogger logger, Exception e);
 
+    [LoggerMessage(EventId = LogEvents.Rpc.ResourceExhausted, Level = LogLevel.Warning, Message = "One-way RPC was rejected because server call capacity is exhausted.")]
+    private static partial void LogOnewayRpcResourceExhausted(ILogger logger);
+
     [LoggerMessage(EventId = LogEvents.Rpc.DispatchFailed, Level = LogLevel.Error, Message = "Unhandled exception in RPC dispatch.")]
     private static partial void LogRpcDispatchUnhandledException(ILogger logger, Exception e);
 

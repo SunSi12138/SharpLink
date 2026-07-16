@@ -15,7 +15,8 @@ internal sealed class SByteCodec : IRpcCodec<sbyte>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public sbyte Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        return Unsafe.ReadUnaligned<sbyte>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
+        CodecHelpers.EnsureAvailable(buffer, Size);
+        return CodecHelpers.ReadUnmanaged<sbyte>(buffer);
     }
 }
 
@@ -44,6 +45,7 @@ internal sealed class NullableSByteCodec : IRpcCodec<sbyte?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public sbyte? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);

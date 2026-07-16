@@ -5,13 +5,15 @@ public class SharpClientBuilder
     public static SharpClientBuilder Create() => new();
     
     
-    private ITransport? _transport;
+    private IClientTransportFactory? _transport;
     private ILoggerFactory? _loggerFactory;
-    private string _handshakeMessage = "Password";
+    private string _handshakeMessage = string.Empty;
 
-    public SharpClientBuilder UseTransport(ITransport transport)
+    /// <summary>Uses an outbound transport factory owned by the built client.</summary>
+    /// <param name="transport">The factory used for initial connections and reconnects.</param>
+    public SharpClientBuilder UseTransport(IClientTransportFactory transport)
     {
-        _transport = transport;
+        _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         return this;
     }
 
@@ -22,15 +24,37 @@ public class SharpClientBuilder
         return this;
     }
 
-    private Func<Type,IRpcCodec?>? _codecResolver;
+    private readonly SharpLinkRuntimeContextBuilder _runtimeContextBuilder = new();
     private TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(10);
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
-    private TimeSpan? _requestTimeout;
+    private TimeSpan? _requestTimeout = TimeSpan.FromSeconds(30);
     private RpcSessionFlushOptions? _rpcSessionFlushOptions;
+
+    /// <summary>Configures instance-scoped runtime behavior.</summary>
+    public SharpClientBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)
+    {
+        _runtimeContextBuilder.Configure(configure);
+        return this;
+    }
+
+    /// <summary>Configures per-client protocol safety limits.</summary>
+    public SharpClientBuilder UseProtocol(Action<SharpLinkProtocolOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        _runtimeContextBuilder.Configure(options => configure(options.Protocol));
+        return this;
+    }
 
     public SharpClientBuilder UseSerializer(Func<Type,IRpcCodec?>? codecResolver)
     {
-        _codecResolver = codecResolver;
+        _runtimeContextBuilder.UseCodecResolver(codecResolver);
+        return this;
+    }
+
+    /// <summary>Registers an explicit codec only for clients built by this builder.</summary>
+    public SharpClientBuilder UseCodec<T>(IRpcCodec<T> codec)
+    {
+        _runtimeContextBuilder.AddCodec(codec);
         return this;
     }
 
@@ -43,13 +67,13 @@ public class SharpClientBuilder
 
     public SharpClientBuilder UseBufferWriterPool(Action<BufferWriterPoolOptions> configure)
     {
-        BufferWriterPool.Configure(configure);
+        _runtimeContextBuilder.ConfigureBufferPool(configure);
         return this;
     }
 
     public SharpClientBuilder UseStateStoreConcurrency(Action<RuntimeConcurrencyOptions> configure)
     {
-        RuntimeConcurrency.Configure(configure);
+        _runtimeContextBuilder.ConfigureStateStores(configure);
         return this;
     }
 
@@ -113,25 +137,10 @@ public class SharpClientBuilder
     public ISharpLinkClient Build()
     {
         if (_transport == null)
-            throw new InvalidOperationException("Transport must be set before building the server.");
+            throw new InvalidOperationException("Transport must be set before building the client.");
 
-        if (_codecResolver is not null)
-            RpcCodecRegistry.Initialize(_codecResolver);
-
-        if (_rpcSessionFlushOptions is not { } flushOptions)
-            return new SharpLinkClient(
-                _transport,
-                _heartbeatInterval,
-                _heartbeatTimeout,
-                _loggerFactory ?? NullLoggerFactory.Instance,
-                _requestTimeout,
-                _handshakeMessage
-            );
-        
-        if (_transport is not IRpcSessionFlushConfigurableTransport configurableTransport)
-            throw new InvalidOperationException("Configured RPC session flush options, but transport does not support flush configuration.");
-        
-        configurableTransport.ConfigureRpcSessionFlush(flushOptions);
+        var runtimeContext = _runtimeContextBuilder.Build();
+        var protocolOptions = runtimeContext.Protocol;
 
         return new SharpLinkClient(
             _transport,
@@ -139,7 +148,10 @@ public class SharpClientBuilder
             _heartbeatTimeout,
             _loggerFactory ?? NullLoggerFactory.Instance,
             _requestTimeout,
-            _handshakeMessage
+            _handshakeMessage,
+            protocolOptions,
+            runtimeContext,
+            _rpcSessionFlushOptions
         );
     }
 }

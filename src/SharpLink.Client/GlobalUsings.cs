@@ -4,6 +4,7 @@ global using System.Text;
 global using SharpLink.Runtime;
 global using System.Buffers;
 global using System.Collections.Concurrent;
+global using System.Diagnostics;
 global using System.Threading.Tasks;
 global using System.Collections.Generic;
 global using Microsoft.Extensions.Logging;

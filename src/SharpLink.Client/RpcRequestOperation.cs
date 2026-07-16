@@ -15,6 +15,7 @@ internal interface IRpcOperation
 internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperation 
 {
     private ManualResetValueTaskSourceCore<T> _core;
+    private IRpcCodecProvider? _codecProvider;
     
     private readonly Action<RpcRequestOperation<T>> _returnAction;
 
@@ -25,13 +26,15 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     }
     
     public long Id { get; private set; }
-    public void Initialize(long id)
+    public void Initialize(long id, IRpcCodecProvider codecProvider)
     {
+        ArgumentNullException.ThrowIfNull(codecProvider);
         Id = id;
+        _codecProvider = codecProvider;
         _core.Reset(); // 重置状态机
     }
     // 【新增】发送失败时的手动归还
-    public void ReturnError() => _returnAction(this);
+    public void ReturnError() => ReturnToPool();
     
     public T GetResult(short token)
     {
@@ -41,7 +44,7 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
         }
         finally
         {
-            _returnAction(this);
+            ReturnToPool();
         }
     }
     public ValueTaskSourceStatus GetStatus(short token) => _core.GetStatus(token);
@@ -59,7 +62,9 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
             }
             // 【IO线程反序列化】
             // 此时 payload 有效，直接转为 T 对象，不拷贝 bytes
-            var result = RpcCodec.Deserialize<T>(payload);
+            var result = (_codecProvider ?? throw new InvalidOperationException("Request operation has no codec provider."))
+                .GetCodec<T>()
+                .Deserialize(payload);
             _core.SetResult(result!);
         }
         catch (Exception ex)
@@ -72,4 +77,11 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
         _core.SetException(ex);
     }
     public ValueTask<T> AsValueTask() => new(this, _core.Version);
+
+    private void ReturnToPool()
+    {
+        _codecProvider = null;
+        _returnAction(this);
+    }
+
 }

@@ -15,14 +15,17 @@ internal sealed class TimeOnlyCodec : IRpcCodec<TimeOnly>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public TimeOnly Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
-            return Unsafe.ReadUnaligned<TimeOnly>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
+            return CodecHelpers.ValidateTimeOnly(
+                Unsafe.ReadUnaligned<TimeOnly>(ref MemoryMarshal.GetReference(buffer.FirstSpan)));
         }
 
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
-        return Unsafe.ReadUnaligned<TimeOnly>(ref MemoryMarshal.GetReference(temp));
+        return CodecHelpers.ValidateTimeOnly(
+            Unsafe.ReadUnaligned<TimeOnly>(ref MemoryMarshal.GetReference(temp)));
     }
 }
 
@@ -52,11 +55,13 @@ internal sealed class NullableTimeOnlyCodec : IRpcCodec<TimeOnly?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public TimeOnly? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
             if (start == 0) return null;
-            return Unsafe.ReadUnaligned<TimeOnly>(ref Unsafe.Add(ref start, 1));
+            return CodecHelpers.ValidateTimeOnly(
+                Unsafe.ReadUnaligned<TimeOnly>(ref Unsafe.Add(ref start, 1)));
         }
 
         Span<byte> temp = stackalloc byte[Size];
@@ -64,6 +69,7 @@ internal sealed class NullableTimeOnlyCodec : IRpcCodec<TimeOnly?>
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         
         if (tempStart == 0) return null;
-        return Unsafe.ReadUnaligned<TimeOnly>(ref Unsafe.Add(ref tempStart, 1));
+        return CodecHelpers.ValidateTimeOnly(
+            Unsafe.ReadUnaligned<TimeOnly>(ref Unsafe.Add(ref tempStart, 1)));
     }
 }

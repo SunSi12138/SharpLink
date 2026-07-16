@@ -12,13 +12,18 @@ public static class RpcCodecRegistry
         RegisterBuiltinArrayCodec();
     }
     
+    [Obsolete("Register codecs with SharpClientBuilder.UseCodec or SharpLinkServerBuilder.UseCodec.")]
     public static void Register<T>(IRpcCodec<T> codec)
+        => RegisterCore(codec);
+
+    private static void RegisterCore<T>(IRpcCodec<T> codec)
     {
         if(RpcCodec<T>.Initialized)
             throw new Exception($"RpcCodecRegistry duplicated register type {typeof(T)}");
         RpcCodec<T>.Codec = codec;
     }
     public static void Initialize(){}
+    [Obsolete("Configure a codec resolver with the client or server builder UseSerializer method.")]
     public static void Initialize(Func<Type,IRpcCodec?>? codecResolver) => _codecResolver = codecResolver;
     internal static IRpcCodec<T> Create<T>()
     {
@@ -41,63 +46,67 @@ public static class RpcCodecRegistry
 
     private static void RegisterBuiltinCodec()
     {
-        Register(BoolCodec.Instance);           Register(NullableBoolCodec.Instance);      
-        Register(ByteCodec.Instance);           Register(NullableByteCodec.Instance);
-        Register(SByteCodec.Instance);          Register(NullableSByteCodec.Instance);
+        RegisterCore(BoolCodec.Instance);           RegisterCore(NullableBoolCodec.Instance);
+        RegisterCore(ByteCodec.Instance);           RegisterCore(NullableByteCodec.Instance);
+        RegisterCore(SByteCodec.Instance);          RegisterCore(NullableSByteCodec.Instance);
         
-        Register(Int16Codec.Instance);          Register(NullableInt16Codec.Instance);     
-        Register(UInt16Codec.Instance);         Register(NullableUInt16Codec.Instance);
-        Register(CharCodec.Instance);           Register(NullableCharCodec.Instance);      
-        Register(HalfCodec.Instance);           Register(NullableHalfCodec.Instance);
+        RegisterCore(Int16Codec.Instance);          RegisterCore(NullableInt16Codec.Instance);
+        RegisterCore(UInt16Codec.Instance);         RegisterCore(NullableUInt16Codec.Instance);
+        RegisterCore(CharCodec.Instance);           RegisterCore(NullableCharCodec.Instance);
+        RegisterCore(HalfCodec.Instance);           RegisterCore(NullableHalfCodec.Instance);
         
-        Register(Int32Codec.Instance);          Register(NullableInt32Codec.Instance);     
-        Register(UInt32Codec.Instance);         Register(NullableUInt32Codec.Instance);
-        Register(FloatCodec.Instance);          Register(NullableFloatCodec.Instance);
-        Register(RuneCodec.Instance);           Register(NullableRuneCodec.Instance);
-        Register(IndexCodec.Instance);          Register(NullableIndexCodec.Instance); 
+        RegisterCore(Int32Codec.Instance);          RegisterCore(NullableInt32Codec.Instance);
+        RegisterCore(UInt32Codec.Instance);         RegisterCore(NullableUInt32Codec.Instance);
+        RegisterCore(FloatCodec.Instance);          RegisterCore(NullableFloatCodec.Instance);
+        RegisterCore(RuneCodec.Instance);           RegisterCore(NullableRuneCodec.Instance);
+        RegisterCore(IndexCodec.Instance);          RegisterCore(NullableIndexCodec.Instance);
         
-        Register(Int64Codec.Instance);          Register(NullableInt64Codec.Instance);     
-        Register(UInt64Codec.Instance);         Register(NullableUInt64Codec.Instance);
-        Register(DoubleCodec.Instance);         Register(NullableDoubleCodec.Instance);    
-        Register(RangeCodec.Instance);          Register(NullableRangeCodec.Instance);
+        RegisterCore(Int64Codec.Instance);          RegisterCore(NullableInt64Codec.Instance);
+        RegisterCore(UInt64Codec.Instance);         RegisterCore(NullableUInt64Codec.Instance);
+        RegisterCore(DoubleCodec.Instance);         RegisterCore(NullableDoubleCodec.Instance);
+        RegisterCore(RangeCodec.Instance);          RegisterCore(NullableRangeCodec.Instance);
         
-        Register(Int128Codec.Instance);         Register(NullableInt128Codec.Instance);
-        Register(UInt128Codec.Instance);        Register(NullableUInt128Codec.Instance);
-        Register(GuidCodec.Instance);           Register(NullableGuidCodec.Instance);
-        Register(DecimalCodec.Instance);        Register(NullableDecimalCodec.Instance);
+        RegisterCore(Int128Codec.Instance);         RegisterCore(NullableInt128Codec.Instance);
+        RegisterCore(UInt128Codec.Instance);        RegisterCore(NullableUInt128Codec.Instance);
+        RegisterCore(GuidCodec.Instance);           RegisterCore(NullableGuidCodec.Instance);
+        RegisterCore(DecimalCodec.Instance);        RegisterCore(NullableDecimalCodec.Instance);
         
-        Register(DateTimeCodec.Instance);       Register(NullableDateTimeCodec.Instance);  
-        Register(DateTimeOffsetCodec.Instance); Register(NullableDateTimeOffsetCodec.Instance);
-        Register(DateOnlyCodec.Instance);       Register(NullableDateOnlyCodec.Instance);
-        Register(TimeOnlyCodec.Instance);       Register(NullableTimeOnlyCodec.Instance);
-        Register(TimeSpanCodec.Instance);       Register(NullableTimeSpanCodec.Instance);
+        RegisterCore(DateTimeCodec.Instance);       RegisterCore(NullableDateTimeCodec.Instance);
+        RegisterCore(DateTimeOffsetCodec.Instance); RegisterCore(NullableDateTimeOffsetCodec.Instance);
+        RegisterCore(DateOnlyCodec.Instance);       RegisterCore(NullableDateOnlyCodec.Instance);
+        RegisterCore(TimeOnlyCodec.Instance);       RegisterCore(NullableTimeOnlyCodec.Instance);
+        RegisterCore(TimeSpanCodec.Instance);       RegisterCore(NullableTimeSpanCodec.Instance);
         
-        Register(StringCodec.Instance);
+        RegisterCore(StringCodec.Instance);
     }
 
     private static void RegisterBuiltinArrayCodec()
     {
-        RegisterBlitArray<bool>();             RegisterBlitArray<byte>();
-        RegisterBlitArray<sbyte>();            RegisterBlitArray<short>();
-        RegisterBlitArray<ushort>();           RegisterBlitArray<char>();
-        RegisterBlitArray<Half>();             RegisterBlitArray<int>();
-        RegisterBlitArray<uint>();             RegisterBlitArray<float>();
-        RegisterBlitArray<Rune>();             RegisterBlitArray<long>();
-        RegisterBlitArray<ulong>();            RegisterBlitArray<double>();
-        RegisterBlitArray<Guid>();             RegisterBlitArray<decimal>();
-        RegisterBlitArray<DateTimeOffset>();   RegisterBlitArray<DateTime>();         
-        RegisterBlitArray<DateOnly>();         RegisterBlitArray<TimeOnly>();
-        RegisterBlitArray<TimeSpan>(); 
-        RegisterBlitArray<Int128>();           RegisterBlitArray<UInt128>(); 
-        RegisterBlitArray<Index>();            RegisterBlitArray<Range>();
+        RegisterBlitArrayCore<bool>();             RegisterBlitArrayCore<byte>();
+        RegisterBlitArrayCore<sbyte>();            RegisterBlitArrayCore<short>();
+        RegisterBlitArrayCore<ushort>();           RegisterBlitArrayCore<char>();
+        RegisterBlitArrayCore<Half>();             RegisterBlitArrayCore<int>();
+        RegisterBlitArrayCore<uint>();             RegisterBlitArrayCore<float>();
+        RegisterBlitArrayCore<Rune>();             RegisterBlitArrayCore<long>();
+        RegisterBlitArrayCore<ulong>();            RegisterBlitArrayCore<double>();
+        RegisterBlitArrayCore<Guid>();             RegisterBlitArrayCore<decimal>();
+        RegisterBlitArrayCore<DateTimeOffset>();   RegisterBlitArrayCore<DateTime>();
+        RegisterBlitArrayCore<DateOnly>();         RegisterBlitArrayCore<TimeOnly>();
+        RegisterBlitArrayCore<TimeSpan>();
+        RegisterBlitArrayCore<Int128>();           RegisterBlitArrayCore<UInt128>();
+        RegisterBlitArrayCore<Index>();            RegisterBlitArrayCore<Range>();
     }
 
+    [Obsolete("Built-in blittable collection codecs are included by every runtime context.")]
     public static void RegisterBlitArray<T>() where T : unmanaged
+        => RegisterBlitArrayCore<T>();
+
+    private static void RegisterBlitArrayCore<T>() where T : unmanaged
     {
-        Register(BlitArrayCodec<T>.Instance);
-        Register(BlitImmutableArrayCodec<T>.Instance);
-        Register(BlitListCodec<T>.Instance);
-        Register(BlitMemoryCodec<T>.Instance);
-        Register(BlitReadOnlyMemoryCodec<T>.Instance);
+        RegisterCore(BlitArrayCodec<T>.Instance);
+        RegisterCore(BlitImmutableArrayCodec<T>.Instance);
+        RegisterCore(BlitListCodec<T>.Instance);
+        RegisterCore(BlitMemoryCodec<T>.Instance);
+        RegisterCore(BlitReadOnlyMemoryCodec<T>.Instance);
     }
 }

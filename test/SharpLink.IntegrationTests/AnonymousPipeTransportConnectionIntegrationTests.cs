@@ -21,7 +21,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
         await Task.Delay(120);
-        harness.DisposeServerOnly();
+        await harness.DisposeServerOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "anonymous pipe pending should fail fast after server dispose", SharpLinkErrorCode.ConnectionClosed);
     }
@@ -35,7 +35,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
         await Task.Delay(120);
-        harness.DisposeClientOnly();
+        await harness.DisposeClientOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "anonymous pipe pending should fail fast after client dispose", SharpLinkErrorCode.ConnectionClosed);
     }
@@ -95,7 +95,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
             var allocator = (IAnonymousPipeAllocator)serverBuilder.Transport!;
-            var (inHandle, outHandle) = allocator.AllocateNewSession();
+            var (inHandle, outHandle) = await allocator.AllocateAsync(cts.Token);
 
             var client = SharpClientBuilder.Create()
                 .UseAnonymousPipe(inHandle, outHandle)
@@ -108,7 +108,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
             {
                 try
                 {
-                    await server.Start(cts.Token);
+                    await server.RunAsync(cts.Token);
                 }
                 catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
                 {
@@ -116,14 +116,12 @@ public class AnonymousPipeTransportConnectionIntegrationTests
                 }
             }, CancellationToken.None);
 
-            var connected = await client.ConnectAsync(cts.Token);
-            if (!connected)
-                throw new Exception("client connect failed");
+            await client.ConnectAsync(cts.Token);
 
             return new AnonymousPipeHarness(server, serverTask, cts, client);
         }
 
-        public void DisposeServerOnly()
+        public async ValueTask DisposeServerOnlyAsync()
         {
             if (_serverDisposed)
                 return;
@@ -131,7 +129,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
             _serverDisposed = true;
             try
             {
-                (_server as IDisposable)?.Dispose();
+                await _server.StopAsync(TimeSpan.Zero);
             }
             catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException or ArgumentException)
             {
@@ -139,7 +137,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
             }
         }
 
-        public void DisposeClientOnly()
+        public async ValueTask DisposeClientOnlyAsync()
         {
             if (_clientDisposed)
                 return;
@@ -147,7 +145,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
             _clientDisposed = true;
             try
             {
-                (Client as IDisposable)?.Dispose();
+                await Client.StopAsync();
             }
             catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException or ArgumentException)
             {
@@ -157,7 +155,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
 
         public async ValueTask DisposeAsync()
         {
-            DisposeClientOnly();
+            await DisposeClientOnlyAsync();
             try
             {
                 await _serverCts.CancelAsync();
@@ -165,7 +163,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
             catch (ObjectDisposedException)
             {
             }
-            DisposeServerOnly();
+            await DisposeServerOnlyAsync();
             await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
             try
             {

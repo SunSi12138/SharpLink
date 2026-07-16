@@ -6,9 +6,9 @@ public readonly ref struct PacketScope(ArrayBufferWriter<byte> writer, PacketTok
 {
     public void Dispose()
     {
-        var bodyLength = writer.WrittenCount - token.StartOffset - ProtocolConstants.HeaderBytes;
+        var bodyLength = writer.WrittenCount - token.StartOffset - ProtocolV2Constants.HeaderBytes;
         var span = MemoryMarshal.AsMemory(writer.WrittenMemory).Span;
-        var lengthSlice = span.Slice(token.StartOffset + ProtocolConstants.PacketLengthOffset, 4);
+        var lengthSlice = span.Slice(token.StartOffset + 1, sizeof(int));
         BinaryPrimitives.WriteInt32LittleEndian(lengthSlice, bodyLength);
     }
 }

@@ -6,9 +6,14 @@ public sealed class StripedLongMap<TValue> where TValue : class
     private readonly Dictionary<long, TValue>[] _maps;
     private readonly int _stripeMask;
 
-    public StripedLongMap()
+    public StripedLongMap() : this(new RuntimeConcurrencyOptions())
     {
-        var snapshot = RuntimeConcurrency.Snapshot();
+    }
+
+    public StripedLongMap(RuntimeConcurrencyOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        var snapshot = options.CloneValidated();
         _locks = new Lock[snapshot.StripeCount];
         _maps = new Dictionary<long, TValue>[snapshot.StripeCount];
         _stripeMask = snapshot.StripeCount - 1;

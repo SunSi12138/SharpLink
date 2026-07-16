@@ -28,20 +28,22 @@ public class SharpLinkServerHostedServiceTests
             throw new Exception(message);
     }
 
-    private sealed class BlockingTransport : ITransport
+    private sealed class BlockingTransport : IServerTransportListener
     {
         private int _disposed;
         public bool DisposeCalled => Volatile.Read(ref _disposed) == 1;
+        public System.Net.EndPoint? LocalEndPoint => null;
 
-        public async Task<IRpcSession> ConnectAsync(CancellationToken ct = default)
+        public async ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
         {
-            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             throw new InvalidOperationException("unreachable");
         }
 
-        public void Dispose()
+        public ValueTask DisposeAsync()
         {
             Interlocked.Exchange(ref _disposed, 1);
+            return ValueTask.CompletedTask;
         }
     }
 }

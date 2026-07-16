@@ -1,99 +1,64 @@
-using System.Threading;
-
 namespace SharpLink.UnitTests.Runtime;
 
 public class BufferWriterPoolTests
 {
-    private static readonly Lock PoolSync = new();
-
     [Test]
-    public void ConfigureShouldThrowOnNullConfigure()
+    public void ConstructorShouldRejectNullOrInvalidOptions()
     {
-        AssertThrows<ArgumentNullException>(() => BufferWriterPool.Configure(null!));
-    }
-
-    [Test]
-    public void ConfigureShouldThrowOnInvalidValues()
-    {
-        AssertThrows<ArgumentOutOfRangeException>(() =>
-            BufferWriterPool.Configure(options => options.InitialCapacity = 0));
-        AssertThrows<ArgumentOutOfRangeException>(() =>
-            BufferWriterPool.Configure(options => options.MaxPooledWriters = 0));
-        AssertThrows<ArgumentOutOfRangeException>(() =>
-            BufferWriterPool.Configure(options => options.MaxRetainedCapacityBytes = 0));
+        AssertThrows<ArgumentNullException>(() => _ = new SharpLinkBufferWriterPool(null!));
+        AssertThrows<ArgumentOutOfRangeException>(() => CreatePool(options => options.InitialCapacity = 0));
+        AssertThrows<ArgumentOutOfRangeException>(() => CreatePool(options => options.MaxPooledWriters = 0));
+        AssertThrows<ArgumentOutOfRangeException>(() => CreatePool(options => options.MaxRetainedCapacityBytes = 0));
+        AssertThrows<ArgumentOutOfRangeException>(() => CreatePool(options =>
+            options.MaxRetainedCapacityBytes = BufferWriterPoolOptions.MaximumRetainedCapacityBytes + 1));
     }
 
     [Test]
     public void ReturnShouldPoolSmallWriterAndClearContent()
     {
-        lock (PoolSync)
+        var pool = CreatePool(options =>
         {
-            try
-            {
-                ConfigurePool(initialCapacity: 111, maxPooledWriters: 1, maxRetainedCapacityBytes: 1024);
-                DrainPool();
+            options.InitialCapacity = 111;
+            options.MaxPooledWriters = 1;
+            options.MaxRetainedCapacityBytes = 1024;
+        });
+        var writer = new ArrayBufferWriter<byte>(128);
+        writer.GetSpan(4);
+        writer.Advance(4);
 
-                var writer = new ArrayBufferWriter<byte>(128);
-                writer.GetSpan(4);
-                writer.Advance(4);
-                BufferWriterPool.Return(writer);
-                Ensure(writer.WrittenCount == 0, "writer should be cleared on return");
-            }
-            finally
-            {
-                ResetDefaults();
-            }
-        }
+        pool.Return(writer);
+        var rented = pool.Rent();
+
+        Ensure(writer.WrittenCount == 0, "writer should be cleared on return");
+        Ensure(ReferenceEquals(writer, rented), "small writer should be retained by its context pool");
     }
 
     [Test]
     public void ReturnShouldDropWriterAboveRetainedCapacity()
     {
-        lock (PoolSync)
+        var pool = CreatePool(options =>
         {
-            try
-            {
-                ConfigurePool(initialCapacity: 123, maxPooledWriters: 1, maxRetainedCapacityBytes: 64);
-                DrainPool();
-
-                var tooLarge = new ArrayBufferWriter<byte>(256);
-                tooLarge.GetSpan(1);
-                tooLarge.Advance(1);
-                BufferWriterPool.Return(tooLarge);
-                Ensure(tooLarge.WrittenCount == 1, "oversized writer should not be cleared because it is not pooled");
-
-                var rented = BufferWriterPool.Get();
-                Ensure(!ReferenceEquals(tooLarge, rented), "oversized writer should not be pooled");
-                Ensure(rented.Capacity == 123, "pool should allocate using configured initial capacity");
-            }
-            finally
-            {
-                ResetDefaults();
-            }
-        }
-    }
-
-    private static void DrainPool()
-    {
-        for (var i = 0; i < 8; i++)
-        {
-            _ = BufferWriterPool.Get();
-        }
-    }
-
-    private static void ResetDefaults()
-    {
-        ConfigurePool(initialCapacity: 1024, maxPooledWriters: 512, maxRetainedCapacityBytes: 64 * 1024);
-    }
-
-    private static void ConfigurePool(int initialCapacity, int maxPooledWriters, int maxRetainedCapacityBytes)
-    {
-        BufferWriterPool.Configure(options =>
-        {
-            options.InitialCapacity = initialCapacity;
-            options.MaxPooledWriters = maxPooledWriters;
-            options.MaxRetainedCapacityBytes = maxRetainedCapacityBytes;
+            options.InitialCapacity = 123;
+            options.MaxPooledWriters = 1;
+            options.MaxRetainedCapacityBytes = 64;
         });
+        var tooLarge = new ArrayBufferWriter<byte>(256);
+        tooLarge.GetSpan(1);
+        tooLarge.Advance(1);
+
+        pool.Return(tooLarge);
+        var rented = pool.Rent();
+
+        Ensure(tooLarge.WrittenCount == 1, "oversized writer should not be retained or mutated");
+        Ensure(!ReferenceEquals(tooLarge, rented), "oversized writer should not be pooled");
+        Ensure(rented.Capacity == 123, "new writer should use the context snapshot");
+    }
+
+    private static SharpLinkBufferWriterPool CreatePool(Action<BufferWriterPoolOptions> configure)
+    {
+        var options = new BufferWriterPoolOptions();
+        configure(options);
+        return new SharpLinkBufferWriterPool(options);
     }
 
     private static void AssertThrows<TException>(Action action) where TException : Exception

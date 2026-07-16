@@ -12,6 +12,7 @@ public static class RpcCodec
     public static void Serialize<T>(in T value, in ArrayBufferWriter<byte> buffer)=>RpcCodec<T>.Codec.Serialize(value, buffer);
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static T? Deserialize<T>(in ReadOnlySequence<byte> buffer)=>RpcCodec<T>.Codec.Deserialize(buffer);
+
 }
 
 internal static class RpcCodec<T>

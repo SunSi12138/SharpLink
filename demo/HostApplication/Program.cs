@@ -9,8 +9,6 @@ using SharpLink.Server;
 
 const int port = 19191;
 
-RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
-
 var builder = Host.CreateApplicationBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddSimpleConsole(options =>

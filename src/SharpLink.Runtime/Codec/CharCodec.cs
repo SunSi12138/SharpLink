@@ -15,6 +15,7 @@ internal sealed class CharCodec : IRpcCodec<char>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public char Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size) 
         {
             return Unsafe.ReadUnaligned<char>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
@@ -59,6 +60,7 @@ internal sealed class NullableCharCodec : IRpcCodec<char?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public char? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);

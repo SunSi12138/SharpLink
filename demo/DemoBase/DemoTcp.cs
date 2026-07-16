@@ -42,7 +42,7 @@ public static class DemoTcp
         {
             try
             {
-                await server.Start(cancellationToken);
+                await server.RunAsync(cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -55,20 +55,19 @@ public static class DemoTcp
         CancellationToken cancellationToken,
         string? errorMessage = null)
     {
-        var connected = await client.ConnectAsync(cancellationToken);
-        if (!connected)
-            throw new InvalidOperationException(errorMessage ?? "Failed to connect to SharpLink server.");
+        await client.ConnectAsync(cancellationToken);
     }
 
     public static async Task ShutdownAsync(
         CancellationTokenSource appCts,
         Task serverTask,
-        params IDisposable?[] disposables)
+        params IAsyncDisposable?[] disposables)
     {
         appCts.Cancel();
         foreach (var disposable in disposables)
         {
-            disposable?.Dispose();
+            if (disposable is not null)
+                await disposable.DisposeAsync();
         }
 
         await Task.WhenAny(serverTask, Task.Delay(300));

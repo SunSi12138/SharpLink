@@ -1,3 +1,5 @@
+namespace SharpLink.Runtime;
+
 internal sealed class Int16Codec : IRpcCodec<short>
 {
     internal static readonly Int16Codec Instance = new();
@@ -13,6 +15,7 @@ internal sealed class Int16Codec : IRpcCodec<short>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public short Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             return Unsafe.ReadUnaligned<short>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
@@ -50,6 +53,7 @@ internal sealed class NullableInt16Codec : IRpcCodec<short?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public short? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);

@@ -2,13 +2,23 @@ namespace SharpLink.Client;
 
 internal class RequestManager
 {
-    private const int BufferSize = 65536; // 必须是 2 的幂
-    private const int IndexMask = BufferSize - 1;
-    
-    private readonly IRpcOperation?[] _slots = new IRpcOperation?[BufferSize];
+    private readonly int _indexMask;
+    private readonly IRpcOperation?[] _slots;
+    private readonly IRpcCodecProvider _codecProvider;
     
     // 全局自增 ID
     private long _nextId;
+
+    public RequestManager(int capacity = 65_536, IRpcCodecProvider? codecProvider = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
+        if (!System.Numerics.BitOperations.IsPow2(capacity))
+            throw new ArgumentException("Request capacity must be a power of two.", nameof(capacity));
+
+        _slots = new IRpcOperation?[capacity];
+        _indexMask = capacity - 1;
+        _codecProvider = codecProvider ?? new SharpLinkRuntimeContextBuilder().Build().Codecs;
+    }
     
     public RpcRequestOperation<T> Rent<T>(out long id)
     {
@@ -17,10 +27,10 @@ internal class RequestManager
         
         // 2. 从静态池租借对象 (复用内存)
         var op = RpcOperationPool<T>.Rent();
-        op.Initialize(id);
+        op.Initialize(id, _codecProvider);
 
         // 3. 注册到 Ring Buffer
-        var index = (int)(id & IndexMask);
+        var index = (int)(id & _indexMask);
         
         // 乐观锁注册
         var original = Interlocked.CompareExchange(ref _slots[index], op, null);
@@ -29,7 +39,9 @@ internal class RequestManager
         
         // 极其罕见的 RingBuffer 耗尽，归还对象并报错
         op.ReturnError();
-        throw new InvalidOperationException($"Request RingBuffer exhausted at index {index}!");
+        throw new SharpLinkException(
+            SharpLinkErrorCode.ResourceExhausted,
+            $"Pending request capacity is exhausted at slot {index}.");
 
     }
 
@@ -65,7 +77,7 @@ internal class RequestManager
 
     private bool TryTakeMatchingOperation(long id, out IRpcOperation? operation)
     {
-        var index = (int)(id & IndexMask);
+        var index = (int)(id & _indexMask);
 
         while (true)
         {
@@ -85,18 +97,32 @@ internal class RequestManager
 
     private static class RpcOperationPool<T>
     {
+        private const int MaxRetainedOperations = 4096;
         // 使用 ConcurrentStack 或者简单的无锁链表实现池
         private static readonly ConcurrentStack<RpcRequestOperation<T>> Stack = new();
+        private static int _retainedCount;
 
         public static RpcRequestOperation<T> Rent()
         {
-            return Stack.TryPop(out var op) ? op :
-                // 新建对象时，传入归还委托
-                new RpcRequestOperation<T>(Return);
+            if (Stack.TryPop(out var op))
+            {
+                Interlocked.Decrement(ref _retainedCount);
+                return op;
+            }
+
+            return new RpcRequestOperation<T>(Return);
         }
 
         private static void Return(RpcRequestOperation<T> op)
         {
+            while (true)
+            {
+                var current = Volatile.Read(ref _retainedCount);
+                if (current >= MaxRetainedOperations)
+                    return;
+                if (Interlocked.CompareExchange(ref _retainedCount, current + 1, current) == current)
+                    break;
+            }
             Stack.Push(op);
         }
     }

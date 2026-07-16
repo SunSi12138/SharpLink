@@ -15,7 +15,8 @@ internal sealed class BoolCodec : IRpcCodec<bool>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        return MemoryMarshal.GetReference(buffer.FirstSpan) != 0;
+        CodecHelpers.EnsureAvailable(buffer, Size);
+        return CodecHelpers.ReadUnmanaged<byte>(buffer) != 0;
     }
 }
 
@@ -50,7 +51,8 @@ internal sealed class NullableBoolCodec : IRpcCodec<bool?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool? Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        var val = MemoryMarshal.GetReference(buffer.FirstSpan);
+        CodecHelpers.EnsureAvailable(buffer, Size);
+        var val = CodecHelpers.ReadUnmanaged<byte>(buffer);
         if (val == NullTag) return null;
         return val != 0;
     }

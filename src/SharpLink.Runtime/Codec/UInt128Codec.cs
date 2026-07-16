@@ -15,6 +15,7 @@ internal sealed class UInt128Codec : IRpcCodec<UInt128>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public UInt128 Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             return Unsafe.ReadUnaligned<UInt128>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
@@ -51,6 +52,7 @@ internal sealed class NullableUInt128Codec : IRpcCodec<UInt128?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public UInt128? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);

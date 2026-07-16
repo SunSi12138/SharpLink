@@ -123,7 +123,9 @@ internal sealed partial class SharpLinkClient
 
     private sealed class RequestTimeoutState : IPooledTimeoutState
     {
-        private static readonly ConcurrentQueue<RequestTimeoutState> SPool = new();
+        [ThreadStatic]
+        private static RequestTimeoutState? t_cached;
+        private static readonly ConcurrentStack<RequestTimeoutState> SPool = new();
 
         private SharpLinkClient? _client;
         private int _lifecycle;
@@ -131,17 +133,22 @@ internal sealed partial class SharpLinkClient
         public SharpLinkClient Client => _client!;
         public long RequestId { get; private set; }
         public bool IsOneWay { get; private set; }
+        public int TimeoutHeapIndex { get; set; } = -1;
 
         private RequestTimeoutState() { }
 
         public static RequestTimeoutState Rent(SharpLinkClient client, long requestId, bool isOneWay)
         {
-            if (!SPool.TryDequeue(out var state))
+            var state = t_cached;
+            if (state is not null)
+                t_cached = null;
+            else if (!SPool.TryPop(out state))
                 state = new RequestTimeoutState();
 
             state._client = client;
             state.RequestId = requestId;
             state.IsOneWay = isOneWay;
+            state.TimeoutHeapIndex = -1;
             state._lifecycle = 0;
             return state;
         }
@@ -157,35 +164,48 @@ internal sealed partial class SharpLinkClient
         }
 
         public void ReturnAfterInvocation() => ReturnCore();
+
+        public void ReturnAfterCancellation() => ReturnCore();
 
         private void ReturnCore()
         {
             _client = null;
             RequestId = 0;
             IsOneWay = false;
-            SPool.Enqueue(this);
+            TimeoutHeapIndex = -1;
+            if (t_cached is null)
+                t_cached = this;
+            else
+                SPool.Push(this);
         }
     }
 
     private sealed class StreamTimeoutState : IPooledTimeoutState
     {
-        private static readonly ConcurrentQueue<StreamTimeoutState> SPool = new();
+        [ThreadStatic]
+        private static StreamTimeoutState? t_cached;
+        private static readonly ConcurrentStack<StreamTimeoutState> SPool = new();
 
         private SharpLinkClient? _client;
         private int _lifecycle;
 
         public SharpLinkClient Client => _client!;
         public long RequestId { get; private set; }
+        public int TimeoutHeapIndex { get; set; } = -1;
 
         private StreamTimeoutState() { }
 
         public static StreamTimeoutState Rent(SharpLinkClient client, long requestId)
         {
-            if (!SPool.TryDequeue(out var state))
+            var state = t_cached;
+            if (state is not null)
+                t_cached = null;
+            else if (!SPool.TryPop(out state))
                 state = new StreamTimeoutState();
 
             state._client = client;
             state.RequestId = requestId;
+            state.TimeoutHeapIndex = -1;
             state._lifecycle = 0;
             return state;
         }
@@ -202,11 +222,17 @@ internal sealed partial class SharpLinkClient
 
         public void ReturnAfterInvocation() => ReturnCore();
 
+        public void ReturnAfterCancellation() => ReturnCore();
+
         private void ReturnCore()
         {
             _client = null;
             RequestId = 0;
-            SPool.Enqueue(this);
+            TimeoutHeapIndex = -1;
+            if (t_cached is null)
+                t_cached = this;
+            else
+                SPool.Push(this);
         }
     }
 }

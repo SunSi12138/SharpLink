@@ -24,6 +24,27 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    public async Task TwoClientServerPairsShouldUseIndependentDtoCodecs()
+    {
+        var firstCodec = new MarkerPersonCodec(0xA1);
+        var secondCodec = new MarkerPersonCodec(0xB2);
+        IRpcCodec? FirstResolver(Type type) => type == typeof(Person) ? firstCodec : MemoryPackCodec.Resolver?.Invoke(type);
+        IRpcCodec? SecondResolver(Type type) => type == typeof(Person) ? secondCodec : MemoryPackCodec.Resolver?.Invoke(type);
+        await using var first = await TestHarness.CreateAsync(codecResolver: FirstResolver);
+        await using var second = await TestHarness.CreateAsync(codecResolver: SecondResolver);
+
+        var firstResult = await first.Client.Get<ITestService>()
+            .EchoAsync(new Person { Name = "first", Age = 1, Tags = ["a"] });
+        var secondResult = await second.Client.Get<ITestService>()
+            .EchoAsync(new Person { Name = "second", Age = 2, Tags = ["b"] });
+
+        Ensure(firstResult is { Name: "first-r", Age: 2 }, "first context codec");
+        Ensure(secondResult is { Name: "second-r", Age: 3 }, "second context codec");
+        Ensure(firstCodec.SerializeCount > 0 && firstCodec.DeserializeCount > 0, "first codec should be used");
+        Ensure(secondCodec.SerializeCount > 0 && secondCodec.DeserializeCount > 0, "second codec should be used");
+    }
+
+    [Test]
     public async Task UserCancellationShouldPropagateOperationCanceledException()
     {
         await using var harness = await TestHarness.CreateAsync();
@@ -36,24 +57,56 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
-    public async Task DefaultRequestTimeoutShouldThrowTimeoutException()
+    public async Task DefaultRequestTimeoutShouldThrowDeadlineExceeded()
     {
         await using var harness = await TestHarness.CreateAsync(requestTimeout: TimeSpan.FromMilliseconds(120));
         var svc = harness.Client.Get<ITestService>();
 
-        await EnsureThrows<TimeoutException>(
+        await EnsureThrowsSharpLinkFast(
             svc.SlowAddAsync(1, 2, CancellationToken.None).AsTask(),
-            "SlowAddAsync request timeout");
+            "SlowAddAsync request timeout",
+            SharpLinkErrorCode.DeadlineExceeded);
     }
 
     [Test]
-    public async Task MethodWithoutTimeoutAttributeShouldIgnoreDefaultRequestTimeout()
+    public async Task UnaryWithoutTimeoutAttributeShouldUseClientDefaultTimeout()
     {
         await using var harness = await TestHarness.CreateAsync(requestTimeout: TimeSpan.FromMilliseconds(120));
         var svc = harness.Client.Get<ITestService>();
 
-        var result = await svc.SlowAddWithoutTimeoutAsync(1, 2).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
-        Ensure(result == 3, "SlowAddWithoutTimeoutAsync should complete successfully");
+        await EnsureThrowsSharpLinkFast(
+            svc.SlowAddWithoutTimeoutAsync(1, 2).AsTask(),
+            "SlowAddWithoutTimeoutAsync default timeout",
+            SharpLinkErrorCode.DeadlineExceeded);
+    }
+
+    [Test]
+    public async Task CallOptionsShouldCarryMetadataAndUseEarliestDeadline()
+    {
+        await using var harness = await TestHarness.CreateAsync();
+        var svc = harness.Client.Get<ITestService>();
+        var metadata = new SharpLinkMetadata(
+            new KeyValuePair<string, string>("tenant", "factory-a"));
+
+        var summary = await svc.DescribeCallAsync(
+            42,
+            new SharpLinkCallOptions
+            {
+                Timeout = TimeSpan.FromSeconds(2),
+                Deadline = DateTimeOffset.UtcNow.AddSeconds(5),
+                Metadata = metadata
+            },
+            CancellationToken.None);
+        Ensure(summary.StartsWith("42:factory-a:deadline", StringComparison.Ordinal), "metadata/deadline call context");
+
+        await EnsureThrowsSharpLinkFast(
+            svc.SlowAddWithOptionsAsync(
+                1,
+                2,
+                new SharpLinkCallOptions { Timeout = TimeSpan.FromMilliseconds(100) },
+                CancellationToken.None).AsTask(),
+            "call options timeout",
+            SharpLinkErrorCode.DeadlineExceeded);
     }
 
     [Test]
@@ -66,7 +119,7 @@ public class IntegrationBehaviorTests
         var streamTask = CollectAsync(svc.SlowDownloadAsync(100, 200, CancellationToken.None), CancellationToken.None);
 
         await Task.Delay(100);
-        harness.DisposeServerOnly();
+        await harness.DisposeServerOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(unaryTask, "unary fail-fast", SharpLinkErrorCode.ConnectionClosed);
         await EnsureThrowsSharpLinkFast(streamTask, "stream fail-fast", SharpLinkErrorCode.ConnectionClosed);
@@ -82,10 +135,79 @@ public class IntegrationBehaviorTests
         var streamTask = CollectAsync(svc.SlowDownloadAsync(100, 200, CancellationToken.None), CancellationToken.None);
 
         await Task.Delay(100);
-        harness.DisposeClientOnly();
+        await harness.DisposeClientOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(unaryTask, "unary fail-fast after client dispose", SharpLinkErrorCode.ConnectionClosed);
         await EnsureThrowsSharpLinkFast(streamTask, "stream fail-fast after client dispose", SharpLinkErrorCode.ConnectionClosed);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task GracefulStopShouldDrainAcceptedCallAndRejectNewCallsAfterGoAway()
+    {
+        await using var harness = await TestHarness.CreateAsync();
+        var svc = harness.Client.Get<ITestService>();
+
+        var acceptedCall = svc.SlowAddWithoutTimeoutAsync(20, 22).AsTask();
+        await Task.Delay(50);
+        var stopTask = harness.DisposeServerOnlyAsync(TimeSpan.FromSeconds(2)).AsTask();
+        await WaitUntilAsync(() => harness.Client.State == SharpLinkConnectionState.Draining);
+
+        await EnsureThrowsSharpLinkFast(
+            svc.AddAsync(1, 1).AsTask(),
+            "new call after GoAway",
+            SharpLinkErrorCode.ConnectionClosed);
+        Ensure(await acceptedCall == 42, "accepted call should complete during grace period");
+        await stopTask.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task GraceTimeoutShouldCancelRemainingServerCall()
+    {
+        await using var harness = await TestHarness.CreateAsync();
+        var svc = harness.Client.Get<ITestService>();
+        using var callCts = new CancellationTokenSource();
+
+        var pending = svc.SlowAddAsync(1, 2, callCts.Token).AsTask();
+        await Task.Delay(50);
+        var started = Stopwatch.GetTimestamp();
+        await harness.DisposeServerOnlyAsync(TimeSpan.FromMilliseconds(100));
+        var elapsed = Stopwatch.GetElapsedTime(started);
+
+        Ensure(elapsed < TimeSpan.FromSeconds(2), "grace timeout should cancel the server call promptly");
+        await EnsureThrowsSharpLinkFast(pending, "call remaining after grace timeout", SharpLinkErrorCode.ConnectionClosed);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ServerConcurrencyExhaustionShouldRejectOverflowAndRecoverWithoutClosingConnection()
+    {
+        await using var harness = await TestHarness.CreateAsync();
+        var svc = harness.Client.Get<ITestService>();
+        var calls = new Task<int>[1025];
+
+        for (var index = 0; index < calls.Length; index++)
+            calls[index] = svc.SlowAddAsync(index, 1, CancellationToken.None).AsTask();
+
+        var completed = 0;
+        var exhausted = 0;
+        foreach (var call in calls)
+        {
+            try
+            {
+                _ = await call.WaitAsync(TimeSpan.FromSeconds(10));
+                completed++;
+            }
+            catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.ResourceExhausted)
+            {
+                exhausted++;
+            }
+        }
+
+        Ensure(completed == 1024, "server should admit exactly the per-connection limit");
+        Ensure(exhausted == 1, "server should reject the overflow call as ResourceExhausted");
+        Ensure(await svc.AddAsync(20, 22) == 42, "connection should recover after call capacity is released");
     }
 
     private static async Task EnsureThrows<TException>(Task task, string name) where TException : Exception
@@ -140,6 +262,13 @@ public class IntegrationBehaviorTests
         return list;
     }
 
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        while (!condition())
+            await Task.Delay(10, timeout.Token);
+    }
+
     private static async IAsyncEnumerable<T> ToAsyncEnumerable<T>(IEnumerable<T> values, [EnumeratorCancellation] CancellationToken ct)
     {
         foreach (var value in values)
@@ -172,23 +301,26 @@ public class IntegrationBehaviorTests
             Client = client;
         }
 
-        public static async Task<TestHarness> CreateAsync(TimeSpan? requestTimeout = null)
+        public static async Task<TestHarness> CreateAsync(
+            TimeSpan? requestTimeout = null,
+            Func<Type, IRpcCodec?>? codecResolver = null)
         {
+            codecResolver ??= MemoryPackCodec.Resolver;
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
                 .AddService<ITestService, TestService>()
                 .UseTcp(0, IPAddress.Loopback.ToString())
-                .UseSerializer(MemoryPackCodec.Resolver)
+                .UseSerializer(codecResolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
 
-            var port = ((IPEndPoint)((ILocalEndPointTransport)serverBuilder.Transport!).LocalEndPoint!).Port;
+            var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
 
             var serverTask = Task.Run(async () =>
             {
                 try
                 {
-                    await server.Start(cts.Token);
+                    await server.RunAsync(cts.Token);
                 }
                 catch (OperationCanceledException)
                 {
@@ -206,45 +338,69 @@ public class IntegrationBehaviorTests
 
             var clientBuilder = SharpClientBuilder.Create()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
-                .UseSerializer(MemoryPackCodec.Resolver)
+                .UseSerializer(codecResolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
 
             if (requestTimeout is { } timeout)
                 clientBuilder.UseRequestTimeout(timeout);
 
             var client = clientBuilder.Build();
-            var connected = await client.ConnectAsync();
-            if (!connected)
-                throw new Exception("client connect failed");
+            await client.ConnectAsync();
 
             return new TestHarness(server, serverTask, cts, client);
         }
 
-        public void DisposeServerOnly()
+        public async ValueTask DisposeServerOnlyAsync(TimeSpan? gracefulTimeout = null)
         {
             if (_serverDisposed)
                 return;
 
             _serverDisposed = true;
-            (_server as IDisposable)?.Dispose();
+            await _server.StopAsync(gracefulTimeout ?? TimeSpan.Zero);
         }
 
-        public void DisposeClientOnly()
+        public async ValueTask DisposeClientOnlyAsync()
         {
             if (_clientDisposed)
                 return;
 
             _clientDisposed = true;
-            (Client as IDisposable)?.Dispose();
+            await Client.StopAsync();
         }
 
         public async ValueTask DisposeAsync()
         {
-            DisposeClientOnly();
+            await DisposeClientOnlyAsync();
             await _serverCts.CancelAsync();
-            DisposeServerOnly();
+            await DisposeServerOnlyAsync();
             await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
             _serverCts.Dispose();
+        }
+    }
+
+    private sealed class MarkerPersonCodec(byte marker) : IRpcCodec<Person>
+    {
+        private readonly byte _marker = marker;
+        public int SerializeCount;
+        public int DeserializeCount;
+
+        public void Serialize(in Person value, in ArrayBufferWriter<byte> buffer)
+        {
+            var markerSpan = buffer.GetSpan(1);
+            markerSpan[0] = _marker;
+            buffer.Advance(1);
+            MemoryPackCodec<Person>.Instance.Serialize(value, buffer);
+            Interlocked.Increment(ref SerializeCount);
+        }
+
+        public Person? Deserialize(in ReadOnlySequence<byte> buffer)
+        {
+            var reader = new SequenceReader<byte>(buffer);
+            if (!reader.TryRead(out var actualMarker) || actualMarker != _marker)
+                throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DTO codec marker mismatch.");
+            Interlocked.Increment(ref DeserializeCount);
+            var payload = buffer.Slice(reader.Position);
+            return MemoryPackCodec<Person>.Instance.Deserialize(payload);
         }
     }
 }
@@ -256,6 +412,15 @@ public interface ITestService : IService
     [Sdk.Timeout]
     ValueTask<int> SlowAddAsync(int left, int right, CancellationToken cancellationToken);
     ValueTask<int> SlowAddWithoutTimeoutAsync(int left, int right);
+    ValueTask<int> SlowAddWithOptionsAsync(
+        int left,
+        int right,
+        SharpLinkCallOptions options,
+        CancellationToken cancellationToken);
+    ValueTask<string> DescribeCallAsync(
+        int value,
+        SharpLinkCallOptions options,
+        CancellationToken cancellationToken);
     ValueTask<Person> EchoAsync(Person person);
     ValueTask<int> UploadAsync(IAsyncEnumerable<int> values);
     IAsyncEnumerable<string> DownloadAsync(int count);
@@ -279,6 +444,29 @@ public class TestService : ITestService
     {
         await Task.Delay(TimeSpan.FromMilliseconds(300));
         return left + right;
+    }
+
+    public async ValueTask<int> SlowAddWithOptionsAsync(
+        int left,
+        int right,
+        SharpLinkCallOptions options,
+        CancellationToken cancellationToken)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+        return left + right;
+    }
+
+    public ValueTask<string> DescribeCallAsync(
+        int value,
+        SharpLinkCallOptions options,
+        CancellationToken cancellationToken)
+    {
+        var context = SharpLinkCallContext.Current;
+        var tenant = context?.Metadata is { Count: > 0 } metadata
+            ? metadata[0].Value
+            : "missing";
+        var deadline = context?.Deadline is null ? "no-deadline" : "deadline";
+        return ValueTask.FromResult($"{value}:{tenant}:{deadline}");
     }
 
     public ValueTask<Person> EchoAsync(Person person)

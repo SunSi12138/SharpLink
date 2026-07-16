@@ -59,7 +59,7 @@ public interface IHelloService : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task TimeoutWithoutCancellationTokenShouldReportSharplink004()
+    public Task TimeoutWithoutCancellationTokenShouldBeAllowed()
     {
         var source = BuildSource("""
 public interface IHelloService : SharpLink.Sdk.IService
@@ -70,7 +70,37 @@ public interface IHelloService : SharpLink.Sdk.IService
 """);
         source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
 
-        EnsureHasRule(source, "SHARPLINK004");
+        EnsureDoesNotHaveRule(source, "SHARPLINK004");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task MultipleCallOptionsShouldReportSharplink007()
+    {
+        var source = BuildSource("""
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, SharpLink.Sdk.SharpLinkCallOptions first, SharpLink.Sdk.SharpLinkCallOptions second);
+}
+""");
+        source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
+
+        EnsureHasRule(source, "SHARPLINK007");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task MisplacedControlParameterShouldReportSharplink008()
+    {
+        var source = BuildSource("""
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(SharpLink.Sdk.SharpLinkCallOptions options, int value, CancellationToken cancellationToken);
+}
+""");
+        source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
+
+        EnsureHasRule(source, "SHARPLINK008");
         return Task.CompletedTask;
     }
 
@@ -132,6 +162,8 @@ namespace SharpLink.Sdk
         {
         }
     }
+
+    public readonly record struct SharpLinkCallOptions;
 }
 
 {{contract}}
@@ -143,6 +175,13 @@ namespace SharpLink.Sdk
         var diagnostics = RunGenerator(source);
         var has = diagnostics.Any(d => d.Id == ruleId);
         Ensure(has, $"Expected diagnostic {ruleId}, but it was not reported.");
+    }
+
+    private static void EnsureDoesNotHaveRule(string source, string ruleId)
+    {
+        var diagnostics = RunGenerator(source);
+        var has = diagnostics.Any(d => d.Id == ruleId);
+        Ensure(!has, $"Did not expect diagnostic {ruleId}.");
     }
 
     private static ImmutableArray<Diagnostic> RunGenerator(string source)

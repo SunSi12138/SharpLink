@@ -7,8 +7,6 @@ using SharpLink.Sdk;
 
 const int port = 19110;
 
-RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
-
 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 var client = DemoTcp.CreateClient(port);
 
@@ -29,5 +27,5 @@ try
 }
 finally
 {
-    (client as IDisposable)?.Dispose();
+    await client.DisposeAsync();
 }

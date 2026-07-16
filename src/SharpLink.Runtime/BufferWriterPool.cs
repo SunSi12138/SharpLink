@@ -1,70 +1,81 @@
 namespace SharpLink.Runtime;
 
-public static class BufferWriterPool
+/// <summary>Instance-scoped pool for packet writers.</summary>
+public sealed class SharpLinkBufferWriterPool : IRpcBufferWriterPool
 {
-    private static readonly ConcurrentQueue<ArrayBufferWriter<byte>> Pool = [];
-    private static int _initialCapacity = 1024;
-    private static int _maxPooledWriters = 512;
-    private static int _maxRetainedCapacityBytes = 64 * 1024;
-    private static int _pooledCount;
+    private readonly ConcurrentQueue<ArrayBufferWriter<byte>> _pool = [];
+    private readonly int _initialCapacity;
+    private readonly int _maxPooledWriters;
+    private readonly int _maxRetainedCapacityBytes;
+    private int _pooledCount;
 
-    public static void Configure(Action<BufferWriterPoolOptions> configure)
+    /// <summary>Creates a pool from a validated immutable option snapshot.</summary>
+    /// <param name="options">Pool capacity and retention limits.</param>
+    public SharpLinkBufferWriterPool(BufferWriterPoolOptions options)
     {
-        ArgumentNullException.ThrowIfNull(configure);
-
-        var options = new BufferWriterPoolOptions
-        {
-            InitialCapacity = Volatile.Read(ref _initialCapacity),
-            MaxPooledWriters = Volatile.Read(ref _maxPooledWriters),
-            MaxRetainedCapacityBytes = Volatile.Read(ref _maxRetainedCapacityBytes)
-        };
-
-        configure(options);
-        options.Validate();
-
-        Interlocked.Exchange(ref _initialCapacity, options.InitialCapacity);
-        Interlocked.Exchange(ref _maxPooledWriters, options.MaxPooledWriters);
-        Interlocked.Exchange(ref _maxRetainedCapacityBytes, options.MaxRetainedCapacityBytes);
-
-        TrimPoolIfNeeded();
+        ArgumentNullException.ThrowIfNull(options);
+        var snapshot = options.CloneValidated();
+        _initialCapacity = snapshot.InitialCapacity;
+        _maxPooledWriters = snapshot.MaxPooledWriters;
+        _maxRetainedCapacityBytes = snapshot.MaxRetainedCapacityBytes;
     }
 
-    public static ArrayBufferWriter<byte> Get()
+    /// <inheritdoc />
+    public ArrayBufferWriter<byte> Rent()
     {
-        if (!Pool.TryDequeue(out var writer))
-            return new ArrayBufferWriter<byte>(Volatile.Read(ref _initialCapacity));
+        if (!_pool.TryDequeue(out var writer))
+            return new ArrayBufferWriter<byte>(_initialCapacity);
 
         Interlocked.Decrement(ref _pooledCount);
         return writer;
     }
 
-    public static void Return(ArrayBufferWriter<byte> writer)
+    /// <inheritdoc />
+    public void Return(ArrayBufferWriter<byte> writer)
     {
         ArgumentNullException.ThrowIfNull(writer);
-
-        if (writer.Capacity > Volatile.Read(ref _maxRetainedCapacityBytes))
+        if (writer.Capacity > _maxRetainedCapacityBytes)
             return;
 
         writer.Clear();
         while (true)
         {
             var current = Volatile.Read(ref _pooledCount);
-            if (current >= Volatile.Read(ref _maxPooledWriters))
+            if (current >= _maxPooledWriters)
                 return;
-
-            if (Interlocked.CompareExchange(ref _pooledCount, current + 1, current) != current)
-                continue;
-
-            Pool.Enqueue(writer);
-            return;
+            if (Interlocked.CompareExchange(ref _pooledCount, current + 1, current) == current)
+                break;
         }
-    }
 
-    private static void TrimPoolIfNeeded()
+        _pool.Enqueue(writer);
+    }
+}
+
+/// <summary>Legacy process-wide writer pool retained only for source compatibility.</summary>
+public static class BufferWriterPool
+{
+    private static readonly Lock Gate = new();
+    private static BufferWriterPoolOptions _options = new();
+    private static SharpLinkBufferWriterPool _pool = new(_options);
+
+    /// <summary>Configures only the legacy compatibility pool.</summary>
+    [Obsolete("Use builder.UseBufferWriterPool; built clients and servers own independent pools.")]
+    public static void Configure(Action<BufferWriterPoolOptions> configure)
     {
-        while (Volatile.Read(ref _pooledCount) > Volatile.Read(ref _maxPooledWriters) && Pool.TryDequeue(out _))
+        ArgumentNullException.ThrowIfNull(configure);
+        lock (Gate)
         {
-            Interlocked.Decrement(ref _pooledCount);
+            var options = _options.CloneValidated();
+            configure(options);
+            options.Validate();
+            _options = options;
+            _pool = new SharpLinkBufferWriterPool(options);
         }
     }
+
+    /// <summary>Rents from the legacy compatibility pool.</summary>
+    public static ArrayBufferWriter<byte> Get() => Volatile.Read(ref _pool).Rent();
+
+    /// <summary>Returns to the legacy compatibility pool.</summary>
+    public static void Return(ArrayBufferWriter<byte> writer) => Volatile.Read(ref _pool).Return(writer);
 }

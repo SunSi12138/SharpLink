@@ -4,7 +4,7 @@
 
 - Source Generator 自动生成 `Proxy/Stub`
 - Unary、`[Oneway]`、客户端流、服务端流、双向流、多流参数
-- 协议级取消（`PacketType.Cancel`）
+- Protocol v2 协议级取消（`ProtocolV2FrameType.Cancel`）
 - `Microsoft.Extensions.Hosting` 托管集成
 - `Socket / NamedPipe / AnonymousPipe / UDS` 传输
 - 内置基础编解码器，并可接入 `MemoryPack` 作为复杂类型回退序列化器
@@ -13,7 +13,7 @@
 
 核心项目（`src/`）：
 
-- `SharpLink.Abstractions`：协议常量、公共接口、通道与传输抽象
+- `SharpLink.Abstractions`：Protocol v2 公共模型、公共接口、通道与传输抽象
 - `SharpLink.Runtime`：`RpcSession`、`StreamManager`、`RpcCodecRegistry`、传输实现与底层收发逻辑
 - `SharpLink.Sdk`：`IService`、`[RpcContract]`、`[RpcService]`、`[Oneway]`、`[Timeout]` 等契约标记
 - `SharpLink.Client`：客户端 Builder、连接生命周期、请求管理与代理调用通道
@@ -87,8 +87,6 @@ SharpLink 默认内置基础类型与 blittable 容器编解码；复杂引用�
 JIT 场景推荐：
 
 ```csharp
-RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
-
 var client = SharpClientBuilder.Create()
     .UseTcp("127.0.0.1", 5000)
     .UseSerializer(MemoryPackCodec.Resolver)
@@ -101,11 +99,14 @@ NativeAOT 场景：
 - 需要为每个非 blittable 的契约参数/返回类型显式注册编解码器
 
 ```csharp
-RpcCodecRegistry.Register(MemoryPackCodec<MyDto>.Instance);
-RpcCodecRegistry.Register(MemoryPackCodec<MyDto[]>.Instance);
+var client = SharpClientBuilder.Create()
+    .UseTcp("127.0.0.1", 5000)
+    .UseCodec(MemoryPackCodec<MyDto>.Instance)
+    .UseCodec(MemoryPackCodec<MyDto[]>.Instance)
+    .Build();
 ```
 
-`test/SharpLink.AotSmoke` 展示了 AOT 下显式注册复杂类型编解码器的最小用法。
+Codec 注册属于当前 Client/Server 的 `SharpLinkRuntimeContext`，同一进程内的实例不会互相覆盖。`test/SharpLink.AotSmoke` 展示了 AOT 下显式注册复杂类型编解码器的最小用法。
 
 ## 传输说明
 
@@ -113,6 +114,17 @@ RpcCodecRegistry.Register(MemoryPackCodec<MyDto[]>.Instance);
 - 当前运行时会对超长 pipe name 做确定性缩短，避免触发平台路径长度限制
 - `AnonymousPipe` 当前已覆盖本机连接、断连与本机压测回归；仓库内置 LoadTest 仅支持 `--mode local`
 - 若自行基于 `IAnonymousPipeAllocator` 将句柄转交外部进程，需要由宿主明确管理句柄交接与释放时机
+
+平台能力矩阵：
+
+| 传输 | Windows | Linux | macOS | 使用范围 |
+| --- | --- | --- | --- | --- |
+| TCP | 支持 | 支持 | 支持 | 本机或跨主机 |
+| UDS | 不承诺 | 支持 | 支持 | 本机 |
+| NamedPipe | 支持 | 支持（映射到 UDS） | 支持（映射到 UDS） | 本机 |
+| AnonymousPipe | 支持 | 支持 | 支持 | 本机协同进程 |
+
+正式 NuGet 包中，`SharpLink.Sdk` 会携带 `SharpLink.Generator` Analyzer。通过 NuGet 使用时只需引用 SDK，无需再手工添加 Generator DLL 或 Analyzer 项目引用。
 
 ## Host 模式
 
@@ -125,13 +137,13 @@ RpcCodecRegistry.Register(MemoryPackCodec<MyDto[]>.Instance);
 
 ## 错误模型
 
-- 运行时失败会优先使用 `SharpLinkException`，并通过 `SharpLinkErrorCode` 区分 `RemoteError / AuthenticationRejected / ConnectionClosed / HeartbeatTimeout / ProtocolViolation`
-- 如果你希望连接失败直接抛出结构化异常，可以使用 `await client.ConnectOrThrowAsync(ct)`
-- 如果仍使用 `ConnectAsync()`，可通过 `ISharpLinkClientDiagnostics.LastConnectionException` 读取最近一次握手拒绝原因
+- 运行时失败使用 `SharpLinkException` 和 `SharpLinkErrorCode` 区分认证、deadline、资源耗尽、断连和协议错误
+- `await client.ConnectAsync(ct)` 成功后才返回；连接或握手失败直接抛结构化异常，不再返回 `bool`
+- 用户 `CancellationToken` 取消保留为本地 `OperationCanceledException`；deadline 到期为 `SharpLinkException(DeadlineExceeded)`
 
 ## 认证
 
-- 客户端可以继续使用 `UseAuthenticator("token")` 发送握手消息
+- 默认认证模式为 Anonymous，不存在默认密码；需要认证时客户端可用 `UseAuthenticator("token")` 发送握手消息
 - 服务端支持两种写法：
 
 ```csharp
@@ -158,6 +170,25 @@ var expiresAt = SharpLinkCallContext.Current?.Authentication?.ExpiresAt;
 
 `SharpLinkCallContext.Current` 仅在服务端 RPC 调用处理期间有值。
 
+契约方法可以在尾部声明一个 `SharpLinkCallOptions`，并可在其后再声明一个 `CancellationToken`。控制参数不会进入业务 payload：
+
+```csharp
+ValueTask<Result> ExecuteAsync(
+    Command command,
+    SharpLinkCallOptions options,
+    CancellationToken cancellationToken);
+
+var options = new SharpLinkCallOptions
+{
+    Timeout = TimeSpan.FromSeconds(2),
+    WaitForReady = true,
+    Metadata = new SharpLinkMetadata(
+        new KeyValuePair<string, string>("tenant", "factory-a"))
+};
+```
+
+绝对 `Deadline`、相对 `Timeout`、`[Timeout]` 和客户端默认值会取最早到期时间。Unary 默认 30 秒；Server/Duplex stream 默认无超时。服务端可从 `SharpLinkCallContext.Current` 读取协商后的 deadline 与 metadata。
+
 如果你希望直接在服务方法里做常见授权校验，可以使用：
 
 ```csharp
@@ -177,8 +208,9 @@ SharpLinkAuthorization.RequireActiveToken();
 - `RpcSession` flush：`UseRpcSessionFlush(...)`
 - `BufferWriterPool`：`UseBufferWriterPool(...)`
 - 运行时并发容器：`UseStateStoreConcurrency(...)`
+- 性能预设与流控边界：`UseRuntime(options => options.PerformanceProfile = SharpLinkPerformanceProfile.LowLatency)`
 
-如果你使用 `UseTcp(0, "127.0.0.1")` 让系统自动分配端口，可以通过 `ILocalEndPointTransport.LocalEndPoint` 读取实际监听端口。
+如果你使用 `UseTcp(0, "127.0.0.1")` 让系统自动分配端口，可以在 `Build()` 前通过 `serverBuilder.Transport.LocalEndPoint` 读取实际监听端口。
 
 ## 文档
 

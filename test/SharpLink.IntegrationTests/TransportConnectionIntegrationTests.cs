@@ -43,7 +43,7 @@ public class TransportConnectionIntegrationTests
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
         await Task.Delay(120);
-        harness.DisposeServerOnly();
+        await harness.DisposeServerOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "tcp pending should fail fast after server dispose", SharpLinkErrorCode.ConnectionClosed);
     }
@@ -56,7 +56,7 @@ public class TransportConnectionIntegrationTests
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
         await Task.Delay(120);
-        harness.DisposeServerOnly();
+        await harness.DisposeServerOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "namedpipe pending should fail fast after server dispose", SharpLinkErrorCode.ConnectionClosed);
     }
@@ -72,7 +72,7 @@ public class TransportConnectionIntegrationTests
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
         await Task.Delay(120);
-        harness.DisposeServerOnly();
+        await harness.DisposeServerOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "uds pending should fail fast after server dispose", SharpLinkErrorCode.ConnectionClosed);
     }
@@ -85,7 +85,7 @@ public class TransportConnectionIntegrationTests
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
         await Task.Delay(120);
-        harness.DisposeClientOnly();
+        await harness.DisposeClientOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "tcp pending should fail fast after client dispose", SharpLinkErrorCode.ConnectionClosed);
     }
@@ -98,7 +98,7 @@ public class TransportConnectionIntegrationTests
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
         await Task.Delay(120);
-        harness.DisposeClientOnly();
+        await harness.DisposeClientOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "namedpipe pending should fail fast after client dispose", SharpLinkErrorCode.ConnectionClosed);
     }
@@ -114,7 +114,7 @@ public class TransportConnectionIntegrationTests
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
         await Task.Delay(120);
-        harness.DisposeClientOnly();
+        await harness.DisposeClientOnlyAsync();
 
         await EnsureThrowsSharpLinkFast(pending, "uds pending should fail fast after client dispose", SharpLinkErrorCode.ConnectionClosed);
     }
@@ -135,7 +135,7 @@ public class TransportConnectionIntegrationTests
         }
         finally
         {
-            (client as IDisposable)?.Dispose();
+            await client.DisposeAsync();
         }
     }
 
@@ -158,7 +158,7 @@ public class TransportConnectionIntegrationTests
         }
         finally
         {
-            (client as IDisposable)?.Dispose();
+            await client.DisposeAsync();
         }
     }
 
@@ -181,7 +181,7 @@ public class TransportConnectionIntegrationTests
         }
         finally
         {
-            (client as IDisposable)?.Dispose();
+            await client.DisposeAsync();
             TryDeleteFile(socketPath);
         }
     }
@@ -206,7 +206,121 @@ public class TransportConnectionIntegrationTests
         }
         finally
         {
-            (client as IDisposable)?.Dispose();
+            await client.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task TcpClientHandshakeShouldHonorConfiguredTimeout()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var silentServerCts = new CancellationTokenSource();
+        var silentServer = Task.Run(async () =>
+        {
+            using var socket = await listener.AcceptSocketAsync(silentServerCts.Token);
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, silentServerCts.Token);
+            }
+            catch (OperationCanceledException) when (silentServerCts.IsCancellationRequested)
+            {
+            }
+        }, CancellationToken.None);
+        var client = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), port)
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromMilliseconds(120))
+            .Build();
+
+        try
+        {
+            await EnsureThrowsSharpLink(
+                client.ConnectAsync(),
+                "client handshake timeout",
+                SharpLinkErrorCode.Unavailable,
+                "timed out");
+        }
+        finally
+        {
+            if (client is IAsyncDisposable asyncClient)
+                await asyncClient.DisposeAsync();
+            await silentServerCts.CancelAsync();
+            listener.Stop();
+            await silentServer.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    [Test]
+    public async Task TcpClientHandshakeShouldHonorCallerCancellation()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var silentServerCts = new CancellationTokenSource();
+        var silentServer = Task.Run(async () =>
+        {
+            using var socket = await listener.AcceptSocketAsync(silentServerCts.Token);
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, silentServerCts.Token);
+            }
+            catch (OperationCanceledException) when (silentServerCts.IsCancellationRequested)
+            {
+            }
+        }, CancellationToken.None);
+        var client = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), port)
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromSeconds(5))
+            .Build();
+
+        try
+        {
+            using var connectCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(120));
+            await EnsureThrows<OperationCanceledException>(
+                client.ConnectAsync(connectCts.Token),
+                "client cancellation during handshake");
+        }
+        finally
+        {
+            if (client is IAsyncDisposable asyncClient)
+                await asyncClient.DisposeAsync();
+            await silentServerCts.CancelAsync();
+            listener.Stop();
+            await silentServer.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    [Test]
+    public async Task TcpServerShouldCloseSessionWhenClientNeverSendsHandshake()
+    {
+        using var serverCts = new CancellationTokenSource();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromMilliseconds(120));
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        var server = serverBuilder.Build();
+        var serverTask = server.RunAsync(serverCts.Token).AsTask();
+
+        try
+        {
+            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            await socket.ConnectAsync(IPAddress.Loopback, port);
+            var buffer = new byte[1];
+            var bytesRead = await socket.ReceiveAsync(buffer, SocketFlags.None)
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(bytesRead == 0, "server should close a session that never handshakes");
+        }
+        finally
+        {
+            await serverCts.CancelAsync();
+            if (server is IAsyncDisposable asyncServer)
+                await asyncServer.DisposeAsync();
+            await serverTask.WaitAsync(TimeSpan.FromSeconds(2));
         }
     }
 
@@ -224,9 +338,17 @@ public class TransportConnectionIntegrationTests
             var writer = BufferWriterPool.Get();
             try
             {
-                using (writer.BeginPacketScope(PacketType.Handshake, PacketFlags.IsError, 0))
+                using (writer.BeginPacketScope(
+                           ProtocolV2FrameType.HandshakeResponse,
+                           ProtocolV2FrameFlags.Error,
+                           0))
                 {
-                    writer.WriteUtf8String("token rejected");
+                    ProtocolV2PayloadCodec.WriteError(
+                        writer,
+                        SharpLinkErrorCode.AuthenticationRejected,
+                        "token rejected",
+                        SharpLinkProtocolOptions.DefaultMaxErrorMessageBytes,
+                        out _);
                 }
 
                 await stream.WriteAsync(writer.WrittenMemory);
@@ -246,22 +368,166 @@ public class TransportConnectionIntegrationTests
 
         try
         {
-            var connected = await client.ConnectAsync();
-            Ensure(!connected, "tcp handshake failure should return false");
-            Ensure(
-                client is ISharpLinkClientDiagnostics
-                {
-                    LastConnectionException: SharpLinkException
-                    {
-                        Code: SharpLinkErrorCode.AuthenticationRejected,
-                        Message: "token rejected"
-                    }
-                },
-                "handshake diagnostics should expose authentication rejection");
+            var exception = await CaptureSharpLinkException(
+                client.ConnectAsync().AsTask(),
+                "tcp handshake rejection");
+            Ensure(exception.Code == SharpLinkErrorCode.AuthenticationRejected, "handshake rejection code");
+            Ensure(exception.Message == "token rejected", "handshake rejection message");
         }
         finally
         {
-            (client as IDisposable)?.Dispose();
+            await client.DisposeAsync();
+            listener.Stop();
+            await Task.WhenAny(fakeServerTask, Task.Delay(1000, CancellationToken.None));
+        }
+    }
+
+    [Test]
+    public async Task TcpUnsupportedRequiredCapabilityShouldReturnUnimplementedAndClose()
+    {
+        using var serverCts = new CancellationTokenSource();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseSerializer(MemoryPackCodec.Resolver);
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        var server = serverBuilder.Build();
+        var serverTask = server.RunAsync(serverCts.Token).AsTask();
+
+        try
+        {
+            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            await socket.ConnectAsync(IPAddress.Loopback, port);
+            await using var stream = new NetworkStream(socket, ownsSocket: false);
+
+            var requestWriter = new ArrayBufferWriter<byte>();
+            var requestToken = ProtocolV2FrameWriter.BeginFrame(
+                requestWriter,
+                ProtocolV2FrameType.HandshakeRequest,
+                ProtocolV2FrameFlags.None,
+                0);
+            ProtocolV2PayloadCodec.WriteHandshakeRequest(
+                requestWriter,
+                new ProtocolV2HandshakeRequest(
+                    ProtocolV2Constants.MinorVersion,
+                    ProtocolV2Capabilities.Compression,
+                    ProtocolV2Capabilities.Compression,
+                    SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
+                    1024 * 1024,
+                    16 * 1024 * 1024,
+                    ReadOnlyMemory<byte>.Empty),
+                new SharpLinkProtocolOptions());
+            ProtocolV2FrameWriter.EndFrame(requestWriter, requestToken);
+            await stream.WriteAsync(requestWriter.WrittenMemory);
+            await stream.FlushAsync();
+
+            var received = new byte[1024];
+            var receivedCount = 0;
+            ProtocolV2FrameHeader responseHeader = default;
+            ReadOnlySequence<byte> responsePayload = default;
+            var parsed = false;
+            using var readCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            while (!parsed)
+            {
+                var bytesRead = await stream.ReadAsync(received.AsMemory(receivedCount), readCts.Token);
+                Ensure(bytesRead > 0, "server should return a handshake error before closing");
+                receivedCount += bytesRead;
+                var sequence = new ReadOnlySequence<byte>(received.AsMemory(0, receivedCount));
+                parsed = ProtocolV2FrameParser.TryReadFrame(
+                    ref sequence,
+                    new SharpLinkProtocolOptions(),
+                    out responseHeader,
+                    out responsePayload);
+            }
+
+            Ensure(responseHeader.Type == ProtocolV2FrameType.HandshakeResponse, "handshake response type");
+            Ensure((responseHeader.Flags & ProtocolV2FrameFlags.Error) != 0, "handshake should fail");
+            var error = ProtocolV2PayloadCodec.ReadError(
+                responsePayload,
+                responseHeader.Flags,
+                SharpLinkProtocolOptions.DefaultMaxErrorMessageBytes);
+            Ensure(error.Code == SharpLinkErrorCode.Unimplemented, "required capability error code");
+            Ensure(await stream.ReadAsync(received, readCts.Token) == 0, "server should close rejected session");
+        }
+        finally
+        {
+            await serverCts.CancelAsync();
+            if (server is IAsyncDisposable asyncServer)
+                await asyncServer.DisposeAsync();
+            await serverTask.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    [Test]
+    public async Task TcpOversizedFrameShouldFailPendingUnaryAndStreamWithSameProtocolViolation()
+    {
+        const int maxFramePayloadBytes = SharpLinkProtocolOptions.MinMaxFramePayloadBytes;
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+
+        var fakeServerTask = Task.Run(async () =>
+        {
+            using var socket = await listener.AcceptSocketAsync();
+            await using var stream = new NetworkStream(socket, ownsSocket: true);
+
+            var handshake = new ArrayBufferWriter<byte>();
+            var handshakeToken = ProtocolV2FrameWriter.BeginFrame(
+                handshake,
+                ProtocolV2FrameType.HandshakeResponse,
+                ProtocolV2FrameFlags.None,
+                0);
+            ProtocolV2PayloadCodec.WriteHandshakeResponse(handshake, new ProtocolV2HandshakeResponse(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.None,
+                maxFramePayloadBytes,
+                1024 * 1024,
+                16 * 1024 * 1024));
+            ProtocolV2FrameWriter.EndFrame(handshake, handshakeToken);
+            await stream.WriteAsync(handshake.WrittenMemory);
+            await stream.FlushAsync();
+
+            await Task.Delay(150);
+
+            var maliciousHeader = new byte[ProtocolV2Constants.HeaderBytes];
+            maliciousHeader[0] = ProtocolV2Constants.Magic;
+            BinaryPrimitives.WriteInt32LittleEndian(
+                maliciousHeader.AsSpan(1, sizeof(int)),
+                maxFramePayloadBytes + 1);
+            maliciousHeader[5] = (byte)ProtocolV2FrameType.Response;
+            BinaryPrimitives.WriteUInt64LittleEndian(maliciousHeader.AsSpan(7, sizeof(ulong)), 1);
+            await stream.WriteAsync(maliciousHeader);
+            await stream.FlushAsync();
+        });
+
+        var client = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), port)
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseProtocol(static options => options.MaxFramePayloadBytes = maxFramePayloadBytes)
+            .UseHeartbeat(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30))
+            .Build();
+
+        try
+        {
+            await client.ConnectAsync();
+            Ensure(client.State == SharpLinkConnectionState.Ready, "fake server handshake");
+            var svc = client.Get<ITestService>();
+
+            var unaryTask = svc.SlowAddAsync(1, 2, CancellationToken.None).AsTask();
+            var streamTask = CollectAsync(
+                svc.SlowDownloadAsync(100, 200, CancellationToken.None),
+                CancellationToken.None);
+
+            var unaryError = await CaptureSharpLinkException(unaryTask, "oversized frame unary");
+            var streamError = await CaptureSharpLinkException(streamTask, "oversized frame stream");
+
+            Ensure(unaryError.Code == SharpLinkErrorCode.ProtocolViolation, "unary protocol violation");
+            Ensure(streamError.Code == SharpLinkErrorCode.ProtocolViolation, "stream protocol violation");
+            Ensure(ReferenceEquals(unaryError, streamError), "pending operations should receive the first failure instance");
+        }
+        finally
+        {
+            await client.DisposeAsync();
             listener.Stop();
             await Task.WhenAny(fakeServerTask, Task.Delay(1000, CancellationToken.None));
         }
@@ -278,14 +544,14 @@ public class TransportConnectionIntegrationTests
             .UseAuthenticator(static message => message == "expected-token")
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
-        var port = ((IPEndPoint)((ILocalEndPointTransport)serverBuilder.Transport!).LocalEndPoint!).Port;
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
 
         var serverTask = Task.Run(async () =>
         {
             try
             {
-                await server.Start(cts.Token);
+                await server.RunAsync(cts.Token);
             }
             catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
             {
@@ -302,15 +568,16 @@ public class TransportConnectionIntegrationTests
 
         try
         {
-            Ensure(await client.ConnectAsync(cts.Token), "custom authenticator should connect");
+            await client.ConnectAsync(cts.Token);
+            Ensure(client.State == SharpLinkConnectionState.Ready, "custom authenticator should connect");
             var svc = client.Get<IConnectionBehaviorService>();
             Ensure(await svc.PingAsync(12) == 13, "custom authenticator ping");
         }
         finally
         {
-            (client as IDisposable)?.Dispose();
+            await client.DisposeAsync();
             await cts.CancelAsync();
-            (server as IDisposable)?.Dispose();
+            await server.DisposeAsync();
             await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
         }
     }
@@ -326,14 +593,14 @@ public class TransportConnectionIntegrationTests
             .UseAuthenticator(static message => message == "expected-token")
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
-        var port = ((IPEndPoint)((ILocalEndPointTransport)serverBuilder.Transport!).LocalEndPoint!).Port;
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
 
         var serverTask = Task.Run(async () =>
         {
             try
             {
-                await server.Start(cts.Token);
+                await server.RunAsync(cts.Token);
             }
             catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
             {
@@ -350,15 +617,16 @@ public class TransportConnectionIntegrationTests
 
         try
         {
-            Ensure(!await client.ConnectAsync(cts.Token), "custom authenticator should reject mismatched token");
-            var exception = EnsureConnectionException(client, "custom authenticator diagnostics");
+            var exception = await CaptureSharpLinkException(
+                client.ConnectAsync(cts.Token).AsTask(),
+                "custom authenticator rejection");
             Ensure(exception.Code == SharpLinkErrorCode.AuthenticationRejected, "custom authenticator diagnostics should expose authentication rejection");
         }
         finally
         {
-            (client as IDisposable)?.Dispose();
+            await client.DisposeAsync();
             await cts.CancelAsync();
-            (server as IDisposable)?.Dispose();
+            await server.DisposeAsync();
             await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
         }
     }
@@ -378,14 +646,14 @@ public class TransportConnectionIntegrationTests
                     "token expired"))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
-        var port = ((IPEndPoint)((ILocalEndPointTransport)serverBuilder.Transport!).LocalEndPoint!).Port;
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
 
         var serverTask = Task.Run(async () =>
         {
             try
             {
-                await server.Start(cts.Token);
+                await server.RunAsync(cts.Token);
             }
             catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
             {
@@ -402,16 +670,17 @@ public class TransportConnectionIntegrationTests
 
         try
         {
-            Ensure(!await client.ConnectAsync(cts.Token), "structured authenticator should reject token");
-            var exception = EnsureConnectionException(client, "structured authenticator diagnostics");
+            var exception = await CaptureSharpLinkException(
+                client.ConnectAsync(cts.Token).AsTask(),
+                "structured authenticator rejection");
             Ensure(exception.Code == SharpLinkErrorCode.AuthenticationExpired, "structured authenticator code");
             Ensure(exception.Message == "token expired", "structured authenticator message");
         }
         finally
         {
-            (client as IDisposable)?.Dispose();
+            await client.DisposeAsync();
             await cts.CancelAsync();
-            (server as IDisposable)?.Dispose();
+            await server.DisposeAsync();
             await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
         }
     }
@@ -439,14 +708,14 @@ public class TransportConnectionIntegrationTests
                 : SharpLinkAuthenticationResult.Reject())
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
-        var port = ((IPEndPoint)((ILocalEndPointTransport)serverBuilder.Transport!).LocalEndPoint!).Port;
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
 
         var serverTask = Task.Run(async () =>
         {
             try
             {
-                await server.Start(cts.Token);
+                await server.RunAsync(cts.Token);
             }
             catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
             {
@@ -463,7 +732,8 @@ public class TransportConnectionIntegrationTests
 
         try
         {
-            Ensure(await client.ConnectAsync(cts.Token), "structured authenticator should connect");
+            await client.ConnectAsync(cts.Token);
+            Ensure(client.State == SharpLinkConnectionState.Ready, "structured authenticator should connect");
             var svc = client.Get<IConnectionBehaviorService>();
             Ensure(await svc.GetAuthenticationSummaryAsync() == "user-42|admin", "authentication context should flow into service");
             Ensure(
@@ -472,9 +742,9 @@ public class TransportConnectionIntegrationTests
         }
         finally
         {
-            (client as IDisposable)?.Dispose();
+            await client.DisposeAsync();
             await cts.CancelAsync();
-            (server as IDisposable)?.Dispose();
+            await server.DisposeAsync();
             await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
         }
     }
@@ -502,14 +772,14 @@ public class TransportConnectionIntegrationTests
                 : SharpLinkAuthenticationResult.Reject())
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
-        var port = ((IPEndPoint)((ILocalEndPointTransport)serverBuilder.Transport!).LocalEndPoint!).Port;
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
 
         var serverTask = Task.Run(async () =>
         {
             try
             {
-                await server.Start(cts.Token);
+                await server.RunAsync(cts.Token);
             }
             catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
             {
@@ -526,7 +796,8 @@ public class TransportConnectionIntegrationTests
 
         try
         {
-            Ensure(await client.ConnectAsync(cts.Token), "authorization guard client should connect");
+            await client.ConnectAsync(cts.Token);
+            Ensure(client.State == SharpLinkConnectionState.Ready, "authorization guard client should connect");
             var svc = client.Get<IConnectionBehaviorService>();
 
             await EnsureThrowsSharpLink(
@@ -549,15 +820,15 @@ public class TransportConnectionIntegrationTests
         }
         finally
         {
-            (client as IDisposable)?.Dispose();
+            await client.DisposeAsync();
             await cts.CancelAsync();
-            (server as IDisposable)?.Dispose();
+            await server.DisposeAsync();
             await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
         }
     }
 
     [Test]
-    public async Task TcpServerStartShouldCancelWhileWaitingForConnection()
+    public async Task TcpServerStartShouldStopNormallyWhenCancellationIsRequested()
     {
         var server = SharpLinkServerBuilder.Create()
             .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
@@ -569,16 +840,16 @@ public class TransportConnectionIntegrationTests
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
-            await EnsureThrows<OperationCanceledException>(server.Start(cts.Token), "tcp server start cancel");
+            await server.RunAsync(cts.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
         }
         finally
         {
-            (server as IDisposable)?.Dispose();
+            await server.DisposeAsync();
         }
     }
 
     [Test]
-    public async Task NamedPipeServerStartShouldCancelWhileWaitingForConnection()
+    public async Task NamedPipeServerStartShouldStopNormallyWhenCancellationIsRequested()
     {
         var pipeName = $"sharplink-start-cancel-{Guid.NewGuid():N}";
         var server = SharpLinkServerBuilder.Create()
@@ -591,11 +862,11 @@ public class TransportConnectionIntegrationTests
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
-            await EnsureThrows<OperationCanceledException>(server.Start(cts.Token), "namedpipe server start cancel");
+            await server.RunAsync(cts.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
         }
         finally
         {
-            (server as IDisposable)?.Dispose();
+            await server.DisposeAsync();
         }
     }
 
@@ -611,11 +882,11 @@ public class TransportConnectionIntegrationTests
 
         try
         {
-            await EnsureThrows<IOException>(server.Start(CancellationToken.None), "server start transport accept exception");
+            await EnsureThrows<IOException>(server.RunAsync(CancellationToken.None).AsTask(), "server start transport accept exception");
         }
         finally
         {
-            (server as IDisposable)?.Dispose();
+            await server.DisposeAsync();
         }
     }
 
@@ -653,6 +924,16 @@ public class TransportConnectionIntegrationTests
         }
     }
 
+    private static Task EnsureThrows<TException>(ValueTask task, string name) where TException : Exception
+        => EnsureThrows<TException>(task.AsTask(), name);
+
+    private static Task EnsureThrowsSharpLink(
+        ValueTask task,
+        string name,
+        SharpLinkErrorCode errorCode,
+        string? messageContains = null)
+        => EnsureThrowsSharpLink(task.AsTask(), name, errorCode, messageContains);
+
     private static async Task EnsureThrowsSharpLinkFast(Task task, string name, SharpLinkErrorCode errorCode)
     {
         try
@@ -668,6 +949,31 @@ public class TransportConnectionIntegrationTests
         {
             Ensure(ex.Code == errorCode, $"{name} error code");
         }
+    }
+
+    private static async Task<SharpLinkException> CaptureSharpLinkException(Task task, string name)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(3));
+            throw new Exception($"assert failed: {name} should throw");
+        }
+        catch (TimeoutException)
+        {
+            throw new Exception($"assert failed: {name} did not fail fast");
+        }
+        catch (SharpLinkException ex)
+        {
+            return ex;
+        }
+    }
+
+    private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> stream, CancellationToken ct)
+    {
+        var list = new List<T>();
+        await foreach (var item in stream.WithCancellation(ct))
+            list.Add(item);
+        return list;
     }
 
     private static async Task EnsureThrowsSharpLink(Task task, string name, SharpLinkErrorCode errorCode, string? messageContains = null)
@@ -689,19 +995,6 @@ public class TransportConnectionIntegrationTests
     {
         if (!condition)
             throw new Exception($"assert failed: {name}");
-    }
-
-    private static SharpLinkException EnsureConnectionException(ISharpLinkClient client, string name)
-    {
-        if (client is not ISharpLinkClientDiagnostics diagnostics)
-            throw new Exception($"assert failed: {name} missing diagnostics interface");
-
-        if (diagnostics.LastConnectionException is SharpLinkException exception)
-            return exception;
-
-        var actualType = diagnostics.LastConnectionException?.GetType().FullName ?? "<null>";
-        var actualMessage = diagnostics.LastConnectionException?.Message ?? "<null>";
-        throw new Exception($"assert failed: {name} actual={actualType} message={actualMessage}");
     }
 
     private static int GetFreePort()
@@ -736,20 +1029,20 @@ public class TransportConnectionIntegrationTests
         await using var harness1 = await TransportHarness.CreateAsync(kind);
         var svc1 = harness1.Client.Get<IConnectionBehaviorService>();
         Ensure(await svc1.PingAsync(20) == 21, $"{kind} first connect");
-        harness1.DisposeClientOnly();
+        await harness1.DisposeClientOnlyAsync();
         await Task.Delay(120);
 
         var client2 = BuildClientForEndpoint(harness1.Endpoint);
         try
         {
-            var connected = await client2.ConnectAsync();
-            Ensure(connected, $"{kind} reconnect connect");
+            await client2.ConnectAsync();
+            Ensure(client2.State == SharpLinkConnectionState.Ready, $"{kind} reconnect connect");
             var svc2 = client2.Get<IConnectionBehaviorService>();
             Ensure(await svc2.PingAsync(30) == 31, $"{kind} reconnect ping");
         }
         finally
         {
-            (client2 as IDisposable)?.Dispose();
+            await client2.DisposeAsync();
         }
     }
 
@@ -786,14 +1079,14 @@ public class TransportConnectionIntegrationTests
 
     private readonly record struct TransportEndpoint(TransportKind Kind, int Port, string PipeName, string UdsPath);
 
-    private sealed class ThrowingConnectTransport(Exception exception) : ITransport
+    private sealed class ThrowingConnectTransport(Exception exception) : IServerTransportListener
     {
-        public Task<IRpcSession> ConnectAsync(CancellationToken ct = default)
-            => Task.FromException<IRpcSession>(exception);
+        public EndPoint? LocalEndPoint => null;
 
-        public void Dispose()
-        {
-        }
+        public ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(exception);
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class TransportHarness : IAsyncDisposable
@@ -846,7 +1139,7 @@ public class TransportConnectionIntegrationTests
                 case TransportKind.Tcp:
                 {
                     serverBuilder.UseTcp(endpoint.Port, IPAddress.Loopback.ToString());
-                    var port = ((IPEndPoint)((ILocalEndPointTransport)serverBuilder.Transport!).LocalEndPoint!).Port;
+                    var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
                     clientBuilder.UseTcp(IPAddress.Loopback.ToString(), port);
                     resolvedEndpoint = new TransportEndpoint(kind, port, string.Empty, string.Empty);
                     break;
@@ -882,7 +1175,7 @@ public class TransportConnectionIntegrationTests
             {
                 try
                 {
-                    await server.Start(cts.Token);
+                    await server.RunAsync(cts.Token);
                 }
                 catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
                 {
@@ -891,14 +1184,12 @@ public class TransportConnectionIntegrationTests
             }, CancellationToken.None);
 
             var client = clientBuilder.Build();
-            var connected = await client.ConnectAsync(cts.Token);
-            if (!connected)
-                throw new Exception("client connect failed");
+            await client.ConnectAsync(cts.Token);
 
             return new TransportHarness(server, serverTask, cts, client, resolvedEndpoint, cleanup);
         }
 
-        public void DisposeServerOnly()
+        public async ValueTask DisposeServerOnlyAsync()
         {
             if (_serverDisposed)
                 return;
@@ -906,7 +1197,7 @@ public class TransportConnectionIntegrationTests
             _serverDisposed = true;
             try
             {
-                (_server as IDisposable)?.Dispose();
+                await _server.StopAsync(TimeSpan.Zero);
             }
             catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException or ArgumentException)
             {
@@ -914,7 +1205,7 @@ public class TransportConnectionIntegrationTests
             }
         }
 
-        public void DisposeClientOnly()
+        public async ValueTask DisposeClientOnlyAsync()
         {
             if (_clientDisposed)
                 return;
@@ -922,7 +1213,7 @@ public class TransportConnectionIntegrationTests
             _clientDisposed = true;
             try
             {
-                (Client as IDisposable)?.Dispose();
+                await Client.StopAsync();
             }
             catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException or ArgumentException)
             {
@@ -932,7 +1223,7 @@ public class TransportConnectionIntegrationTests
 
         public async ValueTask DisposeAsync()
         {
-            DisposeClientOnly();
+            await DisposeClientOnlyAsync();
             try
             {
                 await _serverCts.CancelAsync();
@@ -941,7 +1232,7 @@ public class TransportConnectionIntegrationTests
             {
                 // already disposed by racing cleanup path
             }
-            DisposeServerOnly();
+            await DisposeServerOnlyAsync();
             await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
             try
             {

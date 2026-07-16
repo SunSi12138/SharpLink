@@ -13,22 +13,23 @@ internal sealed class SharpLinkServerHostedService(
         builder.UseLoggerFactoryIfUnset(loggerFactory);
         _server = builder.Build();
         _runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _runTask = _server.Start(_runCts.Token);
+        _runTask = _server.RunAsync(_runCts.Token).AsTask();
         return _runTask.IsCompleted ? _runTask : Task.CompletedTask;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        _ = cancellationToken;
         var runCts = Interlocked.Exchange(ref _runCts, null);
         if (runCts is null)
             return;
 
         try
         {
+            if (_server is not null)
+                await _server.StopAsync(TimeSpan.FromSeconds(30), cancellationToken);
             await runCts.CancelAsync();
             if (_runTask is not null)
-                await _runTask;
+                await _runTask.WaitAsync(cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -36,7 +37,9 @@ internal sealed class SharpLinkServerHostedService(
         finally
         {
             runCts.Dispose();
-            (_server as IDisposable)?.Dispose();
+            var server = Interlocked.Exchange(ref _server, null);
+            if (server is not null)
+                await server.DisposeAsync().AsTask().WaitAsync(cancellationToken);
             _server = null;
             _runTask = null;
         }

@@ -80,7 +80,7 @@ public static class Program
 
     private static async Task RunLocalAsync(LoadTestOptions options, MetricsRegistry metrics)
     {
-        using var harness = LoadTestTransportFactory.CreateLocalHarness(
+        await using var harness = await LoadTestTransportFactory.CreateLocalHarness(
             options.Transport,
             options.Host,
             options.BindIp,
@@ -103,7 +103,7 @@ public static class Program
         finally
         {
             await serverCts.CancelAsync();
-            harness.DisposeServer();
+            await harness.DisposeServerAsync();
             await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
         }
     }
@@ -112,7 +112,7 @@ public static class Program
     {
         try
         {
-            await server.Start(token);
+            await server.RunAsync(token);
         }
         catch (OperationCanceledException)
         {
@@ -135,7 +135,7 @@ public static class Program
             options.HeartbeatTimeoutSeconds,
             static builder => builder.AddService<ILoadTestService, LoadTestService>());
         Console.WriteLine("[Server] started.");
-        await server.Start(cancelScope.Token);
+        await server.RunAsync(cancelScope.Token);
     }
 
     private static async Task RunClientOnlyAsync(LoadTestOptions options, MetricsRegistry metrics, ISharpLinkClient? clientOverride = null)
@@ -153,9 +153,7 @@ public static class Program
         var client = clientOverride ?? ownedClient!;
         try
         {
-            var connected = await client.ConnectAsync();
-            if (!connected)
-                throw new InvalidOperationException("Load test client failed to connect.");
+            await client.ConnectAsync();
 
             var rpc = client.Get<ILoadTestService>();
             foreach (var concurrency in options.ConcurrencyConfig)
@@ -193,7 +191,8 @@ public static class Program
         }
         finally
         {
-            (ownedClient as IDisposable)?.Dispose();
+            if (ownedClient is not null)
+                await ownedClient.DisposeAsync();
         }
     }
 

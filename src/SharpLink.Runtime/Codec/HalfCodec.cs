@@ -15,6 +15,7 @@ internal sealed class HalfCodec : IRpcCodec<Half>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Half Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             return Unsafe.ReadUnaligned<Half>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
@@ -52,6 +53,7 @@ internal sealed class NullableHalfCodec : IRpcCodec<Half?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Half? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);

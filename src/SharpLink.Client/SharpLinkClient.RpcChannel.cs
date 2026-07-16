@@ -272,7 +272,10 @@ internal sealed partial class SharpLinkClient
         TimeSpan? timeoutOverride)
     {
         var applyRequestTimeout = !isOneWay || streamSender is not null;
-        var hasTimeout = TryResolveRequestTimeout(applyRequestTimeout, useDefaultTimeout, timeoutOverride, out var timeout);
+        var hasTimeout = TryResolveRequestTimeout(
+            applyRequestTimeout, includeClientDefault: true, useDefaultTimeout, timeoutOverride, out var timeout);
+        var selectedSession = GetReadySession();
+        DateTimeOffset? absoluteDeadline = hasTimeout ? AddTimeout(DateTimeOffset.UtcNow, timeout) : null;
 
         var requestId = isOneWay ? _requestManager.AllocateRequestId() : 0;
         RpcRequestOperation<T>? op = null;
@@ -283,17 +286,29 @@ internal sealed partial class SharpLinkClient
 
         if (!hasTimeout)
         {
-            var fastFlags = isOneWay ? PacketFlags.IsOneWay : PacketFlags.None;
+            var fastFlags = isOneWay ? ProtocolV2FrameFlags.OneWay : ProtocolV2FrameFlags.None;
             if (!isOneWay && hasReturnPayload)
-                fastFlags |= PacketFlags.HasReturn;
-            SendRpcCall(interfaceHash, methodHash, requestId, fastFlags, payloadWriter);
+                fastFlags |= ProtocolV2FrameFlags.HasReturn;
+            try
+            {
+                SendRpcCall(
+                    selectedSession, interfaceHash, methodHash, requestId, fastFlags, payloadWriter, absoluteDeadline);
+            }
+            catch (Exception exception)
+            {
+                if (op is null)
+                    throw;
+                _requestManager.DispatchError(requestId, exception);
+                return await op.AsValueTask();
+            }
 
             if (streamSender is not null)
             {
+                _requestSessions[requestId] = selectedSession;
                 if (isOneWay)
                     await streamSender(requestId, CancellationToken.None);
                 else
-                    _ = RunStreamSenderAsync(streamSender, requestId, CancellationToken.None);
+                    TrackBackgroundTask(RunStreamSenderAsync(streamSender, requestId, CancellationToken.None));
             }
 
             if (isOneWay)
@@ -302,23 +317,36 @@ internal sealed partial class SharpLinkClient
             return await op!.AsValueTask();
         }
 
-        var packetFlags = isOneWay ? PacketFlags.IsOneWay : PacketFlags.IsCancellable;
+        var packetFlags = isOneWay ? ProtocolV2FrameFlags.OneWay : ProtocolV2FrameFlags.None;
         if (!isOneWay && hasReturnPayload)
-            packetFlags |= PacketFlags.HasReturn;
+            packetFlags |= ProtocolV2FrameFlags.HasReturn;
+        if (streamSender is not null)
+            packetFlags |= ProtocolV2FrameFlags.Cancellable;
 
         using var timeoutRegistration = RegisterRequestTimeout(
-            hasTimeout,
-            timeout,
+            absoluteDeadline,
             requestId,
             isOneWay);
-        SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
+        try
+        {
+            SendRpcCall(
+                selectedSession, interfaceHash, methodHash, requestId, packetFlags, payloadWriter, absoluteDeadline);
+        }
+        catch (Exception exception)
+        {
+            if (op is null)
+                throw;
+            _requestManager.DispatchError(requestId, exception);
+            return await op.AsValueTask();
+        }
 
         if (streamSender is not null)
         {
+            _requestSessions[requestId] = selectedSession;
             if (isOneWay)
                 await streamSender(requestId, CancellationToken.None);
             else
-                _ = RunStreamSenderAsync(streamSender, requestId, CancellationToken.None);
+                TrackBackgroundTask(RunStreamSenderAsync(streamSender, requestId, CancellationToken.None));
         }
 
         if (isOneWay)
@@ -338,11 +366,13 @@ internal sealed partial class SharpLinkClient
         bool useDefaultTimeout,
         TimeSpan? timeoutOverride)
     {
-        if (!ct.CanBeCanceled)
-            return await InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, isOneWay, hasReturnPayload, useDefaultTimeout, timeoutOverride);
+        ct.ThrowIfCancellationRequested();
 
         var applyRequestTimeout = !isOneWay || streamSender is not null;
-        var hasTimeout = TryResolveRequestTimeout(applyRequestTimeout, useDefaultTimeout, timeoutOverride, out var timeout);
+        var hasTimeout = TryResolveRequestTimeout(
+            applyRequestTimeout, includeClientDefault: true, useDefaultTimeout, timeoutOverride, out var timeout);
+        var selectedSession = GetReadySession();
+        DateTimeOffset? absoluteDeadline = hasTimeout ? AddTimeout(DateTimeOffset.UtcNow, timeout) : null;
 
         var requestId = isOneWay ? _requestManager.AllocateRequestId() : 0;
         RpcRequestOperation<T>? op = null;
@@ -351,15 +381,14 @@ internal sealed partial class SharpLinkClient
             op = _requestManager.Rent<T>(out requestId);
         }
 
-        var packetFlags = isOneWay ? PacketFlags.IsOneWay : PacketFlags.None;
+        var packetFlags = isOneWay ? ProtocolV2FrameFlags.OneWay : ProtocolV2FrameFlags.None;
         if (!isOneWay && hasReturnPayload)
-            packetFlags |= PacketFlags.HasReturn;
+            packetFlags |= ProtocolV2FrameFlags.HasReturn;
         if (ct.CanBeCanceled || hasTimeout)
-            packetFlags |= PacketFlags.IsCancellable;
+            packetFlags |= ProtocolV2FrameFlags.Cancellable;
 
         using var timeoutRegistration = RegisterRequestTimeout(
-            hasTimeout,
-            timeout,
+            absoluteDeadline,
             requestId,
             isOneWay);
         await using var cancelRegistration = RegisterCancel(
@@ -367,14 +396,26 @@ internal sealed partial class SharpLinkClient
             requestId,
             isOneWay,
             ct);
-        SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
+        try
+        {
+            SendRpcCall(
+                selectedSession, interfaceHash, methodHash, requestId, packetFlags, payloadWriter, absoluteDeadline);
+        }
+        catch (Exception exception)
+        {
+            if (op is null)
+                throw;
+            _requestManager.DispatchError(requestId, exception);
+            return await op.AsValueTask();
+        }
 
         if (streamSender is not null)
         {
+            _requestSessions[requestId] = selectedSession;
             if (isOneWay)
                 await streamSender(requestId, ct);
             else
-                _ = RunStreamSenderAsync(streamSender, requestId, ct);
+                TrackBackgroundTask(RunStreamSenderAsync(streamSender, requestId, ct));
         }
 
         if (isOneWay)
@@ -391,18 +432,22 @@ internal sealed partial class SharpLinkClient
         bool useDefaultTimeout,
         TimeSpan? timeoutOverride)
     {
+        var session = GetReadySession();
         var requestId = _requestManager.AllocateRequestId();
         _serverStreamRequestIds.Add(requestId);
-        var streamDispatcher = PooledAsyncStreamDispatcher<T>.Rent();
-        _session!.StreamManager.Register(requestId, 0, streamDispatcher);
-        _ = StartServerStreamRequestAsync(
+        var streamDispatcher = PooledAsyncStreamDispatcher<T>.Rent(
+            codecProvider: _runtimeContext.Codecs);
+        session.StreamManager.Register(requestId, 0, streamDispatcher);
+        _requestSessions[requestId] = session;
+        TrackBackgroundTask(StartServerStreamRequestAsync(
+            session,
             interfaceHash,
             methodHash,
             requestId,
             payloadWriter,
             streamSender,
             useDefaultTimeout,
-            timeoutOverride);
+            timeoutOverride));
 
         return streamDispatcher;
     }
@@ -419,11 +464,16 @@ internal sealed partial class SharpLinkClient
         if (!cancellationToken.CanBeCanceled)
             return InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, useDefaultTimeout, timeoutOverride);
 
+        var session = GetReadySession();
         var requestId = _requestManager.AllocateRequestId();
         _serverStreamRequestIds.Add(requestId);
-        var streamDispatcher = PooledAsyncStreamDispatcher<T>.Rent(cancellationToken);
-        _session!.StreamManager.Register(requestId, 0, streamDispatcher);
-        _ = StartCancellableServerStreamRequestAsync(
+        var streamDispatcher = PooledAsyncStreamDispatcher<T>.Rent(
+            cancellationToken,
+            _runtimeContext.Codecs);
+        session.StreamManager.Register(requestId, 0, streamDispatcher);
+        _requestSessions[requestId] = session;
+        TrackBackgroundTask(StartCancellableServerStreamRequestAsync(
+            session,
             interfaceHash,
             methodHash,
             requestId,
@@ -431,12 +481,13 @@ internal sealed partial class SharpLinkClient
             streamSender,
             cancellationToken,
             useDefaultTimeout,
-            timeoutOverride);
+            timeoutOverride));
 
         return streamDispatcher;
     }
 
     private async Task StartServerStreamRequestAsync(
+        RpcSession session,
         long interfaceHash,
         long methodHash,
         long requestId,
@@ -445,32 +496,50 @@ internal sealed partial class SharpLinkClient
         bool useDefaultTimeout,
         TimeSpan? timeoutOverride)
     {
-        var hasTimeout = TryResolveRequestTimeout(true, useDefaultTimeout, timeoutOverride, out var timeout);
-        if (!hasTimeout)
-        {
-            SendRpcCall(interfaceHash, methodHash, requestId, PacketFlags.None, payloadWriter);
-            if (streamSender is not null)
-                await streamSender(requestId, CancellationToken.None);
-            return;
-        }
-
-        using var timeoutRegistration = RegisterStreamTimeout(hasTimeout, timeout, requestId);
+        var hasTimeout = TryResolveRequestTimeout(
+            shouldApply: true, includeClientDefault: false, useDefaultTimeout, timeoutOverride, out var timeout);
+        DateTimeOffset? absoluteDeadline = hasTimeout ? AddTimeout(DateTimeOffset.UtcNow, timeout) : null;
         try
         {
-            var packetFlags = PacketFlags.IsCancellable;
-            SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
+            if (!hasTimeout)
+            {
+                SendRpcCall(session, interfaceHash, methodHash, requestId, ProtocolV2FrameFlags.None, payloadWriter);
+                if (streamSender is not null)
+                {
+                    _requestSessions[requestId] = session;
+                    await streamSender(requestId, CancellationToken.None);
+                }
+                return;
+            }
+
+            var timeoutRegistration = RegisterStreamTimeout(absoluteDeadline, requestId);
+            var lifetime = new StreamCallLifetime(timeoutRegistration, default);
+            if (!_streamCallLifetimes.TryAdd(requestId, lifetime))
+            {
+                lifetime.Dispose();
+                throw new InvalidOperationException("A stream lifetime is already registered for this request.");
+            }
+            const ProtocolV2FrameFlags packetFlags = ProtocolV2FrameFlags.Cancellable;
+            SendRpcCall(
+                session, interfaceHash, methodHash, requestId, packetFlags, payloadWriter, absoluteDeadline);
 
             if (streamSender is not null)
+            {
+                _requestSessions[requestId] = session;
                 await streamSender(requestId, CancellationToken.None);
+            }
         }
         catch (Exception ex)
         {
             _serverStreamRequestIds.Remove(requestId);
-            _session!.StreamManager.CompleteStream(requestId, ex);
+            _requestSessions.TryRemove(requestId, out _);
+            CompleteStreamLifetime(requestId);
+            session.StreamManager.CompleteStream(requestId, ex);
         }
     }
 
     private async Task StartCancellableServerStreamRequestAsync(
+        RpcSession session,
         long interfaceHash,
         long methodHash,
         long requestId,
@@ -480,27 +549,41 @@ internal sealed partial class SharpLinkClient
         bool useDefaultTimeout,
         TimeSpan? timeoutOverride)
     {
-        var hasTimeout = TryResolveRequestTimeout(true, useDefaultTimeout, timeoutOverride, out var timeout);
+        var hasTimeout = TryResolveRequestTimeout(
+            shouldApply: true, includeClientDefault: false, useDefaultTimeout, timeoutOverride, out var timeout);
+        DateTimeOffset? absoluteDeadline = hasTimeout ? AddTimeout(DateTimeOffset.UtcNow, timeout) : null;
 
-        using var timeoutRegistration = RegisterStreamTimeout(hasTimeout, timeout, requestId);
         try
         {
-            await using var cancelRegistration = RegisterStreamCancel(
+            var timeoutRegistration = RegisterStreamTimeout(absoluteDeadline, requestId);
+            var cancelRegistration = RegisterStreamCancel(
                 cancellationToken,
                 requestId,
                 cancellationToken);
+            var lifetime = new StreamCallLifetime(timeoutRegistration, cancelRegistration);
+            if (!_streamCallLifetimes.TryAdd(requestId, lifetime))
+            {
+                lifetime.Dispose();
+                throw new InvalidOperationException("A stream lifetime is already registered for this request.");
+            }
             var packetFlags = (cancellationToken.CanBeCanceled || hasTimeout)
-                ? PacketFlags.IsCancellable
-                : PacketFlags.None;
-            SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
+                ? ProtocolV2FrameFlags.Cancellable
+                : ProtocolV2FrameFlags.None;
+            SendRpcCall(
+                session, interfaceHash, methodHash, requestId, packetFlags, payloadWriter, absoluteDeadline);
 
             if (streamSender is not null)
+            {
+                _requestSessions[requestId] = session;
                 await streamSender(requestId, cancellationToken);
+            }
         }
         catch (Exception ex)
         {
             _serverStreamRequestIds.Remove(requestId);
-            _session!.StreamManager.CompleteStream(requestId, ex);
+            _requestSessions.TryRemove(requestId, out _);
+            CompleteStreamLifetime(requestId);
+            session.StreamManager.CompleteStream(requestId, ex);
         }
     }
 
@@ -538,21 +621,31 @@ internal sealed partial class SharpLinkClient
             : new OperationCanceledException();
     }
 
-    private bool TryResolveRequestTimeout(bool shouldApply, bool useDefaultTimeout, TimeSpan? timeoutOverride, out TimeSpan timeout)
+    private bool TryResolveRequestTimeout(
+        bool shouldApply,
+        bool includeClientDefault,
+        bool useDefaultTimeout,
+        TimeSpan? timeoutOverride,
+        out TimeSpan timeout)
     {
         timeout = TimeSpan.Zero;
         if (!shouldApply)
             return false;
 
+        var hasTimeout = false;
         if (timeoutOverride is { } overrideTimeout)
         {
             timeout = overrideTimeout;
-            return true;
+            hasTimeout = true;
         }
 
-        if (!useDefaultTimeout || !_hasRequestTimeout) return false;
-        timeout = _requestTimeoutValue;
-        return true;
+        if ((includeClientDefault || useDefaultTimeout) && _hasRequestTimeout &&
+            (!hasTimeout || _requestTimeoutValue < timeout))
+        {
+            timeout = _requestTimeoutValue;
+            hasTimeout = true;
+        }
+        return hasTimeout;
 
     }
 
@@ -562,40 +655,103 @@ internal sealed partial class SharpLinkClient
         return timeout;
     }
 
-    private void SendRpcCall(long interfaceHash,
+    private void SendRpcCall(
+        RpcSession session,
+        long interfaceHash,
         long methodHash,
         long requestId,
-        PacketFlags flags,
-        Action<ArrayBufferWriter<byte>>? payloadWriter)
+        ProtocolV2FrameFlags flags,
+        Action<ArrayBufferWriter<byte>>? payloadWriter,
+        DateTimeOffset? deadline = null,
+        SharpLinkMetadata? metadata = null)
     {
-        var writer = BufferWriterPool.Get();
-        using (writer.BeginPacketScope(PacketType.RpcCall, flags, requestId))
+        var hasMetadata = metadata is { Count: > 0 };
+        var metadataLength = 0;
+        if (deadline is not null)
+            flags |= ProtocolV2FrameFlags.HasDeadline;
+        if (hasMetadata)
         {
-            var span = writer.GetSpan(ProtocolConstants.RequestHeaderLength);
-            BinaryPrimitives.WriteInt64LittleEndian(span, interfaceHash);
-            BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodHash);
-            writer.Advance(ProtocolConstants.RequestHeaderLength);
-            payloadWriter?.Invoke(writer);
+            if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) == 0)
+            {
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.Unimplemented,
+                    "The connected server did not negotiate request metadata support.");
+            }
+            metadataLength = ProtocolV2PayloadCodec.GetMetadataPayloadLength(metadata!);
+            if (metadataLength > _protocolOptions.MaxMetadataBytes)
+            {
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.ResourceExhausted,
+                    $"Request metadata exceeds {_protocolOptions.MaxMetadataBytes} bytes.");
+            }
+            flags |= ProtocolV2FrameFlags.HasMetadata;
         }
 
-        _session!.SendPacket(writer);
+        var writer = _runtimeContext.Buffers.Rent();
+        var ownsWriter = true;
+        try
+        {
+            using (writer.BeginPacketScope(
+                       ProtocolV2FrameType.Request, flags, unchecked((ulong)requestId)))
+            {
+                var span = writer.GetSpan(ProtocolV2Constants.RequestPrefixBytes);
+                BinaryPrimitives.WriteInt64LittleEndian(span, interfaceHash);
+                BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodHash);
+                writer.Advance(ProtocolV2Constants.RequestPrefixBytes);
+                if (deadline is { } absoluteDeadline)
+                {
+                    var deadlineSpan = writer.GetSpan(sizeof(long));
+                    BinaryPrimitives.WriteInt64LittleEndian(
+                        deadlineSpan,
+                        absoluteDeadline.ToUnixTimeMilliseconds());
+                    writer.Advance(sizeof(long));
+                }
+                if (hasMetadata)
+                {
+                    ProtocolV2PayloadCodec.WriteVarUInt32(writer, checked((uint)metadataLength));
+                    ProtocolV2PayloadCodec.WriteMetadata(writer, metadata!);
+                }
+                payloadWriter?.Invoke(writer);
+            }
+
+            // SendPacket takes ownership even when enqueueing detects a terminal session.
+            ownsWriter = false;
+            session.SendPacket(writer);
+        }
+        finally
+        {
+            if (ownsWriter)
+                _runtimeContext.Buffers.Return(writer);
+        }
     }
 
-    public async Task SendClientStreamAsync<T>(long requestId, sbyte streamId, IAsyncEnumerable<T> stream, CancellationToken cancellationToken = default)
+    public async Task SendClientStreamAsync<T>(long requestId, ushort streamId, IAsyncEnumerable<T> stream, CancellationToken cancellationToken = default)
     {
+        if (!_requestSessions.TryGetValue(requestId, out var session))
+            session = GetReadySession();
         try
         {
             await foreach (var item in stream.WithCancellation(cancellationToken))
             {
-                _session!.SendStreamChunkAsync(requestId, streamId, item);
+                session.SendStreamChunkAsync(requestId, streamId, item);
             }
 
-            _session!.SendStreamCompleteAsync(requestId, streamId);
+            session.SendStreamCompleteAsync(requestId, streamId);
         }
         catch (Exception ex)
         {
-            _session!.SendStreamErrorAsync(requestId, streamId, ex);
+            try
+            {
+                session.SendStreamErrorAsync(requestId, streamId, ex);
+            }
+            catch (SharpLinkException sendException) when (sendException.Code == SharpLinkErrorCode.ConnectionClosed)
+            {
+            }
             throw;
+        }
+        finally
+        {
+            _requestSessions.TryRemove(requestId, out _);
         }
     }
 
@@ -613,76 +769,145 @@ internal sealed partial class SharpLinkClient
 
     private static ValueTask DispatchStreamChunkAsync(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
-        if(payload.IsEmpty)
-            return session.StreamManager.DispatchChunkAsync(requestId, payload);
-        
         var reader = new SequenceReader<byte>(payload);
-        
-        if (!reader.TryRead(out var streamIdRaw))
-            return session.StreamManager.DispatchChunkAsync(requestId, payload);
-        
-        var streamId = unchecked((sbyte)streamIdRaw);
-        var streamPayload = payload.Slice(sizeof(sbyte));
+        if (!reader.TryReadLittleEndian(out short streamIdBits))
+            throw CreateProtocolViolationException("StreamData stream ID is truncated.");
+        var streamId = unchecked((ushort)streamIdBits);
+        var streamPayload = payload.Slice(sizeof(ushort));
         return session.StreamManager.DispatchChunkAsync(requestId, streamId, streamPayload);
     }
 
-    private static void DispatchStreamComplete(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
+    private void DispatchStreamComplete(
+        IRpcSession session,
+        long requestId,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload,
+        SharpLinkProtocolOptions limits)
     {
         var streamId = TryReadStreamId(ref payload);
-        session.StreamManager.CompleteStream(requestId, streamId, exception: null);
-    }
-
-    private static void DispatchStreamError(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
-    {
-        var streamId = TryReadStreamId(ref payload);
-        var message = payload.Length > 0 ? Encoding.UTF8.GetString(payload) : "Remote Error";
+        if ((flags & ProtocolV2FrameFlags.Error) == 0)
+        {
+            session.StreamManager.CompleteStream(requestId, streamId, exception: null);
+            if (streamId == 0)
+            {
+                _requestSessions.TryRemove(requestId, out _);
+                CompleteStreamLifetime(requestId);
+            }
+            return;
+        }
+        var error = ProtocolV2PayloadCodec.ReadError(payload, flags, limits.MaxErrorMessageBytes);
         session.StreamManager.CompleteStream(
             requestId,
             streamId,
-            SharpLinkException.TryParsePayloadMessage(message, out var structuredException)
-                ? structuredException
-                : new SharpLinkException(SharpLinkErrorCode.RemoteError, message));
+            new SharpLinkException(error.Code, error.Message));
+        if (streamId == 0)
+        {
+            _requestSessions.TryRemove(requestId, out _);
+            CompleteStreamLifetime(requestId);
+        }
     }
 
-    private static sbyte TryReadStreamId(ref ReadOnlySequence<byte> payload)
+    private static ushort TryReadStreamId(ref ReadOnlySequence<byte> payload)
     {
         var firstSpan = payload.FirstSpan;
-        sbyte streamId;
-        if (firstSpan.Length > 0)
+        ushort streamId;
+        if (firstSpan.Length >= sizeof(ushort))
         {
-            streamId = unchecked((sbyte)firstSpan[0]);
+            streamId = BinaryPrimitives.ReadUInt16LittleEndian(firstSpan);
         }
         else
         {
             var reader = new SequenceReader<byte>(payload);
-            if (!reader.TryRead(out var streamIdRaw))
-                return 0;
-
-            streamId = unchecked((sbyte)streamIdRaw);
+            if (!reader.TryReadLittleEndian(out short streamIdBits))
+                throw CreateProtocolViolationException("StreamComplete stream ID is truncated.");
+            streamId = unchecked((ushort)streamIdBits);
         }
 
-        payload = payload.Slice(sizeof(sbyte));
+        payload = payload.Slice(sizeof(ushort));
         return streamId;
     }
 
-    private void HandleDisconnected(Exception? ex=null)
+    private void HandleDisconnected(RpcSession session, Exception ex)
     {
-        if (Interlocked.Exchange(ref _disconnectHandled, true))
+        if (!ReferenceEquals(Interlocked.CompareExchange(ref _session, null, session), session))
             return;
 
-        using var sessionScope = _session is { } session
-            ? BeginSessionLogScope(_logger, session.Id)
-            : null;
-        if (ex is null)
-            LogClientDisconnected(_logger);
-        else
-            LogClientDisconnectedWithError(_logger, ex);
+        using var sessionScope = BeginSessionLogScope(_logger, session.Id);
+        LogClientDisconnectedWithError(_logger, ex);
 
-        var failEx = ex ?? CreateConnectionClosedException("Client is shutting down.");
-        _requestManager.FailAllPendingRequests(failEx);
-        _session?.StreamManager.CompleteAll(failEx);
+        var sessionCts = Interlocked.Exchange(ref _sessionCts, null);
+        if (sessionCts is not null)
+        {
+            sessionCts.Cancel();
+            sessionCts.Dispose();
+        }
+        _requestManager.FailAllPendingRequests(ex);
+        session.StreamManager.CompleteAll(ex);
         _serverStreamRequestIds.Clear();
         _locallyCanceledRequestIds.Clear();
+        _requestSessions.Clear();
+        foreach (var requestId in _streamCallLifetimes.Keys)
+            CompleteStreamLifetime(requestId);
+        ResetReadySignal();
+        TrackBackgroundTask(DisposeDisconnectedSessionAsync(session));
+
+        if (_shutdownCts.IsCancellationRequested ||
+            State is SharpLinkConnectionState.Stopped)
+            return;
+
+        var stableTicks = Stopwatch.GetTimestamp() - Volatile.Read(ref _readyTimestamp);
+        if (stableTicks >= 30L * Stopwatch.Frequency)
+            Volatile.Write(ref _reconnectDelayMilliseconds, 100);
+        TransitionTo(SharpLinkConnectionState.Reconnecting);
+        EnsureReconnectLoop();
+    }
+
+    private void EnsureReconnectLoop()
+    {
+        lock (_stateGate)
+        {
+            if (_shutdownCts.IsCancellationRequested || _reconnectTask is { IsCompleted: false })
+                return;
+            _reconnectTask = ReconnectLoopAsync();
+        }
+    }
+
+    private async Task ReconnectLoopAsync()
+    {
+        while (!_shutdownCts.IsCancellationRequested)
+        {
+            var baseDelay = Volatile.Read(ref _reconnectDelayMilliseconds);
+            var jitter = 0.8 + Random.Shared.NextDouble() * 0.4;
+            var delay = TimeSpan.FromMilliseconds(baseDelay * jitter);
+            try
+            {
+                await Task.Delay(delay, _shutdownCts.Token).ConfigureAwait(false);
+                await ConnectCoreAsync(_shutdownCts.Token).ConfigureAwait(false);
+                return;
+            }
+            catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                using var scope = BeginSessionLogScope(_logger, "reconnect");
+                LogClientBackgroundLoopUnhandledException(_logger, nameof(ReconnectLoopAsync), ex);
+                var nextDelay = Math.Min(baseDelay * 2, 5000);
+                Volatile.Write(ref _reconnectDelayMilliseconds, nextDelay);
+                TransitionTo(SharpLinkConnectionState.Reconnecting);
+            }
+        }
+    }
+
+    private RpcSession GetReadySession()
+    {
+        var session = Volatile.Read(ref _session);
+        if (State == SharpLinkConnectionState.Ready && session is { IsConnected: true })
+            return session;
+        if (State is SharpLinkConnectionState.Draining or SharpLinkConnectionState.Stopped)
+            throw CreateConnectionClosedException("Client is not accepting new calls.");
+        throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink connection is ready.");
     }
 
     private void OnRequestCancel(RequestCancelState state)
@@ -690,7 +915,7 @@ internal sealed partial class SharpLinkClient
         if (!state.IsOneWay && !_locallyCanceledRequestIds.Add(state.RequestId))
             return;
 
-        _session?.SendCancelAsync(state.RequestId);
+        TrySendCancel(state.RequestId);
 
         if (state.IsOneWay) return;
         var ex = CreateCancellationException(state.UserToken);
@@ -702,9 +927,10 @@ internal sealed partial class SharpLinkClient
         if (!_locallyCanceledRequestIds.Add(state.RequestId))
             return;
 
-        _session?.SendCancelAsync(state.RequestId);
+        TrySendCancel(state.RequestId);
         var ex = CreateCancellationException(state.UserToken);
-        _session?.StreamManager.CompleteStream(state.RequestId, ex);
+        if (_requestSessions.TryGetValue(state.RequestId, out var session))
+            session.StreamManager.CompleteStream(state.RequestId, ex);
     }
 
     private void OnRequestTimeout(RequestTimeoutState state)
@@ -712,9 +938,11 @@ internal sealed partial class SharpLinkClient
         if (!state.IsOneWay && !_locallyCanceledRequestIds.Add(state.RequestId))
             return;
 
-        _session?.SendCancelAsync(state.RequestId);
+        TrySendCancel(state.RequestId);
         if (!state.IsOneWay)
-            _requestManager.DispatchError(state.RequestId, new TimeoutException("Request timed out."));
+            _requestManager.DispatchError(state.RequestId, new SharpLinkException(
+                SharpLinkErrorCode.DeadlineExceeded,
+                "Request deadline exceeded."));
     }
 
     private void OnStreamTimeout(StreamTimeoutState state)
@@ -722,26 +950,59 @@ internal sealed partial class SharpLinkClient
         if (!_locallyCanceledRequestIds.Add(state.RequestId))
             return;
 
-        _session?.SendCancelAsync(state.RequestId);
-        _session?.StreamManager.CompleteStream(state.RequestId, new TimeoutException("Request timed out."));
+        TrySendCancel(state.RequestId);
+        if (_requestSessions.TryGetValue(state.RequestId, out var session))
+        {
+            session.StreamManager.CompleteStream(state.RequestId, new SharpLinkException(
+                SharpLinkErrorCode.DeadlineExceeded,
+                "Request deadline exceeded."));
+        }
     }
 
-    private TimeoutRegistration RegisterRequestTimeout(bool enabled, TimeSpan timeout, long requestId, bool isOneWay)
+    private void TrySendCancel(long requestId)
     {
-        if (!enabled)
+        try
+        {
+            if (_requestSessions.TryGetValue(requestId, out var requestSession))
+                requestSession.SendCancelAsync(requestId);
+            else
+                _session?.SendCancelAsync(requestId);
+        }
+        catch (SharpLinkException ex) when (ex.Code is
+            SharpLinkErrorCode.ConnectionClosed or
+            SharpLinkErrorCode.ResourceExhausted or
+            SharpLinkErrorCode.Unavailable)
+        {
+        }
+    }
+
+    private static async Task DisposeDisconnectedSessionAsync(IRpcSession session)
+    {
+        try
+        {
+            await session.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or IOException or SocketException)
+        {
+        }
+    }
+
+    private TimeoutRegistration RegisterRequestTimeout(DateTimeOffset? deadline, long requestId, bool isOneWay)
+    {
+        if (deadline is not { } absoluteDeadline)
             return default;
 
         var state = RequestTimeoutState.Rent(this, requestId, isOneWay);
-        return _requestTimeoutScheduler.Schedule(timeout, SRequestTimeoutCallback, state);
+        return _requestTimeoutScheduler.Schedule(requestId, absoluteDeadline, SRequestTimeoutCallback, state);
     }
 
-    private TimeoutRegistration RegisterStreamTimeout(bool enabled, TimeSpan timeout, long requestId)
+    private TimeoutRegistration RegisterStreamTimeout(DateTimeOffset? deadline, long requestId)
     {
-        if (!enabled)
+        if (deadline is not { } absoluteDeadline)
             return default;
 
         var state = StreamTimeoutState.Rent(this, requestId);
-        return _requestTimeoutScheduler.Schedule(timeout, SStreamTimeoutCallback, state);
+        return _requestTimeoutScheduler.Schedule(requestId, absoluteDeadline, SStreamTimeoutCallback, state);
     }
 
 }

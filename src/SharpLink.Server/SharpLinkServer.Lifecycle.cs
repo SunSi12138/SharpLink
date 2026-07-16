@@ -2,19 +2,93 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
-    public async Task Start(CancellationToken ct = default)
+    public ValueTask RunAsync(CancellationToken cancellationToken = default)
     {
-        using var stopRegistration = ct.CanBeCanceled
-            ? ct.UnsafeRegister(static state => ((CancellationTokenSource)state!).Cancel(), _shutdownCts)
-            : default;
-        var runToken = _shutdownCts.Token;
-        TrackBackgroundTask(RunHeartbeatCheckLoopAsync(runToken));
-
-        while (!runToken.IsCancellationRequested)
+        Task runTask;
+        lock (_stateGate)
         {
-            var session = await transport.ConnectAsync(runToken);
-            await ReplaceSessionAsync(session);
-            TrackBackgroundTask(HandleSessionLifecycleAsync(session, runToken));
+            if (_runTask is null)
+            {
+                if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+                    return ValueTask.FromException(new SharpLinkException(
+                        SharpLinkErrorCode.ConnectionClosed,
+                        "Server cannot be restarted."));
+                _runTask = RunCoreAsync(cancellationToken);
+            }
+            runTask = _runTask;
+        }
+        return new ValueTask(runTask);
+    }
+
+    private async Task RunCoreAsync(CancellationToken cancellationToken)
+    {
+        TransitionTo(ServerState.Starting);
+        using var runCts = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _acceptCts.Token);
+        var acceptToken = runCts.Token;
+        TransitionTo(ServerState.Running);
+        TrackBackgroundTask(RunHeartbeatCheckLoopAsync(_forceStopCts.Token));
+
+        try
+        {
+            while (!acceptToken.IsCancellationRequested)
+            {
+                RpcSession session;
+                ITransportConnection? connection = null;
+                try
+                {
+                    connection = await transportListener.AcceptAsync(acceptToken).ConfigureAwait(false);
+                    session = new RpcSession(connection, _rpcSessionFlushOptions);
+                    connection = null;
+                    session.BindRuntimeContext(_runtimeContext);
+                }
+                catch (OperationCanceledException) when (acceptToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (ObjectDisposedException) when (acceptToken.IsCancellationRequested || CurrentState == ServerState.Draining)
+                {
+                    break;
+                }
+                catch
+                {
+                    if (connection is not null)
+                        await connection.DisposeAsync().ConfigureAwait(false);
+                    throw;
+                }
+                await ReplaceSessionAsync(session);
+                TrackBackgroundTask(HandleSessionLifecycleAsync(session, _forceStopCts.Token));
+            }
+
+            if (cancellationToken.IsCancellationRequested && CurrentState == ServerState.Running)
+            {
+                Task stopTask;
+                lock (_stateGate)
+                {
+                    _stopTask ??= StopCoreAsync(TimeSpan.Zero);
+                    stopTask = _stopTask;
+                }
+                await stopTask.ConfigureAwait(false);
+            }
+            else if (CurrentState == ServerState.Draining)
+            {
+                Task? stopTask;
+                lock (_stateGate)
+                    stopTask = _stopTask;
+                if (stopTask is not null)
+                    await stopTask.ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            TransitionTo(ServerState.Faulted);
+            _acceptCts.Cancel();
+            _forceStopCts.Cancel();
+            await transportListener.DisposeAsync().ConfigureAwait(false);
+            await DisposeAllSessionsAsync().ConfigureAwait(false);
+            await WaitForBackgroundTasksAsync().ConfigureAwait(false);
+            throw;
         }
     }
 
@@ -42,7 +116,22 @@ internal sealed partial class SharpLinkServer
         using var sessionScope = BeginSessionLogScope(_logger, session.Id);
         try
         {
-            var authResult = await ProcessHandshakeAsync(session, ct);
+            using var handshakeTimeoutCts = new CancellationTokenSource(_protocolOptions.HandshakeTimeout);
+            using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct, handshakeTimeoutCts.Token);
+            SharpLinkAuthenticationResult authResult;
+            try
+            {
+                authResult = await ProcessHandshakeAsync(session, handshakeCts.Token);
+            }
+            catch (OperationCanceledException) when (handshakeTimeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                var timeoutException = new SharpLinkException(
+                    SharpLinkErrorCode.Unavailable,
+                    $"RPC handshake timed out after {_protocolOptions.HandshakeTimeout}.");
+                session.NotifyDisconnected(timeoutException);
+                LogHandshakeFailed(_logger);
+                return;
+            }
             if (!authResult.IsAuthenticated)
             {
                 LogHandshakeFailed(_logger);
@@ -80,6 +169,7 @@ internal sealed partial class SharpLinkServer
     private async ValueTask DisconnectSessionAsync(string sessionId)
     {
         _sessionAuthContexts.TryRemove(sessionId, out _);
+        _lastAcceptedRequestIds.TryRemove(sessionId, out _);
         _sessions.TryRemove(sessionId, out var rpcSession);
         if (rpcSession is not null)
         {
@@ -106,16 +196,6 @@ internal sealed partial class SharpLinkServer
             }
         }
     }
-    private SharpLinkAuthenticationResult VerifyHandshake(PacketType packetType, ReadOnlySequence<byte> message)
-    {
-        if (packetType != PacketType.Handshake)
-            return SharpLinkAuthenticationResult.Reject(
-                SharpLinkErrorCode.ProtocolViolation,
-                "Expected handshake packet.");
-
-        return _authValidator(Encoding.UTF8.GetString(message));
-    }
-
     private async Task<SharpLinkAuthenticationResult> ProcessHandshakeAsync(IRpcSession session, CancellationToken ct)
     {
         
@@ -126,18 +206,46 @@ internal sealed partial class SharpLinkServer
         {
             var result = await reader.ReadAsync(ct);
             var buffer =  result.Buffer;
-            while (PacketHelper.TryReadMessage(ref buffer,out var header, out var message))
+            while (ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var message))
             {
-                var authResult = VerifyHandshake(header.Type, message);
-                if (authResult.IsAuthenticated)
-                    session.SendPacketAsync(PacketType.Handshake, PacketFlags.None, header.RequestId);
+                SharpLinkAuthenticationResult authResult;
+                ProtocolV2HandshakeRequest request = default;
+                if (header.Type != ProtocolV2FrameType.HandshakeRequest)
+                {
+                    authResult = SharpLinkAuthenticationResult.Reject(
+                        SharpLinkErrorCode.ProtocolViolation,
+                        "Expected HandshakeRequest frame.");
+                }
                 else
-                    await session.SendStringPacketAndFlushAsync(
-                        PacketType.Handshake,
-                        PacketFlags.IsError,
-                        header.RequestId,
-                        authResult.ToPayloadMessage(),
-                        ct);
+                {
+                    request = ProtocolV2PayloadCodec.ReadHandshakeRequest(message, _protocolOptions);
+                    var unsupportedRequired = request.RequiredCapabilities & ~ProtocolV2Capabilities.Metadata;
+                    authResult = unsupportedRequired != ProtocolV2Capabilities.None
+                        ? SharpLinkAuthenticationResult.Reject(
+                            SharpLinkErrorCode.Unimplemented,
+                            $"Required capabilities are unsupported: {unsupportedRequired}.")
+                        : _authValidator(Encoding.UTF8.GetString(request.AuthenticationPayload.Span));
+                }
+
+                if (authResult.IsAuthenticated)
+                {
+                    var response = new ProtocolV2HandshakeResponse(
+                        Math.Min(request.MinorVersion, ProtocolV2Constants.MinorVersion),
+                        request.SupportedCapabilities & ProtocolV2Capabilities.Metadata,
+                        Math.Min(request.MaxFramePayloadBytes, _protocolOptions.MaxFramePayloadBytes),
+                        Math.Min(request.StreamReceiveWindowBytes, _runtimeContext.FlowControl.StreamReceiveWindowBytes),
+                        Math.Min(request.ConnectionReceiveWindowBytes, _runtimeContext.FlowControl.ConnectionReceiveWindowBytes));
+                    ((RpcSession)session).NegotiatedCapabilities = response.NegotiatedCapabilities;
+                    await session.SendHandshakeResponseAndFlushAsync(response, ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    await session.SendHandshakeErrorAndFlushAsync(
+                        authResult.ErrorCode,
+                        authResult.ErrorMessage,
+                        _protocolOptions.MaxErrorMessageBytes,
+                        ct).ConfigureAwait(false);
+                }
             
                 handshakeResult = authResult;
                 break;
@@ -158,7 +266,8 @@ internal sealed partial class SharpLinkServer
     private async Task ProcessRequestLoop(IRpcSession session,CancellationToken ct)
     {
         var reader = session.Input;
-        var requestCancellationMap = new StripedLongMap<CancellationTokenSource>();
+        var requestCancellationMap = new StripedLongMap<CancellationTokenSource>(_runtimeContext.Concurrency);
+        var callAdmission = new SessionCallAdmission();
         try
         {
             //处理握手
@@ -171,52 +280,74 @@ internal sealed partial class SharpLinkServer
                 try
                 {
                     // 2. 循环解析 buffer 中的数据包 (可能包含多个包)
-                    while (PacketHelper.TryReadMessage(ref buffer,out var header, out var payload))
+                    while (ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
                     {
                         session.LastActive = DateTime.UtcNow;
                         // 3. 处理完整的消息 (这里不需要 await 阻塞网络读取，最好由 Task.Run 处理业务)
                         // 注意：messagePayload 在 Advance 之后就会失效，如果需要异步处理，必须 Copy
                         switch (header.Type)
                         {
-                            case PacketType.Heartbeat:
+                            case ProtocolV2FrameType.Ping:
                                 DebugLogClientHeartbeatReceived(_logger);
                                 session.LastActive = DateTime.UtcNow;
-                                session.SendPacketAsync(PacketType.Heartbeat,PacketFlags.None,header.RequestId);
+                                session.SendPongAsync(ReadMonotonicTimestamp(payload));
                                 break;
-                            case PacketType.RpcCall:
+                            case ProtocolV2FrameType.Pong:
+                                DebugLogClientHeartbeatReceived(_logger);
+                                break;
+                            case ProtocolV2FrameType.Request:
                             {
-                                using var requestScope = BeginRequestLogScope(_logger, header.RequestId);
-                                if ((header.Flags & PacketFlags.IsOneWay) != 0)
+                                var requestId = unchecked((long)header.RequestId);
+                                using var requestScope = BeginRequestLogScope(_logger, requestId);
+                                if (CurrentState != ServerState.Running)
                                 {
-                                    DispatchOneWayRpc(session, header.RequestId, header.Flags, payload, requestCancellationMap, ct);
+                                    if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
+                                    {
+                                        Interlocked.Increment(ref _rejectedOneWayCalls);
+                                        LogOnewayRpcResourceExhausted(_logger);
+                                    }
+                                    else
+                                    {
+                                        session.SendRpcErrorAsync(requestId, new SharpLinkException(
+                                            SharpLinkErrorCode.Unavailable,
+                                            "Server is draining."));
+                                    }
                                     break;
                                 }
 
-                                var dispatchTask = DispatchRpcAsync(session, header.RequestId, header.Flags, payload, requestCancellationMap, ct);
+                                _lastAcceptedRequestIds[session.Id] = requestId;
+                                if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
+                                {
+                                    DispatchOneWayRpc(session, requestId, header.Flags, payload, requestCancellationMap, callAdmission, ct);
+                                    break;
+                                }
+
+                                var dispatchTask = DispatchRpcAsync(session, requestId, header.Flags, payload, requestCancellationMap, callAdmission, ct);
                                 if (!dispatchTask.IsCompletedSuccessfully)
-                                    _ = AwaitDispatchAsync(dispatchTask, header.RequestId);
+                                    TrackBackgroundTask(AwaitDispatchAsync(dispatchTask, requestId));
                                 break;
                             }
-                            case PacketType.Cancel:
-                                if (requestCancellationMap.TryRemove(header.RequestId, out var cts))
+                            case ProtocolV2FrameType.Cancel:
+                                if (requestCancellationMap.TryRemove(unchecked((long)header.RequestId), out var cts))
                                 {
                                     await cts.CancelAsync();
                                     cts.Dispose();
                                 }
                                 break;
-                            case PacketType.StreamChunk:
-                                await DispatchStreamChunkAsync(session, header.RequestId, payload);
+                            case ProtocolV2FrameType.StreamData:
+                                await DispatchStreamChunkAsync(session, unchecked((long)header.RequestId), payload);
                                 break;
-                            case PacketType.StreamComplete:
-                                DispatchStreamComplete(session, header.RequestId, payload);
+                            case ProtocolV2FrameType.StreamComplete:
+                                DispatchStreamComplete(
+                                    session, unchecked((long)header.RequestId), header.Flags, payload, _protocolOptions);
                                 break;
-                            case PacketType.StreamError:
-                                DispatchStreamError(session, header.RequestId, payload);
-                                break;
-                            case PacketType.DisConnect:
-                            case PacketType.Handshake:
-                            case PacketType.Error:
-                            case PacketType.RpcResponse:
+                            case ProtocolV2FrameType.GoAway:
+                                await session.DisposeAsync();
+                                return;
+                            case ProtocolV2FrameType.HandshakeRequest:
+                            case ProtocolV2FrameType.HandshakeResponse:
+                            case ProtocolV2FrameType.Response:
+                            case ProtocolV2FrameType.WindowUpdate:
                             default:
                             {
                                 await session.DisposeAsync();
@@ -264,62 +395,65 @@ internal sealed partial class SharpLinkServer
     private void DispatchOneWayRpc(
         IRpcSession session,
         long requestId,
-        PacketFlags flags,
+        ProtocolV2FrameFlags flags,
         ReadOnlySequence<byte> payload,
         StripedLongMap<CancellationTokenSource> requestCancellationMap,
+        SessionCallAdmission callAdmission,
         CancellationToken serverLoopToken)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
-        var isCancellable = (flags & PacketFlags.IsCancellable) != 0;
-        if (payload.Length < ProtocolConstants.RequestHeaderLength)
+        var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
+        var request = ReadRequestEnvelope(session, payload, flags);
+        if (request.Deadline is { } oneWayDeadline && oneWayDeadline <= DateTimeOffset.UtcNow)
+            return;
+        if (!services.TryGetValue(request.InterfaceHash, out var serviceInfo))
             return;
 
-        var reader = new SequenceReader<byte>(payload);
-        reader.TryReadLittleEndian(out long interfaceHash);
-        reader.TryReadLittleEndian(out long methodHash);
-
-        var argsPayload = payload.Slice(ProtocolConstants.RequestHeaderLength);
-        if (!services.TryGetValue(interfaceHash, out var serviceInfo))
+        if (!TryAcquireCall(callAdmission))
+        {
+            Interlocked.Increment(ref _rejectedOneWayCalls);
+            LogOnewayRpcResourceExhausted(_logger);
             return;
+        }
 
         CancellationTokenSource? linkedCts = null;
         var invokeToken = serverLoopToken;
-        if (isCancellable)
+        if (isCancellable && serviceInfo.stub.SupportsCancellation(request.MethodHash))
         {
             linkedCts = CancellationTokenSource.CreateLinkedTokenSource(serverLoopToken);
             requestCancellationMap.Set(requestId, linkedCts);
+            ApplyDeadline(linkedCts, request.Deadline);
             invokeToken = linkedCts.Token;
         }
 
         try
         {
-            using var callContextScope = SharpLinkCallContext.Push(CreateCallContext(session));
-            var invokeTask = isCancellable
-                ? serviceInfo.stub.InvokeNoReturnCancellableAsync(
-                    serviceInfo.service,
-                    session,
-                    methodHash,
-                    requestId,
-                    argsPayload,
-                    invokeToken)
-                : serviceInfo.stub.InvokeNoReturnAsync(
-                    serviceInfo.service,
-                    session,
-                    methodHash,
-                    requestId,
-                    argsPayload);
+            using var callContextScope = SharpLinkCallContext.Push(CreateCallContext(
+                session, request.Deadline, request.Metadata));
+            var invokeTask = serviceInfo.stub.InvokeNoReturnCancellableAsync(
+                serviceInfo.service,
+                session,
+                request.MethodHash,
+                requestId,
+                request.Arguments,
+                invokeToken);
             if (invokeTask.IsCompletedSuccessfully)
             {
-                ReleaseOneWayDispatchResources(linkedCts, requestId, requestCancellationMap);
+                ReleaseOneWayDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
                 return;
             }
 
-            _ = AwaitOneWayDispatchAsync(invokeTask, linkedCts, requestId, requestCancellationMap);
+            TrackBackgroundTask(AwaitOneWayDispatchAsync(
+                invokeTask,
+                linkedCts,
+                requestId,
+                requestCancellationMap,
+                callAdmission));
         }
         catch (Exception ex)
         {
             LogOnewayRpcDispatchFailed(_logger, ex);
-            ReleaseOneWayDispatchResources(linkedCts, requestId, requestCancellationMap);
+            ReleaseOneWayDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
         }
     }
 
@@ -327,7 +461,8 @@ internal sealed partial class SharpLinkServer
         ValueTask invokeTask,
         CancellationTokenSource? linkedCts,
         long requestId,
-        StripedLongMap<CancellationTokenSource> requestCancellationMap)
+        StripedLongMap<CancellationTokenSource> requestCancellationMap,
+        SessionCallAdmission callAdmission)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
         try
@@ -340,53 +475,65 @@ internal sealed partial class SharpLinkServer
         }
         finally
         {
-            ReleaseOneWayDispatchResources(linkedCts, requestId, requestCancellationMap);
+            ReleaseOneWayDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
         }
     }
 
-    private static void ReleaseOneWayDispatchResources(
+    private void ReleaseOneWayDispatchResources(
         CancellationTokenSource? linkedCts,
         long requestId,
-        StripedLongMap<CancellationTokenSource> requestCancellationMap)
+        StripedLongMap<CancellationTokenSource> requestCancellationMap,
+        SessionCallAdmission callAdmission)
     {
         linkedCts?.Dispose();
         if (linkedCts is not null)
             requestCancellationMap.TryRemove(requestId, out _);
+        ReleaseCall(callAdmission);
     }
 
     private ValueTask DispatchRpcAsync(
         IRpcSession session,
         long requestId,
-        PacketFlags flags,
+        ProtocolV2FrameFlags flags,
         ReadOnlySequence<byte> payload,
         StripedLongMap<CancellationTokenSource> requestCancellationMap,
+        SessionCallAdmission callAdmission,
         CancellationToken serverLoopToken)
     {
-        var isCancellable = (flags & PacketFlags.IsCancellable) != 0;
-        var hasReturnPayload = (flags & PacketFlags.HasReturn) != 0;
+        var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
+        var hasReturnPayload = (flags & ProtocolV2FrameFlags.HasReturn) != 0;
         
-        if(payload.Length<ProtocolConstants.RequestHeaderLength) return ValueTask.CompletedTask;
-        
-
-        var reader = new SequenceReader<byte>(payload);
-        reader.TryReadLittleEndian(out long interfaceHash);
-        reader.TryReadLittleEndian(out long methodHash);
-        
-        var argsPayload = payload.Slice(ProtocolConstants.RequestHeaderLength);
-        if (!services.TryGetValue(interfaceHash, out var serviceInfo))
+        var request = ReadRequestEnvelope(session, payload, flags);
+        if (request.Deadline is { } deadline && deadline <= DateTimeOffset.UtcNow)
         {
             session.SendRpcErrorAsync(requestId, new SharpLinkException(
-                SharpLinkErrorCode.ProtocolViolation,
-                $"Service {interfaceHash} not found."));
+                SharpLinkErrorCode.DeadlineExceeded,
+                "Request deadline exceeded before dispatch."));
+            return ValueTask.CompletedTask;
+        }
+        if (!services.TryGetValue(request.InterfaceHash, out var serviceInfo))
+        {
+            session.SendRpcErrorAsync(requestId, new SharpLinkException(
+                SharpLinkErrorCode.Unimplemented,
+                $"Service {request.InterfaceHash} is not implemented."));
+            return ValueTask.CompletedTask;
+        }
+
+        if (!TryAcquireCall(callAdmission))
+        {
+            session.SendRpcErrorAsync(requestId, new SharpLinkException(
+                SharpLinkErrorCode.ResourceExhausted,
+                "Server call capacity is exhausted."));
             return ValueTask.CompletedTask;
         }
 
         CancellationTokenSource? linkedCts = null;
         var invokeToken = serverLoopToken;
-        if (isCancellable)
+        if (isCancellable && serviceInfo.stub.SupportsCancellation(request.MethodHash))
         {
             linkedCts = CancellationTokenSource.CreateLinkedTokenSource(serverLoopToken);
             requestCancellationMap.Set(requestId, linkedCts);
+            ApplyDeadline(linkedCts, request.Deadline);
             invokeToken = linkedCts.Token;
         }
 
@@ -394,58 +541,75 @@ internal sealed partial class SharpLinkServer
         {
             try
             {
-                var invokeTask = isCancellable
-                    ? serviceInfo.stub.InvokeNoReturnCancellableAsync(serviceInfo.service, session, methodHash, requestId, argsPayload, invokeToken)
-                    : serviceInfo.stub.InvokeNoReturnAsync(serviceInfo.service, session, methodHash, requestId, argsPayload);
+                using var callContextScope = SharpLinkCallContext.Push(CreateCallContext(
+                    session, request.Deadline, request.Metadata));
+                var invokeTask = serviceInfo.stub.InvokeNoReturnCancellableAsync(
+                    serviceInfo.service, session, request.MethodHash, requestId, request.Arguments, invokeToken);
                 if (!invokeTask.IsCompletedSuccessfully)
-                    return AwaitDispatchRpcNoReturnAsync(invokeTask, session, requestId, linkedCts, requestCancellationMap);
-                session.SendPacketAsync(PacketType.RpcResponse, PacketFlags.None, requestId);
-                ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
+                    return AwaitDispatchRpcNoReturnAsync(
+                        invokeTask, session, requestId, linkedCts, requestCancellationMap, callAdmission, request.Deadline);
+                session.SendPacketAsync(ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, requestId);
+                ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
                 return ValueTask.CompletedTask;
             }
             catch (OperationCanceledException)
             {
-                session.SendRpcErrorAsync(requestId, new OperationCanceledException("Request canceled."));
-                ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
+                session.SendRpcErrorAsync(requestId, CreateServerCancellationException(request.Deadline));
+                ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
                 return ValueTask.CompletedTask;
             }
             catch (Exception e)
             {
                 session.SendRpcErrorAsync(requestId, e);
-                ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
+                ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
                 return ValueTask.CompletedTask;
             }
         }
 
-        var writer = BufferWriterPool.Get();
-        var token = writer.BeginPacket(PacketType.RpcResponse, PacketFlags.None, requestId);
+        var writer = _runtimeContext.Buffers.Rent();
+        var ownsWriter = true;
+        var token = writer.BeginPacket(
+            ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((ulong)requestId));
         try
         {
-            using var callContextScope = SharpLinkCallContext.Push(CreateCallContext(session));
-            var invokeTask = isCancellable
-                ? serviceInfo.stub.InvokeCancellableAsync(serviceInfo.service, session, methodHash, requestId, argsPayload, writer, invokeToken)
-                : serviceInfo.stub.InvokeAsync(serviceInfo.service, session, methodHash, requestId, argsPayload, writer);
+            using var callContextScope = SharpLinkCallContext.Push(CreateCallContext(
+                session, request.Deadline, request.Metadata));
+            var invokeTask = serviceInfo.stub.InvokeCancellableAsync(
+                serviceInfo.service, session, request.MethodHash, requestId, request.Arguments, writer, invokeToken);
             if (!invokeTask.IsCompletedSuccessfully)
                 return AwaitDispatchRpcAsync(invokeTask, session, requestId, writer, token, linkedCts,
-                    requestCancellationMap);
+                    requestCancellationMap, callAdmission, request.Deadline);
             writer.EndPacket(token);
-            session.SendPacket(writer);
-            ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
+            ownsWriter = false;
+            ((RpcSession)session).SendPacket(writer);
+            ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
             return ValueTask.CompletedTask;
 
         }
         catch (OperationCanceledException)
         {
-            BufferWriterPool.Return(writer);
-            session.SendRpcErrorAsync(requestId, new OperationCanceledException("Request canceled."));
-            ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
+            if (!ownsWriter)
+            {
+                ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
+                throw;
+            }
+
+            _runtimeContext.Buffers.Return(writer);
+            session.SendRpcErrorAsync(requestId, CreateServerCancellationException(request.Deadline));
+            ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
             return ValueTask.CompletedTask;
         }
         catch (Exception e)
         {
-            BufferWriterPool.Return(writer);
+            if (!ownsWriter)
+            {
+                ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
+                throw;
+            }
+
+            _runtimeContext.Buffers.Return(writer);
             session.SendRpcErrorAsync(requestId, e);
-            ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
+            ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
             return ValueTask.CompletedTask;
         }
     }
@@ -455,17 +619,19 @@ internal sealed partial class SharpLinkServer
         IRpcSession session,
         long requestId,
         CancellationTokenSource? linkedCts,
-        StripedLongMap<CancellationTokenSource> requestCancellationMap)
+        StripedLongMap<CancellationTokenSource> requestCancellationMap,
+        SessionCallAdmission callAdmission,
+        DateTimeOffset? deadline)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
         try
         {
             await invokeTask.ConfigureAwait(false);
-            session.SendPacketAsync(PacketType.RpcResponse, PacketFlags.None, requestId);
+            session.SendPacketAsync(ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, requestId);
         }
         catch (OperationCanceledException)
         {
-            session.SendRpcErrorAsync(requestId, new OperationCanceledException("Request canceled."));
+            session.SendRpcErrorAsync(requestId, CreateServerCancellationException(deadline));
         }
         catch (Exception e)
         {
@@ -473,7 +639,7 @@ internal sealed partial class SharpLinkServer
         }
         finally
         {
-            ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
+            ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
         }
     }
 
@@ -484,77 +650,183 @@ internal sealed partial class SharpLinkServer
         ArrayBufferWriter<byte> writer,
         PacketToken token,
         CancellationTokenSource? linkedCts,
-        StripedLongMap<CancellationTokenSource> requestCancellationMap)
+        StripedLongMap<CancellationTokenSource> requestCancellationMap,
+        SessionCallAdmission callAdmission,
+        DateTimeOffset? deadline)
     {
+        var ownsWriter = true;
         try
         {
             await invokeTask.ConfigureAwait(false);
             writer.EndPacket(token);
-            session.SendPacket(writer);
+            ownsWriter = false;
+            ((RpcSession)session).SendPacket(writer);
         }
         catch (OperationCanceledException)
         {
-            BufferWriterPool.Return(writer);
-            session.SendRpcErrorAsync(requestId, new OperationCanceledException("Request canceled."));
+            if (!ownsWriter)
+                throw;
+
+            _runtimeContext.Buffers.Return(writer);
+            session.SendRpcErrorAsync(requestId, CreateServerCancellationException(deadline));
         }
         catch (Exception e)
         {
-            BufferWriterPool.Return(writer);
+            if (!ownsWriter)
+                throw;
+
+            _runtimeContext.Buffers.Return(writer);
             session.SendRpcErrorAsync(requestId, e);
         }
         finally
         {
-            ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap);
+            ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
         }
     }
 
-    private static void ReleaseDispatchResources(
+    private void ReleaseDispatchResources(
         CancellationTokenSource? linkedCts,
         long requestId,
-        StripedLongMap<CancellationTokenSource> requestCancellationMap)
+        StripedLongMap<CancellationTokenSource> requestCancellationMap,
+        SessionCallAdmission callAdmission)
     {
         linkedCts?.Dispose();
         if (linkedCts is not null)
             requestCancellationMap.TryRemove(requestId, out _);
+        ReleaseCall(callAdmission);
     }
 
     private static async Task DispatchStreamChunkAsync(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
         var reader = new SequenceReader<byte>(payload);
-        if (reader.TryRead(out var streamIdRaw))
+        if (!reader.TryReadLittleEndian(out short streamIdBits))
+            throw new SharpLinkException(SharpLinkErrorCode.ProtocolViolation, "StreamData stream ID is truncated.");
+        var streamId = unchecked((ushort)streamIdBits);
+        var streamPayload = payload.Slice(sizeof(ushort));
+        await session.StreamManager.DispatchChunkAsync(requestId, streamId, streamPayload);
+    }
+
+    private static void DispatchStreamComplete(
+        IRpcSession session,
+        long requestId,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload,
+        SharpLinkProtocolOptions limits)
+    {
+        var streamId = TryReadStreamId(ref payload);
+        if ((flags & ProtocolV2FrameFlags.Error) == 0)
         {
-            var streamId = unchecked((sbyte)streamIdRaw);
-            var streamPayload = payload.Slice(sizeof(sbyte));
-            await session.StreamManager.DispatchChunkAsync(requestId, streamId, streamPayload);
+            session.StreamManager.CompleteStream(requestId, streamId, exception: null);
             return;
         }
-
-        await session.StreamManager.DispatchChunkAsync(requestId, payload);
+        var error = ProtocolV2PayloadCodec.ReadError(payload, flags, limits.MaxErrorMessageBytes);
+        session.StreamManager.CompleteStream(
+            requestId, streamId, new SharpLinkException(error.Code, error.Message));
     }
 
-    private static void DispatchStreamComplete(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
-    {
-        var streamId = TryReadStreamId(ref payload);
-        session.StreamManager.CompleteStream(requestId, streamId, false, null);
-    }
-
-    private static void DispatchStreamError(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
-    {
-        var streamId = TryReadStreamId(ref payload);
-        var message = payload.Length > 0 ? Encoding.UTF8.GetString(payload) : "Remote Error";
-        session.StreamManager.CompleteStream(requestId, streamId, true, message);
-    }
-
-    private static sbyte TryReadStreamId(ref ReadOnlySequence<byte> payload)
+    private static ushort TryReadStreamId(ref ReadOnlySequence<byte> payload)
     {
         var reader = new SequenceReader<byte>(payload);
-        if (!reader.TryRead(out var streamIdRaw))
-            return 0;
-
-        var streamId = unchecked((sbyte)streamIdRaw);
-        payload = payload.Slice(sizeof(sbyte));
+        if (!reader.TryReadLittleEndian(out short streamIdBits))
+            throw new SharpLinkException(SharpLinkErrorCode.ProtocolViolation, "StreamComplete stream ID is truncated.");
+        var streamId = unchecked((ushort)streamIdBits);
+        payload = payload.Slice(sizeof(ushort));
         return streamId;
     }
+
+    private static long ReadMonotonicTimestamp(ReadOnlySequence<byte> payload)
+    {
+        var reader = new SequenceReader<byte>(payload);
+        if (!reader.TryReadLittleEndian(out long timestamp))
+            throw new SharpLinkException(SharpLinkErrorCode.ProtocolViolation, "Heartbeat timestamp is truncated.");
+        return timestamp;
+    }
+
+    private static void ApplyDeadline(CancellationTokenSource cancellation, DateTimeOffset? deadline)
+    {
+        if (deadline is not { } absoluteDeadline)
+            return;
+        var remaining = absoluteDeadline - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+            cancellation.Cancel();
+        else
+            cancellation.CancelAfter(remaining);
+    }
+
+    private static SharpLinkException CreateServerCancellationException(DateTimeOffset? deadline)
+        => deadline is not null
+            ? new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded, "Request deadline exceeded.")
+            : new SharpLinkException(SharpLinkErrorCode.Cancelled, "Request canceled.");
+
+    private RpcRequestEnvelope ReadRequestEnvelope(
+        IRpcSession session,
+        ReadOnlySequence<byte> payload,
+        ProtocolV2FrameFlags flags)
+    {
+        var reader = new SequenceReader<byte>(payload);
+        if (!reader.TryReadLittleEndian(out long interfaceHash) ||
+            !reader.TryReadLittleEndian(out long methodHash))
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.ProtocolViolation,
+                "Request routing prefix is truncated.");
+        }
+
+        DateTimeOffset? deadline = null;
+        if ((flags & ProtocolV2FrameFlags.HasDeadline) != 0)
+        {
+            if (!reader.TryReadLittleEndian(out long unixMilliseconds))
+                throw new SharpLinkException(SharpLinkErrorCode.ProtocolViolation, "Request deadline is truncated.");
+            try
+            {
+                deadline = DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds);
+            }
+            catch (ArgumentOutOfRangeException exception)
+            {
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.ProtocolViolation,
+                    "Request deadline is outside the supported UTC range.",
+                    exception);
+            }
+        }
+
+        SharpLinkMetadata? metadata = null;
+        if ((flags & ProtocolV2FrameFlags.HasMetadata) != 0)
+        {
+            if (session is not RpcSession runtimeSession ||
+                (runtimeSession.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) == 0)
+            {
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.ProtocolViolation,
+                    "Request metadata was not negotiated during handshake.");
+            }
+            if (!ProtocolV2PayloadCodec.TryReadVarUInt32(ref reader, out var metadataLength) ||
+                metadataLength > _protocolOptions.MaxMetadataBytes ||
+                reader.Remaining < metadataLength)
+            {
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.ProtocolViolation,
+                    "Request metadata length is invalid.");
+            }
+            metadata = ProtocolV2PayloadCodec.ReadMetadata(
+                reader.Sequence.Slice(reader.Position, metadataLength));
+            reader.Advance(metadataLength);
+        }
+
+        return new RpcRequestEnvelope(
+            interfaceHash,
+            methodHash,
+            reader.UnreadSequence,
+            deadline,
+            metadata);
+    }
+
+    private readonly record struct RpcRequestEnvelope(
+        long InterfaceHash,
+        long MethodHash,
+        ReadOnlySequence<byte> Arguments,
+        DateTimeOffset? Deadline,
+        SharpLinkMetadata? Metadata);
 
 
 }

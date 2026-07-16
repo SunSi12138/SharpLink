@@ -8,7 +8,12 @@ public static class GeneratedProxyRegistry
     {
         ArgumentNullException.ThrowIfNull(serviceInterfaceType);
         ArgumentNullException.ThrowIfNull(factory);
-        Factories[serviceInterfaceType] = factory;
+        if (Factories.TryAdd(serviceInterfaceType, factory))
+            return;
+        if (Factories.TryGetValue(serviceInterfaceType, out var existing) && existing == factory)
+            return;
+        throw new InvalidOperationException(
+            $"A different generated proxy factory is already registered for '{serviceInterfaceType.FullName}'.");
     }
 
     public static bool TryCreate(Type serviceInterfaceType, IRpcChannel channel, out object? proxy)
@@ -32,7 +37,12 @@ public static class GeneratedStubRegistry
     {
         ArgumentNullException.ThrowIfNull(serviceType);
         ArgumentNullException.ThrowIfNull(factory);
-        Factories[serviceType] = factory;
+        if (Factories.TryAdd(serviceType, factory))
+            return;
+        if (Factories.TryGetValue(serviceType, out var existing) && existing == factory)
+            return;
+        throw new InvalidOperationException(
+            $"A different generated stub factory is already registered for '{serviceType.FullName}'.");
     }
 
     public static bool TryCreate(Type serviceType, out IRpcStub? stub)

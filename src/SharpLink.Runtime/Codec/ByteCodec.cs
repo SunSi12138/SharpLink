@@ -14,7 +14,8 @@ internal sealed class ByteCodec : IRpcCodec<byte>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public byte Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        return MemoryMarshal.GetReference(buffer.FirstSpan);
+        CodecHelpers.EnsureAvailable(buffer, Size);
+        return CodecHelpers.ReadUnmanaged<byte>(buffer);
     }
 }
 
@@ -44,6 +45,7 @@ internal sealed class NullableByteCodec : IRpcCodec<byte?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public byte? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);

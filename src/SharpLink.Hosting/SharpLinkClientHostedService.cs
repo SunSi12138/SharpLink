@@ -3,7 +3,7 @@ namespace SharpLink.Hosting;
 internal sealed class SharpLinkClientHostedService(
     SharpClientBuilder builder,
     SharpLinkClientAccessor accessor,
-    ILoggerFactory loggerFactory) : IHostedService, IDisposable
+    ILoggerFactory loggerFactory) : IHostedService, IAsyncDisposable
 {
     private ISharpLinkClient? _client;
 
@@ -13,27 +13,29 @@ internal sealed class SharpLinkClientHostedService(
         {
             builder.UseLoggerFactoryIfUnset(loggerFactory);
             _client = builder.Build();
-            await _client.ConnectOrThrowAsync(cancellationToken);
+            await _client.ConnectAsync(cancellationToken);
             accessor.SetClient(_client);
         }
         catch (Exception ex)
         {
             accessor.Fail(ex);
-            Dispose();
+            await DisposeAsync();
             throw;
         }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
         accessor.Stop();
-        Dispose();
-        return Task.CompletedTask;
+        var client = Interlocked.Exchange(ref _client, null);
+        if (client is not null)
+            await client.StopAsync(cancellationToken);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        if (_client is IDisposable disposable)
-            disposable.Dispose();
+        var client = Interlocked.Exchange(ref _client, null);
+        if (client is not null)
+            await client.DisposeAsync();
     }
 }

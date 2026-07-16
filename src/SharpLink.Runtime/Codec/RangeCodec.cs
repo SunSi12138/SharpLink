@@ -15,6 +15,7 @@ internal sealed class RangeCodec : IRpcCodec<Range>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Range Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             return Unsafe.ReadUnaligned<Range>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
@@ -52,6 +53,7 @@ internal sealed class NullableRangeCodec : IRpcCodec<Range?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Range? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);

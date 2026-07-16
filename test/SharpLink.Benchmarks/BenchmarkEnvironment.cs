@@ -16,8 +16,8 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
 {
     private readonly CancellationTokenSource _shutdown;
     private readonly Task _serverTask;
-    private readonly IDisposable? _serverDisposable;
-    private readonly IDisposable? _clientDisposable;
+    private readonly ISharpLinkServer _server;
+    private readonly ISharpLinkClient _client;
 
     public IBenchmarkRpc Rpc { get; }
     public BenchmarkRpcService LocalService { get; }
@@ -27,15 +27,15 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         BenchmarkRpcService localService,
         CancellationTokenSource shutdown,
         Task serverTask,
-        IDisposable? serverDisposable,
-        IDisposable? clientDisposable)
+        ISharpLinkServer server,
+        ISharpLinkClient client)
     {
         Rpc = rpc;
         LocalService = localService;
         _shutdown = shutdown;
         _serverTask = serverTask;
-        _serverDisposable = serverDisposable;
-        _clientDisposable = clientDisposable;
+        _server = server;
+        _client = client;
     }
 
     public static async Task<BenchmarkEnvironment> CreateAsync()
@@ -47,7 +47,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             .UseTcp(0, IPAddress.Loopback.ToString())
             .UseSerializer(MemoryPackCodec.Resolver);
 
-        var port = ((IPEndPoint)((ILocalEndPointTransport)serverBuilder.Transport!).LocalEndPoint!).Port;
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
 
         var shutdown = new CancellationTokenSource();
@@ -55,7 +55,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         {
             try
             {
-                await server.Start(shutdown.Token);
+                await server.RunAsync(shutdown.Token);
             }
             catch (OperationCanceledException)
             {
@@ -67,9 +67,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             .UseSerializer(MemoryPackCodec.Resolver)
             .Build();
 
-        var connected = await client.ConnectAsync(shutdown.Token);
-        if (!connected)
-            throw new InvalidOperationException("Failed to connect benchmark client.");
+        await client.ConnectAsync(shutdown.Token);
 
         var rpc = client.Get<IBenchmarkRpc>();
         return new BenchmarkEnvironment(
@@ -77,16 +75,16 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             localService,
             shutdown,
             serverTask,
-            server as IDisposable,
-            client as IDisposable);
+            server,
+            client);
     }
 
     public async ValueTask DisposeAsync()
     {
         _shutdown.Cancel();
 
-        _clientDisposable?.Dispose();
-        _serverDisposable?.Dispose();
+        await _client.StopAsync();
+        await _server.StopAsync(TimeSpan.Zero);
 
         await Task.WhenAny(_serverTask, Task.Delay(500));
         _shutdown.Dispose();

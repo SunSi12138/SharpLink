@@ -36,15 +36,20 @@ public partial class RpcGenerator : IIncrementalGenerator
                 static (node, _) => node is InterfaceDeclarationSyntax,
                 static (attributeContext, ct) => GetInvalidCancellationTokenMethods(attributeContext, ct))
             .Where(x => x.Length > 0);
+        var invalidCallOptionsMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RpcContractAttributeMetadataName,
+                static (node, _) => node is InterfaceDeclarationSyntax,
+                static (attributeContext, ct) => GetInvalidCallOptionsMethods(attributeContext, ct))
+            .Where(x => x.Length > 0);
+        var invalidControlParameterOrderMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RpcContractAttributeMetadataName,
+                static (node, _) => node is InterfaceDeclarationSyntax,
+                static (attributeContext, ct) => GetInvalidControlParameterOrderMethods(attributeContext, ct))
+            .Where(x => x.Length > 0);
         var invalidStreamCountMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcContractAttributeMetadataName,
                 static (node, _) => node is InterfaceDeclarationSyntax,
                 static (attributeContext, ct) => GetInvalidStreamCountMethods(attributeContext, ct))
-            .Where(x => x.Length > 0);
-        var invalidTimeoutCancellationMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
-                RpcContractAttributeMetadataName,
-                static (node, _) => node is InterfaceDeclarationSyntax,
-                static (attributeContext, ct) => GetInvalidTimeoutCancellationMethods(attributeContext, ct))
             .Where(x => x.Length > 0);
         var invalidGenericUsage = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcContractAttributeMetadataName,
@@ -80,6 +85,16 @@ public partial class RpcGenerator : IIncrementalGenerator
                 spc.ReportDiagnostic(diagnostic);
             }
         });
+        context.RegisterSourceOutput(invalidCallOptionsMethods, static (spc, methods) =>
+        {
+            foreach (var method in methods)
+                spc.ReportDiagnostic(Diagnostic.Create(MultipleCallOptionsRule, method.Location, method.MethodName));
+        });
+        context.RegisterSourceOutput(invalidControlParameterOrderMethods, static (spc, methods) =>
+        {
+            foreach (var method in methods)
+                spc.ReportDiagnostic(Diagnostic.Create(ControlParameterOrderRule, method.Location, method.MethodName));
+        });
         context.RegisterSourceOutput(invalidStreamCountMethods, static (spc, methods) =>
         {
             foreach (var method in methods)
@@ -89,17 +104,6 @@ public partial class RpcGenerator : IIncrementalGenerator
                     method.Location,
                     method.MethodName,
                     method.StreamParameterCount);
-                spc.ReportDiagnostic(diagnostic);
-            }
-        });
-        context.RegisterSourceOutput(invalidTimeoutCancellationMethods, static (spc, methods) =>
-        {
-            foreach (var method in methods)
-            {
-                var diagnostic = Diagnostic.Create(
-                    TimeoutRequiresCancellationTokenRule,
-                    method.Location,
-                    method.MethodName);
                 spc.ReportDiagnostic(diagnostic);
             }
         });

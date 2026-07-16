@@ -15,6 +15,7 @@ internal sealed class TimeSpanCodec : IRpcCodec<TimeSpan>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public TimeSpan Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             return Unsafe.ReadUnaligned<TimeSpan>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
@@ -52,6 +53,7 @@ internal sealed class NullableTimeSpanCodec : IRpcCodec<TimeSpan?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public TimeSpan? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);

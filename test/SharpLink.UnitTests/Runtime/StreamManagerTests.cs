@@ -81,6 +81,32 @@ public class StreamManagerTests
         Ensure(ReferenceEquals(exception, dispatcher.LastException), "manager should pass through supplied exception");
     }
 
+    [Test]
+    public async Task SlowConsumerShouldReceiveResourceExhaustedAt4096BufferedElements()
+    {
+        var dispatcher = PooledAsyncStreamDispatcher<int>.Rent();
+        var writer = new ArrayBufferWriter<byte>();
+        RpcCodec.Serialize(42, writer);
+        var payload = new ReadOnlySequence<byte>(writer.WrittenMemory);
+
+        for (var index = 0; index <= 4096; index++)
+            await dispatcher.DispatchAsync(payload);
+
+        var enumerator = dispatcher.GetAsyncEnumerator();
+        var received = 0;
+        try
+        {
+            while (await enumerator.MoveNextAsync())
+                received++;
+            throw new Exception("expected stream ResourceExhausted");
+        }
+        catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.ResourceExhausted)
+        {
+        }
+
+        Ensure(received == 4096, "dispatcher should stop growth at 4096 buffered elements");
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)

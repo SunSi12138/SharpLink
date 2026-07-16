@@ -7,8 +7,6 @@ using SharpLink.Sdk;
 
 const int port = 19110;
 
-RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
-
 var cts = new CancellationTokenSource();
 var server = DemoTcp.CreateServer<IGreetingService, GreetingService>(port);
 var serverTask = DemoTcp.StartServerAsync(server, cts.Token);
@@ -33,7 +31,7 @@ catch (OperationCanceledException)
 finally
 {
     Console.CancelKeyPress -= cancelHandler;
-    await DemoTcp.ShutdownAsync(cts, serverTask, server as IDisposable);
+    await DemoTcp.ShutdownAsync(cts, serverTask, server);
 }
 
 [RpcService]

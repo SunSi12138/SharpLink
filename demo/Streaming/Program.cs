@@ -6,8 +6,6 @@ using SharpLink.Runtime;
 var port = DemoStream.GetFreePort();
 using var cts = new CancellationTokenSource();
 
-RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
-
 var server = DemoTcp.CreateServer<IStreamingService, StreamingService>(port);
 var serverTask = DemoTcp.StartServerAsync(server, cts.Token);
 var client = DemoTcp.CreateClient(port);
@@ -70,7 +68,7 @@ try
 }
 finally
 {
-    await DemoTcp.ShutdownAsync(cts, serverTask, client as IDisposable, server as IDisposable);
+    await DemoTcp.ShutdownAsync(cts, serverTask, client, server);
 }
 
 [RpcContract]

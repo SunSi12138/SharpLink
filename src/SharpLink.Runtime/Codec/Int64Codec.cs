@@ -15,6 +15,7 @@ internal sealed class Int64Codec : IRpcCodec<long>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public long Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             return Unsafe.ReadUnaligned<long>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
@@ -52,6 +53,7 @@ internal sealed class NullableInt64Codec : IRpcCodec<long?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public long? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);

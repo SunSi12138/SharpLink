@@ -8,6 +8,55 @@ public class RequestManagerTests
     private const int RingBufferSize = 65536;
 
     [Test]
+    public void ConstructorShouldRequirePowerOfTwoCapacity()
+    {
+        AssertThrows<ArgumentOutOfRangeException>(() => _ = new RequestManager(0));
+        AssertThrows<ArgumentException>(() => _ = new RequestManager(3));
+    }
+
+    [Test]
+    public async Task OccupiedWrappedSlotShouldReturnResourceExhaustedWithoutPoisoningOtherSlots()
+    {
+        var manager = new RequestManager(4);
+        var longRequest = manager.Rent<int>(out var longRequestId);
+
+        for (var index = 0; index < 3; index++)
+        {
+            var shortRequest = manager.Rent<int>(out var shortRequestId);
+            var payload = ReadOnlySequence<byte>.Empty;
+            Ensure(manager.Dispatch(shortRequestId, ref payload), "short request dispatch");
+            _ = await shortRequest.AsValueTask();
+        }
+
+        ExpectResourceExhausted(() => manager.Rent<int>(out _));
+
+        var healthyRequest = manager.Rent<int>(out var healthyRequestId);
+        var emptyPayload = ReadOnlySequence<byte>.Empty;
+        Ensure(manager.Dispatch(healthyRequestId, ref emptyPayload), "free slot after collision should remain usable");
+        _ = await healthyRequest.AsValueTask();
+
+        emptyPayload = ReadOnlySequence<byte>.Empty;
+        Ensure(manager.Dispatch(longRequestId, ref emptyPayload), "long request should remain registered");
+        _ = await longRequest.AsValueTask();
+    }
+
+    [Test]
+    public async Task DefaultCapacityShouldRejectRequest65537AsResourceExhausted()
+    {
+        var manager = new RequestManager();
+        var operations = new RpcRequestOperation<int>[RingBufferSize];
+        for (var index = 0; index < operations.Length; index++)
+            operations[index] = manager.Rent<int>(out _);
+
+        ExpectResourceExhausted(() => manager.Rent<int>(out _));
+
+        var failure = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "test cleanup");
+        manager.FailAllPendingRequests(failure);
+        foreach (var operation in operations)
+            await EnsureThrows<SharpLinkException>(operation.AsValueTask(), "test cleanup");
+    }
+
+    [Test]
     public async Task DispatchShouldNotDropCurrentPendingWhenStaleResponseArrives()
     {
         var manager = new RequestManager();
@@ -81,6 +130,30 @@ public class RequestManagerTests
         catch (TException ex)
         {
             Ensure(ex.Message.Contains(message, StringComparison.Ordinal), "exception message");
+        }
+    }
+
+    private static void ExpectResourceExhausted(Action action)
+    {
+        try
+        {
+            action();
+            throw new Exception("expected ResourceExhausted");
+        }
+        catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.ResourceExhausted)
+        {
+        }
+    }
+
+    private static void AssertThrows<TException>(Action action) where TException : Exception
+    {
+        try
+        {
+            action();
+            throw new Exception($"expected {typeof(TException).Name}");
+        }
+        catch (TException)
+        {
         }
     }
 

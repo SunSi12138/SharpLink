@@ -15,6 +15,7 @@ internal sealed class Int32Codec : IRpcCodec<int>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             return Unsafe.ReadUnaligned<int>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
@@ -52,6 +53,7 @@ internal sealed class NullableInt32Codec : IRpcCodec<int?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);

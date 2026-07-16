@@ -15,6 +15,7 @@ internal sealed class FloatCodec : IRpcCodec<float>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size) 
             return Unsafe.ReadUnaligned<float>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
             
@@ -48,6 +49,7 @@ internal sealed class NullableFloatCodec : IRpcCodec<float?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);

@@ -11,6 +11,7 @@ internal sealed class DoubleCodec : IRpcCodec<double>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public double Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size) 
             return Unsafe.ReadUnaligned<double>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
         Span<byte> temp = stackalloc byte[Size];
@@ -43,6 +44,7 @@ internal sealed class NullableDoubleCodec : IRpcCodec<double?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public double? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);

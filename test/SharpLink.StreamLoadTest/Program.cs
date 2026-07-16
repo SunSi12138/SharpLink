@@ -73,7 +73,7 @@ public static class Program
 
     private static async Task RunLocalAsync(StreamLoadOptions options)
     {
-        using var harness = LoadTestTransportFactory.CreateLocalHarness(
+        await using var harness = await LoadTestTransportFactory.CreateLocalHarness(
             options.Transport,
             options.Host,
             options.BindIp,
@@ -96,7 +96,7 @@ public static class Program
         finally
         {
             await serverCts.CancelAsync();
-            harness.DisposeServer();
+            await harness.DisposeServerAsync();
             await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
         }
     }
@@ -105,7 +105,7 @@ public static class Program
     {
         try
         {
-            await server.Start(token);
+            await server.RunAsync(token);
         }
         catch (OperationCanceledException)
         {
@@ -129,7 +129,7 @@ public static class Program
             static builder => builder.AddService<IStreamLoadService, StreamLoadService>());
 
         Console.WriteLine("[Server] started");
-        await server.Start(cancel.Token);
+        await server.RunAsync(cancel.Token);
     }
 
     private static async Task RunClientOnlyAsync(StreamLoadOptions options)
@@ -152,15 +152,13 @@ public static class Program
         }
         finally
         {
-            (client as IDisposable)?.Dispose();
+            await client.DisposeAsync();
         }
     }
 
     private static async Task RunClientStagesAsync(StreamLoadOptions options, ISharpLinkClient client)
     {
-        var connected = await client.ConnectAsync();
-        if (!connected)
-            throw new InvalidOperationException("client connect failed");
+        await client.ConnectAsync();
 
         var rpc = client.Get<IStreamLoadService>();
         foreach (var operation in ResolveOperations(options.Operation))

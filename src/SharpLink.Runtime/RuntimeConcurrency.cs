@@ -1,5 +1,6 @@
 namespace SharpLink.Runtime;
 
+[Obsolete("Use SharpLinkRuntimeContextBuilder.ConfigureStateStores instead.")]
 public static class RuntimeConcurrency
 {
     private static int _stripeCount = 32;

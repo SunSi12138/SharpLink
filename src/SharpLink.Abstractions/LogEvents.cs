@@ -30,6 +30,7 @@ public static class LogEvents
         //Warning
         public const int DispatchFailed = 2101;
         public const int OneWayDispatchFailed = 2102;
+        public const int ResourceExhausted = 2103;
         //Error
         //Critical
         //Debug

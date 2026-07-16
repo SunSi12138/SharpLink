@@ -26,15 +26,7 @@ internal sealed class UnsafeBlitCodec<T> : IRpcCodec<T>
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public T Deserialize(in ReadOnlySequence<byte> buffer)
-    {
-        var size = Unsafe.SizeOf<T>();
-        if (buffer.FirstSpan.Length >= size)
-            return Unsafe.ReadUnaligned<T>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
-
-        Span<byte> temp = stackalloc byte[size];
-        buffer.Slice(0, size).CopyTo(temp);
-        return Unsafe.ReadUnaligned<T>(ref MemoryMarshal.GetReference(temp));
-    }
+        => CodecHelpers.ReadUnmanaged<T>(buffer);
 }
 
 internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
@@ -67,6 +59,7 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
         if (value.Length <= 0) return;
         
         var byteSpan = MemoryMarshal.AsBytes(new ReadOnlySpan<T>(value));
+        CodecHelpers.EnsureSerializablePayloadLength(byteSpan.Length, nameof(value));
             
         var dest = writer.GetSpan(byteSpan.Length);
         byteSpan.CopyTo(dest);
@@ -78,7 +71,7 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
     {
         if (buffer.FirstSpan.Length < 4) return ReadSlow(buffer);
         
-        var length = Unsafe.ReadUnaligned<int>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
+        var length = CodecHelpers.ReadInt32(buffer);
         switch (length)
         {
             case -1:
@@ -86,9 +79,8 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
             case 0:
                 return [];
         }
-        
-        var elementSize = Unsafe.SizeOf<T>();
-        var byteCount = length * elementSize;
+
+        var byteCount = CodecHelpers.GetValidatedCollectionByteCount<T>(buffer, length);
 
         var array = new T[length];
         
@@ -114,22 +106,13 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static T[]? ReadSlow(ReadOnlySequence<byte> buffer)
     {
-        // 处理 header 分裂的情况 (极罕见)
-        Span<byte> header = stackalloc byte[4];
-        buffer.Slice(0, 4).CopyTo(header);
-        var length = Unsafe.ReadUnaligned<int>(ref MemoryMarshal.GetReference(header));
-        
-        switch (length)
-        {
-            case -1:
-                return null;
-            case 0:
-                return [];
-        }
+        var length = CodecHelpers.ReadInt32(buffer);
+        if (length == -1) return null;
+        if (length == 0) return [];
 
-        var byteCount = length * Unsafe.SizeOf<T>();
+        var byteCount = CodecHelpers.GetValidatedCollectionByteCount<T>(buffer, length);
         var array = new T[length];
-        buffer.Slice(4, byteCount).CopyTo(MemoryMarshal.AsBytes(array.AsSpan()));
+        buffer.Slice(sizeof(int), byteCount).CopyTo(MemoryMarshal.AsBytes(array.AsSpan()));
         return array;
     }
 }
@@ -165,6 +148,7 @@ internal sealed class BlitListCodec<T> : IRpcCodec<List<T>?> where T:unmanaged
         // 写入 Body
         if (span.Length <= 0) return;
         var byteSpan = MemoryMarshal.AsBytes(span);
+        CodecHelpers.EnsureSerializablePayloadLength(byteSpan.Length, nameof(value));
         var dest = writer.GetSpan(byteSpan.Length);
         byteSpan.CopyTo(dest);
         writer.Advance(byteSpan.Length);
@@ -180,7 +164,7 @@ internal sealed class BlitListCodec<T> : IRpcCodec<List<T>?> where T:unmanaged
         // 包装成 List
         // 注意：这会发生一次 T[] 到 List._items 的内存拷贝 (Array.Copy)
         // 但这是目前安全且标准的做法。
-        return [..array]; 
+        return new List<T>(array);
     }
 }
 
@@ -207,6 +191,7 @@ internal sealed class BlitMemoryCodec<T> : IRpcCodec<Memory<T>>  where T:unmanag
         // 写入 Body
         if (span.Length <= 0) return;
         var byteSpan = MemoryMarshal.AsBytes(span);
+        CodecHelpers.EnsureSerializablePayloadLength(byteSpan.Length, nameof(value));
         var dest = writer.GetSpan(byteSpan.Length);
         byteSpan.CopyTo(dest);
         writer.Advance(byteSpan.Length);
@@ -239,6 +224,7 @@ internal sealed class BlitReadOnlyMemoryCodec<T> : IRpcCodec<ReadOnlyMemory<T>> 
         
         if (span.Length <= 0) return;
         var byteSpan = MemoryMarshal.AsBytes(span);
+        CodecHelpers.EnsureSerializablePayloadLength(byteSpan.Length, nameof(value));
         var dest = writer.GetSpan(byteSpan.Length);
         byteSpan.CopyTo(dest);
         writer.Advance(byteSpan.Length);
@@ -281,6 +267,7 @@ internal sealed class BlitImmutableArrayCodec<T> : IRpcCodec<ImmutableArray<T>> 
         // Body
         if (span.Length <= 0) return;
         var byteSpan = MemoryMarshal.AsBytes(span);
+        CodecHelpers.EnsureSerializablePayloadLength(byteSpan.Length, nameof(value));
         var dest = writer.GetSpan(byteSpan.Length);
         byteSpan.CopyTo(dest);
         writer.Advance(byteSpan.Length);

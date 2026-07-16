@@ -6,9 +6,14 @@ public sealed class StripedLongSet
     private readonly HashSet<long>[] _sets;
     private readonly int _stripeMask;
 
-    public StripedLongSet()
+    public StripedLongSet() : this(new RuntimeConcurrencyOptions())
     {
-        var snapshot = RuntimeConcurrency.Snapshot();
+    }
+
+    public StripedLongSet(RuntimeConcurrencyOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        var snapshot = options.CloneValidated();
         _locks = new Lock[snapshot.StripeCount];
         _sets = new HashSet<long>[snapshot.StripeCount];
         _stripeMask = snapshot.StripeCount - 1;

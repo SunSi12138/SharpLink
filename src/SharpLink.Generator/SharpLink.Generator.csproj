@@ -1,8 +1,14 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk"
+         TreatAsLocalProperty="PublishAot;RuntimeIdentifier;RuntimeIdentifiers;SelfContained;PublishSingleFile">
 
     <PropertyGroup>
         <IsPackable>false</IsPackable>
         <LangVersion>latest</LangVersion>
+        <PublishAot>false</PublishAot>
+        <RuntimeIdentifier></RuntimeIdentifier>
+        <RuntimeIdentifiers></RuntimeIdentifiers>
+        <SelfContained>false</SelfContained>
+        <PublishSingleFile>false</PublishSingleFile>
 
         <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
         <IsRoslynComponent>true</IsRoslynComponent>

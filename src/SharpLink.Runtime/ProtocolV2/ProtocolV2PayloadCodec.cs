@@ -1,0 +1,378 @@
+using System.Text;
+
+namespace SharpLink.Runtime;
+
+/// <summary>Encodes and decodes Protocol v2 control and error payloads.</summary>
+public static class ProtocolV2PayloadCodec
+{
+    private static readonly Encoding SStrictUtf8 = new UTF8Encoding(false, true);
+    private const int HandshakeRequestFixedBytes =
+        sizeof(ushort) + sizeof(ulong) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int);
+    private const int HandshakeResponseBytes =
+        sizeof(ushort) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int);
+
+    /// <summary>Writes a bounded handshake request payload.</summary>
+    public static void WriteHandshakeRequest(
+        IBufferWriter<byte> writer,
+        in ProtocolV2HandshakeRequest request,
+        SharpLinkProtocolOptions limits)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(limits);
+        ValidatePeerLimits(request.MaxFramePayloadBytes, request.StreamReceiveWindowBytes,
+            request.ConnectionReceiveWindowBytes);
+        if (request.AuthenticationPayload.Length > limits.MaxMetadataBytes)
+        {
+            throw new ArgumentOutOfRangeException(nameof(request),
+                $"Authentication payload exceeds the {limits.MaxMetadataBytes}-byte handshake limit.");
+        }
+
+        WriteUInt16(writer, request.MinorVersion);
+        WriteUInt64(writer, (ulong)request.SupportedCapabilities);
+        WriteUInt64(writer, (ulong)request.RequiredCapabilities);
+        WriteInt32(writer, request.MaxFramePayloadBytes);
+        WriteInt32(writer, request.StreamReceiveWindowBytes);
+        WriteInt32(writer, request.ConnectionReceiveWindowBytes);
+        WriteVarUInt32(writer, checked((uint)request.AuthenticationPayload.Length));
+        writer.Write(request.AuthenticationPayload.Span);
+    }
+
+    /// <summary>Reads and validates a complete handshake request payload.</summary>
+    public static ProtocolV2HandshakeRequest ReadHandshakeRequest(
+        ReadOnlySequence<byte> payload,
+        SharpLinkProtocolOptions limits)
+    {
+        ArgumentNullException.ThrowIfNull(limits);
+        if (payload.Length < HandshakeRequestFixedBytes + 1)
+            throw ProtocolV2FrameParser.Violation("HandshakeRequest payload is incomplete.");
+        var reader = new SequenceReader<byte>(payload);
+        if (!reader.TryReadLittleEndian(out short minorBits) ||
+            !reader.TryReadLittleEndian(out long supportedBits) ||
+            !reader.TryReadLittleEndian(out long requiredBits) ||
+            !reader.TryReadLittleEndian(out int maxFrame) ||
+            !reader.TryReadLittleEndian(out int streamWindow) ||
+            !reader.TryReadLittleEndian(out int connectionWindow) ||
+            !TryReadVarUInt32(ref reader, out var authLength))
+        {
+            throw ProtocolV2FrameParser.Violation("HandshakeRequest payload is truncated.");
+        }
+        ValidatePeerLimits(maxFrame, streamWindow, connectionWindow);
+        if (authLength > limits.MaxMetadataBytes)
+            throw ProtocolV2FrameParser.Violation($"Authentication payload exceeds {limits.MaxMetadataBytes} bytes.");
+        if (reader.Remaining != authLength)
+            throw ProtocolV2FrameParser.Violation("Handshake authentication payload length does not match the frame.");
+
+        var auth = authLength == 0
+            ? ReadOnlyMemory<byte>.Empty
+            : reader.Sequence.Slice(reader.Position, authLength).ToArray();
+        return new ProtocolV2HandshakeRequest(
+            unchecked((ushort)minorBits),
+            (ProtocolV2Capabilities)unchecked((ulong)supportedBits),
+            (ProtocolV2Capabilities)unchecked((ulong)requiredBits),
+            maxFrame,
+            streamWindow,
+            connectionWindow,
+            auth);
+    }
+
+    /// <summary>Writes a negotiated handshake response payload.</summary>
+    public static void WriteHandshakeResponse(
+        IBufferWriter<byte> writer,
+        in ProtocolV2HandshakeResponse response)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ValidatePeerLimits(response.MaxFramePayloadBytes, response.StreamReceiveWindowBytes,
+            response.ConnectionReceiveWindowBytes);
+        WriteUInt16(writer, response.MinorVersion);
+        WriteUInt64(writer, (ulong)response.NegotiatedCapabilities);
+        WriteInt32(writer, response.MaxFramePayloadBytes);
+        WriteInt32(writer, response.StreamReceiveWindowBytes);
+        WriteInt32(writer, response.ConnectionReceiveWindowBytes);
+    }
+
+    /// <summary>Reads a negotiated handshake response payload.</summary>
+    public static ProtocolV2HandshakeResponse ReadHandshakeResponse(
+        ReadOnlySequence<byte> payload,
+        SharpLinkProtocolOptions limits)
+    {
+        ArgumentNullException.ThrowIfNull(limits);
+        if (payload.Length != HandshakeResponseBytes)
+            throw ProtocolV2FrameParser.Violation("HandshakeResponse payload has an invalid length.");
+        var reader = new SequenceReader<byte>(payload);
+        if (!reader.TryReadLittleEndian(out short minorBits) ||
+            !reader.TryReadLittleEndian(out long capabilitiesBits) ||
+            !reader.TryReadLittleEndian(out int maxFrame) ||
+            !reader.TryReadLittleEndian(out int streamWindow) ||
+            !reader.TryReadLittleEndian(out int connectionWindow))
+        {
+            throw ProtocolV2FrameParser.Violation("HandshakeResponse payload is truncated.");
+        }
+        ValidatePeerLimits(maxFrame, streamWindow, connectionWindow);
+        return new ProtocolV2HandshakeResponse(
+            unchecked((ushort)minorBits),
+            (ProtocolV2Capabilities)unchecked((ulong)capabilitiesBits),
+            maxFrame,
+            streamWindow,
+            connectionWindow);
+    }
+
+    /// <summary>Writes a binary error payload and reports whether the UTF-8 message was truncated.</summary>
+    public static void WriteError(
+        IBufferWriter<byte> writer,
+        SharpLinkErrorCode code,
+        string? message,
+        int maxMessageBytes,
+        out bool truncated)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentOutOfRangeException.ThrowIfNegative(maxMessageBytes);
+        message ??= string.Empty;
+        var charCount = message.Length;
+        var byteCount = Encoding.UTF8.GetByteCount(message);
+        truncated = byteCount > maxMessageBytes;
+        if (truncated)
+        {
+            charCount = FindUtf8PrefixLength(message, maxMessageBytes);
+            byteCount = Encoding.UTF8.GetByteCount(message.AsSpan(0, charCount));
+        }
+
+        WriteUInt16(writer, checked((ushort)code));
+        WriteVarUInt32(writer, checked((uint)byteCount));
+        if (byteCount == 0)
+            return;
+        var destination = writer.GetSpan(byteCount);
+        var written = Encoding.UTF8.GetBytes(message.AsSpan(0, charCount), destination);
+        writer.Advance(written);
+    }
+
+    /// <summary>Reads a complete binary error payload.</summary>
+    public static ProtocolV2Error ReadError(
+        ReadOnlySequence<byte> payload,
+        ProtocolV2FrameFlags flags,
+        int maxMessageBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(maxMessageBytes);
+        var reader = new SequenceReader<byte>(payload);
+        if (!reader.TryReadLittleEndian(out short codeBits) || !TryReadVarUInt32(ref reader, out var messageLength))
+            throw ProtocolV2FrameParser.Violation("Binary error payload is truncated.");
+        if (messageLength > maxMessageBytes)
+            throw ProtocolV2FrameParser.Violation($"Error message exceeds {maxMessageBytes} bytes.");
+        if (reader.Remaining != messageLength)
+            throw ProtocolV2FrameParser.Violation("Binary error message length does not match the frame.");
+
+        var code = (SharpLinkErrorCode)unchecked((ushort)codeBits);
+        if (!IsDefinedErrorCode(code))
+            throw ProtocolV2FrameParser.Violation($"Unknown error code {unchecked((ushort)codeBits)}.");
+        var message = messageLength == 0
+            ? string.Empty
+            : Encoding.UTF8.GetString(reader.Sequence.Slice(reader.Position, messageLength));
+        return new ProtocolV2Error(code, message, (flags & ProtocolV2FrameFlags.Truncated) != 0);
+    }
+
+    internal static int GetMetadataPayloadLength(SharpLinkMetadata metadata)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        var length = GetVarUInt32Length(checked((uint)metadata.Count));
+        for (var index = 0; index < metadata.Count; index++)
+        {
+            var entry = metadata[index];
+            var keyBytes = Encoding.UTF8.GetByteCount(entry.Key);
+            var valueBytes = Encoding.UTF8.GetByteCount(entry.Value);
+            length = checked(length + GetVarUInt32Length(checked((uint)keyBytes)) + keyBytes);
+            length = checked(length + GetVarUInt32Length(checked((uint)valueBytes)) + valueBytes);
+        }
+        return length;
+    }
+
+    internal static void WriteMetadata(IBufferWriter<byte> writer, SharpLinkMetadata metadata)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(metadata);
+        WriteVarUInt32(writer, checked((uint)metadata.Count));
+        for (var index = 0; index < metadata.Count; index++)
+        {
+            var entry = metadata[index];
+            WriteUtf8(writer, entry.Key);
+            WriteUtf8(writer, entry.Value);
+        }
+    }
+
+    internal static SharpLinkMetadata ReadMetadata(ReadOnlySequence<byte> payload)
+    {
+        var reader = new SequenceReader<byte>(payload);
+        if (!TryReadVarUInt32(ref reader, out var countBits) || countBits > int.MaxValue)
+            throw ProtocolV2FrameParser.Violation("Request metadata entry count is invalid.");
+        var count = checked((int)countBits);
+        if (count > reader.Remaining / 3)
+            throw ProtocolV2FrameParser.Violation("Request metadata entry count exceeds its bounded payload.");
+        var entries = new KeyValuePair<string, string>[count];
+        for (var index = 0; index < count; index++)
+        {
+            var key = ReadUtf8(ref reader, "key");
+            if (string.IsNullOrWhiteSpace(key))
+                throw ProtocolV2FrameParser.Violation("Request metadata key cannot be empty.");
+            var value = ReadUtf8(ref reader, "value");
+            entries[index] = new KeyValuePair<string, string>(key, value);
+        }
+        if (reader.Remaining != 0)
+            throw ProtocolV2FrameParser.Violation("Request metadata has trailing bytes.");
+        return new SharpLinkMetadata(entries);
+    }
+
+    internal static void WriteVarUInt32(IBufferWriter<byte> writer, uint value)
+    {
+        var span = writer.GetSpan(5);
+        var index = 0;
+        while (value >= 0x80)
+        {
+            span[index++] = (byte)(value | 0x80);
+            value >>= 7;
+        }
+        span[index++] = (byte)value;
+        writer.Advance(index);
+    }
+
+    internal static bool TryReadVarUInt32(ref SequenceReader<byte> reader, out uint value)
+    {
+        value = 0;
+        for (var index = 0; index < 5; index++)
+        {
+            if (!reader.TryRead(out var current))
+                return false;
+            if (index == 4 && (current & 0xF0) != 0)
+                return false;
+            value |= (uint)(current & 0x7F) << (index * 7);
+            if ((current & 0x80) == 0)
+                return true;
+        }
+        return false;
+    }
+
+    private static int GetVarUInt32Length(uint value)
+    {
+        var length = 1;
+        while (value >= 0x80)
+        {
+            value >>= 7;
+            length++;
+        }
+        return length;
+    }
+
+    private static void WriteUtf8(IBufferWriter<byte> writer, string value)
+    {
+        var byteCount = Encoding.UTF8.GetByteCount(value);
+        WriteVarUInt32(writer, checked((uint)byteCount));
+        if (byteCount == 0)
+            return;
+        var destination = writer.GetSpan(byteCount);
+        var written = Encoding.UTF8.GetBytes(value.AsSpan(), destination);
+        writer.Advance(written);
+    }
+
+    private static string ReadUtf8(ref SequenceReader<byte> reader, string field)
+    {
+        if (!TryReadVarUInt32(ref reader, out var lengthBits) || lengthBits > int.MaxValue)
+            throw ProtocolV2FrameParser.Violation($"Request metadata {field} length is invalid.");
+        var length = checked((int)lengthBits);
+        if (reader.Remaining < length)
+            throw ProtocolV2FrameParser.Violation($"Request metadata {field} is truncated.");
+        try
+        {
+            var value = length == 0
+                ? string.Empty
+                : SStrictUtf8.GetString(reader.Sequence.Slice(reader.Position, length));
+            reader.Advance(length);
+            return value;
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.ProtocolViolation,
+                $"Request metadata {field} is not valid UTF-8.",
+                exception);
+        }
+    }
+
+    private static int FindUtf8PrefixLength(string value, int maxBytes)
+    {
+        var low = 0;
+        var high = value.Length;
+        while (low < high)
+        {
+            var candidate = low + ((high - low + 1) >> 1);
+            if (Encoding.UTF8.GetByteCount(value.AsSpan(0, candidate)) <= maxBytes)
+                low = candidate;
+            else
+                high = candidate - 1;
+        }
+        if (low < value.Length && low > 0 &&
+            char.IsHighSurrogate(value[low - 1]) && char.IsLowSurrogate(value[low]))
+        {
+            low--;
+        }
+        while (low > 0 && Encoding.UTF8.GetByteCount(value.AsSpan(0, low)) > maxBytes)
+            low--;
+        return low;
+    }
+
+    private static void ValidatePeerLimits(int maxFrame, int streamWindow, int connectionWindow)
+    {
+        if (maxFrame < SharpLinkProtocolOptions.MinMaxFramePayloadBytes ||
+            maxFrame > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes)
+        {
+            throw ProtocolV2FrameParser.Violation(
+                $"Peer frame limit must be between {SharpLinkProtocolOptions.MinMaxFramePayloadBytes} and {SharpLinkProtocolOptions.MaxMaxFramePayloadBytes} bytes.");
+        }
+        if (streamWindow <= 0 || connectionWindow <= 0 || connectionWindow < streamWindow)
+            throw ProtocolV2FrameParser.Violation("Peer receive windows are invalid.");
+    }
+
+    private static bool IsDefinedErrorCode(SharpLinkErrorCode code) => code switch
+    {
+        SharpLinkErrorCode.Unknown or
+        SharpLinkErrorCode.RemoteError or
+        SharpLinkErrorCode.AuthenticationRejected or
+        SharpLinkErrorCode.AuthenticationExpired or
+        SharpLinkErrorCode.AuthorizationDenied or
+        SharpLinkErrorCode.ConnectionClosed or
+        SharpLinkErrorCode.HeartbeatTimeout or
+        SharpLinkErrorCode.ProtocolViolation or
+        SharpLinkErrorCode.DataLoss or
+        SharpLinkErrorCode.ResourceExhausted or
+        SharpLinkErrorCode.Unavailable or
+        SharpLinkErrorCode.Cancelled or
+        SharpLinkErrorCode.InvalidArgument or
+        SharpLinkErrorCode.DeadlineExceeded or
+        SharpLinkErrorCode.NotFound or
+        SharpLinkErrorCode.AlreadyExists or
+        SharpLinkErrorCode.PermissionDenied or
+        SharpLinkErrorCode.FailedPrecondition or
+        SharpLinkErrorCode.Aborted or
+        SharpLinkErrorCode.OutOfRange or
+        SharpLinkErrorCode.Unimplemented or
+        SharpLinkErrorCode.Internal => true,
+        _ => false
+    };
+
+    private static void WriteUInt16(IBufferWriter<byte> writer, ushort value)
+    {
+        var span = writer.GetSpan(sizeof(ushort));
+        BinaryPrimitives.WriteUInt16LittleEndian(span, value);
+        writer.Advance(sizeof(ushort));
+    }
+
+    private static void WriteUInt64(IBufferWriter<byte> writer, ulong value)
+    {
+        var span = writer.GetSpan(sizeof(ulong));
+        BinaryPrimitives.WriteUInt64LittleEndian(span, value);
+        writer.Advance(sizeof(ulong));
+    }
+
+    private static void WriteInt32(IBufferWriter<byte> writer, int value)
+    {
+        var span = writer.GetSpan(sizeof(int));
+        BinaryPrimitives.WriteInt32LittleEndian(span, value);
+        writer.Advance(sizeof(int));
+    }
+}

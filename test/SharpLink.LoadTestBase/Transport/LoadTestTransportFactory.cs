@@ -1,6 +1,7 @@
 ﻿using SharpLink.Runtime;
 using SharpLink.Abstractions;
 using System;
+using System.Threading.Tasks;
 using SharpLink.Client;
 using SharpLink.Server;
 
@@ -55,7 +56,7 @@ public static class LoadTestTransportFactory
         };
     }
 
-    public static LocalHarness CreateLocalHarness(
+    public static async Task<LocalHarness> CreateLocalHarness(
         TransportMode transport,
         string host,
         string bindIp,
@@ -81,9 +82,9 @@ public static class LoadTestTransportFactory
         var anonymousPipeAllocator = (IAnonymousPipeAllocator)serverBuilder.Transport!;
         var serverAnonymous = serverBuilder.Build();
         
-        var (inHandler, outHandler) = anonymousPipeAllocator.AllocateNewSession();
+        var (inHandler, outHandler) = await anonymousPipeAllocator.AllocateAsync();
         var clientAnonymous = SharpClientBuilder.Create()
-            .UseTransport(new AnonymousPipeTransport(inHandler, outHandler))
+            .UseTransport(new AnonymousPipeClientTransportFactory(inHandler, outHandler))
             .UseSerializer(MemoryPackCodec.Resolver)
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds))
             .Build();

@@ -1,38 +1,139 @@
 namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer(
-    ITransport transport,
+    IServerTransportListener transportListener,
     FrozenDictionary<long, (IRpcStub stub,object service)> services,
     TimeSpan heartbeatCheckInterval,
     TimeSpan heartbeatTimeout,
     ILoggerFactory loggerFactory,
-    Func<string, SharpLinkAuthenticationResult>? authValidator = null) : IDisposable,ISharpLinkServer
+    Func<string, SharpLinkAuthenticationResult>? authValidator = null,
+    SharpLinkProtocolOptions? protocolOptions = null,
+    SharpLinkRuntimeContext? runtimeContext = null,
+    RpcSessionFlushOptions? rpcSessionFlushOptions = null) : ISharpLinkServer
 {
+    private enum ServerState
+    {
+        Created,
+        Starting,
+        Running,
+        Draining,
+        Stopped,
+        Faulted
+    }
+
+    private readonly SharpLinkRuntimeContext _runtimeContext = runtimeContext ?? new SharpLinkRuntimeContextBuilder().Build();
     private readonly ConcurrentDictionary<string, IRpcSession> _sessions = [];
     private readonly ConcurrentDictionary<string, SharpLinkAuthenticationContext?> _sessionAuthContexts = [];
+    private readonly ConcurrentDictionary<string, long> _lastAcceptedRequestIds = [];
     private readonly ILogger _logger = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory))).CreateLogger<SharpLinkServer>();
     private readonly Func<string, SharpLinkAuthenticationResult> _authValidator = authValidator ?? DefaultAuthValidator;
-    private readonly CancellationTokenSource _shutdownCts = new();
+    private readonly CancellationTokenSource _acceptCts = new();
+    private readonly CancellationTokenSource _forceStopCts = new();
+    private readonly Lock _stateGate = new();
     private readonly Lock _backgroundTasksGate = new();
     private readonly HashSet<Task> _backgroundTasks = [];
-    private int _disposed;
+    private readonly TaskCompletionSource<bool> _callsDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Task? _runTask;
+    private Task? _stopTask;
+    private int _state = (int)ServerState.Created;
+    private readonly SharpLinkProtocolOptions _protocolOptions =
+        (protocolOptions ?? runtimeContext?.Protocol ?? new SharpLinkProtocolOptions()).CloneValidated();
+    private readonly int _maxConcurrentCallsPerConnection =
+        (runtimeContext?.FlowControl.MaxConcurrentCallsPerConnection ?? 1024);
+    private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions = rpcSessionFlushOptions;
+    private int _globalActiveCalls;
+    private long _rejectedOneWayCalls;
+    private readonly int _globalMaxConcurrentCalls = (int)Math.Min(
+        (long)Environment.ProcessorCount * 1024,
+        65_536L);
 
     private static SharpLinkAuthenticationResult DefaultAuthValidator(string message)
-        => !string.IsNullOrWhiteSpace(message)
-            ? SharpLinkAuthenticationResult.Success
-            : SharpLinkAuthenticationResult.Reject();
-    
+        => SharpLinkAuthenticationResult.Success;
 
-    public void Dispose()
+    public ValueTask DisposeAsync() => StopAsync(TimeSpan.Zero);
+
+    public ValueTask StopAsync(
+        TimeSpan gracefulTimeout,
+        CancellationToken cancellationToken = default)
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
+        ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
+        Task stopTask;
+        lock (_stateGate)
+        {
+            _stopTask ??= StopCoreAsync(gracefulTimeout);
+            stopTask = _stopTask;
+        }
 
-        _shutdownCts.Cancel();
-        DisposeAllSessions();
-        transport.Dispose();
-        WaitForBackgroundTasks();
-        _shutdownCts.Dispose();
+        return cancellationToken.CanBeCanceled
+            ? new ValueTask(stopTask.WaitAsync(cancellationToken))
+            : new ValueTask(stopTask);
+    }
+
+    private async Task StopCoreAsync(TimeSpan gracefulTimeout)
+    {
+        TransitionTo(ServerState.Draining);
+        _acceptCts.Cancel();
+        try
+        {
+            await transportListener.DisposeAsync().ConfigureAwait(false);
+            foreach (var session in _sessions.Values)
+            {
+                var lastAccepted = _lastAcceptedRequestIds.TryGetValue(session.Id, out var requestId)
+                    ? requestId
+                    : 0;
+                try
+                {
+                    await session.SendGoAwayAsync(
+                        lastAccepted,
+                        SharpLinkErrorCode.Unavailable,
+                        "Server is draining.").ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is SharpLinkException or System.IO.IOException or ObjectDisposedException)
+                {
+                }
+            }
+
+            if (Volatile.Read(ref _globalActiveCalls) == 0)
+                _callsDrained.TrySetResult(true);
+            else if (gracefulTimeout > TimeSpan.Zero)
+            {
+                try
+                {
+                    await _callsDrained.Task.WaitAsync(gracefulTimeout).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                }
+            }
+
+            if (_callsDrained.Task.IsCompletedSuccessfully)
+            {
+                foreach (var session in _sessions.Values)
+                {
+                    if (session is not RpcSession rpcSession)
+                        continue;
+                    try
+                    {
+                        await rpcSession.FlushSendQueueAsync().ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is SharpLinkException or System.IO.IOException or ObjectDisposedException)
+                    {
+                    }
+                }
+            }
+
+            _forceStopCts.Cancel();
+            await DisposeAllSessionsAsync().ConfigureAwait(false);
+            await WaitForBackgroundTasksAsync().ConfigureAwait(false);
+            _acceptCts.Dispose();
+            _forceStopCts.Dispose();
+            TransitionTo(ServerState.Stopped);
+        }
+        catch
+        {
+            TransitionTo(ServerState.Faulted);
+            throw;
+        }
     }
 
     private void TrackBackgroundTask(Task task)
@@ -53,35 +154,79 @@ internal sealed partial class SharpLinkServer(
             TaskScheduler.Default);
     }
 
-    private void DisposeAllSessions()
+    private async Task DisposeAllSessionsAsync()
     {
         foreach (var session in _sessions.Values)
-            session.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            await session.DisposeAsync().ConfigureAwait(false);
 
+        _sessions.Clear();
         _sessionAuthContexts.Clear();
+        _lastAcceptedRequestIds.Clear();
     }
 
-    private void WaitForBackgroundTasks()
+    private async Task WaitForBackgroundTasksAsync()
     {
-        Task[] tasks;
-        lock (_backgroundTasksGate)
-            tasks = [.. _backgroundTasks];
-
-        if (tasks.Length == 0)
-            return;
-
-        try
+        while (true)
         {
-            Task.WhenAll(tasks).GetAwaiter().GetResult();
-        }
-        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or System.IO.IOException or SocketException)
-        {
+            Task[] tasks;
+            lock (_backgroundTasksGate)
+                tasks = [.. _backgroundTasks];
+
+            if (tasks.Length == 0)
+                return;
+
+            try
+            {
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or System.IO.IOException or SocketException)
+            {
+            }
         }
     }
 
-    private SharpLinkCallContextSnapshot CreateCallContext(IRpcSession session)
+    private SharpLinkCallContextSnapshot CreateCallContext(
+        IRpcSession session,
+        DateTimeOffset? deadline,
+        SharpLinkMetadata? metadata)
     {
         _sessionAuthContexts.TryGetValue(session.Id, out var authenticationContext);
-        return new SharpLinkCallContextSnapshot(session.Id, authenticationContext);
+        return new SharpLinkCallContextSnapshot(session.Id, authenticationContext, deadline, metadata);
+    }
+
+    private bool TryAcquireCall(SessionCallAdmission sessionAdmission)
+    {
+        if (CurrentState != ServerState.Running)
+            return false;
+        if (Interlocked.Increment(ref sessionAdmission.ActiveCalls) > _maxConcurrentCallsPerConnection)
+        {
+            Interlocked.Decrement(ref sessionAdmission.ActiveCalls);
+            return false;
+        }
+
+        if (Interlocked.Increment(ref _globalActiveCalls) <= _globalMaxConcurrentCalls)
+            return true;
+
+        Interlocked.Decrement(ref _globalActiveCalls);
+        Interlocked.Decrement(ref sessionAdmission.ActiveCalls);
+        return false;
+    }
+
+    private void ReleaseCall(SessionCallAdmission sessionAdmission)
+    {
+        var active = Interlocked.Decrement(ref _globalActiveCalls);
+        Interlocked.Decrement(ref sessionAdmission.ActiveCalls);
+        if (active == 0 && CurrentState == ServerState.Draining)
+            _callsDrained.TrySetResult(true);
+    }
+
+    private ServerState CurrentState => (ServerState)Volatile.Read(ref _state);
+
+    private void TransitionTo(ServerState state)
+        => Interlocked.Exchange(ref _state, (int)state);
+
+    private sealed class SessionCallAdmission
+    {
+        public int ActiveCalls;
     }
 }

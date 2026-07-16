@@ -102,29 +102,53 @@ public partial class RpcGenerator
         return list.ToImmutable();
     }
 
-    private static ImmutableArray<InvalidTimeoutCancellationMethodModel> GetInvalidTimeoutCancellationMethods(GeneratorAttributeSyntaxContext context, CancellationToken _)
+    private static ImmutableArray<InvalidCallOptionsMethodModel> GetInvalidCallOptionsMethods(
+        GeneratorAttributeSyntaxContext context,
+        CancellationToken _)
     {
-        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface)
-            return ImmutableArray<InvalidTimeoutCancellationMethodModel>.Empty;
-        if (!InheritsIService(symbol))
-            return ImmutableArray<InvalidTimeoutCancellationMethodModel>.Empty;
+        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface ||
+            !InheritsIService(symbol))
+            return ImmutableArray<InvalidCallOptionsMethodModel>.Empty;
 
-        var list = ImmutableArray.CreateBuilder<InvalidTimeoutCancellationMethodModel>();
+        var list = ImmutableArray.CreateBuilder<InvalidCallOptionsMethodModel>();
         foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
         {
-            var hasTimeout = method.GetAttributes().Any(IsTimeoutAttribute);
-            if (!hasTimeout)
+            if (method.Parameters.Count(IsCallOptionsParameter) <= 1)
                 continue;
-
-            var hasCancellationToken = method.Parameters.Any(IsCancellationTokenParameter);
-            if (hasCancellationToken)
-                continue;
-
-            list.Add(new InvalidTimeoutCancellationMethodModel(
-                method.Name,
-                method.Locations.FirstOrDefault()));
+            list.Add(new InvalidCallOptionsMethodModel(method.Name, method.Locations.FirstOrDefault()));
         }
+        return list.ToImmutable();
+    }
 
+    private static ImmutableArray<InvalidControlParameterOrderModel> GetInvalidControlParameterOrderMethods(
+        GeneratorAttributeSyntaxContext context,
+        CancellationToken _)
+    {
+        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface ||
+            !InheritsIService(symbol))
+            return ImmutableArray<InvalidControlParameterOrderModel>.Empty;
+
+        var list = ImmutableArray.CreateBuilder<InvalidControlParameterOrderModel>();
+        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        {
+            var optionsIndex = -1;
+            var cancellationIndex = -1;
+            for (var index = 0; index < method.Parameters.Length; index++)
+            {
+                if (IsCallOptionsParameter(method.Parameters[index]))
+                    optionsIndex = index;
+                if (IsCancellationTokenParameter(method.Parameters[index]))
+                    cancellationIndex = index;
+            }
+
+            var expectedCancellationIndex = cancellationIndex >= 0 ? method.Parameters.Length - 1 : -1;
+            var expectedOptionsIndex = optionsIndex >= 0
+                ? method.Parameters.Length - (cancellationIndex >= 0 ? 2 : 1)
+                : -1;
+            if (cancellationIndex == expectedCancellationIndex && optionsIndex == expectedOptionsIndex)
+                continue;
+            list.Add(new InvalidControlParameterOrderModel(method.Name, method.Locations.FirstOrDefault()));
+        }
         return list.ToImmutable();
     }
 
@@ -189,8 +213,10 @@ public partial class RpcGenerator
                 HasTypeParameter(m.ReturnType) ||
                 m.Parameters.Any(p => HasTypeParameter(p.Type)) ||
                 m.Parameters.Count(IsCancellationTokenParameter) > 1 ||
+                m.Parameters.Count(IsCallOptionsParameter) > 1 ||
+                !HasValidControlParameterOrder(m) ||
                 m.Parameters.Count(p => IsAsyncEnumerable(p.Type, out _)) > sbyte.MaxValue ||
-                (m.GetAttributes().Any(IsTimeoutAttribute) && !m.Parameters.Any(IsCancellationTokenParameter)));
+                false);
     }
 
     private static bool HasTypeParameter(ITypeSymbol type)
@@ -209,6 +235,24 @@ public partial class RpcGenerator
 
     private static bool IsCancellationTokenParameter(IParameterSymbol parameter)
         => parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Threading.CancellationToken";
+
+    private static bool IsCallOptionsParameter(IParameterSymbol parameter)
+        => parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::SharpLink.Sdk.SharpLinkCallOptions";
+
+    private static bool HasValidControlParameterOrder(IMethodSymbol method)
+    {
+        var controls = method.Parameters.Where(p => IsCancellationTokenParameter(p) || IsCallOptionsParameter(p)).ToArray();
+        if (controls.Length == 0)
+            return true;
+        var firstControl = method.Parameters.Length - controls.Length;
+        for (var index = firstControl; index < method.Parameters.Length; index++)
+        {
+            if (!IsCancellationTokenParameter(method.Parameters[index]) && !IsCallOptionsParameter(method.Parameters[index]))
+                return false;
+        }
+        return !method.Parameters.Any(IsCancellationTokenParameter) ||
+               IsCancellationTokenParameter(method.Parameters[method.Parameters.Length - 1]);
+    }
 
     private static bool InheritsIService(INamedTypeSymbol symbol)
         => symbol.AllInterfaces.Any(IsIService);
@@ -317,6 +361,7 @@ public partial class RpcGenerator
                     var isValueType = p.Type.IsValueType;
                     var isNullableReference = !isValueType && p.NullableAnnotation == NullableAnnotation.Annotated;
                     var isCancellationToken = IsCancellationTokenParameter(p);
+                    var isCallOptions = IsCallOptionsParameter(p);
                     return new RpcParameterModel(
                         p.Name,
                         pType,
@@ -325,10 +370,14 @@ public partial class RpcGenerator
                         p.Type.IsUnmanagedType,
                         isValueType,
                         isNullableReference,
-                        isCancellationToken);
+                        isCancellationToken,
+                        isCallOptions);
                 }).ToImmutableArray();
 
-                var paramTypes = paramArray.Select(p => p.Type).ToArray();
+                var paramTypes = paramArray
+                    .Where(p => !p.IsCancellationToken && !p.IsCallOptions)
+                    .Select(p => p.Type)
+                    .ToArray();
                 var methodHash = Hashing.GetMethodHash(m.Name, paramTypes);
 
                 return new RpcMethodModel(
@@ -341,6 +390,7 @@ public partial class RpcGenerator
                     IsVoid: m.ReturnsVoid || isNonGenericTaskLike,
                     IsOneWay: isOneWay,
                     HasCancellationToken: paramArray.Any(p => p.IsCancellationToken),
+                    HasCallOptions: paramArray.Any(p => p.IsCallOptions),
                     HasTimeoutAttribute: hasTimeoutAttribute,
                     TimeoutSeconds: timeoutSeconds,
                     Hash: methodHash,

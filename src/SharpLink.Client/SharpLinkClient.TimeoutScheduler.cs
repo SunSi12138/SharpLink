@@ -4,14 +4,15 @@ internal sealed partial class SharpLinkClient
 {
     private interface IPooledTimeoutState
     {
+        int TimeoutHeapIndex { get; set; }
         void ReturnOnDispose();
+        void ReturnAfterCancellation();
     }
 
     private sealed class RequestTimeoutScheduler : IDisposable
     {
-        private const int StripeCount = 8;
+        private const int StripeCount = 32;
         private readonly Stripe[] _stripes = new Stripe[StripeCount];
-        private long _nextId;
         private int _disposed;
 
         public RequestTimeoutScheduler()
@@ -20,25 +21,27 @@ internal sealed partial class SharpLinkClient
                 _stripes[i] = new Stripe();
         }
 
-        public TimeoutRegistration Schedule(TimeSpan timeout, Action<object?> callback, IPooledTimeoutState state)
+        public TimeoutRegistration Schedule(
+            long requestId,
+            DateTimeOffset deadline,
+            Action<object?> callback,
+            IPooledTimeoutState state)
         {
-            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
             ArgumentNullException.ThrowIfNull(callback);
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
-            var dueTicks = DateTime.UtcNow.Add(timeout).Ticks;
-            var id = Interlocked.Increment(ref _nextId);
-            var stripe = GetStripe(id);
-            _stripes[stripe].Schedule(id, dueTicks, callback, state);
-            return new TimeoutRegistration(this, stripe, id, state);
+            var dueTicks = deadline.UtcDateTime.Ticks;
+            var stripe = GetStripe(requestId);
+            _stripes[stripe].Schedule(requestId, dueTicks, callback, state);
+            return new TimeoutRegistration(this, stripe, requestId, state);
         }
 
-        public void Cancel(int stripe, long id)
+        public bool Cancel(int stripe, long id, IPooledTimeoutState state)
         {
             if ((uint)stripe >= StripeCount)
-                return;
+                return false;
 
-            _stripes[stripe].Cancel(id);
+            return _stripes[stripe].Cancel(id, state);
         }
 
         public void Dispose()
@@ -60,9 +63,9 @@ internal sealed partial class SharpLinkClient
         private sealed class Stripe : IDisposable
         {
             private readonly Lock _gate = new();
-            private readonly PriorityQueue<ScheduledTimeout, long> _queue = new();
-            private readonly HashSet<long> _canceled = [];
+            private readonly List<ScheduledTimeout> _heap = [];
             private readonly Timer _timer;
+            private long _armedDueTicks;
             private bool _disposed;
 
             public Stripe()
@@ -70,28 +73,32 @@ internal sealed partial class SharpLinkClient
                 _timer = new Timer(static s => ((Stripe)s!).OnTimer(), this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
             }
 
-            public void Schedule(long id, long dueTicks, Action<object?> callback, object? state)
+            public void Schedule(long id, long dueTicks, Action<object?> callback, IPooledTimeoutState state)
             {
                 lock (_gate)
                 {
                     if (_disposed)
                         return;
 
-                    _queue.Enqueue(new ScheduledTimeout(id, dueTicks, callback, state), dueTicks);
+                    var index = _heap.Count;
+                    _heap.Add(new ScheduledTimeout(id, dueTicks, callback, state));
+                    SiftUpUnsafe(index);
                     UpdateTimerUnsafe();
                 }
             }
 
-            public void Cancel(long id)
+            public bool Cancel(long id, IPooledTimeoutState state)
             {
                 lock (_gate)
                 {
                     if (_disposed)
-                        return;
+                        return false;
 
-                    _canceled.Add(id);
-                    if (_canceled.Count > 2048)
-                        CompactCanceledUnsafe();
+                    var index = state.TimeoutHeapIndex;
+                    if ((uint)index >= (uint)_heap.Count || _heap[index].Id != id)
+                        return false;
+                    RemoveAtUnsafe(index);
+                    return true;
                 }
             }
 
@@ -102,20 +109,19 @@ internal sealed partial class SharpLinkClient
                     ScheduledTimeout next;
                     lock (_gate)
                     {
-                        if (_disposed || _queue.Count == 0)
+                        _armedDueTicks = 0;
+                        if (_disposed || _heap.Count == 0)
                             return;
 
                         var nowTicks = DateTime.UtcNow.Ticks;
-                        next = _queue.Peek();
+                        next = _heap[0];
                         if (next.DueTicks > nowTicks)
                         {
                             UpdateTimerUnsafe();
                             return;
                         }
 
-                        _queue.Dequeue();
-                        if (_canceled.Remove(next.Id))
-                            continue;
+                        RemoveAtUnsafe(0);
                     }
 
                     next.Callback(next.State);
@@ -124,33 +130,91 @@ internal sealed partial class SharpLinkClient
 
             private void UpdateTimerUnsafe()
             {
-                if (_queue.Count == 0)
-                {
-                    _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                if (_heap.Count == 0)
                     return;
-                }
 
                 var nowTicks = DateTime.UtcNow.Ticks;
-                var dueTicks = _queue.Peek().DueTicks;
+                var dueTicks = _heap[0].DueTicks;
+                if (_armedDueTicks != 0 && _armedDueTicks <= dueTicks)
+                    return;
                 var delayTicks = dueTicks - nowTicks;
                 var delay = delayTicks <= 0 ? TimeSpan.Zero : TimeSpan.FromTicks(delayTicks);
                 _timer.Change(delay, Timeout.InfiniteTimeSpan);
+                _armedDueTicks = dueTicks;
             }
 
-            private void CompactCanceledUnsafe()
+            private void RemoveAtUnsafe(int index)
             {
-                if (_queue.Count == 0)
+                var lastIndex = _heap.Count - 1;
+                var removed = _heap[index];
+                removed.State.TimeoutHeapIndex = -1;
+                if (index == lastIndex)
                 {
-                    _canceled.Clear();
+                    _heap.RemoveAt(lastIndex);
                     return;
                 }
 
-                var keep = new HashSet<long>();
-                foreach (var item in _queue.UnorderedItems)
-                    keep.Add(item.Element.Id);
+                var replacement = _heap[lastIndex];
+                _heap[index] = replacement;
+                _heap.RemoveAt(lastIndex);
+                replacement.State.TimeoutHeapIndex = index;
 
-                _canceled.RemoveWhere(id => !keep.Contains(id));
+                var parent = (index - 1) >> 1;
+                if (index > 0 && ComesBefore(replacement, _heap[parent]))
+                    SiftUpUnsafe(index);
+                else
+                    SiftDownUnsafe(index);
             }
+
+            private void SiftUpUnsafe(int index)
+            {
+                var item = _heap[index];
+                while (index > 0)
+                {
+                    var parent = (index - 1) >> 1;
+                    if (!ComesBefore(item, _heap[parent]))
+                        break;
+
+                    SetHeapItemUnsafe(index, _heap[parent]);
+                    index = parent;
+                }
+
+                SetHeapItemUnsafe(index, item);
+            }
+
+            private void SiftDownUnsafe(int index)
+            {
+                var item = _heap[index];
+                var count = _heap.Count;
+                while (true)
+                {
+                    var left = (index << 1) + 1;
+                    if (left >= count)
+                        break;
+
+                    var right = left + 1;
+                    var child = right < count && ComesBefore(_heap[right], _heap[left])
+                        ? right
+                        : left;
+                    if (!ComesBefore(_heap[child], item))
+                        break;
+
+                    SetHeapItemUnsafe(index, _heap[child]);
+                    index = child;
+                }
+
+                SetHeapItemUnsafe(index, item);
+            }
+
+            private void SetHeapItemUnsafe(int index, ScheduledTimeout item)
+            {
+                _heap[index] = item;
+                item.State.TimeoutHeapIndex = index;
+            }
+
+            private static bool ComesBefore(ScheduledTimeout left, ScheduledTimeout right)
+                => left.DueTicks < right.DueTicks ||
+                   (left.DueTicks == right.DueTicks && left.Id < right.Id);
 
             public void Dispose()
             {
@@ -160,15 +224,20 @@ internal sealed partial class SharpLinkClient
                         return;
 
                     _disposed = true;
-                    _queue.Clear();
-                    _canceled.Clear();
+                    foreach (var item in _heap)
+                        item.State.TimeoutHeapIndex = -1;
+                    _heap.Clear();
                 }
 
                 _timer.Dispose();
             }
         }
 
-        private readonly record struct ScheduledTimeout(long Id, long DueTicks, Action<object?> Callback, object? State);
+        private readonly record struct ScheduledTimeout(
+            long Id,
+            long DueTicks,
+            Action<object?> Callback,
+            IPooledTimeoutState State);
     }
 
     private readonly struct TimeoutRegistration(
@@ -181,8 +250,12 @@ internal sealed partial class SharpLinkClient
 
         public void Dispose()
         {
-            scheduler?.Cancel(stripe, id);
-            state?.ReturnOnDispose();
+            if (state is null)
+                return;
+            if (scheduler?.Cancel(stripe, id, state) == true)
+                state.ReturnAfterCancellation();
+            else
+                state.ReturnOnDispose();
         }
     }
 }

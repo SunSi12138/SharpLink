@@ -18,24 +18,25 @@ public static class Program
     public static async Task<int> Main()
     {
         MemoryPackFormatterProvider.Register(new ValueTupleFormatter<int,string>());
-        RegisterAotCodecs();
-        
         var cts = new CancellationTokenSource();
         var runToken = cts.Token;
 
         var serverBuilder = SharpLinkServerBuilder.Create()
             .AddService<IAotService, AotService>()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver);
+            .UseCodec(MemoryPackCodec<UserProfile>.Instance)
+            .UseCodec(MemoryPackCodec<string[]>.Instance)
+            .UseCodec(MemoryPackCodec<string[][]>.Instance)
+            .UseCodec(MemoryPackCodec<(int, string)>.Instance);
 
-        var port = ((IPEndPoint)((ILocalEndPointTransport)serverBuilder.Transport!).LocalEndPoint!).Port;
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
 
         var serverTask = Task.Run(async () =>
         {
             try
             {
-                await server.Start(runToken);
+                await server.RunAsync(runToken);
             }
             catch (OperationCanceledException)
             {
@@ -44,13 +45,15 @@ public static class Program
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseCodec(MemoryPackCodec<UserProfile>.Instance)
+            .UseCodec(MemoryPackCodec<string[]>.Instance)
+            .UseCodec(MemoryPackCodec<string[][]>.Instance)
+            .UseCodec(MemoryPackCodec<(int, string)>.Instance)
             .Build();
 
         try
         {
-            if (!await client.ConnectAsync(runToken))
-                throw new Exception("connect failed");
+            await client.ConnectAsync(runToken);
 
             var svc = client.Get<IAotService>();
             var result = await svc.PingAsync();
@@ -93,18 +96,11 @@ public static class Program
         finally
         {
             await cts.CancelAsync();
-            (client as IDisposable)?.Dispose();
-            (server as IDisposable)?.Dispose();
+            await client.DisposeAsync();
+            await server.DisposeAsync();
             await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
             cts.Dispose();
         }
-    }
-    private static void RegisterAotCodecs()
-    {
-        RpcCodecRegistry.Register(MemoryPackCodec<UserProfile>.Instance);
-        RpcCodecRegistry.Register(MemoryPackCodec<string[]>.Instance);
-        RpcCodecRegistry.Register(MemoryPackCodec<string[][]>.Instance);
-        RpcCodecRegistry.Register(MemoryPackCodec<(int, string)>.Instance);
     }
 }
 

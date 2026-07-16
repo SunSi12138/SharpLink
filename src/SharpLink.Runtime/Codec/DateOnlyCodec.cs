@@ -15,6 +15,7 @@ internal sealed class DateOnlyCodec : IRpcCodec<DateOnly>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public DateOnly Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         int dayNumber;
         if (buffer.FirstSpan.Length >= Size)
         {
@@ -27,7 +28,7 @@ internal sealed class DateOnlyCodec : IRpcCodec<DateOnly>
             dayNumber = Unsafe.ReadUnaligned<int>(ref MemoryMarshal.GetReference(temp));
         }
         
-        return DateOnly.FromDayNumber(dayNumber);
+        return CodecHelpers.CreateDateOnly(dayNumber);
     }
 }
 
@@ -57,13 +58,14 @@ internal sealed class NullableDateOnlyCodec : IRpcCodec<DateOnly?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public DateOnly? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
             if (start == 0) return null;
             
             var dayNumber = Unsafe.ReadUnaligned<int>(ref Unsafe.Add(ref start, 1));
-            return DateOnly.FromDayNumber(dayNumber);
+            return CodecHelpers.CreateDateOnly(dayNumber);
         }
 
         Span<byte> temp = stackalloc byte[Size];
@@ -73,6 +75,6 @@ internal sealed class NullableDateOnlyCodec : IRpcCodec<DateOnly?>
         if (tempStart == 0) return null;
         
         var tempDayNumber = Unsafe.ReadUnaligned<int>(ref Unsafe.Add(ref tempStart, 1));
-        return DateOnly.FromDayNumber(tempDayNumber);
+        return CodecHelpers.CreateDateOnly(tempDayNumber);
     }
 }

@@ -130,14 +130,15 @@ public class RpcChannelCallShapeIntegrationTests
     }
 
     [Test]
-    public async Task GeneratedProxyTimeoutCallShouldThrowTimeoutException()
+    public async Task GeneratedProxyTimeoutCallShouldThrowDeadlineExceeded()
     {
         await using var harness = await CallShapeHarness.CreateAsync();
         var svc = harness.Client.Get<ICallShapeService>();
 
-        await EnsureThrows<TimeoutException>(
+        var exception = await EnsureThrows<SharpLinkException>(
             svc.UnaryAlwaysSlowWithTimeoutAsync().AsTask(),
             "UnaryAlwaysSlowWithTimeoutAsync");
+        Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded, "timeout error code");
     }
 
     private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> stream, CancellationToken ct)
@@ -178,15 +179,16 @@ public class RpcChannelCallShapeIntegrationTests
         Ensure(await condition(), name);
     }
 
-    private static async Task EnsureThrows<TException>(Task task, string name) where TException : Exception
+    private static async Task<TException> EnsureThrows<TException>(Task task, string name) where TException : Exception
     {
         try
         {
             await task;
             throw new Exception($"assert failed: {name}, expected {typeof(TException).Name}");
         }
-        catch (TException)
+        catch (TException exception)
         {
+            return exception;
         }
     }
 
@@ -226,14 +228,14 @@ public class RpcChannelCallShapeIntegrationTests
                 .UseSerializer(MemoryPackCodec.Resolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
 
-            var port = ((IPEndPoint)((ILocalEndPointTransport)serverBuilder.Transport!).LocalEndPoint!).Port;
+            var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
 
             var serverTask = Task.Run(async () =>
             {
                 try
                 {
-                    await server.Start(cts.Token);
+                    await server.RunAsync(cts.Token);
                 }
                 catch (OperationCanceledException)
                 {
@@ -256,8 +258,8 @@ public class RpcChannelCallShapeIntegrationTests
                 .UseRequestTimeout(TimeSpan.FromSeconds(5))
                 .Build();
 
-            var connected = await client.ConnectAsync(cts.Token);
-            return !connected ? throw new Exception("client connect failed") : new CallShapeHarness(server, serverTask, cts, client);
+            await client.ConnectAsync(cts.Token);
+            return new CallShapeHarness(server, serverTask, cts, client);
         }
 
         public async ValueTask DisposeAsync()
@@ -265,14 +267,14 @@ public class RpcChannelCallShapeIntegrationTests
             if (!_clientDisposed)
             {
                 _clientDisposed = true;
-                (Client as IDisposable)?.Dispose();
+                await Client.StopAsync();
             }
 
             await _serverCts.CancelAsync();
             if (!_serverDisposed)
             {
                 _serverDisposed = true;
-                (_server as IDisposable)?.Dispose();
+                await _server.StopAsync(TimeSpan.Zero);
             }
 
             await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));

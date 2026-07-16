@@ -19,6 +19,7 @@ internal record RpcMethodModel(
     bool IsVoid,
     bool IsOneWay,
     bool HasCancellationToken,
+    bool HasCallOptions,
     bool HasTimeoutAttribute,
     double? TimeoutSeconds,
     long Hash,
@@ -32,12 +33,14 @@ internal record RpcParameterModel(
     bool IsBlittable,
     bool IsValueType,
     bool IsNullableReference,
-    bool IsCancellationToken);
+    bool IsCancellationToken,
+    bool IsCallOptions);
 
 internal readonly record struct InvalidRpcMethodModel(string MethodName, string ReturnType, Location? Location);
 internal readonly record struct InvalidCancellationTokenMethodModel(string MethodName, Location? Location);
+internal readonly record struct InvalidCallOptionsMethodModel(string MethodName, Location? Location);
+internal readonly record struct InvalidControlParameterOrderModel(string MethodName, Location? Location);
 internal readonly record struct InvalidStreamCountMethodModel(string MethodName, int StreamParameterCount, Location? Location);
-internal readonly record struct InvalidTimeoutCancellationMethodModel(string MethodName, Location? Location);
 internal readonly record struct InvalidGenericUsageModel(string SymbolName, string TypeName, Location? Location);
 internal readonly record struct InvalidRpcContractInheritanceModel(string InterfaceName, Location? Location);
 

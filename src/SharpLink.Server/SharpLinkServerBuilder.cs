@@ -2,15 +2,13 @@ namespace SharpLink.Server;
 
 public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 {
-    private static readonly Func<string, SharpLinkAuthenticationResult> SDefaultAuthValidator = static message =>
-        !string.IsNullOrWhiteSpace(message)
-            ? SharpLinkAuthenticationResult.Success
-            : SharpLinkAuthenticationResult.Reject();
+    private static readonly Func<string, SharpLinkAuthenticationResult> SDefaultAuthValidator =
+        static _ => SharpLinkAuthenticationResult.Success;
     public static SharpLinkServerBuilder Create() => new();
 
-    private ITransport? _transport;
-    public ITransport? Transport=>_transport;
-    private Func<Type,IRpcCodec?>? _codecResolver;
+    private IServerTransportListener? _transport;
+    public IServerTransportListener? Transport=>_transport;
+    private readonly SharpLinkRuntimeContextBuilder _runtimeContextBuilder = new();
     private TimeSpan _heartbeatCheckInterval = TimeSpan.FromSeconds(10);
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
     private RpcSessionFlushOptions? _rpcSessionFlushOptions;
@@ -18,9 +16,11 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     private ILoggerFactory? _loggerFactory;
     private Func<string, SharpLinkAuthenticationResult> _authValidator = SDefaultAuthValidator;
 
-    public SharpLinkServerBuilder UseTransport(ITransport transport)
+    /// <summary>Uses a server listener owned by the built server.</summary>
+    /// <param name="transport">The listener used to accept independent connections.</param>
+    public SharpLinkServerBuilder UseTransport(IServerTransportListener transport)
     {
-        _transport = transport;
+        _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         return this;
     }
 
@@ -42,7 +42,21 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
     public SharpLinkServerBuilder UseSerializer(Func<Type,IRpcCodec?>? codecResolver)
     {
-        _codecResolver = codecResolver;
+        _runtimeContextBuilder.UseCodecResolver(codecResolver);
+        return this;
+    }
+
+    /// <summary>Registers an explicit codec only for servers built by this builder.</summary>
+    public SharpLinkServerBuilder UseCodec<T>(IRpcCodec<T> codec)
+    {
+        _runtimeContextBuilder.AddCodec(codec);
+        return this;
+    }
+
+    /// <summary>Configures instance-scoped runtime behavior.</summary>
+    public SharpLinkServerBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)
+    {
+        _runtimeContextBuilder.Configure(configure);
         return this;
     }
 
@@ -55,13 +69,13 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
     public SharpLinkServerBuilder UseBufferWriterPool(Action<BufferWriterPoolOptions> configure)
     {
-        BufferWriterPool.Configure(configure);
+        _runtimeContextBuilder.ConfigureBufferPool(configure);
         return this;
     }
 
     public SharpLinkServerBuilder UseStateStoreConcurrency(Action<RuntimeConcurrencyOptions> configure)
     {
-        RuntimeConcurrency.Configure(configure);
+        _runtimeContextBuilder.ConfigureStateStores(configure);
         return this;
     }
 
@@ -110,6 +124,14 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
+    /// <summary>Configures per-server protocol safety limits.</summary>
+    public SharpLinkServerBuilder UseProtocol(Action<SharpLinkProtocolOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        _runtimeContextBuilder.Configure(options => configure(options.Protocol));
+        return this;
+    }
+
     public SharpLinkServerBuilder AddService<TInterface, TService>()
         where TInterface : class, IService
         where TService : class, TInterface, new()
@@ -127,30 +149,19 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         if (_transport == null)
             throw new InvalidOperationException("Transport must be set before building the server.");
 
-        if (_codecResolver is not null)
-            RpcCodecRegistry.Initialize(_codecResolver);
+        var runtimeContext = _runtimeContextBuilder.Build();
+        var protocolOptions = runtimeContext.Protocol;
 
-        if (_rpcSessionFlushOptions is not { } flushOptions)
-            return new SharpLinkServer(
-                _transport,
-                _services.ToFrozenDictionary(),
-                _heartbeatCheckInterval,
-                _heartbeatTimeout,
-                _loggerFactory ?? NullLoggerFactory.Instance,
-                _authValidator);
-        
-        if (_transport is not IRpcSessionFlushConfigurableTransport configurableTransport)
-            throw new InvalidOperationException("Configured RPC session flush options, but transport does not support flush configuration.");
-
-        configurableTransport.ConfigureRpcSessionFlush(flushOptions);
-        
         return new SharpLinkServer(
             _transport,
             _services.ToFrozenDictionary(),
             _heartbeatCheckInterval,
             _heartbeatTimeout,
             _loggerFactory ?? NullLoggerFactory.Instance,
-            _authValidator);
+            _authValidator,
+            protocolOptions,
+            runtimeContext,
+            _rpcSessionFlushOptions);
     }
 
 }

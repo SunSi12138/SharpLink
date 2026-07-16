@@ -20,6 +20,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     private int _mask;               // _buffer.Length - 1
     private int _head;               // consumer owned
     private int _tail;               // producer owned
+    private int _bufferedCount;
 
     // 扩容握手：避免生产者在换 buffer 时消费者正在读老数组
     // 0 = 正常，1 = 扩容中（生产者设1，完成后设0）
@@ -48,9 +49,11 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     private CancellationTokenRegistration _enumerationCancellationRegistration;
 
     private T? _current;
+    private IRpcCodecProvider? _codecProvider;
 
     private const int InitialCapacity = 16;
     private const int ShrinkThreshold = 4096;
+    private const int MaxBufferedElements = 4096;
 
     private PooledAsyncStreamDispatcher()
     {
@@ -61,20 +64,23 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _mask = _buffer.Length - 1;
     }
 
-    public static PooledAsyncStreamDispatcher<T> Rent(CancellationToken enumerationToken = default)
+    public static PooledAsyncStreamDispatcher<T> Rent(
+        CancellationToken enumerationToken = default,
+        IRpcCodecProvider? codecProvider = null)
     {
         if (!Pool.TryTake(out var dispatcher))
             dispatcher = new PooledAsyncStreamDispatcher<T>();
 
-        dispatcher.Reset(enumerationToken);
+        dispatcher.Reset(enumerationToken, codecProvider ?? SharpLinkRuntimeContext.Default.Codecs);
         return dispatcher;
     }
 
-    private void Reset(CancellationToken enumerationToken)
+    private void Reset(CancellationToken enumerationToken, IRpcCodecProvider codecProvider)
     {
         _enumerationCancellationRegistration.Dispose();
 
         _enumerationToken = enumerationToken;
+        _codecProvider = codecProvider;
 
         _waitSource = new ManualResetValueTaskSourceCore<bool>
         {
@@ -90,6 +96,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
         _head = 0;
         _tail = 0;
+        Volatile.Write(ref _bufferedCount, 0);
 
         Volatile.Write(ref _signalState, 0);
         Volatile.Write(ref _waiterState, 0);
@@ -110,11 +117,22 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     {
 
         // 反序列化可能很重：尽量让队列/锁不要挡它（这里本来就无锁）
-        var item = RpcCodec.Deserialize<T>(payload);
+        var item = (_codecProvider ?? throw new InvalidOperationException("Stream dispatcher has no codec provider."))
+            .GetCodec<T>()
+            .Deserialize(payload);
 
         // 生产者侧：如果已结束/已释放，直接丢弃（读用 Volatile 对称）
         if (Volatile.Read(ref _completed) || Volatile.Read(ref _disposed))
             return ValueTask.CompletedTask;
+
+        if (Interlocked.Increment(ref _bufferedCount) > MaxBufferedElements)
+        {
+            Interlocked.Decrement(ref _bufferedCount);
+            Complete(new SharpLinkException(
+                SharpLinkErrorCode.ResourceExhausted,
+                $"Stream receive buffer exceeded {MaxBufferedElements} elements."));
+            return ValueTask.CompletedTask;
+        }
 
         // 快路径：尝试写入 ring
         if (!TryEnqueue(item!))
@@ -132,9 +150,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     {
         var message = string.IsNullOrWhiteSpace(errorMessage) ? "Remote Error" : errorMessage;
         Complete(isError
-            ? SharpLinkException.TryParsePayloadMessage(message, out var structuredException)
-                ? structuredException
-                : new SharpLinkException(SharpLinkErrorCode.RemoteError, message)
+            ? new SharpLinkException(SharpLinkErrorCode.RemoteError, message)
             : null);
     }
 
@@ -294,6 +310,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
             // publish head：让生产者可见（release）
             Volatile.Write(ref _head, (head + 1) & _mask);
+            Interlocked.Decrement(ref _bufferedCount);
             return true;
         }
         finally
@@ -413,6 +430,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
         _enumerationCancellationRegistration.Dispose();
         _error = null;
+        _codecProvider = null;
 
         // 复位枚举器占用标记
         Volatile.Write(ref _enumeratorTaken, 0);

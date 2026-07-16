@@ -19,7 +19,8 @@ internal sealed class StringCodec : IRpcCodec<string?>
             return;
         }
         
-        var bytesCount = value.Length * CharSize;
+        var bytesCount = checked(value.Length * CharSize);
+        CodecHelpers.EnsureSerializablePayloadLength(bytesCount, nameof(value));
 
         var span = writer.GetSpan(bytesCount + 4);
 
@@ -33,28 +34,30 @@ internal sealed class StringCodec : IRpcCodec<string?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public string? Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        var reader = new SequenceReader<byte>(buffer);
-        if (!reader.TryReadLittleEndian(out int bytesCount) || bytesCount < 0)
+        var bytesCount = CodecHelpers.ReadInt32(buffer);
+        if (bytesCount == -1)
             return null;
+        if (bytesCount < -1)
+            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, $"Invalid string byte length {bytesCount}.");
 
         if (bytesCount == 0) return string.Empty;
+        if ((bytesCount & 1) != 0)
+            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "UTF-16 string byte length must be even.");
+        if (bytesCount > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes - sizeof(int))
+            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "String payload exceeds the protocol maximum.");
 
-        if (reader.UnreadSpan.Length >= bytesCount)
+        CodecHelpers.EnsureAvailable(buffer, (long)sizeof(int) + bytesCount);
+        var payload = buffer.Slice(sizeof(int), bytesCount);
+
+        if (payload.FirstSpan.Length >= bytesCount)
         {
-            var charSpan = MemoryMarshal.Cast<byte, char>(reader.UnreadSpan[..bytesCount]);
-            var res = new string(charSpan);
-            reader.Advance(bytesCount);
-            return res;
+            var charSpan = MemoryMarshal.Cast<byte, char>(payload.FirstSpan[..bytesCount]);
+            return new string(charSpan);
         }
-        
-        var sequenceSlice = reader.UnreadSpan[..bytesCount];
 
-        var result = string.Create(bytesCount / CharSize, sequenceSlice, static (destSpan, sequence) =>
+        return string.Create(bytesCount / CharSize, payload, static (destination, sequence) =>
         {
-            sequence.CopyTo(MemoryMarshal.AsBytes(destSpan));
+            sequence.CopyTo(MemoryMarshal.AsBytes(destination));
         });
-        
-        reader.Advance(bytesCount);
-        return result;
     }
 }

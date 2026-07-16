@@ -33,9 +33,10 @@ public partial class RpcGenerator
         {
             var paramList = string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"));
             var streamParams = method.Parameters.Where(p => p.IsStream).ToList();
-            var payloadParams = method.Parameters.Where(p => !p.IsStream && !p.IsCancellationToken).ToList();
+            var payloadParams = method.Parameters.Where(p => !p.IsStream && !p.IsCancellationToken && !p.IsCallOptions).ToList();
             var cancellationTokenParam = method.Parameters.FirstOrDefault(p => p.IsCancellationToken);
             var cancellationTokenArg = cancellationTokenParam is null ? "default" : cancellationTokenParam.Name;
+            var callOptionsParam = method.Parameters.FirstOrDefault(p => p.IsCallOptions);
             var blittablePayloadParams = payloadParams.Where(p => p.IsBlittable).ToList();
             var complexPayloadParams = payloadParams.Where(p => !p.IsBlittable).ToList();
 
@@ -69,7 +70,7 @@ public partial class RpcGenerator
                     sb.AppendLine($"                int lenOffset_{suffix} = writer.WrittenCount;");
                     sb.AppendLine("                writer.Advance(4);");
                     sb.AppendLine($"                int start_{suffix} = writer.WrittenCount;");
-                    sb.AppendLine($"                SharpLink.Runtime.RpcCodec.Serialize({p.Name}, writer);");
+                    sb.AppendLine($"                channel.RuntimeContext.Codecs.GetCodec<{p.Type}>().Serialize({p.Name}, writer);");
                     sb.AppendLine($"                int len_{suffix} = writer.WrittenCount - start_{suffix};");
                     sb.AppendLine("                var writtenSpan = System.Runtime.InteropServices.MemoryMarshal.AsMemory(writer.WrittenMemory).Span;");
                     sb.AppendLine($"                var lengthSlice_{suffix} = writtenSpan.Slice(lenOffset_{suffix}, 4);");
@@ -101,19 +102,19 @@ public partial class RpcGenerator
                 sb.AppendLine("        {");
                 if (streamParams.Count == 1)
                 {
-                    sb.AppendLine($"            await channel.SendClientStreamAsync(requestId, (sbyte)1, {streamParams[0].Name}, cancellationToken);");
+                    sb.AppendLine($"            await channel.SendClientStreamAsync(requestId, (ushort)1, {streamParams[0].Name}, cancellationToken);");
                 }
                 else if (streamParams.Count == 2)
                 {
-                    sb.AppendLine($"            var task1 = channel.SendClientStreamAsync(requestId, (sbyte)1, {streamParams[0].Name}, cancellationToken);");
-                    sb.AppendLine($"            var task2 = channel.SendClientStreamAsync(requestId, (sbyte)2, {streamParams[1].Name}, cancellationToken);");
+                    sb.AppendLine($"            var task1 = channel.SendClientStreamAsync(requestId, (ushort)1, {streamParams[0].Name}, cancellationToken);");
+                    sb.AppendLine($"            var task2 = channel.SendClientStreamAsync(requestId, (ushort)2, {streamParams[1].Name}, cancellationToken);");
                     sb.AppendLine("            await Task.WhenAll(task1, task2);");
                 }
                 else if (streamParams.Count == 3)
                 {
-                    sb.AppendLine($"            var task1 = channel.SendClientStreamAsync(requestId, (sbyte)1, {streamParams[0].Name}, cancellationToken);");
-                    sb.AppendLine($"            var task2 = channel.SendClientStreamAsync(requestId, (sbyte)2, {streamParams[1].Name}, cancellationToken);");
-                    sb.AppendLine($"            var task3 = channel.SendClientStreamAsync(requestId, (sbyte)3, {streamParams[2].Name}, cancellationToken);");
+                    sb.AppendLine($"            var task1 = channel.SendClientStreamAsync(requestId, (ushort)1, {streamParams[0].Name}, cancellationToken);");
+                    sb.AppendLine($"            var task2 = channel.SendClientStreamAsync(requestId, (ushort)2, {streamParams[1].Name}, cancellationToken);");
+                    sb.AppendLine($"            var task3 = channel.SendClientStreamAsync(requestId, (ushort)3, {streamParams[2].Name}, cancellationToken);");
                     sb.AppendLine("            await Task.WhenAll(task1, task2, task3);");
                 }
                 else
@@ -121,11 +122,37 @@ public partial class RpcGenerator
                     var streamId = 1;
                     foreach (var streamParam in streamParams)
                     {
-                        sb.AppendLine($"            await channel.SendClientStreamAsync(requestId, (sbyte){streamId}, {streamParam.Name}, cancellationToken);");
+                        sb.AppendLine($"            await channel.SendClientStreamAsync(requestId, (ushort){streamId}, {streamParam.Name}, cancellationToken);");
                         streamId++;
                     }
                 }
                 sb.AppendLine("        };");
+            }
+
+            if (callOptionsParam is not null)
+            {
+                var payloadArg = hasPayload ? "payloadWriter" : "null";
+                var streamSenderArg = hasStream ? "streamSender" : "null";
+                var methodTimeoutArg = method.TimeoutSeconds is { } configuredSeconds
+                    ? $"TimeSpan.FromSeconds({configuredSeconds.ToString("R", InvariantCulture)}d)"
+                    : "null";
+                if (method.IsStreamReturn)
+                {
+                    sb.AppendLine(
+                        $"        return channel.InvokeStreamingWithCallOptionsAsync<{method.StreamItemType}>(_interfaceHash, {method.Hash}L, {payloadArg}, {streamSenderArg}, {callOptionsParam.Name}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeoutArg}, {cancellationTokenArg});");
+                }
+                else
+                {
+                    var responseType = method.IsVoid ? "byte" : method.GenericArgumentType;
+                    var invocation =
+                        $"channel.InvokeWithCallOptionsAsync<{responseType}>(_interfaceHash, {method.Hash}L, {payloadArg}, {streamSenderArg}, {(method.IsOneWay ? "true" : "false")}, {(!method.IsOneWay && !method.IsVoid ? "true" : "false")}, {callOptionsParam.Name}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeoutArg}, {cancellationTokenArg})";
+                    sb.AppendLine(method.IsVoid
+                        ? $"        await {invocation};"
+                        : $"        return await {invocation};");
+                }
+
+                sb.AppendLine("    }");
+                continue;
             }
 
             if (method.IsStreamReturn)

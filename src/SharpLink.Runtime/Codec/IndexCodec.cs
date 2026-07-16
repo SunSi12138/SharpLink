@@ -15,6 +15,7 @@ internal sealed class IndexCodec : IRpcCodec<Index>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Index Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             return Unsafe.ReadUnaligned<Index>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
@@ -51,6 +52,7 @@ internal sealed class NullableIndexCodec : IRpcCodec<Index?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Index? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);

@@ -2,11 +2,20 @@ namespace SharpLink.Runtime;
 
 public class StreamManager : IStreamManager
 {
-    private readonly StripedLongMap<RequestDispatchers> _dispatchersByRequestId = new();
+    private readonly StripedLongMap<RequestDispatchers> _dispatchersByRequestId;
+
+    public StreamManager() : this(new RuntimeConcurrencyOptions())
+    {
+    }
+
+    public StreamManager(RuntimeConcurrencyOptions concurrencyOptions)
+    {
+        _dispatchersByRequestId = new StripedLongMap<RequestDispatchers>(concurrencyOptions);
+    }
 
     public void Register(long requestId, IStreamDispatcher dispatcher) => Register(requestId, 0, dispatcher);
 
-    public void Register(long requestId, sbyte streamId, IStreamDispatcher dispatcher)
+    public void Register(long requestId, ushort streamId, IStreamDispatcher dispatcher)
     {
         var requestDispatchers = _dispatchersByRequestId.GetOrAdd(requestId, static _ => new RequestDispatchers());
         requestDispatchers.Register(streamId, dispatcher);
@@ -14,7 +23,7 @@ public class StreamManager : IStreamManager
 
     public void Unregister(long requestId) => Unregister(requestId, 0);
 
-    public void Unregister(long requestId, sbyte streamId)
+    public void Unregister(long requestId, ushort streamId)
     {
         if (!_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
             return;
@@ -25,7 +34,7 @@ public class StreamManager : IStreamManager
     public ValueTask DispatchChunkAsync(long requestId, ReadOnlySequence<byte> payload)
         => DispatchChunkAsync(requestId, 0, payload);
 
-    public ValueTask DispatchChunkAsync(long requestId, sbyte streamId, ReadOnlySequence<byte> payload)
+    public ValueTask DispatchChunkAsync(long requestId, ushort streamId, ReadOnlySequence<byte> payload)
     {
         if (_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
             requestDispatchers.TryGet(streamId, out var dispatcher))
@@ -41,7 +50,7 @@ public class StreamManager : IStreamManager
         CompleteStream(requestId, 0, CreateCompletionException(isError, msg));
     }
 
-    public void CompleteStream(long requestId, sbyte streamId, bool isError, string? msg)
+    public void CompleteStream(long requestId, ushort streamId, bool isError, string? msg)
     {
         CompleteStream(requestId, streamId, CreateCompletionException(isError, msg));
     }
@@ -56,7 +65,7 @@ public class StreamManager : IStreamManager
         CompleteStream(requestId, 0, exception);
     }
 
-    public void CompleteStream(long requestId, sbyte streamId, Exception? exception)
+    public void CompleteStream(long requestId, ushort streamId, Exception? exception)
     {
         if (!_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
             return;
@@ -79,18 +88,16 @@ public class StreamManager : IStreamManager
             return null;
 
         var message = string.IsNullOrWhiteSpace(msg) ? "Remote Error" : msg;
-        return SharpLinkException.TryParsePayloadMessage(message, out var structuredException)
-            ? structuredException
-            : new SharpLinkException(SharpLinkErrorCode.RemoteError, message);
+        return new SharpLinkException(SharpLinkErrorCode.RemoteError, message);
     }
 
     private sealed class RequestDispatchers
     {
         private IStreamDispatcher? _defaultDispatcher;
         private readonly Lock _gate = new();
-        private readonly Dictionary<sbyte, IStreamDispatcher> _byStreamId = [];
+        private readonly Dictionary<ushort, IStreamDispatcher> _byStreamId = [];
 
-        public void Register(sbyte streamId, IStreamDispatcher dispatcher)
+        public void Register(ushort streamId, IStreamDispatcher dispatcher)
         {
             if (streamId == 0)
             {
@@ -102,7 +109,7 @@ public class StreamManager : IStreamManager
                 _byStreamId[streamId] = dispatcher;
         }
 
-        public void Unregister(sbyte streamId)
+        public void Unregister(ushort streamId)
         {
             if (streamId == 0)
             {
@@ -114,7 +121,7 @@ public class StreamManager : IStreamManager
                 _byStreamId.Remove(streamId);
         }
 
-        public bool TryGet(sbyte streamId, out IStreamDispatcher dispatcher)
+        public bool TryGet(ushort streamId, out IStreamDispatcher dispatcher)
         {
             if (streamId != 0)
             {
@@ -135,7 +142,7 @@ public class StreamManager : IStreamManager
 
         }
 
-        public bool TryRemove(sbyte streamId, out IStreamDispatcher dispatcher)
+        public bool TryRemove(ushort streamId, out IStreamDispatcher dispatcher)
         {
             if (streamId == 0)
             {

@@ -59,7 +59,13 @@ public class SharpLinkClientAccessorTests
 
     private sealed class FakeSharpLinkClient : ISharpLinkClient
     {
-        public Task<bool> ConnectAsync(CancellationToken ct = default) => Task.FromResult(true);
+        public SharpLinkConnectionState State => SharpLinkConnectionState.Ready;
+
+        public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+        public ValueTask StopAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
         public T Get<T>() where T : IService
             => throw new NotSupportedException();

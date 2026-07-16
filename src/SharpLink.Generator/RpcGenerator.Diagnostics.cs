@@ -26,14 +26,6 @@ public partial class RpcGenerator
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
-    private static readonly DiagnosticDescriptor TimeoutRequiresCancellationTokenRule = new(
-        id: "SHARPLINK004",
-        title: "Timeout Attribute Requires CancellationToken",
-        messageFormat: "RPC method '{0}' uses [Timeout] but does not declare a CancellationToken parameter",
-        category: "SharpLink.Generator",
-        defaultSeverity: DiagnosticSeverity.Error,
-        isEnabledByDefault: true);
-
     private static readonly DiagnosticDescriptor GenericUsageInRpcRule = new(
         id: "SHARPLINK005",
         title: "Generic Type Parameter Not Supported in RPC Contract",
@@ -46,6 +38,22 @@ public partial class RpcGenerator
         id: "SHARPLINK006",
         title: "RPC Contract Must Inherit IService",
         messageFormat: "RPC contract interface '{0}' must inherit SharpLink.Sdk.IService",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor MultipleCallOptionsRule = new(
+        id: "SHARPLINK007",
+        title: "Invalid RPC SharpLinkCallOptions Signature",
+        messageFormat: "RPC method '{0}' can declare at most one SharpLinkCallOptions parameter",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor ControlParameterOrderRule = new(
+        id: "SHARPLINK008",
+        title: "Invalid RPC Control Parameter Order",
+        messageFormat: "RPC method '{0}' must place SharpLinkCallOptions and CancellationToken last, with CancellationToken last when both are present",
         category: "SharpLink.Generator",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);

@@ -15,14 +15,17 @@ internal sealed class DecimalCodec : IRpcCodec<decimal>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public decimal Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
-            return Unsafe.ReadUnaligned<decimal>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
+            return CodecHelpers.ValidateDecimal(
+                Unsafe.ReadUnaligned<decimal>(ref MemoryMarshal.GetReference(buffer.FirstSpan)));
         }
 
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
-        return Unsafe.ReadUnaligned<decimal>(ref MemoryMarshal.GetReference(temp));
+        return CodecHelpers.ValidateDecimal(
+            Unsafe.ReadUnaligned<decimal>(ref MemoryMarshal.GetReference(temp)));
     }
 }
 
@@ -53,12 +56,14 @@ internal sealed class NullableDecimalCodec : IRpcCodec<decimal?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public decimal? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
             if (start == 0) return null;
             
-            return Unsafe.ReadUnaligned<decimal>(ref Unsafe.Add(ref start, 1));
+            return CodecHelpers.ValidateDecimal(
+                Unsafe.ReadUnaligned<decimal>(ref Unsafe.Add(ref start, 1)));
         }
 
         Span<byte> temp = stackalloc byte[Size];
@@ -67,6 +72,7 @@ internal sealed class NullableDecimalCodec : IRpcCodec<decimal?>
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         if (tempStart == 0) return null;
 
-        return Unsafe.ReadUnaligned<decimal>(ref Unsafe.Add(ref tempStart, 1));
+        return CodecHelpers.ValidateDecimal(
+            Unsafe.ReadUnaligned<decimal>(ref Unsafe.Add(ref tempStart, 1)));
     }
 }

@@ -17,14 +17,17 @@ internal sealed class RuneCodec : IRpcCodec<Rune>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Rune Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
-            return Unsafe.ReadUnaligned<Rune>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
+            return CodecHelpers.ValidateRune(
+                Unsafe.ReadUnaligned<Rune>(ref MemoryMarshal.GetReference(buffer.FirstSpan)));
         }
 
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
-        return Unsafe.ReadUnaligned<Rune>(ref MemoryMarshal.GetReference(temp));
+        return CodecHelpers.ValidateRune(
+            Unsafe.ReadUnaligned<Rune>(ref MemoryMarshal.GetReference(temp)));
     }
 }
 
@@ -54,11 +57,13 @@ internal sealed class NullableRuneCodec : IRpcCodec<Rune?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Rune? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureAvailable(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
             if (start == 0) return null;
-            return Unsafe.ReadUnaligned<Rune>(ref Unsafe.Add(ref start, 1));
+            return CodecHelpers.ValidateRune(
+                Unsafe.ReadUnaligned<Rune>(ref Unsafe.Add(ref start, 1)));
         }
 
         Span<byte> temp = stackalloc byte[Size];
@@ -66,6 +71,7 @@ internal sealed class NullableRuneCodec : IRpcCodec<Rune?>
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         
         if (tempStart == 0) return null;
-        return Unsafe.ReadUnaligned<Rune>(ref Unsafe.Add(ref tempStart, 1));
+        return CodecHelpers.ValidateRune(
+            Unsafe.ReadUnaligned<Rune>(ref Unsafe.Add(ref tempStart, 1)));
     }
 }

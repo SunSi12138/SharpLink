@@ -3,23 +3,22 @@ namespace SharpLink.UnitTests.Abstractions;
 public class SharpLinkAuthenticationResultTests
 {
     [Test]
-    public void RejectShouldRoundTripPayloadMessage()
+    public void RejectShouldPreserveStructuredError()
     {
-        var expected = SharpLinkAuthenticationResult.Reject(
+        var result = SharpLinkAuthenticationResult.Reject(
             SharpLinkErrorCode.AuthenticationExpired,
             "token expired");
 
-        var payload = expected.ToPayloadMessage();
-        Ensure(SharpLinkAuthenticationResult.TryParsePayloadMessage(payload, out var actual), "payload should parse");
-        Ensure(actual == expected, "parsed payload should match original");
+        Ensure(!result.IsAuthenticated, "rejection should not authenticate");
+        Ensure(result.ErrorCode == SharpLinkErrorCode.AuthenticationExpired, "error code");
+        Ensure(result.ErrorMessage == "token expired", "error message");
     }
 
     [Test]
-    public void TryParsePayloadMessageShouldReturnFalseForLegacyMessage()
+    public void RejectShouldUseSafeDefaultMessage()
     {
-        Ensure(
-            !SharpLinkAuthenticationResult.TryParsePayloadMessage("Authentication rejected.", out _),
-            "legacy message should not parse as structured payload");
+        var result = SharpLinkAuthenticationResult.Reject(SharpLinkErrorCode.AuthorizationDenied);
+        Ensure(result.ErrorMessage == "Authorization denied.", "default message");
     }
 
     private static void Ensure(bool condition, string message)
