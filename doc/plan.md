@@ -17,13 +17,13 @@
 - 实例级 Runtime Context、Transport Factory/Listener/Connection 拆分。
 - Protocol v2、字节有界 SendPump、CallOptions、deadline、metadata、GoAway 与自动重连。
 
-## 0.5.0：原生 Codec 与热路径优化（发布门禁中）
+## 0.5.0：原生 Codec 与热路径优化（已完成）
 
-1. `0.5.1`：PendingRequestTable、异步 admission 与统一完成仲裁。
-2. `0.5.2`：Unary、OneWay、ClientStreaming、ServerStreaming、DuplexStreaming 五类内部 Invoker。
-3. `0.5.3`：`PooledByteBufferWriter`、`ArrayPool<byte>` 与明确的 payload ownership。
-4. `0.5.4`：受限、无反射、AOT 友好的 DTO Codec Generator；MemoryPack 承接复杂对象图和显式自定义类型。
-5. `0.5.5`：stream/connection 按字节窗口、`WindowUpdate` 与慢消费者背压。
+1. `0.5.1`（已完成）：PendingRequestTable、异步 admission 与统一完成仲裁。
+2. `0.5.2`（已完成）：Unary、OneWay、ClientStreaming、ServerStreaming、DuplexStreaming 五类内部 Invoker。
+3. `0.5.3`（已完成）：`PooledByteBufferWriter`、`ArrayPool<byte>` 与明确的 payload ownership。
+4. `0.5.4`（已完成）：受限、无反射、AOT 友好的 DTO Codec Generator；MemoryPack 承接复杂对象图和显式自定义类型。
+5. `0.5.5`（已完成）：stream/connection 按字节窗口、`WindowUpdate` 与慢消费者背压。
 6. `0.5.6`（已完成）：每 Endpoint 连接池、power-of-two choices 与性能门禁工具入口。
 
 ## 0.6.0：企业核心能力

@@ -4,8 +4,12 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-17
+
 ### 新增
 
+- 可异步 admission 的 `PendingRequestTable`，完整 64 位 request ID 匹配与统一完成仲裁。
+- `PooledByteBufferWriter`、明确的 frame owner 生命周期与 Context 有界 writer pool。
 - Source Generator 原生 DTO/闭合集合 Codec、稳定字段 ID、未知字段跳过、required 校验与 64 层类型图边界。
 - `[RpcSerializable]`、`[RpcMember]`、`[RpcIgnore]`、`[RpcRequired]`、`[RpcExternalCodec]`。
 - append-only generated Codec manifest；Runtime Context 在 Build 时冻结 manifest 快照。
@@ -14,12 +18,19 @@
 
 ### 变更
 
+- 生成代理收敛到 Unary、OneWay、ClientStreaming、ServerStreaming、DuplexStreaming 五类内部 Invoker；静态 descriptor/Codec 避免捕获 delegate。
 - `IRpcCodec<T>.Serialize` 统一写入 `IBufferWriter<byte>`；协议回填使用 `IRpcByteBufferWriter`。
 - AOT Smoke 不再依赖 MemoryPack，覆盖 class、record、struct、嵌套数组和生成 manifest。
 - client/server stream sender 在额度不足时异步等待；消费、取消、超时和断连统一释放额度等待者。
 - stream dispatcher 按已编码字节记账，迟到的已取消 stream data 只丢弃并计数，不重建 dispatcher。
 - stream 调用固定绑定创建时的连接；`GoAway` 连接停止接收新请求并在变为空闲后退出，其他健康连接继续服务。
 - LoadTest 与 StreamLoadTest 支持 `--min-connections` / `--max-connections`。
+
+### 修复
+
+- 长请求跨越 pending table ID 周期、乱序响应、cancel/timeout/disconnect 竞态不会误命中新请求或重复归还 operation。
+- client/server stream 的额度等待、取消、迟到数据与 terminal ACK 统一收敛，慢消费者不再驱动无界缓冲。
+- 多连接下单条 session 断开只失败绑定到该连接的请求，不影响其他 ready session。
 
 ## [0.4.0] - 2026-07-17
 

@@ -25,7 +25,7 @@
 4. `0.5.4`（已完成）：实现 Source Generator DTO Codec 的封闭稳定子集、append-only manifest 与 Context 快照；MemoryPack/外部类型保持显式插件边界。
 5. `0.5.5`（已完成）：实现 stream/connection 按字节窗口、`WindowUpdate`、公平等待与取消/断连收敛。
 6. `0.5.6`（已完成）：实现每 Endpoint 有界连接池、压力扩容、power-of-two choices、stream 固定绑定与 draining connection 退出。
-7. （进行中）完成 Release、AOT、PackageSmoke、LoadTest/Benchmark 五轮门禁后，才进入 0.6。
+7. （已完成）Release、Unit、Generator、Integration、NativeAOT、PackageSmoke 与 LoadTest/Benchmark 门禁全部通过；下一阶段进入 0.6。
 
 ## 后续版本
 
