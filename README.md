@@ -5,7 +5,8 @@
 - Source Generator 自动生成 `Proxy/Stub`
 - Unary、`[Oneway]`、客户端流、服务端流、双向流、多流参数
 - Protocol v2 协议级取消（`ProtocolV2FrameType.Cancel`）
-- `Microsoft.Extensions.Hosting` 托管集成
+- TLS/mTLS、认证、Interceptor、deadline、背压、健康检查与 OpenTelemetry
+- `Microsoft.Extensions.Hosting`、DI 生命周期、readiness 与优雅排空
 - `Socket / NamedPipe / AnonymousPipe / UDS` 传输
 - 内置基础编解码器，并可接入 `MemoryPack` 作为复杂类型回退序列化器
 

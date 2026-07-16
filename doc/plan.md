@@ -26,7 +26,7 @@
 5. `0.5.5`（已完成）：stream/connection 按字节窗口、`WindowUpdate` 与慢消费者背压。
 6. `0.5.6`（已完成）：每 Endpoint 连接池、power-of-two choices 与性能门禁工具入口。
 
-## 0.6.0：企业核心能力
+## 0.6.0：企业核心能力（已完成）
 
 1. `0.6.1`（已完成）：TCP TLS、双向证书与独立握手超时。
 2. `0.6.2`（已完成）：Anonymous/自定义认证、Authentication Context 与 token expiry。

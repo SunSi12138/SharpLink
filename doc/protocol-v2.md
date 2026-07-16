@@ -2,6 +2,8 @@
 
 Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容或恢复扫描。任何 magic、长度、类型、标志或载荷结构错误都作为连接级 `ProtocolViolation` 处理并关闭连接。
 
+0.6.0 使用 protocol minor 1；minor 1 增加可协商的 health-check capability 与成对 health 控制帧。
+
 ## 固定帧头
 
 所有整数使用 little-endian。固定头共 15 字节：

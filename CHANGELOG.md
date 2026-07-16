@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-17
+
 ### 新增
 
 - TCP TLS 与双向证书认证，TLS 在 Protocol v2 handshake 前完成并使用独立超时。
@@ -28,6 +30,7 @@
 ### 修复
 
 - Source Generator 辅助 request/stream 类型加入契约名前缀，多个接口出现相同 method hash 时不再发生编译期类型冲突。
+- NativeAOT 服务注册显式保留 DI 所需 public constructor，避免服务构造器被 trimming 后在首个调用失败。
 
 ## [0.5.0] - 2026-07-17
 
