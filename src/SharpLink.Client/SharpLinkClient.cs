@@ -9,7 +9,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
     private readonly SharpLinkRuntimeContext _runtimeContext = new SharpLinkRuntimeContextBuilder().Build();
     private readonly StripedLongSet _serverStreamRequestIds = new();
     private readonly StripedLongSet _locallyCanceledRequestIds = new();
-    private readonly RequestManager _requestManager = new();
+    private readonly PendingRequestTable _requestManager = new();
     private readonly ConcurrentDictionary<long, RpcSession> _requestSessions = [];
     private readonly ConcurrentDictionary<long, StreamCallLifetime> _streamCallLifetimes = [];
     private readonly RequestTimeoutScheduler _requestTimeoutScheduler = new();
@@ -66,7 +66,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         _rpcSessionFlushOptions = rpcSessionFlushOptions;
         _serverStreamRequestIds = new StripedLongSet(_runtimeContext.Concurrency);
         _locallyCanceledRequestIds = new StripedLongSet(_runtimeContext.Concurrency);
-        _requestManager = new RequestManager(_protocolOptions.MaxPendingRequestsPerConnection, _runtimeContext.Codecs);
+        _requestManager = new PendingRequestTable(_protocolOptions.MaxPendingRequestsPerConnection, _runtimeContext.Codecs);
     }
 
     public SharpLinkClient(
@@ -144,6 +144,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         await WaitForBackgroundTasksAsync().ConfigureAwait(false);
 
         _requestTimeoutScheduler.Dispose();
+        _requestManager.Dispose();
         await transportFactory.DisposeAsync().ConfigureAwait(false);
         _shutdownCts.Dispose();
         TransitionTo(SharpLinkConnectionState.Stopped);

@@ -27,7 +27,14 @@ internal sealed partial class SharpLinkClient
         var requestId = isOneWay ? _requestManager.AllocateRequestId() : 0;
         RpcRequestOperation<T>? operation = null;
         if (!isOneWay)
-            operation = _requestManager.Rent<T>(out requestId);
+        {
+            var lease = await _requestManager.RentAsync<T>(
+                control.WaitForReady,
+                control.Deadline,
+                cancellationToken).ConfigureAwait(false);
+            requestId = lease.Id;
+            operation = lease.Operation;
+        }
 
         var flags = isOneWay ? ProtocolV2FrameFlags.OneWay : ProtocolV2FrameFlags.None;
         if (hasReturnPayload)

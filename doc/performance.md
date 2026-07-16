@@ -89,3 +89,17 @@ BenchmarkDotNet `UnaryBenchmarks.Rpc_Add`（1024 invocation、3 warmup、10 iter
 | 32 | 605.16k QPS / P99 79 μs | 585.48k QPS / P99 81 μs | QPS 未通过（96.75%），P99 通过（102.5%） |
 
 c32 的 97% 阈值为 587.01k QPS，当前中位数低 1.52k QPS，即差 0.25 个百分点。该差值来自所有 Unary 默认启用 30 秒 deadline 后新增的绝对时间计算、8 字节 wire 字段和本地超时登记；不更新既有基线。进入 0.5 后首先完成 PendingRequestTable 与 timeout/deadline 仲裁整合，在继续 Invoker/Codec 重构前重新通过该门禁。
+
+## 0.5.1 PendingRequestTable 回归（2026-07-17，同一 runner）
+
+固定碰撞 RingBuffer 替换为 request ID 探测表；发生主槽冲突时递增 ID 寻找空槽，response dispatch 仍为 O(1)。正常路径不执行 admission semaphore/计数操作，只有真正满表才异步等待。response、error、cancel、timeout 与 disconnect 都以槽位 CAS 争夺唯一完成权，完整 64 位 request ID 必须匹配。
+
+为避免跨日期 runner 负载变化干扰结论，在临时 detached worktree 构建 `v0.4.0`，随后与 0.5.1 使用相同机器、相同时段、1 秒 warmup、3 秒测量、每档五次取中位数：
+
+| 并发 | v0.4.0 同时段基线 | 0.5.1 五轮中位数 | 门禁结论 |
+|---:|---:|---:|---|
+| 1 | 24.84k QPS / P99 74 μs | 25.21k QPS / P99 74 μs | 通过（QPS 101.5%，P99 100.0%） |
+| 8 | 167.55k QPS / P99 68 μs | 167.92k QPS / P99 68 μs | 通过（QPS 100.2%，P99 100.0%） |
+| 32 | 569.43k QPS / P99 83 μs | 566.75k QPS / P99 83 μs | 通过（QPS 99.5%，P99 100.0%） |
+
+满表等待、deadline/cancellation、request ID 回绕、迟到响应与 response/cancel 竞态由 UnitTests 覆盖；本次不更新既有基线。

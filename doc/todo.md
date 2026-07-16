@@ -19,7 +19,7 @@
 
 从本版本开始只使用当前版本号，不再同时引用旧路线图编号。每个编号独立提交；前一项未通过正确性与性能验收，不开始后一项。
 
-1. `0.5.1`：重写 PendingRequestTable，把 admission、response/error/cancel/timeout/disconnect 完成仲裁与默认 deadline 登记整合进同一槽位生命周期。
+1. `0.5.1`（已完成）：重写 PendingRequestTable，把 admission、response/error/cancel/timeout/disconnect 完成仲裁与默认 deadline 登记整合进同一槽位生命周期。
 2. `0.5.2`：将生成代理收敛为 Unary、OneWay、ClientStreaming、ServerStreaming、DuplexStreaming 五类 Invoker。
 3. `0.5.3`：实现 `PooledByteBufferWriter`，统一 payload owner 与 SendPump 归还时机。
 4. `0.5.4`：实现 Source Generator DTO Codec 的最小稳定子集；MemoryPack 保持显式可选插件。
