@@ -39,23 +39,23 @@ public partial class RpcGenerator
             var suffix = GetMethodSuffix(method);
             var payloadParameters = GetPayloadParameters(method);
             if (payloadParameters.Length != 0)
-                sb.AppendLine($"        __requestCodec_{suffix} = new {GetRequestCodecType(method)}(channel.RuntimeContext.Codecs);");
+                sb.AppendLine($"        __requestCodec_{suffix} = new {GetRequestCodecType(model, method)}(channel.RuntimeContext.Codecs);");
             if (!method.IsOneWay)
                 sb.AppendLine($"        __responseCodec_{suffix} = channel.RuntimeContext.Codecs.GetCodec<{GetResponseType(method)}>();");
         }
         sb.AppendLine("    }");
 
         foreach (var method in model.Methods)
-            AppendProxyMethod(sb, method);
+            AppendProxyMethod(sb, model, method);
 
         sb.AppendLine("}");
 
         foreach (var method in model.Methods)
         {
             if (GetPayloadParameters(method).Length != 0)
-                AppendGeneratedRequest(sb, method);
+                AppendGeneratedRequest(sb, model, method);
             if (GetStreamParameters(method).Length != 0)
-                AppendGeneratedStreams(sb, method);
+                AppendGeneratedStreams(sb, model, method);
         }
 
         sb.AppendLine($$"""
@@ -85,23 +85,23 @@ public partial class RpcGenerator
             $"    private static readonly RpcMethodDescriptor __method_{suffix} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout});");
 
         if (GetPayloadParameters(method).Length != 0)
-            sb.AppendLine($"    private readonly IRpcCodec<{GetRequestType(method)}> __requestCodec_{suffix};");
+            sb.AppendLine($"    private readonly IRpcCodec<{GetRequestType(model, method)}> __requestCodec_{suffix};");
         if (!method.IsOneWay)
             sb.AppendLine($"    private readonly IRpcCodec<{GetResponseType(method)}> __responseCodec_{suffix};");
     }
 
-    private static void AppendProxyMethod(StringBuilder sb, RpcMethodModel method)
+    private static void AppendProxyMethod(StringBuilder sb, RpcInterfaceModel model, RpcMethodModel method)
     {
         var suffix = GetMethodSuffix(method);
         var parameterList = string.Join(", ", method.Parameters.Select(static parameter => $"{parameter.Type} {parameter.Name}"));
         var payloadParameters = GetPayloadParameters(method);
         var streamParameters = GetStreamParameters(method);
-        var requestType = payloadParameters.Length == 0 ? "RpcEmptyRequest" : GetRequestType(method);
+        var requestType = payloadParameters.Length == 0 ? "RpcEmptyRequest" : GetRequestType(model, method);
         var requestCodec = payloadParameters.Length == 0 ? "RpcEmptyRequestCodec.Instance" : $"__requestCodec_{suffix}";
         var requestValue = payloadParameters.Length == 0
             ? "default(RpcEmptyRequest)"
             : $"new {requestType}({string.Join(", ", payloadParameters.Select(static parameter => parameter.Name))})";
-        var streamsType = streamParameters.Length == 0 ? "RpcNoClientStreams" : GetStreamsType(method);
+        var streamsType = streamParameters.Length == 0 ? "RpcNoClientStreams" : GetStreamsType(model, method);
         var streamsValue = streamParameters.Length == 0
             ? "default(RpcNoClientStreams)"
             : $"new {streamsType}({string.Join(", ", streamParameters.Select(static parameter => parameter.Name))})";
@@ -164,10 +164,10 @@ public partial class RpcGenerator
             : $"        return {invocation}.AsTask();");
     }
 
-    private static void AppendGeneratedRequest(StringBuilder sb, RpcMethodModel method)
+    private static void AppendGeneratedRequest(StringBuilder sb, RpcInterfaceModel model, RpcMethodModel method)
     {
-        var requestType = GetRequestType(method);
-        var codecType = GetRequestCodecType(method);
+        var requestType = GetRequestType(model, method);
+        var codecType = GetRequestCodecType(model, method);
         var parameters = GetPayloadParameters(method);
         var blittable = parameters.Where(static parameter => parameter.IsBlittable).ToArray();
         var complex = parameters.Where(static parameter => !parameter.IsBlittable).ToArray();
@@ -260,9 +260,9 @@ public partial class RpcGenerator
         sb.AppendLine("}");
     }
 
-    private static void AppendGeneratedStreams(StringBuilder sb, RpcMethodModel method)
+    private static void AppendGeneratedStreams(StringBuilder sb, RpcInterfaceModel model, RpcMethodModel method)
     {
-        var streamsType = GetStreamsType(method);
+        var streamsType = GetStreamsType(model, method);
         var streams = GetStreamParameters(method);
         sb.AppendLine($"internal readonly struct {streamsType} : IRpcClientStreamWriter");
         sb.AppendLine("{");
@@ -317,14 +317,14 @@ public partial class RpcGenerator
     private static string GetMethodSuffix(RpcMethodModel method)
         => unchecked((ulong)method.Hash).ToString("X16", InvariantCulture);
 
-    private static string GetRequestType(RpcMethodModel method)
-        => $"__SharpLinkRequest_{GetMethodSuffix(method)}";
+    private static string GetRequestType(RpcInterfaceModel model, RpcMethodModel method)
+        => $"__{model.Name}_SharpLinkRequest_{GetMethodSuffix(method)}";
 
-    private static string GetRequestCodecType(RpcMethodModel method)
-        => $"__SharpLinkRequestCodec_{GetMethodSuffix(method)}";
+    private static string GetRequestCodecType(RpcInterfaceModel model, RpcMethodModel method)
+        => $"__{model.Name}_SharpLinkRequestCodec_{GetMethodSuffix(method)}";
 
-    private static string GetStreamsType(RpcMethodModel method)
-        => $"__SharpLinkStreams_{GetMethodSuffix(method)}";
+    private static string GetStreamsType(RpcInterfaceModel model, RpcMethodModel method)
+        => $"__{model.Name}_SharpLinkStreams_{GetMethodSuffix(method)}";
 
     private static string GetInlineSizeToken(string typeName)
         => TryGetConstantSize(typeName, out var size)

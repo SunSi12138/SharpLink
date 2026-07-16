@@ -161,8 +161,8 @@ public interface IHelloService : SharpLink.Sdk.IService
         Ensure(proxy.Contains("InvokeClientStreamingAsync"), "ClientStreaming invoker");
         Ensure(proxy.Contains("InvokeServerStreamingAsync"), "ServerStreaming invoker");
         Ensure(proxy.Contains("InvokeDuplexStreamingAsync"), "DuplexStreaming invoker");
-        Ensure(proxy.Contains("readonly struct __SharpLinkRequest_"), "Generated request struct");
-        Ensure(proxy.Contains("IRpcCodec<__SharpLinkRequest_"), "Generated request codec");
+        Ensure(proxy.Contains("readonly struct __IHelloService_SharpLinkRequest_"), "Generated request struct");
+        Ensure(proxy.Contains("IRpcCodec<__IHelloService_SharpLinkRequest_"), "Generated request codec");
         Ensure(!proxy.Contains("Action<IBufferWriter<byte>>"), "Captured payload delegate must not be generated");
         Ensure(!proxy.Contains("InvokeCancellableWithTimeoutAsync"), "Legacy combinatorial API must not be generated");
         return Task.CompletedTask;
@@ -200,6 +200,30 @@ public interface IHelloService : SharpLink.Sdk.IService
         Ensure(codecs.Contains("RpcGeneratedCodecRegistry.Register"), "manifest registration");
         Ensure(codecs.Contains("case 7U:"), "explicit field ID");
         Ensure(codecs.Contains("Missing required RPC member 'Name'"), "required member validation");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ContractsWithMatchingMethodHashesShouldGenerateDistinctHelperTypes()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IFirstService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Add(int left, int right);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface ISecondService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Add(int left, int right);
+}
+""");
+
+        var generated = RunGeneratorAndGetSources(source);
+        var all = string.Join("\n", generated);
+        Ensure(all.Contains("__IFirstService_SharpLinkRequest_"), "first contract helper type");
+        Ensure(all.Contains("__ISecondService_SharpLinkRequest_"), "second contract helper type");
         return Task.CompletedTask;
     }
 

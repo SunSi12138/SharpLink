@@ -175,6 +175,30 @@ var expiresAt = SharpLinkCallContext.Current?.Authentication?.ExpiresAt;
 
 `SharpLinkCallContext.Current` 仅在服务端 RPC 调用处理期间有值。
 
+## TCP TLS
+
+TLS 在 TCP 建连后、SharpLink Protocol v2 handshake 前完成，并拥有独立的 10 秒默认超时。客户端默认使用平台证书链和 hostname 校验；框架不提供“接受所有证书”的默认 helper。
+
+```csharp
+var server = SharpLinkServerBuilder.Create()
+    .UseTcp(5000, new SslServerAuthenticationOptions
+    {
+        ServerCertificate = serverCertificate,
+        ClientCertificateRequired = true
+    })
+    .Build();
+
+var client = SharpClientBuilder.Create()
+    .UseTcp("127.0.0.1", 5000, new SslClientAuthenticationOptions
+    {
+        TargetHost = "rpc.example.internal",
+        ClientCertificates = new X509CertificateCollection { clientCertificate }
+    })
+    .Build();
+```
+
+UDS、NamedPipe 与 AnonymousPipe 默认依赖操作系统权限，不叠加 TLS。TLS 建立日志只记录协商协议与 cipher suite，不记录证书私钥、token 或 payload。
+
 契约方法可以在尾部声明一个 `SharpLinkCallOptions`，并可在其后再声明一个 `CancellationToken`。控制参数不会进入业务 payload：
 
 ```csharp

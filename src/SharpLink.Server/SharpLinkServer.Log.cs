@@ -28,6 +28,12 @@ internal sealed partial class SharpLinkServer
     
     [LoggerMessage(EventId = LogEvents.Connection.HandshakeFailed, Level = LogLevel.Warning, Message = "Handshake failed for client.")]
     private static partial void LogHandshakeFailed(ILogger logger);
+
+    [LoggerMessage(EventId = LogEvents.Connection.TlsHandshakeFailed, Level = LogLevel.Warning, Message = "TLS handshake failed for client.")]
+    private static partial void LogTlsHandshakeFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(EventId = LogEvents.Transport.TlsEstablished, Level = LogLevel.Information, Message = "TLS established using {Protocol} and {CipherSuite}.")]
+    private static partial void LogTlsEstablished(ILogger logger, SslProtocols protocol, TlsCipherSuite cipherSuite);
     
     [LoggerMessage(EventId = LogEvents.Connection.HeartbeatTimeout, Level = LogLevel.Warning, Message = "Client disconnected due to heartbeat timeout.")]
     private static partial void LogClientHeartbeatTimeout(ILogger logger);

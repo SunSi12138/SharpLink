@@ -41,4 +41,7 @@ internal sealed partial class SharpLinkClient
 
     [LoggerMessage(EventId = LogEvents.Client.BackgroundLoopUnhandledException, Level = LogLevel.Error, Message = "Client background loop {LoopName} failed.")]
     private static partial void LogClientBackgroundLoopUnhandledException(ILogger logger, string loopName, Exception exception);
+
+    [LoggerMessage(EventId = LogEvents.Transport.TlsEstablished, Level = LogLevel.Information, Message = "TLS established using {Protocol} and {CipherSuite}.")]
+    private static partial void LogTlsEstablished(ILogger logger, SslProtocols protocol, TlsCipherSuite cipherSuite);
 }

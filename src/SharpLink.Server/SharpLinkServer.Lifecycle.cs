@@ -34,14 +34,12 @@ internal sealed partial class SharpLinkServer
         {
             while (!acceptToken.IsCancellationRequested)
             {
-                RpcSession session;
                 ITransportConnection? connection = null;
                 try
                 {
                     connection = await transportListener.AcceptAsync(acceptToken).ConfigureAwait(false);
-                    session = new RpcSession(connection, _rpcSessionFlushOptions);
+                    TrackBackgroundTask(HandleAcceptedConnectionAsync(connection, _forceStopCts.Token));
                     connection = null;
-                    session.BindRuntimeContext(_runtimeContext);
                 }
                 catch (OperationCanceledException) when (acceptToken.IsCancellationRequested)
                 {
@@ -57,8 +55,6 @@ internal sealed partial class SharpLinkServer
                         await connection.DisposeAsync().ConfigureAwait(false);
                     throw;
                 }
-                await ReplaceSessionAsync(session);
-                TrackBackgroundTask(HandleSessionLifecycleAsync(session, _forceStopCts.Token));
             }
 
             if (cancellationToken.IsCancellationRequested && CurrentState == ServerState.Running)
@@ -94,6 +90,38 @@ internal sealed partial class SharpLinkServer
 
     private static bool IsExpectedCancellation(Exception ex, CancellationToken ct)
         => ex is OperationCanceledException && ct.IsCancellationRequested;
+
+    private async Task HandleAcceptedConnectionAsync(
+        ITransportConnection acceptedConnection,
+        CancellationToken cancellationToken)
+    {
+        ITransportConnection? connection = acceptedConnection;
+        try
+        {
+            if (connection is ITransportSecurityHandshake securityHandshake)
+                await securityHandshake.AuthenticateAsync(cancellationToken).ConfigureAwait(false);
+            if (connection is ITransportSecurityInfo securityInfo)
+                LogTlsEstablished(_logger, securityInfo.Protocol, securityInfo.CipherSuite);
+
+            var session = new RpcSession(connection, _rpcSessionFlushOptions);
+            connection = null;
+            session.BindRuntimeContext(_runtimeContext);
+            await ReplaceSessionAsync(session).ConfigureAwait(false);
+            await HandleSessionLifecycleAsync(session, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (IsExpectedCancellation(exception, cancellationToken))
+        {
+        }
+        catch (Exception exception) when (exception is AuthenticationException or SharpLinkException)
+        {
+            LogTlsHandshakeFailed(_logger, exception);
+        }
+        finally
+        {
+            if (connection is not null)
+                await connection.DisposeAsync().ConfigureAwait(false);
+        }
+    }
 
     private async Task RunHeartbeatCheckLoopAsync(CancellationToken ct)
     {

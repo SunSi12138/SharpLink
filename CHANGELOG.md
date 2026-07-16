@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### 新增
+
+- TCP TLS 与双向证书认证，TLS 在 Protocol v2 handshake 前完成并使用独立超时。
+- TLS 协议/cipher 结构化日志；默认保留平台证书链和 hostname 校验。
+
+### 修复
+
+- Source Generator 辅助 request/stream 类型加入契约名前缀，多个接口出现相同 method hash 时不再发生编译期类型冲突。
+
 ## [0.5.0] - 2026-07-17
 
 ### 新增

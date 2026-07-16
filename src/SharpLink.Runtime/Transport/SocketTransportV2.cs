@@ -52,16 +52,26 @@ public sealed class SocketClientTransportFactory : IClientTransportFactory
 {
     private readonly EndPoint _remoteEndPoint;
     private readonly SocketTransportOptions _options;
+    private readonly SslClientAuthenticationOptions? _tlsOptions;
+    private readonly TimeSpan _tlsHandshakeTimeout;
     private readonly CancellationTokenSource _disposeCts = new();
     private int _disposed;
 
     /// <summary>Creates a socket client factory.</summary>
     /// <param name="remoteEndPoint">The TCP or Unix-domain endpoint to connect.</param>
     /// <param name="options">Optional socket settings, copied during construction.</param>
-    public SocketClientTransportFactory(EndPoint remoteEndPoint, SocketTransportOptions? options = null)
+    /// <param name="tlsOptions">Optional TLS settings. A null value keeps the socket plaintext.</param>
+    /// <param name="tlsHandshakeTimeout">Independent TLS handshake timeout. Defaults to 10 seconds.</param>
+    public SocketClientTransportFactory(
+        EndPoint remoteEndPoint,
+        SocketTransportOptions? options = null,
+        SslClientAuthenticationOptions? tlsOptions = null,
+        TimeSpan? tlsHandshakeTimeout = null)
     {
         _remoteEndPoint = remoteEndPoint ?? throw new ArgumentNullException(nameof(remoteEndPoint));
         _options = (options ?? new SocketTransportOptions()).CloneValidated();
+        _tlsOptions = TlsAuthenticationOptionsSnapshot.Clone(tlsOptions);
+        _tlsHandshakeTimeout = TlsAuthenticationOptionsSnapshot.ValidateTimeout(tlsHandshakeTimeout);
     }
 
     /// <inheritdoc />
@@ -75,7 +85,25 @@ public sealed class SocketClientTransportFactory : IClientTransportFactory
             SocketTransportSocketFactory.ApplyOptions(socket, _options);
             await socket.ConnectAsync(_remoteEndPoint, connectCts.Token).ConfigureAwait(false);
             var stream = new NetworkStream(socket, ownsSocket: true);
-            return new StreamTransportConnection(stream, socket.LocalEndPoint, socket.RemoteEndPoint);
+            if (_tlsOptions is null)
+                return new StreamTransportConnection(stream, socket.LocalEndPoint, socket.RemoteEndPoint);
+
+            var connection = new TlsStreamTransportConnection(
+                stream,
+                _tlsOptions,
+                _tlsHandshakeTimeout,
+                socket.LocalEndPoint,
+                socket.RemoteEndPoint);
+            try
+            {
+                await connection.AuthenticateAsync(connectCts.Token).ConfigureAwait(false);
+                return connection;
+            }
+            catch
+            {
+                await connection.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
         }
         catch
         {
@@ -102,6 +130,8 @@ public sealed class SocketServerTransportListener : IServerTransportListener
 {
     private readonly Socket _listener;
     private readonly SocketTransportOptions _options;
+    private readonly SslServerAuthenticationOptions? _tlsOptions;
+    private readonly TimeSpan _tlsHandshakeTimeout;
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly string? _ownedUnixSocketPath;
     private int _disposed;
@@ -110,14 +140,20 @@ public sealed class SocketServerTransportListener : IServerTransportListener
     /// <param name="localEndPoint">The TCP or Unix-domain endpoint to bind.</param>
     /// <param name="backlog">The operating-system accept backlog.</param>
     /// <param name="options">Optional accepted-socket settings, copied during construction.</param>
+    /// <param name="tlsOptions">Optional TLS settings. A null value keeps accepted sockets plaintext.</param>
+    /// <param name="tlsHandshakeTimeout">Independent TLS handshake timeout. Defaults to 10 seconds.</param>
     public SocketServerTransportListener(
         EndPoint localEndPoint,
         int backlog = 512,
-        SocketTransportOptions? options = null)
+        SocketTransportOptions? options = null,
+        SslServerAuthenticationOptions? tlsOptions = null,
+        TimeSpan? tlsHandshakeTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(localEndPoint);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(backlog);
         _options = (options ?? new SocketTransportOptions()).CloneValidated();
+        _tlsOptions = TlsAuthenticationOptionsSnapshot.Clone(tlsOptions);
+        _tlsHandshakeTimeout = TlsAuthenticationOptionsSnapshot.ValidateTimeout(tlsHandshakeTimeout);
         _listener = SocketTransportSocketFactory.Create(localEndPoint);
 
         string? unixPath = null;
@@ -155,7 +191,14 @@ public sealed class SocketServerTransportListener : IServerTransportListener
         {
             SocketTransportSocketFactory.ApplyOptions(socket, _options);
             var stream = new NetworkStream(socket, ownsSocket: true);
-            return new StreamTransportConnection(stream, socket.LocalEndPoint, socket.RemoteEndPoint);
+            return _tlsOptions is null
+                ? new StreamTransportConnection(stream, socket.LocalEndPoint, socket.RemoteEndPoint)
+                : new TlsStreamTransportConnection(
+                    stream,
+                    _tlsOptions,
+                    _tlsHandshakeTimeout,
+                    socket.LocalEndPoint,
+                    socket.RemoteEndPoint);
         }
         catch
         {

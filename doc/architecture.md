@@ -128,3 +128,11 @@ SharpLink.Serializer.MemoryPack
 - Unix/macOS 上 `NamedPipe` 由 .NET 映射到 Unix Domain Socket 路径
 - 当前运行时会对过长的 pipe name 做确定性缩短，避免触发路径长度限制
 - `AnonymousPipe` 适合本机协同进程，不适合跨主机场景
+
+## TCP TLS
+
+- `SocketClientTransportFactory` 在 TCP connect 后执行 `SslStream.AuthenticateAsClientAsync`，成功后才进入 RPC handshake。
+- Server accept loop 只负责快速接收 socket；每条 accepted connection 在独立、被追踪的生命周期任务中执行 TLS，慢客户端不会串行阻塞后续 accept。
+- TLS handshake 默认 10 秒并可独立配置；timeout、server stop 与 caller cancellation 都会释放 socket、SslStream 和 Pipe。
+- mTLS 直接使用 `SslServerAuthenticationOptions.ClientCertificateRequired` 与客户端证书集合；默认服务器证书验证不被框架放宽。
+- 非 TCP transport 不创建 `SslStream`。协商后的 TLS protocol/cipher 可用于日志和后续 telemetry，但认证 payload、token 和证书敏感数据不写日志。

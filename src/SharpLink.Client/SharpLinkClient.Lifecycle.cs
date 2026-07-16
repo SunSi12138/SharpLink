@@ -62,6 +62,8 @@ internal sealed partial class SharpLinkClient
         try
         {
             connection = await transportFactory.ConnectAsync(attemptCts.Token).ConfigureAwait(false);
+            if (connection is ITransportSecurityInfo securityInfo)
+                LogTlsEstablished(_logger, securityInfo.Protocol, securityInfo.CipherSuite);
             session = new RpcSession(connection, _rpcSessionFlushOptions);
             connection = null;
             session.BindRuntimeContext(_runtimeContext);

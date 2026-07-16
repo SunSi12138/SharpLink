@@ -14,6 +14,8 @@ global using System;
 global using System.IO.Pipes;
 global using System.Net;
 global using System.Net.Sockets;
+global using System.Net.Security;
+global using System.Security.Authentication;
 global using System.Threading;
 global using SharpLink.Sdk;
 

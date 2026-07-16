@@ -13,6 +13,7 @@ public static class LogEvents
         //Warning
         public const int HandshakeFailed = 1101;
         public const int HeartbeatTimeout = 1102;
+        public const int TlsHandshakeFailed = 1103;
         //Error
         public const int ClientDisConnectedWithError = 1201;
         //Critical
@@ -52,7 +53,7 @@ public static class LogEvents
     /// </summary>
     public static class Transport
     {
-        
+        public const int TlsEstablished = 4001;
     }
     
     /// <summary>

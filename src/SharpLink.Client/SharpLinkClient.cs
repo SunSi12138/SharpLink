@@ -179,7 +179,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         {
             await task.ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException or SharpLinkException)
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException or AuthenticationException or SharpLinkException)
         {
         }
     }

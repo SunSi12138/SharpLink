@@ -1,6 +1,6 @@
 namespace SharpLink.Runtime;
 
-internal sealed class StreamTransportConnection : ITransportConnection
+internal class StreamTransportConnection : ITransportConnection
 {
     private readonly Stream _stream;
     private readonly Lock _disposeGate = new();
