@@ -3,4 +3,10 @@
       <ProjectReference Include="..\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
       <ProjectReference Include="..\SharpLink.Runtime\SharpLink.Runtime.csproj" />
     </ItemGroup>
+    <ItemGroup>
+      <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    </ItemGroup>
+    <ItemGroup>
+      <InternalsVisibleTo Include="SharpLink.Hosting" />
+    </ItemGroup>
 </Project>

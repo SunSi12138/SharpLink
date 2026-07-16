@@ -152,6 +152,7 @@ public partial class RpcGenerator
                           internal static void Register()
                           {
                               SharpLink.Abstractions.GeneratedStubRegistry.Register(typeof({{model.ServiceFullName}}), () => new {{model.ServiceName}}_Stub());
+                              SharpLink.Abstractions.GeneratedStubRegistry.RegisterContract(typeof({{model.Interface.FullName}}), () => new {{model.ServiceName}}_Stub());
                           }
                       }
                       """);

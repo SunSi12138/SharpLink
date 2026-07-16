@@ -3,6 +3,129 @@ namespace SharpLink.Server;
 internal sealed partial class SharpLinkServer
 {
     private ValueTask InvokeServiceAsync(
+        ServiceRegistration registration,
+        IRpcSession session,
+        long methodId,
+        long requestId,
+        ReadOnlySequence<byte> arguments,
+        IRpcByteBufferWriter? output,
+        CancellationToken cancellationToken,
+        SharpLinkCallContextSnapshot context)
+    {
+        ValueTask<ServiceLease> acquisition;
+        try
+        {
+            acquisition = registration.AcquireAsync();
+        }
+        catch (Exception exception)
+        {
+            var failedTelemetry = SharpLinkTelemetry.StartServerCall(
+                GetMethodDescriptor(registration.Stub, methodId), requestId);
+            failedTelemetry.Complete(exception);
+            throw;
+        }
+
+        if (!acquisition.IsCompletedSuccessfully)
+        {
+            return InvokeServiceAfterAcquisitionAsync(
+                acquisition,
+                registration.Stub,
+                session,
+                methodId,
+                requestId,
+                arguments,
+                output,
+                cancellationToken,
+                context);
+        }
+
+        return InvokeAcquiredServiceAsync(
+            registration.Stub,
+            acquisition.Result,
+            session,
+            methodId,
+            requestId,
+            arguments,
+            output,
+            cancellationToken,
+            context);
+    }
+
+    private ValueTask InvokeAcquiredServiceAsync(
+        IRpcStub stub,
+        ServiceLease lease,
+        IRpcSession session,
+        long methodId,
+        long requestId,
+        ReadOnlySequence<byte> arguments,
+        IRpcByteBufferWriter? output,
+        CancellationToken cancellationToken,
+        SharpLinkCallContextSnapshot context)
+    {
+
+        if (!lease.RequiresDisposal)
+        {
+            return InvokeServiceTrackedAsync(
+                stub,
+                lease.Service,
+                session,
+                methodId,
+                requestId,
+                arguments,
+                output,
+                cancellationToken,
+                context);
+        }
+
+        return InvokeServiceWithLeaseAsync(
+            stub,
+            lease,
+            session,
+            methodId,
+            requestId,
+            arguments,
+            output,
+            cancellationToken,
+            context);
+    }
+
+    private async ValueTask InvokeServiceAfterAcquisitionAsync(
+        ValueTask<ServiceLease> acquisition,
+        IRpcStub stub,
+        IRpcSession session,
+        long methodId,
+        long requestId,
+        ReadOnlySequence<byte> arguments,
+        IRpcByteBufferWriter? output,
+        CancellationToken cancellationToken,
+        SharpLinkCallContextSnapshot context)
+    {
+        ServiceLease lease;
+        try
+        {
+            lease = await acquisition.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            var failedTelemetry = SharpLinkTelemetry.StartServerCall(
+                GetMethodDescriptor(stub, methodId), requestId);
+            failedTelemetry.Complete(exception);
+            throw;
+        }
+
+        await InvokeAcquiredServiceAsync(
+            stub,
+            lease,
+            session,
+            methodId,
+            requestId,
+            arguments,
+            output,
+            cancellationToken,
+            context).ConfigureAwait(false);
+    }
+
+    private ValueTask InvokeServiceTrackedAsync(
         IRpcStub stub,
         object service,
         IRpcSession session,
@@ -40,6 +163,48 @@ internal sealed partial class SharpLinkServer
         {
             telemetry.Complete(exception);
             throw;
+        }
+    }
+
+    private async ValueTask InvokeServiceWithLeaseAsync(
+        IRpcStub stub,
+        ServiceLease lease,
+        IRpcSession session,
+        long methodId,
+        long requestId,
+        ReadOnlySequence<byte> arguments,
+        IRpcByteBufferWriter? output,
+        CancellationToken cancellationToken,
+        SharpLinkCallContextSnapshot context)
+    {
+        Exception? invocationException = null;
+        try
+        {
+            await InvokeServiceTrackedAsync(
+                stub,
+                lease.Service,
+                session,
+                methodId,
+                requestId,
+                arguments,
+                output,
+                cancellationToken,
+                context).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            invocationException = exception;
+            throw;
+        }
+        finally
+        {
+            try
+            {
+                await lease.DisposeAsync().ConfigureAwait(false);
+            }
+            catch when (invocationException is not null)
+            {
+            }
         }
     }
 
@@ -161,7 +326,7 @@ internal sealed partial class SharpLinkServer
                 exception,
                 callContext,
                 session,
-                serviceInfo.stub,
+                serviceInfo.Stub,
                 methodId,
                 requestId,
                 CancellationToken.None);

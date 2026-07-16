@@ -12,7 +12,7 @@ Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容�
 | 1 | 4 | payload length | 有符号 `int32`，必须在 `0..MaxFramePayloadBytes` |
 | 5 | 1 | frame type | 必须是已定义的 v2 类型 |
 | 6 | 1 | frame flags | 未知 bit 或类型不允许的 bit 均非法 |
-| 7 | 8 | request ID | `uint64`；连接控制帧固定为 0 |
+| 7 | 8 | request ID | `uint64`；连接级控制帧固定为 0，成对控制请求使用非 0 correlation ID |
 
 解析器必须先验证完整固定头与 payload length，再等待或切分 payload。半帧保留在输入缓冲；坏帧不尝试寻找下一个 magic。
 
@@ -30,6 +30,8 @@ Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容�
 | `StreamComplete` | 非 0 | `streamId:uint16`；`Error` 时追加二进制错误 |
 | `WindowUpdate` | 非 0 | `streamId:uint16 + credit:uint32`，credit 必须在 `1..int32.MaxValue` |
 | `GoAway` | 0 | `lastAcceptedRequestId:uint64 + binary error/reason` |
+| `HealthCheck` | 非 0 | 空；只在协商 health-check capability 后发送 |
+| `HealthResponse` | 非 0 | 单字节 `Unhealthy/Ready/Draining` 状态 |
 
 Stream ID 0 表示默认返回流，1–65535 表示显式流参数。Request ID 0 仅用于连接控制帧；溢出分配时必须跳过 0。
 
@@ -53,6 +55,7 @@ Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `H
 - bit 0: metadata
 - bit 1: compression
 - bit 2: flow control
+- bit 3: protocol health check
 
 对端缺少任一 required capability 时，Server 返回 `Unimplemented` 错误并关闭连接。认证载荷不得超过握手/metadata 上限。
 
@@ -77,4 +80,4 @@ errorCode:uint16 + messageLength:varuint32 + UTF8 message
 - 默认 frame payload 上限 4 MiB，可配置范围 1 KiB–64 MiB。
 - metadata 默认上限 16 KiB，错误消息默认上限 64 KiB。
 - 所有网络长度在 `Slice`、复制或分配前验证。
-- `HandshakeRequest/Response`、`Ping/Pong`、`Cancel`、`StreamComplete`、`WindowUpdate` 和 `GoAway` 都有类型级最小/最大载荷校验。
+- `HandshakeRequest/Response`、`Ping/Pong`、`Cancel`、`StreamComplete`、`WindowUpdate`、`GoAway` 和 health 帧都有类型级最小/最大载荷校验。

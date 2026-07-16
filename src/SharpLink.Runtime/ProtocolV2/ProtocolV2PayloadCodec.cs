@@ -146,6 +146,31 @@ public static class ProtocolV2PayloadCodec
             checked((uint)creditBits));
     }
 
+    /// <summary>Writes one fixed-width protocol health response.</summary>
+    public static void WriteHealthResponse(
+        IBufferWriter<byte> writer,
+        SharpLinkHealthStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ValidateHealthStatus(status);
+        var span = writer.GetSpan(1);
+        span[0] = (byte)status;
+        writer.Advance(1);
+    }
+
+    /// <summary>Reads one complete fixed-width protocol health response.</summary>
+    public static SharpLinkHealthCheckResult ReadHealthResponse(ReadOnlySequence<byte> payload)
+    {
+        if (payload.Length != 1)
+            throw ProtocolV2FrameParser.Violation("HealthResponse payload must contain exactly one status byte.");
+        var reader = new SequenceReader<byte>(payload);
+        if (!reader.TryRead(out var statusBits))
+            throw ProtocolV2FrameParser.Violation("HealthResponse status is truncated.");
+        var status = (SharpLinkHealthStatus)statusBits;
+        ValidateHealthStatus(status);
+        return new SharpLinkHealthCheckResult(status);
+    }
+
     /// <summary>Writes a binary error payload and reports whether the UTF-8 message was truncated.</summary>
     public static void WriteError(
         IBufferWriter<byte> writer,
@@ -356,6 +381,16 @@ public static class ProtocolV2PayloadCodec
         }
         if (streamWindow <= 0 || connectionWindow <= 0 || connectionWindow < streamWindow)
             throw ProtocolV2FrameParser.Violation("Peer receive windows are invalid.");
+    }
+
+    private static void ValidateHealthStatus(SharpLinkHealthStatus status)
+    {
+        if (status is not SharpLinkHealthStatus.Ready and
+            not SharpLinkHealthStatus.Draining and
+            not SharpLinkHealthStatus.Unhealthy)
+        {
+            throw ProtocolV2FrameParser.Violation($"Unknown health status {(byte)status}.");
+        }
     }
 
     private static bool IsDefinedErrorCode(SharpLinkErrorCode code) => code switch

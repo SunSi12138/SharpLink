@@ -84,6 +84,7 @@ internal sealed partial class SharpLinkServer
             await transportListener.DisposeAsync().ConfigureAwait(false);
             await DisposeAllSessionsAsync().ConfigureAwait(false);
             await WaitForBackgroundTasksAsync().ConfigureAwait(false);
+            await DisposeServicesAsync().ConfigureAwait(false);
             throw;
         }
     }
@@ -245,7 +246,9 @@ internal sealed partial class SharpLinkServer
                 SharpLinkAuthenticationResult authResult;
                 ProtocolV2HandshakeRequest request = default;
                 var supportedCapabilities =
-                    ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.FlowControl;
+                    ProtocolV2Capabilities.Metadata |
+                    ProtocolV2Capabilities.FlowControl |
+                    ProtocolV2Capabilities.HealthCheck;
                 if (header.Type != ProtocolV2FrameType.HandshakeRequest)
                 {
                     authResult = SharpLinkAuthenticationResult.Reject(
@@ -454,9 +457,22 @@ internal sealed partial class SharpLinkServer
                             case ProtocolV2FrameType.GoAway:
                                 await session.DisposeAsync();
                                 return;
+                            case ProtocolV2FrameType.HealthCheck:
+                                if ((((RpcSession)session).NegotiatedCapabilities &
+                                     ProtocolV2Capabilities.HealthCheck) == 0)
+                                {
+                                    throw new SharpLinkException(
+                                        SharpLinkErrorCode.ProtocolViolation,
+                                        "HealthCheck was not negotiated for this session.");
+                                }
+                                session.SendHealthResponse(
+                                    unchecked((long)header.RequestId),
+                                    HealthStatus);
+                                break;
                             case ProtocolV2FrameType.HandshakeRequest:
                             case ProtocolV2FrameType.HandshakeResponse:
                             case ProtocolV2FrameType.Response:
+                            case ProtocolV2FrameType.HealthResponse:
                             default:
                             {
                                 SharpLinkTelemetry.RecordProtocolFailure("server");
@@ -529,7 +545,7 @@ internal sealed partial class SharpLinkServer
 
         CancellationTokenSource? linkedCts = null;
         var invokeToken = serverLoopToken;
-        if (isCancellable && serviceInfo.stub.SupportsCancellation(request.MethodHash))
+        if (isCancellable && serviceInfo.Stub.SupportsCancellation(request.MethodHash))
         {
             linkedCts = CancellationTokenSource.CreateLinkedTokenSource(serverLoopToken);
             requestCancellationMap.Set(requestId, linkedCts);
@@ -538,14 +554,13 @@ internal sealed partial class SharpLinkServer
         }
 
         var callContext = CreateCallContext(
-            session, serviceInfo.stub, request.MethodHash, requestId,
+            session, serviceInfo.Stub, request.MethodHash, requestId,
             request.Deadline, request.Metadata, invokeToken);
         try
         {
             using var callContextScope = SharpLinkCallContext.Push(callContext);
             var invokeTask = InvokeServiceAsync(
-                serviceInfo.stub,
-                serviceInfo.service,
+                serviceInfo,
                 session,
                 request.MethodHash,
                 requestId,
@@ -569,14 +584,14 @@ internal sealed partial class SharpLinkServer
                 callAdmission,
                 callContext,
                 session,
-                serviceInfo.stub,
+                serviceInfo.Stub,
                 request.MethodHash,
                 invokeToken));
         }
         catch (Exception ex)
         {
             LogOnewayRpcDispatchFailed(_logger, MapServiceException(
-                ex, callContext, session, serviceInfo.stub, request.MethodHash, requestId, invokeToken));
+                ex, callContext, session, serviceInfo.Stub, request.MethodHash, requestId, invokeToken));
             ReleaseOneWayDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
         }
     }
@@ -662,7 +677,7 @@ internal sealed partial class SharpLinkServer
 
         CancellationTokenSource? linkedCts = null;
         var invokeToken = serverLoopToken;
-        if (isCancellable && serviceInfo.stub.SupportsCancellation(request.MethodHash))
+        if (isCancellable && serviceInfo.Stub.SupportsCancellation(request.MethodHash))
         {
             linkedCts = CancellationTokenSource.CreateLinkedTokenSource(serverLoopToken);
             requestCancellationMap.Set(requestId, linkedCts);
@@ -673,18 +688,18 @@ internal sealed partial class SharpLinkServer
         if (!hasReturnPayload)
         {
             var callContext = CreateCallContext(
-                session, serviceInfo.stub, request.MethodHash, requestId,
+                session, serviceInfo.Stub, request.MethodHash, requestId,
                 request.Deadline, request.Metadata, invokeToken);
             try
             {
                 using var callContextScope = SharpLinkCallContext.Push(callContext);
                 var invokeTask = InvokeServiceAsync(
-                    serviceInfo.stub, serviceInfo.service, session, request.MethodHash, requestId,
+                    serviceInfo, session, request.MethodHash, requestId,
                     request.Arguments, output: null, invokeToken, callContext);
                 if (!invokeTask.IsCompletedSuccessfully)
                     return AwaitDispatchRpcNoReturnAsync(
                         invokeTask, session, requestId, linkedCts, requestCancellationMap, callAdmission,
-                        request.Deadline, callContext, serviceInfo.stub, request.MethodHash, invokeToken);
+                        request.Deadline, callContext, serviceInfo.Stub, request.MethodHash, invokeToken);
                 if (callContext is SharpLinkServerInvocationContext interceptorContext)
                     interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
                 session.SendPacketAsync(ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, requestId);
@@ -700,7 +715,7 @@ internal sealed partial class SharpLinkServer
             catch (Exception e)
             {
                 session.SendRpcErrorAsync(requestId, MapServiceException(
-                    e, callContext, session, serviceInfo.stub, request.MethodHash, requestId, invokeToken));
+                    e, callContext, session, serviceInfo.Stub, request.MethodHash, requestId, invokeToken));
                 ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
                 return ValueTask.CompletedTask;
             }
@@ -711,18 +726,18 @@ internal sealed partial class SharpLinkServer
         var token = writer.BeginPacket(
             ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((ulong)requestId));
         var responseCallContext = CreateCallContext(
-            session, serviceInfo.stub, request.MethodHash, requestId,
+            session, serviceInfo.Stub, request.MethodHash, requestId,
             request.Deadline, request.Metadata, invokeToken);
         try
         {
             using var callContextScope = SharpLinkCallContext.Push(responseCallContext);
             var invokeTask = InvokeServiceAsync(
-                serviceInfo.stub, serviceInfo.service, session, request.MethodHash, requestId,
+                serviceInfo, session, request.MethodHash, requestId,
                 request.Arguments, writer, invokeToken, responseCallContext);
             if (!invokeTask.IsCompletedSuccessfully)
                 return AwaitDispatchRpcAsync(invokeTask, session, requestId, writer, token, linkedCts,
                     requestCancellationMap, callAdmission, request.Deadline, responseCallContext,
-                    serviceInfo.stub, request.MethodHash, invokeToken);
+                    serviceInfo.Stub, request.MethodHash, invokeToken);
             if (responseCallContext is SharpLinkServerInvocationContext interceptorContext)
                 interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
             writer.EndPacket(token);
@@ -755,7 +770,7 @@ internal sealed partial class SharpLinkServer
 
             _runtimeContext.Buffers.Return(writer);
             session.SendRpcErrorAsync(requestId, MapServiceException(
-                e, responseCallContext, session, serviceInfo.stub, request.MethodHash, requestId, invokeToken));
+                e, responseCallContext, session, serviceInfo.Stub, request.MethodHash, requestId, invokeToken));
             ReleaseDispatchResources(linkedCts, requestId, requestCancellationMap, callAdmission);
             return ValueTask.CompletedTask;
         }

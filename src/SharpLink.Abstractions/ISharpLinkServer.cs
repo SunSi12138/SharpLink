@@ -3,6 +3,9 @@ namespace SharpLink.Abstractions;
 /// <summary>Owns a SharpLink listener and all sessions accepted from it.</summary>
 public interface ISharpLinkServer : IAsyncDisposable
 {
+    /// <summary>Gets the current process readiness state.</summary>
+    SharpLinkHealthStatus HealthStatus { get; }
+
     /// <summary>Runs the accept loop until stopped, canceled, or faulted.</summary>
     /// <param name="cancellationToken">Requests immediate shutdown when canceled.</param>
     ValueTask RunAsync(CancellationToken cancellationToken = default);

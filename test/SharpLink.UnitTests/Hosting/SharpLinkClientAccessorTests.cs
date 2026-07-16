@@ -65,6 +65,10 @@ public class SharpLinkClientAccessorTests
 
         public ValueTask StopAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 
+        public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Ready));
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
         public T Get<T>() where T : IService

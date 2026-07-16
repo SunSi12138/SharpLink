@@ -15,6 +15,12 @@ public interface ISharpLinkClient : IAsyncDisposable
     /// <param name="cancellationToken">Cancels only this caller's wait for the shared stop operation.</param>
     ValueTask StopAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Queries the selected ready connection using the protocol health control frame.</summary>
+    /// <param name="cancellationToken">Cancels the local health request.</param>
+    /// <returns>The remote server readiness state.</returns>
+    ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
+        CancellationToken cancellationToken = default);
+
     /// <summary>Creates the generated proxy for a registered RPC contract.</summary>
     /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
     TContract Get<TContract>() where TContract : IService;

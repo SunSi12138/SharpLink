@@ -13,7 +13,7 @@ public static class ProtocolV2Constants
     public const int RequestPrefixBytes = 16;
 
     /// <summary>Current protocol minor version.</summary>
-    public const ushort MinorVersion = 0;
+    public const ushort MinorVersion = 1;
 }
 
 /// <summary>Protocol v2 frame types.</summary>
@@ -29,7 +29,9 @@ public enum ProtocolV2FrameType : byte
     StreamData = 7,
     StreamComplete = 8,
     WindowUpdate = 9,
-    GoAway = 10
+    GoAway = 10,
+    HealthCheck = 11,
+    HealthResponse = 12
 }
 
 /// <summary>Protocol v2 frame flags.</summary>
@@ -54,7 +56,8 @@ public enum ProtocolV2Capabilities : ulong
     None = 0,
     Metadata = 1UL << 0,
     Compression = 1UL << 1,
-    FlowControl = 1UL << 2
+    FlowControl = 1UL << 2,
+    HealthCheck = 1UL << 3
 }
 
 /// <summary>Parsed Protocol v2 frame header.</summary>

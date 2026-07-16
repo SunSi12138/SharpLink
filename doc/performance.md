@@ -203,3 +203,17 @@ Activity 与调用级 Meter 只在对应 listener 启用时构造调用 observer
 | 32 | 591.71k QPS / P99 76 μs | 587.94k QPS / P99 76 μs | 通过（QPS 99.4%，P99 100.0%） |
 
 BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 均保持 832 B/op；启用 listener 后的 Activity/tag 成本属于显式可观测性成本，不计入默认热路径门禁。
+
+## 0.6.5 DI/健康检查默认 Singleton 回归（2026-07-17，同一 runner）
+
+服务表改为生命周期 registration，但默认 Singleton 在首次激活后只执行缓存实例读取；只有用户显式选择 Scoped/Transient 才创建调用 scope。健康检查使用独立控制帧和共享有界 pending table，不进入普通业务调用路径。
+
+以 `07f9661`（0.6.4）作为基线，使用 1 秒 warmup、3 秒测量，严格交替 A/B，每档五次取中位数：
+
+| 并发 | 0.6.4 同时段基线 | 0.6.5 默认 Singleton | 门禁结论 |
+|---:|---:|---:|---|
+| 1 | 25.06k QPS / P99 72 μs | 26.02k QPS / P99 71 μs | 通过（QPS 103.8%，P99 98.6%） |
+| 8 | 170.96k QPS / P99 62 μs | 170.76k QPS / P99 62 μs | 通过（QPS 99.9%，P99 100.0%） |
+| 32 | 587.77k QPS / P99 77 μs | 586.62k QPS / P99 76 μs | 通过（QPS 99.8%，P99 98.7%） |
+
+BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 均为 832 B/op。Scoped/Transient 的 scope 与释放成本属于显式生命周期语义，不影响默认门禁。

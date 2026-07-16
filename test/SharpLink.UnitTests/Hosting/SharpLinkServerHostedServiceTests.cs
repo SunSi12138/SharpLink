@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using System.Threading;
 using SharpLink.Hosting;
 using SharpLink.Server;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace SharpLink.UnitTests.Hosting;
 
@@ -13,13 +14,23 @@ public class SharpLinkServerHostedServiceTests
         var transport = new BlockingTransport();
         var builder = SharpLinkServerBuilder.Create()
             .UseTransport(transport);
-        var hosted = new SharpLinkServerHostedService(builder, NullLoggerFactory.Instance);
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var readiness = new SharpLinkServerReadiness();
+        var hosted = new SharpLinkServerHostedService(
+            builder,
+            NullLoggerFactory.Instance,
+            provider,
+            readiness);
 
         await hosted.StartAsync(CancellationToken.None);
+        Ensure(readiness.Status == SharpLinkHealthStatus.Ready,
+            "readiness should be ready after hosted service starts");
         await hosted.StopAsync(CancellationToken.None);
         await hosted.StopAsync(CancellationToken.None);
 
         Ensure(transport.DisposeCalled, "transport should be disposed when hosted service stops");
+        Ensure(readiness.Status == SharpLinkHealthStatus.Unhealthy,
+            "readiness should be unhealthy after hosted service stops");
     }
 
     private static void Ensure(bool condition, string message)

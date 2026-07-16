@@ -10,7 +10,13 @@ public static class HostExtensions
         {
             var builder = SharpLinkServerBuilder.Create();
             configure?.Invoke(builder);
+            builder.AddServiceRegistrationsTo(services);
             services.TryAddSingleton(builder);
+            services.TryAddSingleton<SharpLinkServerReadiness>();
+            services.TryAddSingleton<ISharpLinkServerReadiness>(static provider =>
+                provider.GetRequiredService<SharpLinkServerReadiness>());
+            services.AddHealthChecks()
+                .AddCheck<SharpLinkServerHealthCheck>("sharplink_server", tags: ["ready"]);
             if (builder.Transport is IAnonymousPipeAllocator anonymousPipeAllocator)
                 services.AddSingleton<IAnonymousPipeAllocatorAccessor>(new AnonymousPipeAllocatorAccessor{AnonymousPipeAllocator = anonymousPipeAllocator});
 
@@ -25,6 +31,8 @@ public static class HostExtensions
             services.TryAddSingleton(builder);
             services.TryAddSingleton<SharpLinkClientAccessor>();
             services.TryAddSingleton<ISharpLinkClientAccessor>(sp => sp.GetRequiredService<SharpLinkClientAccessor>());
+            services.AddHealthChecks()
+                .AddCheck<SharpLinkRemoteHealthCheck>("sharplink_remote", tags: ["ready"]);
             services.AddHostedService<SharpLinkClientHostedService>();
             return builder;
         }

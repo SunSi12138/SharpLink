@@ -2,7 +2,7 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer(
     IServerTransportListener transportListener,
-    FrozenDictionary<long, (IRpcStub stub,object service)> services,
+    FrozenDictionary<long, ServiceRegistration> services,
     TimeSpan heartbeatCheckInterval,
     TimeSpan heartbeatTimeout,
     ILoggerFactory loggerFactory,
@@ -12,7 +12,8 @@ internal sealed partial class SharpLinkServer(
     SharpLinkRuntimeContext? runtimeContext = null,
     RpcSessionFlushOptions? rpcSessionFlushOptions = null,
     ISharpLinkServerInterceptor[]? serverInterceptors = null,
-    IRpcExceptionMapper? exceptionMapper = null) : ISharpLinkServer
+    IRpcExceptionMapper? exceptionMapper = null,
+    IAsyncDisposable? ownedServiceProvider = null) : ISharpLinkServer
 {
     private enum ServerState
     {
@@ -49,11 +50,20 @@ internal sealed partial class SharpLinkServer(
         serverInterceptors is { Length: > 0 } ? [.. serverInterceptors] : [];
     private readonly IRpcExceptionMapper _exceptionMapper =
         exceptionMapper ?? new DefaultRpcExceptionMapper(includeDetails: false);
+    private readonly IAsyncDisposable? _ownedServiceProvider = ownedServiceProvider;
+    private int _servicesDisposed;
     private int _globalActiveCalls;
     private long _rejectedOneWayCalls;
     private readonly int _globalMaxConcurrentCalls = (int)Math.Min(
         (long)Environment.ProcessorCount * 1024,
         65_536L);
+
+    public SharpLinkHealthStatus HealthStatus => CurrentState switch
+    {
+        ServerState.Running => SharpLinkHealthStatus.Ready,
+        ServerState.Draining => SharpLinkHealthStatus.Draining,
+        _ => SharpLinkHealthStatus.Unhealthy
+    };
 
     public ValueTask DisposeAsync() => StopAsync(TimeSpan.Zero);
 
@@ -109,6 +119,9 @@ internal sealed partial class SharpLinkServer(
                 catch (TimeoutException)
                 {
                 }
+                catch (OperationCanceledException) when (_forceStopCts.IsCancellationRequested)
+                {
+                }
             }
 
             if (_callsDrained.Task.IsCompletedSuccessfully)
@@ -130,6 +143,7 @@ internal sealed partial class SharpLinkServer(
             _forceStopCts.Cancel();
             await DisposeAllSessionsAsync().ConfigureAwait(false);
             await WaitForBackgroundTasksAsync().ConfigureAwait(false);
+            await DisposeServicesAsync().ConfigureAwait(false);
             _acceptCts.Dispose();
             _forceStopCts.Dispose();
             TransitionTo(ServerState.Stopped);
@@ -137,6 +151,7 @@ internal sealed partial class SharpLinkServer(
         catch
         {
             TransitionTo(ServerState.Faulted);
+            await DisposeServicesAsync().ConfigureAwait(false);
             throw;
         }
     }
@@ -284,6 +299,49 @@ internal sealed partial class SharpLinkServer(
 
     private void TransitionTo(ServerState state)
         => Interlocked.Exchange(ref _state, (int)state);
+
+    internal void ForceStop()
+    {
+        try
+        {
+            _forceStopCts.Cancel();
+        }
+        catch (ObjectDisposedException) when (CurrentState == ServerState.Stopped)
+        {
+        }
+    }
+
+    private async ValueTask DisposeServicesAsync()
+    {
+        if (Interlocked.Exchange(ref _servicesDisposed, 1) != 0)
+            return;
+
+        Exception? firstException = null;
+        foreach (var registration in services.Values)
+        {
+            try
+            {
+                await registration.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                firstException ??= exception;
+            }
+        }
+
+        try
+        {
+            if (_ownedServiceProvider is not null)
+                await _ownedServiceProvider.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            firstException ??= exception;
+        }
+
+        if (firstException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+    }
 
     private sealed class SessionCallAdmission
     {

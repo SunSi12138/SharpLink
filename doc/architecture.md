@@ -161,3 +161,13 @@ SharpLink.Serializer.MemoryPack
 - Meter 覆盖 active connections、reconnect、calls started/completed/failed/active/duration、sent/received bytes、send queue bytes、pending requests、active streams、protocol/auth/resource-exhausted failures。
 - Counter/Histogram/Activity 均先检查 listener/instrument；无 listener 时不创建 TagList、Activity、Stopwatch 对象或 observer state machine。
 - 日志全部使用 `LoggerMessage` source-generated 方法；普通日志不包含 payload、token 或证书内容。
+
+## DI、健康状态与排空
+
+- 默认类型注册是 Singleton，dispatch 只读取已缓存实例，不创建调用 scope；Scoped/Transient 是显式选择的调用级成本。
+- Hosting 在容器 Build 前加入缺失的实现类型注册；应用已有注册必须与 SharpLink 声明的 lifetime 一致。非 Hosting Builder 可使用内部 provider 或显式 `UseServiceProvider`。
+- 类型注册由 DI provider/scope 负责释放；factory 创建的对象由 SharpLink 释放；实例重载始终由调用方持有。激活失败也会异步释放已创建 scope。
+- Unary/OneWay scope 在调用完成后释放；server/client/duplex stream scope 覆盖完整 pump 生命周期，并在异常、取消、断线和强制停机路径释放。
+- Protocol minor 1 协商 health-check capability；`HealthCheck/HealthResponse` 使用非零 correlation ID 和固定一字节状态，不进入业务 stub、interceptor 或服务并发额度。
+- Server 状态映射为 Starting/Stopped/Faulted=`Unhealthy`、Running=`Ready`、Draining=`Draining`。Hosted readiness 直接读取 Server 原子状态，Client accessor 只在至少一条连接 Ready 后发布。
+- Stop 先进入 Draining，再停止 accept 并发送强制 flush 的 GoAway；grace 内等待 active calls，超时后取消 session 调用，最后等待后台任务并释放 service/provider。

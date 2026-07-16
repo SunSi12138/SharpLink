@@ -109,6 +109,42 @@ public static class RpcSessionExtensions
         public void SendPongAsync(long timestamp)
             => SendTimestampFrame(session, ProtocolV2FrameType.Pong, timestamp);
 
+        /// <summary>Sends a protocol-level health request on a negotiated session.</summary>
+        /// <param name="session">The negotiated session that owns the send queue.</param>
+        /// <param name="requestId">The non-zero health request identifier.</param>
+        public void SendHealthCheck(long requestId)
+            => session.SendPacketAsync(
+                ProtocolV2FrameType.HealthCheck,
+                ProtocolV2FrameFlags.None,
+                requestId);
+
+        /// <summary>Sends a fixed-width protocol health response.</summary>
+        /// <param name="session">The negotiated session that owns the send queue.</param>
+        /// <param name="requestId">The request identifier being answered.</param>
+        /// <param name="status">The current server readiness state.</param>
+        public void SendHealthResponse(long requestId, SharpLinkHealthStatus status)
+        {
+            var writer = session.RuntimeContext.Buffers.Rent();
+            var ownsWriter = true;
+            try
+            {
+                using (writer.BeginPacketScope(
+                           ProtocolV2FrameType.HealthResponse,
+                           ProtocolV2FrameFlags.None,
+                           unchecked((ulong)requestId)))
+                {
+                    ProtocolV2PayloadCodec.WriteHealthResponse(writer, status);
+                }
+                ownsWriter = false;
+                GetRuntimeSession(session).SendPacket(writer);
+            }
+            finally
+            {
+                if (ownsWriter)
+                    session.RuntimeContext.Buffers.Return(writer);
+            }
+        }
+
         public async ValueTask SendStreamChunkAsync<T>(
             long requestId,
             ushort streamId,

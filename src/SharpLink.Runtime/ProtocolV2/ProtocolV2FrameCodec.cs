@@ -75,6 +75,8 @@ public static class ProtocolV2FrameParser
         (byte)ProtocolV2FrameType.StreamComplete => ProtocolV2FrameType.StreamComplete,
         (byte)ProtocolV2FrameType.WindowUpdate => ProtocolV2FrameType.WindowUpdate,
         (byte)ProtocolV2FrameType.GoAway => ProtocolV2FrameType.GoAway,
+        (byte)ProtocolV2FrameType.HealthCheck => ProtocolV2FrameType.HealthCheck,
+        (byte)ProtocolV2FrameType.HealthResponse => ProtocolV2FrameType.HealthResponse,
         _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
     };
 
@@ -121,6 +123,8 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.StreamComplete => ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Truncated,
             ProtocolV2FrameType.WindowUpdate => ProtocolV2FrameFlags.None,
             ProtocolV2FrameType.GoAway => ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Truncated,
+            ProtocolV2FrameType.HealthCheck => ProtocolV2FrameFlags.None,
+            ProtocolV2FrameType.HealthResponse => ProtocolV2FrameFlags.None,
             _ => ProtocolV2FrameFlags.None
         };
         if ((flags & ~allowed) != 0)
@@ -194,6 +198,13 @@ public static class ProtocolV2FrameParser
                     throw Violation("GoAway payload is incomplete.");
                 _ = ProtocolV2PayloadCodec.ReadError(
                     payload.Slice(sizeof(ulong)), flags | ProtocolV2FrameFlags.Error, limits.MaxErrorMessageBytes);
+                break;
+            case ProtocolV2FrameType.HealthCheck:
+                if (!payload.IsEmpty)
+                    throw Violation("HealthCheck payload must be empty.");
+                break;
+            case ProtocolV2FrameType.HealthResponse:
+                _ = ProtocolV2PayloadCodec.ReadHealthResponse(payload);
                 break;
         }
     }

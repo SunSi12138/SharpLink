@@ -44,6 +44,10 @@ public static class Program
         {
             await client.ConnectAsync(runToken);
 
+            var health = await client.CheckHealthAsync(runToken);
+            if (health.Status != SharpLinkHealthStatus.Ready)
+                throw new Exception($"unexpected health status: {health.Status}");
+
             var svc = client.Get<IAotService>();
             var result = await svc.PingAsync();
             if (result != "pong")

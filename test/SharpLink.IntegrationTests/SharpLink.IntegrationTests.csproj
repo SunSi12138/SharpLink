@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <PackageReference Include="MemoryPack" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="TUnit" />
   </ItemGroup>
 

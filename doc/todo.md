@@ -29,7 +29,7 @@
 
 ## 后续版本
 
-- `0.6.0`（开发中）：`0.6.1` TLS、`0.6.2` 认证、`0.6.3` Interceptor/异常映射、`0.6.4` 遥测已完成；继续 Hosting、DI、健康检查与优雅排空。
+- `0.6.0`（功能完成，发布门禁中）：TLS、认证、Interceptor/异常映射、遥测、Hosting、DI、健康检查与优雅排空均已完成；不开始 0.7 扩展包。
 - `0.7.0`：Discovery、Load Balancing 与 Resilience 官方扩展包。
 - `0.8.0-rc`：Chaos、长稳、跨平台/AOT/Package/性能 Release Gate，只修复正确性、稳定性、性能回退和文档问题。
 - `1.0.0`：通过 RC 接受标准后发布稳定 API 与 Protocol v2。

@@ -243,7 +243,9 @@ internal sealed partial class SharpLinkClient
         }
         var handshakeRequest = new ProtocolV2HandshakeRequest(
             ProtocolV2Constants.MinorVersion,
-            ProtocolV2Capabilities.Metadata | ProtocolV2Capabilities.FlowControl,
+            ProtocolV2Capabilities.Metadata |
+            ProtocolV2Capabilities.FlowControl |
+            ProtocolV2Capabilities.HealthCheck,
             ProtocolV2Capabilities.None,
             _protocolOptions.MaxFramePayloadBytes,
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
@@ -347,6 +349,9 @@ internal sealed partial class SharpLinkClient
                         case ProtocolV2FrameType.Response:
                             DispatchRpc(unchecked((long)header.RequestId), header.Flags, ref payload);
                             break;
+                        case ProtocolV2FrameType.HealthResponse:
+                            DispatchHealthResponse(unchecked((long)header.RequestId), ref payload);
+                            break;
                         case ProtocolV2FrameType.StreamData:
                             var dispatchTask = DispatchStreamChunkAsync(session, unchecked((long)header.RequestId), payload);
                             if (!dispatchTask.IsCompletedSuccessfully)
@@ -377,6 +382,7 @@ internal sealed partial class SharpLinkClient
                         case ProtocolV2FrameType.HandshakeRequest:
                         case ProtocolV2FrameType.HandshakeResponse:
                         case ProtocolV2FrameType.Request:
+                        case ProtocolV2FrameType.HealthCheck:
                         default:
                             SharpLinkTelemetry.RecordProtocolFailure("client");
                             await session.DisposeAsync();

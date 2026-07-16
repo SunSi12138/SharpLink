@@ -281,6 +281,39 @@ meterProviderBuilder
 
 内置指标覆盖 active connections、reconnect、started/completed/failed/active calls、duration、sent/received bytes、send queue bytes、pending requests、active streams，以及 protocol/auth/resource-exhausted failures。Activity 和指标不记录完整 payload、token、证书或未审核的业务异常消息。没有 listener 时不会创建 TagList、Activity、Stopwatch 对象或额外调用 observer。
 
+## DI、健康检查与优雅排空
+
+默认 `AddService<TContract,TService>()` 使用 Singleton，保留基础 RPC 的无 scope 快路径。需要调用级依赖时可显式选择 Scoped 或 Transient；scope 会持续到 Unary/OneWay 完成，stream 则持续到整条流完成、取消或断线：
+
+```csharp
+services.AddScoped<MyService>();
+services.AddSharpLinkServer(server => server
+    .AddService<IMyService, MyService>(ServiceLifetime.Scoped)
+    .UseTcp(5000));
+```
+
+Hosting 会把匹配 lifetime 的服务注册加入宿主容器；如果应用已注册同一实现类型，则 lifetime 必须一致。非 Hosting 场景可使用 `UseServiceProvider(provider)`。也可以注册调用方持有的 singleton 实例，或注册由 SharpLink 管理生命周期的 provider-aware factory：
+
+```csharp
+serverBuilder
+    .AddService<IMyService>(existingInstance)
+    .AddService<IOtherService>(
+        sp => new OtherService(sp.GetRequiredService<Dependency>()),
+        ServiceLifetime.Transient);
+```
+
+实例重载不会释放调用方对象；类型注册由 DI scope/provider 释放；factory 返回值由 SharpLink 在对应生命周期边界释放。
+
+客户端可以直接使用协议控制帧检查远端状态，不需要定义业务契约：
+
+```csharp
+var health = await client.CheckHealthAsync(cancellationToken);
+if (health.Status != SharpLinkHealthStatus.Ready)
+    throw new InvalidOperationException($"RPC server is {health.Status}.");
+```
+
+`ISharpLinkServer.HealthStatus` 暴露本地 `Ready/Draining/Unhealthy`。`AddSharpLinkServer` 与 `AddSharpLinkClient` 分别注册 `sharplink_server` 和 `sharplink_remote` Microsoft health checks，并带有 `ready` tag。停机顺序固定为 readiness=false、停止 accept、发送 GoAway、等待 active calls、超时后取消、flush 必要控制帧、释放 session/listener/service scope/provider。
+
 ## 可调优配置
 
 - 日志：`UseLoggerFactory(...)`
@@ -288,6 +321,8 @@ meterProviderBuilder
 - 握手认证：`ISharpLinkClientAuthenticator` / `ISharpLinkServerAuthenticator` 与 `RequireAuthentication()`
 - 调用管线：Client/Server `AddInterceptor(...)` 与 Server `UseExceptionMapper(...)`
 - 遥测：`SharpLinkTelemetry.ClientActivitySource`、`ServerActivitySource` 与 `Meter`
+- 服务生命周期：`AddService(instance/type/factory)`、`UseServiceProvider(...)` 与 `ServiceLifetime`
+- 健康检查：`CheckHealthAsync()`、`ISharpLinkServer.HealthStatus` 与 Hosting health checks
 - 请求超时：`UseRequestTimeout(...)`
 - `RpcSession` flush：`UseRpcSessionFlush(...)`
 - `BufferWriterPool`：`UseBufferWriterPool(...)`

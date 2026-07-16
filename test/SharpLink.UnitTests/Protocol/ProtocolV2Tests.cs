@@ -231,6 +231,54 @@ public class ProtocolV2Tests
     }
 
     [Test]
+    public async Task HealthControlFramesShouldRequireBoundedPayloadAndRequestId()
+    {
+        var request = CreateFrame(
+            ProtocolV2FrameType.HealthCheck,
+            ProtocolV2FrameFlags.None,
+            7,
+            []);
+        var requestSequence = new ReadOnlySequence<byte>(request);
+        Ensure(ProtocolV2FrameParser.TryReadFrame(
+            ref requestSequence, Limits, out var requestHeader, out var requestPayload),
+            "health request should parse");
+        Ensure(requestHeader.RequestId == 7 && requestPayload.IsEmpty, "health request shape");
+
+        var response = CreateFrame(
+            ProtocolV2FrameType.HealthResponse,
+            ProtocolV2FrameFlags.None,
+            7,
+            [(byte)SharpLinkHealthStatus.Ready]);
+        var responseSequence = new ReadOnlySequence<byte>(response);
+        Ensure(ProtocolV2FrameParser.TryReadFrame(
+            ref responseSequence, Limits, out _, out var responsePayload),
+            "health response should parse");
+        Ensure(responsePayload.FirstSpan[0] == (byte)SharpLinkHealthStatus.Ready,
+            "health response status");
+
+        await ExpectProtocolViolation(CreateFrame(
+            ProtocolV2FrameType.HealthCheck,
+            ProtocolV2FrameFlags.None,
+            0,
+            []));
+        await ExpectProtocolViolation(CreateFrame(
+            ProtocolV2FrameType.HealthCheck,
+            ProtocolV2FrameFlags.None,
+            7,
+            [1]));
+        await ExpectProtocolViolation(CreateFrame(
+            ProtocolV2FrameType.HealthResponse,
+            ProtocolV2FrameFlags.None,
+            7,
+            [(byte)SharpLinkHealthStatus.Ready, 0]));
+        await ExpectProtocolViolation(CreateFrame(
+            ProtocolV2FrameType.HealthResponse,
+            ProtocolV2FrameFlags.None,
+            7,
+            [byte.MaxValue]));
+    }
+
+    [Test]
     public void MultipleFramesFollowedByHalfFrameShouldPreserveRemainder()
     {
         var first = CreateFrame(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 1, []);
