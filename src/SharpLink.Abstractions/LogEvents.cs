@@ -65,6 +65,9 @@ public static class LogEvents
     {
         public const int BackgroundLoopUnhandledException = 5001;
         public const int HeartbeatLoopUnhandledException = 5002;
+        public const int ForcedCallsRemaining = 5101;
+        public const int DeferredCleanupFailed = 5201;
+        public const int FrameworkCleanupTimeout = 5301;
     }
     
     /// <summary>

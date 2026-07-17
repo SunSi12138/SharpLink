@@ -45,6 +45,8 @@ public static class SharpLinkTelemetry
         Meter.CreateCounter<long>("sharplink.resource_exhausted", unit: "{failure}");
     private static readonly Counter<long> AbandonedCalls =
         Meter.CreateCounter<long>("sharplink.calls.abandoned", unit: "{call}");
+    private static readonly Counter<long> ForcedStopCalls =
+        Meter.CreateCounter<long>("sharplink.server.stop.unfinished_calls", unit: "{call}");
 
     internal static CallScope StartClientCall(RpcMethodDescriptor method)
         => StartCall(ClientActivitySource, ActivityKind.Client, "client", method, requestId: 0);
@@ -67,6 +69,7 @@ public static class SharpLinkTelemetry
     internal static void RecordAuthenticationFailure(string side) => Record(AuthenticationFailures, 1, side);
     internal static void RecordResourceExhausted(string side) => Record(ResourceExhausted, 1, side);
     internal static void RecordAbandonedCall(string side) => Record(AbandonedCalls, 1, side);
+    internal static void RecordForcedStopCalls(long count) => RecordPositive(ForcedStopCalls, count);
 
     private static bool CallMetricsEnabled =>
         StartedCalls.Enabled || CompletedCalls.Enabled || FailedCalls.Enabled ||

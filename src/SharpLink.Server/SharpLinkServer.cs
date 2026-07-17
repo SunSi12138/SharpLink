@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer(
@@ -48,8 +50,10 @@ internal sealed partial class SharpLinkServer(
         serverInterceptors is { Length: > 0 } ? [.. serverInterceptors] : [];
     private readonly IRpcExceptionMapper _exceptionMapper =
         exceptionMapper ?? new DefaultRpcExceptionMapper(includeDetails: false);
-    private readonly IAsyncDisposable? _ownedServiceProvider = ownedServiceProvider;
-    private int _servicesDisposed;
+    private readonly ServerServiceCleanup _serviceCleanup = new(services.Values, ownedServiceProvider);
+    private Task? _deferredServiceCleanupTask;
+    private Task? _shutdownCleanupObserver;
+    private Task? _serviceCleanupObserver;
     private int _globalActiveCalls;
     private long _rejectedOneWayCalls;
     private readonly int _globalMaxConcurrentCalls = (int)Math.Min(
@@ -84,69 +88,247 @@ internal sealed partial class SharpLinkServer(
 
     private async Task StopCoreAsync(TimeSpan gracefulTimeout)
     {
+        const int cleanupBudgetSeconds = 5;
+        var started = Stopwatch.GetTimestamp();
+        var gracefulDeadline = AddStopwatchDuration(started, gracefulTimeout);
+        var finalDeadline = AddStopwatchDuration(gracefulDeadline, TimeSpan.FromSeconds(cleanupBudgetSeconds));
+        var faulted = false;
+
         TransitionTo(ServerState.Draining);
-        _acceptCts.Cancel();
+        CancelForShutdown(_acceptCts, _logger, "AcceptCancellation");
+        var listenerDisposeTask = StartListenerDispose(transportListener);
+        var goAwayTask = SendGoAwayToAllAsync();
+
         try
         {
-            await transportListener.DisposeAsync().ConfigureAwait(false);
-            foreach (var connection in _connections.Values)
-            {
-                connection.MarkDraining();
-                try
-                {
-                    await connection.Session.SendGoAwayAsync(
-                        connection.LastAcceptedRequestId,
-                        SharpLinkErrorCode.Unavailable,
-                        "Server is draining.").ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is SharpLinkException or System.IO.IOException or ObjectDisposedException)
-                {
-                }
-            }
-
             if (Volatile.Read(ref _globalActiveCalls) == 0)
                 _callsDrained.TrySetResult(true);
-            else if (gracefulTimeout > TimeSpan.Zero)
-            {
-                try
-                {
-                    await _callsDrained.Task.WaitAsync(gracefulTimeout).ConfigureAwait(false);
-                }
-                catch (TimeoutException)
-                {
-                }
-                catch (OperationCanceledException) when (_forceStopCts.IsCancellationRequested)
-                {
-                }
-            }
+            else
+                await WaitUntilAsync(_callsDrained.Task, gracefulDeadline).ConfigureAwait(false);
 
+            Task flushTask = Task.CompletedTask;
             if (_callsDrained.Task.IsCompletedSuccessfully)
+                flushTask = FlushAllSessionsAsync();
+
+            var unfinishedCalls = Volatile.Read(ref _globalActiveCalls);
+            if (unfinishedCalls > 0)
             {
-                foreach (var connection in _connections.Values)
-                {
-                    try
-                    {
-                        await connection.Session.FlushSendQueueAsync().ConfigureAwait(false);
-                    }
-                    catch (Exception ex) when (ex is SharpLinkException or System.IO.IOException or ObjectDisposedException)
-                    {
-                    }
-                }
+                LogForcedCallsRemaining(_logger, unfinishedCalls);
+                SharpLinkTelemetry.RecordForcedStopCalls(unfinishedCalls);
+                _deferredServiceCleanupTask = DisposeServicesWhenDrainedAsync(
+                    _callsDrained.Task,
+                    _serviceCleanup,
+                    _logger);
             }
 
-            _forceStopCts.Cancel();
-            await DisposeAllSessionsAsync().ConfigureAwait(false);
-            await WaitForFrameworkTasksAsync().ConfigureAwait(false);
-            await DisposeServicesAsync().ConfigureAwait(false);
+            CancelForShutdown(_forceStopCts, _logger, "CallCancellation");
+            var closeSessionsTask = DisposeAllSessionsAsync();
+            var frameworkTasksTask = WaitForFrameworkTasksAsync();
+            var frameworkCleanupTask = Task.WhenAll(
+                listenerDisposeTask,
+                goAwayTask,
+                flushTask,
+                closeSessionsTask,
+                frameworkTasksTask);
+
+            var frameworkCleanupCompleted = false;
+            try
+            {
+                frameworkCleanupCompleted = await WaitUntilAsync(
+                    frameworkCleanupTask,
+                    finalDeadline).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                faulted = true;
+                frameworkCleanupCompleted = true;
+                LogDeferredCleanupFailed(_logger, "Framework", exception);
+            }
+
+            if (!frameworkCleanupCompleted)
+            {
+                faulted = true;
+                LogFrameworkCleanupTimeout(_logger, cleanupBudgetSeconds);
+                _shutdownCleanupObserver = ObserveShutdownAndDisposeTokensAsync(
+                    frameworkCleanupTask,
+                    _acceptCts,
+                    _forceStopCts,
+                    _logger);
+            }
+            else
+            {
+                _acceptCts.Dispose();
+                _forceStopCts.Dispose();
+            }
+
+            if (unfinishedCalls == 0)
+            {
+                var serviceCleanupTask = _serviceCleanup.DisposeAsync().AsTask();
+                if (!await WaitUntilAsync(serviceCleanupTask, finalDeadline).ConfigureAwait(false))
+                {
+                    faulted = true;
+                    _serviceCleanupObserver = ObserveCleanupFailureAsync(
+                        serviceCleanupTask,
+                        _logger,
+                        "Services");
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            faulted = true;
+            LogDeferredCleanupFailed(_logger, "Stop", exception);
+        }
+
+        TransitionTo(faulted ? ServerState.Faulted : ServerState.Stopped);
+    }
+
+    private async Task CleanupAfterRunFailureAsync()
+    {
+        const int cleanupBudgetSeconds = 5;
+        var deadline = AddStopwatchDuration(
+            Stopwatch.GetTimestamp(),
+            TimeSpan.FromSeconds(cleanupBudgetSeconds));
+
+        CancelForShutdown(_acceptCts, _logger, "AcceptCancellation");
+        CancelForShutdown(_forceStopCts, _logger, "CallCancellation");
+        if (Volatile.Read(ref _globalActiveCalls) == 0)
+            _callsDrained.TrySetResult(true);
+        else
+        {
+            var unfinishedCalls = Volatile.Read(ref _globalActiveCalls);
+            LogForcedCallsRemaining(_logger, unfinishedCalls);
+            SharpLinkTelemetry.RecordForcedStopCalls(unfinishedCalls);
+            _deferredServiceCleanupTask ??= DisposeServicesWhenDrainedAsync(
+                _callsDrained.Task,
+                _serviceCleanup,
+                _logger);
+        }
+
+        var frameworkCleanupTask = Task.WhenAll(
+            StartListenerDispose(transportListener),
+            DisposeAllSessionsAsync(),
+            WaitForFrameworkTasksAsync());
+        var frameworkCleanupCompleted = false;
+        try
+        {
+            frameworkCleanupCompleted = await WaitUntilAsync(frameworkCleanupTask, deadline)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            frameworkCleanupCompleted = true;
+            LogDeferredCleanupFailed(_logger, "Framework", exception);
+        }
+
+        if (frameworkCleanupCompleted)
+        {
             _acceptCts.Dispose();
             _forceStopCts.Dispose();
-            TransitionTo(ServerState.Stopped);
         }
-        catch
+        else
         {
-            TransitionTo(ServerState.Faulted);
-            await DisposeServicesAsync().ConfigureAwait(false);
-            throw;
+            LogFrameworkCleanupTimeout(_logger, cleanupBudgetSeconds);
+            _shutdownCleanupObserver = ObserveShutdownAndDisposeTokensAsync(
+                frameworkCleanupTask,
+                _acceptCts,
+                _forceStopCts,
+                _logger);
+        }
+
+        if (_callsDrained.Task.IsCompletedSuccessfully)
+        {
+            var serviceCleanupTask = _serviceCleanup.DisposeAsync().AsTask();
+            try
+            {
+                if (!await WaitUntilAsync(serviceCleanupTask, deadline).ConfigureAwait(false))
+                {
+                    _serviceCleanupObserver = ObserveCleanupFailureAsync(
+                        serviceCleanupTask,
+                        _logger,
+                        "Services");
+                }
+            }
+            catch (Exception exception)
+            {
+                LogDeferredCleanupFailed(_logger, "Services", exception);
+            }
+        }
+    }
+
+    private async Task SendGoAwayToAllAsync()
+    {
+        var connections = _connections.Values.ToArray();
+        var tasks = new Task[connections.Length];
+        for (var index = 0; index < connections.Length; index++)
+        {
+            var connection = connections[index];
+            connection.MarkDraining();
+            tasks[index] = SendGoAwayAsync(connection);
+        }
+        await Task.WhenAll(tasks).ConfigureAwait(false);
+    }
+
+    private static Task StartListenerDispose(IServerTransportListener listener)
+    {
+        try
+        {
+            return listener.DisposeAsync().AsTask();
+        }
+        catch (Exception exception)
+        {
+            return Task.FromException(exception);
+        }
+    }
+
+    private static void CancelForShutdown(
+        CancellationTokenSource cancellation,
+        ILogger logger,
+        string cleanupName)
+    {
+        try
+        {
+            cancellation.Cancel();
+        }
+        catch (Exception exception)
+        {
+            LogDeferredCleanupFailed(logger, cleanupName, exception);
+        }
+    }
+
+    private static async Task SendGoAwayAsync(ServerConnectionState connection)
+    {
+        try
+        {
+            await connection.Session.SendGoAwayAsync(
+                connection.LastAcceptedRequestId,
+                SharpLinkErrorCode.Unavailable,
+                "Server is draining.").ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            exception is SharpLinkException or System.IO.IOException or ObjectDisposedException)
+        {
+        }
+    }
+
+    private async Task FlushAllSessionsAsync()
+    {
+        var connections = _connections.Values.ToArray();
+        var tasks = new Task[connections.Length];
+        for (var index = 0; index < connections.Length; index++)
+            tasks[index] = FlushSessionAsync(connections[index]);
+        await Task.WhenAll(tasks).ConfigureAwait(false);
+    }
+
+    private static async Task FlushSessionAsync(ServerConnectionState connection)
+    {
+        try
+        {
+            await connection.Session.FlushSendQueueAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            exception is SharpLinkException or System.IO.IOException or ObjectDisposedException)
+        {
         }
     }
 
@@ -178,10 +360,20 @@ internal sealed partial class SharpLinkServer(
 
     private async Task DisposeAllSessionsAsync()
     {
-        foreach (var connection in _connections.Values)
-            await connection.CloseAsync().ConfigureAwait(false);
-
+        var connections = _connections.Values.ToArray();
         _connections.Clear();
+        var tasks = new Task[connections.Length];
+        for (var index = 0; index < connections.Length; index++)
+            tasks[index] = connections[index].CloseAsync().AsTask();
+        try
+        {
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            exception is OperationCanceledException or ObjectDisposedException or
+                System.IO.IOException or SocketException or SharpLinkException)
+        {
+        }
     }
 
     private async Task WaitForFrameworkTasksAsync()
@@ -202,6 +394,93 @@ internal sealed partial class SharpLinkServer(
             catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or System.IO.IOException or SocketException)
             {
             }
+        }
+    }
+
+    private static async Task<bool> WaitUntilAsync(Task task, long deadline)
+    {
+        if (task.IsCompleted)
+        {
+            await task.ConfigureAwait(false);
+            return true;
+        }
+
+        var remaining = GetRemaining(deadline);
+        if (remaining <= TimeSpan.Zero)
+            return false;
+        try
+        {
+            await task.WaitAsync(remaining).ConfigureAwait(false);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+    }
+
+    private static long AddStopwatchDuration(long timestamp, TimeSpan duration)
+    {
+        var delta = duration.TotalSeconds * Stopwatch.Frequency;
+        if (delta >= long.MaxValue - timestamp)
+            return long.MaxValue;
+        return timestamp + (long)Math.Ceiling(delta);
+    }
+
+    private static TimeSpan GetRemaining(long deadline)
+    {
+        var remainingTicks = deadline - Stopwatch.GetTimestamp();
+        if (remainingTicks <= 0)
+            return TimeSpan.Zero;
+        return TimeSpan.FromSeconds((double)remainingTicks / Stopwatch.Frequency);
+    }
+
+    private static async Task DisposeServicesWhenDrainedAsync(
+        Task callsDrained,
+        ServerServiceCleanup serviceCleanup,
+        ILogger logger)
+    {
+        try
+        {
+            await callsDrained.ConfigureAwait(false);
+            await serviceCleanup.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            LogDeferredCleanupFailed(logger, "Services", exception);
+        }
+    }
+
+    private static async Task ObserveShutdownAndDisposeTokensAsync(
+        Task shutdownTask,
+        CancellationTokenSource acceptCts,
+        CancellationTokenSource forceStopCts,
+        ILogger logger)
+    {
+        try
+        {
+            await shutdownTask.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            LogDeferredCleanupFailed(logger, "Framework", exception);
+        }
+        finally
+        {
+            acceptCts.Dispose();
+            forceStopCts.Dispose();
+        }
+    }
+
+    private static async Task ObserveCleanupFailureAsync(Task cleanupTask, ILogger logger, string cleanupName)
+    {
+        try
+        {
+            await cleanupTask.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            LogDeferredCleanupFailed(logger, cleanupName, exception);
         }
     }
 
@@ -304,7 +583,7 @@ internal sealed partial class SharpLinkServer(
     {
         var active = Interlocked.Decrement(ref _globalActiveCalls);
         connection.ReleaseCall();
-        if (active == 0 && CurrentState == ServerState.Draining)
+        if (active == 0 && CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
             _callsDrained.TrySetResult(true);
     }
 
@@ -324,35 +603,4 @@ internal sealed partial class SharpLinkServer(
         }
     }
 
-    private async ValueTask DisposeServicesAsync()
-    {
-        if (Interlocked.Exchange(ref _servicesDisposed, 1) != 0)
-            return;
-
-        Exception? firstException = null;
-        foreach (var registration in services.Values)
-        {
-            try
-            {
-                await registration.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                firstException ??= exception;
-            }
-        }
-
-        try
-        {
-            if (_ownedServiceProvider is not null)
-                await _ownedServiceProvider.DisposeAsync().ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            firstException ??= exception;
-        }
-
-        if (firstException is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
-    }
 }

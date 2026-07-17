@@ -79,12 +79,13 @@ internal sealed partial class SharpLinkServer
         catch
         {
             TransitionTo(ServerState.Faulted);
-            _acceptCts.Cancel();
-            _forceStopCts.Cancel();
-            await transportListener.DisposeAsync().ConfigureAwait(false);
-            await DisposeAllSessionsAsync().ConfigureAwait(false);
-            await WaitForFrameworkTasksAsync().ConfigureAwait(false);
-            await DisposeServicesAsync().ConfigureAwait(false);
+            Task cleanupTask;
+            lock (_stateGate)
+            {
+                _stopTask ??= CleanupAfterRunFailureAsync();
+                cleanupTask = _stopTask;
+            }
+            await cleanupTask.ConfigureAwait(false);
             throw;
         }
     }

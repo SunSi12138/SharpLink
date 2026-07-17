@@ -55,6 +55,15 @@ internal sealed partial class SharpLinkServer
 
     [LoggerMessage(EventId = LogEvents.Server.BackgroundLoopUnhandledException, Level = LogLevel.Error, Message = "Server background loop {LoopName} failed.")]
     private static partial void LogServerBackgroundLoopUnhandledException(ILogger logger, string loopName, Exception e);
+
+    [LoggerMessage(EventId = LogEvents.Server.ForcedCallsRemaining, Level = LogLevel.Warning, Message = "Server grace period expired with {ActiveCalls} user calls still running; their service graph will be released after they finish.")]
+    private static partial void LogForcedCallsRemaining(ILogger logger, int activeCalls);
+
+    [LoggerMessage(EventId = LogEvents.Server.DeferredCleanupFailed, Level = LogLevel.Error, Message = "Deferred server cleanup {CleanupName} failed.")]
+    private static partial void LogDeferredCleanupFailed(ILogger logger, string cleanupName, Exception exception);
+
+    [LoggerMessage(EventId = LogEvents.Server.FrameworkCleanupTimeout, Level = LogLevel.Critical, Message = "Server framework cleanup exceeded its fixed {CleanupBudgetSeconds}-second budget; StopAsync is returning with the server faulted.")]
+    private static partial void LogFrameworkCleanupTimeout(ILogger logger, int cleanupBudgetSeconds);
     
     [LoggerMessage(EventId = LogEvents.Connection.HeartbeatReceived, Level = LogLevel.Debug, Message = "Received client heartbeat.")]
     private static partial void LogClientHeartbeatReceived(ILogger logger);

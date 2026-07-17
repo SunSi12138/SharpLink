@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Diagnostics;
 using System.Threading;
 using SharpLink.Hosting;
 using SharpLink.Server;
@@ -33,6 +34,29 @@ public class SharpLinkServerHostedServiceTests
             "readiness should be unhealthy after hosted service stops");
     }
 
+    [Test]
+    [NotInParallel]
+    public async Task ServerStopShouldReturnFaultedWhenFrameworkCleanupExceedsBudget()
+    {
+        var transport = new DelayedDisposeTransport();
+        var server = SharpLinkServerBuilder.Create()
+            .UseTransport(transport)
+            .Build();
+        var runTask = server.RunAsync().AsTask();
+
+        var started = Stopwatch.GetTimestamp();
+        await server.StopAsync(TimeSpan.Zero).AsTask().WaitAsync(TimeSpan.FromSeconds(7));
+        var elapsed = Stopwatch.GetElapsedTime(started);
+
+        Ensure(elapsed >= TimeSpan.FromSeconds(4), "cleanup budget must be allowed before faulting");
+        Ensure(elapsed < TimeSpan.FromSeconds(7), "server stop must be bounded by the cleanup budget");
+        Ensure(server.HealthStatus == SharpLinkHealthStatus.Unhealthy,
+            "framework cleanup timeout must leave the server unhealthy");
+
+        transport.ReleaseDispose();
+        await runTask.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
@@ -56,5 +80,23 @@ public class SharpLinkServerHostedServiceTests
             Interlocked.Exchange(ref _disposed, 1);
             return ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class DelayedDisposeTransport : IServerTransportListener
+    {
+        private readonly TaskCompletionSource<bool> _disposeRelease =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public System.Net.EndPoint? LocalEndPoint => null;
+
+        public async ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("unreachable");
+        }
+
+        public ValueTask DisposeAsync() => new(_disposeRelease.Task);
+
+        public void ReleaseDispose() => _disposeRelease.TrySetResult(true);
     }
 }

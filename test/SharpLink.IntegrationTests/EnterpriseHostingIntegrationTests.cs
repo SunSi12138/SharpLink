@@ -129,6 +129,47 @@ public class EnterpriseHostingIntegrationTests
             "stopped server is unhealthy");
     }
 
+    [Test]
+    [NotInParallel]
+    public async Task StopShouldBeBoundedAndDeferOwnedServiceDisposalForUncooperativeCall()
+    {
+        UncooperativeLifetimeService.Reset();
+        await using var harness = await EnterpriseHarness.CreateAsync(builder => builder
+            .AddService<IUncooperativeLifetimeService>(
+                static _ => new UncooperativeLifetimeService(),
+                ServiceLifetime.Singleton));
+        var service = harness.Client.Get<IUncooperativeLifetimeService>();
+
+        var invocation = service.WaitForReleaseAsync(CancellationToken.None).AsTask();
+        await UncooperativeLifetimeService.WaitForStartAsync().WaitAsync(TimeSpan.FromSeconds(3));
+
+        var started = Stopwatch.GetTimestamp();
+        await harness.Server.StopAsync(TimeSpan.FromMilliseconds(100));
+        var elapsed = Stopwatch.GetElapsedTime(started);
+
+        Ensure(elapsed < TimeSpan.FromSeconds(2), "uncooperative user call must not hold server stop");
+        Ensure(harness.Server.HealthStatus == SharpLinkHealthStatus.Unhealthy, "stopped server is unhealthy");
+        Ensure(UncooperativeLifetimeService.Disposed == 0,
+            "server-owned service must remain alive while its invocation is still running");
+        await EnsureConnectionClosedAsync(invocation);
+
+        UncooperativeLifetimeService.Release();
+        await UncooperativeLifetimeService.WaitForCompletionAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        await WaitUntilAsync(() => UncooperativeLifetimeService.Disposed == 1);
+    }
+
+    private static async Task EnsureConnectionClosedAsync(Task task)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(3));
+            throw new Exception("assert failed: invocation should fail when its connection closes");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ConnectionClosed)
+        {
+        }
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
@@ -195,6 +236,53 @@ public class EnterpriseHostingIntegrationTests
             _serverCts.Dispose();
         }
     }
+}
+
+[RpcContract]
+public interface IUncooperativeLifetimeService : IService
+{
+    ValueTask WaitForReleaseAsync(CancellationToken cancellationToken);
+}
+
+[RpcService]
+public sealed class UncooperativeLifetimeService : IUncooperativeLifetimeService, IAsyncDisposable
+{
+    private static TaskCompletionSource<bool> s_started = CreateCompletionSource();
+    private static TaskCompletionSource<bool> s_release = CreateCompletionSource();
+    private static TaskCompletionSource<bool> s_completed = CreateCompletionSource();
+    private static int s_disposed;
+
+    internal static int Disposed => Volatile.Read(ref s_disposed);
+
+    internal static Task WaitForStartAsync() => Volatile.Read(ref s_started).Task;
+
+    internal static Task WaitForCompletionAsync() => Volatile.Read(ref s_completed).Task;
+
+    internal static void Release() => Volatile.Read(ref s_release).TrySetResult(true);
+
+    internal static void Reset()
+    {
+        Volatile.Write(ref s_started, CreateCompletionSource());
+        Volatile.Write(ref s_release, CreateCompletionSource());
+        Volatile.Write(ref s_completed, CreateCompletionSource());
+        Volatile.Write(ref s_disposed, 0);
+    }
+
+    public async ValueTask WaitForReleaseAsync(CancellationToken cancellationToken)
+    {
+        Volatile.Read(ref s_started).TrySetResult(true);
+        await Volatile.Read(ref s_release).Task.ConfigureAwait(false);
+        Volatile.Read(ref s_completed).TrySetResult(true);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Interlocked.Increment(ref s_disposed);
+        return ValueTask.CompletedTask;
+    }
+
+    private static TaskCompletionSource<bool> CreateCompletionSource()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
 
 public sealed record LifetimeDependency(int Value);
