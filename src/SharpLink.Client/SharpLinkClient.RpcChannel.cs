@@ -189,9 +189,13 @@ internal sealed partial class SharpLinkClient
 
     private async Task ReconnectLoopAsync()
     {
+        // EnsureReconnectLoop assigns the returned task while holding _stateGate. Yield before
+        // taking that gate so reconnect completion and replacement scheduling can be coordinated.
+        await Task.Yield();
+
         while (!_shutdownCts.IsCancellationRequested)
         {
-            if (ReadyConnectionCount >= _connectionPoolOptions.MinConnections)
+            if (TryCompleteReconnectLoop())
                 return;
             var baseDelay = Volatile.Read(ref _reconnectDelayMilliseconds);
             var jitter = 0.8 + Random.Shared.NextDouble() * 0.4;
@@ -202,7 +206,7 @@ internal sealed partial class SharpLinkClient
                 SharpLinkTelemetry.ReconnectAttempt();
                 await ConnectOneAsync(_shutdownCts.Token).ConfigureAwait(false);
                 PublishReadyState();
-                if (ReadyConnectionCount >= _connectionPoolOptions.MinConnections)
+                if (TryCompleteReconnectLoop())
                     return;
             }
             catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
@@ -217,6 +221,20 @@ internal sealed partial class SharpLinkClient
                 Volatile.Write(ref _reconnectDelayMilliseconds, nextDelay);
                 TransitionTo(SharpLinkConnectionState.Reconnecting);
             }
+        }
+    }
+
+    private bool TryCompleteReconnectLoop()
+    {
+        lock (_stateGate)
+        {
+            if (_shutdownCts.IsCancellationRequested)
+                return true;
+            if (ReadyConnectionCount < _connectionPoolOptions.MinConnections)
+                return false;
+
+            _reconnectTask = null;
+            return true;
         }
     }
 

@@ -13,6 +13,95 @@ public class TransportConnectionIntegrationTests
     }
 
     [Test]
+    public async Task TcpServerShouldProcessRequestCoalescedWithHandshake()
+    {
+        using var serverCts = new CancellationTokenSource();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseSerializer(MemoryPackCodec.Resolver);
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        var server = serverBuilder.Build();
+        var serverTask = server.RunAsync(serverCts.Token).AsTask();
+
+        try
+        {
+            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            await socket.ConnectAsync(IPAddress.Loopback, port);
+            await using var stream = new NetworkStream(socket, ownsSocket: false);
+
+            using var frames = new PooledByteBufferWriter();
+            var limits = new SharpLinkProtocolOptions();
+            var handshakeToken = ProtocolV2FrameWriter.BeginFrame(
+                frames,
+                ProtocolV2FrameType.HandshakeRequest,
+                ProtocolV2FrameFlags.None,
+                0);
+            ProtocolV2PayloadCodec.WriteHandshakeRequest(
+                frames,
+                new ProtocolV2HandshakeRequest(
+                    ProtocolV2Constants.MinorVersion,
+                    ProtocolV2Capabilities.HealthCheck,
+                    ProtocolV2Capabilities.None,
+                    SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
+                    1024 * 1024,
+                    16 * 1024 * 1024,
+                    ReadOnlyMemory<byte>.Empty),
+                limits);
+            ProtocolV2FrameWriter.EndFrame(frames, handshakeToken);
+            var healthToken = ProtocolV2FrameWriter.BeginFrame(
+                frames,
+                ProtocolV2FrameType.HealthCheck,
+                ProtocolV2FrameFlags.None,
+                1);
+            ProtocolV2FrameWriter.EndFrame(frames, healthToken);
+
+            // One write makes the server handshake and first request share the same pipe read.
+            await stream.WriteAsync(frames.WrittenMemory);
+            await stream.FlushAsync();
+
+            var received = new byte[4096];
+            var receivedCount = 0;
+            var consumedCount = 0;
+            var responseCount = 0;
+            using var readCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            while (responseCount < 2)
+            {
+                var bytesRead = await stream.ReadAsync(received.AsMemory(receivedCount), readCts.Token);
+                Ensure(bytesRead > 0, "server should return both coalesced-frame responses");
+                receivedCount += bytesRead;
+                var sequence = new ReadOnlySequence<byte>(
+                    received.AsMemory(consumedCount, receivedCount - consumedCount));
+                while (ProtocolV2FrameParser.TryReadFrame(
+                           ref sequence,
+                           limits,
+                           out var header,
+                           out var payload))
+                {
+                    if (responseCount == 0)
+                        Ensure(header.Type == ProtocolV2FrameType.HandshakeResponse, "handshake response order");
+                    else
+                    {
+                        Ensure(header.Type == ProtocolV2FrameType.HealthResponse, "coalesced health response type");
+                        Ensure(header.RequestId == 1, "coalesced health response request ID");
+                        Ensure(
+                            ProtocolV2PayloadCodec.ReadHealthResponse(payload).Status == SharpLinkHealthStatus.Ready,
+                            "coalesced health response status");
+                    }
+                    responseCount++;
+                }
+                consumedCount = receivedCount - checked((int)sequence.Length);
+            }
+        }
+        finally
+        {
+            await serverCts.CancelAsync();
+            await server.DisposeAsync();
+            await serverTask.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    [Test]
     public async Task TcpShouldEnforceNegotiatedFrameLimitInBothDirections()
     {
         await VerifyNegotiatedFrameLimitAsync(

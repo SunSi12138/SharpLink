@@ -23,6 +23,7 @@ namespace SharpLink.ChaosTests;
 public static class Program
 {
     private static readonly TimeSpan RecoveryTimeout = TimeSpan.FromSeconds(30);
+    private const int ConsecutiveRecoveryProbeCount = 5;
 
     public static async Task<int> Main(string[] args)
     {
@@ -344,6 +345,7 @@ public static class Program
     {
         var deadline = Stopwatch.GetTimestamp() +
                        (long)Math.Ceiling(RecoveryTimeout.TotalSeconds * Stopwatch.Frequency);
+        var consecutiveSuccesses = 0;
         while (!cancellationToken.IsCancellationRequested)
         {
             try
@@ -351,7 +353,8 @@ public static class Program
                 var probe = await service.AddAsync(20, 22).ConfigureAwait(false);
                 if (probe != 42)
                     throw new InvalidDataException("Recovery probe result was corrupted.");
-                return true;
+                if (++consecutiveSuccesses >= ConsecutiveRecoveryProbeCount)
+                    return true;
             }
             catch (Exception exception) when (exception is SocketException or IOException or ObjectDisposedException or
                                               SharpLinkException
@@ -362,6 +365,7 @@ public static class Program
                                                       SharpLinkErrorCode.Cancelled
                                               })
             {
+                consecutiveSuccesses = 0;
             }
 
             if (Stopwatch.GetTimestamp() >= deadline)

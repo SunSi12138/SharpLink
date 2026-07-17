@@ -153,7 +153,7 @@ internal sealed partial class SharpLinkClient
     {
         lock (_stateGate)
         {
-            if (_shutdownCts.IsCancellationRequested)
+            if (_shutdownCts.IsCancellationRequested || ReadyConnectionCount == 0)
                 return;
             _readyTimestamp = Stopwatch.GetTimestamp();
             TransitionTo(SharpLinkConnectionState.Ready);
@@ -316,7 +316,10 @@ internal sealed partial class SharpLinkClient
                 handshakeCompleted = true;
                 break;
             }
-            reader.AdvanceTo(buffer.Start, buffer.End);
+            // A control or response frame can share this read with the handshake response.
+            // Once the handshake is complete, leave the remainder unexamined so the request
+            // loop observes it immediately instead of waiting for another transport read.
+            reader.AdvanceTo(buffer.Start, handshakeCompleted ? buffer.Start : buffer.End);
 
             if (handshakeCompleted)
             {

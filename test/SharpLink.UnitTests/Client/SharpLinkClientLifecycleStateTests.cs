@@ -73,6 +73,29 @@ public class SharpLinkClientLifecycleStateTests
     }
 
     [Test]
+    public async Task ImmediatelyDrainedReconnectShouldNotLoseTheNextReconnectSignal()
+    {
+        const int immediatelyDrainedReconnects = 8;
+        var transport = new SequenceClientTransportFactory(immediatelyDrainedReconnects);
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        await client.ConnectAsync();
+        var first = await transport.WaitForConnectionAsync(0);
+
+        await first.DisposeAsync();
+        await WaitUntilAsync(
+            () => transport.ConnectCount >= immediatelyDrainedReconnects + 2 &&
+                  client.State == SharpLinkConnectionState.Ready,
+            () => $"reconnect stalled after {transport.ConnectCount} attempts in state {client.State} " +
+                  $"with {client.ReadyConnectionCount} ready connections");
+
+        Ensure(client.ReadyConnectionCount == 1,
+            "a reconnect drained before its worker exits must schedule a replacement");
+    }
+
+    [Test]
     public async Task ConnectShouldEstablishConfiguredMinimumPoolSize()
     {
         var transport = new SequenceClientTransportFactory();
@@ -163,11 +186,18 @@ public class SharpLinkClientLifecycleStateTests
         Ensure(client.State == SharpLinkConnectionState.Ready, "another ready connection should keep the client ready");
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition)
+    private static async Task WaitUntilAsync(Func<bool> condition, Func<string>? timeoutMessage = null)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        while (!condition())
-            await Task.Delay(10, timeout.Token);
+        try
+        {
+            while (!condition())
+                await Task.Delay(10, timeout.Token);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            throw new TimeoutException(timeoutMessage?.Invoke() ?? "The expected client state was not reached.");
+        }
     }
 
     private static void Ensure(bool condition, string message)
@@ -191,12 +221,20 @@ public class SharpLinkClientLifecycleStateTests
     {
         private readonly Lock _gate = new();
         private readonly List<TestTransportConnection> _connections = [];
+        private readonly int _immediatelyDrainedReconnects;
         private int _connectCount;
+
+        internal SequenceClientTransportFactory(int immediatelyDrainedReconnects = 0)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(immediatelyDrainedReconnects);
+            _immediatelyDrainedReconnects = immediatelyDrainedReconnects;
+        }
 
         public int ConnectCount => Volatile.Read(ref _connectCount);
 
         public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
         {
+            var connectNumber = Interlocked.Increment(ref _connectCount);
             var connection = new TestTransportConnection();
             var payload = new ArrayBufferWriter<byte>();
             ProtocolV2PayloadCodec.WriteHandshakeResponse(payload, new ProtocolV2HandshakeResponse(
@@ -211,9 +249,27 @@ public class SharpLinkClientLifecycleStateTests
                 0,
                 payload.WrittenMemory,
                 cancellationToken);
+            if (connectNumber > 1 && connectNumber <= _immediatelyDrainedReconnects + 1)
+            {
+                using var goAway = new PooledByteBufferWriter();
+                var lastAccepted = goAway.GetSpan(sizeof(ulong));
+                BinaryPrimitives.WriteUInt64LittleEndian(lastAccepted, 0);
+                goAway.Advance(sizeof(ulong));
+                ProtocolV2PayloadCodec.WriteError(
+                    goAway,
+                    SharpLinkErrorCode.Unavailable,
+                    "immediate rolling restart",
+                    1024,
+                    out _);
+                await connection.InjectFrameAsync(
+                    ProtocolV2FrameType.GoAway,
+                    ProtocolV2FrameFlags.Error,
+                    0,
+                    goAway.WrittenMemory,
+                    cancellationToken);
+            }
             lock (_gate)
                 _connections.Add(connection);
-            Interlocked.Increment(ref _connectCount);
             return connection;
         }
 

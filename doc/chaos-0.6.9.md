@@ -8,9 +8,10 @@ non-zero final framework gauge, or (for runs of at least six hours) retained-mem
 
 Fault attribution is generation-based rather than a fixed time window. A call is an injected
 failure only when it started during a restart generation or overlapped a generation change. After
-the listener is recreated, the runner requires a successful probe RPC before closing that fault
-generation. Recovery taking longer than 30 seconds is recorded as an unexpected failure. This
-keeps slow CI runners honest without misclassifying a still-recovering connection as healthy.
+the listener is recreated, the runner requires five consecutive successful probe RPCs, spaced
+20 ms apart, before closing that fault generation. Any failed probe resets the consecutive count.
+Recovery taking longer than 30 seconds is recorded as an unexpected failure. This keeps slow CI
+runners honest without treating a transient single success as a stable connection.
 Once a restart begins, its probe validation owns an independent 30-second budget and must finish
 even if the configured load duration expires; the last injected fault cannot escape verification.
 
@@ -43,8 +44,9 @@ The release report must show zero `UnexpectedFailures` and zero for all final ga
 - `sharplink.send.queue.bytes`
 
 `MaxRecoveryMilliseconds` reports the slowest complete stop, listener recreation, reconnect,
-handshake, and successful probe cycle. The two-minute 0.6.9 candidate run completed 9 rolling
-restarts with a maximum recovery of 13,044 ms and zero unexpected failures.
+handshake, and stable five-probe cycle. The final local two-minute 0.6.9 candidate run completed
+9 rolling restarts and 2,947,129 successful calls, with a maximum stable recovery of 5,031 ms,
+zero unexpected failures, and all final framework gauges at zero.
 
 Transport-specific RST/FIN, pipe disposal, TLS/authentication, asymmetric frame limit, bounded
 stop, and cancel/response/deadline races remain covered by Unit and Integration tests; the chaos

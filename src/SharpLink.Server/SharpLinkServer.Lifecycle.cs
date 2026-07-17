@@ -350,9 +350,11 @@ internal sealed partial class SharpLinkServer
                 handshakeResult = authResult;
                 break;
             }
-            reader.AdvanceTo(buffer.Start, buffer.End);
+            // The first request can be coalesced with the handshake request. Preserve the
+            // unconsumed remainder as unexamined when handing the reader to the request loop.
+            reader.AdvanceTo(buffer.Start, handshakeResult.HasValue ? buffer.Start : buffer.End);
             
-            if(handshakeResult.HasValue)
+            if (handshakeResult.HasValue)
                 return handshakeResult.Value;
             
             if(result.IsCompleted)
