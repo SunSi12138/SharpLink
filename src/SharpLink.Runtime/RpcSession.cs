@@ -182,6 +182,9 @@ public sealed partial class RpcSession : IRpcSession
     internal void CompleteSendStream(long requestId, ushort streamId, Exception? exception = null)
         => Volatile.Read(ref _streamFlowControl)?.CompleteSendStream(requestId, streamId, exception);
 
+    internal void AbortSendStreams(long requestId, Exception exception)
+        => Volatile.Read(ref _streamFlowControl)?.AbortSendStreams(requestId, exception);
+
     private void AcceptReceivedStreamBytes(long requestId, ushort streamId, int encodedBytes)
         => Volatile.Read(ref _streamFlowControl)?.AcceptReceived(requestId, streamId, encodedBytes);
 

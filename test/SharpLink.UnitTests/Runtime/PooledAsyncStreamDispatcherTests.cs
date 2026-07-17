@@ -123,21 +123,88 @@ public class PooledAsyncStreamDispatcherTests
 
         var producer = Task.Run(async () => await manager.DispatchChunkAsync(77, Payload));
         Ensure(entered.Wait(TimeSpan.FromSeconds(3)), "producer must enter decode");
-        await first.DisposeAsync();
+        var disposing = first.DisposeAsync().AsTask();
+        Ensure(!disposing.IsCompleted, "early disposal must wait for an acquired decode");
+
+        release.Set();
+        await disposing.WaitAsync(TimeSpan.FromSeconds(3));
 
         var second = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
             default,
             new ReferenceItemCodec());
-        Ensure(!ReferenceEquals(first, second),
-            "dispatcher with an in-flight producer must not be rented to another stream");
-
-        release.Set();
         await producer.WaitAsync(TimeSpan.FromSeconds(3));
         second.Complete(exception: null);
         await second.DisposeAsync();
-        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 2,
-            "both dispatchers should become reusable after the producer exits");
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the safely reused dispatcher should return exactly once");
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task AttachedDispatcherShouldNotReturnToPoolWhenPendingCompletionOwnsTheSlot()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var manager = new StreamManager();
+        var first = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, new ReferenceItemCodec());
+        manager.Register(91, first);
+        first.SetConsumerAbandonedCallback(_ => { }, 91);
+
+        await first.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+            "a closed but still attached dispatcher must not enter the process-wide pool");
+
+        var second = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, new ReferenceItemCodec());
+        Ensure(!ReferenceEquals(first, second),
+            "a delayed pending completion must not share its dispatcher with a new lease");
+
+        manager.Unregister(91);
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "detaching the old entry should make its disposed dispatcher reusable");
+        second.Complete(exception: null);
+        await second.DisposeAsync();
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ConcurrentPoolLeasesShouldKeepItemsIsolated()
+    {
+        PooledAsyncStreamDispatcher<byte>.ClearPoolForTests();
+        var codec = new ByteCodec();
+        var workers = new Task[64];
+        for (var worker = 0; worker < workers.Length; worker++)
+        {
+            workers[worker] = Task.Run(async () =>
+            {
+                for (var iteration = 0; iteration < 5_000; iteration++)
+                {
+                    var dispatcher = PooledAsyncStreamDispatcher<byte>.Rent(default, codec);
+                    var enumerator = dispatcher.GetAsyncEnumerator();
+                    var producer = Task.Run(async () =>
+                    {
+                        for (byte value = 0; value < 16; value++)
+                            await dispatcher.DispatchAsync(new ReadOnlySequence<byte>(new[] { value }));
+                        dispatcher.Complete(exception: null);
+                    });
+
+                    var count = 0;
+                    var sum = 0;
+                    while (await enumerator.MoveNextAsync())
+                    {
+                        count++;
+                        sum += enumerator.Current;
+                    }
+                    await enumerator.DisposeAsync();
+                    await producer;
+                    Ensure(count == 16 && sum == 120,
+                        $"concurrent pooled lease returned count={count}, sum={sum}");
+                }
+            });
+        }
+
+        await Task.WhenAll(workers);
+        PooledAsyncStreamDispatcher<byte>.ClearPoolForTests();
     }
 
     [Test]
@@ -231,5 +298,17 @@ public class PooledAsyncStreamDispatcherTests
             beforeDeserialize?.Invoke();
             return new ReferenceItem(_marker);
         }
+    }
+
+    private sealed class ByteCodec : IRpcCodec<byte>
+    {
+        public void Serialize(in byte value, IBufferWriter<byte> buffer)
+        {
+            var span = buffer.GetSpan(1);
+            span[0] = value;
+            buffer.Advance(1);
+        }
+
+        public byte Deserialize(in ReadOnlySequence<byte> buffer) => buffer.FirstSpan[0];
     }
 }

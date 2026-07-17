@@ -135,7 +135,15 @@ internal sealed class ClientConnection :
     }
 
     public void OnConsumerAbandoned(long requestId)
-        => PendingCalls.TryComplete(requestId, PendingCallCompletionReason.ConsumerAbandoned);
+    {
+        if (!PendingCalls.TryComplete(requestId, PendingCallCompletionReason.ConsumerAbandoned))
+        {
+            // A response/complete path may already own the pending slot but not yet have
+            // detached its dispatcher. Remove the map entry here so this lease cannot be
+            // returned to the process-wide pool while that completion callback is delayed.
+            Session.StreamManager.Unregister(requestId, 0);
+        }
+    }
 
     void IPendingCallOwner.OnPendingCallRegistered()
         => Interlocked.Increment(ref _activeCallCount);
@@ -146,8 +154,6 @@ internal sealed class ClientConnection :
             PendingCallCompletionReason.UserCancellation or
             PendingCallCompletionReason.DeadlineExceeded or
             PendingCallCompletionReason.ConsumerAbandoned;
-        if (shouldSendCancel)
-            TrySendCancel(completion.RequestId);
 
         if (completion.Kind is PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming)
         {
@@ -161,9 +167,14 @@ internal sealed class ClientConnection :
                 Session.StreamManager.CompleteStream(
                     completion.RequestId,
                     0,
-                    completion.Exception);
+                completion.Exception);
             }
         }
+
+        // Return all receive credit before Cancel. Both frames share the session send pump,
+        // so the peer observes the final WindowUpdate before it reclaims the aborted stream.
+        if (shouldSendCancel)
+            TrySendCancel(completion.RequestId);
 
         ReleaseActiveCall();
     }

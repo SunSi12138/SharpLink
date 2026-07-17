@@ -89,3 +89,42 @@ jobs:
 
       - name: Load Test Smoke
         run: dotnet run -c Release --project test/SharpLink.LoadTest -- --mode local --operation add --concurrency 1,8,32 --warmup 2 --duration 8 --metrics-port 0
+
+  chaos-soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 135
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore test/SharpLink.ChaosTests/SharpLink.ChaosTests.csproj
+
+      - name: Build
+        run: dotnet build test/SharpLink.ChaosTests/SharpLink.ChaosTests.csproj --no-restore -c Release -v minimal
+
+      - name: Two-hour Mixed Chaos
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.ChaosTests
+          --
+          --duration-seconds 7200
+          --concurrency 32
+          --restart-interval-seconds 30
+          --json-output artifacts/chaos/nightly-2h.json
+
+      - name: Upload Chaos Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-nightly-2h
+          path: artifacts/chaos/nightly-2h.json
+          if-no-files-found: warn
+          retention-days: 14

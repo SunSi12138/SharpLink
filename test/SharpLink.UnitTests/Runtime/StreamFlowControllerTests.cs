@@ -107,6 +107,39 @@ public class StreamFlowControllerTests
         await Task.CompletedTask;
     }
 
+    [Test]
+    public async Task AbortedSendStreamShouldReclaimConnectionCreditAndCapacity()
+    {
+        var controller = new StreamFlowController(4, 4, 1024, maxConcurrentStreams: 1);
+        await controller.AcquireSendCreditAsync(1, 0, 4, CancellationToken.None);
+        controller.CompleteSendStream(
+            1,
+            0,
+            new SharpLinkException(SharpLinkErrorCode.Cancelled, "consumer abandoned"));
+
+        Ensure(controller.SendConnectionCredit == 4, "aborted stream must return outstanding connection credit");
+        await controller.AcquireSendCreditAsync(2, 0, 4, CancellationToken.None);
+        Ensure(controller.SendConnectionCredit == 0, "new stream should reuse reclaimed capacity");
+    }
+
+    [Test]
+    public async Task RequestCancelShouldAbortAllResponseStreamsEvenAfterCallDispatchCompleted()
+    {
+        var controller = new StreamFlowController(4, 8, 1024, maxConcurrentStreams: 2);
+        await controller.AcquireSendCreditAsync(7, 0, 4, CancellationToken.None);
+        await controller.AcquireSendCreditAsync(7, 1, 4, CancellationToken.None);
+
+        controller.AbortSendStreams(
+            7,
+            new SharpLinkException(SharpLinkErrorCode.Cancelled, "remote cancel"));
+
+        Ensure(controller.SendConnectionCredit == 8, "request cancel must reclaim every response stream credit");
+        controller.CompleteSendStream(7, 0);
+        controller.CompleteSendStream(7, 1);
+        await controller.AcquireSendCreditAsync(8, 0, 4, CancellationToken.None);
+        await controller.AcquireSendCreditAsync(9, 0, 4, CancellationToken.None);
+    }
+
     private static async Task ExpectCancellation(ValueTask pending)
     {
         try

@@ -59,6 +59,8 @@ internal sealed class StreamFlowController
             ThrowIfTerminated();
             var key = new StreamKey(requestId, streamId);
             var state = GetOrAddSendState(key);
+            if (state.AbortException is { } abortException)
+                throw abortException;
             if (state.Completed)
                 throw CreateStreamClosedException();
             if (_waiters.Count == 0 && CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
@@ -111,9 +113,22 @@ internal sealed class StreamFlowController
             var key = new StreamKey(requestId, streamId);
             if (_sendStates.TryGetValue(key, out var state))
             {
-                state.Completed = true;
-                if (state.Credit == _streamWindow)
+                if (state.AbortException is not null)
+                {
                     _sendStates.Remove(key);
+                }
+                else if (exception is not null)
+                {
+                    var outstandingCredit = _streamWindow - state.Credit;
+                    _sendConnectionCredit = checked(_sendConnectionCredit + outstandingCredit);
+                    _sendStates.Remove(key);
+                }
+                else
+                {
+                    state.Completed = true;
+                    if (state.Credit == _streamWindow)
+                        _sendStates.Remove(key);
+                }
             }
 
             var node = _waiters.First;
@@ -137,6 +152,52 @@ internal sealed class StreamFlowController
             for (var index = 0; index < rejected.Count; index++)
                 rejected[index].Completion.TrySetException(completionException);
         }
+        CompleteReadyWaiters(ready);
+    }
+
+    public void AbortSendStreams(long requestId, Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        List<StreamKey>? removedKeys = null;
+        List<CreditWaiter>? rejected = null;
+        List<CreditWaiter>? ready;
+        lock (_gate)
+        {
+            foreach (var pair in _sendStates)
+            {
+                if (pair.Key.RequestId != requestId)
+                    continue;
+                var state = pair.Value;
+                _sendConnectionCredit = checked(
+                    _sendConnectionCredit + (_streamWindow - state.Credit));
+                state.Credit = _streamWindow;
+                state.AbortException = exception;
+                if (state.Completed)
+                    (removedKeys ??= []).Add(pair.Key);
+            }
+            if (removedKeys is not null)
+            {
+                for (var index = 0; index < removedKeys.Count; index++)
+                    _sendStates.Remove(removedKeys[index]);
+            }
+
+            var node = _waiters.First;
+            while (node is not null)
+            {
+                var next = node.Next;
+                if (node.Value.Key.RequestId == requestId)
+                {
+                    _waiters.Remove(node);
+                    node.Value.Node = null;
+                    node.Value.Rejection = exception;
+                    (rejected ??= []).Add(node.Value);
+                }
+                node = next;
+            }
+            ready = AdmitWaiters();
+        }
+
+        CompleteReadyWaiters(rejected);
         CompleteReadyWaiters(ready);
     }
 
@@ -293,11 +354,12 @@ internal sealed class StreamFlowController
         while (_waiters.First is { } first)
         {
             var waiter = first.Value;
-            if (!_sendStates.TryGetValue(waiter.Key, out var state) || state.Completed)
+            if (!_sendStates.TryGetValue(waiter.Key, out var state) ||
+                state.Completed || state.AbortException is not null)
             {
                 _waiters.RemoveFirst();
                 waiter.Node = null;
-                waiter.Rejection = CreateStreamClosedException();
+                waiter.Rejection = state?.AbortException ?? CreateStreamClosedException();
                 (ready ??= []).Add(waiter);
                 continue;
             }
@@ -380,6 +442,7 @@ internal sealed class StreamFlowController
     {
         public long Credit = initialCredit;
         public bool Completed;
+        public Exception? AbortException;
     }
 
     private sealed class ReceiveState(long initialCredit)

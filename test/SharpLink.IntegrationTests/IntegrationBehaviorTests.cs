@@ -194,6 +194,23 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task FastEarlyBreakShouldReturnFlowCreditAndNotLeakCompletedSendStates()
+    {
+        await using var harness = await TestHarness.CreateAsync();
+        var service = harness.Client.Get<ITestService>();
+
+        for (var iteration = 0; iteration < 1_500; iteration++)
+        {
+            await using var enumerator = service.DownloadAsync(32).GetAsyncEnumerator();
+            Ensure(await enumerator.MoveNextAsync(), "fast stream should produce its first item");
+        }
+
+        Ensure(await service.AddAsync(20, 22) == 42,
+            "connection should remain healthy after more than 1,024 fast early-break streams");
+    }
+
+    [Test]
     public async Task CallOptionsShouldCarryMetadataAndUseEarliestDeadline()
     {
         await using var harness = await TestHarness.CreateAsync();

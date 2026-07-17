@@ -16,4 +16,8 @@ internal interface IStreamDispatchLease
 internal interface IStreamDispatchState
 {
     bool HasActiveDispatches { get; }
+
+    bool IsDetached { get; }
+
+    void Close();
 }

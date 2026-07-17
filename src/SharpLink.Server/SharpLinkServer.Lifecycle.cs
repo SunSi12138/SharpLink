@@ -481,6 +481,11 @@ internal sealed partial class SharpLinkServer
                             }
                             case ProtocolV2FrameType.Cancel:
                                 var cancelRequestId = unchecked((long)header.RequestId);
+                                ((RpcSession)session).AbortSendStreams(
+                                    cancelRequestId,
+                                    new SharpLinkException(
+                                        SharpLinkErrorCode.Cancelled,
+                                        "Remote consumer cancelled the RPC stream."));
                                 if (requestCancellationMap.TryGetValue(cancelRequestId, out var callState) &&
                                     callState.TryAcquire(cancelRequestId))
                                 {
