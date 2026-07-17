@@ -8,5 +8,7 @@
     </ItemGroup>
     <ItemGroup>
       <InternalsVisibleTo Include="SharpLink.Hosting" />
+      <InternalsVisibleTo Include="SharpLink.UnitTests" />
+      <InternalsVisibleTo Include="SharpLink.Benchmarks" />
     </ItemGroup>
 </Project>

@@ -26,9 +26,7 @@ internal sealed partial class SharpLinkServer(
     }
 
     private readonly SharpLinkRuntimeContext _runtimeContext = runtimeContext ?? new SharpLinkRuntimeContextBuilder().Build();
-    private readonly ConcurrentDictionary<string, IRpcSession> _sessions = [];
-    private readonly ConcurrentDictionary<string, SharpLinkAuthenticationContext?> _sessionAuthContexts = [];
-    private readonly ConcurrentDictionary<string, long> _lastAcceptedRequestIds = [];
+    private readonly ConcurrentDictionary<string, ServerConnectionState> _connections = [];
     private readonly ILogger _logger = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory))).CreateLogger<SharpLinkServer>();
     private readonly ISharpLinkServerAuthenticator? _authenticator = authenticator;
     private readonly bool _authenticationRequired = authenticationRequired;
@@ -91,15 +89,13 @@ internal sealed partial class SharpLinkServer(
         try
         {
             await transportListener.DisposeAsync().ConfigureAwait(false);
-            foreach (var session in _sessions.Values)
+            foreach (var connection in _connections.Values)
             {
-                var lastAccepted = _lastAcceptedRequestIds.TryGetValue(session.Id, out var requestId)
-                    ? requestId
-                    : 0;
+                connection.MarkDraining();
                 try
                 {
-                    await session.SendGoAwayAsync(
-                        lastAccepted,
+                    await connection.Session.SendGoAwayAsync(
+                        connection.LastAcceptedRequestId,
                         SharpLinkErrorCode.Unavailable,
                         "Server is draining.").ConfigureAwait(false);
                 }
@@ -126,13 +122,11 @@ internal sealed partial class SharpLinkServer(
 
             if (_callsDrained.Task.IsCompletedSuccessfully)
             {
-                foreach (var session in _sessions.Values)
+                foreach (var connection in _connections.Values)
                 {
-                    if (session is not RpcSession rpcSession)
-                        continue;
                     try
                     {
-                        await rpcSession.FlushSendQueueAsync().ConfigureAwait(false);
+                        await connection.Session.FlushSendQueueAsync().ConfigureAwait(false);
                     }
                     catch (Exception ex) when (ex is SharpLinkException or System.IO.IOException or ObjectDisposedException)
                     {
@@ -176,12 +170,10 @@ internal sealed partial class SharpLinkServer(
 
     private async Task DisposeAllSessionsAsync()
     {
-        foreach (var session in _sessions.Values)
-            await session.DisposeAsync().ConfigureAwait(false);
+        foreach (var connection in _connections.Values)
+            await connection.CloseAsync().ConfigureAwait(false);
 
-        _sessions.Clear();
-        _sessionAuthContexts.Clear();
-        _lastAcceptedRequestIds.Clear();
+        _connections.Clear();
     }
 
     private async Task WaitForBackgroundTasksAsync()
@@ -207,6 +199,7 @@ internal sealed partial class SharpLinkServer(
 
     private SharpLinkCallContextSnapshot CreateCallContext(
         IRpcSession session,
+        SharpLinkAuthenticationContext? authenticationContext,
         IRpcStub stub,
         long methodId,
         long requestId,
@@ -214,7 +207,6 @@ internal sealed partial class SharpLinkServer(
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken)
     {
-        _sessionAuthContexts.TryGetValue(session.Id, out var authenticationContext);
         if (_serverInterceptors.Length == 0)
             return new SharpLinkCallContextSnapshot(session.Id, authenticationContext, deadline, metadata);
 
@@ -269,13 +261,16 @@ internal sealed partial class SharpLinkServer(
         return method;
     }
 
-    private bool TryAcquireCall(SessionCallAdmission sessionAdmission)
+    private bool TryAcquireCall(ServerConnectionState connection)
     {
         if (CurrentState != ServerState.Running)
             return false;
-        if (Interlocked.Increment(ref sessionAdmission.ActiveCalls) > _maxConcurrentCallsPerConnection)
+        if (!connection.TryAcquireCall(_maxConcurrentCallsPerConnection))
+            return false;
+
+        if (CurrentState != ServerState.Running)
         {
-            Interlocked.Decrement(ref sessionAdmission.ActiveCalls);
+            connection.ReleaseCall();
             return false;
         }
 
@@ -283,14 +278,24 @@ internal sealed partial class SharpLinkServer(
             return true;
 
         Interlocked.Decrement(ref _globalActiveCalls);
-        Interlocked.Decrement(ref sessionAdmission.ActiveCalls);
+        connection.ReleaseCall();
         return false;
     }
 
-    private void ReleaseCall(SessionCallAdmission sessionAdmission)
+    private bool TryAcceptRequest(ServerConnectionState connection, long requestId)
+    {
+        if (CurrentState != ServerState.Running)
+            return false;
+        if (!connection.TryRecordAcceptedRequest(requestId))
+            return false;
+        return CurrentState == ServerState.Running &&
+               connection.LifecycleState == ServerConnectionLifecycleState.Ready;
+    }
+
+    private void ReleaseCall(ServerConnectionState connection)
     {
         var active = Interlocked.Decrement(ref _globalActiveCalls);
-        Interlocked.Decrement(ref sessionAdmission.ActiveCalls);
+        connection.ReleaseCall();
         if (active == 0 && CurrentState == ServerState.Draining)
             _callsDrained.TrySetResult(true);
     }
@@ -341,10 +346,5 @@ internal sealed partial class SharpLinkServer(
 
         if (firstException is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
-    }
-
-    private sealed class SessionCallAdmission
-    {
-        public int ActiveCalls;
     }
 }

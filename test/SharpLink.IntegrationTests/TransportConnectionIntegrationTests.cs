@@ -838,6 +838,69 @@ public class TransportConnectionIntegrationTests
     }
 
     [Test]
+    public async Task TcpAuthenticationContextShouldRemainIsolatedPerConnection()
+    {
+        using var cts = new CancellationTokenSource();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseAuthenticator(CreateServerAuthenticator(static token =>
+                SharpLinkAuthenticationResult.Authenticate(
+                    new SharpLinkAuthenticationContext(
+                        subject: token,
+                        claims: new Dictionary<string, string>(StringComparer.Ordinal)
+                        {
+                            ["role"] = token
+                        }))))
+            .RequireAuthentication();
+
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        var server = serverBuilder.Build();
+        var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
+        var firstClient = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), port)
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseAuthenticator(CreateClientAuthenticator("connection-a"))
+            .Build();
+        var secondClient = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), port)
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseAuthenticator(CreateClientAuthenticator("connection-b"))
+            .Build();
+
+        try
+        {
+            await Task.WhenAll(
+                firstClient.ConnectAsync(cts.Token).AsTask(),
+                secondClient.ConnectAsync(cts.Token).AsTask());
+            var firstService = firstClient.Get<IConnectionBehaviorService>();
+            var secondService = secondClient.Get<IConnectionBehaviorService>();
+            var calls = new Task<string>[200];
+            for (var index = 0; index < calls.Length; index += 2)
+            {
+                calls[index] = firstService.GetAuthenticationSummaryAsync().AsTask();
+                calls[index + 1] = secondService.GetAuthenticationSummaryAsync().AsTask();
+            }
+
+            await Task.WhenAll(calls);
+            for (var index = 0; index < calls.Length; index += 2)
+            {
+                Ensure(calls[index].Result == "connection-a|connection-a", "first connection authentication isolation");
+                Ensure(calls[index + 1].Result == "connection-b|connection-b", "second connection authentication isolation");
+            }
+        }
+        finally
+        {
+            await firstClient.DisposeAsync();
+            await secondClient.DisposeAsync();
+            await cts.CancelAsync();
+            await server.DisposeAsync();
+            await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
+        }
+    }
+
+    [Test]
     public async Task TcpAuthorizationGuardsShouldReturnStructuredRemoteErrors()
     {
         var expiresAt = new DateTimeOffset(2030, 4, 19, 12, 34, 56, TimeSpan.Zero);
