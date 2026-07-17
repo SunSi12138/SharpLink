@@ -122,6 +122,9 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     public bool TryClaimResponse()
     {
+        if (Reason != ServerCallCancellationReason.None)
+            return false;
+
         if (Deadline is { } deadline && deadline <= DateTimeOffset.UtcNow)
         {
             TryAbandon(ServerCallCancellationReason.DeadlineExceeded);
@@ -131,6 +134,15 @@ internal sealed class ServerCallCancellationState : IDisposable
         if (_serverLoopToken.IsCancellationRequested)
         {
             TryAbandon(ServerCallCancellationReason.ConnectionClosed);
+            return false;
+        }
+
+        // CancelAfter uses a timer and may become observable a few scheduler ticks before the
+        // wall-clock comparison reaches the serialized absolute deadline. It is still the
+        // deadline source owned by this state, not an arbitrary service cancellation.
+        if (Deadline is not null && _invocationCancellation?.IsCancellationRequested == true)
+        {
+            TryAbandon(ServerCallCancellationReason.DeadlineExceeded);
             return false;
         }
 
