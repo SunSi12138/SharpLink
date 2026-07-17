@@ -33,7 +33,7 @@
 - `0.6.6`（已完成）：可信性能基线、协商帧边界、异步请求缓冲生命周期、低风险热路径优化与旧兼容层删除。
 - `0.6.7`（已完成）：每连接客户端状态、统一 PendingCallTable、无完成锁 deadline 调度和提前停止 stream 消费收敛。
 - `0.6.8`（已完成）：统一服务端连接状态、取消原因仲裁、用户调用 observer 与证据驱动附加审计。
-- `0.6.9`（当前下一阶段）：有界 Server Stop、Stream Dispatcher 峰值回收、Chaos/长稳与最终性能收敛。
+- `0.6.9`（已完成）：有界 Server Stop、Stream Dispatcher 峰值回收、Chaos/长稳与最终性能收敛。
 - 当前按用户要求不开始 `0.7.0` 扩展包。
 - `0.7.0`：Discovery、Load Balancing 与 Resilience 官方扩展包。
 - `0.8.0-rc`：Chaos、长稳、跨平台/AOT/Package/性能 Release Gate，只修复正确性、稳定性、性能回退和文档问题。

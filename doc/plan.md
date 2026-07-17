@@ -34,6 +34,15 @@
 4. `0.6.4`（已完成）：OpenTelemetry Activity、Meter 与预编译结构化日志。
 5. `0.6.5`（已完成）：DI 服务生命周期、健康检查、readiness 与优雅排空。
 
+## 0.6.6–0.6.9：性能与稳定性收敛（已完成）
+
+1. `0.6.6`（已完成）：可信基线、协商帧边界、异步请求缓冲生命周期、低风险热路径优化与旧兼容层删除。
+2. `0.6.7`（已完成）：每连接 ClientConnection/PendingCallTable、monotonic deadline 调度和提前停止 stream 消费收敛。
+3. `0.6.8`（已完成）：统一 ServerConnectionState、取消原因仲裁、用户调用 observer 与证据驱动附加审计。
+4. `0.6.9`（已完成）：有界 Server Stop、Stream Dispatcher 峰值回收、Chaos/长稳和 JIT/NativeAOT 最终性能审核。
+
+0.6.9 不改变公共 API 或 Protocol v2 wire 格式。按当前范围约束，完成 0.6.x 后暂停，不自动开始官方企业扩展包。
+
 ## 0.7.0：官方企业扩展包
 
 1. `0.7.1`：Discovery 与不可变 Endpoint snapshot/watch。

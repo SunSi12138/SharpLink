@@ -4,6 +4,38 @@
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-07-17
+
+### 新增
+
+- 增加 `SharpLink.ChaosTests`，覆盖混合 Unary/Streaming、提前停止消费、取消/deadline、滚动 TCP 重启、重连和最终框架指标归零。
+- 增加 PR 两分钟、Nightly 两小时 Chaos 分级 Gate，以及专用宿主连续 24 小时长稳脚本与结构化 JSON 证据。
+- 增加 JIT/NativeAOT 性能矩阵入口，覆盖 Transport、Profile、连接池、payload、并发、Unary、OneWay、同步/异步服务和 Streaming。
+- LoadTest 增加 Empty Unary、OneWay 与 AOT-safe source-generated JSON 报告。
+
+### 变更
+
+- `StopAsync` 使用 graceful timeout 与固定五秒框架清理预算有界返回；不合作的业务 Task 不再永久阻塞宿主停机。
+- 仍在执行的用户调用保留自身 DI scope/provider，并在真实结束后延迟清理；listener、session、Pipe、send queue 等框架资源不被业务 Task 长期保留。
+- Stream Dispatcher 静态池改为每个 item 类型最多保留 1,024 个对象；大于 256 的缓冲在回池前缩回初始容量并清除引用。
+- OneWay 性能证据区分正常单生产者吞吐与主动耗尽有界发送队列的 backpressure 场景。
+
+### 修复
+
+- 修复 server/duplex stream 提前停止消费时，WindowUpdate、Cancel、pending slot、dispatcher 租约和 send credit 之间的竞态与泄漏。
+- 修复 dispatcher 在旧调用仍持有 dispatch entry 时过早回池，随后被另一调用复用并被迟到完成污染的问题。
+- 修复 Cancel 到达已完成调用后，响应 stream send state 未被终止并可能重新创建 credit 状态的问题。
+- 修复 NativeAOT LoadTest 报告依赖反射 JSON 序列化的问题。
+
+### 性能与稳定性
+
+- 五轮 TCP Unary A/B：c1 QPS +1.86%、P99 持平；c128 QPS -0.15%、P99 -1.82%，全部零错误并通过门禁。
+- 五轮 Server Streaming A/B：QPS -1.45%、P99 -2.49%，零错误并通过门禁。
+- `Rpc_Add` 保持 672 B/op；JIT/NativeAOT smoke 正常矩阵全部零错误，AOT publish 零 trimming/AOT 警告。
+- 两分钟混合 Chaos 完成 2,611,073 次成功调用和 11 次滚动重启，非预期失败为 0，结束时所有框架 gauge 为 0。
+
+0.6.8 → 0.6.9 没有公共 API 或 Protocol v2 wire 变更。完整证据见 `doc/performance-0.6.9.md`、`doc/chaos-0.6.9.md` 和 `doc/migration-0.6.9.md`。
+
 ## [0.6.8] - 2026-07-17
 
 ### 新增
