@@ -48,7 +48,7 @@ jobs:
         run: unzip -l artifacts/nuget/SharpLink.Sdk.*.nupkg | grep -q 'analyzers/dotnet/cs/SharpLink.Generator.dll'
 
       - name: Restore Package Smoke
-        run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --source artifacts/nuget --source https://api.nuget.org/v3/index.json
+        run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
         env:
           NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
 

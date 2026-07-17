@@ -46,17 +46,27 @@ public class TransportFactoryLifecycleTests
         await using var factory = new NamedPipeClientTransportFactory(name);
 
         var firstAccept = listener.AcceptAsync().AsTask();
-        var firstClient = await factory.ConnectAsync();
-        var firstServer = await firstAccept;
+        var firstClient = await AwaitStageAsync(factory.ConnectAsync().AsTask(), "first named-pipe connect");
+        var firstServer = await AwaitStageAsync(firstAccept, "first named-pipe accept");
         var firstServerId = firstServer.Id;
-        await firstClient.DisposeAsync();
-        await firstServer.DisposeAsync();
+        await AwaitStageAsync(firstClient.DisposeAsync().AsTask(), "first named-pipe client dispose");
+        await AwaitStageAsync(firstServer.DisposeAsync().AsTask(), "first named-pipe server dispose");
 
         var secondAccept = listener.AcceptAsync().AsTask();
-        await using var secondClient = await factory.ConnectAsync();
-        await using var secondServer = await secondAccept;
-        Ensure(firstServerId != secondServer.Id, "named-pipe accepts must produce independent connections");
-        await AssertDuplexByteAsync(secondClient, secondServer, 0x7E);
+        var secondClient = await AwaitStageAsync(
+            factory.ConnectAsync().AsTask(),
+            "second named-pipe connect");
+        var secondServer = await AwaitStageAsync(secondAccept, "second named-pipe accept");
+        try
+        {
+            Ensure(firstServerId != secondServer.Id, "named-pipe accepts must produce independent connections");
+            await AssertDuplexByteAsync(secondClient, secondServer, 0x7E);
+        }
+        finally
+        {
+            await AwaitStageAsync(secondClient.DisposeAsync().AsTask(), "second named-pipe client dispose");
+            await AwaitStageAsync(secondServer.DisposeAsync().AsTask(), "second named-pipe server dispose");
+        }
     }
 
     [Test]
@@ -97,10 +107,10 @@ public class TransportFactoryLifecycleTests
         var memory = sender.Output.GetMemory(1);
         memory.Span[0] = value;
         sender.Output.Advance(1);
-        var flush = await sender.Output.FlushAsync();
-        Ensure(!flush.IsCanceled && !flush.IsCompleted, "sender flush");
 
-        var result = await receiver.Input.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var readTask = receiver.Input.ReadAsync().AsTask();
+        var flushTask = sender.Output.FlushAsync().AsTask();
+        var result = await readTask.WaitAsync(TimeSpan.FromSeconds(2));
         var buffer = result.Buffer;
         try
         {
@@ -111,6 +121,9 @@ public class TransportFactoryLifecycleTests
         {
             receiver.Input.AdvanceTo(buffer.GetPosition(1));
         }
+
+        var flush = await flushTask.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(!flush.IsCanceled && !flush.IsCompleted, "sender flush");
     }
 
     private static int GetFreePort()
@@ -131,6 +144,30 @@ public class TransportFactoryLifecycleTests
         }
         catch (TException)
         {
+        }
+    }
+
+    private static async Task AwaitStageAsync(Task task, string stage)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException exception)
+        {
+            throw new TimeoutException($"Timed out during {stage}.", exception);
+        }
+    }
+
+    private static async Task<T> AwaitStageAsync<T>(Task<T> task, string stage)
+    {
+        try
+        {
+            return await task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException exception)
+        {
+            throw new TimeoutException($"Timed out during {stage}.", exception);
         }
     }
 

@@ -100,7 +100,22 @@ internal sealed partial class SharpLinkServer
         try
         {
             if (connection is ITransportSecurityHandshake securityHandshake)
-                await securityHandshake.AuthenticateAsync(cancellationToken).ConfigureAwait(false);
+            {
+                try
+                {
+                    await securityHandshake.AuthenticateAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (IsExpectedCancellation(exception, cancellationToken))
+                {
+                    return;
+                }
+                catch (Exception exception) when (
+                    exception is AuthenticationException or System.IO.IOException or SocketException or SharpLinkException)
+                {
+                    LogTlsHandshakeFailed(_logger, exception);
+                    return;
+                }
+            }
             if (connection is ITransportSecurityInfo securityInfo)
                 LogTlsEstablished(_logger, securityInfo.Protocol, securityInfo.CipherSuite);
 
@@ -115,10 +130,6 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception) when (IsExpectedCancellation(exception, cancellationToken))
         {
-        }
-        catch (Exception exception) when (exception is AuthenticationException or SharpLinkException)
-        {
-            LogTlsHandshakeFailed(_logger, exception);
         }
         finally
         {

@@ -202,9 +202,13 @@ public class TlsTransportIntegrationTests
             request.CertificateExtensions.Add(names.Build());
         }
 
-        return request.CreateSelfSigned(
+        using var generated = request.CreateSelfSigned(
             notBefore ?? DateTimeOffset.UtcNow.AddMinutes(-5),
             notAfter ?? DateTimeOffset.UtcNow.AddDays(2));
+        return X509CertificateLoader.LoadPkcs12(
+            generated.Export(X509ContentType.Pkcs12),
+            password: null,
+            X509KeyStorageFlags.DefaultKeySet);
     }
 
     private static async Task VerifyRpcShapesAsync(ITlsIntegrationService service)
