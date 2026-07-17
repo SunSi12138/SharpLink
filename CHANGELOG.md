@@ -25,6 +25,8 @@
 - 修复 server/duplex stream 提前停止消费时，WindowUpdate、Cancel、pending slot、dispatcher 租约和 send credit 之间的竞态与泄漏。
 - 修复 dispatcher 在旧调用仍持有 dispatch entry 时过早回池，随后被另一调用复用并被迟到完成污染的问题。
 - 修复 Cancel 到达已完成调用后，响应 stream send state 未被终止并可能重新创建 credit 状态的问题。
+- 修复 Session 已终止后迟到的 `NotifyConnected` 重新增加 active-connection 指标、且再无关闭机会抵消的问题。
+- 修复 TLS 重连测试可能把上一连接代际尚未清空时的旧 Ready 状态误判为新连接已经可用的问题。
 - 修复 NativeAOT LoadTest 报告依赖反射 JSON 序列化的问题。
 
 ### 性能与稳定性

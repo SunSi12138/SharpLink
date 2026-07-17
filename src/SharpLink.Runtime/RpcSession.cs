@@ -36,7 +36,10 @@ public sealed partial class RpcSession : IRpcSession
     private int _activeRequests;
     private int _draining;
     private string _telemetrySide = "unknown";
-    private int _telemetryConnected;
+    private int _telemetryConnectionState;
+    private const int TelemetryNotOpened = 0;
+    private const int TelemetryOpened = 1;
+    private const int TelemetryClosed = 2;
     internal Func<long, long, long, Exception, SharpLinkException>? ServiceExceptionMapper { get; set; }
 
     internal void SetTelemetrySide(string side)
@@ -361,8 +364,21 @@ public sealed partial class RpcSession : IRpcSession
     public event Action? OnConnected;
     public void NotifyConnected()
     {
-        if (Interlocked.Exchange(ref _telemetryConnected, 1) == 0)
-            SharpLinkTelemetry.ConnectionOpened(_telemetrySide);
+        if (Volatile.Read(ref _terminal) is not null ||
+            Interlocked.CompareExchange(
+                ref _telemetryConnectionState,
+                TelemetryOpened,
+                TelemetryNotOpened) != TelemetryNotOpened)
+        {
+            return;
+        }
+
+        SharpLinkTelemetry.ConnectionOpened(_telemetrySide);
+        if (Volatile.Read(ref _terminal) is not null)
+        {
+            RecordTelemetryConnectionClosed();
+            return;
+        }
         OnConnected?.Invoke();
     }
     public event Action<Exception?>? OnDisconnected;
@@ -454,7 +470,7 @@ public sealed partial class RpcSession : IRpcSession
 
     private void RecordTelemetryConnectionClosed()
     {
-        if (Interlocked.Exchange(ref _telemetryConnected, 0) != 0)
+        if (Interlocked.Exchange(ref _telemetryConnectionState, TelemetryClosed) == TelemetryOpened)
             SharpLinkTelemetry.ConnectionClosed(_telemetrySide);
     }
 

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.IO.Pipelines;
 using System.Threading;
 
@@ -122,6 +123,49 @@ public class RpcSessionLifecycleTests
         Ensure(disconnectCount == 1, "concurrent disposal should close transport once");
         foreach (var failure in failures)
             Ensure(failure.Code == SharpLinkErrorCode.ConnectionClosed, "closed sends should be structured");
+    }
+
+    [Test]
+    public async Task NotifyConnectedAfterDisposeShouldNotReopenConnectionMetric()
+    {
+        const string side = "late-notify-test";
+        var balance = 0L;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meterListener) =>
+        {
+            if (instrument.Meter.Name == "SharpLink" &&
+                instrument.Name == "sharplink.connections.active")
+            {
+                meterListener.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "rpc.side" && Equals(tag.Value, side))
+                {
+                    Interlocked.Add(ref balance, measurement);
+                    break;
+                }
+            }
+        });
+        listener.Start();
+
+        var input = new Pipe();
+        var output = new Pipe();
+        var session = new RpcSession(
+            "late-notify",
+            input.Reader,
+            output.Writer,
+            static () => { },
+            static () => true);
+        session.SetTelemetrySide(side);
+
+        await session.DisposeAsync();
+        session.NotifyConnected();
+
+        Ensure(Volatile.Read(ref balance) == 0, "a terminal session must not reopen its connection metric");
     }
 
     private static SharpLinkException CaptureSendException(RpcSession session)
