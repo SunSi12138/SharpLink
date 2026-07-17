@@ -1051,6 +1051,9 @@ internal sealed partial class SharpLinkClient
 
     private void EnsureExpansion()
     {
+        if (ReadyConnectionCount >= _connectionPoolOptions.MaxConnections)
+            return;
+
         lock (_stateGate)
         {
             if (_shutdownCts.IsCancellationRequested ||
