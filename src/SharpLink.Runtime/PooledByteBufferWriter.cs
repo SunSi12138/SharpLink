@@ -9,13 +9,14 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
     private byte[]? _buffer;
     private int _written;
     private int _active;
+    private int _maxWrittenBytes = int.MaxValue;
 
     /// <summary>Creates an independently owned writer lease.</summary>
     /// <param name="initialCapacity">The minimum initial byte capacity.</param>
     /// <example><code>using var writer = new PooledByteBufferWriter(1024);</code></example>
     public PooledByteBufferWriter(int initialCapacity = 1024)
     {
-        Activate(initialCapacity);
+        Activate(initialCapacity, int.MaxValue);
     }
 
     private PooledByteBufferWriter(bool inactive)
@@ -65,9 +66,12 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
         }
     }
 
-    internal void Activate(int initialCapacity)
+    internal void Activate(int initialCapacity, int maxWrittenBytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(initialCapacity);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxWrittenBytes);
+        if (initialCapacity > maxWrittenBytes)
+            throw new ArgumentOutOfRangeException(nameof(initialCapacity));
         if (Interlocked.CompareExchange(ref _active, 1, 0) != 0)
             throw new InvalidOperationException("The byte writer already has an active lease.");
 
@@ -81,6 +85,7 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
                     ArrayPool<byte>.Shared.Return(previous);
             }
             _written = 0;
+            _maxWrittenBytes = maxWrittenBytes;
         }
         catch
         {
@@ -93,14 +98,14 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
     public Memory<byte> GetMemory(int sizeHint = 0)
     {
         EnsureCapacity(sizeHint);
-        return _buffer.AsMemory(_written);
+        return _buffer.AsMemory(_written, Math.Min(_buffer!.Length - _written, _maxWrittenBytes - _written));
     }
 
     /// <inheritdoc />
     public Span<byte> GetSpan(int sizeHint = 0)
     {
         EnsureCapacity(sizeHint);
-        return _buffer.AsSpan(_written);
+        return _buffer.AsSpan(_written, Math.Min(_buffer!.Length - _written, _maxWrittenBytes - _written));
     }
 
     /// <inheritdoc />
@@ -108,6 +113,8 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
     {
         EnsureActive();
         ArgumentOutOfRangeException.ThrowIfNegative(count);
+        if (count > _maxWrittenBytes - _written)
+            throw CreateLimitException();
         if (count > _buffer!.Length - _written)
             throw new InvalidOperationException("Cannot advance beyond the available capacity.");
         _written += count;
@@ -130,6 +137,7 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
 
         var buffer = Interlocked.Exchange(ref _buffer, null);
         _written = 0;
+        _maxWrittenBytes = int.MaxValue;
         if (buffer is not null)
             ArrayPool<byte>.Shared.Return(buffer);
         return true;
@@ -141,6 +149,7 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
             return false;
 
         _written = 0;
+        _maxWrittenBytes = int.MaxValue;
         if (_buffer is { Length: var length } buffer && length > maxRetainedCapacityBytes)
         {
             _buffer = null;
@@ -164,6 +173,8 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
         ArgumentOutOfRangeException.ThrowIfNegative(sizeHint);
         if (sizeHint == 0)
             sizeHint = 1;
+        if (sizeHint > _maxWrittenBytes - _written)
+            throw CreateLimitException();
         if (sizeHint <= _buffer!.Length - _written)
             return;
 
@@ -183,4 +194,9 @@ public sealed class PooledByteBufferWriter : IRpcByteBufferWriter
         if (Volatile.Read(ref _active) == 0)
             throw new ObjectDisposedException(nameof(PooledByteBufferWriter));
     }
+
+    private SharpLinkException CreateLimitException()
+        => new(
+            SharpLinkErrorCode.ResourceExhausted,
+            $"The packet writer exceeded its {_maxWrittenBytes}-byte lease limit.");
 }

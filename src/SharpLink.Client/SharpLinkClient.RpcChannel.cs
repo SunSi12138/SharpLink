@@ -738,7 +738,7 @@ internal sealed partial class SharpLinkClient
             flags |= ProtocolV2FrameFlags.HasMetadata;
         }
 
-        var writer = _runtimeContext.Buffers.Rent();
+        var writer = session.RentFrameWriter();
         var ownsWriter = true;
         try
         {

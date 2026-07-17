@@ -77,6 +77,26 @@ public class BufferWriterPoolTests
         AssertThrows<ObjectDisposedException>(() => writer.GetSpan());
     }
 
+    [Test]
+    public void BoundedLeaseShouldRejectGrowthAndRemainReusable()
+    {
+        var pool = CreatePool(options => options.InitialCapacity = 16);
+        var writer = pool.Rent(32);
+        writer.GetSpan(32).Clear();
+        writer.Advance(32);
+
+        var limit = AssertThrows<SharpLinkException>(() => writer.GetSpan(1));
+        Ensure(limit.Code == SharpLinkErrorCode.ResourceExhausted, "bounded writer error code");
+        AssertThrows<SharpLinkException>(() => writer.Advance(1));
+        pool.Return(writer);
+
+        var reused = pool.Rent();
+        reused.GetSpan(64).Clear();
+        reused.Advance(64);
+        Ensure(reused.WrittenCount == 64, "a later unbounded lease must not inherit the prior limit");
+        pool.Return(reused);
+    }
+
     private static SharpLinkBufferWriterPool CreatePool(Action<BufferWriterPoolOptions> configure)
     {
         var options = new BufferWriterPoolOptions();
@@ -84,15 +104,16 @@ public class BufferWriterPoolTests
         return new SharpLinkBufferWriterPool(options);
     }
 
-    private static void AssertThrows<TException>(Action action) where TException : Exception
+    private static TException AssertThrows<TException>(Action action) where TException : Exception
     {
         try
         {
             action();
             throw new Exception($"expected {typeof(TException).Name}");
         }
-        catch (TException)
+        catch (TException exception)
         {
+            return exception;
         }
     }
 

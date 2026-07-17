@@ -5,6 +5,8 @@ public sealed partial class RpcSession : IRpcSession
     public string Id { get; }
     public SharpLinkRuntimeContext RuntimeContext { get; private set; } = SharpLinkRuntimeContext.Default;
     internal ProtocolV2Capabilities NegotiatedCapabilities { get; set; }
+    private int _negotiatedMaxFramePayloadBytes = SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes;
+    internal int NegotiatedMaxFramePayloadBytes => Volatile.Read(ref _negotiatedMaxFramePayloadBytes);
     IRpcRuntimeContext IRpcSession.RuntimeContext => RuntimeContext;
     public DateTime LastActive { get; set; } = DateTime.UtcNow;
     public PipeReader Input { get; }
@@ -119,6 +121,7 @@ public sealed partial class RpcSession : IRpcSession
             if (_pump is not null)
                 throw new InvalidOperationException("Runtime context must be bound before the first outbound frame.");
             RuntimeContext = runtimeContext;
+            Volatile.Write(ref _negotiatedMaxFramePayloadBytes, runtimeContext.Protocol.MaxFramePayloadBytes);
             StreamManager = new StreamManager(
                 runtimeContext.Concurrency,
                 AcceptReceivedStreamBytes,
@@ -127,6 +130,21 @@ public sealed partial class RpcSession : IRpcSession
         }
     }
 
+    internal void SetNegotiatedMaxFramePayloadBytes(int value)
+    {
+        if (value < SharpLinkProtocolOptions.MinMaxFramePayloadBytes ||
+            value > RuntimeContext.Protocol.MaxFramePayloadBytes)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.ProtocolViolation,
+                $"Negotiated frame limit {value} is outside the local protocol limits.");
+        }
+        Volatile.Write(ref _negotiatedMaxFramePayloadBytes, value);
+    }
+
+    internal IRpcByteBufferWriter RentFrameWriter()
+        => RuntimeContext.Buffers.Rent(checked(ProtocolV2Constants.HeaderBytes + NegotiatedMaxFramePayloadBytes));
+
     internal void EnableStreamFlowControl(int streamWindowBytes, int connectionWindowBytes)
     {
         if ((NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) == 0)
@@ -134,7 +152,7 @@ public sealed partial class RpcSession : IRpcSession
         var controller = new StreamFlowController(
             streamWindowBytes,
             connectionWindowBytes,
-            RuntimeContext.Protocol.MaxFramePayloadBytes,
+            NegotiatedMaxFramePayloadBytes,
             RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection);
         if (Interlocked.CompareExchange(ref _streamFlowControl, controller, null) is not null)
             throw new InvalidOperationException("Stream flow control is already enabled for this session.");
@@ -205,6 +223,8 @@ public sealed partial class RpcSession : IRpcSession
             throw terminal.Exception;
         }
 
+        ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
+
         var result = GetOrCreatePump().TryEnqueue(new OwnedFrame(packet, forceFlush: false, flushCompletion: null));
         if (result == SendEnqueueResult.Full)
         {
@@ -224,14 +244,16 @@ public sealed partial class RpcSession : IRpcSession
     internal async ValueTask FlushSendQueueAsync(CancellationToken ct = default)
     {
         var marker = RuntimeContext.Buffers.Rent();
-        await SendPacketAsync(marker, waitForCapacity: true, forceFlush: true, ct).ConfigureAwait(false);
+        await SendPacketAsync(marker, waitForCapacity: true, forceFlush: true, ct, allowEmpty: true)
+            .ConfigureAwait(false);
     }
 
     internal async ValueTask SendPacketAsync(
         IRpcByteBufferWriter packet,
         bool waitForCapacity,
         bool forceFlush,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool allowEmpty = false)
     {
         ArgumentNullException.ThrowIfNull(packet);
         if (Volatile.Read(ref _terminal) is { } terminal)
@@ -239,6 +261,8 @@ public sealed partial class RpcSession : IRpcSession
             RuntimeContext.Buffers.Return(packet);
             throw terminal.Exception;
         }
+
+        ValidateOutboundPacketOrReturn(packet, allowEmpty);
 
         var completion = forceFlush
             ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
@@ -259,6 +283,42 @@ public sealed partial class RpcSession : IRpcSession
 
         if (completion is not null)
             await completion.Task.WaitAsync(ct).ConfigureAwait(false);
+    }
+
+    private void ValidateOutboundPacketOrReturn(IRpcByteBufferWriter packet, bool allowEmpty)
+    {
+        try
+        {
+            var length = packet.WrittenCount;
+            if (length == 0)
+            {
+                if (allowEmpty)
+                    return;
+                throw new InvalidOperationException("Only an internal flush marker may be empty.");
+            }
+            if (length < ProtocolV2Constants.HeaderBytes)
+                throw new InvalidOperationException("Outbound frame is shorter than the protocol header.");
+
+            var payloadLength = length - ProtocolV2Constants.HeaderBytes;
+            if (payloadLength > NegotiatedMaxFramePayloadBytes)
+            {
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.ResourceExhausted,
+                    $"Outbound frame payload exceeds the negotiated {NegotiatedMaxFramePayloadBytes}-byte limit.");
+            }
+
+            var span = packet.WrittenSpan;
+            if (span[0] != ProtocolV2Constants.Magic)
+                throw new InvalidOperationException("Outbound frame has an invalid protocol magic byte.");
+            var encodedPayloadLength = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(1, sizeof(int)));
+            if (encodedPayloadLength != payloadLength)
+                throw new InvalidOperationException("Outbound frame payload length does not match its header.");
+        }
+        catch
+        {
+            RuntimeContext.Buffers.Return(packet);
+            throw;
+        }
     }
 
     internal long QueuedSendBytes => Volatile.Read(ref _pump)?.QueuedBytes ?? 0;

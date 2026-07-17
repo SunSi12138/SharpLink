@@ -25,13 +25,23 @@ public sealed class SharpLinkBufferWriterPool : IRpcBufferWriterPool
 
     /// <inheritdoc />
     public IRpcByteBufferWriter Rent()
+        => RentCore(int.MaxValue);
+
+    /// <inheritdoc />
+    public IRpcByteBufferWriter Rent(int maxWrittenBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxWrittenBytes);
+        return RentCore(maxWrittenBytes);
+    }
+
+    private IRpcByteBufferWriter RentCore(int maxWrittenBytes)
     {
         if (!_pool.TryDequeue(out var writer))
             writer = PooledByteBufferWriter.CreateInactive();
         else
             Interlocked.Decrement(ref _pooledCount);
 
-        writer.Activate(_initialCapacity);
+        writer.Activate(Math.Min(_initialCapacity, maxWrittenBytes), maxWrittenBytes);
         return writer;
     }
 

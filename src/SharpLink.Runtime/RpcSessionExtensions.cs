@@ -9,7 +9,7 @@ public static class RpcSessionExtensions
             SharpLinkProtocolOptions limits,
             CancellationToken cancellationToken = default)
         {
-            var writer = session.RuntimeContext.Buffers.Rent();
+            var writer = GetRuntimeSession(session).RentFrameWriter();
             var ownsWriter = true;
             try
             {
@@ -33,7 +33,7 @@ public static class RpcSessionExtensions
             ProtocolV2HandshakeResponse response,
             CancellationToken cancellationToken = default)
         {
-            var writer = session.RuntimeContext.Buffers.Rent();
+            var writer = GetRuntimeSession(session).RentFrameWriter();
             var ownsWriter = true;
             try
             {
@@ -69,7 +69,7 @@ public static class RpcSessionExtensions
 
         public void SendPacketAsync(ProtocolV2FrameType frameType, ProtocolV2FrameFlags flags, long requestId)
         {
-            var writer = session.RuntimeContext.Buffers.Rent();
+            var writer = GetRuntimeSession(session).RentFrameWriter();
             var ownsWriter = true;
             try
             {
@@ -124,7 +124,7 @@ public static class RpcSessionExtensions
         /// <param name="status">The current server readiness state.</param>
         public void SendHealthResponse(long requestId, SharpLinkHealthStatus status)
         {
-            var writer = session.RuntimeContext.Buffers.Rent();
+            var writer = GetRuntimeSession(session).RentFrameWriter();
             var ownsWriter = true;
             try
             {
@@ -151,7 +151,7 @@ public static class RpcSessionExtensions
             T item,
             CancellationToken cancellationToken = default)
         {
-            var writer = session.RuntimeContext.Buffers.Rent();
+            var writer = GetRuntimeSession(session).RentFrameWriter();
             var ownsWriter = true;
             try
             {
@@ -186,7 +186,7 @@ public static class RpcSessionExtensions
 
         public void SendStreamCompleteAsync(long requestId, ushort streamId)
         {
-            var writer = session.RuntimeContext.Buffers.Rent();
+            var writer = GetRuntimeSession(session).RentFrameWriter();
             var ownsWriter = true;
             try
             {
@@ -221,7 +221,7 @@ public static class RpcSessionExtensions
             ArgumentNullException.ThrowIfNull(exception);
             exception = GetRuntimeSession(session).MapServiceException(
                 requestId, contractId, methodId, exception);
-            var writer = session.RuntimeContext.Buffers.Rent();
+            var writer = GetRuntimeSession(session).RentFrameWriter();
             var ownsWriter = true;
             try
             {
@@ -259,7 +259,7 @@ public static class RpcSessionExtensions
             string? message,
             CancellationToken cancellationToken = default)
         {
-            var writer = session.RuntimeContext.Buffers.Rent();
+            var writer = GetRuntimeSession(session).RentFrameWriter();
             var ownsWriter = true;
             try
             {
@@ -290,7 +290,7 @@ public static class RpcSessionExtensions
         internal void SendWindowUpdate(long requestId, ushort streamId, int credit)
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(credit);
-            var writer = session.RuntimeContext.Buffers.Rent();
+            var writer = GetRuntimeSession(session).RentFrameWriter();
             var ownsWriter = true;
             try
             {
@@ -314,7 +314,7 @@ public static class RpcSessionExtensions
 
     private static void SendTimestampFrame(IRpcSession session, ProtocolV2FrameType type, long timestamp)
     {
-        var writer = session.RuntimeContext.Buffers.Rent();
+        var writer = GetRuntimeSession(session).RentFrameWriter();
         var ownsWriter = true;
         try
         {
@@ -342,7 +342,7 @@ public static class RpcSessionExtensions
         string? message,
         int maxMessageBytes)
     {
-        var writer = session.RuntimeContext.Buffers.Rent();
+        var writer = GetRuntimeSession(session).RentFrameWriter();
         var ownsWriter = true;
         try
         {
@@ -371,7 +371,7 @@ public static class RpcSessionExtensions
         int maxMessageBytes,
         CancellationToken cancellationToken)
     {
-        var writer = session.RuntimeContext.Buffers.Rent();
+        var writer = GetRuntimeSession(session).RentFrameWriter();
         var ownsWriter = true;
         try
         {

@@ -13,6 +13,17 @@ public class TransportConnectionIntegrationTests
     }
 
     [Test]
+    public async Task TcpShouldEnforceNegotiatedFrameLimitInBothDirections()
+    {
+        await VerifyNegotiatedFrameLimitAsync(
+            SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
+            SharpLinkProtocolOptions.MinMaxFramePayloadBytes);
+        await VerifyNegotiatedFrameLimitAsync(
+            SharpLinkProtocolOptions.MinMaxFramePayloadBytes,
+            SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes);
+    }
+
+    [Test]
     public async Task NamedPipeConnectAndBasicRpcShouldWork()
     {
         await using var harness = await TransportHarness.CreateAsync(TransportKind.NamedPipe);
@@ -1145,6 +1156,49 @@ public class TransportConnectionIntegrationTests
         }
     }
 
+    private static async Task VerifyNegotiatedFrameLimitAsync(int clientLimit, int serverLimit)
+    {
+        using var cts = new CancellationTokenSource();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseProtocol(options => options.MaxFramePayloadBytes = serverLimit)
+            .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        var server = serverBuilder.Build();
+        var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
+        var client = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), port)
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseProtocol(options => options.MaxFramePayloadBytes = clientLimit)
+            .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
+            .Build();
+        try
+        {
+            await client.ConnectAsync(cts.Token);
+            var service = client.Get<IConnectionBehaviorService>();
+            await EnsureThrowsSharpLink(
+                service.EchoAsync(new string('x', 2_048)).AsTask(),
+                "oversized request",
+                SharpLinkErrorCode.ResourceExhausted);
+            Ensure(await service.PingAsync(1) == 2, "connection remains healthy after request rejection");
+
+            await EnsureThrowsSharpLink(
+                service.CreatePayloadAsync(2_048).AsTask(),
+                "oversized response",
+                SharpLinkErrorCode.ResourceExhausted);
+            Ensure(await service.PingAsync(2) == 3, "connection remains healthy after response rejection");
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await cts.CancelAsync();
+            await server.StopAsync(TimeSpan.Zero);
+            await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
+        }
+    }
+
     private static ISharpLinkClient BuildClientForEndpoint(TransportEndpoint endpoint)
     {
         var builder = SharpClientBuilder.Create()
@@ -1355,6 +1409,8 @@ public class TransportConnectionIntegrationTests
 public interface IConnectionBehaviorService : IService
 {
     ValueTask<int> PingAsync(int value);
+    ValueTask<string> EchoAsync(string value);
+    ValueTask<string> CreatePayloadAsync(int length);
     ValueTask<int> SlowAsync(int delayMs, CancellationToken cancellationToken = default);
     ValueTask<string> GetAuthenticationSummaryAsync();
     ValueTask<string> GetAuthenticationDetailsAsync();
@@ -1367,6 +1423,11 @@ public interface IConnectionBehaviorService : IService
 public sealed class ConnectionBehaviorService : IConnectionBehaviorService
 {
     public ValueTask<int> PingAsync(int value) => ValueTask.FromResult(value + 1);
+
+    public ValueTask<string> EchoAsync(string value) => ValueTask.FromResult(value);
+
+    public ValueTask<string> CreatePayloadAsync(int length)
+        => ValueTask.FromResult(new string('x', length));
 
     public async ValueTask<int> SlowAsync(int delayMs, CancellationToken cancellationToken = default)
     {

@@ -25,6 +25,12 @@ public interface IRpcBufferWriterPool
     /// <summary>Rents a cleared byte writer.</summary>
     IRpcByteBufferWriter Rent();
 
+    /// <summary>Rents a cleared writer that rejects growth beyond an ownership-specific byte limit.</summary>
+    /// <param name="maxWrittenBytes">Maximum bytes that may be advanced during this lease.</param>
+    /// <returns>A bounded writer lease owned by the caller until it is returned.</returns>
+    /// <remarks>Protocol implementations should use this overload for every network frame.</remarks>
+    IRpcByteBufferWriter Rent(int maxWrittenBytes);
+
     /// <summary>Returns a writer after its final consumer has finished.</summary>
     /// <param name="writer">The writer whose ownership is returned.</param>
     void Return(IRpcByteBufferWriter writer);

@@ -280,10 +280,12 @@ internal sealed partial class SharpLinkServer
                         Math.Min(request.MaxFramePayloadBytes, _protocolOptions.MaxFramePayloadBytes),
                         Math.Min(request.StreamReceiveWindowBytes, _runtimeContext.FlowControl.StreamReceiveWindowBytes),
                         Math.Min(request.ConnectionReceiveWindowBytes, _runtimeContext.FlowControl.ConnectionReceiveWindowBytes));
-                    ((RpcSession)session).NegotiatedCapabilities = response.NegotiatedCapabilities;
+                    var runtimeSession = (RpcSession)session;
+                    runtimeSession.NegotiatedCapabilities = response.NegotiatedCapabilities;
+                    runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
                     if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
                     {
-                        ((RpcSession)session).EnableStreamFlowControl(
+                        runtimeSession.EnableStreamFlowControl(
                             response.StreamReceiveWindowBytes,
                             response.ConnectionReceiveWindowBytes);
                     }
@@ -721,7 +723,7 @@ internal sealed partial class SharpLinkServer
             }
         }
 
-        var writer = _runtimeContext.Buffers.Rent();
+        var writer = ((RpcSession)session).RentFrameWriter();
         var ownsWriter = true;
         var token = writer.BeginPacket(
             ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((ulong)requestId));

@@ -275,10 +275,12 @@ internal sealed partial class SharpLinkClient
                     }
                     else
                     {
-                        ((RpcSession)session).NegotiatedCapabilities = response.NegotiatedCapabilities;
+                        var runtimeSession = (RpcSession)session;
+                        runtimeSession.NegotiatedCapabilities = response.NegotiatedCapabilities;
+                        runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
                         if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
                         {
-                            ((RpcSession)session).EnableStreamFlowControl(
+                            runtimeSession.EnableStreamFlowControl(
                                 response.StreamReceiveWindowBytes,
                                 response.ConnectionReceiveWindowBytes);
                         }
