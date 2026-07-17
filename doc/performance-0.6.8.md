@@ -36,4 +36,14 @@
 
 ## P068-04：附加实验
 
-待专项审计完成后补充。没有达到证据阈值的候选不会修改实现。
+本任务没有修改 Runtime/Generator 实现。结论如下：
+
+| 候选 | 证据 | 结论 |
+|---|---|---|
+| `StreamFlowController` 拆锁/struct state | BenchmarkDotNet `CreditRoundTrip` 在 1/8/32/128 流下分别为 11.59 ns、93.37 ns、357.08 ns、1.401 us，全部 0 B/op；当前没有 profile 证明并发锁等待超过目标 CPU 的 2%。 | 保留单 gate 和现有线程安全证明；该 micro 只证明无分配，不把它误写成并发锁结论。 |
+| Writer Pool 从 `ConcurrentQueue` 改为 `ConcurrentStack` | 当前池已有 writer 数量与 retained capacity 双重上限；现有 allocation/RSS 证据没有把 Queue 操作识别为主要成本，也没有 Stack 的峰值 RSS 证据。 | 不修改；避免为了局部 LIFO 命中率改变复用顺序和峰值保留行为。 |
+| Server Interceptor pipeline 池化 | 无 interceptor 时继续直接调用 Stub；启用时 pipeline 每调用创建，但本轮没有 interceptor-enabled allocation profile 证明其为主要分配源。池化还必须证明认证、session、service、arguments 和 DI scope 引用不会跨租约残留。 | 不修改；先保留清晰的每调用所有权。 |
+| Throughput 1 ms flush timer 复用 | `WaitForMoreUntilDeadlineAsync` 仅在 TimedBatch 已有待 flush 数据且队列暂时为空时创建 linked CTS；现有 LoadTest/Benchmark 没有把该 CTS 列为主要 allocation source。 | 不修改计时模型，避免引入 pump timer 与 queue wake-up 的新竞态。 |
+| Generated Stub Codec 缓存 | primitive 已走 `SharedRpcCodec<T>` 静态快速路径；Generated DTO codec 自身在构造时缓存成员 codec。剩余复杂参数的 provider lookup 尚无 DTO server profile 证明达到阈值，而且 Stub 不能跨不同 Runtime Context 缓存错误 provider。 | 不修改；保持实例级 Codec 隔离优先。 |
+
+上述候选只有在后续 profile 满足各自触发条件时才重新打开。本轮不以抽象层数量或代码观感替代性能证据。
