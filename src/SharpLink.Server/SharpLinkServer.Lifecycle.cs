@@ -28,7 +28,7 @@ internal sealed partial class SharpLinkServer
             _acceptCts.Token);
         var acceptToken = runCts.Token;
         TransitionTo(ServerState.Running);
-        TrackBackgroundTask(RunHeartbeatCheckLoopAsync(_forceStopCts.Token));
+        TrackFrameworkTask(RunHeartbeatCheckLoopAsync(_forceStopCts.Token));
 
         try
         {
@@ -38,7 +38,7 @@ internal sealed partial class SharpLinkServer
                 try
                 {
                     connection = await transportListener.AcceptAsync(acceptToken).ConfigureAwait(false);
-                    TrackBackgroundTask(HandleAcceptedConnectionAsync(connection, _forceStopCts.Token));
+                    TrackFrameworkTask(HandleAcceptedConnectionAsync(connection, _forceStopCts.Token));
                     connection = null;
                 }
                 catch (OperationCanceledException) when (acceptToken.IsCancellationRequested)
@@ -83,7 +83,7 @@ internal sealed partial class SharpLinkServer
             _forceStopCts.Cancel();
             await transportListener.DisposeAsync().ConfigureAwait(false);
             await DisposeAllSessionsAsync().ConfigureAwait(false);
-            await WaitForBackgroundTasksAsync().ConfigureAwait(false);
+            await WaitForFrameworkTasksAsync().ConfigureAwait(false);
             await DisposeServicesAsync().ConfigureAwait(false);
             throw;
         }
@@ -475,7 +475,7 @@ internal sealed partial class SharpLinkServer
                                 var dispatchTask = DispatchRpcAsync(
                                     connection, requestId, header.Flags, payload, requestCancellationMap, ct);
                                 if (!dispatchTask.IsCompletedSuccessfully)
-                                    TrackBackgroundTask(AwaitDispatchAsync(dispatchTask, requestId));
+                                    ObserveUserCall(dispatchTask, requestId);
                                 break;
                             }
                             case ProtocolV2FrameType.Cancel:
@@ -567,6 +567,9 @@ internal sealed partial class SharpLinkServer
         }
     }
 
+    private void ObserveUserCall(ValueTask dispatchTask, long requestId)
+        => _ = AwaitDispatchAsync(dispatchTask, requestId);
+
     private void DispatchOneWayRpc(
         ServerConnectionState connection,
         long requestId,
@@ -628,17 +631,19 @@ internal sealed partial class SharpLinkServer
 
             callState = EnsureTrackedCallState(
                 callState, requestId, request.Deadline, serverLoopToken, requestCancellationMap);
-            TrackBackgroundTask(AwaitOneWayDispatchAsync(
-                invokeTask,
-                callState,
-                requestId,
-                requestCancellationMap,
-                connection,
-                callContext,
-                session,
-                serviceInfo.Stub,
-                request.MethodHash,
-                invokeToken));
+            ObserveUserCall(
+                new ValueTask(AwaitOneWayDispatchAsync(
+                    invokeTask,
+                    callState,
+                    requestId,
+                    requestCancellationMap,
+                    connection,
+                    callContext,
+                    session,
+                    serviceInfo.Stub,
+                    request.MethodHash,
+                    invokeToken)),
+                requestId);
         }
         catch (Exception ex)
         {

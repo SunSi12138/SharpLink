@@ -33,8 +33,8 @@ internal sealed partial class SharpLinkServer(
     private readonly CancellationTokenSource _acceptCts = new();
     private readonly CancellationTokenSource _forceStopCts = new();
     private readonly Lock _stateGate = new();
-    private readonly Lock _backgroundTasksGate = new();
-    private readonly HashSet<Task> _backgroundTasks = [];
+    private readonly Lock _frameworkTasksGate = new();
+    private readonly HashSet<Task> _frameworkTasks = [];
     private readonly TaskCompletionSource<bool> _callsDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task? _runTask;
     private Task? _stopTask;
@@ -136,7 +136,7 @@ internal sealed partial class SharpLinkServer(
 
             _forceStopCts.Cancel();
             await DisposeAllSessionsAsync().ConfigureAwait(false);
-            await WaitForBackgroundTasksAsync().ConfigureAwait(false);
+            await WaitForFrameworkTasksAsync().ConfigureAwait(false);
             await DisposeServicesAsync().ConfigureAwait(false);
             _acceptCts.Dispose();
             _forceStopCts.Dispose();
@@ -150,17 +150,25 @@ internal sealed partial class SharpLinkServer(
         }
     }
 
-    private void TrackBackgroundTask(Task task)
+    private void TrackFrameworkTask(Task task)
     {
-        lock (_backgroundTasksGate)
-            _backgroundTasks.Add(task);
+        lock (_frameworkTasksGate)
+            _frameworkTasks.Add(task);
 
         task.ContinueWith(
             static (completedTask, state) =>
             {
                 var server = (SharpLinkServer)state!;
-                lock (server._backgroundTasksGate)
-                    server._backgroundTasks.Remove(completedTask);
+                lock (server._frameworkTasksGate)
+                    server._frameworkTasks.Remove(completedTask);
+
+                if (completedTask.Exception is { } exception)
+                {
+                    LogServerBackgroundLoopUnhandledException(
+                        server._logger,
+                        "FrameworkTask",
+                        exception.GetBaseException());
+                }
             },
             this,
             CancellationToken.None,
@@ -176,13 +184,13 @@ internal sealed partial class SharpLinkServer(
         _connections.Clear();
     }
 
-    private async Task WaitForBackgroundTasksAsync()
+    private async Task WaitForFrameworkTasksAsync()
     {
         while (true)
         {
             Task[] tasks;
-            lock (_backgroundTasksGate)
-                tasks = [.. _backgroundTasks];
+            lock (_frameworkTasksGate)
+                tasks = [.. _frameworkTasks];
 
             if (tasks.Length == 0)
                 return;
