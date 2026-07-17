@@ -11,8 +11,10 @@ namespace SharpLink.PackageSmoke;
 [RpcContract]
 public interface IPackageSmokeService : IService
 {
+    [NonCancellable]
     ValueTask<int> AddAsync(int left, int right);
 
+    [NonCancellable]
     ValueTask<PackageSmokeEnvelope> EchoAsync(PackageSmokeEnvelope value);
 }
 

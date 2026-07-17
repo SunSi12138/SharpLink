@@ -4,6 +4,37 @@
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-07-17
+
+### 新增
+
+- 每条物理连接独立拥有 `ClientConnection`、pending table、request ID、monotonic deadline timer、取消源、active count 与 Ready/Draining/Closed 状态。
+- `[NonCancellable]` 显式声明服务方法不支持协作取消；Source Generator 通过 `SHARPLINK004` 警告未声明 `CancellationToken` 的 RPC 方法。
+- `sharplink.calls.abandoned` 指标与限频结构化日志，记录客户端已放弃但服务业务仍在执行的调用。
+
+### 变更
+
+- Response、error、用户取消、deadline、断连、GoAway、send failure、stream complete 与提前停止消费统一经过每连接 `PendingCallTable.TryComplete` 仲裁。
+- 每连接只使用一个 monotonic timer 扫描有界 pending table；正常完成不再进入旧 timeout scheduler 的 Schedule/Cancel 锁。
+- 默认 Unary timeout 仍为 30 秒并固定映射为 `SharpLinkException(DeadlineExceeded)`；`DisableRequestTimeout()` 提供真正无客户端默认 timeout 的显式入口。
+- 客户端 deadline 与服务执行取消解耦：没有 `CancellationToken` 的服务调用会在客户端超时后标记 Abandoned、抑制迟到响应，并在业务任务真实结束后释放 admission 与 DI scope。
+- Server/duplex stream 提前 Dispose 会发送 Cancel，并一次性释放 pending slot、dispatcher、producer、credit waiter 与 active count。
+
+### 性能
+
+- 同步且 `[NonCancellable]` 的服务调用不租用 cancellation state、不进入服务端 cancellation map；只有支持协作取消或真正异步未完成的调用才注册状态。
+- 同机五轮 A/B 中位数相对 `v0.6.6`：c1 QPS +0.59%，c128 QPS +0.33%，c128 P99 -16.82%，`Rpc_Add` allocation 保持 672 B/op。
+- 已撤销“所有服务调用无条件注册 cancellation state”的实验；其拆分测量导致 c128 相对客户端候选回退约 10%。
+
+### 修复
+
+- 迟到 response 不再需要永久 tombstone，也不会完成已复用的 request ID 或关闭健康连接。
+- 修复提前退出 server/duplex stream 后客户端 pending、dispatcher 与 active count 泄漏。
+- 修复只因请求携带 deadline 就把任意 `OperationCanceledException` 误报为 `DeadlineExceeded` 的错误分类。
+- Cancel、deadline、response 与 disconnect 竞态只允许一个终态，operation 仍在调用方 `GetResult` 后才回池。
+
+完整 A/B 环境、失败实验和最终结论见 `doc/performance-0.6.7.md`。
+
 ## [0.6.6] - 2026-07-17
 
 ### 新增
