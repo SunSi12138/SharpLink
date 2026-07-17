@@ -10,6 +10,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
     private readonly Lock _stateGate = new();
     private readonly Lock _poolGate = new();
     private readonly Lock _backgroundTasksGate = new();
+    private readonly SemaphoreSlim _reconnectSignal = new(0, 1);
     private readonly HashSet<Task> _backgroundTasks = [];
     private ClientConnection[] _readyConnections = [];
     private readonly HashSet<ClientConnection> _connections = [];
@@ -143,6 +144,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         await WaitForBackgroundTasksAsync().ConfigureAwait(false);
 
         await transportFactory.DisposeAsync().ConfigureAwait(false);
+        _reconnectSignal.Dispose();
         _shutdownCts.Dispose();
         TransitionTo(SharpLinkConnectionState.Stopped);
     }

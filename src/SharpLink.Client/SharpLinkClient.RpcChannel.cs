@@ -181,60 +181,54 @@ internal sealed partial class SharpLinkClient
     {
         lock (_stateGate)
         {
-            if (_shutdownCts.IsCancellationRequested || _reconnectTask is { IsCompleted: false })
+            if (_shutdownCts.IsCancellationRequested)
                 return;
-            _reconnectTask = ReconnectLoopAsync();
+            if (_reconnectTask is not { IsCompleted: false })
+                _reconnectTask = ReconnectLoopAsync();
+            if (_reconnectSignal.CurrentCount == 0)
+                _reconnectSignal.Release();
         }
     }
 
     private async Task ReconnectLoopAsync()
     {
-        // EnsureReconnectLoop assigns the returned task while holding _stateGate. Yield before
-        // taking that gate so reconnect completion and replacement scheduling can be coordinated.
-        await Task.Yield();
-
         while (!_shutdownCts.IsCancellationRequested)
         {
-            if (TryCompleteReconnectLoop())
-                return;
-            var baseDelay = Volatile.Read(ref _reconnectDelayMilliseconds);
-            var jitter = 0.8 + Random.Shared.NextDouble() * 0.4;
-            var delay = TimeSpan.FromMilliseconds(baseDelay * jitter);
             try
             {
-                await Task.Delay(delay, _shutdownCts.Token).ConfigureAwait(false);
-                SharpLinkTelemetry.ReconnectAttempt();
-                await ConnectOneAsync(_shutdownCts.Token).ConfigureAwait(false);
-                PublishReadyState();
-                if (TryCompleteReconnectLoop())
-                    return;
+                await _reconnectSignal.WaitAsync(_shutdownCts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
             {
                 return;
             }
-            catch (Exception ex)
+
+            while (!_shutdownCts.IsCancellationRequested &&
+                   ReadyConnectionCount < _connectionPoolOptions.MinConnections)
             {
-                using var scope = BeginSessionLogScope(_logger, "reconnect");
-                LogClientBackgroundLoopUnhandledException(_logger, nameof(ReconnectLoopAsync), ex);
-                var nextDelay = Math.Min(baseDelay * 2, 5000);
-                Volatile.Write(ref _reconnectDelayMilliseconds, nextDelay);
-                TransitionTo(SharpLinkConnectionState.Reconnecting);
+                var baseDelay = Volatile.Read(ref _reconnectDelayMilliseconds);
+                var jitter = 0.8 + Random.Shared.NextDouble() * 0.4;
+                var delay = TimeSpan.FromMilliseconds(baseDelay * jitter);
+                try
+                {
+                    await Task.Delay(delay, _shutdownCts.Token).ConfigureAwait(false);
+                    SharpLinkTelemetry.ReconnectAttempt();
+                    await ConnectOneAsync(_shutdownCts.Token).ConfigureAwait(false);
+                    PublishReadyState();
+                }
+                catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    using var scope = BeginSessionLogScope(_logger, "reconnect");
+                    LogClientBackgroundLoopUnhandledException(_logger, nameof(ReconnectLoopAsync), ex);
+                    var nextDelay = Math.Min(baseDelay * 2, 5000);
+                    Volatile.Write(ref _reconnectDelayMilliseconds, nextDelay);
+                    TransitionTo(SharpLinkConnectionState.Reconnecting);
+                }
             }
-        }
-    }
-
-    private bool TryCompleteReconnectLoop()
-    {
-        lock (_stateGate)
-        {
-            if (_shutdownCts.IsCancellationRequested)
-                return true;
-            if (ReadyConnectionCount < _connectionPoolOptions.MinConnections)
-                return false;
-
-            _reconnectTask = null;
-            return true;
         }
     }
 

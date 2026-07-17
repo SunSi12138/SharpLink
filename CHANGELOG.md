@@ -29,7 +29,7 @@
 - 修复 Session 已终止后迟到的 `NotifyConnected` 重新增加 active-connection 指标、且再无关闭机会抵消的问题。
 - 修复 TLS 重连测试可能把上一连接代际尚未清空时的旧 Ready 状态误判为新连接已经可用的问题。
 - 修复握手帧与后续 GoAway/首个 Request 共用同一 Pipe buffer 时，未消费尾帧被错误标记为已检查并一直等待新字节的问题。
-- 修复重连 worker 正在退出时新断连信号可能误认旧 worker 仍存活，以及已被立即排空的连接仍发布全局 Ready，导致连接归零后不再正确等待替代连接的问题。
+- 重连改为实例级持久 supervisor：容量 1 的故障信号不会在 worker 退出边界丢失；同时已被立即排空的连接不再发布全局 Ready，连接归零后会持续补充替代连接直到 Client Stop。
 - 修复 NativeAOT LoadTest 报告依赖反射 JSON 序列化的问题。
 
 ### 性能与稳定性
@@ -37,7 +37,7 @@
 - 五轮 TCP Unary A/B：c1 QPS +1.86%、P99 持平；c128 QPS -0.15%、P99 -1.82%，全部零错误并通过门禁。
 - 五轮 Server Streaming A/B：QPS -1.45%、P99 -2.49%，零错误并通过门禁。
 - `Rpc_Add` 保持 672 B/op；JIT/NativeAOT smoke 正常矩阵全部零错误，AOT publish 零 trimming/AOT 警告。
-- 两分钟混合 Chaos 完成 2,947,129 次成功调用和 9 次滚动重启；以连续五次探针确认稳定恢复，最大端到端恢复 5.031 秒，非预期失败为 0，结束时所有框架 gauge 为 0。
+- 两分钟混合 Chaos 完成 2,938,187 次成功调用和 9 次滚动重启；以连续五次探针确认稳定恢复，最大端到端恢复 11.040 秒，非预期失败为 0，结束时所有框架 gauge 为 0。
 
 0.6.8 → 0.6.9 没有公共 API 或 Protocol v2 wire 变更。完整证据见 `doc/performance-0.6.9.md`、`doc/chaos-0.6.9.md` 和 `doc/migration-0.6.9.md`。
 
