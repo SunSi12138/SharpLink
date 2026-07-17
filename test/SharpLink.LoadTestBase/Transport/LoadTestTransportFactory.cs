@@ -17,10 +17,12 @@ public static class LoadTestTransportFactory
         string pipeName,
         int heartbeatCheckIntervalSeconds,
         int heartbeatTimeoutSeconds,
-        Func<SharpLinkServerBuilder, SharpLinkServerBuilder> configure)
+        Func<SharpLinkServerBuilder, SharpLinkServerBuilder> configure,
+        SharpLinkPerformanceProfile performanceProfile = SharpLinkPerformanceProfile.Balanced)
     {
         var builder = configure(SharpLinkServerBuilder.Create())
             .UseSerializer(MemoryPackCodec.Resolver)
+            .UseRuntime(options => options.PerformanceProfile = performanceProfile)
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
 
         return transport switch
@@ -42,16 +44,25 @@ public static class LoadTestTransportFactory
         int heartbeatIntervalSeconds,
         int heartbeatTimeoutSeconds,
         int minConnections,
-        int maxConnections)
+        int maxConnections,
+        SharpLinkPerformanceProfile performanceProfile = SharpLinkPerformanceProfile.Balanced,
+        bool disableRequestTimeout = false,
+        TimeSpan? requestTimeout = null)
     {
         var builder = SharpClientBuilder.Create()
             .UseSerializer(MemoryPackCodec.Resolver)
+            .UseRuntime(options => options.PerformanceProfile = performanceProfile)
             .UseConnectionPool(options =>
             {
                 options.MinConnections = minConnections;
                 options.MaxConnections = maxConnections;
             })
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
+
+        if (disableRequestTimeout)
+            builder.DisableRequestTimeout();
+        else if (requestTimeout is { } timeout)
+            builder.UseRequestTimeout(timeout);
 
         return transport switch
         {
@@ -75,11 +86,16 @@ public static class LoadTestTransportFactory
         int heartbeatTimeoutSeconds,
         int minConnections,
         int maxConnections,
-        Func<SharpLinkServerBuilder, SharpLinkServerBuilder> configure)
+        Func<SharpLinkServerBuilder, SharpLinkServerBuilder> configure,
+        SharpLinkPerformanceProfile performanceProfile = SharpLinkPerformanceProfile.Balanced,
+        bool disableRequestTimeout = false,
+        TimeSpan? requestTimeout = null)
     {
         if (transport != TransportMode.AnonymousPipe)
         {
-            var server = CreateServer(transport, bindIp, port, udsPath, pipeName, heartbeatCheckIntervalSeconds, heartbeatTimeoutSeconds, configure);
+            var server = CreateServer(
+                transport, bindIp, port, udsPath, pipeName,
+                heartbeatCheckIntervalSeconds, heartbeatTimeoutSeconds, configure, performanceProfile);
             var client = CreateClient(
                 transport,
                 host,
@@ -89,12 +105,16 @@ public static class LoadTestTransportFactory
                 heartbeatIntervalSeconds,
                 heartbeatTimeoutSeconds,
                 minConnections,
-                maxConnections);
+                maxConnections,
+                performanceProfile,
+                disableRequestTimeout,
+                requestTimeout);
             return new LocalHarness(server, client, static () => { });
         }
 
         var serverBuilder = configure(SharpLinkServerBuilder.Create())
             .UseSerializer(MemoryPackCodec.Resolver)
+            .UseRuntime(options => options.PerformanceProfile = performanceProfile)
             .UseAnonymousPipe()
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
         var anonymousPipeAllocator = (IAnonymousPipeAllocator)serverBuilder.Transport!;
@@ -104,14 +124,19 @@ public static class LoadTestTransportFactory
         var clientAnonymous = SharpClientBuilder.Create()
             .UseTransport(new AnonymousPipeClientTransportFactory(inHandler, outHandler))
             .UseSerializer(MemoryPackCodec.Resolver)
+            .UseRuntime(options => options.PerformanceProfile = performanceProfile)
             .UseConnectionPool(options =>
             {
                 options.MinConnections = minConnections;
                 options.MaxConnections = maxConnections;
             })
-            .UseHeartbeat(TimeSpan.FromSeconds(heartbeatIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds))
-            .Build();
+            .UseHeartbeat(TimeSpan.FromSeconds(heartbeatIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
+
+        if (disableRequestTimeout)
+            clientAnonymous.DisableRequestTimeout();
+        else if (requestTimeout is { } timeout)
+            clientAnonymous.UseRequestTimeout(timeout);
         
-        return new LocalHarness(serverAnonymous, clientAnonymous, static () => { });
+        return new LocalHarness(serverAnonymous, clientAnonymous.Build(), static () => { });
     }
 }

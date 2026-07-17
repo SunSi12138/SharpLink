@@ -28,12 +28,12 @@ done
 
 if [[ ${#DEMOS[@]} -eq 0 ]]; then
   DEMOS=(
-    "demo/HelloWorld",
-    "demo/Streaming",
-    "demo/Cancel",
-    "demo/Log",
-    "demo/OneWay",
-    "demo/Timeout",
+    "demo/HelloWorld"
+    "demo/Streaming"
+    "demo/Cancel"
+    "demo/Log"
+    "demo/Oneway"
+    "demo/Timeout"
     "demo/HostApplication"
   )
 fi
@@ -42,6 +42,7 @@ if [[ ${#TESTS[@]} -eq 0 ]]; then
   TESTS=(
     "test/SharpLink.IntegrationTests"
     "test/SharpLink.UnitTests"
+    "test/SharpLink.Generator.Tests"
   )
 fi
 
@@ -57,10 +58,7 @@ run_step() {
   echo
   echo "==> ${kind} :: ${project}"
 
-  local cmd=(dotnet run --project "$project")
-  if [[ "$NO_BUILD" -eq 0 ]]; then
-    cmd+=(--no-build)
-  fi
+  local cmd=(dotnet run -c Release --no-build --project "$project")
 
   if ! "${cmd[@]}"; then
     FAILED+=("${kind} :: ${project}")
@@ -69,7 +67,7 @@ run_step() {
 
 if [[ "$NO_BUILD" -eq 0 ]]; then
   echo "==> build :: Sharplink.slnx"
-  dotnet build "Sharplink.slnx" -v minimal
+  dotnet build "Sharplink.slnx" -c Release -v minimal
 fi
 
 for p in "${DEMOS[@]}"; do
@@ -91,4 +89,3 @@ for item in "${FAILED[@]}"; do
   echo "  - ${item}"
 done
 exit 1
-

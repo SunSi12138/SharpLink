@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.LoadTestBase;
+using SharpLink.Runtime;
 using SharpLink.Sdk;
 
 namespace SharpLink.LoadTest;
@@ -51,7 +52,8 @@ public static class Program
         Console.WriteLine(
             $"[Config] mode={options.Mode} transport={options.Transport} operation={options.Operation} " +
             $"duration={options.DurationSeconds}s warmup={options.WarmupSeconds}s concurrency=[{string.Join(",", options.ConcurrencyConfig)}] " +
-            $"payload={options.PayloadSize}B pool={options.MinConnections}/{options.MaxConnections}");
+            $"payload={options.PayloadSize}B pool={options.MinConnections}/{options.MaxConnections} " +
+            $"profile={options.PerformanceProfile} requestTimeout={options.RequestTimeoutMode}");
 
         if (options.Transport == TransportMode.Tcp)
             Console.WriteLine($"[Config] tcp://{options.Host}:{options.Port} (bind={options.BindIp})");
@@ -68,8 +70,11 @@ public static class Program
         Console.WriteLine("  --transport tcp|uds|namedpipe|anonymous");
         Console.WriteLine("  --host 127.0.0.1 --bind-ip 0.0.0.0 --port 19100");
         Console.WriteLine("  --duration 20 --warmup 5 --concurrency 1,2,4,8,16,32");
-        Console.WriteLine("  --operation add|echo --payload-size 64");
+        Console.WriteLine("  --operation add|echo|yield|delay --payload-size 64");
         Console.WriteLine("  --min-connections 1 --max-connections 1");
+        Console.WriteLine("  --profile balanced|lowlatency|throughput");
+        Console.WriteLine("  --request-timeout default|disabled|1ms|10ms|100ms");
+        Console.WriteLine("  --json-output artifacts/perf/load.json");
         Console.WriteLine("  --metrics-port 9464");
         Console.WriteLine("  --heartbeat-interval 10 --heartbeat-check-interval 10 --heartbeat-timeout 120");
         Console.WriteLine();
@@ -94,7 +99,10 @@ public static class Program
             options.HeartbeatTimeoutSeconds,
             options.MinConnections,
             options.MaxConnections,
-            static builder => builder.AddService<ILoadTestService, LoadTestService>());
+            static builder => builder.AddService<ILoadTestService, LoadTestService>(),
+            options.PerformanceProfile,
+            options.DisableRequestTimeout,
+            options.RequestTimeout);
         var serverCts = new CancellationTokenSource();
         var serverToken = serverCts.Token;
         var serverTask = RunServerLoopAsync(harness.Server, serverToken);
@@ -137,7 +145,8 @@ public static class Program
             options.PipeName,
             options.HeartbeatCheckIntervalSeconds,
             options.HeartbeatTimeoutSeconds,
-            static builder => builder.AddService<ILoadTestService, LoadTestService>());
+            static builder => builder.AddService<ILoadTestService, LoadTestService>(),
+            options.PerformanceProfile);
         Console.WriteLine("[Server] started.");
         await server.RunAsync(cancelScope.Token);
     }
@@ -154,9 +163,13 @@ public static class Program
                 options.HeartbeatIntervalSeconds,
                 options.HeartbeatTimeoutSeconds,
                 options.MinConnections,
-                options.MaxConnections)
+                options.MaxConnections,
+                options.PerformanceProfile,
+                options.DisableRequestTimeout,
+                options.RequestTimeout)
             : null;
         var client = clientOverride ?? ownedClient!;
+        var results = new List<StageResult>();
         try
         {
             await client.ConnectAsync();
@@ -193,7 +206,14 @@ public static class Program
 
                 if (!string.IsNullOrEmpty(result.TopFailures))
                     Console.WriteLine($"[Failures] {result.TopFailures}");
+                results.Add(result);
             }
+
+            PerformanceReportWriter.Write(
+                options.JsonOutputPath,
+                "SharpLink.LoadTest",
+                options,
+                results);
         }
         finally
         {
@@ -271,6 +291,14 @@ public static class Program
                         if (operation == "echo")
                         {
                             _ = await rpc.EchoAsync(echoPayload);
+                        }
+                        else if (operation == "yield")
+                        {
+                            _ = await rpc.YieldAsync(7, 9);
+                        }
+                        else if (operation == "delay")
+                        {
+                            _ = await rpc.DelayAsync(7, 9);
                         }
                         else
                         {
@@ -354,6 +382,17 @@ public sealed class LoadTestOptions
     public int HeartbeatTimeoutSeconds { get; private init; } = 120;
     public int MinConnections { get; private init; } = 1;
     public int MaxConnections { get; private init; } = 1;
+    public SharpLinkPerformanceProfile PerformanceProfile { get; private init; } = SharpLinkPerformanceProfile.Balanced;
+    public string RequestTimeoutMode { get; private init; } = "default";
+    public string? JsonOutputPath { get; private init; }
+    public bool DisableRequestTimeout => RequestTimeoutMode == "disabled";
+    public TimeSpan? RequestTimeout => RequestTimeoutMode switch
+    {
+        "1ms" => TimeSpan.FromMilliseconds(1),
+        "10ms" => TimeSpan.FromMilliseconds(10),
+        "100ms" => TimeSpan.FromMilliseconds(100),
+        _ => null
+    };
 
     public static LoadTestOptions Parse(string[] args)
     {
@@ -386,8 +425,20 @@ public sealed class LoadTestOptions
             : [1, 2, 4, 8, 16, 32];
 
         var operation = map.GetValueOrDefault("operation", "add").ToLowerInvariant();
-        if (operation is not ("add" or "echo"))
-            throw new ArgumentException($"Unsupported operation: {operation}. Supported: add, echo.");
+        if (operation is not ("add" or "echo" or "yield" or "delay"))
+            throw new ArgumentException($"Unsupported operation: {operation}. Supported: add, echo, yield, delay.");
+
+        var profileText = map.GetValueOrDefault("profile", "balanced");
+        var profile = profileText.ToLowerInvariant() switch
+        {
+            "balanced" => SharpLinkPerformanceProfile.Balanced,
+            "lowlatency" => SharpLinkPerformanceProfile.LowLatency,
+            "throughput" => SharpLinkPerformanceProfile.Throughput,
+            _ => throw new ArgumentException($"Unsupported performance profile: {profileText}.")
+        };
+        var requestTimeoutMode = map.GetValueOrDefault("request-timeout", "default").ToLowerInvariant();
+        if (requestTimeoutMode is not ("default" or "disabled" or "1ms" or "10ms" or "100ms"))
+            throw new ArgumentException($"Unsupported request timeout mode: {requestTimeoutMode}.");
 
         var minConnections = int.Parse(map.GetValueOrDefault("min-connections", "1"));
         var maxConnections = int.Parse(map.GetValueOrDefault("max-connections", "1"));
@@ -419,7 +470,10 @@ public sealed class LoadTestOptions
             HeartbeatCheckIntervalSeconds = int.Parse(map.GetValueOrDefault("heartbeat-check-interval", "10")),
             HeartbeatTimeoutSeconds = int.Parse(map.GetValueOrDefault("heartbeat-timeout", "120")),
             MinConnections = minConnections,
-            MaxConnections = maxConnections
+            MaxConnections = maxConnections,
+            PerformanceProfile = profile,
+            RequestTimeoutMode = requestTimeoutMode,
+            JsonOutputPath = map.GetValueOrDefault("json-output")
         };
     }
 
@@ -685,6 +739,8 @@ public interface ILoadTestService : IService
 {
     ValueTask<int> AddAsync(int left, int right);
     ValueTask<string> EchoAsync(string value);
+    ValueTask<int> YieldAsync(int left, int right);
+    ValueTask<int> DelayAsync(int left, int right);
 }
 
 [RpcService]
@@ -692,4 +748,16 @@ public class LoadTestService : ILoadTestService
 {
     public ValueTask<int> AddAsync(int left, int right) => ValueTask.FromResult(left + right);
     public ValueTask<string> EchoAsync(string value) => ValueTask.FromResult(value);
+
+    public async ValueTask<int> YieldAsync(int left, int right)
+    {
+        await Task.Yield();
+        return left + right;
+    }
+
+    public async ValueTask<int> DelayAsync(int left, int right)
+    {
+        await Task.Delay(TimeSpan.FromMilliseconds(1)).ConfigureAwait(false);
+        return left + right;
+    }
 }

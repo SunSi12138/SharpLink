@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.LoadTestBase;
+using SharpLink.Runtime;
 using SharpLink.Sdk;
 
 namespace SharpLink.StreamLoadTest;
@@ -48,7 +49,10 @@ public static class Program
         Console.WriteLine("  --duration 20 --warmup 5 --concurrency 1,2,4,8,16");
         Console.WriteLine("  --operation all|unary|c2s|s2c|duplex");
         Console.WriteLine("  --stream-size 256");
+        Console.WriteLine("  --consumer-delay-ms 0 --early-break-after 0 --pause-after 0 --pause-ms 0");
         Console.WriteLine("  --min-connections 1 --max-connections 1");
+        Console.WriteLine("  --profile balanced|lowlatency|throughput");
+        Console.WriteLine("  --json-output artifacts/perf/stream.json");
         Console.WriteLine("  --heartbeat-interval 10 --heartbeat-check-interval 10 --heartbeat-timeout 120");
         Console.WriteLine();
         Console.WriteLine("Examples:");
@@ -61,7 +65,11 @@ public static class Program
     private static void PrintConfig(StreamLoadOptions options)
     {
         Console.WriteLine($"[Config] mode={options.Mode} transport={options.Transport} op={options.Operation} duration={options.DurationSeconds}s warmup={options.WarmupSeconds}s streamSize={options.StreamSize}");
-        Console.WriteLine($"[Config] concurrency=[{string.Join(',', options.ConcurrencyConfig)}] pool={options.MinConnections}/{options.MaxConnections}");
+        Console.WriteLine(
+            $"[Config] concurrency=[{string.Join(',', options.ConcurrencyConfig)}] " +
+            $"pool={options.MinConnections}/{options.MaxConnections} profile={options.PerformanceProfile} " +
+            $"delay={options.ConsumerDelayMilliseconds}ms earlyBreak={options.EarlyBreakAfter} " +
+            $"pause={options.PauseAfter}/{options.PauseMilliseconds}ms");
 
         if (options.Transport == TransportMode.Tcp)
             Console.WriteLine($"[Config] tcp://{options.Host}:{options.Port} (bind={options.BindIp})");
@@ -87,7 +95,8 @@ public static class Program
             options.HeartbeatTimeoutSeconds,
             options.MinConnections,
             options.MaxConnections,
-            static builder => builder.AddService<IStreamLoadService, StreamLoadService>());
+            static builder => builder.AddService<IStreamLoadService, StreamLoadService>(),
+            options.PerformanceProfile);
 
         using var serverCts = new CancellationTokenSource();
         var serverTask = RunServerLoopAsync(harness.Server, serverCts.Token);
@@ -130,7 +139,8 @@ public static class Program
             options.PipeName,
             options.HeartbeatCheckIntervalSeconds,
             options.HeartbeatTimeoutSeconds,
-            static builder => builder.AddService<IStreamLoadService, StreamLoadService>());
+            static builder => builder.AddService<IStreamLoadService, StreamLoadService>(),
+            options.PerformanceProfile);
 
         Console.WriteLine("[Server] started");
         await server.RunAsync(cancel.Token);
@@ -150,7 +160,8 @@ public static class Program
             options.HeartbeatIntervalSeconds,
             options.HeartbeatTimeoutSeconds,
             options.MinConnections,
-            options.MaxConnections);
+            options.MaxConnections,
+            options.PerformanceProfile);
 
         try
         {
@@ -167,6 +178,7 @@ public static class Program
         await client.ConnectAsync();
 
         var rpc = client.Get<IStreamLoadService>();
+        var results = new List<StageResult>();
         foreach (var operation in ResolveOperations(options.Operation))
         {
             foreach (var concurrency in options.ConcurrencyConfig)
@@ -174,27 +186,34 @@ public static class Program
                 if (options.WarmupSeconds > 0)
                 {
                     Console.WriteLine($"[Warmup] op={operation} c={concurrency} for {options.WarmupSeconds}s");
-                    _ = await ExecuteStageAsync(rpc, operation, options.StreamSize, options.WarmupSeconds, concurrency);
+                    _ = await ExecuteStageAsync(rpc, operation, options, options.WarmupSeconds, concurrency);
                 }
 
-                var result = await ExecuteStageAsync(rpc, operation, options.StreamSize, options.DurationSeconds, concurrency);
+                var result = await ExecuteStageAsync(rpc, operation, options, options.DurationSeconds, concurrency);
                 Console.WriteLine($"[Result] op={result.Operation} c={result.Concurrency} qps={result.Qps:F2} ok={result.Success} fail={result.Failure} err={result.ErrorRatePercent:F2}% p50={result.P50Us:F2}us p95={result.P95Us:F2}us p99={result.P99Us:F2}us avg={result.AvgUs:F2}us max={result.MaxUs:F2}us dur={result.ElapsedSeconds:F2}s");
                 if (!string.IsNullOrEmpty(result.TopFailures))
                     Console.WriteLine($"[Failures] {result.TopFailures}");
+                results.Add(result);
             }
         }
+
+        PerformanceReportWriter.Write(
+            options.JsonOutputPath,
+            "SharpLink.StreamLoadTest",
+            options,
+            results);
     }
 
     private static async Task<StageResult> ExecuteStageAsync(
         IStreamLoadService rpc,
         string operation,
-        int streamSize,
+        StreamLoadOptions options,
         int durationSeconds,
         int concurrency)
     {
         var histogram = new LatencyHistogram();
         var failures = new FailureRecorder();
-        var payload = Enumerable.Range(1, streamSize).ToArray();
+        var payload = Enumerable.Range(1, options.StreamSize).ToArray();
 
         long success = 0;
         long failure = 0;
@@ -212,7 +231,7 @@ public static class Program
                     var start = Stopwatch.GetTimestamp();
                     try
                     {
-                        await InvokeOperationAsync(rpc, operation, payload, token);
+                        await InvokeOperationAsync(rpc, operation, payload, options, token);
                         var us = Stopwatch.GetElapsedTime(start).TotalMilliseconds * 1000.0;
                         histogram.Record(us);
                         Interlocked.Increment(ref success);
@@ -250,7 +269,12 @@ public static class Program
             failures.Top(3));
     }
 
-    private static async Task InvokeOperationAsync(IStreamLoadService rpc, string operation, int[] payload, CancellationToken ct)
+    private static async Task InvokeOperationAsync(
+        IStreamLoadService rpc,
+        string operation,
+        int[] payload,
+        StreamLoadOptions options,
+        CancellationToken ct)
     {
         switch (operation)
         {
@@ -261,20 +285,33 @@ public static class Program
                 _ = await rpc.UploadAsync(ToStream(payload, ct));
                 return;
             case "s2c":
-                await DrainAsync(rpc.DownloadAsync(payload.Length), ct);
+                await DrainAsync(rpc.DownloadAsync(payload.Length), options, ct);
                 return;
             case "duplex":
-                await DrainAsync(rpc.DuplexAsync(ToStream(payload, ct)), ct);
+                await DrainAsync(rpc.DuplexAsync(ToStream(payload, ct)), options, ct);
                 return;
             default:
                 throw new ArgumentOutOfRangeException(nameof(operation), operation, "Unsupported operation");
         }
     }
 
-    private static async Task DrainAsync(IAsyncEnumerable<int> stream, CancellationToken ct)
+    private static async Task DrainAsync(
+        IAsyncEnumerable<int> stream,
+        StreamLoadOptions options,
+        CancellationToken ct)
     {
+        var consumed = 0;
         await foreach (var item in stream.WithCancellation(ct))
+        {
             _ = item;
+            consumed++;
+            if (options.ConsumerDelayMilliseconds > 0)
+                await Task.Delay(options.ConsumerDelayMilliseconds, ct).ConfigureAwait(false);
+            if (options.PauseAfter > 0 && consumed == options.PauseAfter && options.PauseMilliseconds > 0)
+                await Task.Delay(options.PauseMilliseconds, ct).ConfigureAwait(false);
+            if (options.EarlyBreakAfter > 0 && consumed >= options.EarlyBreakAfter)
+                break;
+        }
     }
 
     private static async IAsyncEnumerable<int> ToStream(int[] values, [EnumeratorCancellation] CancellationToken ct)
@@ -310,6 +347,12 @@ public sealed class StreamLoadOptions
     public int HeartbeatTimeoutSeconds { get; private init; } = 120;
     public int MinConnections { get; private init; } = 1;
     public int MaxConnections { get; private init; } = 1;
+    public int ConsumerDelayMilliseconds { get; private init; }
+    public int EarlyBreakAfter { get; private init; }
+    public int PauseAfter { get; private init; }
+    public int PauseMilliseconds { get; private init; }
+    public SharpLinkPerformanceProfile PerformanceProfile { get; private init; } = SharpLinkPerformanceProfile.Balanced;
+    public string? JsonOutputPath { get; private init; }
 
     public static StreamLoadOptions Parse(string[] args)
     {
@@ -354,6 +397,15 @@ public sealed class StreamLoadOptions
         if (transport == TransportMode.AnonymousPipe && maxConnections != 1)
             throw new ArgumentException("Anonymous-pipe load tests require --max-connections 1.");
 
+        var profileText = map.GetValueOrDefault("profile", "balanced");
+        var profile = profileText.ToLowerInvariant() switch
+        {
+            "balanced" => SharpLinkPerformanceProfile.Balanced,
+            "lowlatency" => SharpLinkPerformanceProfile.LowLatency,
+            "throughput" => SharpLinkPerformanceProfile.Throughput,
+            _ => throw new ArgumentException($"Unsupported performance profile: {profileText}.")
+        };
+
         return new StreamLoadOptions
         {
             Mode = mode,
@@ -372,8 +424,20 @@ public sealed class StreamLoadOptions
             HeartbeatCheckIntervalSeconds = int.Parse(map.GetValueOrDefault("heartbeat-check-interval", "10")),
             HeartbeatTimeoutSeconds = int.Parse(map.GetValueOrDefault("heartbeat-timeout", "120")),
             MinConnections = minConnections,
-            MaxConnections = maxConnections
+            MaxConnections = maxConnections,
+            ConsumerDelayMilliseconds = ParseNonNegative(map, "consumer-delay-ms"),
+            EarlyBreakAfter = ParseNonNegative(map, "early-break-after"),
+            PauseAfter = ParseNonNegative(map, "pause-after"),
+            PauseMilliseconds = ParseNonNegative(map, "pause-ms"),
+            PerformanceProfile = profile,
+            JsonOutputPath = map.GetValueOrDefault("json-output")
         };
+    }
+
+    private static int ParseNonNegative(Dictionary<string, string> map, string key)
+    {
+        var value = int.Parse(map.GetValueOrDefault(key, "0"));
+        return value >= 0 ? value : throw new ArgumentOutOfRangeException(key);
     }
 }
 
