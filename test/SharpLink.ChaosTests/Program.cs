@@ -12,6 +12,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Runtime;
@@ -45,6 +46,7 @@ public static class Program
         long faultGeneration = 0;
         long maxRecoveryMilliseconds = 0;
         var restartCount = 0;
+        using var clientLogs = new ChaosLoggerFactory();
 
         var server = await ChaosServer.StartAsync(port: 0).ConfigureAwait(false);
         var port = server.Port;
@@ -52,6 +54,7 @@ public static class Program
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .UseHeartbeat(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5))
             .UseRequestTimeout(TimeSpan.FromSeconds(2))
+            .UseLoggerFactory(clientLogs)
             .UseConnectionPool(pool =>
             {
                 pool.MinConnections = 1;
@@ -141,6 +144,7 @@ public static class Program
                 while (true)
                 {
                     await Task.Delay(options.RestartInterval, duration.Token).ConfigureAwait(false);
+                    clientLogs.Clear();
                     Interlocked.Increment(ref faultGeneration);
                     var recoveryStarted = Stopwatch.GetTimestamp();
                     using var recoveryTimeout = new CancellationTokenSource(RecoveryTimeout);
@@ -152,14 +156,14 @@ public static class Program
                     }
                     catch (OperationCanceledException) when (recoveryTimeout.IsCancellationRequested)
                     {
-                        RecordUnexpectedFailure(CreateRecoveryTimeoutException());
+                        RecordUnexpectedFailure(CreateRecoveryTimeoutException(client.State, clientLogs.Snapshot()));
                         await duration.CancelAsync().ConfigureAwait(false);
                         return;
                     }
                     Interlocked.Increment(ref restartCount);
                     if (!await WaitForRecoveryAsync(service, recoveryTimeout.Token).ConfigureAwait(false))
                     {
-                        RecordUnexpectedFailure(CreateRecoveryTimeoutException());
+                        RecordUnexpectedFailure(CreateRecoveryTimeoutException(client.State, clientLogs.Snapshot()));
                         await duration.CancelAsync().ConfigureAwait(false);
                         return;
                     }
@@ -382,9 +386,17 @@ public static class Program
         return false;
     }
 
-    private static TimeoutException CreateRecoveryTimeoutException()
-        => new($"Client did not complete a probe RPC within {RecoveryTimeout.TotalSeconds:F0} " +
-               "seconds of a server restart.");
+    private static TimeoutException CreateRecoveryTimeoutException(
+        SharpLinkConnectionState state,
+        IReadOnlyList<string> clientErrors)
+    {
+        var diagnostics = clientErrors.Count == 0
+            ? "No client error logs were captured during this restart generation."
+            : string.Join(" | ", clientErrors);
+        return new TimeoutException(
+            $"Client did not complete a probe RPC within {RecoveryTimeout.TotalSeconds:F0} " +
+            $"seconds of a server restart. State={state}. ClientErrors={diagnostics}");
+    }
 
     private static void UpdateMaximum(ref long target, long candidate)
     {
@@ -568,6 +580,51 @@ internal sealed class ChaosMetricObserver : IDisposable
     }
 
     public void Dispose() => _listener.Dispose();
+}
+
+internal sealed class ChaosLoggerFactory : ILoggerFactory, ILogger
+{
+    private const int MaxRetainedErrors = 8;
+    private readonly ConcurrentQueue<string> _errors = new();
+
+    public void AddProvider(ILoggerProvider provider)
+    {
+        ArgumentNullException.ThrowIfNull(provider);
+    }
+
+    public ILogger CreateLogger(string categoryName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(categoryName);
+        return this;
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull
+        => null;
+
+    public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
+
+    public void Log<TState>(
+        LogLevel logLevel,
+        EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter)
+    {
+        if (!IsEnabled(logLevel))
+            return;
+
+        _errors.Enqueue(
+            $"Event={eventId.Id}:{eventId.Name}; Message={formatter(state, exception)}; " +
+            $"Exception={exception}");
+        while (_errors.Count > MaxRetainedErrors)
+            _errors.TryDequeue(out _);
+    }
+
+    internal void Clear() => _errors.Clear();
+
+    internal IReadOnlyList<string> Snapshot() => [.. _errors];
+
+    public void Dispose() => _errors.Clear();
 }
 
 internal sealed class ChaosOptions
