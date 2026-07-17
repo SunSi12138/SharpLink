@@ -305,9 +305,13 @@ public class InterceptorIntegrationTests
 public interface IInterceptorTestService : IService
 {
     [Idempotent]
+    [NonCancellable]
     ValueTask<string> DescribeAsync(int value, SharpLinkCallOptions options);
+    [NonCancellable]
     ValueTask<int> DescribeNumberAsync(int value);
+    [NonCancellable]
     ValueTask<int> FailAsync();
+    [NonCancellable]
     IAsyncEnumerable<int> FailStreamAsync();
 }
 

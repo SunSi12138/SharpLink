@@ -26,6 +26,15 @@ public partial class RpcGenerator
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    private static readonly DiagnosticDescriptor MissingCancellationTokenRule = new(
+        id: "SHARPLINK004",
+        title: "RPC Method Cannot Cooperatively Stop Application Work",
+        messageFormat: "RPC method '{0}' has no CancellationToken; add one or explicitly annotate the method with [NonCancellable]",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description: "Client deadlines still fail locally, but server application work may continue after the call is abandoned.");
+
     private static readonly DiagnosticDescriptor GenericUsageInRpcRule = new(
         id: "SHARPLINK005",
         title: "Generic Type Parameter Not Supported in RPC Contract",

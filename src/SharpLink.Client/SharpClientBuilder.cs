@@ -125,6 +125,9 @@ public class SharpClientBuilder
         return this;
     }
 
+    /// <summary>Configures the default timeout applied to unary calls without an earlier deadline.</summary>
+    /// <param name="timeout">A positive timeout.</param>
+    /// <returns>This builder.</returns>
     public SharpClientBuilder UseRequestTimeout(TimeSpan timeout)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
@@ -132,6 +135,9 @@ public class SharpClientBuilder
         return this;
     }
 
+    /// <summary>Disables the client default request timeout.</summary>
+    /// <remarks>Explicit call deadlines, call-option timeouts, and <c>TimeoutAttribute</c> still apply.</remarks>
+    /// <returns>This builder.</returns>
     public SharpClientBuilder DisableRequestTimeout()
     {
         _requestTimeout = null;

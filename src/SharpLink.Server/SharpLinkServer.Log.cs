@@ -50,6 +50,9 @@ internal sealed partial class SharpLinkServer
     [LoggerMessage(EventId = LogEvents.Rpc.DispatchFailed, Level = LogLevel.Error, Message = "Unhandled exception in RPC dispatch.")]
     private static partial void LogRpcDispatchUnhandledException(ILogger logger, Exception e);
 
+    [LoggerMessage(EventId = LogEvents.Rpc.CallAbandoned, Level = LogLevel.Debug, Message = "RPC call was abandoned with reason {Reason}; any late response is suppressed.")]
+    private static partial void LogRpcCallAbandoned(ILogger logger, ServerCallCancellationReason reason);
+
     [LoggerMessage(EventId = LogEvents.Server.BackgroundLoopUnhandledException, Level = LogLevel.Error, Message = "Server background loop {LoopName} failed.")]
     private static partial void LogServerBackgroundLoopUnhandledException(ILogger logger, string loopName, Exception e);
     

@@ -42,6 +42,7 @@ internal readonly record struct InvalidCancellationTokenMethodModel(string Metho
 internal readonly record struct InvalidCallOptionsMethodModel(string MethodName, Location? Location);
 internal readonly record struct InvalidControlParameterOrderModel(string MethodName, Location? Location);
 internal readonly record struct InvalidStreamCountMethodModel(string MethodName, int StreamParameterCount, Location? Location);
+internal readonly record struct NonCancellableRpcMethodModel(string MethodName, Location? Location);
 internal readonly record struct InvalidGenericUsageModel(string SymbolName, string TypeName, Location? Location);
 internal readonly record struct InvalidRpcContractInheritanceModel(string InterfaceName, Location? Location);
 

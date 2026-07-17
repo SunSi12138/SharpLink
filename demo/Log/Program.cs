@@ -52,6 +52,7 @@ finally
 [RpcContract]
 public interface ILogService : IService
 {
+    [NonCancellable]
     ValueTask<string> PingAsync();
 }
 

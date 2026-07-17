@@ -74,16 +74,27 @@ finally
 [RpcContract]
 public interface IStreamingService : IService
 {
+    [NonCancellable]
     ValueTask<int> UploadNumbers(IAsyncEnumerable<int> numbers);
+    [NonCancellable]
     IAsyncEnumerable<string> DownloadLabels(int count);
+    [NonCancellable]
     IAsyncEnumerable<string> Chat(IAsyncEnumerable<string> messages);
+    [NonCancellable]
     ValueTask<int> MergeSums(IAsyncEnumerable<int> left, IAsyncEnumerable<int> right);
+    [NonCancellable]
     ValueTask<int> ScaleAndSum(int factor, IAsyncEnumerable<int> numbers);
+    [NonCancellable]
     ValueTask<int> UploadClassItems(IAsyncEnumerable<BatchEnvelope> items);
+    [NonCancellable]
     IAsyncEnumerable<(int Index, string Label)> DownloadTupleItems(int count);
+    [NonCancellable]
     ValueTask<int> UploadStructPoints(IAsyncEnumerable<SamplePoint> points);
+    [NonCancellable]
     ValueTask<int> SumArrayBatches(IAsyncEnumerable<int[]> batches);
+    [NonCancellable]
     ValueTask<int> SumListBatches(IAsyncEnumerable<List<int>> batches);
+    [NonCancellable]
     ValueTask<int> SumMemoryBatches(IAsyncEnumerable<Memory<byte>> batches);
 }
 

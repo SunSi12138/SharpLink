@@ -59,12 +59,28 @@ public interface IHelloService : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task TimeoutWithoutCancellationTokenShouldBeAllowed()
+    public Task MissingCancellationTokenShouldReportSharplink004()
     {
         var source = BuildSource("""
 public interface IHelloService : SharpLink.Sdk.IService
 {
     [SharpLink.Sdk.Timeout(1)]
+    ValueTask<int> Echo(int value);
+}
+""");
+        source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
+
+        EnsureHasRule(source, "SHARPLINK004");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ExplicitNonCancellableShouldSuppressSharplink004()
+    {
+        var source = BuildSource("""
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    [SharpLink.Sdk.NonCancellable]
     ValueTask<int> Echo(int value);
 }
 """);
@@ -310,6 +326,11 @@ namespace SharpLink.Sdk
 
     [AttributeUsage(AttributeTargets.Method)]
     public sealed class OnewayAttribute : Attribute
+    {
+    }
+
+    [AttributeUsage(AttributeTargets.Method)]
+    public sealed class NonCancellableAttribute : Attribute
     {
     }
 

@@ -37,6 +37,7 @@ public static class LogEvents
         //Critical
         //Debug
         public const int RequestReceived = 2401;
+        public const int CallAbandoned = 2402;
         //Trace
     }
 

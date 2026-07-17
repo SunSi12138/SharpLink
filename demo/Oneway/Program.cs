@@ -39,5 +39,6 @@ public class OnewayService : IOnewayService
 public interface IOnewayService : IService
 {
     [Oneway]
+    [NonCancellable]
     ValueTask FireAndForget(string message);
 }

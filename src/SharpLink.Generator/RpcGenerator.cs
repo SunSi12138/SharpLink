@@ -53,6 +53,11 @@ public partial class RpcGenerator : IIncrementalGenerator
                 static (node, _) => node is InterfaceDeclarationSyntax,
                 static (attributeContext, ct) => GetInvalidStreamCountMethods(attributeContext, ct))
             .Where(x => x.Length > 0);
+        var nonCancellableRpcMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RpcContractAttributeMetadataName,
+                static (node, _) => node is InterfaceDeclarationSyntax,
+                static (attributeContext, ct) => GetNonCancellableRpcMethods(attributeContext, ct))
+            .Where(x => x.Length > 0);
         var invalidGenericUsage = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcContractAttributeMetadataName,
                 static (node, _) => node is InterfaceDeclarationSyntax,
@@ -108,6 +113,11 @@ public partial class RpcGenerator : IIncrementalGenerator
                     method.StreamParameterCount);
                 spc.ReportDiagnostic(diagnostic);
             }
+        });
+        context.RegisterSourceOutput(nonCancellableRpcMethods, static (spc, methods) =>
+        {
+            foreach (var method in methods)
+                spc.ReportDiagnostic(Diagnostic.Create(MissingCancellationTokenRule, method.Location, method.MethodName));
         });
         context.RegisterSourceOutput(invalidGenericUsage, static (spc, models) =>
         {

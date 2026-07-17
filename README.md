@@ -234,7 +234,11 @@ var options = new SharpLinkCallOptions
 };
 ```
 
-绝对 `Deadline`、相对 `Timeout`、`[Timeout]` 和客户端默认值会取最早到期时间。Unary 默认 30 秒；Server/Duplex stream 默认无超时。服务端可从 `SharpLinkCallContext.Current` 读取协商后的 deadline 与 metadata。
+绝对 `Deadline`、相对 `Timeout`、`[Timeout]` 和客户端默认值会取最早到期时间。Unary 默认 30 秒；Server/Duplex stream 默认无超时。调用 deadline 到期时，客户端固定得到 `SharpLinkException(DeadlineExceeded)`；这与服务实现是否声明 `CancellationToken` 无关。`DisableRequestTimeout()` 只关闭客户端默认值，显式 deadline、`Timeout` 和 `[Timeout]` 仍然生效。
+
+建议所有可能等待、访问 I/O 或占用昂贵资源的契约方法都把 `CancellationToken` 放在参数末尾。没有 token 的方法会产生 `SHARPLINK004` 警告；确认业务工作不可取消时用 `[NonCancellable]` 显式说明。此时客户端仍会按 deadline 停止等待，服务端会把调用标记为 abandoned、丢弃迟到响应并继续观察业务任务，直到任务结束后才释放该调用的 admission 与 DI scope。团队可以在 `.editorconfig` 中将 `dotnet_diagnostic.SHARPLINK004.severity = error` 提升为编译错误。
+
+服务端可从 `SharpLinkCallContext.Current` 读取协商后的 deadline 与 metadata。
 
 如果你希望直接在服务方法里做常见授权校验，可以使用：
 
@@ -326,7 +330,7 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 遥测：`SharpLinkTelemetry.ClientActivitySource`、`ServerActivitySource` 与 `Meter`
 - 服务生命周期：`AddService(instance/type/factory)`、`UseServiceProvider(...)` 与 `ServiceLifetime`
 - 健康检查：`CheckHealthAsync()`、`ISharpLinkServer.HealthStatus` 与 Hosting health checks
-- 请求超时：`UseRequestTimeout(...)`
+- 请求超时：`UseRequestTimeout(...)`；需要真正无默认超时时使用 `DisableRequestTimeout()`
 - `RpcSession` flush：`UseRpcSessionFlush(...)`
 - 实例级 Buffer Writer Pool：`UseBufferWriterPool(...)`
 - 运行时并发容器：`UseStateStoreConcurrency(...)`

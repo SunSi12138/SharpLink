@@ -236,7 +236,9 @@ internal static class LifetimeServiceState
 [RpcContract]
 public interface IEnterpriseLifetimeService : IService
 {
+    [NonCancellable]
     ValueTask<int> GetValueAsync();
+    [NonCancellable]
     IAsyncEnumerable<int> StreamAsync();
 }
 

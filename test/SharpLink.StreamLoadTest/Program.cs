@@ -459,9 +459,13 @@ public sealed record StageResult(
 [RpcContract]
 public interface IStreamLoadService : IService
 {
+    [NonCancellable]
     ValueTask<int> AddAsync(int left, int right);
+    [NonCancellable]
     ValueTask<long> UploadAsync(IAsyncEnumerable<int> values);
+    [NonCancellable]
     IAsyncEnumerable<int> DownloadAsync(int count);
+    [NonCancellable]
     IAsyncEnumerable<int> DuplexAsync(IAsyncEnumerable<int> values);
 }
 

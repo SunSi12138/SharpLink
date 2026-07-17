@@ -309,9 +309,13 @@ public class TlsTransportIntegrationTests
 [RpcContract]
 public interface ITlsIntegrationService : IService
 {
+    [NonCancellable]
     ValueTask<int> AddAsync(int left, int right);
+    [NonCancellable]
     ValueTask<int> SumAsync(IAsyncEnumerable<int> values);
+    [NonCancellable]
     IAsyncEnumerable<int> RangeAsync(int count);
+    [NonCancellable]
     IAsyncEnumerable<int> EchoAsync(long marker, IAsyncEnumerable<int> values);
 }
 

@@ -1401,14 +1401,22 @@ public class TransportConnectionIntegrationTests
 [RpcContract]
 public interface IConnectionBehaviorService : IService
 {
+    [NonCancellable]
     ValueTask<int> PingAsync(int value);
+    [NonCancellable]
     ValueTask<string> EchoAsync(string value);
+    [NonCancellable]
     ValueTask<string> CreatePayloadAsync(int length);
     ValueTask<int> SlowAsync(int delayMs, CancellationToken cancellationToken = default);
+    [NonCancellable]
     ValueTask<string> GetAuthenticationSummaryAsync();
+    [NonCancellable]
     ValueTask<string> GetAuthenticationDetailsAsync();
+    [NonCancellable]
     ValueTask<int> RequireScopeAsync(string scope);
+    [NonCancellable]
     ValueTask<int> RequireTenantAsync(string tenantId);
+    [NonCancellable]
     ValueTask<int> RequireActiveTokenAsync(long unixSeconds);
 }
 

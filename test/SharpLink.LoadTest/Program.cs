@@ -737,9 +737,13 @@ internal sealed class MetricsServer : IDisposable
 [RpcContract]
 public interface ILoadTestService : IService
 {
+    [NonCancellable]
     ValueTask<int> AddAsync(int left, int right);
+    [NonCancellable]
     ValueTask<string> EchoAsync(string value);
+    [NonCancellable]
     ValueTask<int> YieldAsync(int left, int right);
+    [NonCancellable]
     ValueTask<int> DelayAsync(int left, int right);
 }
 

@@ -131,8 +131,10 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task UnaryWithoutTimeoutAttributeShouldUseClientDefaultTimeout()
     {
+        TestService.ResetNonCancellableCompletion();
         await using var harness = await TestHarness.CreateAsync(requestTimeout: TimeSpan.FromMilliseconds(120));
         var svc = harness.Client.Get<ITestService>();
 
@@ -140,6 +142,33 @@ public class IntegrationBehaviorTests
             svc.SlowAddWithoutTimeoutAsync(1, 2).AsTask(),
             "SlowAddWithoutTimeoutAsync default timeout",
             SharpLinkErrorCode.DeadlineExceeded);
+
+        await TestService.WaitForNonCancellableCompletionAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(await svc.AddAsync(20, 22) == 42,
+            "a late non-cancellable result must be suppressed without damaging the connection");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task DisableRequestTimeoutShouldAllowNonCancellableUnaryToFinish()
+    {
+        TestService.ResetNonCancellableCompletion();
+        await using var harness = await TestHarness.CreateAsync(disableRequestTimeout: true);
+        var svc = harness.Client.Get<ITestService>();
+
+        Ensure(await svc.SlowAddWithoutTimeoutAsync(20, 22) == 42,
+            "disabled default timeout should wait for the service result");
+        await TestService.WaitForNonCancellableCompletionAsync().WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public async Task NonCancellableOperationCanceledExceptionShouldNotBeMisreportedAsDeadline()
+    {
+        await using var harness = await TestHarness.CreateAsync();
+        await EnsureThrowsSharpLinkFast(
+            harness.Client.Get<ITestService>().ThrowCancellationAsync().AsTask(),
+            "non-cancellable service cancellation classification",
+            SharpLinkErrorCode.Cancelled);
     }
 
     [Test]
@@ -389,7 +418,8 @@ public class IntegrationBehaviorTests
             TimeSpan? requestTimeout = null,
             Func<Type, IRpcCodec?>? codecResolver = null,
             Action<SharpLinkRuntimeOptions>? runtimeConfigure = null,
-            Action<SharpLinkConnectionPoolOptions>? poolConfigure = null)
+            Action<SharpLinkConnectionPoolOptions>? poolConfigure = null,
+            bool disableRequestTimeout = false)
         {
             codecResolver ??= MemoryPackCodec.Resolver;
             var cts = new CancellationTokenSource();
@@ -433,7 +463,9 @@ public class IntegrationBehaviorTests
             if (poolConfigure is not null)
                 clientBuilder.UseConnectionPool(poolConfigure);
 
-            if (requestTimeout is { } timeout)
+            if (disableRequestTimeout)
+                clientBuilder.DisableRequestTimeout();
+            else if (requestTimeout is { } timeout)
                 clientBuilder.UseRequestTimeout(timeout);
 
             var client = clientBuilder.Build();
@@ -500,10 +532,14 @@ public class IntegrationBehaviorTests
 [RpcContract]
 public interface ITestService : IService
 {
+    [NonCancellable]
     ValueTask<int> AddAsync(int left, int right);
     [Sdk.Timeout]
     ValueTask<int> SlowAddAsync(int left, int right, CancellationToken cancellationToken);
+    [NonCancellable]
     ValueTask<int> SlowAddWithoutTimeoutAsync(int left, int right);
+    [NonCancellable]
+    ValueTask ThrowCancellationAsync();
     ValueTask<int> SlowAddWithOptionsAsync(
         int left,
         int right,
@@ -513,18 +549,31 @@ public interface ITestService : IService
         int value,
         SharpLinkCallOptions options,
         CancellationToken cancellationToken);
+    [NonCancellable]
     ValueTask<Person> EchoAsync(Person person);
+    [NonCancellable]
     ValueTask<GeneratedEnvelope> EchoGeneratedAsync(GeneratedEnvelope value);
+    [NonCancellable]
     ValueTask<int> UploadAsync(IAsyncEnumerable<int> values);
+    [NonCancellable]
     IAsyncEnumerable<string> DownloadAsync(int count);
     IAsyncEnumerable<int> SlowDownloadAsync(int count, int delayMs, CancellationToken cancellationToken);
     [Oneway]
+    [NonCancellable]
     ValueTask NotifyAsync(string message);
 }
 
 [RpcService]
 public class TestService : ITestService
 {
+    private static TaskCompletionSource s_nonCancellableCompletion = CreateCompletionSource();
+
+    internal static void ResetNonCancellableCompletion()
+        => Interlocked.Exchange(ref s_nonCancellableCompletion, CreateCompletionSource());
+
+    internal static Task WaitForNonCancellableCompletionAsync()
+        => Volatile.Read(ref s_nonCancellableCompletion).Task;
+
     public ValueTask<int> AddAsync(int left, int right) => ValueTask.FromResult(left + right);
 
     public async ValueTask<int> SlowAddAsync(int left, int right, CancellationToken cancellationToken)
@@ -536,8 +585,12 @@ public class TestService : ITestService
     public async ValueTask<int> SlowAddWithoutTimeoutAsync(int left, int right)
     {
         await Task.Delay(TimeSpan.FromMilliseconds(300));
+        Volatile.Read(ref s_nonCancellableCompletion).TrySetResult();
         return left + right;
     }
+
+    public ValueTask ThrowCancellationAsync()
+        => ValueTask.FromException(new OperationCanceledException("service-specific cancellation"));
 
     public async ValueTask<int> SlowAddWithOptionsAsync(
         int left,
@@ -603,6 +656,9 @@ public class TestService : ITestService
         _ = message;
         return ValueTask.CompletedTask;
     }
+
+    private static TaskCompletionSource CreateCompletionSource()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
 
 [MemoryPackable]

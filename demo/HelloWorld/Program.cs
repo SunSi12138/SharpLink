@@ -134,18 +134,31 @@ public class HelloService : IHelloService
 [RpcContract]
 public interface IHelloService : IService
 {
+    [NonCancellable]
     ValueTask Notify();
+    [NonCancellable]
     ValueTask<string> Ping();
+    [NonCancellable]
     ValueTask<int> Add(int left, int right);
+    [NonCancellable]
     ValueTask<string> ComposeGreeting(string name, int level, bool enabled, double score, DateTime timestamp);
+    [NonCancellable]
     ValueTask<int> GetServerCode();
+    [NonCancellable]
     ValueTask<int> SumPoint(BlittablePoint point);
+    [NonCancellable]
     ValueTask<long> SumTuple((int A, int B, long C) value);
+    [NonCancellable]
     ValueTask<long> MixPointAndTuple(BlittablePoint point, (int A, int B, long C) value);
+    [NonCancellable]
     ValueTask<int> SumArray(int[] values);
+    [NonCancellable]
     ValueTask<int> SumJaggedArray(int[][] values);
+    [NonCancellable]
     ValueTask<UserProfile> EchoUser(UserProfile user);
+    [NonCancellable]
     ValueTask<List<int>> ReverseList(List<int> values);
+    [NonCancellable]
     ValueTask<Memory<byte>> ProcessMemory(Memory<byte> data);
 }
 

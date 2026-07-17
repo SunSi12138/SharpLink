@@ -62,6 +62,7 @@ public sealed class HostRpcDemoService(
 [RpcContract]
 public interface IHelloService : IService
 {
+    [NonCancellable]
     ValueTask<string> Echo(string name);
 }
 

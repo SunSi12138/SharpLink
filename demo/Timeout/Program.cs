@@ -73,8 +73,10 @@ public interface ITimeoutService : IService
     [Timeout(0.05)]
     ValueTask<int> WorkWithMethodTimeout(CancellationToken cancellationToken = default);
 
+    [NonCancellable]
     ValueTask<int> WorkWithoutTimeoutAttribute();
 
+    [NonCancellable]
     ValueTask<int> QuickSuccess();
 }
 

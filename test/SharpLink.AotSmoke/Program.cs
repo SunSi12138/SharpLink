@@ -100,11 +100,17 @@ public static class Program
 [RpcContract]
 public interface IAotService : IService
 {
+    [NonCancellable]
     ValueTask<string> PingAsync();
+    [NonCancellable]
     ValueTask<UserProfile> EchoProfileAsync(UserProfile profile);
+    [NonCancellable]
     ValueTask<int[]> ReverseIntsAsync(int[] values);
+    [NonCancellable]
     ValueTask<string[][]> EchoNestedStringsAsync(string[][] values);
+    [NonCancellable]
     ValueTask<Point2D> OffsetAsync(Point2D point, int dx, int dy);
+    [NonCancellable]
     ValueTask<AotPair> EchoPairAsync(AotPair value);
 }
 

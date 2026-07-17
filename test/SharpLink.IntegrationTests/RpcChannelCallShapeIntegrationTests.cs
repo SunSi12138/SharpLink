@@ -286,7 +286,9 @@ public class RpcChannelCallShapeIntegrationTests
 [RpcContract]
 public interface ICallShapeService : IService
 {
+    [NonCancellable]
     ValueTask<int> UnaryPayloadAsync(int payload);
+    [NonCancellable]
     ValueTask<int> UnaryNoPayloadAsync();
     ValueTask<int> UnaryCancellableAsync(int payload, CancellationToken cancellationToken = default);
     [Timeout]
@@ -306,7 +308,9 @@ public interface ICallShapeService : IService
     [Timeout(0.2)]
     ValueTask<int> UnaryAlwaysSlowWithTimeoutAsync(CancellationToken cancellationToken = default);
 
+    [NonCancellable]
     ValueTask VoidPayloadAsync(int payload);
+    [NonCancellable]
     ValueTask VoidNoPayloadAsync();
     ValueTask VoidCancellableAsync(int payload, CancellationToken cancellationToken = default);
     [Timeout]
@@ -326,11 +330,14 @@ public interface ICallShapeService : IService
     ValueTask VoidCancellableDefaultTimeoutAsync(int payload, CancellationToken cancellationToken = default);
     [Timeout(1)]
     ValueTask VoidCancellableTimeoutAsync(int payload, CancellationToken cancellationToken = default);
+    [NonCancellable]
     ValueTask<int> GetVoidTotalAsync();
 
     [Oneway]
+    [NonCancellable]
     ValueTask OneWayPayloadAsync(int payload);
     [Oneway]
+    [NonCancellable]
     ValueTask OneWayNoPayloadAsync();
     [Oneway]
     ValueTask OneWayCancellableAsync(int payload, CancellationToken cancellationToken = default);
@@ -360,9 +367,12 @@ public interface ICallShapeService : IService
     [Oneway]
     [Timeout(1)]
     ValueTask OneWayCancellableTimeoutNoPayloadAsync(CancellationToken cancellationToken = default);
+    [NonCancellable]
     ValueTask<int> GetOneWayTotalAsync();
 
+    [NonCancellable]
     ValueTask<int> ClientStreamPayloadAsync(int marker, IAsyncEnumerable<int> stream);
+    [NonCancellable]
     ValueTask<int> ClientStreamNoPayloadAsync(IAsyncEnumerable<int> stream);
     [Timeout]
     ValueTask<int> ClientStreamDefaultTimeoutPayloadAsync(int marker, IAsyncEnumerable<int> stream, CancellationToken cancellationToken = default);
@@ -375,7 +385,9 @@ public interface ICallShapeService : IService
     ValueTask<int> ClientStreamCancellableNoPayloadAsync(IAsyncEnumerable<int> stream, CancellationToken cancellationToken = default);
     [Timeout(1)]
     ValueTask<int> ClientStreamCancellableWithTimeoutNoPayloadAsync(IAsyncEnumerable<int> stream, CancellationToken cancellationToken = default);
+    [NonCancellable]
     ValueTask ClientStreamNoReturnPayloadAsync(int marker, IAsyncEnumerable<int> stream);
+    [NonCancellable]
     ValueTask ClientStreamNoReturnNoPayloadAsync(IAsyncEnumerable<int> stream);
     [Timeout]
     ValueTask ClientStreamNoReturnWithDefaultTimeoutPayloadAsync(int marker, IAsyncEnumerable<int> stream, CancellationToken cancellationToken = default);
@@ -402,8 +414,10 @@ public interface ICallShapeService : IService
     ValueTask ClientStreamCancellableNoReturnWithTimeoutNoPayloadAsync(IAsyncEnumerable<int> stream, CancellationToken cancellationToken = default);
 
     [Oneway]
+    [NonCancellable]
     ValueTask OneWayClientStreamPayloadAsync(int marker, IAsyncEnumerable<int> stream);
     [Oneway]
+    [NonCancellable]
     ValueTask OneWayClientStreamNoPayloadAsync(IAsyncEnumerable<int> stream);
     [Oneway]
     [Timeout]
@@ -434,9 +448,12 @@ public interface ICallShapeService : IService
     [Timeout(1)]
     ValueTask OneWayClientStreamCancellableWithTimeoutNoPayloadAsync(IAsyncEnumerable<int> stream, CancellationToken cancellationToken = default);
 
+    [NonCancellable]
     ValueTask<int> GetClientStreamNoReturnTotalAsync();
 
+    [NonCancellable]
     IAsyncEnumerable<int> ServerStreamPayloadAsync(int count);
+    [NonCancellable]
     IAsyncEnumerable<int> ServerStreamNoPayloadAsync();
     [Timeout]
     IAsyncEnumerable<int> ServerStreamDefaultTimeoutPayloadAsync(int count, CancellationToken cancellationToken = default);
@@ -457,7 +474,9 @@ public interface ICallShapeService : IService
     [Timeout(1)]
     IAsyncEnumerable<int> ServerStreamCancellableTimeoutNoPayloadAsync(CancellationToken cancellationToken = default);
 
+    [NonCancellable]
     IAsyncEnumerable<int> DuplexPayloadAsync(int add, IAsyncEnumerable<int> stream);
+    [NonCancellable]
     IAsyncEnumerable<int> DuplexNoPayloadAsync(IAsyncEnumerable<int> stream);
     [Timeout]
     IAsyncEnumerable<int> DuplexDefaultTimeoutPayloadAsync(int add, IAsyncEnumerable<int> stream, CancellationToken cancellationToken = default);

@@ -102,6 +102,30 @@ public partial class RpcGenerator
         return list.ToImmutable();
     }
 
+    private static ImmutableArray<NonCancellableRpcMethodModel> GetNonCancellableRpcMethods(
+        GeneratorAttributeSyntaxContext context,
+        CancellationToken _)
+    {
+        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface ||
+            !InheritsIService(symbol))
+        {
+            return ImmutableArray<NonCancellableRpcMethodModel>.Empty;
+        }
+
+        var list = ImmutableArray.CreateBuilder<NonCancellableRpcMethodModel>();
+        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        {
+            if (method.Parameters.Any(IsCancellationTokenParameter) ||
+                method.GetAttributes().Any(IsNonCancellableAttribute))
+            {
+                continue;
+            }
+
+            list.Add(new NonCancellableRpcMethodModel(method.Name, method.Locations.FirstOrDefault()));
+        }
+        return list.ToImmutable();
+    }
+
     private static ImmutableArray<InvalidCallOptionsMethodModel> GetInvalidCallOptionsMethods(
         GeneratorAttributeSyntaxContext context,
         CancellationToken _)
@@ -283,6 +307,12 @@ public partial class RpcGenerator
     {
         return IsAttribute(attribute, "SharpLink.Sdk", "IdempotentAttribute") ||
                IsAttribute(attribute, "SharpLink.Abstractions", "IdempotentAttribute");
+    }
+
+    private static bool IsNonCancellableAttribute(AttributeData attribute)
+    {
+        return IsAttribute(attribute, "SharpLink.Sdk", "NonCancellableAttribute") ||
+               IsAttribute(attribute, "SharpLink.Abstractions", "NonCancellableAttribute");
     }
 
     private static double? GetTimeoutSecondsOrNull(IMethodSymbol method, out bool hasTimeoutAttribute)
