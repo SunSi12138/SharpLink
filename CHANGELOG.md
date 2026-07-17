@@ -35,7 +35,7 @@
 - 五轮 TCP Unary A/B：c1 QPS +1.86%、P99 持平；c128 QPS -0.15%、P99 -1.82%，全部零错误并通过门禁。
 - 五轮 Server Streaming A/B：QPS -1.45%、P99 -2.49%，零错误并通过门禁。
 - `Rpc_Add` 保持 672 B/op；JIT/NativeAOT smoke 正常矩阵全部零错误，AOT publish 零 trimming/AOT 警告。
-- 两分钟混合 Chaos 完成 3,088,557 次成功调用和 10 次滚动重启，最大端到端恢复 6.559 秒，非预期失败为 0，结束时所有框架 gauge 为 0。
+- 两分钟混合 Chaos 完成 2,628,863 次成功调用和 9 次滚动重启，最大端到端恢复 13.044 秒，非预期失败为 0，结束时所有框架 gauge 为 0。
 
 0.6.8 → 0.6.9 没有公共 API 或 Protocol v2 wire 变更。完整证据见 `doc/performance-0.6.9.md`、`doc/chaos-0.6.9.md` 和 `doc/migration-0.6.9.md`。
 

@@ -22,6 +22,8 @@ namespace SharpLink.ChaosTests;
 
 public static class Program
 {
+    private static readonly TimeSpan RecoveryTimeout = TimeSpan.FromSeconds(30);
+
     public static async Task<int> Main(string[] args)
     {
         if (args.Any(static argument => argument is "--help" or "-h"))
@@ -140,13 +142,23 @@ public static class Program
                     await Task.Delay(options.RestartInterval, duration.Token).ConfigureAwait(false);
                     Interlocked.Increment(ref faultGeneration);
                     var recoveryStarted = Stopwatch.GetTimestamp();
+                    using var recoveryTimeout = new CancellationTokenSource(RecoveryTimeout);
                     await server.StopAsync().ConfigureAwait(false);
-                    server = await ChaosServer.StartWithRetryAsync(port, duration.Token).ConfigureAwait(false);
-                    Interlocked.Increment(ref restartCount);
-                    if (!await WaitForRecoveryAsync(service, duration.Token).ConfigureAwait(false))
+                    try
                     {
-                        RecordUnexpectedFailure(new TimeoutException(
-                            "Client did not complete a probe RPC within 20 seconds of a server restart."));
+                        server = await ChaosServer.StartWithRetryAsync(port, recoveryTimeout.Token)
+                            .ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (recoveryTimeout.IsCancellationRequested)
+                    {
+                        RecordUnexpectedFailure(CreateRecoveryTimeoutException());
+                        await duration.CancelAsync().ConfigureAwait(false);
+                        return;
+                    }
+                    Interlocked.Increment(ref restartCount);
+                    if (!await WaitForRecoveryAsync(service, recoveryTimeout.Token).ConfigureAwait(false))
+                    {
+                        RecordUnexpectedFailure(CreateRecoveryTimeoutException());
                         await duration.CancelAsync().ConfigureAwait(false);
                         return;
                     }
@@ -330,7 +342,8 @@ public static class Program
         IChaosService service,
         CancellationToken cancellationToken)
     {
-        var deadline = Stopwatch.GetTimestamp() + (20L * Stopwatch.Frequency);
+        var deadline = Stopwatch.GetTimestamp() +
+                       (long)Math.Ceiling(RecoveryTimeout.TotalSeconds * Stopwatch.Frequency);
         while (!cancellationToken.IsCancellationRequested)
         {
             try
@@ -353,10 +366,21 @@ public static class Program
 
             if (Stopwatch.GetTimestamp() >= deadline)
                 return false;
-            await Task.Delay(20, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await Task.Delay(20, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
         }
         return false;
     }
+
+    private static TimeoutException CreateRecoveryTimeoutException()
+        => new($"Client did not complete a probe RPC within {RecoveryTimeout.TotalSeconds:F0} " +
+               "seconds of a server restart.");
 
     private static void UpdateMaximum(ref long target, long candidate)
     {
