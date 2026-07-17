@@ -4,6 +4,35 @@
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-07-17
+
+### 新增
+
+- `ServerConnectionState` 统一拥有物理连接的 Session、认证上下文、最后接受的 request ID、每连接调用额度、取消表、连接 token 与 Handshaking/Ready/Draining/Closed 生命周期。
+- `ServerCallCancellationState` 为远端 Cancel、deadline、Server Stop、连接故障和正常完成提供 first-wins 终态仲裁与独立错误分类。
+- 增加连接认证隔离、幂等关闭、独立 admission、deadline timer、抛异常取消回调及 10,000 次取消/完成/Dispose 竞态测试。
+
+### 变更
+
+- 服务端三个 session 字典合并为单一 connection dictionary；业务请求热路径直接持有 connection state，不再逐请求查认证上下文或最后请求 ID。
+- 心跳超时、同 ID 连接替换、读循环退出和 Server Stop 统一经过幂等连接关闭入口；单连接故障只取消该连接的服务调用。
+- 框架任务继续被显式持有、等待和观察异常；异步用户调用改由 active-call counter 与统一 observer 收敛，不再为每个调用进入全局 Task HashSet 锁。
+
+### 性能
+
+- 同机 TCP c128 对同步、`Task.Yield()` 和 1 ms async 服务各执行五轮交替 A/B，全部零错误并通过 QPS/P99 回归门禁。
+- 目标 `Task.Yield()` 路径 QPS +0.08%、P99 -1.54%，未达到可宣称性能收益阈值；本版本只确认全局任务集合锁从该路径消失，不宣称平均吞吐提升。
+- StreamFlowController、Writer Pool、Interceptor pipeline、Throughput flush timer 与 Generated Stub Codec lookup 均因缺少触发阈值证据而保持不变。
+
+### 修复
+
+- 修复连接替换或心跳关闭只释放 Session、但不完成统一连接生命周期和连接级服务调用取消的问题。
+- 修复携带 deadline 的调用可能把远端取消、服务停机或连接故障误归类为 `DeadlineExceeded` 的竞态。
+- 修复已完成 framework task 在 Stop 获取快照前移出集合时，异常可能未被观察的问题。
+- 修复 Windows Release Gate 的 TLS PFX 导出、NamedPipe 测试 flush 顺序和 PackageSmoke NuGet 源隔离问题。
+
+完整 A/B、附加实验和保留结论见 `doc/performance-0.6.8.md`。
+
 ## [0.6.7] - 2026-07-17
 
 ### 新增
