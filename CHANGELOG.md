@@ -4,6 +4,34 @@
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-07-17
+
+### 新增
+
+- LoadTest、StreamLoadTest 与热路径 Micro Benchmark 增加可重复 JSON 证据，记录 commit、机器、Runtime、GC、Transport、Profile、连接池、payload 与并发度。
+- `IRpcBufferWriterPool.Rent(int maxWrittenBytes)` 与 session 协商后的出站帧硬上限。
+- Server Interceptor 异步等待期间使用有界 ArrayPool owner 持有业务 arguments，避免越过 `PipeReader.AdvanceTo` 后读取复用内存。
+
+### 性能
+
+- SendPump 没有 admission waiter 时跳过容量通知锁；默认单连接池达到上限时跳过扩容状态锁。
+- Generated Stub 的多段固定宽度参数改用有界 stack scratch，不再为每个参数分配临时数组。
+- `SharpLinkCallContext` scope 改为值类型；基准从约 104 B/op 降至 72 B/op。
+- Parser 只做帧结构验证，Metadata/Error/Handshake 等语义 payload 在消费位置解析一次；Metadata parser 基准降为 0 B/op。
+
+### 变更
+
+- 删除进程级 `BufferWriterPool`、`RuntimeConcurrency`、`RpcCodecRegistry`、`RpcCodec` 兼容入口；Codec、Pool 与状态容器配置只属于构建它们的 Client/Server Context。
+- 删除旧 Client 调用排列组合和 CallOptions wrapper；生成代理只使用 Unary、OneWay、ClientStreaming、ServerStreaming、DuplexStreaming 五类 `IRpcChannel` invoker。
+- 测试与示例迁移到实例级 Runtime Context、`SharpLinkBufferWriterPool` 和生成调用链。
+
+### 修复
+
+- Client/Server 所有业务帧、流帧与错误帧统一执行双方握手协商后的较小 frame limit；本地超限返回 `ResourceExhausted` 且不关闭健康连接。
+- 修复启用异步 Server Interceptor 后请求参数可能引用已归还 Pipe buffer 的生命周期问题。
+
+完整 A/B 环境、数据和结论见 `doc/performance-0.6.6.md`。
+
 ## [0.6.0] - 2026-07-17
 
 ### 新增
