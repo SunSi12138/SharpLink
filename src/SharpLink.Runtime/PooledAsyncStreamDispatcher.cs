@@ -2,11 +2,13 @@ namespace SharpLink.Runtime;
 
 public sealed class PooledAsyncStreamDispatcher<T> :
     IStreamConsumptionAwareDispatcher,
+    IStreamDispatchLease,
     IAsyncEnumerable<T>,
     IAsyncEnumerator<T>,
     IValueTaskSource<bool>
 {
-    private static readonly ConcurrentBag<PooledAsyncStreamDispatcher<T>> Pool = [];
+    private static readonly ConcurrentStack<PooledAsyncStreamDispatcher<T>> Pool = [];
+    private static int s_retainedCount;
 
     // 仅用于 WaitSource 的一致性（不是热路径锁）
     private readonly Lock _waitGate = new();
@@ -14,21 +16,15 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
     private ManualResetValueTaskSourceCore<bool> _waitSource;
 
-    // SPSC ring buffer: _head 仅消费者写，_tail 仅生产者写
-    // 双方会读对方的值，因此使用 Volatile.Read/Write 保证可见性与顺序
-    private T[] _buffer = new T[16]; // 2 的幂
-    private int[] _encodedByteCounts = new int[16];
-    private int _mask;               // _buffer.Length - 1
-    private int _head;               // consumer owned
-    private int _tail;               // producer owned
+    // Growable SPSC segments avoid copying a ring while the consumer is reading it.
+    private BufferSegment _firstSegment = new(16);
+    private BufferSegment _consumerSegment;
+    private BufferSegment _producerSegment;
+    private readonly ConcurrentStack<BufferSegment> _freeSegments = [];
+    private int _consumerIndex;
+    private int _producerIndex;
+    private int _totalCapacity = 16;
     private int _bufferedCount;
-
-    // 扩容握手：避免生产者在换 buffer 时消费者正在读老数组
-    // 0 = 正常，1 = 扩容中（生产者设1，完成后设0）
-    private int _resizeInProgress;
-
-    // 消费者是否正在执行 dequeue 临界段（扩容握手用）
-    private int _consumerInDequeue;
 
     // 0 = 无信号，1 = 有信号（WaitForData 的快路径）
     private int _signalState;
@@ -43,7 +39,10 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     // GetAsyncEnumerator 原子防御（审核 #4）：0/1
     private int _enumeratorTaken;
 
-    private bool _inPool;
+    // 0 = leased, 1 = returning/in pool/discarded. A CAS prevents double-return.
+    private int _poolState;
+    private int _producerOperations;
+    private IStreamDispatchState? _dispatchState;
     private Exception? _error;
 
     private CancellationToken _enumerationToken;
@@ -59,8 +58,9 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     private int _consumerTerminal;
 
     private const int InitialCapacity = 16;
-    private const int ShrinkThreshold = 4096;
+    private const int ShrinkThreshold = 256;
     private const int MaxBufferedElements = 4096;
+    private const int MaxRetainedDispatchers = 1024;
 
     private PooledAsyncStreamDispatcher()
     {
@@ -68,7 +68,8 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         {
             RunContinuationsAsynchronously = true
         };
-        _mask = _buffer.Length - 1;
+        _consumerSegment = _firstSegment;
+        _producerSegment = _firstSegment;
     }
 
     public static PooledAsyncStreamDispatcher<T> Rent(
@@ -83,8 +84,10 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         IRpcCodec<T> codec)
     {
         ArgumentNullException.ThrowIfNull(codec);
-        if (!Pool.TryTake(out var dispatcher))
+        if (!Pool.TryPop(out var dispatcher))
             dispatcher = new PooledAsyncStreamDispatcher<T>();
+        else
+            Interlocked.Decrement(ref s_retainedCount);
 
         dispatcher.Reset(enumerationToken, codec);
         return dispatcher;
@@ -102,28 +105,21 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             RunContinuationsAsynchronously = true
         };
 
-        // 可选：避免长期占用超大数组
-        if (_buffer.Length > ShrinkThreshold)
-        {
-            _buffer = new T[InitialCapacity];
-            _encodedByteCounts = new int[InitialCapacity];
-            _mask = _buffer.Length - 1;
-        }
-
-        _head = 0;
-        _tail = 0;
+        _consumerSegment = _firstSegment;
+        _producerSegment = _firstSegment;
+        _consumerIndex = 0;
+        _producerIndex = 0;
         Volatile.Write(ref _bufferedCount, 0);
 
         Volatile.Write(ref _signalState, 0);
         Volatile.Write(ref _waiterState, 0);
-        Volatile.Write(ref _resizeInProgress, 0);
-        Volatile.Write(ref _consumerInDequeue, 0);
-
         Volatile.Write(ref _completed, false);
         Volatile.Write(ref _disposed, false);
 
         Volatile.Write(ref _enumeratorTaken, 0);
-        _inPool = false;
+        Volatile.Write(ref _poolState, 0);
+        Volatile.Write(ref _producerOperations, 0);
+        Volatile.Write(ref _dispatchState, null);
 
         _error = null;
         _current = default;
@@ -139,6 +135,25 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         => DispatchAsync(payload, checked((int)payload.Length));
 
     public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
+    {
+        if (!TryAcquireDispatch())
+            return RejectedDispatch();
+        try
+        {
+            return DispatchAcquiredAsync(payload, encodedByteCount);
+        }
+        finally
+        {
+            ReleaseDispatch();
+        }
+    }
+
+    ValueTask IStreamDispatchLease.DispatchAcquiredAsync(
+        ReadOnlySequence<byte> payload,
+        int encodedByteCount)
+        => DispatchAcquiredAsync(payload, encodedByteCount);
+
+    private ValueTask DispatchAcquiredAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(encodedByteCount);
         T? item;
@@ -171,16 +186,51 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             return ValueTask.CompletedTask;
         }
 
-        // 快路径：尝试写入 ring
-        if (!TryEnqueue(item!, encodedByteCount))
-        {
-            // 满了：扩容（慢路径）
-            GrowAndEnqueue(item!, encodedByteCount);
-        }
+        Enqueue(item!, encodedByteCount);
 
         // 审核 #2：扩容路径不再内部 Signal，统一在外层一次
         Signal();
         return ValueTask.CompletedTask;
+    }
+
+    void IStreamDispatchLease.BindDispatchState(IStreamDispatchState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (Interlocked.CompareExchange(ref _dispatchState, state, null) is not null)
+            throw new InvalidOperationException("Stream dispatcher is already registered.");
+    }
+
+    void IStreamDispatchLease.OnDispatchesDrained() => TryReturnToPool();
+
+    private bool TryAcquireDispatch()
+    {
+        if (Volatile.Read(ref _poolState) != 0)
+            return false;
+
+        Interlocked.Increment(ref _producerOperations);
+        if (Volatile.Read(ref _poolState) == 0)
+            return true;
+
+        Interlocked.Decrement(ref _producerOperations);
+        return false;
+    }
+
+    private void ReleaseDispatch()
+    {
+        if (Interlocked.Decrement(ref _producerOperations) < 0)
+            throw new InvalidOperationException("Stream dispatcher producer lease underflowed.");
+        TryReturnToPool();
+    }
+
+    private static ValueTask RejectedDispatch()
+    {
+#if DEBUG
+        return ValueTask.FromException(new ObjectDisposedException(
+            typeof(PooledAsyncStreamDispatcher<T>).FullName,
+            "A stream frame targeted a dispatcher after it was returned to the pool."));
+#else
+        return ValueTask.CompletedTask;
+#endif
     }
 
     public void SetBytesConsumedCallback(
@@ -241,10 +291,6 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         {
             _enumerationToken.ThrowIfCancellationRequested();
 
-            // 扩容慢路径：让出一次（极少发生）
-            if (Volatile.Read(ref _resizeInProgress) == 1)
-                await Task.Yield();
-
             if (TryDequeue(out var value, out var encodedByteCount))
             {
                 _current = value;
@@ -260,11 +306,15 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             // 没取到：如果已完成则结束（并抛错误）
             if (Volatile.Read(ref _completed))
             {
-                Volatile.Write(ref _disposed, true);
+                if (Volatile.Read(ref _bufferedCount) != 0 ||
+                    Volatile.Read(ref _producerOperations) != 0 ||
+                    Volatile.Read(ref _dispatchState)?.HasActiveDispatches == true)
+                {
+                    await Task.Yield();
+                    continue;
+                }
 
                 var err = _error;
-                TryReturnToPool();
-
                 if (err is not null)
                     throw err;
 
@@ -307,10 +357,9 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         if (discardedBytes != 0)
             NotifyBytesConsumed(discardedBytes);
 
-        // 安全策略：不保证生产者停止 -> 仍需 completed && empty 才回池
-        TryReturnToPool();
-
+        // Signal before publishing to the pool: no code may touch this lease after return.
         Signal();
+        TryReturnToPool();
         return ValueTask.CompletedTask;
     }
 
@@ -327,132 +376,80 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         => _waitSource.OnCompleted(continuation, state, token, flags);
 
     // --------------------------
-    // SPSC ring buffer primitives
+    // SPSC segmented buffer primitives
     // --------------------------
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool TryEnqueue(T item, int encodedByteCount)
+    private void Enqueue(T item, int encodedByteCount)
     {
-        // tail 是生产者私有写
-        var tail = _tail;
-        var next = (tail + 1) & _mask;
+        var segment = _producerSegment;
+        var index = _producerIndex;
+        if (index == segment.Items.Length)
+        {
+            BufferSegment next;
+            if (_freeSegments.TryPop(out var recycled))
+            {
+                next = recycled;
+            }
+            else
+            {
+                var retainedCapacityRemaining = ShrinkThreshold - _totalCapacity;
+                var nextCapacity = retainedCapacityRemaining > 0
+                    ? Math.Min(segment.Items.Length << 1, retainedCapacityRemaining)
+                    : Math.Min(segment.Items.Length << 1, ShrinkThreshold);
+                next = new BufferSegment(nextCapacity);
+                _totalCapacity += nextCapacity;
+            }
+            Volatile.Write(ref segment.Next, next);
+            _producerSegment = segment = next;
+            _producerIndex = index = 0;
+        }
 
-        // 读 head（消费者写），判断是否满
-        var head = Volatile.Read(ref _head);
-        if (next == head)
-            return false;
-
-        _buffer[tail] = item;
-        _encodedByteCounts[tail] = encodedByteCount;
-
-        // publish tail：让消费者可见（release）
-        Volatile.Write(ref _tail, next);
-        return true;
+        segment.Items[index] = item;
+        segment.EncodedByteCounts[index] = encodedByteCount;
+        _producerIndex = index + 1;
+        Volatile.Write(ref segment.Published, index + 1);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool TryDequeue(out T value, out int encodedByteCount)
     {
-        // 如果正在扩容，让上层去 Yield（慢路径）
-        if (Volatile.Read(ref _resizeInProgress) == 1)
+        while (true)
         {
+            var segment = _consumerSegment;
+            var index = _consumerIndex;
+            var published = Volatile.Read(ref segment.Published);
+            if (index < published)
+            {
+                value = segment.Items[index];
+                encodedByteCount = segment.EncodedByteCounts[index];
+                if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+                    segment.Items[index] = default!;
+                segment.EncodedByteCounts[index] = 0;
+                _consumerIndex = index + 1;
+                Interlocked.Decrement(ref _bufferedCount);
+                return true;
+            }
+
+            if (index == segment.Items.Length && Volatile.Read(ref segment.Next) is { } next)
+            {
+                _consumerSegment = next;
+                _consumerIndex = 0;
+                Volatile.Write(ref segment.Next, null);
+                Volatile.Write(ref segment.Published, 0);
+                _freeSegments.Push(segment);
+                continue;
+            }
+
             value = default!;
             encodedByteCount = 0;
             return false;
-        }
-
-        // 标记进入 dequeue 临界段（扩容握手用）
-        Volatile.Write(ref _consumerInDequeue, 1);
-
-        try
-        {
-            // 进来后再检查一次，避免刚好遇到扩容开始
-            if (Volatile.Read(ref _resizeInProgress) == 1)
-            {
-                value = default!;
-                encodedByteCount = 0;
-                return false;
-            }
-
-            var head = _head;
-            var tail = Volatile.Read(ref _tail);
-            if (head == tail)
-            {
-                value = default!;
-                encodedByteCount = 0;
-                return false;
-            }
-
-            value = _buffer[head];
-            encodedByteCount = _encodedByteCounts[head];
-
-            if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
-                _buffer[head] = default!;
-            _encodedByteCounts[head] = 0;
-
-            // publish head：让生产者可见（release）
-            Volatile.Write(ref _head, (head + 1) & _mask);
-            Interlocked.Decrement(ref _bufferedCount);
-            return true;
-        }
-        finally
-        {
-            Volatile.Write(ref _consumerInDequeue, 0);
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool IsEmpty()
-        => Volatile.Read(ref _head) == Volatile.Read(ref _tail);
-
-    private void GrowAndEnqueue(T item, int encodedByteCount)
-    {
-        // 开始扩容：告诉消费者暂避
-        Volatile.Write(ref _resizeInProgress, 1);
-
-        // 等消费者不在 dequeue 临界段（扩容极少发生）
-        var sw = new SpinWait();
-        while (Volatile.Read(ref _consumerInDequeue) == 1)
-            sw.SpinOnce();
-
-        var old = _buffer;
-        var oldEncodedByteCounts = _encodedByteCounts;
-        var oldMask = _mask;
-
-        var head = Volatile.Read(ref _head);
-        var tail = Volatile.Read(ref _tail);
-
-        var count = tail >= head ? (tail - head) : (old.Length - head + tail);
-        var newSize = old.Length << 1;
-        var newBuf = new T[newSize];
-        var newEncodedByteCounts = new int[newSize];
-        var newMask = newSize - 1;
-
-        for (var i = 0; i < count; i++)
-        {
-            newBuf[i] = old[(head + i) & oldMask];
-            newEncodedByteCounts[i] = oldEncodedByteCounts[(head + i) & oldMask];
-        }
-
-        // 交换 buffer + 指针（消费者此时不在 dequeue 临界段）
-        _buffer = newBuf;
-        _encodedByteCounts = newEncodedByteCounts;
-        _mask = newMask;
-
-        // 重置 head/tail 到新布局
-        Volatile.Write(ref _head, 0);
-        Volatile.Write(ref _tail, count);
-
-        // enqueue 新元素（必有空间）
-        newBuf[count] = item;
-        newEncodedByteCounts[count] = encodedByteCount;
-        Volatile.Write(ref _tail, (count + 1) & newMask);
-
-        // 扩容结束
-        Volatile.Write(ref _resizeInProgress, 0);
-
-        // 审核 #2：这里不再 Signal()，由 DispatchAsync 外层统一唤醒
-    }
+        => Volatile.Read(ref _bufferedCount) == 0;
 
     // --------------------------
     // Wait/Signal (async)
@@ -510,14 +507,26 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
     private void TryReturnToPool()
     {
-        if (_inPool)
+        // 关键：不保证消费者 Dispose 后生产者停止 => 必须等 completed 才能安全回收
+        if (!Volatile.Read(ref _completed) || !IsEmpty() ||
+            Volatile.Read(ref _producerOperations) != 0 ||
+            Volatile.Read(ref _dispatchState)?.HasActiveDispatches == true)
             return;
 
-        // 关键：不保证消费者 Dispose 后生产者停止 => 必须等 completed 才能安全回收
-        if (!Volatile.Read(ref _completed) || !IsEmpty())
+        if (Interlocked.CompareExchange(ref _poolState, 1, 0) != 0)
             return;
+
+        // Close the acquire-vs-return race before clearing lease state.
+        if (Volatile.Read(ref _producerOperations) != 0 || !IsEmpty() ||
+            Volatile.Read(ref _dispatchState)?.HasActiveDispatches == true)
+        {
+            Volatile.Write(ref _poolState, 0);
+            return;
+        }
 
         _enumerationCancellationRegistration.Dispose();
+        _enumerationCancellationRegistration = default;
+        _enumerationToken = default;
         _error = null;
         _codec = null;
         _bytesConsumed = null;
@@ -525,22 +534,108 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _flowControlRequestId = 0;
         _flowControlStreamId = 0;
         _consumerAbandonedRequestId = 0;
+        Volatile.Write(ref _dispatchState, null);
 
         // 复位枚举器占用标记
         Volatile.Write(ref _enumeratorTaken, 0);
         _current = default;
 
+        if (_totalCapacity > ShrinkThreshold)
+        {
+            while (_freeSegments.TryPop(out _))
+            {
+            }
+            _firstSegment = new BufferSegment(InitialCapacity);
+            _totalCapacity = InitialCapacity;
+        }
+        else
+        {
+            var active = _consumerSegment;
+            if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+                Array.Clear(active.Items);
+            Array.Clear(active.EncodedByteCounts);
+            Volatile.Write(ref active.Published, 0);
+            Volatile.Write(ref active.Next, null);
+            foreach (var segment in _freeSegments)
+            {
+                if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+                    Array.Clear(segment.Items);
+                Array.Clear(segment.EncodedByteCounts);
+                Volatile.Write(ref segment.Published, 0);
+                Volatile.Write(ref segment.Next, null);
+            }
+            _firstSegment = active;
+        }
+        _consumerSegment = _firstSegment;
+        _producerSegment = _firstSegment;
+        _consumerIndex = 0;
+        _producerIndex = 0;
+
         Volatile.Write(ref _signalState, 0);
         Volatile.Write(ref _waiterState, 0);
-        Volatile.Write(ref _resizeInProgress, 0);
-        Volatile.Write(ref _consumerInDequeue, 0);
-
         // 注意：_completed/_disposed 会在下次 Reset 时统一清
-        _inPool = true;
-        Pool.Add(this);
+        if (Interlocked.Increment(ref s_retainedCount) <= MaxRetainedDispatchers)
+        {
+            Pool.Push(this);
+            return;
+        }
+
+        Interlocked.Decrement(ref s_retainedCount);
+    }
+
+    internal static int RetainedCountForTests => Volatile.Read(ref s_retainedCount);
+
+    internal int BufferCapacityForTests => _totalCapacity;
+
+    internal bool HasRetainedReferencesForTests
+    {
+        get
+        {
+            if (_codec is not null || _bytesConsumed is not null || _consumerAbandoned is not null ||
+                _current is not null || _enumerationToken.CanBeCanceled ||
+                !_enumerationCancellationRegistration.Equals(default))
+            {
+                return true;
+            }
+
+            if (!RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+                return false;
+            if (SegmentHasReferences(_firstSegment))
+                return true;
+            foreach (var segment in _freeSegments)
+            {
+                if (SegmentHasReferences(segment))
+                    return true;
+            }
+            return false;
+        }
+    }
+
+    private static bool SegmentHasReferences(BufferSegment segment)
+    {
+        for (var index = 0; index < segment.Items.Length; index++)
+        {
+            if (segment.Items[index] is not null)
+                return true;
+        }
+        return false;
+    }
+
+    internal static void ClearPoolForTests()
+    {
+        while (Pool.TryPop(out _))
+            Interlocked.Decrement(ref s_retainedCount);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void NotifyBytesConsumed(int encodedByteCount)
         => _bytesConsumed?.Invoke(_flowControlRequestId, _flowControlStreamId, encodedByteCount);
+
+    private sealed class BufferSegment(int capacity)
+    {
+        internal readonly T[] Items = new T[capacity];
+        internal readonly int[] EncodedByteCounts = new int[capacity];
+        internal int Published;
+        internal BufferSegment? Next;
+    }
 }

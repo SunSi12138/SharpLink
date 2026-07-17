@@ -67,19 +67,59 @@ public class StreamManager : IStreamManager
     public ValueTask DispatchChunkAsync(long requestId, ushort streamId, ReadOnlySequence<byte> payload)
     {
         if (_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
-            requestDispatchers.TryGet(streamId, out var dispatcher))
+            requestDispatchers.TryAcquire(streamId, out var entry))
         {
-            if (_acceptBytes is not null && dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+            try
             {
+                var dispatcher = entry.Dispatcher;
                 var encodedByteCount = Math.Max(1, checked((int)payload.Length));
-                _acceptBytes(requestId, streamId, encodedByteCount);
-                return consumptionAware.DispatchAsync(payload, encodedByteCount);
+                if (_acceptBytes is not null && dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+                {
+                    _acceptBytes(requestId, streamId, encodedByteCount);
+                    return CompleteDispatch(
+                        entry,
+                        dispatcher is IStreamDispatchLease leased
+                            ? leased.DispatchAcquiredAsync(payload, encodedByteCount)
+                            : consumptionAware.DispatchAsync(payload, encodedByteCount));
+                }
+
+                return CompleteDispatch(
+                    entry,
+                    dispatcher is IStreamDispatchLease dispatchLease
+                        ? dispatchLease.DispatchAcquiredAsync(payload, encodedByteCount)
+                        : dispatcher.DispatchAsync(payload));
             }
-            return dispatcher.DispatchAsync(payload);
+            catch
+            {
+                entry.Release();
+                throw;
+            }
         }
 
         Interlocked.Increment(ref _droppedStreamFrames);
         return ValueTask.CompletedTask;
+    }
+
+    private static ValueTask CompleteDispatch(DispatcherEntry entry, ValueTask dispatch)
+    {
+        if (dispatch.IsCompletedSuccessfully)
+        {
+            entry.Release();
+            return ValueTask.CompletedTask;
+        }
+        return AwaitDispatchAsync(entry, dispatch);
+    }
+
+    private static async ValueTask AwaitDispatchAsync(DispatcherEntry entry, ValueTask dispatch)
+    {
+        try
+        {
+            await dispatch.ConfigureAwait(false);
+        }
+        finally
+        {
+            entry.Release();
+        }
     }
 
     public void CompleteStream(long requestId, bool isError, string? msg)
@@ -147,54 +187,46 @@ public class StreamManager : IStreamManager
 
     private sealed class RequestDispatchers
     {
-        private IStreamDispatcher? _defaultDispatcher;
+        private DispatcherEntry? _defaultDispatcher;
         private readonly Lock _gate = new();
-        private readonly Dictionary<ushort, IStreamDispatcher> _byStreamId = [];
+        private readonly Dictionary<ushort, DispatcherEntry> _byStreamId = [];
 
         public void Register(ushort streamId, IStreamDispatcher dispatcher)
         {
             if (streamId == 0)
             {
-                if (Interlocked.CompareExchange(ref _defaultDispatcher, dispatcher, null) is not null)
+                var entry = new DispatcherEntry(dispatcher);
+                if (Interlocked.CompareExchange(ref _defaultDispatcher, entry, null) is not null)
                     throw new InvalidOperationException("The default stream is already registered.");
                 return;
             }
 
             lock (_gate)
-                _byStreamId.Add(streamId, dispatcher);
+                _byStreamId.Add(streamId, new DispatcherEntry(dispatcher));
         }
 
-        public void Unregister(ushort streamId)
-        {
-            if (streamId == 0)
-            {
-                Interlocked.Exchange(ref _defaultDispatcher, null);
-                return;
-            }
-
-            lock (_gate)
-                _byStreamId.Remove(streamId);
-        }
-
-        public bool TryGet(ushort streamId, out IStreamDispatcher dispatcher)
+        public bool TryAcquire(ushort streamId, out DispatcherEntry entry)
         {
             if (streamId != 0)
             {
                 lock (_gate)
-                    return _byStreamId.TryGetValue(streamId, out dispatcher!);
+                {
+                    if (_byStreamId.TryGetValue(streamId, out entry!) && entry.TryAcquire())
+                        return true;
+                    entry = null!;
+                    return false;
+                }
             }
-            
-            var defaultDispatcher = Volatile.Read(ref _defaultDispatcher);
-            
-            if (defaultDispatcher is not null)
+
+            var defaultEntry = Volatile.Read(ref _defaultDispatcher);
+            if (defaultEntry is not null && defaultEntry.TryAcquire())
             {
-                dispatcher = defaultDispatcher;
+                entry = defaultEntry;
                 return true;
             }
 
-            dispatcher = null!;
+            entry = null!;
             return false;
-
         }
 
         public bool TryRemove(ushort streamId, out IStreamDispatcher dispatcher)
@@ -208,14 +240,20 @@ public class StreamManager : IStreamManager
                     return false;
                 }
 
-                dispatcher = removed;
+                removed.Close();
+                dispatcher = removed.Dispatcher;
                 return true;
             }
 
             lock (_gate)
             {
-                if (_byStreamId.TryGetValue(streamId, out dispatcher!))
-                    return _byStreamId.Remove(streamId);
+                if (_byStreamId.Remove(streamId, out var entry))
+                {
+                    entry.Close();
+                    dispatcher = entry.Dispatcher;
+                    return true;
+                }
+                dispatcher = default!;
                 return false;
             }
         }
@@ -223,14 +261,18 @@ public class StreamManager : IStreamManager
         public int CompleteAll(Exception? exception)
         {
             var defaultDispatcher = Interlocked.Exchange(ref _defaultDispatcher, null);
-            defaultDispatcher?.Complete(exception);
+            defaultDispatcher?.Close();
+            defaultDispatcher?.Dispatcher.Complete(exception);
             var count = defaultDispatcher is null ? 0 : 1;
 
             lock (_gate)
             {
                 count += _byStreamId.Count;
-                foreach (var dispatcher in _byStreamId.Values)
-                    dispatcher.Complete(exception);
+                foreach (var entry in _byStreamId.Values)
+                {
+                    entry.Close();
+                    entry.Dispatcher.Complete(exception);
+                }
                 _byStreamId.Clear();
             }
             return count;
@@ -244,6 +286,62 @@ public class StreamManager : IStreamManager
                     return false;
                 lock (_gate)
                     return _defaultDispatcher is null && _byStreamId.Count == 0;
+            }
+        }
+    }
+
+    private sealed class DispatcherEntry : IStreamDispatchState
+    {
+        private const int ClosedMask = int.MinValue;
+        private const int CountMask = int.MaxValue;
+        private int _state;
+
+        internal DispatcherEntry(IStreamDispatcher dispatcher)
+        {
+            Dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+            if (dispatcher is IStreamDispatchLease lease)
+                lease.BindDispatchState(this);
+        }
+
+        internal IStreamDispatcher Dispatcher { get; }
+
+        public bool HasActiveDispatches => (Volatile.Read(ref _state) & CountMask) != 0;
+
+        internal bool TryAcquire()
+        {
+            while (true)
+            {
+                var state = Volatile.Read(ref _state);
+                if ((state & ClosedMask) != 0 || (state & CountMask) == CountMask)
+                    return false;
+                if (Interlocked.CompareExchange(ref _state, state + 1, state) != state)
+                    continue;
+
+                return true;
+            }
+        }
+
+        internal void Release()
+        {
+            var state = Interlocked.Decrement(ref _state);
+            if ((state & CountMask) == CountMask)
+                throw new InvalidOperationException("Stream dispatcher lease underflowed.");
+            if ((state & ClosedMask) != 0 && (state & CountMask) == 0 &&
+                Dispatcher is IStreamDispatchLease lease)
+            {
+                lease.OnDispatchesDrained();
+            }
+        }
+
+        internal void Close()
+        {
+            while (true)
+            {
+                var state = Volatile.Read(ref _state);
+                if ((state & ClosedMask) != 0)
+                    return;
+                if (Interlocked.CompareExchange(ref _state, state | ClosedMask, state) == state)
+                    return;
             }
         }
     }

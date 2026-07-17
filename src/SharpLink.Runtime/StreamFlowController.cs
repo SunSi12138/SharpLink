@@ -177,7 +177,13 @@ internal sealed class StreamFlowController
             var streamCredit = checked(state.Credit + encodedBytes);
             var connectionCredit = checked(_receiveConnectionCredit + encodedBytes);
             if (streamCredit > _streamWindow || connectionCredit > _connectionWindow)
-                throw Violation("Consumed stream bytes exceed the outstanding receive credit.");
+            {
+                throw Violation(
+                    $"Consumed stream bytes exceed outstanding credit " +
+                    $"(request={requestId}, stream={streamId}, bytes={encodedBytes}, " +
+                    $"streamCredit={state.Credit}/{_streamWindow}, " +
+                    $"connectionCredit={_receiveConnectionCredit}/{_connectionWindow}).");
+            }
 
             state.Credit = streamCredit;
             _receiveConnectionCredit = connectionCredit;
