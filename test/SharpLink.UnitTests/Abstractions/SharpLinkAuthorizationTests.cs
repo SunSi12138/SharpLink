@@ -3,6 +3,32 @@ namespace SharpLink.UnitTests.Abstractions;
 public class SharpLinkAuthorizationTests
 {
     [Test]
+    public async Task CallContextScopeShouldFlowAcrossAwaitAndRestoreNestedScope()
+    {
+        var previous = SharpLinkCallContext.Current;
+        var outerSnapshot = new SharpLinkCallContextSnapshot("outer", authentication: null);
+        var innerSnapshot = new SharpLinkCallContextSnapshot("inner", authentication: null);
+        var outer = SharpLinkCallContext.Push(outerSnapshot);
+
+        try
+        {
+            await Task.Yield();
+            Ensure(ReferenceEquals(outerSnapshot, SharpLinkCallContext.Current), "outer context after await");
+
+            using (SharpLinkCallContext.Push(innerSnapshot))
+                Ensure(ReferenceEquals(innerSnapshot, SharpLinkCallContext.Current), "inner context");
+
+            Ensure(ReferenceEquals(outerSnapshot, SharpLinkCallContext.Current), "outer context after nested dispose");
+        }
+        finally
+        {
+            outer.Dispose();
+        }
+
+        Ensure(ReferenceEquals(previous, SharpLinkCallContext.Current), "previous context after outer dispose");
+    }
+
+    [Test]
     public void RequireScopeShouldReturnAuthenticationWhenScopeExists()
     {
         var authentication = new SharpLinkAuthenticationContext(

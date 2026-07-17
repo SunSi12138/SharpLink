@@ -6,14 +6,14 @@ public static class SharpLinkCallContext
 
     public static SharpLinkCallContextSnapshot? Current => SCurrent.Value;
 
-    internal static IDisposable Push(SharpLinkCallContextSnapshot? snapshot)
+    internal static Scope Push(SharpLinkCallContextSnapshot? snapshot)
     {
         var previous = SCurrent.Value;
         SCurrent.Value = snapshot;
         return new Scope(previous);
     }
 
-    private sealed class Scope(SharpLinkCallContextSnapshot? previous) : IDisposable
+    internal struct Scope(SharpLinkCallContextSnapshot? previous) : IDisposable
     {
         private int _disposed;
 
