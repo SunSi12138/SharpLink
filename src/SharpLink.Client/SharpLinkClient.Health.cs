@@ -7,7 +7,8 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var session = GetReadySession();
+        var connection = GetReadyConnection();
+        var session = connection.Session;
         if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.HealthCheck) == 0)
         {
             throw new SharpLinkException(
@@ -15,41 +16,37 @@ internal sealed partial class SharpLinkClient
                 "The server did not negotiate protocol health checks.");
         }
 
-        var operation = _requestManager.Rent(HealthResponseCodec.Instance, out var requestId);
         var deadline = _hasRequestTimeout
             ? DateTimeOffset.UtcNow + _requestTimeoutValue
             : (DateTimeOffset?)null;
-        using var timeoutRegistration = RegisterRequestTimeout(
-            deadline,
-            requestId,
-            isOneWay: false);
-        await using var cancelRegistration = RegisterCancel(
+        var operation = connection.PendingCalls.Rent(
+            HealthResponseCodec.Instance,
+            PendingCallKind.Health,
+            GetMonotonicDeadlineTimestamp(deadline, DateTimeOffset.UtcNow),
             cancellationToken,
-            requestId,
-            isOneWay: false,
-            cancellationToken);
+            out var requestId);
         try
         {
-            BindRequestToSession(requestId, session);
-            session.SendHealthCheck(requestId);
+            if (connection.PendingCalls.Contains(requestId))
+                session.SendHealthCheck(requestId);
         }
         catch (Exception exception)
         {
-            TryUnbindRequest(requestId, out _);
-            _requestManager.DispatchError(requestId, exception);
+            connection.PendingCalls.TryComplete(
+                requestId,
+                PendingCallCompletionReason.SendFailure,
+                exception);
         }
 
         return await operation.AsValueTask().ConfigureAwait(false);
     }
 
-    private void DispatchHealthResponse(long requestId, ref ReadOnlySequence<byte> payload)
+    private void DispatchHealthResponse(
+        ClientConnection connection,
+        long requestId,
+        ref ReadOnlySequence<byte> payload)
     {
-        if (_requestManager.Dispatch(requestId, ref payload))
-        {
-            TryUnbindRequest(requestId, out _);
-            return;
-        }
-        if (_locallyCanceledRequestIds.Remove(requestId))
+        if (connection.PendingCalls.Dispatch(requestId, ref payload))
             return;
 
         using var requestScope = BeginRequestLogScope(_logger, requestId);

@@ -33,11 +33,12 @@ internal sealed partial class SharpLinkClient
             throw CreateDeadlineExceededException();
         return new ResolvedCallControl(
             deadline,
+            GetMonotonicDeadlineTimestamp(deadline, now),
             options.Metadata is { Count: > 0 } ? options.Metadata : null,
             options.WaitForReady);
     }
 
-    private async ValueTask<RpcSession> GetReadySessionAsync(
+    private async ValueTask<ClientConnection> GetReadyConnectionAsync(
         bool waitForReady,
         DateTimeOffset? deadline,
         CancellationToken cancellationToken)
@@ -45,10 +46,10 @@ internal sealed partial class SharpLinkClient
         while (true)
         {
             if (State == SharpLinkConnectionState.Ready && ReadyConnectionCount != 0)
-                return GetReadySession();
+                return GetReadyConnection();
 
             if (!waitForReady)
-                return GetReadySession();
+                return GetReadyConnection();
             if (State == SharpLinkConnectionState.Stopped || _shutdownCts.IsCancellationRequested)
                 throw CreateConnectionClosedException("Client has stopped.");
 
@@ -96,29 +97,24 @@ internal sealed partial class SharpLinkClient
     private static SharpLinkException CreateDeadlineExceededException()
         => new(SharpLinkErrorCode.DeadlineExceeded, "Request deadline exceeded.");
 
-    private void CompleteStreamLifetime(long requestId)
+    private static long GetMonotonicDeadlineTimestamp(
+        DateTimeOffset? deadline,
+        DateTimeOffset utcNow)
     {
-        if (_streamCallLifetimes.TryRemove(requestId, out var lifetime))
-            lifetime.Dispose();
-    }
-
-    private sealed class StreamCallLifetime(
-        TimeoutRegistration timeoutRegistration,
-        PooledCancellationRegistration cancellationRegistration) : IDisposable
-    {
-        private int _disposed;
-
-        public void Dispose()
-        {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0)
-                return;
-            timeoutRegistration.Dispose();
-            cancellationRegistration.Dispose();
-        }
+        if (deadline is not { } absoluteDeadline)
+            return 0;
+        var remaining = absoluteDeadline - utcNow;
+        if (remaining <= TimeSpan.Zero)
+            return Stopwatch.GetTimestamp();
+        var stopwatchTicks = remaining.TotalSeconds * Stopwatch.Frequency;
+        if (stopwatchTicks >= long.MaxValue - Stopwatch.GetTimestamp())
+            return long.MaxValue;
+        return Stopwatch.GetTimestamp() + Math.Max(1L, (long)Math.Ceiling(stopwatchTicks));
     }
 
     private readonly record struct ResolvedCallControl(
         DateTimeOffset? Deadline,
+        long DeadlineTimestamp,
         SharpLinkMetadata? Metadata,
         bool WaitForReady);
 }

@@ -5,104 +5,6 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
-    private static readonly Action<object?> SRequestCancelCallback = static state =>
-    {
-        var cancelState = (RequestCancelState)state!;
-        if (!cancelState.TryBeginInvocation())
-            return;
-
-        try
-        {
-            cancelState.Client.OnRequestCancel(cancelState);
-        }
-        finally
-        {
-            cancelState.ReturnAfterInvocation();
-        }
-    };
-
-    private static readonly Action<object?> SStreamCancelCallback = static state =>
-    {
-        var cancelState = (StreamCancelState)state!;
-        if (!cancelState.TryBeginInvocation())
-            return;
-
-        try
-        {
-            cancelState.Client.OnStreamCancel(cancelState);
-        }
-        finally
-        {
-            cancelState.ReturnAfterInvocation();
-        }
-    };
-
-    private static readonly Action<object?> SRequestTimeoutCallback = static state =>
-    {
-        var timeoutState = (RequestTimeoutState)state!;
-        if (!timeoutState.TryBeginInvocation())
-            return;
-
-        try
-        {
-            timeoutState.Client.OnRequestTimeout(timeoutState);
-        }
-        finally
-        {
-            timeoutState.ReturnAfterInvocation();
-        }
-    };
-
-    private static readonly Action<object?> SStreamTimeoutCallback = static state =>
-    {
-        var timeoutState = (StreamTimeoutState)state!;
-        if (!timeoutState.TryBeginInvocation())
-            return;
-
-        try
-        {
-            timeoutState.Client.OnStreamTimeout(timeoutState);
-        }
-        finally
-        {
-            timeoutState.ReturnAfterInvocation();
-        }
-    };
-
-    private PooledCancellationRegistration RegisterCancel(
-        CancellationToken ct,
-        long requestId,
-        bool isOneWay,
-        CancellationToken userToken)
-    {
-        if (!ct.CanBeCanceled)
-            return default;
-
-        var state = RequestCancelState.Rent(this, requestId, isOneWay, userToken);
-        var registration = ct.UnsafeRegister(SRequestCancelCallback, state);
-        return new PooledCancellationRegistration(registration, state);
-    }
-
-    private PooledCancellationRegistration RegisterStreamCancel(
-        CancellationToken ct,
-        long requestId,
-        CancellationToken userToken)
-    {
-        if (!ct.CanBeCanceled)
-            return default;
-
-        var state = StreamCancelState.Rent(this, requestId, userToken);
-        var registration = ct.UnsafeRegister(SStreamCancelCallback, state);
-        return new PooledCancellationRegistration(registration, state);
-    }
-
-    private static OperationCanceledException CreateCancellationException(CancellationToken userToken)
-    {
-        return userToken.CanBeCanceled
-            ? new OperationCanceledException(userToken)
-            : new OperationCanceledException();
-    }
-
     private void SendRpcCall(
         RpcSession session,
         long interfaceHash,
@@ -173,48 +75,13 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    public async Task SendClientStreamAsync<T>(long requestId, ushort streamId, IAsyncEnumerable<T> stream, CancellationToken cancellationToken = default)
-    {
-        if (!_requestSessions.TryGetValue(requestId, out var session))
-            session = GetReadySession();
-        try
-        {
-            await foreach (var item in stream.WithCancellation(cancellationToken))
-            {
-                await session.SendStreamChunkAsync(
-                    requestId,
-                    streamId,
-                    item,
-                    cancellationToken).ConfigureAwait(false);
-            }
-
-            session.SendStreamCompleteAsync(requestId, streamId);
-        }
-        catch (Exception ex)
-        {
-            try
-            {
-                session.SendStreamErrorAsync(requestId, streamId, ex);
-            }
-            catch (SharpLinkException sendException) when (sendException.Code == SharpLinkErrorCode.ConnectionClosed)
-            {
-            }
-            throw;
-        }
-    }
-
-    private async Task RunStreamSenderAsync(Func<long, CancellationToken, Task> streamSender, long requestId, CancellationToken ct)
-    {
-        try
-        {
-            await streamSender(requestId, ct);
-        }
-        catch (Exception ex)
-        {
-            TryUnbindRequest(requestId, out _);
-            _requestManager.DispatchError(requestId, ex);
-        }
-    }
+    public Task SendClientStreamAsync<T>(
+        long requestId,
+        ushort streamId,
+        IAsyncEnumerable<T> stream,
+        CancellationToken cancellationToken = default)
+        => Task.FromException(new InvalidOperationException(
+            "Client streams must use the connection-bound sink supplied to generated stream writers."));
 
     private static ValueTask DispatchStreamChunkAsync(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
@@ -227,7 +94,7 @@ internal sealed partial class SharpLinkClient
     }
 
     private void DispatchStreamComplete(
-        IRpcSession session,
+        ClientConnection connection,
         long requestId,
         ProtocolV2FrameFlags flags,
         ReadOnlySequence<byte> payload,
@@ -236,26 +103,27 @@ internal sealed partial class SharpLinkClient
         var streamId = TryReadStreamId(ref payload);
         if ((flags & ProtocolV2FrameFlags.Error) == 0)
         {
-            session.StreamManager.CompleteStream(requestId, streamId, exception: null);
             if (streamId == 0)
             {
-                _serverStreamRequestIds.Remove(requestId);
-                TryUnbindRequest(requestId, out _);
-                CompleteStreamLifetime(requestId);
+                connection.PendingCalls.TryComplete(
+                    requestId,
+                    PendingCallCompletionReason.RemoteStreamComplete);
             }
+            else
+                connection.Session.StreamManager.CompleteStream(requestId, streamId, exception: null);
             return;
         }
         var error = ProtocolV2PayloadCodec.ReadError(payload, flags, limits.MaxErrorMessageBytes);
-        session.StreamManager.CompleteStream(
-            requestId,
-            streamId,
-            new SharpLinkException(error.Code, error.Message));
+        var exception = new SharpLinkException(error.Code, error.Message);
         if (streamId == 0)
         {
-            _serverStreamRequestIds.Remove(requestId);
-            TryUnbindRequest(requestId, out _);
-            CompleteStreamLifetime(requestId);
+            connection.PendingCalls.TryComplete(
+                requestId,
+                PendingCallCompletionReason.RemoteStreamComplete,
+                exception);
         }
+        else
+            connection.Session.StreamManager.CompleteStream(requestId, streamId, exception);
     }
 
     private static ushort TryReadStreamId(ref ReadOnlySequence<byte> payload)
@@ -278,22 +146,17 @@ internal sealed partial class SharpLinkClient
         return streamId;
     }
 
-    private void HandleDisconnected(RpcSession session, Exception ex)
+    private void HandleDisconnected(ClientConnection connection, Exception ex)
     {
-        if (!RemoveReadySession(session, out var sessionCts))
+        if (!RemoveReadyConnection(connection))
             return;
 
+        var session = connection.Session;
         using var sessionScope = BeginSessionLogScope(_logger, session.Id);
         LogClientDisconnectedWithError(_logger, ex);
 
-        if (sessionCts is not null)
-        {
-            sessionCts.Cancel();
-            sessionCts.Dispose();
-        }
-        FailRequestsForSession(session, ex);
-        session.StreamManager.CompleteAll(ex);
-        TrackBackgroundTask(DisposeDisconnectedSessionAsync(session));
+        connection.Fail(ex);
+        TrackBackgroundTask(DisposeDisconnectedConnectionAsync(connection));
 
         if (_shutdownCts.IsCancellationRequested ||
             State is SharpLinkConnectionState.Stopped)
@@ -357,28 +220,28 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private RpcSession GetReadySession()
+    private ClientConnection GetReadyConnection()
     {
-        var sessions = Volatile.Read(ref _readySessions);
-        if (State == SharpLinkConnectionState.Ready && sessions.Length != 0)
+        var connections = Volatile.Read(ref _readyConnections);
+        if (State == SharpLinkConnectionState.Ready && connections.Length != 0)
         {
-            RpcSession selected;
-            if (sessions.Length == 1)
+            ClientConnection selected;
+            if (connections.Length == 1)
             {
-                selected = sessions[0];
+                selected = connections[0];
             }
             else
             {
-                var first = Random.Shared.Next(sessions.Length);
-                var second = Random.Shared.Next(sessions.Length - 1);
+                var first = Random.Shared.Next(connections.Length);
+                var second = Random.Shared.Next(connections.Length - 1);
                 if (second >= first)
                     second++;
-                selected = SelectLeastLoaded(sessions, first, second);
+                selected = SelectLeastLoaded(connections, first, second);
             }
 
             if (selected.CanAcceptCalls)
             {
-                if (selected.ActiveRequestCount != 0)
+                if (selected.ActiveCallCount != 0)
                     EnsureExpansion();
                 return selected;
             }
@@ -388,40 +251,41 @@ internal sealed partial class SharpLinkClient
         throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink connection is ready.");
     }
 
-    internal static RpcSession SelectLeastLoaded(RpcSession[] sessions, int first, int second)
+    internal static ClientConnection SelectLeastLoaded(
+        ClientConnection[] connections,
+        int first,
+        int second)
     {
-        ArgumentNullException.ThrowIfNull(sessions);
+        ArgumentNullException.ThrowIfNull(connections);
         ArgumentOutOfRangeException.ThrowIfNegative(first);
         ArgumentOutOfRangeException.ThrowIfNegative(second);
-        if ((uint)first >= (uint)sessions.Length || (uint)second >= (uint)sessions.Length)
+        if ((uint)first >= (uint)connections.Length || (uint)second >= (uint)connections.Length)
             throw new ArgumentOutOfRangeException(nameof(first));
-        var firstSession = sessions[first];
-        var secondSession = sessions[second];
-        return firstSession.ActiveRequestCount <= secondSession.ActiveRequestCount
-            ? firstSession
-            : secondSession;
+        var firstConnection = connections[first];
+        var secondConnection = connections[second];
+        return firstConnection.ActiveCallCount <= secondConnection.ActiveCallCount
+            ? firstConnection
+            : secondConnection;
     }
 
-    private bool RemoveReadySession(
-        RpcSession session,
-        out CancellationTokenSource? sessionCancellation)
+    private bool RemoveReadyConnection(ClientConnection connection)
     {
         lock (_poolGate)
         {
-            if (!_sessionCancellations.Remove(session, out sessionCancellation))
+            if (!_connections.Remove(connection))
                 return false;
             PublishReadySnapshotLocked();
             return true;
         }
     }
 
-    private void MarkSessionDraining(RpcSession session)
+    private void MarkConnectionDraining(ClientConnection connection)
     {
-        session.MarkDraining();
+        connection.MarkDraining();
         lock (_poolGate)
             PublishReadySnapshotLocked();
 
-        RetireDrainingSessionIfIdle(session);
+        RetireDrainingConnectionIfIdle(connection);
 
         if (ReadyConnectionCount != 0)
         {
@@ -433,17 +297,16 @@ internal sealed partial class SharpLinkClient
         EnsureReconnectLoop();
     }
 
-    private void RetireDrainingSessionIfIdle(RpcSession session)
+    internal void RetireDrainingConnectionIfIdle(ClientConnection connection)
     {
-        if (!session.IsDraining || session.ActiveRequestCount != 0 ||
-            !RemoveReadySession(session, out var sessionCancellation))
+        if (connection.State != ClientConnectionState.Draining ||
+            connection.ActiveCallCount != 0 ||
+            !RemoveReadyConnection(connection))
         {
             return;
         }
 
-        sessionCancellation?.Cancel();
-        sessionCancellation?.Dispose();
-        TrackBackgroundTask(DisposeDisconnectedSessionAsync(session));
+        TrackBackgroundTask(DisposeDisconnectedConnectionAsync(connection));
     }
 
     private void EnsureExpansion()
@@ -482,120 +345,15 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private void FailRequestsForSession(RpcSession session, Exception exception)
-    {
-        foreach (var pair in _requestSessions)
-        {
-            if (!ReferenceEquals(pair.Value, session) || !TryUnbindRequest(pair.Key, out _))
-                continue;
-            _requestManager.DispatchError(pair.Key, exception);
-            _serverStreamRequestIds.Remove(pair.Key);
-            _locallyCanceledRequestIds.Remove(pair.Key);
-            CompleteStreamLifetime(pair.Key);
-        }
-    }
-
-    private void OnRequestCancel(RequestCancelState state)
-    {
-        if (!state.IsOneWay && !_locallyCanceledRequestIds.Add(state.RequestId))
-            return;
-
-        TrySendCancel(state.RequestId);
-
-        if (state.IsOneWay) return;
-        var ex = CreateCancellationException(state.UserToken);
-        _requestManager.DispatchError(state.RequestId, ex);
-        TryUnbindRequest(state.RequestId, out _);
-    }
-
-    private void OnStreamCancel(StreamCancelState state)
-    {
-        if (!_locallyCanceledRequestIds.Add(state.RequestId))
-            return;
-
-        TrySendCancel(state.RequestId);
-        var ex = CreateCancellationException(state.UserToken);
-        if (_requestSessions.TryGetValue(state.RequestId, out var session))
-            session.StreamManager.CompleteStream(state.RequestId, ex);
-        _serverStreamRequestIds.Remove(state.RequestId);
-        TryUnbindRequest(state.RequestId, out _);
-    }
-
-    private void OnRequestTimeout(RequestTimeoutState state)
-    {
-        if (!state.IsOneWay && !_locallyCanceledRequestIds.Add(state.RequestId))
-            return;
-
-        TrySendCancel(state.RequestId);
-        if (!state.IsOneWay)
-        {
-            _requestManager.DispatchError(state.RequestId, new SharpLinkException(
-                SharpLinkErrorCode.DeadlineExceeded,
-                "Request deadline exceeded."));
-            TryUnbindRequest(state.RequestId, out _);
-        }
-    }
-
-    private void OnStreamTimeout(StreamTimeoutState state)
-    {
-        if (!_locallyCanceledRequestIds.Add(state.RequestId))
-            return;
-
-        TrySendCancel(state.RequestId);
-        if (_requestSessions.TryGetValue(state.RequestId, out var session))
-        {
-            session.StreamManager.CompleteStream(state.RequestId, new SharpLinkException(
-                SharpLinkErrorCode.DeadlineExceeded,
-                "Request deadline exceeded."));
-        }
-        _serverStreamRequestIds.Remove(state.RequestId);
-        TryUnbindRequest(state.RequestId, out _);
-    }
-
-    private void TrySendCancel(long requestId)
+    private static async Task DisposeDisconnectedConnectionAsync(ClientConnection connection)
     {
         try
         {
-            if (_requestSessions.TryGetValue(requestId, out var requestSession))
-                requestSession.SendCancelAsync(requestId);
-            else
-                _session?.SendCancelAsync(requestId);
-        }
-        catch (SharpLinkException ex) when (ex.Code is
-            SharpLinkErrorCode.ConnectionClosed or
-            SharpLinkErrorCode.ResourceExhausted or
-            SharpLinkErrorCode.Unavailable)
-        {
-        }
-    }
-
-    private static async Task DisposeDisconnectedSessionAsync(IRpcSession session)
-    {
-        try
-        {
-            await session.DisposeAsync().ConfigureAwait(false);
+            await connection.DisposeAsync().ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is ObjectDisposedException or IOException or SocketException)
         {
         }
-    }
-
-    private TimeoutRegistration RegisterRequestTimeout(DateTimeOffset? deadline, long requestId, bool isOneWay)
-    {
-        if (deadline is not { } absoluteDeadline)
-            return default;
-
-        var state = RequestTimeoutState.Rent(this, requestId, isOneWay);
-        return _requestTimeoutScheduler.Schedule(requestId, absoluteDeadline, SRequestTimeoutCallback, state);
-    }
-
-    private TimeoutRegistration RegisterStreamTimeout(DateTimeOffset? deadline, long requestId)
-    {
-        if (deadline is not { } absoluteDeadline)
-            return default;
-
-        var state = StreamTimeoutState.Rent(this, requestId);
-        return _requestTimeoutScheduler.Schedule(requestId, absoluteDeadline, SStreamTimeoutCallback, state);
     }
 
 }

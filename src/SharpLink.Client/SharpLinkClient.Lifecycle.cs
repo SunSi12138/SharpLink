@@ -30,7 +30,7 @@ internal sealed partial class SharpLinkClient
 
     private async Task ConnectInitialAsync(CancellationToken cancellationToken)
     {
-        var connected = new List<RpcSession>(_connectionPoolOptions.MinConnections);
+        var connected = new List<ClientConnection>(_connectionPoolOptions.MinConnections);
         try
         {
             for (var index = 0; index < _connectionPoolOptions.MinConnections; index++)
@@ -41,9 +41,7 @@ internal sealed partial class SharpLinkClient
         {
             for (var index = 0; index < connected.Count; index++)
             {
-                RemoveReadySession(connected[index], out var cancellation);
-                cancellation?.Cancel();
-                cancellation?.Dispose();
+                RemoveReadyConnection(connected[index]);
                 await connected[index].DisposeAsync().ConfigureAwait(false);
             }
             if (!_shutdownCts.IsCancellationRequested)
@@ -52,7 +50,7 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private async Task<RpcSession> ConnectOneAsync(CancellationToken cancellationToken)
+    private async Task<ClientConnection> ConnectOneAsync(CancellationToken cancellationToken)
     {
         using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
@@ -99,34 +97,47 @@ internal sealed partial class SharpLinkClient
                 throw handshakeException;
 
             var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(_shutdownCts.Token);
-            var readySession = session;
+            var clientConnection = new ClientConnection(
+                this,
+                session,
+                sessionCts,
+                _protocolOptions.MaxPendingRequestsPerConnection,
+                _runtimeContext.Codecs);
+            var readySession = clientConnection.Session;
             readySession.OnDisconnected += exception => HandleDisconnected(
-                readySession,
+                clientConnection,
                 exception ?? CreateConnectionClosedException("Transport closed."));
 
+            Exception? poolException = null;
             lock (_poolGate)
             {
                 if (_shutdownCts.IsCancellationRequested ||
                     State is SharpLinkConnectionState.Stopped)
                 {
-                    sessionCts.Dispose();
-                    throw CreateConnectionClosedException("Client stopped while connecting.");
+                    poolException = CreateConnectionClosedException("Client stopped while connecting.");
                 }
-                if (CountReadyConnectionsLocked() >= _connectionPoolOptions.MaxConnections)
+                else if (CountReadyConnectionsLocked() >= _connectionPoolOptions.MaxConnections)
                 {
-                    sessionCts.Dispose();
-                    throw new InvalidOperationException("The connection pool is already at capacity.");
+                    poolException = new InvalidOperationException("The connection pool is already at capacity.");
                 }
-
-                _sessionCancellations.Add(readySession, sessionCts);
-                PublishReadySnapshotLocked();
+                else
+                {
+                    _connections.Add(clientConnection);
+                    PublishReadySnapshotLocked();
+                }
+            }
+            if (poolException is not null)
+            {
+                session = null;
+                await clientConnection.DisposeAsync().ConfigureAwait(false);
+                throw poolException;
             }
 
             readySession.NotifyConnected();
-            TrackBackgroundTask(RunHeartbeatSendLoopAsync(readySession, sessionCts.Token));
-            TrackBackgroundTask(RunProcessRequestLoopAsync(readySession, sessionCts.Token));
+            TrackBackgroundTask(RunHeartbeatSendLoopAsync(clientConnection, sessionCts.Token));
+            TrackBackgroundTask(RunProcessRequestLoopAsync(clientConnection, sessionCts.Token));
             session = null;
-            return readySession;
+            return clientConnection;
         }
         catch
         {
@@ -152,23 +163,22 @@ internal sealed partial class SharpLinkClient
 
     private void PublishReadySnapshotLocked()
     {
-        var snapshot = new RpcSession[_sessionCancellations.Count];
+        var snapshot = new ClientConnection[_connections.Count];
         var index = 0;
-        foreach (var candidate in _sessionCancellations.Keys)
+        foreach (var candidate in _connections)
         {
             if (candidate.CanAcceptCalls)
                 snapshot[index++] = candidate;
         }
         if (index != snapshot.Length)
             Array.Resize(ref snapshot, index);
-        Volatile.Write(ref _readySessions, snapshot);
-        Volatile.Write(ref _session, snapshot.Length == 0 ? null : snapshot[0]);
+        Volatile.Write(ref _readyConnections, snapshot);
     }
 
     private int CountReadyConnectionsLocked()
     {
         var count = 0;
-        foreach (var candidate in _sessionCancellations.Keys)
+        foreach (var candidate in _connections)
         {
             if (candidate.CanAcceptCalls)
                 count++;
@@ -182,11 +192,12 @@ internal sealed partial class SharpLinkClient
     private static bool IsTransportFault(Exception ex)
         => ex is IOException or ObjectDisposedException or SocketException;
 
-    private async Task RunHeartbeatSendLoopAsync(RpcSession session, CancellationToken ct)
+    private async Task RunHeartbeatSendLoopAsync(ClientConnection connection, CancellationToken ct)
     {
+        var session = connection.Session;
         try
         {
-            await HeartbeatSendLoop(session, ct);
+            await HeartbeatSendLoop(connection, ct);
         }
         catch (Exception ex) when (IsExpectedCancellation(ex, ct))
         {
@@ -195,17 +206,18 @@ internal sealed partial class SharpLinkClient
         {
             using var sessionScope = BeginSessionLogScope(_logger, session.Id);
             LogClientBackgroundLoopUnhandledException(_logger, nameof(HeartbeatSendLoop), ex);
-            HandleDisconnected(session, IsTransportFault(ex)
+            HandleDisconnected(connection, IsTransportFault(ex)
                 ? CreateConnectionClosedException("Transport closed.", ex)
                 : ex);
         }
     }
 
-    private async Task RunProcessRequestLoopAsync(RpcSession session, CancellationToken ct)
+    private async Task RunProcessRequestLoopAsync(ClientConnection connection, CancellationToken ct)
     {
+        var session = connection.Session;
         try
         {
-            await ProcessRequestLoop(session, ct);
+            await ProcessRequestLoop(connection, ct);
         }
         catch (Exception ex) when (IsExpectedCancellation(ex, ct))
         {
@@ -216,7 +228,7 @@ internal sealed partial class SharpLinkClient
                 SharpLinkTelemetry.RecordProtocolFailure("client");
             using var sessionScope = BeginSessionLogScope(_logger, session.Id);
             LogClientBackgroundLoopUnhandledException(_logger, nameof(ProcessRequestLoop), ex);
-            HandleDisconnected(session, IsTransportFault(ex)
+            HandleDisconnected(connection, IsTransportFault(ex)
                 ? CreateConnectionClosedException("Transport closed.", ex)
                 : ex);
         }
@@ -322,8 +334,9 @@ internal sealed partial class SharpLinkClient
             : CreateConnectionClosedException("Server disconnected during handshake.");
     }
 
-    private async Task ProcessRequestLoop(RpcSession session, CancellationToken ct)
+    private async Task ProcessRequestLoop(ClientConnection connection, CancellationToken ct)
     {
+        var session = connection.Session;
         var reader = session.Input;
         using var sessionScope = BeginSessionLogScope(_logger, session.Id);
 
@@ -349,10 +362,10 @@ internal sealed partial class SharpLinkClient
                             DebugLogServerCancelIgnored(_logger);
                             break;
                         case ProtocolV2FrameType.Response:
-                            DispatchRpc(unchecked((long)header.RequestId), header.Flags, ref payload);
+                            DispatchRpc(connection, unchecked((long)header.RequestId), header.Flags, ref payload);
                             break;
                         case ProtocolV2FrameType.HealthResponse:
-                            DispatchHealthResponse(unchecked((long)header.RequestId), ref payload);
+                            DispatchHealthResponse(connection, unchecked((long)header.RequestId), ref payload);
                             break;
                         case ProtocolV2FrameType.StreamData:
                             var dispatchTask = DispatchStreamChunkAsync(session, unchecked((long)header.RequestId), payload);
@@ -361,7 +374,7 @@ internal sealed partial class SharpLinkClient
                             break;
                         case ProtocolV2FrameType.StreamComplete:
                             DispatchStreamComplete(
-                                session, unchecked((long)header.RequestId), header.Flags, payload, _protocolOptions);
+                                connection, unchecked((long)header.RequestId), header.Flags, payload, _protocolOptions);
                             break;
                         case ProtocolV2FrameType.WindowUpdate:
                             session.ApplyWindowUpdate(
@@ -375,7 +388,7 @@ internal sealed partial class SharpLinkClient
                                 payload.Slice(sizeof(ulong)),
                                 header.Flags | ProtocolV2FrameFlags.Error,
                                 _protocolOptions.MaxErrorMessageBytes);
-                            MarkSessionDraining(session);
+                            MarkConnectionDraining(connection);
                             using (BeginRequestLogScope(_logger, unchecked((long)header.RequestId)))
                                 LogClientDisconnectedWithError(
                                     _logger,
@@ -388,7 +401,7 @@ internal sealed partial class SharpLinkClient
                         default:
                             SharpLinkTelemetry.RecordProtocolFailure("client");
                             await session.DisposeAsync();
-                            HandleDisconnected(session, CreateProtocolViolationException("Received unexpected packet from server."));
+                            HandleDisconnected(connection, CreateProtocolViolationException("Received unexpected packet from server."));
                             return;
                     }
                 }
@@ -402,11 +415,12 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        HandleDisconnected(session, CreateConnectionClosedException("Server disconnected."));
+        HandleDisconnected(connection, CreateConnectionClosedException("Server disconnected."));
     }
 
-    private async Task HeartbeatSendLoop(RpcSession session, CancellationToken ct)
+    private async Task HeartbeatSendLoop(ClientConnection connection, CancellationToken ct)
     {
+        var session = connection.Session;
         using var sessionScope = BeginSessionLogScope(_logger, session.Id);
         while (!ct.IsCancellationRequested)
         {
@@ -419,12 +433,16 @@ internal sealed partial class SharpLinkClient
             LogServerHeartbeatTimeout(_logger);
 
             await session.DisposeAsync();
-            HandleDisconnected(session, CreateHeartbeatTimeoutException("Server heartbeat timeout."));
+            HandleDisconnected(connection, CreateHeartbeatTimeoutException("Server heartbeat timeout."));
             break;
         }
     }
 
-    private void DispatchRpc(long requestId, ProtocolV2FrameFlags flags, ref ReadOnlySequence<byte> payload)
+    private void DispatchRpc(
+        ClientConnection connection,
+        long requestId,
+        ProtocolV2FrameFlags flags,
+        ref ReadOnlySequence<byte> payload)
     {
         var isError = (flags & ProtocolV2FrameFlags.Error) != 0;
 
@@ -432,37 +450,14 @@ internal sealed partial class SharpLinkClient
         {
             var error = ProtocolV2PayloadCodec.ReadError(payload, flags, _protocolOptions.MaxErrorMessageBytes);
             var remoteException = new SharpLinkException(error.Code, error.Message);
-            if (_requestManager.DispatchError(requestId, remoteException))
-            {
-                TryUnbindRequest(requestId, out _);
+            if (connection.PendingCalls.DispatchError(requestId, remoteException))
                 return;
-            }
-
-            if (_serverStreamRequestIds.Remove(requestId))
-            {
-                if (TryUnbindRequest(requestId, out var requestSession))
-                    requestSession.StreamManager.CompleteStream(requestId, remoteException);
-                CompleteStreamLifetime(requestId);
-                return;
-            }
         }
         else
         {
-            if (_requestManager.Dispatch(requestId, ref payload))
-            {
-                TryUnbindRequest(requestId, out _);
+            if (connection.PendingCalls.Dispatch(requestId, ref payload))
                 return;
-            }
-
-            // Server-stream receives a terminal RpcResponse ACK; swallow it.
-            if (_serverStreamRequestIds.Contains(requestId))
-            {
-                return;
-            }
         }
-
-        if (_locallyCanceledRequestIds.Remove(requestId))
-            return;
 
         using var requestScope = BeginRequestLogScope(_logger, requestId);
         LogUnknownOrTimedOutResponse(_logger);

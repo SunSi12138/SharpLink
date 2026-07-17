@@ -143,6 +143,28 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    public async Task EarlyServerStreamDisposalShouldCancelAndReleaseConnectionState()
+    {
+        await using var harness = await TestHarness.CreateAsync();
+        var client = (SharpLinkClient)harness.Client;
+        var service = harness.Client.Get<ITestService>();
+
+        for (var iteration = 0; iteration < 100; iteration++)
+        {
+            await using var enumerator = service
+                .SlowDownloadAsync(1_000, 10, CancellationToken.None)
+                .GetAsyncEnumerator();
+            Ensure(await enumerator.MoveNextAsync(), "stream should produce its first item");
+        }
+
+        await WaitUntilAsync(() =>
+            client.PendingCallCount == 0 &&
+            client.ActiveClientCallCount == 0 &&
+            client.ActiveClientStreamCount == 0);
+        Ensure(await service.AddAsync(20, 22) == 42, "connection should remain healthy after early disposal");
+    }
+
+    [Test]
     public async Task CallOptionsShouldCarryMetadataAndUseEarliestDeadline()
     {
         await using var harness = await TestHarness.CreateAsync();

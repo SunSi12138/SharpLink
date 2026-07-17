@@ -94,20 +94,37 @@ public class SharpLinkClientLifecycleStateTests
     [Test]
     public async Task PowerOfTwoChoiceShouldSelectLowerActiveConnection()
     {
-        var firstConnection = new TestTransportConnection();
-        var secondConnection = new TestTransportConnection();
-        await using var first = new RpcSession(firstConnection);
-        await using var second = new RpcSession(secondConnection);
-        first.AddActiveRequest();
-        first.AddActiveRequest();
-        second.AddActiveRequest();
+        await using var owner = new SharpLinkClient(
+            new TestClientTransportFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        var context = new SharpLinkRuntimeContextBuilder().Build();
+        await using var first = new ClientConnection(
+            owner,
+            new RpcSession(new TestTransportConnection()),
+            new CancellationTokenSource(),
+            8,
+            context.Codecs);
+        await using var second = new ClientConnection(
+            owner,
+            new RpcSession(new TestTransportConnection()),
+            new CancellationTokenSource(),
+            8,
+            context.Codecs);
+        var firstCall1 = first.PendingCalls.Rent<int>(out var firstId1);
+        var firstCall2 = first.PendingCalls.Rent<int>(out var firstId2);
+        var secondCall = second.PendingCalls.Rent<int>(out var secondId);
 
         var selected = SharpLinkClient.SelectLeastLoaded([first, second], 0, 1);
         Ensure(ReferenceEquals(selected, second), "power-of-two should select the lower active count");
 
-        first.ReleaseActiveRequest();
-        first.ReleaseActiveRequest();
-        second.ReleaseActiveRequest();
+        var completed = new InvalidOperationException("test completion");
+        first.PendingCalls.DispatchError(firstId1, completed);
+        first.PendingCalls.DispatchError(firstId2, completed);
+        second.PendingCalls.DispatchError(secondId, completed);
+        await ObserveFailureAsync(firstCall1.AsValueTask());
+        await ObserveFailureAsync(firstCall2.AsValueTask());
+        await ObserveFailureAsync(secondCall.AsValueTask());
     }
 
     [Test]
@@ -157,6 +174,17 @@ public class SharpLinkClientLifecycleStateTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private static async Task ObserveFailureAsync(ValueTask<int> operation)
+    {
+        try
+        {
+            await operation;
+        }
+        catch (InvalidOperationException)
+        {
+        }
     }
 
     private sealed class SequenceClientTransportFactory : IClientTransportFactory

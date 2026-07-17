@@ -6,20 +6,13 @@ namespace SharpLink.Client;
 internal sealed partial class SharpLinkClient(IClientTransportFactory transportFactory) : IRpcChannel, ISharpLinkClient
 {
     private readonly SharpLinkRuntimeContext _runtimeContext = new SharpLinkRuntimeContextBuilder().Build();
-    private readonly StripedLongSet _serverStreamRequestIds = new();
-    private readonly StripedLongSet _locallyCanceledRequestIds = new();
-    private readonly PendingRequestTable _requestManager = new();
-    private readonly ConcurrentDictionary<long, RpcSession> _requestSessions = [];
-    private readonly ConcurrentDictionary<long, StreamCallLifetime> _streamCallLifetimes = [];
-    private readonly RequestTimeoutScheduler _requestTimeoutScheduler = new();
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly Lock _stateGate = new();
     private readonly Lock _poolGate = new();
     private readonly Lock _backgroundTasksGate = new();
     private readonly HashSet<Task> _backgroundTasks = [];
-    private RpcSession? _session;
-    private RpcSession[] _readySessions = [];
-    private readonly Dictionary<RpcSession, CancellationTokenSource> _sessionCancellations = [];
+    private ClientConnection[] _readyConnections = [];
+    private readonly HashSet<ClientConnection> _connections = [];
     private Task? _connectTask;
     private Task? _reconnectTask;
     private Task? _expansionTask;
@@ -71,9 +64,6 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         _rpcSessionFlushOptions = rpcSessionFlushOptions;
         _connectionPoolOptions = (connectionPoolOptions ?? new SharpLinkConnectionPoolOptions()).CloneValidated();
         _clientInterceptors = clientInterceptors is { Length: > 0 } ? [.. clientInterceptors] : [];
-        _serverStreamRequestIds = new StripedLongSet(_runtimeContext.Concurrency);
-        _locallyCanceledRequestIds = new StripedLongSet(_runtimeContext.Concurrency);
-        _requestManager = new PendingRequestTable(_protocolOptions.MaxPendingRequestsPerConnection, _runtimeContext.Codecs);
     }
 
     public SharpLinkClient(
@@ -123,32 +113,18 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         Volatile.Read(ref _readySignal).TrySetResult(true);
 
         var stoppingException = CreateConnectionClosedException("Client is stopping.");
-        RpcSession[] sessions;
-        CancellationTokenSource[] sessionCancellations;
+        ClientConnection[] connections;
         lock (_poolGate)
         {
-            sessions = [.. _sessionCancellations.Keys];
-            sessionCancellations = [.. _sessionCancellations.Values];
-            _sessionCancellations.Clear();
-            Volatile.Write(ref _readySessions, []);
-            Volatile.Write(ref _session, null);
+            connections = [.. _connections];
+            _connections.Clear();
+            Volatile.Write(ref _readyConnections, []);
         }
-        for (var index = 0; index < sessionCancellations.Length; index++)
+        for (var index = 0; index < connections.Length; index++)
         {
-            await sessionCancellations[index].CancelAsync().ConfigureAwait(false);
-            sessionCancellations[index].Dispose();
+            connections[index].Fail(stoppingException);
+            await connections[index].DisposeAsync().ConfigureAwait(false);
         }
-        _requestManager.FailAllPendingRequests(stoppingException);
-        foreach (var requestId in _requestSessions.Keys)
-            TryUnbindRequest(requestId, out _);
-        for (var index = 0; index < sessions.Length; index++)
-            sessions[index].StreamManager.CompleteAll(stoppingException);
-        _serverStreamRequestIds.Clear();
-        _locallyCanceledRequestIds.Clear();
-        foreach (var requestId in _streamCallLifetimes.Keys)
-            CompleteStreamLifetime(requestId);
-        for (var index = 0; index < sessions.Length; index++)
-            await sessions[index].DisposeAsync().ConfigureAwait(false);
 
         Task? connectTask;
         Task? reconnectTask;
@@ -166,8 +142,6 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
             await IgnoreExpectedStopExceptionAsync(expansionTask).ConfigureAwait(false);
         await WaitForBackgroundTasksAsync().ConfigureAwait(false);
 
-        _requestTimeoutScheduler.Dispose();
-        _requestManager.Dispose();
         await transportFactory.DisposeAsync().ConfigureAwait(false);
         _shutdownCts.Dispose();
         TransitionTo(SharpLinkConnectionState.Stopped);
@@ -252,35 +226,42 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         }
     }
 
-    internal int ReadyConnectionCount => Volatile.Read(ref _readySessions).Length;
+    internal int ReadyConnectionCount => Volatile.Read(ref _readyConnections).Length;
 
-    private void BindRequestToSession(long requestId, RpcSession session)
+    internal int PendingCallCount
     {
-        ArgumentNullException.ThrowIfNull(session);
-        try
+        get
         {
-            session.AddActiveRequest();
+            var connections = Volatile.Read(ref _readyConnections);
+            var count = 0;
+            for (var index = 0; index < connections.Length; index++)
+                count += connections[index].PendingCalls.Count;
+            return count;
         }
-        catch (Exception exception)
-        {
-            _requestManager.DispatchError(requestId, exception);
-            throw;
-        }
-        if (_requestSessions.TryAdd(requestId, session))
-            return;
-        session.ReleaseActiveRequest();
-        var duplicate = new InvalidOperationException($"Request {requestId} is already bound to a connection.");
-        _requestManager.DispatchError(requestId, duplicate);
-        throw duplicate;
     }
 
-    private bool TryUnbindRequest(long requestId, out RpcSession session)
+    internal int ActiveClientCallCount
     {
-        if (!_requestSessions.TryRemove(requestId, out session!))
-            return false;
-        session.ReleaseActiveRequest();
-        RetireDrainingSessionIfIdle(session);
-        return true;
+        get
+        {
+            var connections = Volatile.Read(ref _readyConnections);
+            var count = 0;
+            for (var index = 0; index < connections.Length; index++)
+                count += connections[index].ActiveCallCount;
+            return count;
+        }
+    }
+
+    internal int ActiveClientStreamCount
+    {
+        get
+        {
+            var connections = Volatile.Read(ref _readyConnections);
+            var count = 0;
+            for (var index = 0; index < connections.Length; index++)
+                count += ((StreamManager)connections[index].Session.StreamManager).ActiveStreamCount;
+            return count;
+        }
     }
 
 }

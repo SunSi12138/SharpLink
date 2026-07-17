@@ -7,6 +7,7 @@ public class StreamManager : IStreamManager
     private readonly Action<long, ushort, int>? _bytesConsumed;
     private readonly Action<long, ushort>? _streamCompleted;
     private long _droppedStreamFrames;
+    private int _activeStreamCount;
 
     public StreamManager() : this(new RuntimeConcurrencyOptions())
     {
@@ -37,6 +38,7 @@ public class StreamManager : IStreamManager
         var requestDispatchers = _dispatchersByRequestId.GetOrAdd(requestId, static _ => new RequestDispatchers());
         requestDispatchers.Register(streamId, dispatcher);
         SharpLinkTelemetry.AddActiveStreams(1);
+        Interlocked.Increment(ref _activeStreamCount);
         if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
             consumptionAware.SetBytesConsumedCallback(_bytesConsumed, requestId, streamId);
     }
@@ -51,6 +53,7 @@ public class StreamManager : IStreamManager
         if (requestDispatchers.TryRemove(streamId, out var dispatcher))
         {
             SharpLinkTelemetry.AddActiveStreams(-1);
+            Interlocked.Decrement(ref _activeStreamCount);
             if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
                 consumptionAware.SetBytesConsumedCallback(null, 0, 0);
             _streamCompleted?.Invoke(requestId, streamId);
@@ -107,6 +110,7 @@ public class StreamManager : IStreamManager
         if (requestDispatchers.TryRemove(streamId, out var dispatcher))
         {
             SharpLinkTelemetry.AddActiveStreams(-1);
+            Interlocked.Decrement(ref _activeStreamCount);
             dispatcher.Complete(exception);
             _streamCompleted?.Invoke(requestId, streamId);
             RemoveEmptyRequest(requestId, requestDispatchers);
@@ -117,11 +121,14 @@ public class StreamManager : IStreamManager
     {
         foreach (var requestDispatchers in _dispatchersByRequestId.DrainValues())
         {
-            SharpLinkTelemetry.AddActiveStreams(-requestDispatchers.CompleteAll(exception));
+            var completed = requestDispatchers.CompleteAll(exception);
+            SharpLinkTelemetry.AddActiveStreams(-completed);
+            Interlocked.Add(ref _activeStreamCount, -completed);
         }
     }
 
     internal long DroppedStreamFrames => Volatile.Read(ref _droppedStreamFrames);
+    internal int ActiveStreamCount => Volatile.Read(ref _activeStreamCount);
 
     private void RemoveEmptyRequest(long requestId, RequestDispatchers requestDispatchers)
     {

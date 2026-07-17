@@ -52,8 +52,11 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     private T? _current;
     private IRpcCodec<T>? _codec;
     private Action<long, ushort, int>? _bytesConsumed;
+    private Action<long>? _consumerAbandoned;
     private long _flowControlRequestId;
     private ushort _flowControlStreamId;
+    private long _consumerAbandonedRequestId;
+    private int _consumerTerminal;
 
     private const int InitialCapacity = 16;
     private const int ShrinkThreshold = 4096;
@@ -125,8 +128,11 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _error = null;
         _current = default;
         _bytesConsumed = null;
+        _consumerAbandoned = null;
         _flowControlRequestId = 0;
         _flowControlStreamId = 0;
+        _consumerAbandonedRequestId = 0;
+        Volatile.Write(ref _consumerTerminal, 0);
     }
 
     public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
@@ -187,6 +193,12 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _flowControlStreamId = streamId;
     }
 
+    public void SetConsumerAbandonedCallback(Action<long>? callback, long requestId)
+    {
+        _consumerAbandoned = callback;
+        _consumerAbandonedRequestId = requestId;
+    }
+
     public void Complete(bool isError, string? errorMessage)
     {
         var message = string.IsNullOrWhiteSpace(errorMessage) ? "Remote Error" : errorMessage;
@@ -197,13 +209,10 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
     public void Complete(Exception? exception)
     {
-        // 已完成则忽略
-        if (Volatile.Read(ref _completed))
+        if (Interlocked.CompareExchange(ref _consumerTerminal, 1, 0) != 0)
             return;
 
-        // 审核 #1：先写 error，最后发布 completed（release）
         _error = exception;
-
         Volatile.Write(ref _completed, true);
         Signal();
     }
@@ -269,6 +278,25 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
     public ValueTask DisposeAsync()
     {
+        if (!Volatile.Read(ref _completed))
+        {
+            var terminal = Interlocked.CompareExchange(ref _consumerTerminal, 2, 0);
+            if (terminal == 0)
+            {
+                _consumerAbandoned?.Invoke(_consumerAbandonedRequestId);
+                _error ??= new OperationCanceledException(
+                    "The response stream consumer stopped before remote completion.");
+                Volatile.Write(ref _completed, true);
+                Signal();
+            }
+            else if (terminal == 1)
+            {
+                var spinner = new SpinWait();
+                while (!Volatile.Read(ref _completed))
+                    spinner.SpinOnce();
+            }
+        }
+
         // 审核 #3：写用 Volatile.Write 对称
         Volatile.Write(ref _disposed, true);
         _current = default;
@@ -493,8 +521,10 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _error = null;
         _codec = null;
         _bytesConsumed = null;
+        _consumerAbandoned = null;
         _flowControlRequestId = 0;
         _flowControlStreamId = 0;
+        _consumerAbandonedRequestId = 0;
 
         // 复位枚举器占用标记
         Volatile.Write(ref _enumeratorTaken, 0);

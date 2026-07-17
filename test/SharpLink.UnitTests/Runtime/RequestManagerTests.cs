@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Diagnostics;
+using System.Threading;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Runtime;
@@ -210,6 +212,53 @@ public class PendingRequestTableTests
         catch (OperationCanceledException)
         {
         }
+    }
+
+    [Test]
+    public async Task MonotonicDeadlineScanShouldCompleteWithoutCompletionPathRemoval()
+    {
+        using var manager = new PendingRequestTable(8);
+        var deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 50;
+        var operation = manager.Rent(
+            new Int32Codec(),
+            PendingCallKind.Unary,
+            deadline,
+            CancellationToken.None,
+            out _);
+
+        var exception = await CaptureExceptionAsync(operation.AsValueTask().AsTask());
+        Ensure(exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
+            "monotonic deadline should produce DeadlineExceeded");
+        Ensure(manager.Count == 0, "deadline scan should release the slot");
+    }
+
+    [Test]
+    public async Task CancellationResponseRaceShouldNotLeaveTombstonesOrCorruptPool()
+    {
+        using var manager = new PendingRequestTable(8);
+        for (var iteration = 0; iteration < 10_000; iteration++)
+        {
+            using var cancellation = new CancellationTokenSource();
+            var operation = manager.Rent(
+                new Int32Codec(),
+                PendingCallKind.Unary,
+                deadlineTimestamp: 0,
+                cancellation.Token,
+                out var requestId);
+            var payload = ReadOnlySequence<byte>.Empty;
+            await Task.WhenAll(
+                Task.Run(cancellation.Cancel),
+                Task.Run(() => manager.Dispatch(requestId, ref payload)));
+            try
+            {
+                _ = await operation.AsValueTask();
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        Ensure(manager.Count == 0, "all racing calls should release their slots");
     }
 
     private static void SetNextId(PendingRequestTable manager, long nextId)
