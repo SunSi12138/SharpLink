@@ -234,8 +234,7 @@ internal sealed partial class SharpLinkServer
                     service, session, methodId, requestId, arguments, output, cancellationToken);
         }
 
-        return new ServerInterceptorPipeline(
-            _serverInterceptors,
+        return InvokeInterceptedWithOwnedArgumentsAsync(
             stub,
             service,
             session,
@@ -243,7 +242,65 @@ internal sealed partial class SharpLinkServer
             requestId,
             arguments,
             output,
-            cancellationToken).InvokeAsync((SharpLinkServerInvocationContext)context);
+            cancellationToken,
+            (SharpLinkServerInvocationContext)context);
+    }
+
+    private async ValueTask InvokeInterceptedWithOwnedArgumentsAsync(
+        IRpcStub stub,
+        object service,
+        IRpcSession session,
+        long methodId,
+        long requestId,
+        ReadOnlySequence<byte> arguments,
+        IRpcByteBufferWriter? output,
+        CancellationToken cancellationToken,
+        SharpLinkServerInvocationContext context)
+    {
+        var length = checked((int)arguments.Length);
+        var maxArgumentsBytes = ((RpcSession)session).NegotiatedMaxFramePayloadBytes;
+        if (length > maxArgumentsBytes)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.ResourceExhausted,
+                $"RPC arguments exceed the negotiated {maxArgumentsBytes}-byte frame limit.");
+        }
+
+        if (length == 0)
+        {
+            await new ServerInterceptorPipeline(
+                _serverInterceptors,
+                stub,
+                service,
+                session,
+                methodId,
+                requestId,
+                ReadOnlySequence<byte>.Empty,
+                output,
+                cancellationToken).InvokeAsync(context).ConfigureAwait(false);
+            return;
+        }
+
+        var rented = ArrayPool<byte>.Shared.Rent(length);
+        try
+        {
+            arguments.CopyTo(rented);
+            var ownedArguments = new ReadOnlySequence<byte>(rented.AsMemory(0, length));
+            await new ServerInterceptorPipeline(
+                _serverInterceptors,
+                stub,
+                service,
+                session,
+                methodId,
+                requestId,
+                ownedArguments,
+                output,
+                cancellationToken).InvokeAsync(context).ConfigureAwait(false);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+        }
     }
 
     private static async ValueTask ObserveServerCallAsync(

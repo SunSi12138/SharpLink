@@ -55,6 +55,27 @@ public class InterceptorIntegrationTests
     }
 
     [Test]
+    public async Task AsyncServerInterceptorShouldOwnArgumentsUntilNextCompletes()
+    {
+        var interceptor = new DelayedFirstServerInterceptor();
+        await using var harness = await InterceptorHarness.CreateAsync(serverInterceptor: interceptor);
+        var service = harness.Client.Get<IInterceptorTestService>();
+
+        var delayed = service.DescribeNumberAsync(123_456).AsTask();
+        await interceptor.Entered.WaitAsync(TimeSpan.FromSeconds(3));
+
+        var churn = new Task<int>[256];
+        for (var index = 0; index < churn.Length; index++)
+            churn[index] = service.DescribeNumberAsync(index).AsTask();
+
+        interceptor.Release();
+        Ensure(await delayed.WaitAsync(TimeSpan.FromSeconds(3)) == 123_457, "delayed arguments remain owned");
+        var values = await Task.WhenAll(churn).WaitAsync(TimeSpan.FromSeconds(5));
+        for (var index = 0; index < values.Length; index++)
+            Ensure(values[index] == index + 1, $"churn response {index}");
+    }
+
+    [Test]
     public async Task DefaultExceptionMapperShouldHideServiceDetails()
     {
         await using var harness = await InterceptorHarness.CreateAsync();
@@ -181,6 +202,31 @@ public class InterceptorIntegrationTests
             => ValueTask.FromException(new SharpLinkException(
                 SharpLinkErrorCode.PermissionDenied,
                 "Rejected by policy."));
+    }
+
+    private sealed class DelayedFirstServerInterceptor : ISharpLinkServerInterceptor
+    {
+        private readonly TaskCompletionSource<bool> _entered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _release =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _first;
+
+        public Task Entered => _entered.Task;
+
+        public void Release() => _release.TrySetResult(true);
+
+        public async ValueTask InvokeAsync(
+            SharpLinkServerInvocationContext context,
+            SharpLinkServerInvocationDelegate next)
+        {
+            if (Interlocked.CompareExchange(ref _first, 1, 0) == 0)
+            {
+                _entered.TrySetResult(true);
+                await _release.Task.ConfigureAwait(false);
+            }
+            await next(context).ConfigureAwait(false);
+        }
     }
 
     private sealed class TestExceptionMapper : IRpcExceptionMapper
