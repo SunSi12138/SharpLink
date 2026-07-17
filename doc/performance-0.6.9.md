@@ -33,6 +33,8 @@ TCP、Balanced、连接池 1/1、server streaming、stream size 256、并发 32�
 
 QPS/P99 均通过门禁。提前停止消费另由 1,500 次串行 early-break、64 路并发 pooled lease、10,000 次资源归零和 Chaos 混合负载验证，防止把“流能跑完”误当成“租约与 credit 一定正确归还”。
 
+Release Gate 暴露异步 stream 注册的回池竞态后，最终修复只在每次 server/duplex stream 注册开始与结束各增加一次原子持有操作，不进入逐 item 热路径。相同 s2c/c32/256-item 场景复跑五次，中位数为 9,345.17 QPS、P99 4,008 us、零错误；相对上表候选分别为 -1.42% 与 +3.46%，仍在 97%/105% 门禁内。
+
 ## Allocation
 
 BenchmarkDotNet `UnaryBenchmarks.Rpc_Add`：
@@ -68,11 +70,13 @@ OneWay 的成功含义是“本地有界 SendPump 接受”，不含服务端 AC
 
 本机两分钟混合 Chaos 结果：
 
-- 2,611,073 次成功调用。
-- 4,237,981 次预期故障注入结果。
-- 11 次滚动重启。
+- 3,088,557 次成功调用。
+- 2,507,715 次预期故障注入结果。
+- 10 次滚动重启，最慢一次从停服到成功探针 RPC 为 6.559 秒。
 - 0 次非预期失败。
 - 结束时 connections、calls、pending requests、streams、send queue bytes 全部为 0。
+
+Chaos 的故障归因使用奇偶代次：调用只在开始于故障代次或跨越代次边界时被计为预期失败；新 listener 启动后还必须完成真实探针 RPC 才结束故障代次。旧的固定 8 秒窗口已删除，因为它会在慢 runner 尚未恢复时制造假阳性，也会掩盖 dispatcher 异步注册期间的 use-after-return。修复前 30 秒复现为 7 次 `Stream dispatcher has no codec`；注册持有权修复后相同参数为 0 次非预期失败。
 
 两分钟样本包含启动及对象池预热，retained memory 增长不参与六小时门禁。持续至少六小时后才比较最后六小时窗口；正式 24 小时连续长稳命令与判定规则见 `doc/chaos-0.6.9.md`，不能把多个短 CI job 拼接成连续长稳证据。
 

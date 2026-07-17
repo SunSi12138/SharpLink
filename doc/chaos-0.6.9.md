@@ -6,6 +6,12 @@ when it observes data corruption, a non-injected RPC failure, no successful work
 non-zero final framework gauge, or (for runs of at least six hours) retained-memory growth above
 5% over the final six-hour window.
 
+Fault attribution is generation-based rather than a fixed time window. A call is an injected
+failure only when it started during a restart generation or overlapped a generation change. After
+the listener is recreated, the runner requires a successful probe RPC before closing that fault
+generation. Recovery taking longer than 20 seconds is recorded as an unexpected failure. This
+keeps slow CI runners honest without misclassifying a still-recovering connection as healthy.
+
 ## CI levels
 
 - Pull requests and release tags run a two-minute catastrophic-regression smoke.
@@ -33,6 +39,10 @@ The release report must show zero `UnexpectedFailures` and zero for all final ga
 - `sharplink.requests.pending`
 - `sharplink.streams.active`
 - `sharplink.send.queue.bytes`
+
+`MaxRecoveryMilliseconds` reports the slowest complete stop, listener recreation, reconnect,
+handshake, and successful probe cycle. The two-minute 0.6.9 candidate run completed 10 rolling
+restarts with a maximum recovery of 6,559 ms and zero unexpected failures.
 
 Transport-specific RST/FIN, pipe disposal, TLS/authentication, asymmetric frame limit, bounded
 stop, and cancel/response/deadline races remain covered by Unit and Integration tests; the chaos

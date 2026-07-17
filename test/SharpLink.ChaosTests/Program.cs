@@ -39,7 +39,8 @@ public static class Program
         long success = 0;
         long expectedFailures = 0;
         long unexpectedFailures = 0;
-        long injectionTimestamp = long.MinValue;
+        long faultGeneration = 0;
+        long maxRecoveryMilliseconds = 0;
         var restartCount = 0;
 
         var server = await ChaosServer.StartAsync(port: 0).ConfigureAwait(false);
@@ -71,17 +72,10 @@ public static class Program
                 service,
                 workerId,
                 duration.Token,
-                () => Volatile.Read(ref injectionTimestamp),
+                () => Volatile.Read(ref faultGeneration),
                 () => Interlocked.Increment(ref success),
                 () => Interlocked.Increment(ref expectedFailures),
-                exception =>
-                {
-                    Interlocked.Increment(ref unexpectedFailures);
-                    var key = DescribeFailure(exception);
-                    failures.AddOrUpdate(key, 1, static (_, count) => count + 1);
-                    if (failureSamples.Count < 20)
-                        failureSamples.Enqueue(exception.ToString());
-                });
+                RecordUnexpectedFailure);
         }
 
         var restarter = RestartLoopAsync();
@@ -114,6 +108,7 @@ public static class Program
             success,
             expectedFailures,
             unexpectedFailures,
+            maxRecoveryMilliseconds,
             startedMemory,
             endedMemory,
             memoryGrowthPercent,
@@ -143,15 +138,41 @@ public static class Program
                 while (true)
                 {
                     await Task.Delay(options.RestartInterval, duration.Token).ConfigureAwait(false);
-                    Volatile.Write(ref injectionTimestamp, Stopwatch.GetTimestamp());
+                    Interlocked.Increment(ref faultGeneration);
+                    var recoveryStarted = Stopwatch.GetTimestamp();
                     await server.StopAsync().ConfigureAwait(false);
                     server = await ChaosServer.StartWithRetryAsync(port, duration.Token).ConfigureAwait(false);
                     Interlocked.Increment(ref restartCount);
+                    if (!await WaitForRecoveryAsync(service, duration.Token).ConfigureAwait(false))
+                    {
+                        RecordUnexpectedFailure(new TimeoutException(
+                            "Client did not complete a probe RPC within 20 seconds of a server restart."));
+                        await duration.CancelAsync().ConfigureAwait(false);
+                        return;
+                    }
+                    var recoveryMilliseconds = (long)Math.Ceiling(
+                        Stopwatch.GetElapsedTime(recoveryStarted).TotalMilliseconds);
+                    UpdateMaximum(ref maxRecoveryMilliseconds, recoveryMilliseconds);
+                    Interlocked.Increment(ref faultGeneration);
                 }
             }
             catch (OperationCanceledException) when (duration.IsCancellationRequested)
             {
             }
+            catch (Exception exception)
+            {
+                RecordUnexpectedFailure(exception);
+                await duration.CancelAsync().ConfigureAwait(false);
+            }
+        }
+
+        void RecordUnexpectedFailure(Exception exception)
+        {
+            Interlocked.Increment(ref unexpectedFailures);
+            var key = DescribeFailure(exception);
+            failures.AddOrUpdate(key, 1, static (_, count) => count + 1);
+            if (failureSamples.Count < 20)
+                failureSamples.Enqueue(exception.ToString());
         }
 
         async Task SampleRetainedMemoryAsync()
@@ -187,7 +208,7 @@ public static class Program
         IChaosService service,
         int workerId,
         CancellationToken runToken,
-        Func<long> getLastInjection,
+        Func<long> getFaultGeneration,
         Action success,
         Action expectedFailure,
         Action<Exception> unexpectedFailure)
@@ -196,6 +217,7 @@ public static class Program
         while (!runToken.IsCancellationRequested)
         {
             var operation = (workerId + iteration++) & 3;
+            var operationGeneration = getFaultGeneration();
             try
             {
                 switch (operation)
@@ -236,7 +258,11 @@ public static class Program
             {
                 break;
             }
-            catch (Exception exception) when (IsExpected(operation, exception, getLastInjection()))
+            catch (Exception exception) when (IsExpected(
+                       operation,
+                       exception,
+                       operationGeneration,
+                       getFaultGeneration()))
             {
                 expectedFailure();
             }
@@ -271,7 +297,11 @@ public static class Program
         }
     }
 
-    private static bool IsExpected(int operation, Exception exception, long injectionTimestamp)
+    private static bool IsExpected(
+        int operation,
+        Exception exception,
+        long operationGeneration,
+        long currentGeneration)
     {
         if (operation == 3 && exception is OperationCanceledException)
             return true;
@@ -283,8 +313,7 @@ public static class Program
             return true;
         }
 
-        if (injectionTimestamp == long.MinValue ||
-            Stopwatch.GetElapsedTime(injectionTimestamp) > TimeSpan.FromSeconds(8))
+        if ((operationGeneration & 1L) == 0 && operationGeneration == currentGeneration)
         {
             return false;
         }
@@ -295,6 +324,50 @@ public static class Program
                 Code: SharpLinkErrorCode.Unavailable or SharpLinkErrorCode.ConnectionClosed or
                     SharpLinkErrorCode.DeadlineExceeded or SharpLinkErrorCode.Cancelled
             };
+    }
+
+    private static async Task<bool> WaitForRecoveryAsync(
+        IChaosService service,
+        CancellationToken cancellationToken)
+    {
+        var deadline = Stopwatch.GetTimestamp() + (20L * Stopwatch.Frequency);
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                var probe = await service.AddAsync(20, 22).ConfigureAwait(false);
+                if (probe != 42)
+                    throw new InvalidDataException("Recovery probe result was corrupted.");
+                return true;
+            }
+            catch (Exception exception) when (exception is SocketException or IOException or ObjectDisposedException or
+                                              SharpLinkException
+                                              {
+                                                  Code: SharpLinkErrorCode.Unavailable or
+                                                      SharpLinkErrorCode.ConnectionClosed or
+                                                      SharpLinkErrorCode.DeadlineExceeded or
+                                                      SharpLinkErrorCode.Cancelled
+                                              })
+            {
+            }
+
+            if (Stopwatch.GetTimestamp() >= deadline)
+                return false;
+            await Task.Delay(20, cancellationToken).ConfigureAwait(false);
+        }
+        return false;
+    }
+
+    private static void UpdateMaximum(ref long target, long candidate)
+    {
+        var current = Volatile.Read(ref target);
+        while (candidate > current)
+        {
+            var observed = Interlocked.CompareExchange(ref target, candidate, current);
+            if (observed == current)
+                return;
+            current = observed;
+        }
     }
 
     private static string DescribeFailure(Exception exception)
@@ -523,6 +596,7 @@ internal sealed record ChaosReport(
     long Success,
     long ExpectedFailures,
     long UnexpectedFailures,
+    long MaxRecoveryMilliseconds,
     long RetainedMemoryStart,
     long RetainedMemoryEnd,
     double RetainedMemoryGrowthPercent,

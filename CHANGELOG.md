@@ -24,6 +24,7 @@
 
 - 修复 server/duplex stream 提前停止消费时，WindowUpdate、Cancel、pending slot、dispatcher 租约和 send credit 之间的竞态与泄漏。
 - 修复 dispatcher 在旧调用仍持有 dispatch entry 时过早回池，随后被另一调用复用并被迟到完成污染的问题。
+- 修复 server/duplex stream 在异步等待连接注册期间被消费者释放后提前回池，恢复线程随后把已清空 Codec 的 dispatcher 注册到新连接的问题。
 - 修复 Cancel 到达已完成调用后，响应 stream send state 未被终止并可能重新创建 credit 状态的问题。
 - 修复 Session 已终止后迟到的 `NotifyConnected` 重新增加 active-connection 指标、且再无关闭机会抵消的问题。
 - 修复 TLS 重连测试可能把上一连接代际尚未清空时的旧 Ready 状态误判为新连接已经可用的问题。
@@ -34,7 +35,7 @@
 - 五轮 TCP Unary A/B：c1 QPS +1.86%、P99 持平；c128 QPS -0.15%、P99 -1.82%，全部零错误并通过门禁。
 - 五轮 Server Streaming A/B：QPS -1.45%、P99 -2.49%，零错误并通过门禁。
 - `Rpc_Add` 保持 672 B/op；JIT/NativeAOT smoke 正常矩阵全部零错误，AOT publish 零 trimming/AOT 警告。
-- 两分钟混合 Chaos 完成 2,611,073 次成功调用和 11 次滚动重启，非预期失败为 0，结束时所有框架 gauge 为 0。
+- 两分钟混合 Chaos 完成 3,088,557 次成功调用和 10 次滚动重启，最大端到端恢复 6.559 秒，非预期失败为 0，结束时所有框架 gauge 为 0。
 
 0.6.8 → 0.6.9 没有公共 API 或 Protocol v2 wire 变更。完整证据见 `doc/performance-0.6.9.md`、`doc/chaos-0.6.9.md` 和 `doc/migration-0.6.9.md`。
 

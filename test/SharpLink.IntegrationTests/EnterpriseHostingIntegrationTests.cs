@@ -115,9 +115,12 @@ public class EnterpriseHostingIntegrationTests
 
         var stream = harness.Client.Get<IEnterpriseLifetimeService>().StreamAsync().GetAsyncEnumerator();
         Ensure(await stream.MoveNextAsync(), "active stream started");
+        await LifetimeServiceState.WaitForStreamBlockedAsync().WaitAsync(TimeSpan.FromSeconds(3));
         var stopTask = harness.Server.StopAsync(TimeSpan.FromSeconds(5)).AsTask();
         await WaitUntilAsync(() => harness.Server.HealthStatus == SharpLinkHealthStatus.Draining);
         Ensure(!stopTask.IsCompleted, "stop waits for active stream");
+        await Task.Delay(250);
+        Ensure(!stopTask.IsCompleted, "GoAway does not terminate an active stream");
 
         LifetimeServiceState.ReleaseStream();
         while (await stream.MoveNextAsync())
@@ -290,6 +293,7 @@ public sealed record LifetimeDependency(int Value);
 internal static class LifetimeServiceState
 {
     private static TaskCompletionSource<bool> _streamRelease = CreateRelease();
+    private static TaskCompletionSource<bool> _streamBlocked = CreateRelease();
     private static int _nextId;
     private static int _created;
     private static int _disposed;
@@ -305,6 +309,10 @@ internal static class LifetimeServiceState
 
     public static Task WaitForStreamReleaseAsync() => Volatile.Read(ref _streamRelease).Task;
 
+    public static Task WaitForStreamBlockedAsync() => Volatile.Read(ref _streamBlocked).Task;
+
+    public static void RecordStreamBlocked() => Volatile.Read(ref _streamBlocked).TrySetResult(true);
+
     public static void ReleaseStream() => Volatile.Read(ref _streamRelease).TrySetResult(true);
 
     public static void RecordDispose() => Interlocked.Increment(ref _disposed);
@@ -315,6 +323,7 @@ internal static class LifetimeServiceState
         Volatile.Write(ref _created, 0);
         Volatile.Write(ref _disposed, 0);
         Volatile.Write(ref _streamRelease, CreateRelease());
+        Volatile.Write(ref _streamBlocked, CreateRelease());
     }
 
     private static TaskCompletionSource<bool> CreateRelease()
@@ -351,6 +360,7 @@ public sealed class EnterpriseLifetimeService : IEnterpriseLifetimeService, IAsy
     public async IAsyncEnumerable<int> StreamAsync()
     {
         yield return _instanceId;
+        LifetimeServiceState.RecordStreamBlocked();
         await LifetimeServiceState.WaitForStreamReleaseAsync();
         yield return _instanceId;
     }

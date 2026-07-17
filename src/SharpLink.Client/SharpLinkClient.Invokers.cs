@@ -478,6 +478,7 @@ internal sealed partial class SharpLinkClient
         ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
+        dispatcher.RetainForRegistration();
         ClientConnection? connection = null;
         var requestId = 0L;
         try
@@ -506,6 +507,10 @@ internal sealed partial class SharpLinkClient
         {
             CompleteFailedGeneratedStream(dispatcher, connection, requestId, exception);
         }
+        finally
+        {
+            dispatcher.ReleaseRegistrationRetention();
+        }
     }
 
     private async Task StartDuplexStreamingInvokerAsync<TRequest, TResponse, TStreams>(
@@ -519,6 +524,7 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
+        dispatcher.RetainForRegistration();
         ClientConnection? connection = null;
         var requestId = 0L;
         try
@@ -546,6 +552,10 @@ internal sealed partial class SharpLinkClient
         catch (Exception exception)
         {
             CompleteFailedGeneratedStream(dispatcher, connection, requestId, exception);
+        }
+        finally
+        {
+            dispatcher.ReleaseRegistrationRetention();
         }
     }
 

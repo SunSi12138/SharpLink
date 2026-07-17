@@ -168,6 +168,30 @@ public class PooledAsyncStreamDispatcherTests
 
     [Test]
     [NotInParallel]
+    public async Task RegistrationRetentionShouldPreventUnregisteredDispatcherReuse()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var first = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, new ReferenceItemCodec());
+        first.RetainForRegistration();
+        first.Complete(exception: null);
+        await first.DisposeAsync();
+
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+            "an unfinished async registration must retain its dispatcher lease");
+        var second = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, new ReferenceItemCodec());
+        Ensure(!ReferenceEquals(first, second),
+            "an unregistered dispatcher must not be reused while registration can still resume");
+
+        first.ReleaseRegistrationRetention();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "releasing the final registration owner should make the terminal dispatcher reusable");
+        second.Complete(exception: null);
+        await second.DisposeAsync();
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task ConcurrentPoolLeasesShouldKeepItemsIsolated()
     {
         PooledAsyncStreamDispatcher<byte>.ClearPoolForTests();

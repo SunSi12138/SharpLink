@@ -226,6 +226,19 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         TryReturnToPool();
     }
 
+    // A generated server-stream call can be handed to its consumer before an asynchronous
+    // WaitForReady registration completes. Keep that unregistered lease out of the pool until
+    // registration or failure has reached a terminal state.
+    internal void RetainForRegistration()
+    {
+        if (!TryAcquireDispatch())
+            throw new ObjectDisposedException(
+                typeof(PooledAsyncStreamDispatcher<T>).FullName,
+                "The stream dispatcher was disposed before registration began.");
+    }
+
+    internal void ReleaseRegistrationRetention() => ReleaseDispatch();
+
     private static ValueTask RejectedDispatch()
     {
 #if DEBUG
