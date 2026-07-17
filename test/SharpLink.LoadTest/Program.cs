@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Text.Json.Serialization;
 using System.Linq;
 using System.Net;
 using System.Text;
@@ -70,7 +71,7 @@ public static class Program
         Console.WriteLine("  --transport tcp|uds|namedpipe|anonymous");
         Console.WriteLine("  --host 127.0.0.1 --bind-ip 0.0.0.0 --port 19100");
         Console.WriteLine("  --duration 20 --warmup 5 --concurrency 1,2,4,8,16,32");
-        Console.WriteLine("  --operation add|echo|yield|delay --payload-size 64");
+        Console.WriteLine("  --operation empty|add|echo|oneway|yield|delay --payload-size 64");
         Console.WriteLine("  --min-connections 1 --max-connections 1");
         Console.WriteLine("  --profile balanced|lowlatency|throughput");
         Console.WriteLine("  --request-timeout default|disabled|1ms|10ms|100ms");
@@ -213,7 +214,8 @@ public static class Program
                 options.JsonOutputPath,
                 "SharpLink.LoadTest",
                 options,
-                results);
+                results,
+                LoadTestJsonContext.Default);
         }
         finally
         {
@@ -280,7 +282,10 @@ public static class Program
 
         for (var i = 0; i < workers.Length; i++)
         {
-            var echoPayload = operation == "echo" ? new string('x', payloadSize) : string.Empty;
+            // StringCodec writes UTF-16 bytes; keep the requested business payload size exact.
+            var echoPayload = operation == "echo"
+                ? new string('x', payloadSize / sizeof(char))
+                : string.Empty;
             workers[i] = Task.Run(async () =>
             {
                 while (!token.IsCancellationRequested)
@@ -292,6 +297,10 @@ public static class Program
                         {
                             _ = await rpc.EchoAsync(echoPayload);
                         }
+                        else if (operation == "empty")
+                        {
+                            await rpc.PingAsync();
+                        }
                         else if (operation == "yield")
                         {
                             _ = await rpc.YieldAsync(7, 9);
@@ -299,6 +308,10 @@ public static class Program
                         else if (operation == "delay")
                         {
                             _ = await rpc.DelayAsync(7, 9);
+                        }
+                        else if (operation == "oneway")
+                        {
+                            await rpc.NotifyAsync(7, 9);
                         }
                         else
                         {
@@ -425,8 +438,9 @@ public sealed class LoadTestOptions
             : [1, 2, 4, 8, 16, 32];
 
         var operation = map.GetValueOrDefault("operation", "add").ToLowerInvariant();
-        if (operation is not ("add" or "echo" or "yield" or "delay"))
-            throw new ArgumentException($"Unsupported operation: {operation}. Supported: add, echo, yield, delay.");
+        if (operation is not ("empty" or "add" or "echo" or "oneway" or "yield" or "delay"))
+            throw new ArgumentException(
+                $"Unsupported operation: {operation}. Supported: empty, add, echo, oneway, yield, delay.");
 
         var profileText = map.GetValueOrDefault("profile", "balanced");
         var profile = profileText.ToLowerInvariant() switch
@@ -504,6 +518,12 @@ public sealed record RealtimeResult(
     double P95Us,
     double P99Us,
     double P999Us);
+
+[JsonSourceGenerationOptions(
+    WriteIndented = true,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSerializable(typeof(PerformanceReport<LoadTestOptions, StageResult>))]
+internal sealed partial class LoadTestJsonContext : JsonSerializerContext;
 
 internal sealed class LatencyHistogram
 {
@@ -738,6 +758,8 @@ internal sealed class MetricsServer : IDisposable
 public interface ILoadTestService : IService
 {
     [NonCancellable]
+    ValueTask PingAsync();
+    [NonCancellable]
     ValueTask<int> AddAsync(int left, int right);
     [NonCancellable]
     ValueTask<string> EchoAsync(string value);
@@ -745,11 +767,15 @@ public interface ILoadTestService : IService
     ValueTask<int> YieldAsync(int left, int right);
     [NonCancellable]
     ValueTask<int> DelayAsync(int left, int right);
+    [Oneway]
+    [NonCancellable]
+    ValueTask NotifyAsync(int left, int right);
 }
 
 [RpcService]
 public class LoadTestService : ILoadTestService
 {
+    public ValueTask PingAsync() => ValueTask.CompletedTask;
     public ValueTask<int> AddAsync(int left, int right) => ValueTask.FromResult(left + right);
     public ValueTask<string> EchoAsync(string value) => ValueTask.FromResult(value);
 
@@ -764,4 +790,6 @@ public class LoadTestService : ILoadTestService
         await Task.Delay(TimeSpan.FromMilliseconds(1)).ConfigureAwait(false);
         return left + right;
     }
+
+    public ValueTask NotifyAsync(int left, int right) => ValueTask.CompletedTask;
 }

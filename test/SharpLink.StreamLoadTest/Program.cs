@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Text.Json.Serialization;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -201,7 +202,8 @@ public static class Program
             options.JsonOutputPath,
             "SharpLink.StreamLoadTest",
             options,
-            results);
+            results,
+            StreamLoadTestJsonContext.Default);
     }
 
     private static async Task<StageResult> ExecuteStageAsync(
@@ -455,6 +457,12 @@ public sealed record StageResult(
     double ElapsedSeconds,
     double ErrorRatePercent,
     string TopFailures);
+
+[JsonSourceGenerationOptions(
+    WriteIndented = true,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSerializable(typeof(PerformanceReport<StreamLoadOptions, StageResult>))]
+internal sealed partial class StreamLoadTestJsonContext : JsonSerializerContext;
 
 [RpcContract]
 public interface IStreamLoadService : IService

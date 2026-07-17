@@ -13,18 +13,13 @@ namespace SharpLink.LoadTestBase;
 /// <summary>Writes machine-readable load-test evidence with enough environment data for A/B comparison.</summary>
 public static class PerformanceReportWriter
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
-
     /// <summary>Writes one completed workload report when <paramref name="path"/> is configured.</summary>
     public static void Write<TConfiguration, TResult>(
         string? path,
         string workload,
         TConfiguration configuration,
-        IReadOnlyList<TResult> results)
+        IReadOnlyList<TResult> results,
+        JsonSerializerContext serializerContext)
     {
         if (string.IsNullOrWhiteSpace(path))
             return;
@@ -49,7 +44,9 @@ public static class PerformanceReportWriter
             configuration,
             results);
 
-        File.WriteAllText(fullPath, JsonSerializer.Serialize(report, JsonOptions));
+        File.WriteAllText(
+            fullPath,
+            JsonSerializer.Serialize(report, report.GetType(), serializerContext));
         Console.WriteLine($"[Evidence] JSON report: {fullPath}");
     }
 
@@ -83,19 +80,20 @@ public static class PerformanceReportWriter
             return "unknown";
         }
     }
-
-    private sealed record PerformanceReport<TConfiguration, TResult>(
-        string Workload,
-        DateTimeOffset TimestampUtc,
-        string Commit,
-        string OperatingSystem,
-        string OsArchitecture,
-        string ProcessArchitecture,
-        string Runtime,
-        int ProcessorCount,
-        bool ServerGc,
-        string GcLatencyMode,
-        string? AssemblyVersion,
-        TConfiguration Configuration,
-        IReadOnlyList<TResult> Results);
 }
+
+/// <summary>Machine-readable performance evidence emitted by a load-test executable.</summary>
+public sealed record PerformanceReport<TConfiguration, TResult>(
+    string Workload,
+    DateTimeOffset TimestampUtc,
+    string Commit,
+    string OperatingSystem,
+    string OsArchitecture,
+    string ProcessArchitecture,
+    string Runtime,
+    int ProcessorCount,
+    bool ServerGc,
+    string GcLatencyMode,
+    string? AssemblyVersion,
+    TConfiguration Configuration,
+    IReadOnlyList<TResult> Results);
