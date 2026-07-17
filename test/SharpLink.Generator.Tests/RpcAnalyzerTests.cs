@@ -150,9 +150,20 @@ public interface IHelloService : SharpLink.Sdk.IService
     IAsyncEnumerable<int> Download(int count);
     IAsyncEnumerable<int> Duplex(IAsyncEnumerable<int> values);
 }
+
+[SharpLink.Sdk.RpcService]
+public sealed class HelloService : IHelloService
+{
+    public ValueTask<int> Unary(int value) => throw new NotImplementedException();
+    public ValueTask Notify(string value) => throw new NotImplementedException();
+    public ValueTask<int> Upload(IAsyncEnumerable<int> values) => throw new NotImplementedException();
+    public IAsyncEnumerable<int> Download(int count) => throw new NotImplementedException();
+    public IAsyncEnumerable<int> Duplex(IAsyncEnumerable<int> values) => throw new NotImplementedException();
+}
 """);
 
         var generated = RunGeneratorAndGetSources(source);
+        var allGenerated = string.Join("\n", generated);
         var proxy = generated.FirstOrDefault(static text => text.Contains("IHelloService_Proxy"));
         if (proxy is null)
             throw new Exception("Expected generated proxy source.");
@@ -163,6 +174,8 @@ public interface IHelloService : SharpLink.Sdk.IService
         Ensure(proxy.Contains("InvokeDuplexStreamingAsync"), "DuplexStreaming invoker");
         Ensure(proxy.Contains("readonly struct __IHelloService_SharpLinkRequest_"), "Generated request struct");
         Ensure(proxy.Contains("IRpcCodec<__IHelloService_SharpLinkRequest_"), "Generated request codec");
+        Ensure(allGenerated.Contains("Span<byte> tmp_"), "Segmented fixed-width arguments must use stack scratch");
+        Ensure(!allGenerated.Contains("byte[] tmp_"), "Segmented fixed-width arguments must not allocate arrays");
         Ensure(!proxy.Contains("Action<IBufferWriter<byte>>"), "Captured payload delegate must not be generated");
         Ensure(!proxy.Contains("InvokeCancellableWithTimeoutAsync"), "Legacy combinatorial API must not be generated");
         return Task.CompletedTask;
@@ -297,6 +310,11 @@ namespace SharpLink.Sdk
 
     [AttributeUsage(AttributeTargets.Method)]
     public sealed class OnewayAttribute : Attribute
+    {
+    }
+
+    [AttributeUsage(AttributeTargets.Class)]
+    public sealed class RpcServiceAttribute : Attribute
     {
     }
 

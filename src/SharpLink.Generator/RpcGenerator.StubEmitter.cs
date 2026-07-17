@@ -254,9 +254,9 @@ public partial class RpcGenerator
                 sb.AppendLine("                }");
                 sb.AppendLine("                else");
                 sb.AppendLine("                {");
-                sb.AppendLine($"                    byte[] tmp_{p.Name} = new byte[{sizeToken}];");
+                sb.AppendLine($"                    Span<byte> tmp_{p.Name} = stackalloc byte[{sizeToken}];");
                 sb.AppendLine($"                    if (!reader.TryCopyTo(tmp_{p.Name})) throw new InvalidDataException();");
-                sb.AppendLine($"                    arg_{p.Name} = System.Runtime.CompilerServices.Unsafe.ReadUnaligned<{p.Type}>(in tmp_{p.Name}[0]);");
+                sb.AppendLine($"                    arg_{p.Name} = System.Runtime.CompilerServices.Unsafe.ReadUnaligned<{p.Type}>(in System.Runtime.InteropServices.MemoryMarshal.GetReference(tmp_{p.Name}));");
                 sb.AppendLine("                }");
                 sb.AppendLine($"                reader.Advance({sizeToken});");
             }
