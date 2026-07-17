@@ -71,32 +71,3 @@ public sealed class SharpLinkBufferWriterPool : IRpcBufferWriterPool
         _pool.Enqueue(pooledWriter);
     }
 }
-
-/// <summary>Legacy process-wide writer pool retained only for source compatibility.</summary>
-public static class BufferWriterPool
-{
-    private static readonly Lock Gate = new();
-    private static BufferWriterPoolOptions _options = new();
-    private static SharpLinkBufferWriterPool _pool = new(_options);
-
-    /// <summary>Configures only the legacy compatibility pool.</summary>
-    [Obsolete("Use builder.UseBufferWriterPool; built clients and servers own independent pools.")]
-    public static void Configure(Action<BufferWriterPoolOptions> configure)
-    {
-        ArgumentNullException.ThrowIfNull(configure);
-        lock (Gate)
-        {
-            var options = _options.CloneValidated();
-            configure(options);
-            options.Validate();
-            _options = options;
-            _pool = new SharpLinkBufferWriterPool(options);
-        }
-    }
-
-    /// <summary>Rents from the legacy compatibility pool.</summary>
-    public static IRpcByteBufferWriter Get() => Volatile.Read(ref _pool).Rent();
-
-    /// <summary>Returns to the legacy compatibility pool.</summary>
-    public static void Return(IRpcByteBufferWriter writer) => Volatile.Read(ref _pool).Return(writer);
-}

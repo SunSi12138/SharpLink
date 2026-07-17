@@ -15,16 +15,7 @@ public class SharpLinkClientCallOptionsTests
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30));
 
-        var exception = await CaptureSharpLinkException(client.InvokeWithCallOptionsAsync<int>(
-            1,
-            2,
-            payloadWriter: null,
-            streamSender: null,
-            isOneWay: false,
-            hasReturnPayload: true,
-            options: default,
-            hasMethodTimeout: false,
-            methodTimeout: null));
+        var exception = await CaptureSharpLinkException(ClientInvokerTestHelper.InvokeUnaryAsync(client));
         Ensure(exception.Code == SharpLinkErrorCode.Unavailable, "fail-fast error code");
     }
 
@@ -37,20 +28,13 @@ public class SharpLinkClientCallOptionsTests
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30));
 
-        var invocation = client.InvokeWithCallOptionsAsync<int>(
-            1,
-            2,
-            payloadWriter: null,
-            streamSender: null,
-            isOneWay: false,
-            hasReturnPayload: true,
-            options: new SharpLinkCallOptions
+        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(
+            client,
+            new SharpLinkCallOptions
             {
                 Timeout = TimeSpan.FromSeconds(2),
                 WaitForReady = true
-            },
-            hasMethodTimeout: false,
-            methodTimeout: null).AsTask();
+            }).AsTask();
 
         await Task.Delay(50);
         Ensure(!invocation.IsCompleted, "call should wait while no connection is ready");
@@ -73,20 +57,13 @@ public class SharpLinkClientCallOptionsTests
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30));
 
-        var exception = await CaptureSharpLinkException(client.InvokeWithCallOptionsAsync<int>(
-            1,
-            2,
-            payloadWriter: null,
-            streamSender: null,
-            isOneWay: false,
-            hasReturnPayload: true,
-            options: new SharpLinkCallOptions
+        var exception = await CaptureSharpLinkException(ClientInvokerTestHelper.InvokeUnaryAsync(
+            client,
+            new SharpLinkCallOptions
             {
                 Timeout = TimeSpan.FromMilliseconds(80),
                 WaitForReady = true
-            },
-            hasMethodTimeout: false,
-            methodTimeout: null));
+            }));
         Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded, "wait deadline error code");
     }
 

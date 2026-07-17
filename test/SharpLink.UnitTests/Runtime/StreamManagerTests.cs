@@ -2,6 +2,9 @@ namespace SharpLink.UnitTests.Runtime;
 
 public class StreamManagerTests
 {
+    private static readonly IRpcCodecProvider SCodecs =
+        new SharpLinkRuntimeContextBuilder().Build().Codecs;
+
     [Test]
     public async Task DispatchChunkShouldReachRegisteredDefaultStream()
     {
@@ -84,9 +87,9 @@ public class StreamManagerTests
     [Test]
     public async Task SlowConsumerShouldReceiveResourceExhaustedAt4096BufferedElements()
     {
-        var dispatcher = PooledAsyncStreamDispatcher<int>.Rent();
+        var dispatcher = PooledAsyncStreamDispatcher<int>.Rent(codecProvider: SCodecs);
         var writer = new ArrayBufferWriter<byte>();
-        RpcCodec.Serialize(42, writer);
+        SCodecs.GetCodec<int>().Serialize(42, writer);
         var payload = new ReadOnlySequence<byte>(writer.WrittenMemory);
 
         for (var index = 0; index <= 4096; index++)
@@ -117,10 +120,10 @@ public class StreamManagerTests
             (_, _, bytes) => accepted += bytes,
             (_, _, bytes) => consumed += bytes,
             null);
-        var dispatcher = PooledAsyncStreamDispatcher<int>.Rent();
+        var dispatcher = PooledAsyncStreamDispatcher<int>.Rent(codecProvider: SCodecs);
         manager.Register(40, 2, dispatcher);
         var writer = new ArrayBufferWriter<byte>();
-        RpcCodec.Serialize(42, writer);
+        SCodecs.GetCodec<int>().Serialize(42, writer);
 
         await manager.DispatchChunkAsync(40, 2, new ReadOnlySequence<byte>(writer.WrittenMemory));
         Ensure(accepted == writer.WrittenCount, "encoded bytes should be admitted before decode");

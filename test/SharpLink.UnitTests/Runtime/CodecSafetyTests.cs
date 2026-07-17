@@ -9,6 +9,9 @@ namespace SharpLink.UnitTests.Runtime;
 
 public class CodecSafetyTests
 {
+    private static readonly IRpcCodecProvider SCodecs =
+        new SharpLinkRuntimeContextBuilder().Build().Codecs;
+
     [Test]
     public void FixedLengthCodecsShouldRoundTripSingleAndMultiSegmentAndRejectTruncation()
     {
@@ -68,7 +71,7 @@ public class CodecSafetyTests
     public void FixedLengthCodecShouldHandleEmptyLeadingSegment()
     {
         var sequence = CreateSegmentedSequence([1], includeLeadingEmptySegment: true);
-        Ensure(RpcCodec.Deserialize<bool>(sequence), "bool with empty leading segment");
+        Ensure(Deserialize<bool>(sequence), "bool with empty leading segment");
     }
 
     [Test]
@@ -108,10 +111,10 @@ public class CodecSafetyTests
         AssertVariableRoundTrip<string?>(string.Empty, static (left, right) => left == right);
         AssertVariableRoundTrip<string?>("SharpLink-汉字", static (left, right) => left == right);
 
-        ExpectDataLoss(() => RpcCodec.Deserialize<string>(new ReadOnlySequence<byte>(Array.Empty<byte>())));
-        ExpectDataLoss(() => RpcCodec.Deserialize<string>(new ReadOnlySequence<byte>(CreateLengthPrefix(-2))));
-        ExpectDataLoss(() => RpcCodec.Deserialize<string>(new ReadOnlySequence<byte>(CreateLengthPrefix(3))));
-        ExpectDataLoss(() => RpcCodec.Deserialize<string>(new ReadOnlySequence<byte>(CreateLengthPrefixedPayload(4, [1, 2]))));
+        ExpectDataLoss(() => Deserialize<string>(new ReadOnlySequence<byte>(Array.Empty<byte>())));
+        ExpectDataLoss(() => Deserialize<string>(new ReadOnlySequence<byte>(CreateLengthPrefix(-2))));
+        ExpectDataLoss(() => Deserialize<string>(new ReadOnlySequence<byte>(CreateLengthPrefix(3))));
+        ExpectDataLoss(() => Deserialize<string>(new ReadOnlySequence<byte>(CreateLengthPrefixedPayload(4, [1, 2]))));
     }
 
     [Test]
@@ -128,13 +131,13 @@ public class CodecSafetyTests
         AssertSequenceRoundTrip<ImmutableArray<int>>(ImmutableArray.Create(11, 12), static value => value.AsEnumerable());
         AssertSequenceRoundTrip<ImmutableArray<int>>(ImmutableArray<int>.Empty, static value => value.AsEnumerable());
 
-        Ensure(RpcCodec.Deserialize<int[]?>(new ReadOnlySequence<byte>(CreateLengthPrefix(-1))) is null, "null array");
-        Ensure(RpcCodec.Deserialize<List<int>?>(new ReadOnlySequence<byte>(CreateLengthPrefix(-1))) is null, "null list");
-        Ensure(RpcCodec.Deserialize<ImmutableArray<int>>(new ReadOnlySequence<byte>(CreateLengthPrefix(-1))).IsDefault, "default immutable array");
-        Ensure(RpcCodec.Deserialize<int[]>(new ReadOnlySequence<byte>(CreateLengthPrefix(0))) is { Length: 0 }, "empty array");
-        ExpectDataLoss(() => RpcCodec.Deserialize<int[]>(new ReadOnlySequence<byte>(CreateLengthPrefix(-2))));
-        ExpectDataLoss(() => RpcCodec.Deserialize<int[]>(new ReadOnlySequence<byte>(CreateLengthPrefix(int.MaxValue))));
-        ExpectDataLoss(() => RpcCodec.Deserialize<int[]>(new ReadOnlySequence<byte>(CreateLengthPrefixedPayload(2, [1, 2, 3, 4]))));
+        Ensure(Deserialize<int[]?>(new ReadOnlySequence<byte>(CreateLengthPrefix(-1))) is null, "null array");
+        Ensure(Deserialize<List<int>?>(new ReadOnlySequence<byte>(CreateLengthPrefix(-1))) is null, "null list");
+        Ensure(Deserialize<ImmutableArray<int>>(new ReadOnlySequence<byte>(CreateLengthPrefix(-1))).IsDefault, "default immutable array");
+        Ensure(Deserialize<int[]>(new ReadOnlySequence<byte>(CreateLengthPrefix(0))) is { Length: 0 }, "empty array");
+        ExpectDataLoss(() => Deserialize<int[]>(new ReadOnlySequence<byte>(CreateLengthPrefix(-2))));
+        ExpectDataLoss(() => Deserialize<int[]>(new ReadOnlySequence<byte>(CreateLengthPrefix(int.MaxValue))));
+        ExpectDataLoss(() => Deserialize<int[]>(new ReadOnlySequence<byte>(CreateLengthPrefixedPayload(2, [1, 2, 3, 4]))));
     }
 
     [Test]
@@ -146,17 +149,17 @@ public class CodecSafetyTests
     [Test]
     public void SemanticFixedCodecsShouldMapInvalidValuesToDataLoss()
     {
-        ExpectDataLoss(() => RpcCodec.Deserialize<DateOnly>(Int32Sequence(int.MaxValue)));
-        ExpectDataLoss(() => RpcCodec.Deserialize<DateTime>(Int64Sequence(DateTime.MaxValue.Ticks + 1)));
+        ExpectDataLoss(() => Deserialize<DateOnly>(Int32Sequence(int.MaxValue)));
+        ExpectDataLoss(() => Deserialize<DateTime>(Int64Sequence(DateTime.MaxValue.Ticks + 1)));
 
         var dateTimeOffset = new byte[10];
         BinaryPrimitives.WriteInt64LittleEndian(dateTimeOffset, long.MaxValue);
         BinaryPrimitives.WriteInt16LittleEndian(dateTimeOffset.AsSpan(sizeof(long)), 0);
-        ExpectDataLoss(() => RpcCodec.Deserialize<DateTimeOffset>(new ReadOnlySequence<byte>(dateTimeOffset)));
+        ExpectDataLoss(() => Deserialize<DateTimeOffset>(new ReadOnlySequence<byte>(dateTimeOffset)));
 
-        ExpectDataLoss(() => RpcCodec.Deserialize<TimeOnly>(Int64Sequence(long.MaxValue)));
-        ExpectDataLoss(() => RpcCodec.Deserialize<Rune>(Int32Sequence(0x11_0000)));
-        ExpectDataLoss(() => RpcCodec.Deserialize<decimal>(new ReadOnlySequence<byte>(Enumerable.Repeat((byte)0xFF, 16).ToArray())));
+        ExpectDataLoss(() => Deserialize<TimeOnly>(Int64Sequence(long.MaxValue)));
+        ExpectDataLoss(() => Deserialize<Rune>(Int32Sequence(0x11_0000)));
+        ExpectDataLoss(() => Deserialize<decimal>(new ReadOnlySequence<byte>(Enumerable.Repeat((byte)0xFF, 16).ToArray())));
     }
 
     [Test]
@@ -164,8 +167,8 @@ public class CodecSafetyTests
     {
         var bytes = new byte[2048];
         new Random(42).NextBytes(bytes);
-        _ = RpcCodec.Deserialize<LargeBlittable>(CreateSegmentedSequence(bytes));
-        ExpectDataLoss(() => RpcCodec.Deserialize<LargeBlittable>(new ReadOnlySequence<byte>(bytes.AsMemory(0, 2047))));
+        _ = Deserialize<LargeBlittable>(CreateSegmentedSequence(bytes));
+        ExpectDataLoss(() => Deserialize<LargeBlittable>(new ReadOnlySequence<byte>(bytes.AsMemory(0, 2047))));
     }
 
     [Test]
@@ -180,7 +183,7 @@ public class CodecSafetyTests
             random.NextBytes(scratch);
 
             var codecInput = new ReadOnlySequence<byte>(scratch.AsMemory(0, sizeof(int)));
-            _ = RpcCodec.Deserialize<int>(codecInput);
+            _ = Deserialize<int>(codecInput);
 
             var incompleteFrame = new ReadOnlySequence<byte>(
                 scratch.AsMemory(0, index % ProtocolV2Constants.HeaderBytes));
@@ -215,7 +218,7 @@ public class CodecSafetyTests
             var invalidString = new ReadOnlySequence<byte>(scratch.AsMemory(0, sizeof(int)));
             try
             {
-                _ = RpcCodec.Deserialize<string>(invalidString);
+                _ = Deserialize<string>(invalidString);
                 throw new Exception("expected random data loss");
             }
             catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.DataLoss)
@@ -227,29 +230,35 @@ public class CodecSafetyTests
     private static void AssertFixedRoundTrip<T>(T value)
     {
         var writer = new ArrayBufferWriter<byte>();
-        RpcCodec.Serialize(value, writer);
+        Serialize(value, writer);
         var bytes = writer.WrittenSpan.ToArray();
 
-        var single = RpcCodec.Deserialize<T>(new ReadOnlySequence<byte>(bytes));
+        var single = Deserialize<T>(new ReadOnlySequence<byte>(bytes));
         Ensure(EqualityComparer<T>.Default.Equals(value, single!), $"single segment {typeof(T)}");
 
-        var segmented = RpcCodec.Deserialize<T>(CreateSegmentedSequence(bytes));
+        var segmented = Deserialize<T>(CreateSegmentedSequence(bytes));
         Ensure(EqualityComparer<T>.Default.Equals(value, segmented!), $"multi segment {typeof(T)}");
 
         for (var length = 0; length < bytes.Length; length++)
         {
             var truncated = new ReadOnlySequence<byte>(bytes.AsMemory(0, length));
-            ExpectDataLoss(() => RpcCodec.Deserialize<T>(truncated));
+            ExpectDataLoss(() => Deserialize<T>(truncated));
         }
     }
+
+    private static void Serialize<T>(in T value, IBufferWriter<byte> writer)
+        => SCodecs.GetCodec<T>().Serialize(value, writer);
+
+    private static T? Deserialize<T>(in ReadOnlySequence<byte> payload)
+        => SCodecs.GetCodec<T>().Deserialize(payload);
 
     private static void AssertVariableRoundTrip<T>(T value, Func<T?, T?, bool> equals)
     {
         var writer = new ArrayBufferWriter<byte>();
-        RpcCodec.Serialize(value, writer);
+        Serialize(value, writer);
         var bytes = writer.WrittenSpan.ToArray();
-        var single = RpcCodec.Deserialize<T>(new ReadOnlySequence<byte>(bytes));
-        var segmented = RpcCodec.Deserialize<T>(CreateSegmentedSequence(bytes));
+        var single = Deserialize<T>(new ReadOnlySequence<byte>(bytes));
+        var segmented = Deserialize<T>(CreateSegmentedSequence(bytes));
         Ensure(equals(value, single), $"single segment {typeof(T)}");
         Ensure(equals(value, segmented), $"multi segment {typeof(T)}");
     }
@@ -257,12 +266,12 @@ public class CodecSafetyTests
     private static void AssertSequenceRoundTrip<T>(T value, Func<T, IEnumerable<int>> values)
     {
         var writer = new ArrayBufferWriter<byte>();
-        RpcCodec.Serialize(value, writer);
+        Serialize(value, writer);
         var expected = values(value).ToArray();
         var bytes = writer.WrittenSpan.ToArray();
 
-        var single = RpcCodec.Deserialize<T>(new ReadOnlySequence<byte>(bytes));
-        var segmented = RpcCodec.Deserialize<T>(CreateSegmentedSequence(bytes));
+        var single = Deserialize<T>(new ReadOnlySequence<byte>(bytes));
+        var segmented = Deserialize<T>(CreateSegmentedSequence(bytes));
         Ensure(single is not null && values(single).SequenceEqual(expected), $"single segment {typeof(T)}");
         Ensure(segmented is not null && values(segmented).SequenceEqual(expected), $"multi segment {typeof(T)}");
     }

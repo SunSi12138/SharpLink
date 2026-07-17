@@ -17,7 +17,7 @@ public class SharpLinkClientCancellationTests
 
         await client.ConnectAsync();
 
-        var invokeTask = client.InvokeCancellableWithDefaultTimeoutNoPayloadAsync<int>(1, 2, CancellationToken.None).AsTask();
+        var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         var exception = await EnsureThrows<SharpLinkException>(invokeTask);
         Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded, "timeout should map to DeadlineExceeded");
@@ -39,7 +39,9 @@ public class SharpLinkClientCancellationTests
         await client.ConnectAsync();
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(80));
-        var invokeTask = client.InvokeCancellableNoPayloadAsync<int>(1, 2, cts.Token).AsTask();
+        var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(
+            client,
+            cancellationToken: cts.Token).AsTask();
 
         _ = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await EnsureThrows<OperationCanceledException>(invokeTask);
@@ -57,7 +59,7 @@ public class SharpLinkClientCancellationTests
 
         await client.ConnectAsync();
 
-        var invokeTask = client.InvokeNoPayloadAsync<int>(1, 2).AsTask();
+        var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
 
         await transport.Connection.InjectPacketAsync(
@@ -81,7 +83,7 @@ public class SharpLinkClientCancellationTests
 
         await client.ConnectAsync();
 
-        await client.InvokeOneWayNoPayloadAsync(1, 2);
+        await ClientInvokerTestHelper.InvokeOneWayAsync(client);
         var hasCancel = await transport.Connection.TryWaitForSentPacket(
             ProtocolV2FrameType.Cancel, TimeSpan.FromMilliseconds(200));
         Ensure(!hasCancel, "oneway call should not send timeout cancel");

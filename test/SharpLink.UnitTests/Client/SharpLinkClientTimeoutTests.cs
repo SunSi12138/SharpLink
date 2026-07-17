@@ -1,5 +1,6 @@
 using System.Threading;
 using SharpLink.Client;
+using SharpLink.Sdk;
 
 namespace SharpLink.UnitTests.Client;
 
@@ -16,7 +17,9 @@ public class SharpLinkClientTimeoutTests
 
         await client.ConnectAsync();
 
-        var invokeTask = client.InvokeCancellableWithTimeoutNoPayloadAsync<int>(1, 2, TimeSpan.FromMilliseconds(80), CancellationToken.None).AsTask();
+        var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(
+            client,
+            new SharpLinkCallOptions { Timeout = TimeSpan.FromMilliseconds(80) }).AsTask();
         var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         var exception = await EnsureThrows<SharpLinkException>(invokeTask);
         Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded, "timeout should map to DeadlineExceeded");
@@ -40,7 +43,9 @@ public class SharpLinkClientTimeoutTests
         using var cts = new CancellationTokenSource();
         cts.CancelAfter(TimeSpan.FromMilliseconds(80));
 
-        var invokeTask = client.InvokeCancellableNoPayloadAsync<int>(1, 2, cts.Token).AsTask();
+        var invokeTask = ClientInvokerTestHelper.InvokeUnaryAsync(
+            client,
+            cancellationToken: cts.Token).AsTask();
         var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await EnsureThrows<Exception>(invokeTask);
 

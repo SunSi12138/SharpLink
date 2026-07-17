@@ -346,29 +346,22 @@ public class TransportConnectionIntegrationTests
         {
             using var socket = await listener.AcceptSocketAsync();
             await using var stream = new NetworkStream(socket, ownsSocket: true);
-            var writer = BufferWriterPool.Get();
-            try
+            using var writer = new PooledByteBufferWriter();
+            using (writer.BeginPacketScope(
+                       ProtocolV2FrameType.HandshakeResponse,
+                       ProtocolV2FrameFlags.Error,
+                       0))
             {
-                using (writer.BeginPacketScope(
-                           ProtocolV2FrameType.HandshakeResponse,
-                           ProtocolV2FrameFlags.Error,
-                           0))
-                {
-                    ProtocolV2PayloadCodec.WriteError(
-                        writer,
-                        SharpLinkErrorCode.AuthenticationRejected,
-                        "token rejected",
-                        SharpLinkProtocolOptions.DefaultMaxErrorMessageBytes,
-                        out _);
-                }
+                ProtocolV2PayloadCodec.WriteError(
+                    writer,
+                    SharpLinkErrorCode.AuthenticationRejected,
+                    "token rejected",
+                    SharpLinkProtocolOptions.DefaultMaxErrorMessageBytes,
+                    out _);
+            }
 
-                await stream.WriteAsync(writer.WrittenMemory);
-                await stream.FlushAsync();
-            }
-            finally
-            {
-                BufferWriterPool.Return(writer);
-            }
+            await stream.WriteAsync(writer.WrittenMemory);
+            await stream.FlushAsync();
         });
 
         var client = SharpClientBuilder.Create()

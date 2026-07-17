@@ -28,7 +28,7 @@ SharpLink.Serializer.MemoryPack
 
 - `SharpLink.Runtime`
   - `RpcSession`、`StreamManager`、`Request/Stream` 调度基础设施
-  - `RpcCodecRegistry` 与内置编解码器
+  - Context 所属的 `IRpcCodecProvider` 与内置不可变编解码器
   - 传输实现（Socket、NamedPipe、AnonymousPipe 的 client factory / server listener / 独立 connection）
   - Protocol v2 帧编解码、发送泵、池化缓冲与并发容器
 

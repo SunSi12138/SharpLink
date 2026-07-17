@@ -61,7 +61,7 @@ public class RpcSessionLifecycleTests
         var readFailure = new SharpLinkException(SharpLinkErrorCode.ProtocolViolation, "reader failed");
 
         var readFault = Task.Run(() => session.NotifyDisconnected(readFailure));
-        var writeFault = Task.Run(() => session.SendPacket(CreatePacket()));
+        var writeFault = Task.Run(() => session.SendPacket(CreatePacket(session)));
         try
         {
             await writeFault;
@@ -103,7 +103,7 @@ public class RpcSessionLifecycleTests
                 {
                     try
                     {
-                        session.SendPacket(CreatePacket());
+                        session.SendPacket(CreatePacket(session));
                     }
                     catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ConnectionClosed)
                     {
@@ -128,7 +128,7 @@ public class RpcSessionLifecycleTests
     {
         try
         {
-            session.SendPacket(CreatePacket());
+            session.SendPacket(CreatePacket(session));
             throw new Exception("send should fail after the session terminates");
         }
         catch (SharpLinkException exception)
@@ -137,9 +137,9 @@ public class RpcSessionLifecycleTests
         }
     }
 
-    private static IRpcByteBufferWriter CreatePacket()
+    private static IRpcByteBufferWriter CreatePacket(RpcSession session)
     {
-        var writer = BufferWriterPool.Get();
+        var writer = session.RuntimeContext.Buffers.Rent();
         writer.WritePacket(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 1);
         return writer;
     }

@@ -15,7 +15,7 @@
 核心项目（`src/`）：
 
 - `SharpLink.Abstractions`：Protocol v2 公共模型、公共接口、通道与传输抽象
-- `SharpLink.Runtime`：`RpcSession`、`StreamManager`、`RpcCodecRegistry`、传输实现与底层收发逻辑
+- `SharpLink.Runtime`：`RpcSession`、`StreamManager`、实例级 Codec Provider、传输实现与底层收发逻辑
 - `SharpLink.Sdk`：`IService`、`[RpcContract]`、`[RpcService]`、`[Oneway]`、`[Timeout]` 等契约标记
 - `SharpLink.Client`：客户端 Builder、连接生命周期、请求管理与代理调用通道
 - `SharpLink.Server`：服务端 Builder、连接管理、Stub 分发、心跳与取消处理
@@ -51,8 +51,10 @@
 构建与测试：
 
 ```bash
-dotnet build Sharplink.slnx -v minimal
-dotnet test --solution Sharplink.slnx -v minimal
+dotnet build Sharplink.slnx -c Release
+dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release
+dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release
+dotnet run --project test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release -- --timeout 120s
 ```
 
 运行示例：
@@ -326,7 +328,7 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 健康检查：`CheckHealthAsync()`、`ISharpLinkServer.HealthStatus` 与 Hosting health checks
 - 请求超时：`UseRequestTimeout(...)`
 - `RpcSession` flush：`UseRpcSessionFlush(...)`
-- `BufferWriterPool`：`UseBufferWriterPool(...)`
+- 实例级 Buffer Writer Pool：`UseBufferWriterPool(...)`
 - 运行时并发容器：`UseStateStoreConcurrency(...)`
 - 性能预设与流控边界：`UseRuntime(options => options.PerformanceProfile = SharpLinkPerformanceProfile.LowLatency)`
 - 客户端连接池：`UseConnectionPool(options => { options.MinConnections = 1; options.MaxConnections = 4; })`
@@ -334,6 +336,17 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 客户端默认使用 `1/1` 单连接池，单连接选择路径不产生随机选择或临时集合。只有在已有连接承载在途请求时，池才会按压力异步扩容；多连接使用 power-of-two choices 比较在途请求数。stream 在创建时固定到同一连接，收到 `GoAway` 的连接停止接收新调用并在在途请求归零后退出。`Throughput` 预设在用户未显式配置连接池时使用 `1/min(Environment.ProcessorCount, 4)`，其他预设保持 `1/1`。
 
 `AnonymousPipe` 的一次句柄 offer 只支持一个客户端连接，因此其 `MaxConnections` 必须为 `1`。
+
+### 0.6.6 兼容入口迁移
+
+0.6.6 删除了会跨 Client/Server 实例互相覆盖状态的进程级兼容入口：
+
+- `RpcCodecRegistry` / `RpcCodec`：业务配置迁移到 Client/Server Builder 的 `UseCodec<T>(...)` 或 `UseSerializer(...)`；底层组件从所属 `IRpcRuntimeContext.Codecs` 解析 Codec。
+- `BufferWriterPool`：容量和保留策略迁移到 Builder 的 `UseBufferWriterPool(...)`；框架内部从所属 Context 的 `Buffers` 租借和归还。独立工具代码可直接使用 `PooledByteBufferWriter`。
+- `RuntimeConcurrency`：迁移到每个 Builder 的 `UseStateStoreConcurrency(...)`。
+- 旧的 Client 调用排列组合入口已删除；业务调用只通过 Source Generator 代理，底层扩展只实现 `IRpcChannel` 的五类 invoker。
+
+这些配置在 `Build()` 时冻结；同进程的不同 Client/Server 可以使用不同 Codec、Pool 和并发参数而互不污染。
 
 如果你使用 `UseTcp(0, "127.0.0.1")` 让系统自动分配端口，可以在 `Build()` 前通过 `serverBuilder.Transport.LocalEndPoint` 读取实际监听端口。
 
