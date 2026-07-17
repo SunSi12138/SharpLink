@@ -11,7 +11,8 @@ internal enum ServerCallCancellationReason : byte
 }
 
 /// <summary>
-/// Owns cancellation and terminal-response eligibility for one server invocation.
+/// Owns cancellation, deadline timing and terminal-response eligibility for one server invocation.
+/// The first terminal source wins and all later sources become no-ops.
 /// </summary>
 internal sealed class ServerCallCancellationState : IDisposable
 {
@@ -19,9 +20,11 @@ internal sealed class ServerCallCancellationState : IDisposable
     private static readonly ConcurrentStack<ServerCallCancellationState> Pool = new();
     private static int s_retainedCount;
 
-    private readonly Lock _cancellationGate = new();
+    private readonly Lock _lifetimeGate = new();
     private CancellationTokenSource? _invocationCancellation;
-    private CancellationToken _serverLoopToken;
+    private CancellationTokenRegistration _deadlineRegistration;
+    private CancellationTokenRegistration _serverStoppingRegistration;
+    private CancellationTokenRegistration _connectionClosedRegistration;
     private int _reason;
     private int _abandonedRecorded;
     private bool _disposeRequested;
@@ -36,7 +39,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     public DateTimeOffset? Deadline { get; private set; }
 
     public CancellationToken InvocationToken
-        => _invocationCancellation?.Token ?? _serverLoopToken;
+        => _invocationCancellation?.Token ?? CancellationToken.None;
 
     public ServerCallCancellationReason Reason
         => (ServerCallCancellationReason)Volatile.Read(ref _reason);
@@ -46,7 +49,8 @@ internal sealed class ServerCallCancellationState : IDisposable
     public static ServerCallCancellationState Rent(
         long requestId,
         DateTimeOffset? deadline,
-        CancellationToken serverLoopToken,
+        CancellationToken connectionClosedToken,
+        CancellationToken serverStoppingToken,
         bool supportsCooperativeCancellation)
     {
         if (!Pool.TryPop(out var state))
@@ -56,34 +60,57 @@ internal sealed class ServerCallCancellationState : IDisposable
 
         state.RequestId = requestId;
         state.Deadline = deadline;
-        state._serverLoopToken = serverLoopToken;
         state._reason = (int)ServerCallCancellationReason.None;
         state._abandonedRecorded = 0;
         state._disposeRequested = false;
         state._externalUsers = 0;
-        if (supportsCooperativeCancellation)
+        state._deadlineRegistration = default;
+        state._serverStoppingRegistration = default;
+        state._connectionClosedRegistration = default;
+        state._invocationCancellation = supportsCooperativeCancellation || deadline is not null
+            ? new CancellationTokenSource()
+            : null;
+
+        if (deadline is { } absoluteDeadline)
         {
-            var cancellation = CancellationTokenSource.CreateLinkedTokenSource(serverLoopToken);
-            if (deadline is { } absoluteDeadline)
-            {
-                var remaining = absoluteDeadline - DateTimeOffset.UtcNow;
-                if (remaining <= TimeSpan.Zero)
-                    cancellation.Cancel();
-                else
-                    cancellation.CancelAfter(remaining);
-            }
-            state._invocationCancellation = cancellation;
+            var cancellation = state._invocationCancellation!;
+            state._deadlineRegistration = cancellation.Token.UnsafeRegister(
+                static callbackState =>
+                    ((ServerCallCancellationState)callbackState!).InvokeCancellation(
+                        ServerCallCancellationReason.DeadlineExceeded),
+                state);
+            var remaining = absoluteDeadline - DateTimeOffset.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+                state.TryCancel(ServerCallCancellationReason.DeadlineExceeded);
+            else
+                cancellation.CancelAfter(remaining);
         }
-        else
+
+        // Register server shutdown before connection closure so forced server shutdown has a
+        // deterministic reason when both tokens have already been canceled.
+        if (serverStoppingToken.CanBeCanceled)
         {
-            state._invocationCancellation = null;
+            state._serverStoppingRegistration = serverStoppingToken.UnsafeRegister(
+                static callbackState =>
+                    ((ServerCallCancellationState)callbackState!).InvokeCancellation(
+                        ServerCallCancellationReason.ServerStopping),
+                state);
         }
+        if (connectionClosedToken.CanBeCanceled)
+        {
+            state._connectionClosedRegistration = connectionClosedToken.UnsafeRegister(
+                static callbackState =>
+                    ((ServerCallCancellationState)callbackState!).InvokeCancellation(
+                        ServerCallCancellationReason.ConnectionClosed),
+                state);
+        }
+
         return state;
     }
 
     public bool TryAcquire(long expectedRequestId)
     {
-        lock (_cancellationGate)
+        lock (_lifetimeGate)
         {
             if (_disposeRequested || RequestId != expectedRequestId)
                 return false;
@@ -95,7 +122,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     public void ReleaseUse()
     {
         var shouldDispose = false;
-        lock (_cancellationGate)
+        lock (_lifetimeGate)
         {
             if (--_externalUsers < 0)
                 throw new InvalidOperationException("Server call cancellation state use count underflowed.");
@@ -105,7 +132,7 @@ internal sealed class ServerCallCancellationState : IDisposable
             ReturnCore();
     }
 
-    public bool TryAbandon(ServerCallCancellationReason reason)
+    public bool TryCancel(ServerCallCancellationReason reason)
     {
         if (reason is ServerCallCancellationReason.None or ServerCallCancellationReason.Completed)
             throw new ArgumentOutOfRangeException(nameof(reason));
@@ -116,7 +143,15 @@ internal sealed class ServerCallCancellationState : IDisposable
             return false;
         }
 
-        _invocationCancellation?.Cancel();
+        try
+        {
+            _invocationCancellation?.Cancel();
+        }
+        catch
+        {
+            // User cancellation callbacks cannot be allowed to escape into a protocol loop,
+            // timer callback or server shutdown path. Cancellation remains observable.
+        }
         return true;
     }
 
@@ -127,22 +162,7 @@ internal sealed class ServerCallCancellationState : IDisposable
 
         if (Deadline is { } deadline && deadline <= DateTimeOffset.UtcNow)
         {
-            TryAbandon(ServerCallCancellationReason.DeadlineExceeded);
-            return false;
-        }
-
-        if (_serverLoopToken.IsCancellationRequested)
-        {
-            TryAbandon(ServerCallCancellationReason.ConnectionClosed);
-            return false;
-        }
-
-        // CancelAfter uses a timer and may become observable a few scheduler ticks before the
-        // wall-clock comparison reaches the serialized absolute deadline. It is still the
-        // deadline source owned by this state, not an arbitrary service cancellation.
-        if (Deadline is not null && _invocationCancellation?.IsCancellationRequested == true)
-        {
-            TryAbandon(ServerCallCancellationReason.DeadlineExceeded);
+            TryCancel(ServerCallCancellationReason.DeadlineExceeded);
             return false;
         }
 
@@ -159,7 +179,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     public void Dispose()
     {
         var shouldDispose = false;
-        lock (_cancellationGate)
+        lock (_lifetimeGate)
         {
             if (_disposeRequested)
                 return;
@@ -170,13 +190,37 @@ internal sealed class ServerCallCancellationState : IDisposable
             ReturnCore();
     }
 
+    private void InvokeCancellation(ServerCallCancellationReason reason)
+    {
+        lock (_lifetimeGate)
+        {
+            if (_disposeRequested)
+                return;
+            _externalUsers++;
+        }
+
+        try
+        {
+            TryCancel(reason);
+        }
+        finally
+        {
+            ReleaseUse();
+        }
+    }
+
     private void ReturnCore()
     {
+        _connectionClosedRegistration.Dispose();
+        _serverStoppingRegistration.Dispose();
+        _deadlineRegistration.Dispose();
         _invocationCancellation?.Dispose();
         _invocationCancellation = null;
+        _connectionClosedRegistration = default;
+        _serverStoppingRegistration = default;
+        _deadlineRegistration = default;
         RequestId = 0;
         Deadline = null;
-        _serverLoopToken = CancellationToken.None;
         _reason = (int)ServerCallCancellationReason.None;
         _abandonedRecorded = 0;
 

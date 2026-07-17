@@ -485,7 +485,7 @@ internal sealed partial class SharpLinkServer
                                 {
                                     try
                                     {
-                                        callState.TryAbandon(ServerCallCancellationReason.RemoteCancel);
+                                        callState.TryCancel(ServerCallCancellationReason.RemoteCancel);
                                     }
                                     finally
                                     {
@@ -1019,7 +1019,7 @@ internal sealed partial class SharpLinkServer
         return timestamp;
     }
 
-    private static ServerCallCancellationState? CreateTrackedCallState(
+    private ServerCallCancellationState? CreateTrackedCallState(
         long requestId,
         DateTimeOffset? deadline,
         CancellationToken serverLoopToken,
@@ -1033,12 +1033,13 @@ internal sealed partial class SharpLinkServer
             requestId,
             deadline,
             serverLoopToken,
+            _forceStopCts.Token,
             supportsCooperativeCancellation: true);
         requestCancellationMap.Set(requestId, callState);
         return callState;
     }
 
-    private static ServerCallCancellationState EnsureTrackedCallState(
+    private ServerCallCancellationState EnsureTrackedCallState(
         ServerCallCancellationState? callState,
         long requestId,
         DateTimeOffset? deadline,
@@ -1052,6 +1053,7 @@ internal sealed partial class SharpLinkServer
             requestId,
             deadline,
             serverLoopToken,
+            _forceStopCts.Token,
             supportsCooperativeCancellation: false);
         requestCancellationMap.Set(requestId, callState);
         return callState;
