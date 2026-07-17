@@ -224,6 +224,23 @@ public static class ProtocolV2PayloadCodec
         return new ProtocolV2Error(code, message, (flags & ProtocolV2FrameFlags.Truncated) != 0);
     }
 
+    internal static void ValidateErrorPayload(ReadOnlySequence<byte> payload, int maxMessageBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(maxMessageBytes);
+        var reader = new SequenceReader<byte>(payload);
+        if (!reader.TryReadLittleEndian(out short codeBits) ||
+            !TryReadVarUInt32(ref reader, out var messageLength))
+        {
+            throw ProtocolV2FrameParser.Violation("Binary error payload is truncated.");
+        }
+        if (messageLength > maxMessageBytes)
+            throw ProtocolV2FrameParser.Violation($"Error message exceeds {maxMessageBytes} bytes.");
+        if (reader.Remaining != messageLength)
+            throw ProtocolV2FrameParser.Violation("Binary error message length does not match the frame.");
+        if (!IsDefinedErrorCode((SharpLinkErrorCode)unchecked((ushort)codeBits)))
+            throw ProtocolV2FrameParser.Violation($"Unknown error code {unchecked((ushort)codeBits)}.");
+    }
+
     internal static int GetMetadataPayloadLength(SharpLinkMetadata metadata)
     {
         ArgumentNullException.ThrowIfNull(metadata);

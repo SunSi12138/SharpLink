@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace SharpLink.Runtime;
 
 /// <summary>Parses bounded SharpLink Protocol v2 frames.</summary>
@@ -56,7 +54,7 @@ public static class ProtocolV2FrameParser
             return false;
 
         payload = buffer.Slice(ProtocolV2Constants.HeaderBytes, payloadLength);
-        ValidatePayload(type, flags, payload, limits);
+        ValidatePayloadShape(type, flags, payload, limits);
         header = new ProtocolV2FrameHeader(type, flags, requestId);
         buffer = buffer.Slice(ProtocolV2Constants.HeaderBytes + payloadLength);
         return true;
@@ -139,7 +137,7 @@ public static class ProtocolV2FrameParser
         }
     }
 
-    private static void ValidatePayload(
+    private static void ValidatePayloadShape(
         ProtocolV2FrameType type,
         ProtocolV2FrameFlags flags,
         ReadOnlySequence<byte> payload,
@@ -148,13 +146,17 @@ public static class ProtocolV2FrameParser
         switch (type)
         {
             case ProtocolV2FrameType.HandshakeRequest:
-                _ = ProtocolV2PayloadCodec.ReadHandshakeRequest(payload, limits);
+                if (payload.Length < 31 || payload.Length > 35L + limits.MaxMetadataBytes)
+                    throw Violation("HandshakeRequest payload has an invalid bounded length.");
                 break;
             case ProtocolV2FrameType.HandshakeResponse:
                 if ((flags & ProtocolV2FrameFlags.Error) != 0)
-                    _ = ProtocolV2PayloadCodec.ReadError(payload, flags, limits.MaxErrorMessageBytes);
+                    ProtocolV2PayloadCodec.ValidateErrorPayload(payload, limits.MaxErrorMessageBytes);
                 else
-                    _ = ProtocolV2PayloadCodec.ReadHandshakeResponse(payload, limits);
+                {
+                    if (payload.Length != 22)
+                        throw Violation("HandshakeResponse payload has an invalid length.");
+                }
                 break;
             case ProtocolV2FrameType.Ping:
             case ProtocolV2FrameType.Pong:
@@ -166,7 +168,7 @@ public static class ProtocolV2FrameParser
                 break;
             case ProtocolV2FrameType.Response:
                 if ((flags & ProtocolV2FrameFlags.Error) != 0)
-                    _ = ProtocolV2PayloadCodec.ReadError(payload, flags, limits.MaxErrorMessageBytes);
+                    ProtocolV2PayloadCodec.ValidateErrorPayload(payload, limits.MaxErrorMessageBytes);
                 break;
             case ProtocolV2FrameType.Cancel:
                 if (!payload.IsEmpty)
@@ -186,25 +188,41 @@ public static class ProtocolV2FrameParser
                 {
                     if (payload.Length < sizeof(ushort) + 3)
                         throw Violation("Error StreamComplete payload is incomplete.");
-                    _ = ProtocolV2PayloadCodec.ReadError(
-                        payload.Slice(sizeof(ushort)), flags, limits.MaxErrorMessageBytes);
+                    ProtocolV2PayloadCodec.ValidateErrorPayload(
+                        payload.Slice(sizeof(ushort)), limits.MaxErrorMessageBytes);
                 }
                 break;
             case ProtocolV2FrameType.WindowUpdate:
-                _ = ProtocolV2PayloadCodec.ReadWindowUpdate(payload);
+                if (payload.Length != sizeof(ushort) + sizeof(uint))
+                    throw Violation("WindowUpdate payload must contain UInt16 stream ID and UInt32 credit.");
+                var windowReader = new SequenceReader<byte>(payload);
+                if (!windowReader.TryReadLittleEndian(out short _) ||
+                    !windowReader.TryReadLittleEndian(out int credit) || credit <= 0)
+                {
+                    throw Violation("WindowUpdate credit must be between 1 and Int32.MaxValue.");
+                }
                 break;
             case ProtocolV2FrameType.GoAway:
                 if (payload.Length < sizeof(ulong) + 3)
                     throw Violation("GoAway payload is incomplete.");
-                _ = ProtocolV2PayloadCodec.ReadError(
-                    payload.Slice(sizeof(ulong)), flags | ProtocolV2FrameFlags.Error, limits.MaxErrorMessageBytes);
+                ProtocolV2PayloadCodec.ValidateErrorPayload(
+                    payload.Slice(sizeof(ulong)), limits.MaxErrorMessageBytes);
                 break;
             case ProtocolV2FrameType.HealthCheck:
                 if (!payload.IsEmpty)
                     throw Violation("HealthCheck payload must be empty.");
                 break;
             case ProtocolV2FrameType.HealthResponse:
-                _ = ProtocolV2PayloadCodec.ReadHealthResponse(payload);
+                if (payload.Length != 1)
+                    throw Violation("HealthResponse payload must contain exactly one status byte.");
+                var healthReader = new SequenceReader<byte>(payload);
+                if (!healthReader.TryRead(out var status) ||
+                    status is not (byte)SharpLinkHealthStatus.Ready and
+                    not (byte)SharpLinkHealthStatus.Draining and
+                    not (byte)SharpLinkHealthStatus.Unhealthy)
+                {
+                    throw Violation($"Unknown health status {status}.");
+                }
                 break;
         }
     }
@@ -228,8 +246,6 @@ public static class ProtocolV2FrameParser
             throw Violation($"Request metadata exceeds its {maxMetadataBytes}-byte limit.");
         if (reader.Remaining < metadataLength)
             throw Violation("Request metadata payload is truncated.");
-        _ = ProtocolV2PayloadCodec.ReadMetadata(
-            reader.Sequence.Slice(reader.Position, metadataLength));
     }
 
     internal static SharpLinkException Violation(string message)

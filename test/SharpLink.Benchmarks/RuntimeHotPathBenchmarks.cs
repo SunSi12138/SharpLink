@@ -25,12 +25,6 @@ public class RuntimeHotPathBenchmarks
     private ReadOnlySequence<byte> _requestFrame;
     private ReadOnlySequence<byte> _metadataFrame;
     private ReadOnlySequence<byte> _segmentedMetadataFrame;
-    private StreamFlowController _flowController = null!;
-    private long[] _flowRequestIds = null!;
-
-    [Params(1, 8, 32, 128)]
-    public int FlowStreams { get; set; }
-
     [GlobalSetup]
     public void Setup()
     {
@@ -42,14 +36,6 @@ public class RuntimeHotPathBenchmarks
         var metadataBytes = CreateRequestFrame(includeMetadata: true);
         _metadataFrame = new ReadOnlySequence<byte>(metadataBytes);
         _segmentedMetadataFrame = CreateSegmented(metadataBytes, 1);
-        _flowController = new StreamFlowController(
-            streamWindow: 1024,
-            connectionWindow: 1024 * Math.Max(FlowStreams, 1),
-            maxFramePayloadBytes: 4 * 1024 * 1024,
-            maxConcurrentStreams: Math.Max(FlowStreams, 1));
-        _flowRequestIds = new long[FlowStreams];
-        for (var index = 0; index < _flowRequestIds.Length; index++)
-            _flowRequestIds[index] = index + 1;
     }
 
     [GlobalCleanup]
@@ -81,18 +67,6 @@ public class RuntimeHotPathBenchmarks
     {
         using var scope = SharpLinkCallContext.Push(_callContext);
         _ = SharpLinkCallContext.Current;
-    }
-
-    [Benchmark]
-    public void FlowCreditRoundTrip()
-    {
-        for (var index = 0; index < _flowRequestIds.Length; index++)
-        {
-            var requestId = _flowRequestIds[index];
-            _flowController.AcquireSendCreditAsync(requestId, 1, 32, CancellationToken.None)
-                .GetAwaiter().GetResult();
-            _flowController.ApplyWindowUpdate(requestId, 1, 32);
-        }
     }
 
     private ProtocolV2FrameHeader Parse(ReadOnlySequence<byte> frame)
@@ -152,6 +126,42 @@ public class RuntimeHotPathBenchmarks
             next.RunningIndex = RunningIndex + Memory.Length;
             Next = next;
             return next;
+        }
+    }
+}
+
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+public class FlowControlHotPathBenchmarks
+{
+    private StreamFlowController _flowController = null!;
+    private long[] _requestIds = null!;
+
+    [Params(1, 8, 32, 128)]
+    public int FlowStreams { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _flowController = new StreamFlowController(
+            streamWindow: 1024,
+            connectionWindow: 1024 * Math.Max(FlowStreams, 1),
+            maxFramePayloadBytes: 4 * 1024 * 1024,
+            maxConcurrentStreams: Math.Max(FlowStreams, 1));
+        _requestIds = new long[FlowStreams];
+        for (var index = 0; index < _requestIds.Length; index++)
+            _requestIds[index] = index + 1;
+    }
+
+    [Benchmark]
+    public void CreditRoundTrip()
+    {
+        for (var index = 0; index < _requestIds.Length; index++)
+        {
+            var requestId = _requestIds[index];
+            _flowController.AcquireSendCreditAsync(requestId, 1, 32, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            _flowController.ApplyWindowUpdate(requestId, 1, 32);
         }
     }
 }
