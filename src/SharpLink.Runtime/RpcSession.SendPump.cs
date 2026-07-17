@@ -316,6 +316,9 @@ public sealed partial class RpcSession
 
         private void PulseCapacityWaiters()
         {
+            if (Volatile.Read(ref _capacityChanged) is null)
+                return;
+
             TaskCompletionSource<bool>? waiters;
             lock (_admissionGate)
             {
