@@ -94,6 +94,30 @@ public sealed class StripedLongMap<TValue> where TValue : class
         return values;
     }
 
+    /// <summary>Copies a bounded point-in-time view of the current entries.</summary>
+    /// <param name="destination">A destination large enough for the map's configured upper bound.</param>
+    /// <returns>The number of copied entries.</returns>
+    internal int CopyEntries(Span<KeyValuePair<long, TValue>> destination)
+    {
+        var count = 0;
+        for (var index = 0; index < _maps.Length; index++)
+        {
+            lock (_locks[index])
+            {
+                var map = _maps[index];
+                if (map.Count > destination.Length - count)
+                {
+                    throw new ArgumentException(
+                        "The destination is smaller than the current map value count.",
+                        nameof(destination));
+                }
+                foreach (var entry in map)
+                    destination[count++] = entry;
+            }
+        }
+        return count;
+    }
+
     private int GetStripe(long key)
     {
         var hash = unchecked((int)(key ^ (key >> 32)));

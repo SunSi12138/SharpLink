@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
@@ -125,7 +127,8 @@ internal sealed partial class SharpLinkServer
             connectionState = new ServerConnectionState(
                 session,
                 _runtimeContext.Concurrency,
-                cancellationToken);
+                cancellationToken,
+                _maxConcurrentCallsPerConnection);
             connection = null;
             session.SetTelemetrySide("server");
             session.BindRuntimeContext(_runtimeContext);
@@ -590,7 +593,7 @@ internal sealed partial class SharpLinkServer
         using var requestScope = BeginRequestLogScope(_logger, requestId);
         var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
         var request = ReadRequestEnvelope(session, payload, flags);
-        if (request.Deadline is { } oneWayDeadline && oneWayDeadline <= DateTimeOffset.UtcNow)
+        if (IsDeadlineExceeded(request.DeadlineTimestamp))
             return;
         if (!services.TryGetValue(request.InterfaceHash, out var serviceInfo))
             return;
@@ -606,8 +609,10 @@ internal sealed partial class SharpLinkServer
         var supportsCooperativeCancellation =
             isCancellable && serviceInfo.Stub.SupportsCancellation(request.MethodHash);
         var callState = CreateTrackedCallState(
+            connection,
             requestId,
             request.Deadline,
+            request.DeadlineTimestamp,
             serverLoopToken,
             supportsCooperativeCancellation,
             requestCancellationMap);
@@ -632,13 +637,14 @@ internal sealed partial class SharpLinkServer
             {
                 if (callContext is SharpLinkServerInvocationContext interceptorContext)
                     interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
-                TryClaimCallCompletion(callState, request.Deadline, serverLoopToken);
+                TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken);
                 ReleaseOneWayDispatchResources(callState, requestId, requestCancellationMap, connection);
                 return;
             }
 
             callState = EnsureTrackedCallState(
-                callState, requestId, request.Deadline, serverLoopToken, requestCancellationMap);
+                connection, callState, requestId, request.Deadline, request.DeadlineTimestamp,
+                serverLoopToken, requestCancellationMap);
             ObserveUserCall(
                 new ValueTask(AwaitOneWayDispatchAsync(
                     invokeTask,
@@ -655,7 +661,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception ex)
         {
-            if (TryClaimCallCompletion(callState, request.Deadline, serverLoopToken))
+            if (TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
             {
                 LogOnewayRpcDispatchFailed(_logger, MapServiceException(
                     ex, callContext, session, serviceInfo.Stub, request.MethodHash, requestId, invokeToken));
@@ -725,7 +731,7 @@ internal sealed partial class SharpLinkServer
         var hasReturnPayload = (flags & ProtocolV2FrameFlags.HasReturn) != 0;
         
         var request = ReadRequestEnvelope(session, payload, flags);
-        if (request.Deadline is { } deadline && deadline <= DateTimeOffset.UtcNow)
+        if (IsDeadlineExceeded(request.DeadlineTimestamp))
         {
             session.SendRpcErrorAsync(requestId, new SharpLinkException(
                 SharpLinkErrorCode.DeadlineExceeded,
@@ -752,8 +758,10 @@ internal sealed partial class SharpLinkServer
         var supportsCooperativeCancellation =
             isCancellable && serviceInfo.Stub.SupportsCancellation(request.MethodHash);
         var callState = CreateTrackedCallState(
+            connection,
             requestId,
             request.Deadline,
+            request.DeadlineTimestamp,
             serverLoopToken,
             supportsCooperativeCancellation,
             requestCancellationMap);
@@ -773,28 +781,31 @@ internal sealed partial class SharpLinkServer
                 if (!invokeTask.IsCompletedSuccessfully)
                 {
                     callState = EnsureTrackedCallState(
-                        callState, requestId, request.Deadline, serverLoopToken, requestCancellationMap);
+                        connection, callState, requestId, request.Deadline, request.DeadlineTimestamp,
+                        serverLoopToken, requestCancellationMap);
                     return AwaitDispatchRpcNoReturnAsync(
                         invokeTask, session, requestId, callState, requestCancellationMap, connection,
-                        request.Deadline, callContext, serviceInfo.Stub, request.MethodHash, invokeToken);
+                        callContext, serviceInfo.Stub, request.MethodHash, invokeToken);
                 }
                 if (callContext is SharpLinkServerInvocationContext interceptorContext)
                     interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
-                if (TryClaimCallCompletion(callState, request.Deadline, serverLoopToken))
+                if (TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
                     session.SendPacketAsync(ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, requestId);
                 ReleaseDispatchResources(callState, requestId, requestCancellationMap, connection);
                 return ValueTask.CompletedTask;
             }
             catch (OperationCanceledException)
             {
-                if (TryClaimCallCompletion(callState, request.Deadline, serverLoopToken))
-                    session.SendRpcErrorAsync(requestId, CreateServerCancellationException(callState, request.Deadline));
+                if (TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
+                    session.SendRpcErrorAsync(
+                        requestId,
+                        CreateServerCancellationException(callState, request.DeadlineTimestamp));
                 ReleaseDispatchResources(callState, requestId, requestCancellationMap, connection);
                 return ValueTask.CompletedTask;
             }
             catch (Exception e)
             {
-                if (TryClaimCallCompletion(callState, request.Deadline, serverLoopToken))
+                if (TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
                 {
                     session.SendRpcErrorAsync(requestId, MapServiceException(
                         e, callContext, session, serviceInfo.Stub, request.MethodHash, requestId, invokeToken));
@@ -820,14 +831,15 @@ internal sealed partial class SharpLinkServer
             if (!invokeTask.IsCompletedSuccessfully)
             {
                 callState = EnsureTrackedCallState(
-                    callState, requestId, request.Deadline, serverLoopToken, requestCancellationMap);
+                    connection, callState, requestId, request.Deadline, request.DeadlineTimestamp,
+                    serverLoopToken, requestCancellationMap);
                 return AwaitDispatchRpcAsync(invokeTask, session, requestId, writer, token, callState,
-                    requestCancellationMap, connection, request.Deadline, responseCallContext,
+                    requestCancellationMap, connection, responseCallContext,
                     serviceInfo.Stub, request.MethodHash, invokeToken);
             }
             if (responseCallContext is SharpLinkServerInvocationContext interceptorContext)
                 interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
-            if (!TryClaimCallCompletion(callState, request.Deadline, serverLoopToken))
+            if (!TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
             {
                 _runtimeContext.Buffers.Return(writer);
                 ReleaseDispatchResources(callState, requestId, requestCancellationMap, connection);
@@ -849,8 +861,10 @@ internal sealed partial class SharpLinkServer
             }
 
             _runtimeContext.Buffers.Return(writer);
-            if (TryClaimCallCompletion(callState, request.Deadline, serverLoopToken))
-                session.SendRpcErrorAsync(requestId, CreateServerCancellationException(callState, request.Deadline));
+            if (TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
+                session.SendRpcErrorAsync(
+                    requestId,
+                    CreateServerCancellationException(callState, request.DeadlineTimestamp));
             ReleaseDispatchResources(callState, requestId, requestCancellationMap, connection);
             return ValueTask.CompletedTask;
         }
@@ -863,7 +877,7 @@ internal sealed partial class SharpLinkServer
             }
 
             _runtimeContext.Buffers.Return(writer);
-            if (TryClaimCallCompletion(callState, request.Deadline, serverLoopToken))
+            if (TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
             {
                 session.SendRpcErrorAsync(requestId, MapServiceException(
                     e, responseCallContext, session, serviceInfo.Stub, request.MethodHash, requestId, invokeToken));
@@ -880,7 +894,6 @@ internal sealed partial class SharpLinkServer
         ServerCallCancellationState callState,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         ServerConnectionState connection,
-        DateTimeOffset? deadline,
         SharpLinkCallContextSnapshot callContext,
         IRpcStub stub,
         long methodId,
@@ -898,7 +911,9 @@ internal sealed partial class SharpLinkServer
         catch (OperationCanceledException)
         {
             if (TryClaimCallCompletion(callState))
-                session.SendRpcErrorAsync(requestId, CreateServerCancellationException(callState, deadline));
+                session.SendRpcErrorAsync(
+                    requestId,
+                    CreateServerCancellationException(callState, callState.DeadlineTimestamp));
         }
         catch (Exception e)
         {
@@ -923,7 +938,6 @@ internal sealed partial class SharpLinkServer
         ServerCallCancellationState callState,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         ServerConnectionState connection,
-        DateTimeOffset? deadline,
         SharpLinkCallContextSnapshot callContext,
         IRpcStub stub,
         long methodId,
@@ -952,7 +966,9 @@ internal sealed partial class SharpLinkServer
 
             _runtimeContext.Buffers.Return(writer);
             if (TryClaimCallCompletion(callState))
-                session.SendRpcErrorAsync(requestId, CreateServerCancellationException(callState, deadline));
+                session.SendRpcErrorAsync(
+                    requestId,
+                    CreateServerCancellationException(callState, callState.DeadlineTimestamp));
         }
         catch (Exception e)
         {
@@ -1033,8 +1049,10 @@ internal sealed partial class SharpLinkServer
     }
 
     private ServerCallCancellationState? CreateTrackedCallState(
+        ServerConnectionState connection,
         long requestId,
         DateTimeOffset? deadline,
+        long deadlineTimestamp,
         CancellationToken serverLoopToken,
         bool supportsCooperativeCancellation,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap)
@@ -1045,17 +1063,21 @@ internal sealed partial class SharpLinkServer
         var callState = ServerCallCancellationState.Rent(
             requestId,
             deadline,
+            deadlineTimestamp,
             serverLoopToken,
             _forceStopCts.Token,
             supportsCooperativeCancellation: true);
         requestCancellationMap.Set(requestId, callState);
+        connection.DeadlineScheduler.Register(callState);
         return callState;
     }
 
     private ServerCallCancellationState EnsureTrackedCallState(
+        ServerConnectionState connection,
         ServerCallCancellationState? callState,
         long requestId,
         DateTimeOffset? deadline,
+        long deadlineTimestamp,
         CancellationToken serverLoopToken,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap)
     {
@@ -1065,10 +1087,12 @@ internal sealed partial class SharpLinkServer
         callState = ServerCallCancellationState.Rent(
             requestId,
             deadline,
+            deadlineTimestamp,
             serverLoopToken,
             _forceStopCts.Token,
             supportsCooperativeCancellation: false);
         requestCancellationMap.Set(requestId, callState);
+        connection.DeadlineScheduler.Register(callState);
         return callState;
     }
 
@@ -1086,13 +1110,13 @@ internal sealed partial class SharpLinkServer
 
     private bool TryClaimCallCompletion(
         ServerCallCancellationState? callState,
-        DateTimeOffset? deadline,
+        long deadlineTimestamp,
         CancellationToken serverLoopToken)
     {
         if (callState is not null)
             return TryClaimCallCompletion(callState);
 
-        var reason = deadline is { } absoluteDeadline && absoluteDeadline <= DateTimeOffset.UtcNow
+        var reason = IsDeadlineExceeded(deadlineTimestamp)
             ? ServerCallCancellationReason.DeadlineExceeded
             : serverLoopToken.IsCancellationRequested
                 ? ServerCallCancellationReason.ConnectionClosed
@@ -1107,8 +1131,8 @@ internal sealed partial class SharpLinkServer
 
     private static SharpLinkException CreateServerCancellationException(
         ServerCallCancellationState? callState,
-        DateTimeOffset? deadline)
-        => (callState?.Reason ?? (deadline is { } absoluteDeadline && absoluteDeadline <= DateTimeOffset.UtcNow
+        long deadlineTimestamp)
+        => (callState?.Reason ?? (IsDeadlineExceeded(deadlineTimestamp)
             ? ServerCallCancellationReason.DeadlineExceeded
             : ServerCallCancellationReason.RemoteCancel)) switch
         {
@@ -1165,6 +1189,7 @@ internal sealed partial class SharpLinkServer
         }
 
         DateTimeOffset? deadline = null;
+        var deadlineTimestamp = 0L;
         if ((flags & ProtocolV2FrameFlags.HasDeadline) != 0)
         {
             if (!reader.TryReadLittleEndian(out long unixMilliseconds))
@@ -1172,6 +1197,12 @@ internal sealed partial class SharpLinkServer
             try
             {
                 deadline = DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds);
+                var utcNow = DateTimeOffset.UtcNow;
+                var monotonicNow = Stopwatch.GetTimestamp();
+                deadlineTimestamp = GetMonotonicDeadlineTimestamp(
+                    deadline.Value,
+                    utcNow,
+                    monotonicNow);
             }
             catch (ArgumentOutOfRangeException exception)
             {
@@ -1210,6 +1241,7 @@ internal sealed partial class SharpLinkServer
             methodHash,
             reader.UnreadSequence,
             deadline,
+            deadlineTimestamp,
             metadata);
     }
 
@@ -1218,7 +1250,25 @@ internal sealed partial class SharpLinkServer
         long MethodHash,
         ReadOnlySequence<byte> Arguments,
         DateTimeOffset? Deadline,
+        long DeadlineTimestamp,
         SharpLinkMetadata? Metadata);
+
+    private static bool IsDeadlineExceeded(long deadlineTimestamp)
+        => deadlineTimestamp > 0 && deadlineTimestamp <= Stopwatch.GetTimestamp();
+
+    private static long GetMonotonicDeadlineTimestamp(
+        DateTimeOffset deadline,
+        DateTimeOffset utcNow,
+        long monotonicNow)
+    {
+        var remaining = deadline - utcNow;
+        if (remaining <= TimeSpan.Zero)
+            return monotonicNow;
+        var stopwatchTicks = remaining.TotalSeconds * Stopwatch.Frequency;
+        if (stopwatchTicks >= long.MaxValue - monotonicNow)
+            return long.MaxValue;
+        return monotonicNow + Math.Max(1L, (long)Math.Ceiling(stopwatchTicks));
+    }
 
 
 }

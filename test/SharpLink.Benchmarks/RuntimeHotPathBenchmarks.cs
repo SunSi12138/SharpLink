@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
@@ -10,6 +11,7 @@ using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
+using SharpLink.Server;
 
 namespace SharpLink.Benchmarks;
 
@@ -163,5 +165,65 @@ public class FlowControlHotPathBenchmarks
                 .GetAwaiter().GetResult();
             _flowController.ApplyWindowUpdate(requestId, 1, 32);
         }
+    }
+}
+
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+public class ServerCallCancellationStateBenchmarks
+{
+    private static readonly long SDeadlineOffset = 30L * Stopwatch.Frequency;
+
+    [Benchmark(Baseline = true)]
+    public void NoDeadline()
+    {
+        var state = ServerCallCancellationState.Rent(
+            1,
+            null,
+            0,
+            CancellationToken.None,
+            CancellationToken.None,
+            supportsCooperativeCancellation: false);
+        state.Dispose();
+    }
+
+    [Benchmark]
+    public void CooperativeDeadline()
+    {
+        var state = ServerCallCancellationState.Rent(
+            2,
+            DateTimeOffset.UtcNow.AddSeconds(30),
+            Stopwatch.GetTimestamp() + SDeadlineOffset,
+            CancellationToken.None,
+            CancellationToken.None,
+            supportsCooperativeCancellation: true);
+        state.Dispose();
+    }
+
+    [Benchmark]
+    public void NonCooperativeDeadline()
+    {
+        var state = ServerCallCancellationState.Rent(
+            3,
+            DateTimeOffset.UtcNow.AddSeconds(30),
+            Stopwatch.GetTimestamp() + SDeadlineOffset,
+            CancellationToken.None,
+            CancellationToken.None,
+            supportsCooperativeCancellation: false);
+        state.Dispose();
+    }
+
+    [Benchmark]
+    public void CancelAndDispose()
+    {
+        var state = ServerCallCancellationState.Rent(
+            4,
+            null,
+            0,
+            CancellationToken.None,
+            CancellationToken.None,
+            supportsCooperativeCancellation: true);
+        state.TryCancel(ServerCallCancellationReason.RemoteCancel);
+        state.Dispose();
     }
 }

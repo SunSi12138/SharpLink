@@ -24,11 +24,13 @@ internal sealed class ServerConnectionState
     internal ServerConnectionState(
         RpcSession session,
         RuntimeConcurrencyOptions concurrency,
-        CancellationToken serverToken)
+        CancellationToken serverToken,
+        int maxConcurrentCalls = 1024)
     {
         Session = session ?? throw new ArgumentNullException(nameof(session));
         ArgumentNullException.ThrowIfNull(concurrency);
         CallCancellations = new StripedLongMap<ServerCallCancellationState>(concurrency);
+        DeadlineScheduler = new ServerCallDeadlineScheduler(CallCancellations, maxConcurrentCalls);
         _connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
         _connectionToken = _connectionCancellation.Token;
     }
@@ -39,6 +41,8 @@ internal sealed class ServerConnectionState
         => Volatile.Read(ref _authenticationContext);
 
     internal StripedLongMap<ServerCallCancellationState> CallCancellations { get; }
+
+    internal ServerCallDeadlineScheduler DeadlineScheduler { get; }
 
     internal CancellationToken ConnectionToken => _connectionToken;
 
@@ -148,6 +152,7 @@ internal sealed class ServerConnectionState
         }
         finally
         {
+            DeadlineScheduler.Dispose();
             Interlocked.Exchange(ref _lifecycleState, (int)ServerConnectionLifecycleState.Closed);
             Volatile.Write(ref _authenticationContext, null);
             _connectionCancellation.Dispose();
