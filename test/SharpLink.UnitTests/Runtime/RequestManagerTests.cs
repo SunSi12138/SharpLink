@@ -261,6 +261,33 @@ public class PendingRequestTableTests
         Ensure(manager.Count == 0, "all racing calls should release their slots");
     }
 
+    [Test]
+    public async Task CancellationShouldNotCompleteOwnerBeforeRegistrationIsPublished()
+    {
+        using var owner = new BlockingPendingCallOwner();
+        using var manager = new PendingRequestTable(8, owner: owner);
+        using var cancellation = new CancellationTokenSource();
+        var rentTask = Task.Run(() => manager.Rent(
+            new Int32Codec(),
+            PendingCallKind.Unary,
+            deadlineTimestamp: 0,
+            cancellation.Token,
+            out _));
+
+        Ensure(owner.RegistrationEntered.Wait(TimeSpan.FromSeconds(2)),
+            "registration callback should reach the deterministic race gate");
+        var cancelTask = Task.Run(cancellation.Cancel);
+        await Task.Delay(20);
+        owner.AllowRegistration.Set();
+
+        var operation = await rentTask;
+        await cancelTask;
+        var exception = await CaptureExceptionAsync(operation.AsValueTask().AsTask());
+        Ensure(exception is OperationCanceledException, "the racing call should still observe cancellation");
+        Ensure(owner.MinimumActiveCount >= 0, "completion must not precede owner registration");
+        Ensure(owner.ActiveCount == 0, "registration and completion must balance exactly once");
+    }
+
     private static void SetNextId(PendingRequestTable manager, long nextId)
     {
         var field = typeof(PendingRequestTable).GetField("_nextId", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -325,5 +352,43 @@ public class PendingRequestTableTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private sealed class BlockingPendingCallOwner : IPendingCallOwner, IDisposable
+    {
+        private int _activeCount;
+        private int _minimumActiveCount;
+
+        internal ManualResetEventSlim RegistrationEntered { get; } = new(initialState: false);
+        internal ManualResetEventSlim AllowRegistration { get; } = new(initialState: false);
+        internal int ActiveCount => Volatile.Read(ref _activeCount);
+        internal int MinimumActiveCount => Volatile.Read(ref _minimumActiveCount);
+
+        public void OnPendingCallRegistered()
+        {
+            RegistrationEntered.Set();
+            AllowRegistration.Wait(TimeSpan.FromSeconds(2));
+            Interlocked.Increment(ref _activeCount);
+        }
+
+        public void OnPendingCallCompleted(in PendingCallCompletion completion)
+        {
+            var active = Interlocked.Decrement(ref _activeCount);
+            var minimum = Volatile.Read(ref _minimumActiveCount);
+            while (active < minimum)
+            {
+                var observed = Interlocked.CompareExchange(ref _minimumActiveCount, active, minimum);
+                if (observed == minimum)
+                    break;
+                minimum = observed;
+            }
+        }
+
+        public void Dispose()
+        {
+            AllowRegistration.Set();
+            RegistrationEntered.Dispose();
+            AllowRegistration.Dispose();
+        }
     }
 }

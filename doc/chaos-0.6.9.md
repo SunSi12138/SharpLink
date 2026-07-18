@@ -45,13 +45,17 @@ The release report must show zero `UnexpectedFailures` and zero for all final ga
 
 `MaxRecoveryMilliseconds` reports the slowest complete stop, listener recreation, reconnect,
 handshake, and stable five-probe cycle. The final local two-minute 0.6.9 candidate run completed
-9 rolling restarts and 2,938,187 successful calls, with a maximum stable recovery of 11,040 ms,
+9 rolling restarts and 2,943,483 successful calls, with a maximum stable recovery of 15,583 ms,
 zero unexpected failures, and all final framework gauges at zero.
 
-An earlier Linux release run recovered three generations but then completed no probe for the
-fourth generation's full 30-second budget. The client reconnect worker is now a persistent,
-instance-owned supervisor driven by a capacity-one signal and stopped with the client. It no
-longer depends on a short-lived worker completing at exactly the same time as a new drain signal.
+Linux release runs exposed a pending-call publication race before the reconnect timeout: Cancel or
+disconnect could remove a slot after its CAS publication but before the owning connection recorded
+the active call. Completion then decremented first, raised an active-count underflow, and faulted
+the client read loop. Completion winners now wait for the short registration publication barrier
+before releasing admission or owner state. The reconnect worker is also a persistent,
+instance-owned supervisor driven by a capacity-one signal and stopped with the client.
+Chaos timeout artifacts retain the client state and recent client errors, and final-drain failures
+include an active-call breakdown by side, contract, and method.
 
 Transport-specific RST/FIN, pipe disposal, TLS/authentication, asymmetric frame limit, bounded
 stop, and cancel/response/deadline races remain covered by Unit and Integration tests; the chaos

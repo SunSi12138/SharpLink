@@ -308,6 +308,7 @@ internal sealed class PendingRequestTable : IDisposable
             if (call is null)
                 continue;
 
+            call.WaitUntilRegistered();
             ReleaseSlot();
             var payload = ReadOnlySequence<byte>.Empty;
             CompleteTakenCall(
@@ -429,6 +430,7 @@ internal sealed class PendingRequestTable : IDisposable
     {
         SharpLinkTelemetry.AddPendingRequests(1);
         _owner?.OnPendingCallRegistered();
+        call.MarkRegistered();
         if (call.DeadlineTimestamp > 0)
             UpdateEarliestDeadline(call.DeadlineTimestamp);
         if (call.CancellationToken.IsCancellationRequested)
@@ -451,6 +453,7 @@ internal sealed class PendingRequestTable : IDisposable
             if (!ReferenceEquals(exchanged, current))
                 continue;
 
+            current.WaitUntilRegistered();
             call = current;
             ReleaseSlot();
             return true;
@@ -644,6 +647,7 @@ internal sealed class PendingRequestTable : IDisposable
         private PendingRequestTable? _table;
         private CancellationTokenRegistration _cancellationRegistration;
         private CancellationTokenSource? _producerCancellation;
+        private int _registered;
 
         public long Id { get; private set; }
         public PendingCallKind Kind { get; private set; }
@@ -669,6 +673,7 @@ internal sealed class PendingRequestTable : IDisposable
                 Interlocked.Decrement(ref s_retainedCount);
 
             call._table = table;
+            Volatile.Write(ref call._registered, 0);
             call.Id = id;
             call.Kind = kind;
             call.Operation = operation;
@@ -694,6 +699,15 @@ internal sealed class PendingRequestTable : IDisposable
         }
 
         public void DisposeCancellationRegistration() => _cancellationRegistration.Dispose();
+
+        public void MarkRegistered() => Volatile.Write(ref _registered, 1);
+
+        public void WaitUntilRegistered()
+        {
+            var spinner = new SpinWait();
+            while (Volatile.Read(ref _registered) == 0)
+                spinner.SpinOnce();
+        }
 
         public void CancelProducer(PendingCallCompletionReason reason)
         {
@@ -727,6 +741,7 @@ internal sealed class PendingRequestTable : IDisposable
             CancellationToken = CancellationToken.None;
             _producerCancellation = null;
             _cancellationRegistration = default;
+            Volatile.Write(ref _registered, 0);
 
             while (true)
             {

@@ -545,6 +545,7 @@ internal sealed class ChaosMetricObserver : IDisposable
     ];
 
     private readonly ConcurrentDictionary<string, long> _values = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, long> _activeCallBreakdown = new(StringComparer.Ordinal);
     private readonly MeterListener _listener = new();
 
     internal ChaosMetricObserver()
@@ -556,8 +557,33 @@ internal sealed class ChaosMetricObserver : IDisposable
             if (instrument.Meter.Name == "SharpLink" && _values.ContainsKey(instrument.Name))
                 listener.EnableMeasurementEvents(instrument);
         };
-        _listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
-            _values.AddOrUpdate(instrument.Name, measurement, (_, value) => value + measurement));
+        _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            _values.AddOrUpdate(instrument.Name, measurement, (_, value) => value + measurement);
+            if (instrument.Name != "sharplink.calls.active")
+                return;
+
+            string? side = null;
+            object? contractId = null;
+            object? methodId = null;
+            foreach (var tag in tags)
+            {
+                switch (tag.Key)
+                {
+                    case "rpc.side":
+                        side = tag.Value?.ToString();
+                        break;
+                    case "rpc.sharplink.contract_id":
+                        contractId = tag.Value;
+                        break;
+                    case "rpc.sharplink.method_id":
+                        methodId = tag.Value;
+                        break;
+                }
+            }
+            var key = $"{side ?? "unknown"}:{contractId ?? "unknown"}:{methodId ?? "unknown"}";
+            _activeCallBreakdown.AddOrUpdate(key, measurement, (_, value) => value + measurement);
+        });
         _listener.Start();
     }
 
@@ -573,7 +599,11 @@ internal sealed class ChaosMetricObserver : IDisposable
             {
                 throw new InvalidOperationException(
                     "SharpLink state did not drain after chaos: " +
-                    string.Join(", ", _values.Select(static value => $"{value.Key}={value.Value}")));
+                    string.Join(", ", _values.Select(static value => $"{value.Key}={value.Value}")) +
+                    "; active-call breakdown: " +
+                    string.Join(", ", _activeCallBreakdown
+                        .Where(static value => value.Value != 0)
+                        .Select(static value => $"{value.Key}={value.Value}")));
             }
             await Task.Delay(20).ConfigureAwait(false);
         }

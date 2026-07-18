@@ -70,15 +70,15 @@ OneWay 的成功含义是“本地有界 SendPump 接受”，不含服务端 AC
 
 本机两分钟混合 Chaos 结果：
 
-- 2,938,187 次成功调用。
-- 3,150,125 次预期故障注入结果。
-- 9 次滚动重启，最慢一次从停服到连续五次成功探针 RPC 为 11.040 秒。
+- 2,943,483 次成功调用。
+- 3,366,011 次预期故障注入结果。
+- 9 次滚动重启，最慢一次从停服到连续五次成功探针 RPC 为 15.583 秒。
 - 0 次非预期失败。
 - 结束时 connections、calls、pending requests、streams、send queue bytes 全部为 0。
 
 Chaos 的故障归因使用奇偶代次：调用只在开始于故障代次或跨越代次边界时被计为预期失败；新 listener 启动后必须以 20 ms 间隔连续完成五次真实探针 RPC 才结束故障代次，任一失败会清零连续计数。旧的固定 8 秒窗口和单次成功判定均已删除：前者会在慢 runner 尚未恢复时制造假阳性，后者会把瞬时连通误报为稳定恢复。修复前 30 秒复现为 7 次 `Stream dispatcher has no codec`；注册持有权修复后相同参数为 0 次非预期失败。
 
-短生命周期 reconnect worker 在 Linux Release Gate 中曾连续恢复三个代次，但第四个代次在完整 30 秒预算内没有完成探针。最终实现改为每 Client 一个由容量 1 semaphore 驱动、随 Client Stop 取消和等待的持久 supervisor；它在被唤醒后按实际 Ready 数补连接，不再依赖 worker 退出与新断连信号之间的窄竞态。该改动只进入断线冷路径，不改变正常 RPC 热路径。
+Linux Release Gate 的完整 artifact 最终定位到 PendingCall 发布竞态：slot 已 CAS 可见、但 owner active count 尚未登记时，Cancel 或断连可以先取走 slot 并执行减量，触发 `Client connection active call count underflowed`，异常随后击穿读循环并表现为重连探针超时。完成赢家现在会等待极短的注册发布屏障，再释放 admission 与 owner 状态；正常完成路径只增加一次 Volatile read。另将 reconnect worker 改为每 Client 一个由容量 1 semaphore 驱动、随 Client Stop 取消和等待的持久 supervisor，消除 worker 退出边界的失唤醒可能；该部分只进入断线冷路径。
 
 恢复硬上限为 30 秒，来源是 Server 最多 5 秒强制清理、10 秒 handshake、抖动后最多 6 秒重连退避及 2 秒调用 timeout 的组合预算与调度余量，而非任意时间窗口。任何已经开始的重启都使用独立恢复预算；即使负载总时长先结束，也必须完成成功探针或明确失败。
 
