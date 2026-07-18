@@ -8,6 +8,7 @@ public class StreamManager : IStreamManager
     private readonly Action<long, ushort>? _streamCompleted;
     private long _droppedStreamFrames;
     private int _activeStreamCount;
+    private Termination? _termination;
 
     public StreamManager() : this(new RuntimeConcurrencyOptions())
     {
@@ -35,12 +36,46 @@ public class StreamManager : IStreamManager
     public void Register(long requestId, ushort streamId, IStreamDispatcher dispatcher)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
-        var requestDispatchers = _dispatchersByRequestId.GetOrAdd(requestId, static _ => new RequestDispatchers());
-        requestDispatchers.Register(streamId, dispatcher);
+        var termination = Volatile.Read(ref _termination);
+        if (termination is not null)
+        {
+            dispatcher.Complete(termination.Exception);
+            return;
+        }
+
+        var requestDispatchers = _dispatchersByRequestId.GetOrAdd(
+            requestId,
+            static _ => new RequestDispatchers());
         SharpLinkTelemetry.AddActiveStreams(1);
         Interlocked.Increment(ref _activeStreamCount);
         if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
             consumptionAware.SetBytesConsumedCallback(_bytesConsumed, requestId, streamId);
+        try
+        {
+            // Publish the active-stream accounting before the entry. CompleteAll can
+            // otherwise remove a newly visible entry before Register increments the
+            // gauge, causing a transient negative value during session teardown.
+            requestDispatchers.Register(streamId, dispatcher);
+        }
+        catch
+        {
+            if (dispatcher is IStreamConsumptionAwareDispatcher failedRegistration)
+                failedRegistration.SetBytesConsumedCallback(null, 0, 0);
+            SharpLinkTelemetry.AddActiveStreams(-1);
+            Interlocked.Decrement(ref _activeStreamCount);
+            RemoveEmptyRequest(requestId, requestDispatchers);
+            throw;
+        }
+
+        termination = Volatile.Read(ref _termination);
+        if (termination is not null)
+        {
+            CompleteTerminatedRegistration(
+                requestId,
+                streamId,
+                requestDispatchers,
+                termination.Exception);
+        }
     }
 
     public void Unregister(long requestId) => Unregister(requestId, 0);
@@ -245,11 +280,38 @@ public class StreamManager : IStreamManager
 
     public void CompleteAll(Exception? exception)
     {
+        var termination = new Termination(exception);
+        if (Interlocked.CompareExchange(ref _termination, termination, null) is not null)
+            return;
+
         foreach (var requestDispatchers in _dispatchersByRequestId.DrainValues())
         {
             var completed = requestDispatchers.CompleteAll(exception);
             SharpLinkTelemetry.AddActiveStreams(-completed);
             Interlocked.Add(ref _activeStreamCount, -completed);
+        }
+    }
+
+    private void CompleteTerminatedRegistration(
+        long requestId,
+        ushort streamId,
+        RequestDispatchers requestDispatchers,
+        Exception? exception)
+    {
+        if (!requestDispatchers.TryRemove(streamId, out var entry))
+            return;
+
+        SharpLinkTelemetry.AddActiveStreams(-1);
+        Interlocked.Decrement(ref _activeStreamCount);
+        try
+        {
+            entry.Dispatcher.Complete(exception);
+            _streamCompleted?.Invoke(requestId, streamId);
+        }
+        finally
+        {
+            entry.Detach();
+            RemoveEmptyRequest(requestId, requestDispatchers);
         }
     }
 
@@ -269,6 +331,11 @@ public class StreamManager : IStreamManager
 
         var message = string.IsNullOrWhiteSpace(msg) ? "Remote Error" : msg;
         return new SharpLinkException(SharpLinkErrorCode.RemoteError, message);
+    }
+
+    private sealed class Termination(Exception? exception)
+    {
+        internal Exception? Exception { get; } = exception;
     }
 
     private sealed class RequestDispatchers

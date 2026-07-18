@@ -282,6 +282,18 @@ public static class Program
                        getFaultGeneration()))
             {
                 expectedFailure();
+                // Fail-fast RPCs can complete synchronously while every connection is
+                // unavailable. Pace retries so the load generator does not monopolize
+                // the ThreadPool with an exception storm and starve the reconnect timer
+                // that this scenario is intended to verify.
+                try
+                {
+                    await Task.Delay(1, runToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (runToken.IsCancellationRequested)
+                {
+                    break;
+                }
             }
             catch (Exception exception)
             {

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
 
@@ -72,6 +73,50 @@ public class StreamManagerTests
         Ensure(d1.LastException is SharpLinkException { Code: SharpLinkErrorCode.RemoteError, Message: "shutdown" }, "d1 error");
         Ensure(d2.LastException is SharpLinkException { Code: SharpLinkErrorCode.RemoteError, Message: "shutdown" }, "d2 error");
         Ensure(d3.LastException is SharpLinkException { Code: SharpLinkErrorCode.RemoteError, Message: "shutdown" }, "d3 error");
+        Ensure(manager.ActiveStreamCount == 0, "all registered streams should be removed");
+    }
+
+    [Test]
+    public void RegisterAfterCompleteAllShouldCompleteWithoutPublishingAnActiveStream()
+    {
+        var manager = new StreamManager();
+        var exception = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "session closed");
+        manager.CompleteAll(exception);
+        var dispatcher = new RecordingDispatcher();
+
+        manager.Register(3, 1, dispatcher);
+
+        Ensure(dispatcher.CompleteCount == 1, "late dispatcher should be completed once");
+        Ensure(ReferenceEquals(exception, dispatcher.LastException), "late dispatcher should preserve terminal error");
+        Ensure(manager.ActiveStreamCount == 0, "late registration must not increment active streams");
+    }
+
+    [Test]
+    public async Task RegisterRacingCompleteAllShouldNotLeaveAnOrphanedStream()
+    {
+        for (var iteration = 0; iteration < 10_000; iteration++)
+        {
+            var manager = new StreamManager();
+            var dispatcher = new RecordingDispatcher();
+            using var start = new ManualResetEventSlim();
+            var register = Task.Run(() =>
+            {
+                start.Wait();
+                manager.Register(iteration, dispatcher);
+            });
+            var complete = Task.Run(() =>
+            {
+                start.Wait();
+                manager.CompleteAll(new SharpLinkException(
+                    SharpLinkErrorCode.ConnectionClosed,
+                    "session closed"));
+            });
+
+            start.Set();
+            await Task.WhenAll(register, complete);
+            Ensure(dispatcher.CompleteCount == 1, "racing dispatcher should be completed once");
+            Ensure(manager.ActiveStreamCount == 0, "racing registration must be drained");
+        }
     }
 
     [Test]

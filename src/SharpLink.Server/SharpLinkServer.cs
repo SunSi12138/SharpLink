@@ -27,6 +27,13 @@ internal sealed partial class SharpLinkServer(
         Faulted
     }
 
+    private enum ServerCallAdmissionResult : byte
+    {
+        Acquired,
+        Unavailable,
+        CapacityExhausted
+    }
+
     private readonly SharpLinkRuntimeContext _runtimeContext = runtimeContext ?? new SharpLinkRuntimeContextBuilder().Build();
     private readonly ConcurrentDictionary<string, ServerConnectionState> _connections = [];
     private readonly ILogger _logger = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory))).CreateLogger<SharpLinkServer>();
@@ -548,25 +555,29 @@ internal sealed partial class SharpLinkServer(
         return method;
     }
 
-    private bool TryAcquireCall(ServerConnectionState connection)
+    private ServerCallAdmissionResult TryAcquireCall(ServerConnectionState connection)
     {
         if (CurrentState != ServerState.Running)
-            return false;
+            return ServerCallAdmissionResult.Unavailable;
         if (!connection.TryAcquireCall(_maxConcurrentCallsPerConnection))
-            return false;
+        {
+            return connection.LifecycleState == ServerConnectionLifecycleState.Ready
+                ? ServerCallAdmissionResult.CapacityExhausted
+                : ServerCallAdmissionResult.Unavailable;
+        }
 
         if (CurrentState != ServerState.Running)
         {
             connection.ReleaseCall();
-            return false;
+            return ServerCallAdmissionResult.Unavailable;
         }
 
         if (Interlocked.Increment(ref _globalActiveCalls) <= _globalMaxConcurrentCalls)
-            return true;
+            return ServerCallAdmissionResult.Acquired;
 
         Interlocked.Decrement(ref _globalActiveCalls);
         connection.ReleaseCall();
-        return false;
+        return ServerCallAdmissionResult.CapacityExhausted;
     }
 
     private bool TryAcceptRequest(ServerConnectionState connection, long requestId)

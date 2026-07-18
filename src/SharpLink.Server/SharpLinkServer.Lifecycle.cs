@@ -598,11 +598,15 @@ internal sealed partial class SharpLinkServer
         if (!services.TryGetValue(request.InterfaceHash, out var serviceInfo))
             return;
 
-        if (!TryAcquireCall(connection))
+        var admission = TryAcquireCall(connection);
+        if (admission != ServerCallAdmissionResult.Acquired)
         {
-            SharpLinkTelemetry.RecordResourceExhausted("server");
             Interlocked.Increment(ref _rejectedOneWayCalls);
-            LogOnewayRpcResourceExhausted(_logger);
+            if (admission == ServerCallAdmissionResult.CapacityExhausted)
+            {
+                SharpLinkTelemetry.RecordResourceExhausted("server");
+                LogOnewayRpcResourceExhausted(_logger);
+            }
             return;
         }
 
@@ -746,12 +750,22 @@ internal sealed partial class SharpLinkServer
             return ValueTask.CompletedTask;
         }
 
-        if (!TryAcquireCall(connection))
+        var admission = TryAcquireCall(connection);
+        if (admission != ServerCallAdmissionResult.Acquired)
         {
-            SharpLinkTelemetry.RecordResourceExhausted("server");
-            session.SendRpcErrorAsync(requestId, new SharpLinkException(
-                SharpLinkErrorCode.ResourceExhausted,
-                "Server call capacity is exhausted."));
+            if (admission == ServerCallAdmissionResult.CapacityExhausted)
+            {
+                SharpLinkTelemetry.RecordResourceExhausted("server");
+                session.SendRpcErrorAsync(requestId, new SharpLinkException(
+                    SharpLinkErrorCode.ResourceExhausted,
+                    "Server call capacity is exhausted."));
+            }
+            else
+            {
+                session.SendRpcErrorAsync(requestId, new SharpLinkException(
+                    SharpLinkErrorCode.Unavailable,
+                    "Server is draining."));
+            }
             return ValueTask.CompletedTask;
         }
 
