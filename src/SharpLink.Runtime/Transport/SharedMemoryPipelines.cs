@@ -15,6 +15,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
     private bool _hasOutstandingRead;
     private CancellationToken _registeredReadCancellation;
     private CancellationTokenRegistration _readCancellationRegistration;
+    private TaskCompletionSource<bool>? _outstandingReadReleased;
     private int _cancelPending;
     private int _completed;
 
@@ -52,9 +53,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         {
             // Connection disposal can race the consumer's finally/AdvanceTo. The mapping
             // may already be closing, so only release the locally staged buffer here.
-            _staging?.Dispose();
-            _staging = null;
-            _stagingExaminedAll = false;
+            DisposeStaging();
         }
         else if (_currentIsStaging)
         {
@@ -92,10 +91,11 @@ internal sealed class SharedMemoryPipeReader : PipeReader
                     _control.SignalSpaceAvailable();
             }
         }
-        Volatile.Write(ref _hasOutstandingRead, false);
         _currentBuffer = default;
         _currentRingLength = 0;
         _currentIsStaging = false;
+        Volatile.Write(ref _hasOutstandingRead, false);
+        Volatile.Read(ref _outstandingReadReleased)?.TrySetResult(true);
     }
 
     public override void CancelPendingRead()
@@ -114,19 +114,20 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         _control.PulseDataWaiter();
         _readCancellationRegistration.Dispose();
         if (!Volatile.Read(ref _hasOutstandingRead))
-        {
-            _staging?.Dispose();
-            _staging = null;
-        }
+            DisposeStaging();
     }
 
-    public override async ValueTask CompleteAsync(Exception? exception = null)
+    public override ValueTask CompleteAsync(Exception? exception = null)
     {
         Complete(exception);
-        while (Volatile.Read(ref _hasOutstandingRead))
-            await Task.Yield();
-        _staging?.Dispose();
-        _staging = null;
+        var outstandingReadReleased = WaitForOutstandingReadReleaseAsync();
+        if (outstandingReadReleased.IsCompletedSuccessfully)
+        {
+            DisposeStaging();
+            return ValueTask.CompletedTask;
+        }
+
+        return new ValueTask(CompleteAfterOutstandingReadAsync(outstandingReadReleased));
     }
 
     public override bool TryRead(out ReadResult result)
@@ -314,6 +315,30 @@ internal sealed class SharedMemoryPipeReader : PipeReader
     {
         for (var index = 0; index < _spinCount; index++)
             Thread.SpinWait(4);
+    }
+
+    private Task WaitForOutstandingReadReleaseAsync()
+    {
+        if (!Volatile.Read(ref _hasOutstandingRead))
+            return Task.CompletedTask;
+
+        var created = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waiter = Interlocked.CompareExchange(ref _outstandingReadReleased, created, null) ?? created;
+        if (!Volatile.Read(ref _hasOutstandingRead))
+            waiter.TrySetResult(true);
+        return waiter.Task;
+    }
+
+    private async Task CompleteAfterOutstandingReadAsync(Task outstandingReadReleased)
+    {
+        await outstandingReadReleased.ConfigureAwait(false);
+        DisposeStaging();
+    }
+
+    private void DisposeStaging()
+    {
+        Interlocked.Exchange(ref _staging, null)?.Dispose();
+        _stagingExaminedAll = false;
     }
 
     private long RefreshWritePosition()

@@ -380,6 +380,37 @@ public class SharedMemoryTransportConnectionIntegrationTests
     }
 
     [Test]
+    public async Task SharedMemoryReaderCompleteAsyncShouldWaitForOutstandingReadRelease()
+    {
+        var (listener, factory, client, server) = await CreateRawPairAsync();
+        await using var listenerScope = listener;
+        await using var factoryScope = factory;
+        await using var clientScope = client;
+        await using var serverScope = server;
+
+        var memory = client.Output.GetMemory(1);
+        memory.Span[0] = 0x5A;
+        client.Output.Advance(1);
+        _ = await client.Output.FlushAsync();
+
+        var read = await server.Input.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(read.Buffer.Length == 1, "shared-memory outstanding read payload");
+
+        var firstComplete = server.Input.CompleteAsync().AsTask();
+        var concurrentComplete = server.Input.CompleteAsync().AsTask();
+        Ensure(!firstComplete.IsCompleted && !concurrentComplete.IsCompleted,
+            "shared-memory reader completion waits for AdvanceTo");
+
+        server.Input.AdvanceTo(read.Buffer.End);
+        await Task.WhenAll(firstComplete, concurrentComplete).WaitAsync(TimeSpan.FromSeconds(2));
+
+        var completedAgain = server.Input.CompleteAsync();
+        Ensure(completedAgain.IsCompletedSuccessfully,
+            "shared-memory completed reader has a synchronous idempotent completion path");
+        await completedAgain;
+    }
+
+    [Test]
     public async Task SharedMemoryConcurrentCloseShouldBeIdempotentOnBothSides()
     {
         var (listener, factory, client, server) = await CreateRawPairAsync();
