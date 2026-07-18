@@ -150,6 +150,24 @@ public class IntegrationBehaviorTests
 
     [Test]
     [NotInParallel]
+    public async Task NonCancellableFailureAfterTimeoutShouldBeObservedAndSuppressed()
+    {
+        TestService.ResetNonCancellableFailure();
+        await using var harness = await TestHarness.CreateAsync(requestTimeout: TimeSpan.FromMilliseconds(120));
+        var svc = harness.Client.Get<ITestService>();
+
+        await EnsureThrowsSharpLinkFast(
+            svc.SlowThrowWithoutTimeoutAsync().AsTask(),
+            "SlowThrowWithoutTimeoutAsync default timeout",
+            SharpLinkErrorCode.DeadlineExceeded);
+
+        await TestService.WaitForNonCancellableFailureAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(await svc.AddAsync(20, 22) == 42,
+            "a late non-cancellable exception must be observed without damaging the connection");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task DisableRequestTimeoutShouldAllowNonCancellableUnaryToFinish()
     {
         TestService.ResetNonCancellableCompletion();
@@ -195,19 +213,35 @@ public class IntegrationBehaviorTests
 
     [Test]
     [NotInParallel]
+    public async Task NonCancellableServerStreamEarlyBreakShouldStopFrameworkPump()
+    {
+        TestService.ResetDownloadDisposed();
+        await using var harness = await TestHarness.CreateAsync();
+        var service = harness.Client.Get<ITestService>();
+
+        await using (var enumerator = service.DownloadAsync(int.MaxValue).GetAsyncEnumerator())
+            Ensure(await enumerator.MoveNextAsync(), "stream should produce its first item");
+
+        await TestService.WaitForDownloadDisposedAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(await service.AddAsync(20, 22) == 42,
+            "framework stream cancellation must leave the connection healthy");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task FastEarlyBreakShouldReturnFlowCreditAndNotLeakCompletedSendStates()
     {
         await using var harness = await TestHarness.CreateAsync();
         var service = harness.Client.Get<ITestService>();
 
-        for (var iteration = 0; iteration < 1_500; iteration++)
+        for (var iteration = 0; iteration < 10_000; iteration++)
         {
             await using var enumerator = service.DownloadAsync(32).GetAsyncEnumerator();
             Ensure(await enumerator.MoveNextAsync(), "fast stream should produce its first item");
         }
 
         Ensure(await service.AddAsync(20, 22) == 42,
-            "connection should remain healthy after more than 1,024 fast early-break streams");
+            "connection should remain healthy after 10,000 fast early-break streams");
     }
 
     [Test]
@@ -556,6 +590,8 @@ public interface ITestService : IService
     [NonCancellable]
     ValueTask<int> SlowAddWithoutTimeoutAsync(int left, int right);
     [NonCancellable]
+    ValueTask<int> SlowThrowWithoutTimeoutAsync();
+    [NonCancellable]
     ValueTask ThrowCancellationAsync();
     ValueTask<int> SlowAddWithOptionsAsync(
         int left,
@@ -584,12 +620,26 @@ public interface ITestService : IService
 public class TestService : ITestService
 {
     private static TaskCompletionSource s_nonCancellableCompletion = CreateCompletionSource();
+    private static TaskCompletionSource s_nonCancellableFailure = CreateCompletionSource();
+    private static TaskCompletionSource s_downloadDisposed = CreateCompletionSource();
 
     internal static void ResetNonCancellableCompletion()
         => Interlocked.Exchange(ref s_nonCancellableCompletion, CreateCompletionSource());
 
     internal static Task WaitForNonCancellableCompletionAsync()
         => Volatile.Read(ref s_nonCancellableCompletion).Task;
+
+    internal static void ResetNonCancellableFailure()
+        => Interlocked.Exchange(ref s_nonCancellableFailure, CreateCompletionSource());
+
+    internal static Task WaitForNonCancellableFailureAsync()
+        => Volatile.Read(ref s_nonCancellableFailure).Task;
+
+    internal static void ResetDownloadDisposed()
+        => Interlocked.Exchange(ref s_downloadDisposed, CreateCompletionSource());
+
+    internal static Task WaitForDownloadDisposedAsync()
+        => Volatile.Read(ref s_downloadDisposed).Task;
 
     public ValueTask<int> AddAsync(int left, int right) => ValueTask.FromResult(left + right);
 
@@ -604,6 +654,13 @@ public class TestService : ITestService
         await Task.Delay(TimeSpan.FromMilliseconds(300));
         Volatile.Read(ref s_nonCancellableCompletion).TrySetResult();
         return left + right;
+    }
+
+    public async ValueTask<int> SlowThrowWithoutTimeoutAsync()
+    {
+        await Task.Delay(TimeSpan.FromMilliseconds(300));
+        Volatile.Read(ref s_nonCancellableFailure).TrySetResult();
+        throw new InvalidOperationException("late non-cancellable failure");
     }
 
     public ValueTask ThrowCancellationAsync()
@@ -651,10 +708,17 @@ public class TestService : ITestService
 
     public async IAsyncEnumerable<string> DownloadAsync(int count)
     {
-        for (var i = 0; i < count; i++)
+        try
         {
-            yield return $"v-{i}";
-            await Task.Yield();
+            for (var i = 0; i < count; i++)
+            {
+                yield return $"v-{i}";
+                await Task.Yield();
+            }
+        }
+        finally
+        {
+            Volatile.Read(ref s_downloadDisposed).TrySetResult();
         }
     }
 

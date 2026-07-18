@@ -167,6 +167,32 @@ public class ServerCallCancellationStateTests
     }
 
     [Test]
+    public void ServerStopAndConnectionCloseRaceShouldPublishOneStableReason()
+    {
+        for (var iteration = 0; iteration < 10_000; iteration++)
+        {
+            using var connectionClosed = new CancellationTokenSource();
+            using var serverStopping = new CancellationTokenSource();
+            var state = ServerCallCancellationState.Rent(
+                iteration + 1,
+                null,
+                0,
+                connectionClosed.Token,
+                serverStopping.Token,
+                supportsCooperativeCancellation: true);
+
+            Parallel.Invoke(connectionClosed.Cancel, serverStopping.Cancel);
+
+            Ensure(state.Reason is ServerCallCancellationReason.ConnectionClosed or
+                    ServerCallCancellationReason.ServerStopping,
+                "one infrastructure cancellation reason must win");
+            Ensure(state.InvocationToken.IsCancellationRequested,
+                "the invocation token must observe the winning infrastructure reason");
+            state.Dispose();
+        }
+    }
+
+    [Test]
     public void CompletedCallShouldIgnoreLaterCancellation()
     {
         using var connectionClosed = new CancellationTokenSource();

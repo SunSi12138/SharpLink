@@ -127,15 +127,24 @@ public class ProtocolV2Tests
     [Test]
     public async Task CancelReasonShouldRoundTripAndEnforceNegotiatedShape()
     {
+        foreach (var reason in new[]
+                 {
+                     ProtocolV2CancelReason.UserCancellation,
+                     ProtocolV2CancelReason.DeadlineExceeded,
+                     ProtocolV2CancelReason.ConsumerAbandoned
+                 })
+        {
+            var roundTripWriter = new PooledByteBufferWriter();
+            ProtocolV2PayloadCodec.WriteCancelReason(roundTripWriter, reason);
+            Ensure(
+                ProtocolV2PayloadCodec.ReadCancelReason(
+                    new ReadOnlySequence<byte>(roundTripWriter.WrittenMemory)) == reason,
+                $"cancel reason {reason} round-trip");
+        }
+
         var payloadWriter = new PooledByteBufferWriter();
-        ProtocolV2PayloadCodec.WriteCancelReason(
-            payloadWriter,
-            ProtocolV2CancelReason.ConsumerAbandoned);
+        ProtocolV2PayloadCodec.WriteCancelReason(payloadWriter, ProtocolV2CancelReason.ConsumerAbandoned);
         var payload = new ReadOnlySequence<byte>(payloadWriter.WrittenMemory);
-        Ensure(
-            ProtocolV2PayloadCodec.ReadCancelReason(payload) ==
-            ProtocolV2CancelReason.ConsumerAbandoned,
-            "cancel reason round-trip");
 
         var frame = CreateFrame(
             ProtocolV2FrameType.Cancel,

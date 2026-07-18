@@ -233,29 +233,35 @@ public class PendingRequestTableTests
     }
 
     [Test]
-    public async Task CancellationResponseRaceShouldNotLeaveTombstonesOrCorruptPool()
+    public async Task CancellationResponseDeadlineRaceShouldHaveOneWinnerAndNotCorruptPool()
     {
         using var manager = new PendingRequestTable(8);
-        for (var iteration = 0; iteration < 10_000; iteration++)
+        for (var iteration = 0; iteration < 100_000; iteration++)
         {
-            using var cancellation = new CancellationTokenSource();
             var operation = manager.Rent(
                 new Int32Codec(),
                 PendingCallKind.Unary,
                 deadlineTimestamp: 0,
-                cancellation.Token,
+                CancellationToken.None,
                 out var requestId);
             var payload = ReadOnlySequence<byte>.Empty;
-            await Task.WhenAll(
-                Task.Run(cancellation.Cancel),
-                Task.Run(() => manager.Dispatch(requestId, ref payload)));
-            try
-            {
-                _ = await operation.AsValueTask();
-            }
-            catch (OperationCanceledException)
-            {
-            }
+            var winners = new bool[3];
+            Parallel.Invoke(
+                () => winners[0] = manager.Dispatch(requestId, ref payload),
+                () => winners[1] = manager.TryComplete(
+                    requestId,
+                    PendingCallCompletionReason.UserCancellation),
+                () => winners[2] = manager.TryComplete(
+                    requestId,
+                    PendingCallCompletionReason.DeadlineExceeded));
+
+            var winnerCount = (winners[0] ? 1 : 0) + (winners[1] ? 1 : 0) + (winners[2] ? 1 : 0);
+            Ensure(winnerCount == 1,
+                "response, cancel, and deadline must have exactly one terminal winner");
+            var exception = await CaptureExceptionAsync(operation.AsValueTask().AsTask());
+            Ensure(exception is null or OperationCanceledException or
+                    SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
+                "the operation must expose the winning completion reason");
         }
 
         Ensure(manager.Count == 0, "all racing calls should release their slots");
