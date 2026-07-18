@@ -7,6 +7,35 @@ namespace SharpLink.UnitTests.Runtime;
 public class SharedMemoryControlChannelTests
 {
     [Test]
+    public async Task DisposeShouldDrainTheFinalCloseSignalBeforeCompletingWakeSource()
+    {
+        var pipeName = $"sc{Guid.NewGuid():N}"[..20];
+        await using var server = new NamedPipeServerStream(
+            pipeName,
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        await using var client = new NamedPipeClientStream(
+            ".",
+            pipeName,
+            PipeDirection.InOut,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+
+        var accept = server.WaitForConnectionAsync();
+        await client.ConnectAsync();
+        await accept;
+        await using var control = new SharedMemoryControlChannel(server);
+
+        var dispose = control.DisposeAsync().AsTask();
+        var signal = new byte[1];
+        await client.ReadExactlyAsync(signal).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        await dispose.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await Assert.That(signal[0]).IsEqualTo((byte)3);
+    }
+
+    [Test]
     public async Task RepeatedOutboundSignalsShouldShareOnePendingWake()
     {
         var requests = 0L;

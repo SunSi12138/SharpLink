@@ -10,15 +10,9 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     private const int CloseBit = 4;
 
     private readonly PipeStream _stream;
-    private readonly Channel<bool> _outboundWake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
-    {
-        SingleReader = true,
-        SingleWriter = false,
-        AllowSynchronousContinuations = false,
-        FullMode = BoundedChannelFullMode.DropWrite
-    });
-    private readonly Channel<bool> _dataAvailable = CreatePulseChannel();
-    private readonly Channel<bool> _spaceAvailable = CreatePulseChannel();
+    private readonly SharedMemoryAsyncPulse _outboundWake = new();
+    private readonly SharedMemoryAsyncPulse _dataAvailable = new();
+    private readonly SharedMemoryAsyncPulse _spaceAvailable = new();
     private readonly Task _readerTask;
     private readonly Task _writerTask;
     private Exception? _terminalException;
@@ -52,21 +46,21 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     {
         QueueSignal(SpaceAvailableBit, "space");
     }
-    public void PulseDataWaiter() => _dataAvailable.Writer.TryWrite(true);
-    public void PulseSpaceWaiter() => _spaceAvailable.Writer.TryWrite(true);
+    public void PulseDataWaiter() => _dataAvailable.Pulse();
+    public void PulseSpaceWaiter() => _spaceAvailable.Pulse();
 
     public ValueTask WaitForDataAsync(CancellationToken cancellationToken)
-        => WaitAsync(_dataAvailable.Reader, cancellationToken);
+        => WaitAsync(_dataAvailable, cancellationToken);
 
     public ValueTask WaitForSpaceAsync(CancellationToken cancellationToken)
-        => WaitAsync(_spaceAvailable.Reader, cancellationToken);
+        => WaitAsync(_spaceAvailable, cancellationToken);
 
-    private async ValueTask WaitAsync(ChannelReader<bool> reader, CancellationToken cancellationToken)
+    private async ValueTask WaitAsync(SharedMemoryAsyncPulse pulse, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (IsClosed)
             ThrowClosed();
-        _ = await reader.ReadAsync().ConfigureAwait(false);
+        _ = await pulse.WaitAsync().ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         if (IsClosed)
             ThrowClosed();
@@ -85,10 +79,10 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
                 switch (signal[0])
                 {
                     case DataAvailableSignal:
-                        _dataAvailable.Writer.TryWrite(true);
+                        _dataAvailable.Pulse();
                         break;
                     case SpaceAvailableSignal:
-                        _spaceAvailable.Writer.TryWrite(true);
+                        _spaceAvailable.Pulse();
                         break;
                     case CloseSignal:
                         return;
@@ -117,7 +111,7 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         var signal = new byte[1];
         try
         {
-            await foreach (var _ in _outboundWake.Reader.ReadAllAsync().ConfigureAwait(false))
+            while (await _outboundWake.WaitAsync().ConfigureAwait(false))
             {
                 var pending = Interlocked.Exchange(ref _pendingOutboundSignals, 0);
                 if ((pending & DataAvailableBit) != 0)
@@ -159,7 +153,7 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
 
         if (!IsClosed)
             QueueSignal(CloseBit, kind: null);
-        _outboundWake.Writer.TryComplete();
+        _outboundWake.Complete();
         try
         {
             await _writerTask.WaitAsync(TimeSpan.FromMilliseconds(250)).ConfigureAwait(false);
@@ -189,11 +183,9 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     {
         if (Interlocked.Exchange(ref _closed, 1) != 0)
             return;
-        _dataAvailable.Writer.TryWrite(true);
-        _spaceAvailable.Writer.TryWrite(true);
-        _dataAvailable.Writer.TryComplete();
-        _spaceAvailable.Writer.TryComplete();
-        _outboundWake.Writer.TryComplete();
+        _dataAvailable.Complete();
+        _spaceAvailable.Complete();
+        _outboundWake.Complete();
     }
 
     private bool QueueSignal(int bit, string? kind)
@@ -205,7 +197,7 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         var previous = Interlocked.Or(ref _pendingOutboundSignals, bit);
         var queued = (previous & bit) == 0;
         if (queued)
-            _outboundWake.Writer.TryWrite(true);
+            _outboundWake.Pulse();
         else if (kind is not null)
             SharpLinkTelemetry.RecordSharedMemoryNotificationCoalesced(kind);
         return queued;
@@ -223,13 +215,4 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
 
     private static SharpLinkException CreateConnectionClosedException(Exception? innerException = null)
         => new(SharpLinkErrorCode.ConnectionClosed, "Shared-memory control channel closed.", innerException);
-
-    private static Channel<bool> CreatePulseChannel()
-        => Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
-        {
-            FullMode = BoundedChannelFullMode.DropWrite,
-            SingleReader = true,
-            SingleWriter = false,
-            AllowSynchronousContinuations = false
-        });
 }
