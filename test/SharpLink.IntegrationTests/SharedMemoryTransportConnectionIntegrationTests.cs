@@ -368,6 +368,67 @@ public class SharedMemoryTransportConnectionIntegrationTests
     }
 
     [Test]
+    public async Task SharedMemoryWriterShouldRefreshPeerCursorOnlyWhenCachedSpaceIsInsufficient()
+    {
+        const int capacity = 64 * 1024;
+        var writerReadRefreshes = 0L;
+        using var meterListener = new MeterListener();
+        meterListener.InstrumentPublished = static (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == "SharpLink" &&
+                instrument.Name == "sharplink.shared_memory.cursor.refreshes")
+            {
+                listener.EnableMeasurementEvents(instrument);
+            }
+        };
+        meterListener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "sharplink.shared_memory.cursor_kind" &&
+                    Equals(tag.Value, "writer_read"))
+                {
+                    Interlocked.Add(ref writerReadRefreshes, measurement);
+                    return;
+                }
+            }
+        });
+        meterListener.Start();
+
+        var (listener, factory, client, server) = await CreateRawPairAsync();
+        await using var listenerScope = listener;
+        await using var factoryScope = factory;
+        await using var clientScope = client;
+        await using var serverScope = server;
+
+        var baseline = Volatile.Read(ref writerReadRefreshes);
+        for (var index = 0; index < 128; index++)
+        {
+            var memory = client.Output.GetMemory(8);
+            BinaryPrimitives.WriteInt64LittleEndian(memory.Span, index);
+            client.Output.Advance(8);
+        }
+        _ = await client.Output.FlushAsync();
+        Ensure(Volatile.Read(ref writerReadRefreshes) == baseline,
+            "shared-memory direct reservations reuse the cached peer cursor");
+
+        var firstRead = await server.Input.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(firstRead.Buffer.Length == 1024, "shared-memory cached-cursor direct payload");
+        server.Input.AdvanceTo(firstRead.Buffer.End);
+
+        var wrapped = client.Output.GetMemory(capacity);
+        wrapped.Span[..capacity].Fill(0x6B);
+        client.Output.Advance(capacity);
+        _ = await client.Output.FlushAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(Volatile.Read(ref writerReadRefreshes) == baseline + 1,
+            "shared-memory writer refreshes once when cached space is insufficient");
+
+        var wrappedRead = await server.Input.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(wrappedRead.Buffer.Length == capacity, "shared-memory cached-cursor wrap payload");
+        server.Input.AdvanceTo(wrappedRead.Buffer.End);
+    }
+
+    [Test]
     public async Task SharedMemoryConnectionDisposeShouldBeIdempotent()
     {
         var (listener, factory, client, server) = await CreateRawPairAsync();

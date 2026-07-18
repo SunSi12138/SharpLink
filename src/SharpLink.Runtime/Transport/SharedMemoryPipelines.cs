@@ -9,6 +9,8 @@ internal sealed class SharedMemoryPipeReader : PipeReader
     private readonly RingSequenceSegment _secondSegment = new();
     private ReadOnlySequence<byte> _currentBuffer;
     private PooledReadBuffer? _staging;
+    private long _readPosition;
+    private long _cachedWritePosition;
     private int _currentRingLength;
     private bool _currentIsStaging;
     private bool _stagingExaminedAll;
@@ -27,6 +29,8 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         _direction = direction;
         _control = control;
         _spinCount = spinCount;
+        _readPosition = direction.ReadReadPosition();
+        _cachedWritePosition = RefreshWritePosition();
     }
 
     public override void AdvanceTo(SequencePosition consumed)
@@ -68,7 +72,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         }
         else
         {
-            var readPosition = _direction.ReadReadPosition();
+            var readPosition = _readPosition;
             var remaining = checked(_currentRingLength - (int)consumedBytes);
             // Pipe consumers are allowed to examine an incomplete frame without consuming it.
             // Move that examined tail out of the bounded ring so a frame larger than the ring,
@@ -79,13 +83,15 @@ internal sealed class SharedMemoryPipeReader : PipeReader
                 _staging = new PooledReadBuffer(remaining);
                 _staging.Append(_currentBuffer.Slice(consumed));
                 _stagingExaminedAll = true;
-                _direction.PublishReadPosition(unchecked(readPosition + _currentRingLength));
+                _readPosition = unchecked(readPosition + _currentRingLength);
+                _direction.PublishReadPosition(_readPosition);
                 if (_direction.TakeWriterWaiting() || _currentRingLength == _direction.Capacity)
                     _control.SignalSpaceAvailable();
             }
             else
             {
-                _direction.PublishReadPosition(unchecked(readPosition + consumedBytes));
+                _readPosition = unchecked(readPosition + consumedBytes);
+                _direction.PublishReadPosition(_readPosition);
                 if (consumedBytes != 0 &&
                     (_direction.TakeWriterWaiting() || _currentRingLength == _direction.Capacity))
                     _control.SignalSpaceAvailable();
@@ -204,9 +210,14 @@ internal sealed class SharedMemoryPipeReader : PipeReader
             return true;
         }
 
-        var readPosition = _direction.ReadReadPosition();
-        var writePosition = RefreshWritePosition();
+        var readPosition = _readPosition;
+        var writePosition = _cachedWritePosition;
         var available = _direction.GetAvailableBytes(writePosition, readPosition);
+        if (available == 0)
+        {
+            writePosition = RefreshWritePosition();
+            available = _direction.GetAvailableBytes(writePosition, readPosition);
+        }
         if (available == 0)
         {
             if (_direction.IsWriterClosed || _control.IsClosed)
@@ -287,9 +298,14 @@ internal sealed class SharedMemoryPipeReader : PipeReader
     {
         if (_staging is null)
             return 0;
-        var readPosition = _direction.ReadReadPosition();
-        var writePosition = RefreshWritePosition();
+        var readPosition = _readPosition;
+        var writePosition = _cachedWritePosition;
         var available = _direction.GetAvailableBytes(writePosition, readPosition);
+        if (available == 0)
+        {
+            writePosition = RefreshWritePosition();
+            available = _direction.GetAvailableBytes(writePosition, readPosition);
+        }
         if (available == 0)
             return 0;
 
@@ -305,7 +321,8 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         _staging.Append(_direction.Memory.Span.Slice(index, firstLength));
         if (firstLength != available)
             _staging.Append(_direction.Memory.Span[..(available - firstLength)]);
-        _direction.PublishReadPosition(unchecked(readPosition + available));
+        _readPosition = unchecked(readPosition + available);
+        _direction.PublishReadPosition(_readPosition);
         if (_direction.TakeWriterWaiting() || available == _direction.Capacity)
             _control.SignalSpaceAvailable();
         return available;
@@ -344,7 +361,8 @@ internal sealed class SharedMemoryPipeReader : PipeReader
     private long RefreshWritePosition()
     {
         SharpLinkTelemetry.RecordSharedMemoryCursorRefresh("reader_write");
-        return _direction.ReadWritePosition();
+        _cachedWritePosition = _direction.ReadWritePosition();
+        return _cachedWritePosition;
     }
 
     private void RegisterReadCancellation(CancellationToken cancellationToken)
@@ -451,6 +469,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
     private readonly SemaphoreSlim _flushGate = new(1, 1);
     private long _publishedWritePosition;
     private long _reservedWritePosition;
+    private long _cachedReadPosition;
     private PooledSpillBuffer? _spill;
     private int _spillOffset;
     private SpillReason _lastSpillReason;
@@ -471,6 +490,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
         _spinCount = spinCount;
         _publishedWritePosition = direction.ReadWritePosition();
         _reservedWritePosition = _publishedWritePosition;
+        _cachedReadPosition = RefreshReadPosition();
     }
 
     public override bool CanGetUnflushedBytes => true;
@@ -612,9 +632,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
         out Memory<byte> memory,
         out SpillReason spillReason)
     {
-        var readPosition = RefreshReadPosition();
-        var reserved = _direction.GetAvailableBytes(_reservedWritePosition, readPosition);
-        var free = _direction.Capacity - reserved;
+        var free = GetCachedFreeBytes(_reservedWritePosition, sizeHint);
         if (free < sizeHint)
         {
             memory = default;
@@ -640,7 +658,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
     {
         if (_reservedWritePosition == _publishedWritePosition)
             return;
-        var wasEmpty = _publishedWritePosition == _direction.ReadReadPosition();
+        var wasEmpty = _publishedWritePosition == _cachedReadPosition;
         _publishedWritePosition = _reservedWritePosition;
         _direction.PublishWritePosition(_publishedWritePosition);
         if (_direction.TakeReaderWaiting() || wasEmpty)
@@ -660,22 +678,21 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
                 throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Shared-memory peer stopped reading.");
             }
 
-            var readPosition = RefreshReadPosition();
-            var occupied = _direction.GetAvailableBytes(_publishedWritePosition, readPosition);
-            var free = _direction.Capacity - occupied;
+            var free = GetCachedFreeBytes(_publishedWritePosition, minimumBytes: 1);
+            var readPosition = _cachedReadPosition;
             if (free == 0)
             {
                 SpinBriefly();
                 readPosition = RefreshReadPosition();
-                occupied = _direction.GetAvailableBytes(_publishedWritePosition, readPosition);
-                free = _direction.Capacity - occupied;
+                free = _direction.Capacity -
+                    _direction.GetAvailableBytes(_publishedWritePosition, readPosition);
             }
             if (free == 0)
             {
                 _direction.SetWriterWaiting();
                 readPosition = RefreshReadPosition();
-                occupied = _direction.GetAvailableBytes(_publishedWritePosition, readPosition);
-                free = _direction.Capacity - occupied;
+                free = _direction.Capacity -
+                    _direction.GetAvailableBytes(_publishedWritePosition, readPosition);
                 if (free == 0)
                 {
                     SharpLinkTelemetry.RecordSharedMemoryWait("writer");
@@ -725,7 +742,22 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
     private long RefreshReadPosition()
     {
         SharpLinkTelemetry.RecordSharedMemoryCursorRefresh("writer_read");
-        return _direction.ReadReadPosition();
+        _cachedReadPosition = _direction.ReadReadPosition();
+        return _cachedReadPosition;
+    }
+
+    private int GetCachedFreeBytes(long writePosition, int minimumBytes)
+    {
+        var occupied = unchecked((ulong)(writePosition - _cachedReadPosition));
+        if (occupied <= (ulong)_direction.Capacity)
+        {
+            var cachedFree = _direction.Capacity - (int)occupied;
+            if (cachedFree >= minimumBytes)
+                return cachedFree;
+        }
+
+        var readPosition = RefreshReadPosition();
+        return _direction.Capacity - _direction.GetAvailableBytes(writePosition, readPosition);
     }
 
     private static string GetSpillReasonName(SpillReason reason)
