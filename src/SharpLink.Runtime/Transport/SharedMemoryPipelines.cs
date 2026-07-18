@@ -282,7 +282,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         }
 
         _stagingExaminedAll = false;
-        _currentBuffer = new ReadOnlySequence<byte>(_staging.WrittenMemory);
+        _currentBuffer = _staging.WrittenSequence;
         _currentIsStaging = true;
         _currentRingLength = 0;
         Volatile.Write(ref _hasOutstandingRead, true);
@@ -391,17 +391,32 @@ internal sealed class SharedMemoryPipeReader : PipeReader
 
     private sealed class PooledReadBuffer : IDisposable
     {
-        private byte[] _buffer;
-        private int _start;
-        private int _end;
+        private const int MaxRetainedSegments = 256;
+        private static readonly ConcurrentStack<StagingSegment> SegmentPool = [];
+        private static int s_retainedSegments;
+
+        private readonly int _minimumSegmentSize;
+        private StagingSegment? _first;
+        private StagingSegment? _last;
+        private int _firstOffset;
+        private int _writtenCount;
+        private int _disposed;
 
         public PooledReadBuffer(int initialCapacity)
         {
-            _buffer = ArrayPool<byte>.Shared.Rent(Math.Max(256, initialCapacity));
+            _minimumSegmentSize = Math.Max(256, initialCapacity);
         }
 
-        public int WrittenCount => _end - _start;
-        public ReadOnlyMemory<byte> WrittenMemory => _buffer.AsMemory(_start, WrittenCount);
+        public int WrittenCount => _writtenCount;
+
+        public ReadOnlySequence<byte> WrittenSequence
+            => _first is null
+                ? ReadOnlySequence<byte>.Empty
+                : new ReadOnlySequence<byte>(
+                    _first,
+                    _firstOffset,
+                    _last!,
+                    _last!.Memory.Length);
 
         public void Append(ReadOnlySequence<byte> sequence)
         {
@@ -411,9 +426,16 @@ internal sealed class SharedMemoryPipeReader : PipeReader
 
         public void Append(ReadOnlySpan<byte> source)
         {
-            EnsureCapacity(source.Length);
-            source.CopyTo(_buffer.AsSpan(_end));
-            _end += source.Length;
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            var remaining = source;
+            while (!remaining.IsEmpty)
+            {
+                if (_last is null || _last.AvailableCapacity == 0)
+                    AppendSegment(Math.Max(_minimumSegmentSize, remaining.Length));
+                var copied = _last!.Append(remaining);
+                _writtenCount = checked(_writtenCount + copied);
+                remaining = remaining[copied..];
+            }
             SharpLinkTelemetry.RecordSharedMemoryStagingBytes(source.Length);
         }
 
@@ -421,41 +443,116 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         {
             if (count < 0 || count > WrittenCount)
                 throw new ArgumentOutOfRangeException(nameof(count));
-            _start += count;
-            if (_start == _end)
-                _start = _end = 0;
-        }
-
-        private void EnsureCapacity(int additionalBytes)
-        {
-            if (additionalBytes <= _buffer.Length - _end)
-                return;
-            var written = WrittenCount;
-            if (additionalBytes <= _buffer.Length - written)
+            _writtenCount -= count;
+            while (count != 0)
             {
-                _buffer.AsSpan(_start, written).CopyTo(_buffer);
-                SharpLinkTelemetry.RecordSharedMemoryStagingCopyBytes(written);
-                _start = 0;
-                _end = written;
-                return;
+                var available = _first!.Memory.Length - _firstOffset;
+                if (count < available)
+                {
+                    _firstOffset += count;
+                    return;
+                }
+
+                count -= available;
+                var consumed = _first;
+                _first = consumed.NextSegment;
+                consumed.SetNext(null);
+                ReturnSegment(consumed);
+                _firstOffset = 0;
             }
 
-            var required = checked(written + additionalBytes);
-            var replacement = ArrayPool<byte>.Shared.Rent(Math.Max(required, checked(_buffer.Length * 2)));
-            _buffer.AsSpan(_start, written).CopyTo(replacement);
-            SharpLinkTelemetry.RecordSharedMemoryStagingCopyBytes(written);
-            ArrayPool<byte>.Shared.Return(_buffer);
-            _buffer = replacement;
-            _start = 0;
-            _end = written;
+            if (_first is null)
+                _last = null;
         }
 
         public void Dispose()
         {
-            var buffer = Interlocked.Exchange(ref _buffer, Array.Empty<byte>());
-            if (buffer.Length != 0)
-                ArrayPool<byte>.Shared.Return(buffer);
-            _start = _end = 0;
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+            while (_first is not null)
+            {
+                var segment = _first;
+                _first = segment.NextSegment;
+                segment.SetNext(null);
+                ReturnSegment(segment);
+            }
+            _last = null;
+            _firstOffset = 0;
+            _writtenCount = 0;
+        }
+
+        private void AppendSegment(int capacity)
+        {
+            var runningIndex = _last is null
+                ? 0
+                : checked(_last.RunningIndex + _last.Memory.Length);
+            var segment = RentSegment(capacity, runningIndex);
+            if (_last is null)
+                _first = segment;
+            else
+                _last.SetNext(segment);
+            _last = segment;
+        }
+
+        private static StagingSegment RentSegment(int capacity, long runningIndex)
+        {
+            if (!SegmentPool.TryPop(out var segment))
+                segment = new StagingSegment();
+            else
+                Interlocked.Decrement(ref s_retainedSegments);
+            segment.Initialize(capacity, runningIndex);
+            return segment;
+        }
+
+        private static void ReturnSegment(StagingSegment segment)
+        {
+            segment.Release();
+            if (Interlocked.Increment(ref s_retainedSegments) <= MaxRetainedSegments)
+            {
+                SegmentPool.Push(segment);
+                return;
+            }
+            Interlocked.Decrement(ref s_retainedSegments);
+        }
+
+        private sealed class StagingSegment : ReadOnlySequenceSegment<byte>
+        {
+            private byte[] _buffer = Array.Empty<byte>();
+            private int _written;
+
+            public int AvailableCapacity => _buffer.Length - _written;
+            public StagingSegment? NextSegment => (StagingSegment?)Next;
+
+            public void Initialize(int capacity, long runningIndex)
+            {
+                _buffer = ArrayPool<byte>.Shared.Rent(capacity);
+                _written = 0;
+                Memory = default;
+                RunningIndex = runningIndex;
+                Next = null;
+            }
+
+            public int Append(ReadOnlySpan<byte> source)
+            {
+                var count = Math.Min(source.Length, AvailableCapacity);
+                source[..count].CopyTo(_buffer.AsSpan(_written));
+                _written += count;
+                Memory = _buffer.AsMemory(0, _written);
+                return count;
+            }
+
+            public void SetNext(StagingSegment? next) => Next = next;
+
+            public void Release()
+            {
+                var buffer = Interlocked.Exchange(ref _buffer, Array.Empty<byte>());
+                if (buffer.Length != 0)
+                    ArrayPool<byte>.Shared.Return(buffer);
+                _written = 0;
+                Memory = default;
+                RunningIndex = 0;
+                Next = null;
+            }
         }
     }
 }

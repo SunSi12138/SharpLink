@@ -719,6 +719,27 @@ public class SharedMemoryTransportConnectionIntegrationTests
     [Test]
     public async Task SharedMemoryPayloadLargerThanRingShouldRoundTrip()
     {
+        var stagingBytes = 0L;
+        var stagingCopyBytes = 0L;
+        using var meterListener = new MeterListener();
+        meterListener.InstrumentPublished = static (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == "SharpLink" && instrument.Name is
+                "sharplink.shared_memory.staging.bytes" or
+                "sharplink.shared_memory.staging.copy.bytes")
+            {
+                listener.EnableMeasurementEvents(instrument);
+            }
+        };
+        meterListener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
+        {
+            if (instrument.Name == "sharplink.shared_memory.staging.bytes")
+                Interlocked.Add(ref stagingBytes, measurement);
+            else
+                Interlocked.Add(ref stagingCopyBytes, measurement);
+        });
+        meterListener.Start();
+
         await using var harness = await SharedMemoryHarness.CreateAsync();
         var service = harness.Client.Get<IConnectionBehaviorService>();
         var payload = new string('x', 256 * 1024);
@@ -726,6 +747,52 @@ public class SharedMemoryTransportConnectionIntegrationTests
         var response = await service.EchoAsync(payload);
 
         Ensure(response == payload, "shared-memory wrapped payload");
+        Ensure(Volatile.Read(ref stagingBytes) > 0,
+            "shared-memory larger-than-ring payload uses bounded staging");
+        Ensure(Volatile.Read(ref stagingCopyBytes) == 0,
+            "shared-memory segmented staging does not recopy accumulated bytes");
+    }
+
+    [Test]
+    public async Task SharedMemorySegmentedStagingShouldPreservePartialConsumptionAcrossAppends()
+    {
+        const int capacity = 64 * 1024;
+        const int payloadLength = (capacity * 3) + 123;
+        var (listener, factory, client, server) = await CreateRawPairAsync();
+        await using var listenerScope = listener;
+        await using var factoryScope = factory;
+        await using var clientScope = client;
+        await using var serverScope = server;
+
+        var payload = client.Output.GetMemory(payloadLength);
+        for (var index = 0; index < payloadLength; index++)
+            payload.Span[index] = unchecked((byte)(index * 31));
+        client.Output.Advance(payloadLength);
+        var flush = client.Output.FlushAsync().AsTask();
+
+        var expectedOffset = 0;
+        var stagedFirstRead = false;
+        while (expectedOffset < payloadLength)
+        {
+            var read = await server.Input.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            if (!stagedFirstRead)
+            {
+                Ensure(read.Buffer.Length == capacity, "shared-memory initial full staging segment");
+                server.Input.AdvanceTo(read.Buffer.Start, read.Buffer.End);
+                stagedFirstRead = true;
+                continue;
+            }
+
+            var consume = expectedOffset + read.Buffer.Length == payloadLength
+                ? checked((int)read.Buffer.Length)
+                : Math.Min(capacity / 2, checked((int)read.Buffer.Length));
+            ValidatePattern(read.Buffer.Slice(0, consume), expectedOffset);
+            expectedOffset += consume;
+            var consumed = read.Buffer.GetPosition(consume);
+            server.Input.AdvanceTo(consumed, read.Buffer.End);
+        }
+
+        _ = await flush.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Test]
@@ -892,6 +959,20 @@ public class SharedMemoryTransportConnectionIntegrationTests
                 return tag.Value as string;
         }
         return null;
+    }
+
+    private static void ValidatePattern(ReadOnlySequence<byte> sequence, int offset)
+    {
+        var index = offset;
+        foreach (var segment in sequence)
+        {
+            foreach (var value in segment.Span)
+            {
+                Ensure(value == unchecked((byte)(index * 31)),
+                    $"shared-memory staged byte {index}");
+                index++;
+            }
+        }
     }
 
     private static long Checksum(long sequence, int salt)
