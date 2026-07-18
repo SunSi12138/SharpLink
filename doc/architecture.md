@@ -96,10 +96,11 @@ SharpLink.Serializer.MemoryPack
 
 ## 取消与超时
 
-1. 调用侧 `CancellationToken` 触发，或请求超时调度器命中。
-2. Client 发送 `ProtocolV2FrameType.Cancel`。
-3. Server 定位目标请求 CTS 并取消执行。
-4. 非 `oneway` 调用回传错误；流式调用完成对应流并结束等待。
+1. 调用侧 `CancellationToken`、monotonic deadline 或 stream consumer early-break 通过客户端 PendingCall 的单一 CAS 终态仲裁。
+2. Client 在协商 protocol minor 2 的 `CancellationReason` capability 后，分别发送 `UserCancellation`、`DeadlineExceeded` 或 `ConsumerAbandoned`；旧对端继续使用空载荷 Cancel。
+3. Server 先 CAS 发布稳定终止原因，再取消 invocation CTS，保证业务取消回调看到的原因已经确定。
+4. 没有业务 Token 的调用不创建 invocation CTS；客户端仍按 deadline 结束，服务端抑制迟到响应并观察 Task 到真实结束。
+5. 每条服务端连接用一个 Timer 扫描有界调用表；所有响应在发送前再次用 monotonic deadline 仲裁。
 
 ## 错误传播
 
@@ -158,7 +159,8 @@ SharpLink.Serializer.MemoryPack
 
 - 公共 `SharpLinkTelemetry` 暴露 `SharpLink.Client`、`SharpLink.Server` 两个 `ActivitySource` 和名为 `SharpLink` 的 `Meter`。
 - Activity 只在 source 有 listener 时创建，并携带 contract ID、method ID、method kind、server request ID 与结构化状态；不写入 payload、token、证书或业务异常消息。
-- Meter 覆盖 active connections、reconnect、calls started/completed/failed/active/duration、sent/received bytes、send queue bytes、pending requests、active streams、protocol/auth/resource-exhausted failures。
+- Meter 覆盖 active connections、reconnect、calls started/completed/failed/active/abandoned/duration、sent/received bytes、send queue bytes、pending requests、active streams、late responses、protocol/auth/resource-exhausted failures。
+- abandoned call 带低基数 termination reason；迟到响应逐次计数，但每连接 Warning 使用五秒限频窗口并报告被抑制数量。
 - Counter/Histogram/Activity 均先检查 listener/instrument；无 listener 时不创建 TagList、Activity、Stopwatch 对象或 observer state machine。
 - 日志全部使用 `LoggerMessage` source-generated 方法；普通日志不包含 payload、token 或证书内容。
 
@@ -168,6 +170,6 @@ SharpLink.Serializer.MemoryPack
 - Hosting 在容器 Build 前加入缺失的实现类型注册；应用已有注册必须与 SharpLink 声明的 lifetime 一致。非 Hosting Builder 可使用内部 provider 或显式 `UseServiceProvider`。
 - 类型注册由 DI provider/scope 负责释放；factory 创建的对象由 SharpLink 释放；实例重载始终由调用方持有。激活失败也会异步释放已创建 scope。
 - Unary/OneWay scope 在调用完成后释放；server/client/duplex stream scope 覆盖完整 pump 生命周期，并在异常、取消、断线和强制停机路径释放。
-- Protocol minor 1 协商 health-check capability；`HealthCheck/HealthResponse` 使用非零 correlation ID 和固定一字节状态，不进入业务 stub、interceptor 或服务并发额度。
+- Protocol minor 1 引入 health-check capability，minor 2 引入带原因 Cancel；`HealthCheck/HealthResponse` 使用非零 correlation ID 和固定一字节状态，不进入业务 stub、interceptor 或服务并发额度。
 - Server 状态映射为 Starting/Stopped/Faulted=`Unhealthy`、Running=`Ready`、Draining=`Draining`。Hosted readiness 直接读取 Server 原子状态，Client accessor 只在至少一条连接 Ready 后发布。
 - Stop 先进入 Draining，再停止 accept 并发送强制 flush 的 GoAway；grace 内等待 active calls，超时后取消 session 调用，最后等待后台任务并释放 service/provider。

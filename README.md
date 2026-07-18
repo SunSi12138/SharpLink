@@ -286,7 +286,7 @@ meterProviderBuilder
     .AddMeter("SharpLink");
 ```
 
-内置指标覆盖 active connections、reconnect、started/completed/failed/active calls、duration、sent/received bytes、send queue bytes、pending requests、active streams，以及 protocol/auth/resource-exhausted failures。Activity 和指标不记录完整 payload、token、证书或未审核的业务异常消息。没有 listener 时不会创建 TagList、Activity、Stopwatch 对象或额外调用 observer。
+内置指标覆盖 active connections、reconnect、started/completed/failed/active/abandoned calls、duration、sent/received bytes、send queue bytes、pending requests、active streams、迟到响应，以及 protocol/auth/resource-exhausted failures。`sharplink.calls.abandoned` 使用 `rpc.sharplink.termination_reason` 区分 deadline、远端取消、consumer abandoned、停机与断连；`sharplink.responses.late_dropped` 逐次记录被安全丢弃的迟到响应。Activity 和指标不记录完整 payload、token、证书或未审核的业务异常消息。没有 listener 时不会创建 TagList、Activity、Stopwatch 对象或额外调用 observer。
 
 ## DI、健康检查与优雅排空
 
@@ -360,5 +360,8 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 架构：`doc/architecture.md`
 - 待办与改进方向：`doc/todo.md`
 - 压测：`doc/loadtest.md`
+- Protocol v2：`doc/protocol-v2.md`
+- 0.6.10 迁移：`doc/migration-0.6.10.md`
+- 0.6.10 性能与 Chaos：`doc/performance-0.6.10.md`、`doc/chaos-0.6.10.md`
 - 贡献指南：`CONTRIBUTING.md`
 - 更新日志：`CHANGELOG.md`

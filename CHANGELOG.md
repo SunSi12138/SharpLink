@@ -4,6 +4,37 @@
 
 ## [Unreleased]
 
+## [0.6.10] - 2026-07-18
+
+### 新增
+
+- Protocol minor 2 增加可协商的 `CancellationReason` capability；协商后 Cancel 帧携带 `UserCancellation`、`DeadlineExceeded` 或 `ConsumerAbandoned`，与 0.6.9 对端仍使用空载荷 Cancel 互操作。
+- Source Generator 增加 `SHARPLINK014`：Streaming 契约缺少 `CancellationToken` 时编译失败；`[NonCancellable]` 可显式豁免。增加 `SHARPLINK015`，拒绝特性与 Token 同时声明。
+- `sharplink.calls.abandoned` 增加低基数终止原因标签；新增 `sharplink.responses.late_dropped` 指标。
+
+### 变更
+
+- 生成 Stub 将显式 Token、任意 client stream 参数和 stream 返回值都声明为框架可取消；即使业务方法标记 `[NonCancellable]`，stream pump、dispatcher、窗口等待和连接资源仍可终止。
+- 服务端在请求入口把绝对 UTC deadline 换算为 monotonic timestamp，之后的到期调度和响应仲裁不再受 wall clock 调整影响。
+- 服务端 deadline 使用每物理连接一个 Timer 扫描最多 1,024 个在途调用；正常完成路径不维护 timer node，也不进入 scheduler lock。
+- 每连接迟到响应 Warning 最多五秒一次，并携带前一窗口被抑制的数量；迟到响应 metric 仍逐次记录。
+
+### 修复
+
+- 修复 deadline CTS 先取消业务 Token、后发布 `DeadlineExceeded`，导致业务取消回调可能观察到空或错误终止原因的竞态。
+- 非协作调用不再仅因携带 deadline 创建 invocation CTS；超时后继续观察用户 Task，但抑制其迟到成功或异常响应。
+- deadline 扫描快照同时保存 request ID 与池化 state；旧代扫描不能获取已经归池并被新请求租用的对象。
+- 修复无业务 Token 的 server streaming 提前停止消费后，框架流泵可能无法及时终止的问题。
+
+### 性能与稳定性
+
+- `ServerCallCancellationState` 专项基准中，cooperative deadline 从实验性独立 CTS 的 368 B/op 降至 80 B/op；相对 0.6.9 的 320 B/op 也显著下降。non-cooperative deadline 从 320 B/op 降至 32 B/op。
+- 增加 100,000 次客户端 Response/Cancel/Deadline 和服务端 Cancel/Response/Deadline 终态竞态、10,000 次真实 stream early-break，以及 Stop/Connection 并发取消测试。
+- 五轮交替 A/B 的所有 Unary/Streaming 场景均通过 97%/105% 门禁；`Rpc_Add` ShortRun 保持 672 B/op。
+- 120 秒混合 Chaos 完成 2,943,131 次成功调用、10 次滚动重启与 0 次非预期失败；最大恢复 6.589 秒，最终所有框架 gauge 为 0。
+
+完整协议、迁移和证据见 `doc/protocol-v2.md`、`doc/migration-0.6.10.md`、`doc/performance-0.6.10.md` 与 `doc/chaos-0.6.10.md`。
+
 ## [0.6.9] - 2026-07-17
 
 ### 新增

@@ -2,7 +2,7 @@
 
 Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容或恢复扫描。任何 magic、长度、类型、标志或载荷结构错误都作为连接级 `ProtocolViolation` 处理并关闭连接。
 
-0.6.0 使用 protocol minor 1；minor 1 增加可协商的 health-check capability 与成对 health 控制帧。
+0.6.9 使用 protocol minor 1；0.6.10 升为 minor 2，并增加可协商的带原因 Cancel。minor 仍按双方较小值协商，新增能力为可选 bit，因此 0.6.9 与 0.6.10 可以互操作。
 
 ## 固定帧头
 
@@ -27,7 +27,7 @@ Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容�
 | `Ping` / `Pong` | 0 | 发送端 monotonic timestamp (`int64`) |
 | `Request` | 非 0 | `contractId:uint64 + methodId:uint64`，随后是可选 deadline、metadata 和业务 payload |
 | `Response` | 非 0 | 成功时直接为返回 payload；`Error` 时为二进制错误 |
-| `Cancel` | 非 0 | 空 |
+| `Cancel` | 非 0 | 未协商 `CancellationReason` 时为空；协商后固定一个有效 reason byte |
 | `StreamData` | 非 0 | `streamId:uint16 + item payload` |
 | `StreamComplete` | 非 0 | `streamId:uint16`；`Error` 时追加二进制错误 |
 | `WindowUpdate` | 非 0 | `streamId:uint16 + credit:uint32`，credit 必须在 `1..int32.MaxValue` |
@@ -58,8 +58,22 @@ Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `H
 - bit 1: compression
 - bit 2: flow control
 - bit 3: protocol health check
+- bit 4: cancellation reason
 
 对端缺少任一 required capability 时，Server 返回 `Unimplemented` 错误并关闭连接。认证载荷不得超过握手/metadata 上限。
+
+## Cancel 原因与兼容
+
+协商 `CancellationReason` capability 后，Cancel payload 固定为一个字节：
+
+| 值 | 名称 | 语义 |
+|---:|---|---|
+| 0 | `Unspecified` | legacy Cancel 或未提供更具体原因 |
+| 1 | `UserCancellation` | 调用方 Token 主动取消 |
+| 2 | `DeadlineExceeded` | 客户端 monotonic deadline 到期 |
+| 3 | `ConsumerAbandoned` | server/duplex stream 消费者提前退出 |
+
+未协商该 capability 时，只允许 0 字节 legacy Cancel，并在服务端映射为远端主动取消。协商后空载荷、未协商却携带载荷、未知 reason 或超过一个字节都属于连接级 `ProtocolViolation`。
 
 ## 流量控制
 

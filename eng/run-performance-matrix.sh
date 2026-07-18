@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TIER="${SHARPLINK_MATRIX_TIER:-smoke}"
 RUNTIMES="${SHARPLINK_MATRIX_RUNTIMES:-jit}"
 REPETITIONS="${SHARPLINK_MATRIX_REPETITIONS:-1}"
-OUTPUT_ROOT="${SHARPLINK_MATRIX_OUTPUT:-$ROOT/artifacts/perf/0.6.9-matrix}"
+OUTPUT_ROOT="${SHARPLINK_MATRIX_OUTPUT:-$ROOT/artifacts/perf/0.6.10-matrix}"
 
 if [[ "$TIER" == "full" ]]; then
   TRANSPORTS=(tcp uds namedpipe anonymous)

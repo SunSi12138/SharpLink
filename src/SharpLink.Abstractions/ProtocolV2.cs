@@ -58,6 +58,7 @@ public enum ProtocolV2Capabilities : ulong
     Compression = 1UL << 1,
     FlowControl = 1UL << 2,
     HealthCheck = 1UL << 3,
+    /// <summary>Negotiates an explicit one-byte reason on Cancel frames.</summary>
     CancellationReason = 1UL << 4
 }
 
