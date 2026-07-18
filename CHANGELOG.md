@@ -28,13 +28,16 @@
 - 修复本地 stream 取消与已取得的异步 dispatch 竞争时，Cancel 可能先于最后的 WindowUpdate 到达并使对端把合法 credit 误判为协议错误、关闭健康连接的问题。
 - 修复连接池扩容恰逢滚动重启失败后可能没有把零 Ready 池交给持久重连 worker，客户端永久停留在 `Draining/Reconnecting` 的问题。
 - Ready connection snapshot 现在是请求选择的事实来源；全局状态发布的瞬时滞后不再拒绝已就绪连接。GoAway 排空且暂无连接返回 `Unavailable`，只有 Client Stop/Dispose 返回 `ConnectionClosed`。
+- 修复 StreamManager 终止 drain 与迟到 stream 注册竞争时，dispatcher 可能挂在已经移出 map 的节点上并永久多计一个 active stream 的问题；正常注册使用两次终态读取，不增加全局锁。
+- Server call admission 现在区分排空中的 `Unavailable` 与真实容量耗尽的 `ResourceExhausted`，不再把 Request accept 后发生的停机竞态错误归类为限流。
 
 ### 性能与稳定性
 
 - `ServerCallCancellationState` 专项基准中，cooperative deadline 从实验性独立 CTS 的 368 B/op 降至 80 B/op；相对 0.6.9 的 320 B/op 也显著下降。non-cooperative deadline 从 320 B/op 降至 32 B/op。
-- 增加 100,000 次客户端 Response/Cancel/Deadline 和服务端 Cancel/Response/Deadline 终态竞态、10,000 次真实 stream early-break，以及 Stop/Connection 并发取消测试。
+- 增加 100,000 次客户端 Response/Cancel/Deadline 和服务端 Cancel/Response/Deadline 终态竞态、10,000 次真实 stream early-break、10,000 次 stream register/drain 竞态，以及 Stop/Connection 并发取消测试。
 - 五轮交替 A/B 的所有 Unary/Streaming 场景均通过 97%/105% 门禁；`Rpc_Add` ShortRun 保持 672 B/op。
-- 最终修复提交的 120 秒混合 Chaos 完成 3,027,164 次成功调用、10 次滚动重启与 0 次非预期失败；最大恢复 8.095 秒，最终所有框架 gauge 为 0。
+- Stream register/drain 修复的第一版全局锁实验因 QPS -7.54%、P99 +14.34% 被撤销；最终无锁版本专项五轮 A/B 为 QPS +5.31%、P99 -8.27%，两边均为零失败。
+- 最终代码提交的 2 核 120 秒混合 Chaos 完成 2,632,568 次成功调用、11 次滚动重启与 0 次非预期失败；最大恢复 331ms，最终所有框架 gauge 为 0。
 
 完整协议、迁移和证据见 `doc/protocol-v2.md`、`doc/migration-0.6.10.md`、`doc/performance-0.6.10.md` 与 `doc/chaos-0.6.10.md`。
 

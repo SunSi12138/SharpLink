@@ -83,12 +83,23 @@ Release Gate 竞态修复提交 `f8a86a0` 再次执行 ShortRun 与固定 1,024 
 
 十份报告 Failure 均为 0，QPS/P99 全部通过 97%/105% 门禁。
 
+## Release Gate stream 终止修复 A/B
+
+云端与 2 核 Chaos 暴露出 StreamManager 的终止 drain 可以和迟到注册跨越：注册方把 dispatcher 发布到一个已经从全局 map 移除的 `RequestDispatchers`，导致 active stream 永久多计。第一版正确性修复在每次 stream 注册上增加全局生命周期锁，专项五轮 server-stream A/B 直接否决：
+
+| 实现 | QPS 中位数变化 | P99 中位数变化 | 结论 |
+|---|---:|---:|---|
+| 全局注册/终止锁 | -7.54% | +14.34% | 撤销，不进入提交历史 |
+| 两次终态读取 + 竞态后定点移除 | +5.31% | -8.27% | 接受 |
+
+专项环境为 TCP/Balanced/pool 1/1、server stream、每流 32 items、并发 128、1 秒预热与 3 秒采样，A/B 反向交替五次取中位数。最终无锁候选相对 `9af2963`：QPS `55,009.00 → 57,932.29`，P99 `5,622us → 5,157us`，十份报告 Failure 均为 0。该修复只在 stream 建立时增加两次 volatile terminal read，StreamData dispatch 热路径没有变化。
+
 ## 本地发布 Gate
 
 - Release 全解决方案构建：0 warning / 0 error。
-- Unit 157、Generator 17、Integration 83：全部通过；Integration 额外连续运行 10 轮均通过。
+- Unit 159、Generator 17、Integration 83：全部通过；前一轮 Release Gate 修复后 Integration 额外连续运行 10 轮均通过。
 - macOS arm64 NativeAOT publish/run：`AOT_SMOKE_PASS`，无 AOT/trimming 警告。
 - 0.6.10 正式包与 PackageSmoke：通过；`SharpLink.Sdk` 包含 Generator Analyzer。
-- 最终修复提交 `f8a86a0` 的 120 秒混合 Chaos：3,027,164 success、2,749,080 injected、10 次滚动重启、0 unexpected；最大恢复 8.095 秒，结束时 connections/calls/pending/streams/send queue 全部为 0。
+- 最终代码提交 `02d468a` 的 2 核 120 秒混合 Chaos：2,632,568 success、905,428 injected、11 次滚动重启、0 unexpected；最大恢复 331ms，结束时 connections/calls/pending/streams/send queue 全部为 0。
 
 两分钟 retained memory 只包含启动和对象池预热，不适用六小时增长门禁。连续 24 小时 release soak 必须在最终 release commit 上单独执行，不能用短样本替代。
