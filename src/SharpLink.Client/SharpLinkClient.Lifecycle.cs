@@ -257,7 +257,8 @@ internal sealed partial class SharpLinkClient
             ProtocolV2Constants.MinorVersion,
             ProtocolV2Capabilities.Metadata |
             ProtocolV2Capabilities.FlowControl |
-            ProtocolV2Capabilities.HealthCheck,
+            ProtocolV2Capabilities.HealthCheck |
+            ProtocolV2Capabilities.CancellationReason,
             ProtocolV2Capabilities.None,
             _protocolOptions.MaxFramePayloadBytes,
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
@@ -362,6 +363,7 @@ internal sealed partial class SharpLinkClient
                             DebugLogServerHeartbeatReceived(_logger);
                             break;
                         case ProtocolV2FrameType.Cancel:
+                            _ = session.ReadNegotiatedCancelReason(payload);
                             DebugLogServerCancelIgnored(_logger);
                             break;
                         case ProtocolV2FrameType.Response:

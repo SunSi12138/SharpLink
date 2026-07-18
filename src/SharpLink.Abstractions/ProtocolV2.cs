@@ -13,7 +13,7 @@ public static class ProtocolV2Constants
     public const int RequestPrefixBytes = 16;
 
     /// <summary>Current protocol minor version.</summary>
-    public const ushort MinorVersion = 1;
+    public const ushort MinorVersion = 2;
 }
 
 /// <summary>Protocol v2 frame types.</summary>
@@ -57,7 +57,21 @@ public enum ProtocolV2Capabilities : ulong
     Metadata = 1UL << 0,
     Compression = 1UL << 1,
     FlowControl = 1UL << 2,
-    HealthCheck = 1UL << 3
+    HealthCheck = 1UL << 3,
+    CancellationReason = 1UL << 4
+}
+
+/// <summary>Identifies why a client abandoned an active RPC call.</summary>
+public enum ProtocolV2CancelReason : byte
+{
+    /// <summary>The peer uses the legacy Cancel form or did not provide a more specific reason.</summary>
+    Unspecified = 0,
+    /// <summary>The caller's cancellation token was canceled.</summary>
+    UserCancellation = 1,
+    /// <summary>The effective RPC deadline expired.</summary>
+    DeadlineExceeded = 2,
+    /// <summary>The caller stopped consuming a streaming response before remote completion.</summary>
+    ConsumerAbandoned = 3
 }
 
 /// <summary>Parsed Protocol v2 frame header.</summary>

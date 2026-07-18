@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.IO.Pipelines;
 using SharpLink.Sdk;
 
 namespace SharpLink.UnitTests.Protocol;
@@ -121,6 +122,54 @@ public class ProtocolV2Tests
         var decodedResponse = ProtocolV2PayloadCodec.ReadHandshakeResponse(
             new ReadOnlySequence<byte>(responsePayload.WrittenMemory), Limits);
         Ensure(decodedResponse == response, "handshake response round-trip");
+    }
+
+    [Test]
+    public async Task CancelReasonShouldRoundTripAndEnforceNegotiatedShape()
+    {
+        var payloadWriter = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteCancelReason(
+            payloadWriter,
+            ProtocolV2CancelReason.ConsumerAbandoned);
+        var payload = new ReadOnlySequence<byte>(payloadWriter.WrittenMemory);
+        Ensure(
+            ProtocolV2PayloadCodec.ReadCancelReason(payload) ==
+            ProtocolV2CancelReason.ConsumerAbandoned,
+            "cancel reason round-trip");
+
+        var frame = CreateFrame(
+            ProtocolV2FrameType.Cancel,
+            ProtocolV2FrameFlags.None,
+            1,
+            payloadWriter.WrittenMemory.ToArray());
+        var sequence = new ReadOnlySequence<byte>(frame);
+        Ensure(ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out _, out _),
+            "static parser should accept a bounded one-byte Cancel payload");
+
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = new RpcSession(
+            "cancel-shape",
+            input.Reader,
+            output.Writer,
+            static () => { },
+            static () => true);
+
+        session.NegotiatedCapabilities = ProtocolV2Capabilities.CancellationReason;
+        Ensure(
+            session.ReadNegotiatedCancelReason(payload) == ProtocolV2CancelReason.ConsumerAbandoned,
+            "negotiated reason should decode");
+        await ExpectProtocolViolation(() =>
+            session.ReadNegotiatedCancelReason(ReadOnlySequence<byte>.Empty));
+
+        session.NegotiatedCapabilities = ProtocolV2Capabilities.None;
+        Ensure(
+            session.ReadNegotiatedCancelReason(ReadOnlySequence<byte>.Empty) ==
+            ProtocolV2CancelReason.Unspecified,
+            "legacy empty Cancel should decode as unspecified");
+        await ExpectProtocolViolation(() => session.ReadNegotiatedCancelReason(payload));
+        await ExpectProtocolViolation(() => ProtocolV2PayloadCodec.ReadCancelReason(
+            new ReadOnlySequence<byte>(new byte[] { byte.MaxValue })));
     }
 
     [Test]
@@ -327,6 +376,19 @@ public class ProtocolV2Tests
         {
             var sequence = new ReadOnlySequence<byte>(frame);
             _ = ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out _, out _);
+            throw new Exception("expected ProtocolViolation");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+            await Task.CompletedTask;
+        }
+    }
+
+    private static async Task ExpectProtocolViolation(Action action)
+    {
+        try
+        {
+            action();
             throw new Exception("expected ProtocolViolation");
         }
         catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)

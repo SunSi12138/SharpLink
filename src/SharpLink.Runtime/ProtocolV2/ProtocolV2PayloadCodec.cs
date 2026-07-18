@@ -146,6 +146,31 @@ public static class ProtocolV2PayloadCodec
             checked((uint)creditBits));
     }
 
+    /// <summary>Writes one validated cancellation reason byte.</summary>
+    public static void WriteCancelReason(
+        IBufferWriter<byte> writer,
+        ProtocolV2CancelReason reason)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ValidateCancelReason(reason);
+        var span = writer.GetSpan(1);
+        span[0] = (byte)reason;
+        writer.Advance(1);
+    }
+
+    /// <summary>Reads one complete cancellation reason payload.</summary>
+    public static ProtocolV2CancelReason ReadCancelReason(ReadOnlySequence<byte> payload)
+    {
+        if (payload.Length != 1)
+            throw ProtocolV2FrameParser.Violation("Cancel payload must contain exactly one reason byte.");
+        var reader = new SequenceReader<byte>(payload);
+        if (!reader.TryRead(out var reasonBits))
+            throw ProtocolV2FrameParser.Violation("Cancel reason is truncated.");
+        var reason = (ProtocolV2CancelReason)reasonBits;
+        ValidateCancelReason(reason);
+        return reason;
+    }
+
     /// <summary>Writes one fixed-width protocol health response.</summary>
     public static void WriteHealthResponse(
         IBufferWriter<byte> writer,
@@ -407,6 +432,17 @@ public static class ProtocolV2PayloadCodec
             not SharpLinkHealthStatus.Unhealthy)
         {
             throw ProtocolV2FrameParser.Violation($"Unknown health status {(byte)status}.");
+        }
+    }
+
+    private static void ValidateCancelReason(ProtocolV2CancelReason reason)
+    {
+        if (reason is not ProtocolV2CancelReason.Unspecified and
+            not ProtocolV2CancelReason.UserCancellation and
+            not ProtocolV2CancelReason.DeadlineExceeded and
+            not ProtocolV2CancelReason.ConsumerAbandoned)
+        {
+            throw ProtocolV2FrameParser.Violation($"Unknown Cancel reason {(byte)reason}.");
         }
     }
 

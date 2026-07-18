@@ -4,6 +4,7 @@ internal enum ServerCallCancellationReason : byte
 {
     None,
     RemoteCancel,
+    ConsumerAbandoned,
     DeadlineExceeded,
     ServerStopping,
     ConnectionClosed,

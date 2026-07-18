@@ -1,5 +1,6 @@
 using SharpLink.Client;
 using SharpLink.Sdk;
+using System.Collections.Generic;
 using System.Threading;
 
 namespace SharpLink.UnitTests.Client;
@@ -20,6 +21,15 @@ internal static class ClientInvokerTestHelper
         2,
         RpcMethodKind.OneWay,
         HasResponsePayload: false,
+        HasClientStreams: false,
+        HasMethodTimeout: false,
+        MethodTimeout: null);
+
+    private static readonly RpcMethodDescriptor SServerStreamingMethod = new(
+        1,
+        3,
+        RpcMethodKind.ServerStreaming,
+        HasResponsePayload: true,
         HasClientStreams: false,
         HasMethodTimeout: false,
         MethodTimeout: null);
@@ -51,5 +61,20 @@ internal static class ClientInvokerTestHelper
             RpcEmptyRequestCodec.Instance,
             in streams,
             default);
+    }
+
+    public static IAsyncEnumerable<int> InvokeServerStreaming(
+        SharpLinkClient client,
+        CancellationToken cancellationToken = default)
+    {
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+        return channel.InvokeServerStreamingAsync(
+            SServerStreamingMethod,
+            in request,
+            RpcEmptyRequestCodec.Instance,
+            channel.RuntimeContext.Codecs.GetCodec<int>(),
+            default,
+            cancellationToken);
     }
 }

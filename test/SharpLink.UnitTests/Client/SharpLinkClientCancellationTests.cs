@@ -29,7 +29,7 @@ public class SharpLinkClientCancellationTests
     [Test]
     public async Task InvokeCancellableNoPayloadAsyncShouldUseOperationCanceledWhenUserTokenCancels()
     {
-        var transport = new TestClientTransportFactory();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
@@ -43,8 +43,12 @@ public class SharpLinkClientCancellationTests
             client,
             cancellationToken: cts.Token).AsTask();
 
-        _ = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await EnsureThrows<OperationCanceledException>(invokeTask);
+        var cancel = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Cancel);
+        Ensure(cancel.Header.RequestId == request.RequestId, "user cancel request ID");
+        Ensure(cancel.Payload is [(byte)ProtocolV2CancelReason.UserCancellation],
+            "user cancellation should send its negotiated reason");
     }
 
     [Test]
@@ -87,6 +91,28 @@ public class SharpLinkClientCancellationTests
         var hasCancel = await transport.Connection.TryWaitForSentPacket(
             ProtocolV2FrameType.Cancel, TimeSpan.FromMilliseconds(200));
         Ensure(!hasCancel, "oneway call should not send timeout cancel");
+    }
+
+    [Test]
+    public async Task EarlyServerStreamDisposalShouldSendConsumerAbandonedReason()
+    {
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromSeconds(5));
+
+        await client.ConnectAsync();
+        var stream = ClientInvokerTestHelper.InvokeServerStreaming(client);
+        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var enumerator = stream.GetAsyncEnumerator();
+        await enumerator.DisposeAsync();
+
+        var cancel = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Cancel);
+        Ensure(cancel.Header.RequestId == request.RequestId, "consumer abandonment request ID");
+        Ensure(cancel.Payload is [(byte)ProtocolV2CancelReason.ConsumerAbandoned],
+            "early stream disposal should send ConsumerAbandoned");
     }
 
     private static async Task<TException> EnsureThrows<TException>(Task task) where TException : Exception

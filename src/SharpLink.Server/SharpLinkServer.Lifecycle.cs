@@ -288,7 +288,8 @@ internal sealed partial class SharpLinkServer
                 var supportedCapabilities =
                     ProtocolV2Capabilities.Metadata |
                     ProtocolV2Capabilities.FlowControl |
-                    ProtocolV2Capabilities.HealthCheck;
+                    ProtocolV2Capabilities.HealthCheck |
+                    ProtocolV2Capabilities.CancellationReason;
                 if (header.Type != ProtocolV2FrameType.HandshakeRequest)
                 {
                     authResult = SharpLinkAuthenticationResult.Reject(
@@ -483,17 +484,16 @@ internal sealed partial class SharpLinkServer
                             }
                             case ProtocolV2FrameType.Cancel:
                                 var cancelRequestId = unchecked((long)header.RequestId);
+                                var cancelReason = session.ReadNegotiatedCancelReason(payload);
                                 ((RpcSession)session).AbortSendStreams(
                                     cancelRequestId,
-                                    new SharpLinkException(
-                                        SharpLinkErrorCode.Cancelled,
-                                        "Remote consumer cancelled the RPC stream."));
+                                    CreateRemoteCancellationException(cancelReason));
                                 if (requestCancellationMap.TryGetValue(cancelRequestId, out var callState) &&
                                     callState.TryAcquire(cancelRequestId))
                                 {
                                     try
                                     {
-                                        callState.TryCancel(ServerCallCancellationReason.RemoteCancel);
+                                        callState.TryCancel(MapRemoteCancellationReason(cancelReason));
                                     }
                                     finally
                                     {
@@ -1122,6 +1122,32 @@ internal sealed partial class SharpLinkServer
                 SharpLinkErrorCode.ConnectionClosed,
                 "Connection closed."),
             _ => new SharpLinkException(SharpLinkErrorCode.Cancelled, "Request canceled.")
+        };
+
+    private static ServerCallCancellationReason MapRemoteCancellationReason(
+        ProtocolV2CancelReason reason)
+        => reason switch
+        {
+            ProtocolV2CancelReason.DeadlineExceeded => ServerCallCancellationReason.DeadlineExceeded,
+            ProtocolV2CancelReason.ConsumerAbandoned => ServerCallCancellationReason.ConsumerAbandoned,
+            ProtocolV2CancelReason.Unspecified or
+            ProtocolV2CancelReason.UserCancellation => ServerCallCancellationReason.RemoteCancel,
+            _ => throw new ArgumentOutOfRangeException(nameof(reason), reason, null)
+        };
+
+    private static SharpLinkException CreateRemoteCancellationException(
+        ProtocolV2CancelReason reason)
+        => reason switch
+        {
+            ProtocolV2CancelReason.DeadlineExceeded => new SharpLinkException(
+                SharpLinkErrorCode.DeadlineExceeded,
+                "Remote RPC deadline exceeded."),
+            ProtocolV2CancelReason.ConsumerAbandoned => new SharpLinkException(
+                SharpLinkErrorCode.Cancelled,
+                "Remote consumer abandoned the RPC stream."),
+            _ => new SharpLinkException(
+                SharpLinkErrorCode.Cancelled,
+                "Remote caller cancelled the RPC stream.")
         };
 
     private RpcRequestEnvelope ReadRequestEnvelope(

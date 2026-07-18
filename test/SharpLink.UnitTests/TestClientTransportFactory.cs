@@ -7,6 +7,14 @@ namespace SharpLink.UnitTests;
 
 internal sealed class TestClientTransportFactory : IClientTransportFactory
 {
+    private readonly ProtocolV2Capabilities _negotiatedCapabilities;
+
+    internal TestClientTransportFactory(
+        ProtocolV2Capabilities negotiatedCapabilities = ProtocolV2Capabilities.None)
+    {
+        _negotiatedCapabilities = negotiatedCapabilities;
+    }
+
     public TestTransportConnection Connection { get; } = new();
     public int ConnectCount => Volatile.Read(ref _connectCount);
     private int _connectCount;
@@ -17,7 +25,7 @@ internal sealed class TestClientTransportFactory : IClientTransportFactory
         var payload = new PooledByteBufferWriter();
         ProtocolV2PayloadCodec.WriteHandshakeResponse(payload, new ProtocolV2HandshakeResponse(
             ProtocolV2Constants.MinorVersion,
-            ProtocolV2Capabilities.None,
+            _negotiatedCapabilities,
             4 * 1024 * 1024,
             1024 * 1024,
             16 * 1024 * 1024));
@@ -37,7 +45,7 @@ internal sealed class TestTransportConnection : ITransportConnection
 {
     private readonly Pipe _inbound = new();
     private readonly Pipe _outbound = new();
-    private readonly Channel<ProtocolV2FrameHeader> _sentPackets = Channel.CreateUnbounded<ProtocolV2FrameHeader>();
+    private readonly Channel<TestSentFrame> _sentPackets = Channel.CreateUnbounded<TestSentFrame>();
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Task _observeOutputTask;
     private int _disposed;
@@ -76,12 +84,15 @@ internal sealed class TestTransportConnection : ITransportConnection
     }
 
     public async Task<ProtocolV2FrameHeader> WaitForSentPacket(ProtocolV2FrameType type)
+        => (await WaitForSentFrame(type)).Header;
+
+    public async Task<TestSentFrame> WaitForSentFrame(ProtocolV2FrameType type)
     {
         while (true)
         {
-            var header = await _sentPackets.Reader.ReadAsync();
-            if (header.Type == type)
-                return header;
+            var frame = await _sentPackets.Reader.ReadAsync();
+            if (frame.Header.Type == type)
+                return frame;
         }
     }
 
@@ -92,8 +103,8 @@ internal sealed class TestTransportConnection : ITransportConnection
         {
             while (true)
             {
-                var header = await _sentPackets.Reader.ReadAsync(timeoutCts.Token);
-                if (header.Type == type)
+                var frame = await _sentPackets.Reader.ReadAsync(timeoutCts.Token);
+                if (frame.Header.Type == type)
                     return true;
             }
         }
@@ -136,8 +147,8 @@ internal sealed class TestTransportConnection : ITransportConnection
                     ref buffer,
                     new SharpLinkProtocolOptions(),
                     out var header,
-                    out _))
-                    _sentPackets.Writer.TryWrite(header);
+                    out var payload))
+                    _sentPackets.Writer.TryWrite(new TestSentFrame(header, payload.ToArray()));
                 if (result.IsCompleted)
                     return;
             }
@@ -170,3 +181,7 @@ internal sealed class TestTransportConnection : ITransportConnection
         }
     }
 }
+
+internal readonly record struct TestSentFrame(
+    ProtocolV2FrameHeader Header,
+    byte[] Payload);

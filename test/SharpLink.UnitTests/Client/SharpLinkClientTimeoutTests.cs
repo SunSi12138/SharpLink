@@ -9,7 +9,7 @@ public class SharpLinkClientTimeoutTests
     [Test]
     public async Task InvokeWithTimeoutNoPayloadAsyncShouldTimeoutAndSendCancel()
     {
-        var transport = new TestClientTransportFactory();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
@@ -24,19 +24,21 @@ public class SharpLinkClientTimeoutTests
         var exception = await EnsureThrows<SharpLinkException>(invokeTask);
         Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded, "timeout should map to DeadlineExceeded");
 
-        var cancelPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Cancel);
-        Ensure(cancelPacket.RequestId == callPacket.RequestId, "cancel should target same request");
+        var cancelFrame = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Cancel);
+        Ensure(cancelFrame.Header.RequestId == callPacket.RequestId, "cancel should target same request");
+        Ensure(cancelFrame.Payload is [(byte)ProtocolV2CancelReason.DeadlineExceeded],
+            "deadline timeout should send DeadlineExceeded reason");
     }
 
     [Test]
     public async Task InvokeCancellableNoPayloadAsyncTimeoutAndUserCancelShouldSendSingleCancel()
     {
-        var transport = new TestClientTransportFactory();
+        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
-            TimeSpan.FromMilliseconds(80));
+            TimeSpan.FromSeconds(1));
 
         await client.ConnectAsync();
 
@@ -49,8 +51,10 @@ public class SharpLinkClientTimeoutTests
         var callPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await EnsureThrows<Exception>(invokeTask);
 
-        var cancelPacket = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Cancel);
-        Ensure(cancelPacket.RequestId == callPacket.RequestId, "first cancel should target same request");
+        var cancelFrame = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Cancel);
+        Ensure(cancelFrame.Header.RequestId == callPacket.RequestId, "first cancel should target same request");
+        Ensure(cancelFrame.Payload is [(byte)ProtocolV2CancelReason.UserCancellation],
+            "user token should win the cancellation race in this test");
         var hasSecondCancel = await transport.Connection.TryWaitForSentPacket(
             ProtocolV2FrameType.Cancel, TimeSpan.FromMilliseconds(200));
         Ensure(!hasSecondCancel, "cancel packet should be sent only once");

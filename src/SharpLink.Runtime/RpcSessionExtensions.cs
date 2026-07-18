@@ -100,8 +100,61 @@ public static class RpcSessionExtensions
                 GetMaxErrorMessageBytes(session));
         }
 
-        public void SendCancelAsync(long requestId)
-            => session.SendPacketAsync(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, requestId);
+        /// <summary>Sends a negotiated protocol cancellation for one active request.</summary>
+        /// <param name="requestId">The non-zero request identifier to cancel.</param>
+        /// <param name="reason">The stable client-side cancellation reason.</param>
+        public void SendCancelAsync(long requestId, ProtocolV2CancelReason reason)
+        {
+            var runtimeSession = GetRuntimeSession(session);
+            if ((runtimeSession.NegotiatedCapabilities & ProtocolV2Capabilities.CancellationReason) == 0)
+            {
+                session.SendPacketAsync(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, requestId);
+                return;
+            }
+
+            var writer = runtimeSession.RentFrameWriter();
+            var ownsWriter = true;
+            try
+            {
+                using (writer.BeginPacketScope(
+                           ProtocolV2FrameType.Cancel,
+                           ProtocolV2FrameFlags.None,
+                           unchecked((ulong)requestId)))
+                {
+                    ProtocolV2PayloadCodec.WriteCancelReason(writer, reason);
+                }
+                ownsWriter = false;
+                runtimeSession.SendPacket(writer);
+            }
+            finally
+            {
+                if (ownsWriter)
+                    session.RuntimeContext.Buffers.Return(writer);
+            }
+        }
+
+        internal ProtocolV2CancelReason ReadNegotiatedCancelReason(ReadOnlySequence<byte> payload)
+        {
+            var hasReasonCapability =
+                (GetRuntimeSession(session).NegotiatedCapabilities &
+                 ProtocolV2Capabilities.CancellationReason) != 0;
+            if (!hasReasonCapability)
+            {
+                if (!payload.IsEmpty)
+                {
+                    throw ProtocolV2FrameParser.Violation(
+                        "Cancel reason payload was sent without negotiating CancellationReason.");
+                }
+                return ProtocolV2CancelReason.Unspecified;
+            }
+
+            if (payload.IsEmpty)
+            {
+                throw ProtocolV2FrameParser.Violation(
+                    "Cancel reason payload is required after negotiating CancellationReason.");
+            }
+            return ProtocolV2PayloadCodec.ReadCancelReason(payload);
+        }
 
         public void SendPingAsync()
             => SendTimestampFrame(session, ProtocolV2FrameType.Ping, Stopwatch.GetTimestamp());

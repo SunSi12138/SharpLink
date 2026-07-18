@@ -174,7 +174,7 @@ internal sealed class ClientConnection :
         // Return all receive credit before Cancel. Both frames share the session send pump,
         // so the peer observes the final WindowUpdate before it reclaims the aborted stream.
         if (shouldSendCancel)
-            TrySendCancel(completion.RequestId);
+            TrySendCancel(completion.RequestId, GetCancelReason(completion.Reason));
 
         ReleaseActiveCall();
     }
@@ -201,11 +201,20 @@ internal sealed class ClientConnection :
             _client.RetireDrainingConnectionIfIdle(this);
     }
 
-    private void TrySendCancel(long requestId)
+    private static ProtocolV2CancelReason GetCancelReason(PendingCallCompletionReason reason)
+        => reason switch
+        {
+            PendingCallCompletionReason.UserCancellation => ProtocolV2CancelReason.UserCancellation,
+            PendingCallCompletionReason.DeadlineExceeded => ProtocolV2CancelReason.DeadlineExceeded,
+            PendingCallCompletionReason.ConsumerAbandoned => ProtocolV2CancelReason.ConsumerAbandoned,
+            _ => throw new ArgumentOutOfRangeException(nameof(reason), reason, null)
+        };
+
+    private void TrySendCancel(long requestId, ProtocolV2CancelReason reason)
     {
         try
         {
-            Session.SendCancelAsync(requestId);
+            Session.SendCancelAsync(requestId, reason);
         }
         catch (SharpLinkException exception) when (exception.Code is
             SharpLinkErrorCode.ConnectionClosed or

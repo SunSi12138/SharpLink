@@ -171,8 +171,8 @@ public static class ProtocolV2FrameParser
                     ProtocolV2PayloadCodec.ValidateErrorPayload(payload, limits.MaxErrorMessageBytes);
                 break;
             case ProtocolV2FrameType.Cancel:
-                if (!payload.IsEmpty)
-                    throw Violation("Cancel payload must be empty.");
+                if (payload.Length > 1)
+                    throw Violation("Cancel payload must contain zero or one reason byte.");
                 break;
             case ProtocolV2FrameType.StreamData:
                 if (payload.Length < sizeof(ushort))
