@@ -3,7 +3,9 @@ namespace SharpLink.IntegrationTests;
 public class IntegrationBehaviorTests
 {
     [Test]
-    public async Task BasicRpcAndStreamingShouldWork()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task BasicRpcAndStreamingShouldWork(bool useSharedMemory)
     {
         static IRpcCodec? Resolver(Type type)
         {
@@ -16,7 +18,9 @@ public class IntegrationBehaviorTests
             return MemoryPackCodec.Resolver?.Invoke(type);
         }
 
-        await using var harness = await TestHarness.CreateAsync(codecResolver: Resolver);
+        await using var harness = await TestHarness.CreateAsync(
+            codecResolver: Resolver,
+            useSharedMemory: useSharedMemory);
         var svc = harness.Client.Get<ITestService>();
 
         var add = await svc.AddAsync(10, 20);
@@ -48,13 +52,15 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
-    public async Task OneByteFlowWindowsShouldResumeBothStreamDirections()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OneByteFlowWindowsShouldResumeBothStreamDirections(bool useSharedMemory)
     {
         await using var harness = await TestHarness.CreateAsync(runtimeConfigure: options =>
         {
             options.FlowControl.StreamReceiveWindowBytes = 1;
             options.FlowControl.ConnectionReceiveWindowBytes = 1;
-        });
+        }, useSharedMemory: useSharedMemory);
         var svc = harness.Client.Get<ITestService>();
 
         var upload = await svc.UploadAsync(
@@ -66,13 +72,15 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
-    public async Task ConnectionPoolShouldExpandOnceUnderConcurrentPressure()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConnectionPoolShouldExpandOnceUnderConcurrentPressure(bool useSharedMemory)
     {
         await using var harness = await TestHarness.CreateAsync(poolConfigure: options =>
         {
             options.MinConnections = 1;
             options.MaxConnections = 2;
-        });
+        }, useSharedMemory: useSharedMemory);
         var client = (SharpLinkClient)harness.Client;
         var svc = harness.Client.Get<ITestService>();
 
@@ -559,19 +567,27 @@ public class IntegrationBehaviorTests
             Func<Type, IRpcCodec?>? codecResolver = null,
             Action<SharpLinkRuntimeOptions>? runtimeConfigure = null,
             Action<SharpLinkConnectionPoolOptions>? poolConfigure = null,
-            bool disableRequestTimeout = false)
+            bool disableRequestTimeout = false,
+            bool useSharedMemory = false)
         {
             codecResolver ??= MemoryPackCodec.Resolver;
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
                 .AddService<ITestService, TestService>()
-                .UseTcp(0, IPAddress.Loopback.ToString())
                 .UseSerializer(codecResolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
             if (runtimeConfigure is not null)
                 serverBuilder.UseRuntime(runtimeConfigure);
 
-            var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+            var sharedMemoryName = $"sharplink-behavior-{Guid.NewGuid():N}";
+            var port = 0;
+            if (useSharedMemory)
+                serverBuilder.UseSharedMemory(sharedMemoryName);
+            else
+            {
+                serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+                port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+            }
             var server = serverBuilder.Build();
 
             var serverTask = Task.Run(async () =>
@@ -595,9 +611,12 @@ public class IntegrationBehaviorTests
             }, CancellationToken.None);
 
             var clientBuilder = SharpClientBuilder.Create()
-                .UseTcp(IPAddress.Loopback.ToString(), port)
                 .UseSerializer(codecResolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
+            if (useSharedMemory)
+                clientBuilder.UseSharedMemory(sharedMemoryName);
+            else
+                clientBuilder.UseTcp(IPAddress.Loopback.ToString(), port);
             if (runtimeConfigure is not null)
                 clientBuilder.UseRuntime(runtimeConfigure);
             if (poolConfigure is not null)

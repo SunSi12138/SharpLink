@@ -21,6 +21,7 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     private readonly Channel<bool> _spaceAvailable = CreatePulseChannel();
     private readonly Task _readerTask;
     private readonly Task _writerTask;
+    private Exception? _terminalException;
     private int _pendingOutboundSignals;
     private int _closed;
     private int _disposed;
@@ -33,6 +34,15 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     }
 
     public bool IsClosed => Volatile.Read(ref _closed) != 0;
+
+    public void ThrowIfFaulted()
+    {
+        var exception = Volatile.Read(ref _terminalException);
+        if (exception is SharpLinkException sharpLinkException)
+            throw sharpLinkException;
+        if (exception is not null)
+            throw CreateConnectionClosedException(exception);
+    }
 
     public void SignalDataAvailable()
     {
@@ -57,11 +67,11 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (IsClosed)
-            throw CreateConnectionClosedException();
+            ThrowClosed();
         _ = await reader.ReadAsync().ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         if (IsClosed)
-            throw CreateConnectionClosedException();
+            ThrowClosed();
     }
 
     private async Task RunReaderAsync()
@@ -94,6 +104,10 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         catch (Exception ex) when (IsExpectedControlClose(ex))
         {
         }
+        catch (Exception ex)
+        {
+            Interlocked.CompareExchange(ref _terminalException, ex, null);
+        }
         finally
         {
             MarkClosed();
@@ -121,6 +135,10 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         }
         catch (Exception ex) when (IsExpectedControlClose(ex))
         {
+        }
+        catch (Exception ex)
+        {
+            Interlocked.CompareExchange(ref _terminalException, ex, null);
         }
         finally
         {
@@ -180,6 +198,8 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
 
     private bool QueueSignal(int bit)
     {
+        if (IsClosed)
+            return false;
         var previous = Interlocked.Or(ref _pendingOutboundSignals, bit);
         _outboundWake.Writer.TryWrite(true);
         return (previous & bit) == 0;
@@ -187,7 +207,13 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
 
     private static bool IsExpectedControlClose(Exception exception)
         => exception is IOException or ObjectDisposedException or OperationCanceledException or
-            InvalidOperationException or SocketException or SharpLinkException;
+            InvalidOperationException or SocketException;
+
+    private void ThrowClosed()
+    {
+        ThrowIfFaulted();
+        throw CreateConnectionClosedException();
+    }
 
     private static SharpLinkException CreateConnectionClosedException(Exception? innerException = null)
         => new(SharpLinkErrorCode.ConnectionClosed, "Shared-memory control channel closed.", innerException);

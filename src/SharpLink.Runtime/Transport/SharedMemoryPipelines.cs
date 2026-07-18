@@ -172,6 +172,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
             if (_control.IsClosed)
             {
                 _direction.ClearReaderWaiting();
+                _control.ThrowIfFaulted();
                 return new ReadResult(default, isCanceled: false, isCompleted: true);
             }
 
@@ -180,7 +181,8 @@ internal sealed class SharedMemoryPipeReader : PipeReader
                 SharpLinkTelemetry.RecordSharedMemoryWait("reader");
                 await _control.WaitForDataAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (SharpLinkException) when (_control.IsClosed)
+            catch (SharpLinkException exception) when (
+                _control.IsClosed && exception.Code == SharpLinkErrorCode.ConnectionClosed)
             {
                 if (TryCreateAvailableReadResult(requireAdditionalStagingData: false, out result))
                     return result;
@@ -208,6 +210,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         {
             if (_direction.IsWriterClosed || _control.IsClosed)
             {
+                _control.ThrowIfFaulted();
                 result = new ReadResult(default, isCanceled: false, isCompleted: true);
                 return true;
             }
@@ -466,6 +469,12 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
             throw new InvalidOperationException("Advance must be called before requesting another buffer.");
         ArgumentOutOfRangeException.ThrowIfNegative(sizeHint);
         sizeHint = Math.Max(1, sizeHint);
+        if (sizeHint > SharedMemoryTransportOptions.MaxCapacityPerDirectionBytes)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.ResourceExhausted,
+                "Shared-memory spill requests cannot exceed the maximum per-direction capacity.");
+        }
 
         if (_spill is null && TryGetDirectMemory(sizeHint, out var memory))
         {
@@ -502,12 +511,20 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
             if (Interlocked.Exchange(ref _cancelPending, 0) != 0)
                 return new FlushResult(isCanceled: true, isCompleted: false);
             if (_direction.IsReaderClosed || _control.IsClosed)
+            {
+                _control.ThrowIfFaulted();
                 return new FlushResult(isCanceled: false, isCompleted: true);
+            }
 
             PublishDirectWrites();
             if (_spill is not null && !await DrainSpillAsync(cancellationToken).ConfigureAwait(false))
                 return new FlushResult(isCanceled: true, isCompleted: false);
-            return new FlushResult(isCanceled: false, isCompleted: _direction.IsReaderClosed || _control.IsClosed);
+            if (_direction.IsReaderClosed || _control.IsClosed)
+            {
+                _control.ThrowIfFaulted();
+                return new FlushResult(isCanceled: false, isCompleted: true);
+            }
+            return new FlushResult(isCanceled: false, isCompleted: false);
         }
         finally
         {
@@ -584,7 +601,10 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
             if (Interlocked.Exchange(ref _cancelPending, 0) != 0)
                 return false;
             if (_direction.IsReaderClosed || _control.IsClosed)
+            {
+                _control.ThrowIfFaulted();
                 throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Shared-memory peer stopped reading.");
+            }
 
             var readPosition = _direction.ReadReadPosition();
             var occupied = _direction.GetAvailableBytes(_publishedWritePosition, readPosition);
@@ -682,7 +702,14 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
 
         public Memory<byte> GetMemory(int sizeHint)
         {
-            EnsureCapacity(checked(WrittenCount + sizeHint));
+            var required = checked(WrittenCount + sizeHint);
+            if (required > SharedMemoryTransportOptions.MaxCapacityPerDirectionBytes)
+            {
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.ResourceExhausted,
+                    "Shared-memory spill buffer exceeded the maximum per-direction capacity.");
+            }
+            EnsureCapacity(required);
             return _buffer.AsMemory(WrittenCount);
         }
 

@@ -3,6 +3,8 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO.Pipelines;
 using System.IO.Pipes;
+using System.Security.Cryptography;
+using System.Text;
 using PipeStreamOptions = System.IO.Pipes.PipeOptions;
 
 namespace SharpLink.IntegrationTests;
@@ -280,6 +282,27 @@ public class SharedMemoryTransportConnectionIntegrationTests
     }
 
     [Test]
+    public async Task SharedMemoryOversizedSpillRequestShouldFailWithoutAllocation()
+    {
+        var (listener, factory, client, server) = await CreateRawPairAsync();
+        await using var listenerScope = listener;
+        await using var factoryScope = factory;
+        await using var clientScope = client;
+        await using var serverScope = server;
+
+        try
+        {
+            _ = client.Output.GetMemory((256 * 1024 * 1024) + 1);
+            throw new Exception("expected oversized shared-memory spill rejection");
+        }
+        catch (SharpLinkException exception)
+        {
+            Ensure(exception.Code == SharpLinkErrorCode.ResourceExhausted,
+                "shared-memory oversized spill error code");
+        }
+    }
+
+    [Test]
     public async Task SharedMemoryConnectionDisposeShouldBeIdempotent()
     {
         var (listener, factory, client, server) = await CreateRawPairAsync();
@@ -289,6 +312,169 @@ public class SharedMemoryTransportConnectionIntegrationTests
 
         await client.DisposeAsync();
         await client.DisposeAsync();
+    }
+
+    [Test]
+    public async Task SharedMemoryConcurrentCloseShouldBeIdempotentOnBothSides()
+    {
+        var (listener, factory, client, server) = await CreateRawPairAsync();
+        await using var listenerScope = listener;
+        await using var factoryScope = factory;
+
+        var closes = new List<Task>(32);
+        for (var index = 0; index < 16; index++)
+        {
+            closes.Add(client.DisposeAsync().AsTask());
+            closes.Add(server.DisposeAsync().AsTask());
+        }
+        await Task.WhenAll(closes).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    public async Task SharedMemoryHandshakeShouldRejectMismatchedAcknowledgementNonceAndCleanMapping()
+    {
+        var name = $"ack{Guid.NewGuid():N}"[..20];
+        await using var listener = new SharedMemoryServerTransportListener(name);
+        var accept = listener.AcceptAsync().AsTask();
+        await using var pipe = new NamedPipeClientStream(
+            ".",
+            $"shm-{name}",
+            PipeDirection.InOut,
+            PipeStreamOptions.Asynchronous | PipeStreamOptions.CurrentUserOnly);
+        await pipe.ConnectAsync();
+
+        var nonce = RandomNumberGenerator.GetBytes(32);
+        var hello = new byte[48];
+        BinaryPrimitives.WriteInt32LittleEndian(hello, 0x53484D31);
+        BinaryPrimitives.WriteInt32LittleEndian(hello.AsSpan(4), 1);
+        BinaryPrimitives.WriteInt32LittleEndian(hello.AsSpan(8), 64 * 1024);
+        BinaryPrimitives.WriteInt32LittleEndian(hello.AsSpan(12), Environment.ProcessId);
+        nonce.CopyTo(hello, 16);
+        await pipe.WriteAsync(hello);
+        await pipe.FlushAsync();
+
+        var responseHeader = new byte[52];
+        await pipe.ReadExactlyAsync(responseHeader);
+        var pathLength = BinaryPrimitives.ReadInt32LittleEndian(responseHeader.AsSpan(16));
+        Ensure(pathLength is > 0 and <= 3072, "shared-memory handshake response path length");
+        var pathBytes = new byte[pathLength];
+        await pipe.ReadExactlyAsync(pathBytes);
+        var mappingPath = Encoding.UTF8.GetString(pathBytes);
+
+        var invalidAck = new byte[40];
+        BinaryPrimitives.WriteInt32LittleEndian(invalidAck, 0x53484D31);
+        BinaryPrimitives.WriteInt32LittleEndian(invalidAck.AsSpan(4), 1);
+        RandomNumberGenerator.Fill(invalidAck.AsSpan(8));
+        await pipe.WriteAsync(invalidAck);
+        await pipe.FlushAsync();
+
+        try
+        {
+            await accept;
+            throw new Exception("expected shared-memory acknowledgement nonce rejection");
+        }
+        catch (SharpLinkException exception)
+        {
+            Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
+                "shared-memory acknowledgement nonce error code");
+        }
+
+        await WaitUntilAsync(() => !File.Exists(mappingPath), TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public async Task SharedMemoryAuthenticationShouldStayIsolatedAcrossMultipleClients()
+    {
+        var name = $"sharplink-shm-auth-{Guid.NewGuid():N}";
+        using var serverCts = new CancellationTokenSource();
+        var server = SharpLinkServerBuilder.Create()
+            .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
+            .UseSharedMemory(name)
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseAuthenticator(SharpLinkAuthenticator.CreateServer((request, _) =>
+            {
+                var token = Encoding.UTF8.GetString(request.Payload.Span);
+                return ValueTask.FromResult(token is "connection-a" or "connection-b"
+                    ? SharpLinkAuthenticationResult.Authenticate(new SharpLinkAuthenticationContext(
+                        subject: token,
+                        claims: new Dictionary<string, string>(StringComparer.Ordinal)
+                        {
+                            ["role"] = token
+                        }))
+                    : SharpLinkAuthenticationResult.Reject());
+            }))
+            .RequireAuthentication()
+            .Build();
+        var serverTask = Task.Run(async () =>
+        {
+            try
+            {
+                await server.RunAsync(serverCts.Token);
+            }
+            catch (Exception exception) when (exception is OperationCanceledException or
+                                              ObjectDisposedException or IOException or SocketException)
+            {
+                _ = exception.HResult;
+            }
+        }, CancellationToken.None);
+
+        var firstClient = CreateAuthenticatedSharedMemoryClient(name, "connection-a");
+        var secondClient = CreateAuthenticatedSharedMemoryClient(name, "connection-b");
+        var rejectedClient = CreateAuthenticatedSharedMemoryClient(name, "rejected");
+        try
+        {
+            await Task.WhenAll(
+                firstClient.ConnectAsync(serverCts.Token).AsTask(),
+                secondClient.ConnectAsync(serverCts.Token).AsTask());
+            var firstService = firstClient.Get<IConnectionBehaviorService>();
+            var secondService = secondClient.Get<IConnectionBehaviorService>();
+            var calls = new Task<string>[200];
+            for (var index = 0; index < calls.Length; index += 2)
+            {
+                calls[index] = firstService.GetAuthenticationSummaryAsync().AsTask();
+                calls[index + 1] = secondService.GetAuthenticationSummaryAsync().AsTask();
+            }
+            await Task.WhenAll(calls);
+            for (var index = 0; index < calls.Length; index += 2)
+            {
+                Ensure(calls[index].Result == "connection-a|connection-a",
+                    "shared-memory first authentication context isolation");
+                Ensure(calls[index + 1].Result == "connection-b|connection-b",
+                    "shared-memory second authentication context isolation");
+            }
+
+            try
+            {
+                await rejectedClient.ConnectAsync(serverCts.Token);
+                throw new Exception("expected shared-memory authentication rejection");
+            }
+            catch (SharpLinkException exception)
+            {
+                Ensure(exception.Code == SharpLinkErrorCode.AuthenticationRejected,
+                    "shared-memory authentication rejection code");
+            }
+        }
+        finally
+        {
+            await firstClient.DisposeAsync();
+            await secondClient.DisposeAsync();
+            await rejectedClient.DisposeAsync();
+            await serverCts.CancelAsync();
+            await server.DisposeAsync();
+            await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
+        }
+    }
+
+    [Test]
+    public async Task SharedMemoryHeartbeatShouldKeepAnIdleConnectionReady()
+    {
+        await using var harness = await SharedMemoryHarness.CreateAsync();
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        Ensure(harness.Client.State == SharpLinkConnectionState.Ready,
+            "shared-memory idle heartbeat connection state");
+        Ensure(await harness.Client.Get<IConnectionBehaviorService>().PingAsync(50) == 51,
+            "shared-memory ping after idle heartbeat interval");
     }
 
     [Test]
@@ -446,6 +632,24 @@ public class SharedMemoryTransportConnectionIntegrationTests
             await listener.DisposeAsync();
             throw;
         }
+    }
+
+    private static ISharpLinkClient CreateAuthenticatedSharedMemoryClient(string name, string token)
+    {
+        var payload = Encoding.UTF8.GetBytes(token);
+        return SharpClientBuilder.Create()
+            .UseSharedMemory(name)
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseAuthenticator(SharpLinkAuthenticator.CreateClient(
+                _ => ValueTask.FromResult<ReadOnlyMemory<byte>>(payload)))
+            .Build();
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        using var cancellation = new CancellationTokenSource(timeout);
+        while (!condition())
+            await Task.Delay(10, cancellation.Token);
     }
 
     private static long Checksum(long sequence, int salt)

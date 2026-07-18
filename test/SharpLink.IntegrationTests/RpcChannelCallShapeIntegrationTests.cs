@@ -5,9 +5,11 @@ namespace SharpLink.IntegrationTests;
 public class RpcChannelCallShapeIntegrationTests
 {
     [Test]
-    public async Task GeneratedProxyCallsShouldWorkWithRealRpcService()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task GeneratedProxyCallsShouldWorkWithRealRpcService(bool useSharedMemory)
     {
-        await using var harness = await CallShapeHarness.CreateAsync();
+        await using var harness = await CallShapeHarness.CreateAsync(useSharedMemory);
         var svc = harness.Client.Get<ICallShapeService>();
 
         Ensure(await svc.UnaryPayloadAsync(3) == 13, "UnaryPayloadAsync");
@@ -219,16 +221,23 @@ public class RpcChannelCallShapeIntegrationTests
             Client = client;
         }
 
-        public static async Task<CallShapeHarness> CreateAsync()
+        public static async Task<CallShapeHarness> CreateAsync(bool useSharedMemory = false)
         {
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
                 .AddService<ICallShapeService, CallShapeService>()
-                .UseTcp(0, IPAddress.Loopback.ToString())
                 .UseSerializer(MemoryPackCodec.Resolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
 
-            var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+            var sharedMemoryName = $"sharplink-call-shape-{Guid.NewGuid():N}";
+            var port = 0;
+            if (useSharedMemory)
+                serverBuilder.UseSharedMemory(sharedMemoryName);
+            else
+            {
+                serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+                port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+            }
             var server = serverBuilder.Build();
 
             var serverTask = Task.Run(async () =>
@@ -251,12 +260,15 @@ public class RpcChannelCallShapeIntegrationTests
                 }
             }, CancellationToken.None);
 
-            var client = SharpClientBuilder.Create()
-                .UseTcp(IPAddress.Loopback.ToString(), port)
+            var clientBuilder = SharpClientBuilder.Create()
                 .UseSerializer(MemoryPackCodec.Resolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
-                .UseRequestTimeout(TimeSpan.FromSeconds(5))
-                .Build();
+                .UseRequestTimeout(TimeSpan.FromSeconds(5));
+            if (useSharedMemory)
+                clientBuilder.UseSharedMemory(sharedMemoryName);
+            else
+                clientBuilder.UseTcp(IPAddress.Loopback.ToString(), port);
+            var client = clientBuilder.Build();
 
             await client.ConnectAsync(cts.Token);
             return new CallShapeHarness(server, serverTask, cts, client);
