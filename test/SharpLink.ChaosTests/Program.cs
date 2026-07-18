@@ -74,10 +74,12 @@ public static class Program
         AppDomain.CurrentDomain.UnhandledException += unhandledHandler;
 
         phase = "StartingServer";
-        var server = await ChaosServer.StartAsync(port: 0).ConfigureAwait(false);
+        var server = await ChaosServer.StartAsync(
+            options.Transport,
+            options.SharedMemoryName,
+            port: 0).ConfigureAwait(false);
         var port = server.Port;
-        await using var client = SharpClientBuilder.Create()
-            .UseTcp(IPAddress.Loopback.ToString(), port)
+        var clientBuilder = SharpClientBuilder.Create()
             .UseHeartbeat(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5))
             .UseRequestTimeout(TimeSpan.FromSeconds(2))
             .UseLoggerFactory(clientLogs)
@@ -85,8 +87,12 @@ public static class Program
             {
                 pool.MinConnections = 1;
                 pool.MaxConnections = Math.Min(Environment.ProcessorCount, 4);
-            })
-            .Build();
+            });
+        if (options.Transport == ChaosTransport.SharedMemory)
+            clientBuilder.UseSharedMemory(options.SharedMemoryName);
+        else
+            clientBuilder.UseTcp(IPAddress.Loopback.ToString(), port);
+        await using var client = clientBuilder.Build();
 
         phase = "ConnectingClient";
         await client.ConnectAsync(duration.Token).ConfigureAwait(false);
@@ -205,7 +211,11 @@ public static class Program
                     serverStops.Enqueue(await server.StopAsync("RollingRestart").ConfigureAwait(false));
                     try
                     {
-                        server = await ChaosServer.StartWithRetryAsync(port, recoveryTimeout.Token)
+                        server = await ChaosServer.StartWithRetryAsync(
+                                options.Transport,
+                                options.SharedMemoryName,
+                                port,
+                                recoveryTimeout.Token)
                             .ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (recoveryTimeout.IsCancellationRequested)
@@ -317,6 +327,7 @@ public static class Program
                 options.CheckpointInterval.TotalSeconds,
                 options.RestartInterval.TotalSeconds,
                 options.Concurrency,
+                options.Transport.ToString(),
                 options.DumpOnFailure,
                 options.StopOnUnexpectedFailure,
                 Volatile.Read(ref restartCount),
@@ -763,6 +774,8 @@ public static class Program
         Console.WriteLine("SharpLink.ChaosTests options:");
         Console.WriteLine("  --duration 10m                  (supports s, m, h, d, or TimeSpan)");
         Console.WriteLine("  --duration-seconds 120");
+        Console.WriteLine("  --transport tcp|sharedmemory");
+        Console.WriteLine("  --shm-name sharplink-chaos");
         Console.WriteLine("  --concurrency 32");
         Console.WriteLine("  --restart-interval-seconds 5");
         Console.WriteLine("  --checkpoint-interval 1m");
@@ -777,19 +790,31 @@ internal sealed class ChaosServer(SharpLinkServer server, Task runTask, int port
 {
     internal int Port { get; } = port;
 
-    internal static Task<ChaosServer> StartAsync(int port)
+    internal static Task<ChaosServer> StartAsync(
+        ChaosTransport transport,
+        string sharedMemoryName,
+        int port)
     {
         var builder = SharpLinkServerBuilder.Create()
-            .UseTcp(port, IPAddress.Loopback.ToString())
             .UseHeartbeat(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5))
             .AddService<IChaosService, ChaosService>();
-        var boundPort = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
+        if (transport == ChaosTransport.SharedMemory)
+            builder.UseSharedMemory(sharedMemoryName);
+        else
+            builder.UseTcp(port, IPAddress.Loopback.ToString());
+        var boundPort = transport == ChaosTransport.Tcp
+            ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port
+            : 0;
         var server = (SharpLinkServer)builder.Build();
         var runTask = server.RunAsync().AsTask();
         return Task.FromResult(new ChaosServer(server, runTask, boundPort));
     }
 
-    internal static async Task<ChaosServer> StartWithRetryAsync(int port, CancellationToken cancellationToken)
+    internal static async Task<ChaosServer> StartWithRetryAsync(
+        ChaosTransport transport,
+        string sharedMemoryName,
+        int port,
+        CancellationToken cancellationToken)
     {
         Exception? lastException = null;
         for (var attempt = 0; attempt < 100; attempt++)
@@ -797,7 +822,7 @@ internal sealed class ChaosServer(SharpLinkServer server, Task runTask, int port
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                return await StartAsync(port).ConfigureAwait(false);
+                return await StartAsync(transport, sharedMemoryName, port).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is SocketException or IOException)
             {
@@ -1025,6 +1050,8 @@ internal sealed class ChaosOptions
     internal TimeSpan CheckpointInterval { get; private init; } = TimeSpan.FromSeconds(30);
     internal bool DumpOnFailure { get; private init; } = true;
     internal bool StopOnUnexpectedFailure { get; private init; } = true;
+    internal ChaosTransport Transport { get; private init; } = ChaosTransport.Tcp;
+    internal string SharedMemoryName { get; private init; } = "sharplink-chaos";
     internal string? JsonOutputPath { get; private init; }
 
     internal static ChaosOptions Parse(string[] args)
@@ -1047,6 +1074,12 @@ internal sealed class ChaosOptions
             : TimeSpan.FromSeconds(ParsePositive(values, "duration-seconds", 120));
         var concurrency = ParsePositive(values, "concurrency", 32);
         var restartSeconds = ParsePositive(values, "restart-interval-seconds", 5);
+        var transport = values.GetValueOrDefault("transport", "tcp").ToLowerInvariant() switch
+        {
+            "tcp" => ChaosTransport.Tcp,
+            "sharedmemory" or "shared-memory" or "shm" => ChaosTransport.SharedMemory,
+            var value => throw new ArgumentException($"Unsupported chaos transport '{value}'.")
+        };
         if (TimeSpan.FromSeconds(restartSeconds) >= duration)
             throw new ArgumentException("Restart interval must be shorter than the chaos duration.");
         var checkpointInterval = values.TryGetValue("checkpoint-interval", out var checkpointText)
@@ -1064,6 +1097,8 @@ internal sealed class ChaosOptions
             CheckpointInterval = checkpointInterval,
             DumpOnFailure = ParseBoolean(values, "dump-on-failure", fallback: true),
             StopOnUnexpectedFailure = ParseBoolean(values, "stop-on-unexpected", fallback: true),
+            Transport = transport,
+            SharedMemoryName = values.GetValueOrDefault("shm-name", "sharplink-chaos"),
             JsonOutputPath = values.GetValueOrDefault("json-output")
         };
     }
@@ -1158,6 +1193,7 @@ internal sealed record ChaosReport(
     double CheckpointIntervalSeconds,
     double RestartIntervalSeconds,
     int Concurrency,
+    string Transport,
     bool DumpOnFailure,
     bool StopOnUnexpectedFailure,
     int RestartCount,
@@ -1191,6 +1227,12 @@ internal sealed record ChaosDiagnosticArtifact(
     string Path,
     bool Captured,
     string Details);
+
+internal enum ChaosTransport
+{
+    Tcp,
+    SharedMemory
+}
 
 internal sealed record MemorySample(
     DateTimeOffset TimestampUtc,

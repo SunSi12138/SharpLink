@@ -35,11 +35,10 @@ jobs:
       - name: Integration Tests
         run: dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --timeout 60s
 
-      - name: Publish AOT Smoke
-        run: dotnet publish test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj -c Release -r linux-x64 /p:PublishAot=true -v minimal
-
-      - name: Run AOT Smoke
-        run: ./test/SharpLink.AotSmoke/bin/Release/net10.0/linux-x64/publish/SharpLink.AotSmoke
+      - name: Run Independent-process Shared-memory AOT Smoke
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
 
       - name: Pack
         run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
@@ -61,7 +60,7 @@ jobs:
         run: dotnet run -c Release --no-build --project demo/Oneway
 
       - name: Load Smoke
-        run: dotnet run -c Release --no-build --project test/SharpLink.LoadTest -- --mode local --operation add --concurrency 1,4 --warmup 2 --duration 5 --metrics-port 0
+        run: dotnet run -c Release --no-build --project test/SharpLink.LoadTest -- --mode local --transport sharedmemory --operation add --concurrency 1,4 --warmup 2 --duration 5 --metrics-port 0
 
       - name: Chaos Smoke
         run: >-
@@ -69,6 +68,7 @@ jobs:
           --project test/SharpLink.ChaosTests
           --
           --duration-seconds 120
+          --transport sharedmemory
           --concurrency 16
           --restart-interval-seconds 10
           --json-output artifacts/chaos/pr-smoke.json

@@ -4,25 +4,30 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TIER="${SHARPLINK_MATRIX_TIER:-smoke}"
 RUNTIMES="${SHARPLINK_MATRIX_RUNTIMES:-jit}"
-REPETITIONS="${SHARPLINK_MATRIX_REPETITIONS:-1}"
+REPETITIONS="${SHARPLINK_MATRIX_REPETITIONS:-}"
 OUTPUT_ROOT="${SHARPLINK_MATRIX_OUTPUT:-$ROOT/artifacts/perf/0.6.10-matrix}"
 
 if [[ "$TIER" == "full" ]]; then
-  TRANSPORTS=(tcp uds namedpipe anonymous)
+  TRANSPORTS=(tcp uds namedpipe anonymous sharedmemory)
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) TRANSPORTS=(tcp namedpipe anonymous sharedmemory) ;;
+  esac
   PROFILES=(balanced lowlatency throughput)
-  PAYLOADS=(0 32 256 4096 65536)
+  PAYLOADS=(0 32 256 4096 65536 1048576)
   CONCURRENCY="1,8,32,128"
   WARMUP=5
   DURATION=20
   STREAM_OPERATION=all
+  REPETITIONS="${REPETITIONS:-5}"
 else
-  TRANSPORTS=(tcp)
+  TRANSPORTS=(tcp sharedmemory)
   PROFILES=(balanced)
   PAYLOADS=(0 256 65536)
   CONCURRENCY="1,32,128"
   WARMUP=1
   DURATION=3
   STREAM_OPERATION=s2c
+  REPETITIONS="${REPETITIONS:-1}"
 fi
 
 mkdir -p "$OUTPUT_ROOT"
@@ -36,6 +41,7 @@ case "$(uname -s)-$(uname -m)" in
   Linux-aarch64|Linux-arm64) RID=linux-arm64 ;;
   Darwin-x86_64) RID=osx-x64 ;;
   Darwin-arm64) RID=osx-arm64 ;;
+  MINGW*-x86_64|MSYS*-x86_64|CYGWIN*-x86_64) RID=win-x64 ;;
 esac
 
 run_project() {
@@ -56,13 +62,24 @@ run_project() {
   if [[ ! -x "$publish/$name" ]]; then
     dotnet publish "$project" -c Release -r "$RID" /p:PublishAot=true -o "$publish" -v minimal
   fi
-  "$publish/$name" "$@"
+  local executable="$publish/$name"
+  if [[ "$RID" == win-* ]]; then
+    executable="$executable.exe"
+  fi
+  "$executable" "$@"
 }
 
 IFS=',' read -r -a RUNTIME_LIST <<< "$RUNTIMES"
 for runtime in "${RUNTIME_LIST[@]}"; do
   for repetition in $(seq 1 "$REPETITIONS"); do
-    for transport in "${TRANSPORTS[@]}"; do
+    ordered_transports=("${TRANSPORTS[@]}")
+    if (( repetition % 2 == 0 )); then
+      ordered_transports=()
+      for ((index=${#TRANSPORTS[@]}-1; index>=0; index--)); do
+        ordered_transports+=("${TRANSPORTS[index]}")
+      done
+    fi
+    for transport in "${ordered_transports[@]}"; do
       for profile in "${PROFILES[@]}"; do
         POOLS=("1 1" "1 4")
         if [[ "$transport" == "anonymous" ]]; then

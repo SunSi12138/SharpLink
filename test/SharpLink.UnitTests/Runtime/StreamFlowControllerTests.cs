@@ -123,7 +123,38 @@ public class StreamFlowControllerTests
         Ensure(controller.SendConnectionCredit == 4,
             "the receiver's final update must reclaim the exact outstanding credit");
         await controller.AcquireSendCreditAsync(2, 0, 4, CancellationToken.None);
+        controller.ApplyWindowUpdate(1, 0, 4);
         Ensure(controller.SendConnectionCredit == 0, "new stream should reuse reclaimed capacity");
+    }
+
+    [Test]
+    public async Task AbortedSendStreamShouldIgnoreAlreadyQueuedWindowUpdates()
+    {
+        var controller = new StreamFlowController(4, 4, 1024, maxConcurrentStreams: 2);
+        await controller.AcquireSendCreditAsync(1, 1, 4, CancellationToken.None);
+        var cancellation = new SharpLinkException(SharpLinkErrorCode.Cancelled, "locally cancelled");
+
+        controller.AbortSendStreams(1, cancellation);
+        controller.ApplyWindowUpdate(1, 1, 4);
+        controller.CompleteSendStream(1, 1, cancellation);
+        controller.ApplyWindowUpdate(1, 1, 4);
+
+        Ensure(controller.SendConnectionCredit == 4, "late aborted-stream credit must not be counted twice");
+    }
+
+    [Test]
+    public async Task UnknownWindowUpdateShouldRemainAProtocolViolation()
+    {
+        var controller = new StreamFlowController(4, 4, 1024);
+        try
+        {
+            controller.ApplyWindowUpdate(99, 1, 1);
+            throw new Exception("expected unknown stream violation");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+        }
+        await Task.CompletedTask;
     }
 
     [Test]

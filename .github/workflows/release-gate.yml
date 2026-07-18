@@ -77,7 +77,17 @@ jobs:
           NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
 
   aot-smoke:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-14
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
@@ -90,11 +100,12 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Publish AOT Smoke
-        run: dotnet publish test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj -c Release -r linux-x64 /p:PublishAot=true -v minimal
-
-      - name: Run AOT Smoke
-        run: ./test/SharpLink.AotSmoke/bin/Release/net10.0/linux-x64/publish/SharpLink.AotSmoke
+      - name: Run Independent-process Shared-memory AOT Smoke
+        shell: bash
+        env:
+          SHARPLINK_AOT_RID: ${{ matrix.rid }}
+          SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/aot
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
 
   pack:
     runs-on: ubuntu-latest
@@ -141,7 +152,11 @@ jobs:
           path: artifacts/nuget/*.nupkg
 
   chaos-smoke:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
@@ -160,6 +175,7 @@ jobs:
           --project test/SharpLink.ChaosTests
           --
           --duration-seconds 120
+          --transport sharedmemory
           --concurrency 32
           --restart-interval-seconds 10
           --json-output artifacts/chaos/release-smoke.json
@@ -168,7 +184,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: chaos-release-smoke
+          name: chaos-release-smoke-${{ runner.os }}
           path: |
             artifacts/chaos/release-smoke.json
             artifacts/chaos/release-smoke.dmp

@@ -16,6 +16,9 @@ public static class TransportDefaults
     public static string GetDefaultPipeName(string name)
         => name;
 
+    public static string GetDefaultSharedMemoryName(string name)
+        => name;
+
     public static bool TryParseTransport(string value, out TransportMode mode)
     {
         switch (value.Trim().ToLowerInvariant())
@@ -36,10 +39,14 @@ public static class TransportDefaults
             case "anonymous-pipe":
                 mode = TransportMode.AnonymousPipe;
                 return true;
+            case "sharedmemory":
+            case "shared-memory":
+            case "shm":
+                mode = TransportMode.SharedMemory;
+                return true;
             default:
                 mode = TransportMode.Tcp;
                 return false;
         }
     }
 }
-
