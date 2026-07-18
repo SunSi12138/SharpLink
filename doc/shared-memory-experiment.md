@@ -15,18 +15,26 @@
 - 映射为 4 KiB 固定头部加 Client→Server、Server→Client 两个等容量环。头部包含 magic、布局版本、容量、nonce、隔离游标、等待标志和关闭状态。
 - 客户端只接受用户私有临时目录内、GUID 命名、`.shm` 后缀、非符号链接的映射；Unix 权限不得包含 group/other 位。
 - 双方容量不一致取较小值；SpinCount 仅影响本端。失败直接返回结构化错误，不回退到 TCP、UDS 或 Pipe。
-- 通知后端为 `named-pipe-control`。empty→non-empty 与 full→non-full 状态转换会补发合并通知，避免等待标志竞态留下的长尾停顿。
-- 未知控制信号会作为 `ProtocolViolation` 暴露，不会被吞成普通断连；spill 总量受 256 MiB 上限约束，越界在分配前返回 `ResourceExhausted`。
+- 通知后端为 `named-pipe-control`。双方使用“登记等待后重新检查”协议，只有实际等待者才触发控制通知；data/space 使用 bitmask 合并写，进程内 waiter 使用可复用 ValueTask source。控制语义变更由共享内存握手版本 2 隔离，旧版本会在映射前失败。
+- 未知控制 bit 会作为 `ProtocolViolation` 暴露，不会被吞成普通断连；spill 总量受 256 MiB 上限约束，越界在分配前返回 `ResourceExhausted`。入站 staging 与出站累积 spill 使用池化 sequence segments，不在增长时复制已有字节。
+
+## 正确性优先的热路径改造
+
+- 默认证据采集只启用容量、后端、spill/wait/notification；`--detailed-shm-evidence` 才启用 direct、spill 原因与复制、staging、通知请求/合并和游标刷新，避免正式计时被高频观测扰动。
+- reader 关闭不再用 `Task.Yield` 轮询 outstanding read，而是等待一次性完成信号；映射仍在 `AdvanceTo` 前保持有效。
+- SPSC 两端缓存本端游标和已观察到的对端游标；只有缓存数据/空间不足时才重新读取共享游标，跨进程 publish 的 acquire/release 语义不变。
+- 通知只发给已经登记的 waiter，同类 pending wake 会合并；data 与 space 同时 pending 时只需一次控制写。可复用 pulse 的锁存快路径在 10,000 次循环中本线程分配为 0。
+- 256 KiB 帧通过 64 KiB 环时仍使用有界 staging，但 accumulated growth-copy 为 0；多段 spill 在中途取消并恢复 Flush 后仍保持字节顺序，pending growth-copy 为 0。
 
 ## 已覆盖证据
 
-- Release solution build：0 warning、0 error。Unit 175/175、Generator 17/17、Integration 108/108；其中 SharedMemory 传输专项 21/21。
+- Release solution build：0 warning、0 error。Unit 183/183、Generator 17/17、Integration 114/114；其中 SharedMemory 传输专项 27/27。
 - 共享内存选项/profile、非法容量/SpinCount/timeout、路径权限、nonce/ack、未知控制信号、游标有符号溢出、越界 spill 和 stale 文件清理。
 - 原始双向各 1,000,000 条带序号/checksum 记录，在 64 KiB 环上反复回卷，零损坏。
 - 完整生成代理调用形态同时在 TCP 与 SharedMemory 上执行：Unary、Void、OneWay、client stream、server stream、duplex 及多流变体；另覆盖 1-byte stream/connection window 背压。
 - 基础 RPC、256 KiB 超环帧、容量协商、连接池 1→2 扩容、多客户端认证上下文隔离与拒绝、心跳空闲、无服务 timeout、调用方取消、未知握手版本、nonce 错误、监听空闲、并发关闭、断连、重连和双方独立子进程强杀。
-- PackageSmoke 从本地生成的 NuGet 包独立 restore/run，并分别完成 TCP 与 SharedMemory RPC；macOS arm64 SharedMemory NativeAOT server/client 独立进程通过，publish 无 trimming/AOT warning。
-- commit `d16a3a2369ad413280b8fd5ebd216ab943c68c87` 的 SharedMemory Chaos：120 秒、并发 32、11 次服务重启；2,265,436 success、777,253 expected failure、0 unexpected failure，最长恢复 232 ms。结束后五项 tracked metrics 与临时映射文件均为 0。
+- PackageSmoke 从本地生成的 NuGet 包和全新 NuGet 缓存独立 restore/run，并分别完成 TCP 与 SharedMemory RPC；macOS arm64 SharedMemory NativeAOT server/client 独立进程通过，publish 无 trimming/AOT warning。Linux x64 与 Windows x64 framework-dependent publish 均为 0 warning/0 error，但没有冒充运行时验证。
+- commit `6631eaf8f97eb147a6313393b1d3797a280ed281` 的 SharedMemory Chaos：120 秒、并发 32、23 次服务重启；2,127,782 success、757,618 expected failure、0 unexpected failure，最长恢复 220 ms。结束后五项 tracked metrics 与临时映射文件均为 0。
 
 120 秒 Chaos 只有起止两个 retained-memory 样本，不能据此作泄漏判断，也不能代替 24 小时最后六小时增长门禁。
 

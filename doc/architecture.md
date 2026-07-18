@@ -132,8 +132,8 @@ SharpLink.Serializer.MemoryPack
 - `SharedMemory` 只支持同机同用户。命名管道是权限边界和控制通道；数据不经过控制通道。
 - 每条共享内存连接拥有一个 4 KiB 版本化小端头部和两个 SPSC 环。读写游标、等待标志与关闭位按 128 字节隔离；文件映射只在双方 nonce、版本、容量和长度全部校验后开放。
 - Unix/macOS 在双方确认映射后 unlink 文件；Windows 使用 delete sharing 与 `DeleteOnClose`。新建映射前只清理能够独占打开的遗留 `.shm` 文件，不删除活跃连接资源。
-- Writer 优先直接返回映射内存；只有回卷、空间不足或已有待处理数据时使用有界池化 spill。Reader 直接返回映射上的 `ReadOnlySequence<byte>`，只有跨环且协议尚未消费的半帧进入池化 staging。
-- 通知后端当前统一为 `named-pipe-control`。共享等待标志使用“设置后重新检查”，并在 empty→non-empty / full→non-full 边界补发合并信号，避免过期通知积压或丢失唤醒。
+- Writer 优先直接返回映射内存；只有回卷、空间不足或已有待处理数据时使用有界池化 spill。累积 spill 与超环 staging 都使用池化 sequence segments，避免扩容时重复复制已积累字节。Reader 直接返回映射上的 `ReadOnlySequence<byte>`，只有跨环且协议尚未消费的半帧进入 staging。
+- 通知后端当前统一为 `named-pipe-control`。共享等待标志使用“设置后重新检查”：只有对端实际登记等待时才发控制信号，登记前发生的游标变化由重新检查观察，因此不依赖过期通知。data/space 可在一次 bitmask 写中合并，进程内 waiter 使用可复用的单消费者 ValueTask source。
 
 ## TCP TLS
 
@@ -164,7 +164,7 @@ SharpLink.Serializer.MemoryPack
 
 - 公共 `SharpLinkTelemetry` 暴露 `SharpLink.Client`、`SharpLink.Server` 两个 `ActivitySource` 和名为 `SharpLink` 的 `Meter`。
 - Activity 只在 source 有 listener 时创建，并携带 contract ID、method ID、method kind、server request ID 与结构化状态；不写入 payload、token、证书或业务异常消息。
-- Meter 覆盖 active connections、reconnect、calls started/completed/failed/active/abandoned/duration、sent/received bytes、send queue bytes、pending requests、active streams、late responses、protocol/auth/resource-exhausted failures，以及共享内存协商容量、spill bytes、waits 和 notifications。
+- Meter 覆盖 active connections、reconnect、calls started/completed/failed/active/abandoned/duration、sent/received bytes、send queue bytes、pending requests、active streams、late responses、protocol/auth/resource-exhausted failures，以及共享内存协商容量、spill bytes、waits 和 notifications。可选详细诊断还区分 direct/spill 原因、staging、复制、通知请求/合并和游标刷新；这些高频计数不用于正式计时。
 - abandoned call 带低基数 termination reason；迟到响应逐次计数，但每连接 Warning 使用五秒限频窗口并报告被抑制数量。
 - Counter/Histogram/Activity 均先检查 listener/instrument；无 listener 时不创建 TagList、Activity、Stopwatch 对象或 observer state machine。
 - 日志全部使用 `LoggerMessage` source-generated 方法；普通日志不包含 payload、token 或证书内容。
