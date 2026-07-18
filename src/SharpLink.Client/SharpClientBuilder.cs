@@ -166,6 +166,8 @@ public class SharpClientBuilder
             throw new InvalidOperationException("Transport must be set before building the client.");
 
         var runtimeContext = _runtimeContextBuilder.Build();
+        if (_transport is IPerformanceProfileAwareTransport profileAwareTransport)
+            profileAwareTransport.BindPerformanceProfile(runtimeContext.Options.PerformanceProfile);
         var protocolOptions = runtimeContext.Protocol;
         var connectionPool = CreateConnectionPoolSnapshot(runtimeContext);
         if (_transport is AnonymousPipeClientTransportFactory && connectionPool.MaxConnections != 1)
