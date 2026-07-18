@@ -320,7 +320,7 @@ public class IntegrationBehaviorTests
         await EnsureThrowsSharpLinkFast(
             svc.AddAsync(1, 1).AsTask(),
             "new call after GoAway",
-            SharpLinkErrorCode.ConnectionClosed);
+            SharpLinkErrorCode.Unavailable);
         Ensure(await acceptedCall == 42, "accepted call should complete during grace period");
         await stopTask.WaitAsync(TimeSpan.FromSeconds(2));
     }

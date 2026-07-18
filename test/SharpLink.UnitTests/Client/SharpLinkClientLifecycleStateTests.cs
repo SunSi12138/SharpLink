@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Net.Sockets;
 using System.Threading;
 using SharpLink.Client;
 
@@ -93,6 +94,38 @@ public class SharpLinkClientLifecycleStateTests
 
         Ensure(client.ReadyConnectionCount == 1,
             "a reconnect drained before its worker exits must schedule a replacement");
+    }
+
+    [Test]
+    public async Task FailedExpansionShouldHandZeroReadyPoolToReconnectWorker()
+    {
+        var transport = new SequenceClientTransportFactory(failedConnectsAfterInitial: 1);
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            connectionPoolOptions: new SharpLinkConnectionPoolOptions
+            {
+                MinConnections = 1,
+                MaxConnections = 2
+            });
+        await client.ConnectAsync();
+        var firstConnection = await transport.WaitForConnectionAsync(0);
+
+        var firstCall = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        _ = await firstConnection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        var secondCall = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        await WaitUntilAsync(() => transport.ConnectCount >= 2);
+
+        await firstConnection.DisposeAsync();
+        await ObserveConnectionFailureAsync(firstCall);
+        await ObserveConnectionFailureAsync(secondCall);
+        await WaitUntilAsync(
+            () => transport.ConnectCount >= 3 &&
+                  client.ReadyConnectionCount == 1 &&
+                  client.State == SharpLinkConnectionState.Ready,
+            () => $"failed expansion stranded the client after {transport.ConnectCount} attempts " +
+                  $"in state {client.State} with {client.ReadyConnectionCount} ready connections");
     }
 
     [Test]
@@ -217,17 +250,35 @@ public class SharpLinkClientLifecycleStateTests
         }
     }
 
+    private static async Task ObserveConnectionFailureAsync(Task<int> operation)
+    {
+        try
+        {
+            _ = await operation;
+            throw new Exception("expected the disconnected call to fail");
+        }
+        catch (SharpLinkException exception) when (exception.Code is
+            SharpLinkErrorCode.ConnectionClosed or SharpLinkErrorCode.Unavailable)
+        {
+        }
+    }
+
     private sealed class SequenceClientTransportFactory : IClientTransportFactory
     {
         private readonly Lock _gate = new();
         private readonly List<TestTransportConnection> _connections = [];
         private readonly int _immediatelyDrainedReconnects;
+        private readonly int _failedConnectsAfterInitial;
         private int _connectCount;
 
-        internal SequenceClientTransportFactory(int immediatelyDrainedReconnects = 0)
+        internal SequenceClientTransportFactory(
+            int immediatelyDrainedReconnects = 0,
+            int failedConnectsAfterInitial = 0)
         {
             ArgumentOutOfRangeException.ThrowIfNegative(immediatelyDrainedReconnects);
+            ArgumentOutOfRangeException.ThrowIfNegative(failedConnectsAfterInitial);
             _immediatelyDrainedReconnects = immediatelyDrainedReconnects;
+            _failedConnectsAfterInitial = failedConnectsAfterInitial;
         }
 
         public int ConnectCount => Volatile.Read(ref _connectCount);
@@ -235,6 +286,9 @@ public class SharpLinkClientLifecycleStateTests
         public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
         {
             var connectNumber = Interlocked.Increment(ref _connectCount);
+            if (connectNumber > 1 && connectNumber <= _failedConnectsAfterInitial + 1)
+                throw new SocketException((int)SocketError.ConnectionRefused);
+
             var connection = new TestTransportConnection();
             var payload = new ArrayBufferWriter<byte>();
             ProtocolV2PayloadCodec.WriteHandshakeResponse(payload, new ProtocolV2HandshakeResponse(

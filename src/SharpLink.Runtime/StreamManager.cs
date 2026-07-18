@@ -173,6 +173,76 @@ public class StreamManager : IStreamManager
         }
     }
 
+    /// <summary>
+    /// Closes a locally terminated receive stream and waits for dispatches that acquired the
+    /// entry before it was closed. The final receive-credit flush therefore precedes a caller's
+    /// Cancel frame without blocking the normal no-dispatch completion path.
+    /// </summary>
+    internal ValueTask CompleteStreamAfterDispatchesAsync(
+        long requestId,
+        ushort streamId,
+        Exception? exception)
+    {
+        if (!_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) ||
+            !requestDispatchers.TryRemove(streamId, out var entry))
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        SharpLinkTelemetry.AddActiveStreams(-1);
+        Interlocked.Decrement(ref _activeStreamCount);
+        try
+        {
+            entry.Dispatcher.Complete(exception);
+        }
+        catch
+        {
+            entry.Detach();
+            RemoveEmptyRequest(requestId, requestDispatchers);
+            throw;
+        }
+        if (!entry.HasActiveDispatches)
+        {
+            FinalizeLocallyTerminatedStream(requestId, streamId, requestDispatchers, entry);
+            return ValueTask.CompletedTask;
+        }
+
+        return AwaitDispatchesAndFinalizeAsync(
+            requestId,
+            streamId,
+            requestDispatchers,
+            entry);
+    }
+
+    private async ValueTask AwaitDispatchesAndFinalizeAsync(
+        long requestId,
+        ushort streamId,
+        RequestDispatchers requestDispatchers,
+        DispatcherEntry entry)
+    {
+        await entry.WaitForDispatchesAsync().ConfigureAwait(false);
+        FinalizeLocallyTerminatedStream(requestId, streamId, requestDispatchers, entry);
+    }
+
+    private void FinalizeLocallyTerminatedStream(
+        long requestId,
+        ushort streamId,
+        RequestDispatchers requestDispatchers,
+        DispatcherEntry entry)
+    {
+        try
+        {
+            if (entry.Dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+                consumptionAware.SetBytesConsumedCallback(null, 0, 0);
+            _streamCompleted?.Invoke(requestId, streamId);
+        }
+        finally
+        {
+            entry.Detach();
+            RemoveEmptyRequest(requestId, requestDispatchers);
+        }
+    }
+
     public void CompleteAll(Exception? exception)
     {
         foreach (var requestDispatchers in _dispatchersByRequestId.DrainValues())
@@ -328,6 +398,7 @@ public class StreamManager : IStreamManager
         private const int ClosedMask = int.MinValue;
         private const int CountMask = int.MaxValue;
         private int _state;
+        private TaskCompletionSource? _dispatchesDrained;
 
         internal DispatcherEntry(IStreamDispatcher dispatcher)
         {
@@ -363,11 +434,33 @@ public class StreamManager : IStreamManager
             var state = Interlocked.Decrement(ref _state);
             if ((state & CountMask) == CountMask)
                 throw new InvalidOperationException("Stream dispatcher lease underflowed.");
-            if ((state & ClosedMask) != 0 && (state & CountMask) == 0 && IsDetached &&
-                Dispatcher is IStreamDispatchLease lease)
+            if ((state & ClosedMask) != 0 && (state & CountMask) == 0)
             {
-                lease.OnDispatchesDrained();
+                Volatile.Read(ref _dispatchesDrained)?.TrySetResult();
+                if (IsDetached && Dispatcher is IStreamDispatchLease lease)
+                    lease.OnDispatchesDrained();
             }
+        }
+
+        internal ValueTask WaitForDispatchesAsync()
+        {
+            if (!HasActiveDispatches)
+                return ValueTask.CompletedTask;
+
+            var completion = Volatile.Read(ref _dispatchesDrained);
+            if (completion is null)
+            {
+                var created = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                completion = Interlocked.CompareExchange(
+                    ref _dispatchesDrained,
+                    created,
+                    null) ?? created;
+            }
+
+            if (!HasActiveDispatches)
+                completion.TrySetResult();
+            return new ValueTask(completion.Task);
         }
 
         public void Close()

@@ -168,12 +168,39 @@ internal sealed class ClientConnection :
                 Session.StreamManager.Unregister(completion.RequestId, 0);
                 completion.Dispatcher?.Complete(completion.Exception);
             }
+            else if (shouldSendCancel)
+            {
+                ValueTask drain;
+                try
+                {
+                    drain = Session.StreamManager is StreamManager manager
+                        ? manager.CompleteStreamAfterDispatchesAsync(
+                            completion.RequestId,
+                            0,
+                            completion.Exception)
+                        : ValueTask.CompletedTask;
+                }
+                catch (Exception exception)
+                {
+                    Fail(exception);
+                    ReleaseActiveCall();
+                    return;
+                }
+                if (!drain.IsCompletedSuccessfully)
+                {
+                    _client.TrackBackgroundTask(FinishCancellationAfterDispatchesAsync(
+                        drain,
+                        completion.RequestId,
+                        GetCancelReason(completion.Reason)));
+                    return;
+                }
+            }
             else
             {
                 Session.StreamManager.CompleteStream(
                     completion.RequestId,
                     0,
-                completion.Exception);
+                    completion.Exception);
             }
         }
 
@@ -183,6 +210,26 @@ internal sealed class ClientConnection :
             TrySendCancel(completion.RequestId, GetCancelReason(completion.Reason));
 
         ReleaseActiveCall();
+    }
+
+    private async Task FinishCancellationAfterDispatchesAsync(
+        ValueTask drain,
+        long requestId,
+        ProtocolV2CancelReason reason)
+    {
+        try
+        {
+            await drain.ConfigureAwait(false);
+            TrySendCancel(requestId, reason);
+        }
+        catch (Exception exception)
+        {
+            Fail(exception);
+        }
+        finally
+        {
+            ReleaseActiveCall();
+        }
     }
 
     public async ValueTask DisposeAsync()

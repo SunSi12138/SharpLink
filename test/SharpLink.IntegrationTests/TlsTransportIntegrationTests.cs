@@ -21,7 +21,9 @@ public class TlsTransportIntegrationTests
         var concreteClient = (SharpLinkClient)client;
         await WaitUntilAsync(() => concreteClient.ReadyConnectionCount == 0);
         await using var secondServer = await StartServerAsync(port, CreateServerOptions(certificate));
-        await WaitUntilAsync(() => concreteClient.ReadyConnectionCount != 0);
+        await WaitUntilAsync(() =>
+            concreteClient.ReadyConnectionCount != 0 &&
+            concreteClient.State == SharpLinkConnectionState.Ready);
         Ensure(await client.Get<ITlsIntegrationService>().AddAsync(20, 22) == 42, "TLS reconnect RPC");
     }
 

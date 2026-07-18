@@ -235,7 +235,7 @@ internal sealed partial class SharpLinkClient
     private ClientConnection GetReadyConnection()
     {
         var connections = Volatile.Read(ref _readyConnections);
-        if (State == SharpLinkConnectionState.Ready && connections.Length != 0)
+        if (!_shutdownCts.IsCancellationRequested && connections.Length != 0)
         {
             ClientConnection selected;
             if (connections.Length == 1)
@@ -258,7 +258,7 @@ internal sealed partial class SharpLinkClient
                 return selected;
             }
         }
-        if (State is SharpLinkConnectionState.Draining or SharpLinkConnectionState.Stopped)
+        if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
             throw CreateConnectionClosedException("Client is not accepting new calls.");
         throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink connection is ready.");
     }
@@ -354,6 +354,19 @@ internal sealed partial class SharpLinkClient
         {
             using var scope = BeginSessionLogScope(_logger, "pool-expand");
             LogClientBackgroundLoopUnhandledException(_logger, nameof(ExpandOneAsync), ex);
+
+            // Expansion is opportunistic while the pool still has a ready connection, but
+            // that connection can start draining while ConnectOneAsync is in flight. Once
+            // the failed expansion observes that the pool fell below its minimum it must
+            // hand ownership to the persistent reconnect worker. Otherwise a coalesced
+            // reconnect signal can leave the client permanently stranded with zero ready
+            // connections after a rolling restart.
+            if (!_shutdownCts.IsCancellationRequested &&
+                ReadyConnectionCount < _connectionPoolOptions.MinConnections)
+            {
+                TransitionTo(SharpLinkConnectionState.Reconnecting);
+                EnsureReconnectLoop();
+            }
         }
     }
 

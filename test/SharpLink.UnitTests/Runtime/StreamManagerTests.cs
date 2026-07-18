@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using System.Linq;
+
 namespace SharpLink.UnitTests.Runtime;
 
 public class StreamManagerTests
@@ -145,6 +148,43 @@ public class StreamManagerTests
         Ensure(manager.DroppedStreamFrames == 2, "late stream data should be counted and dropped");
     }
 
+    [Test]
+    public async Task LocalCancellationShouldFlushOnlyAfterAcquiredDispatchesDrain()
+    {
+        var events = new List<string>();
+        var manager = new StreamManager(
+            new RuntimeConcurrencyOptions(),
+            null,
+            null,
+            (_, _) => events.Add("credit-flushed"));
+        var dispatcher = new GatedDispatcher(events);
+        manager.Register(50, dispatcher);
+
+        var dispatch = manager.DispatchChunkAsync(
+            50,
+            new ReadOnlySequence<byte>(new byte[] { 1 }));
+        await dispatcher.Entered.WaitAsync(TimeSpan.FromSeconds(1));
+        var completion = manager.CompleteStreamAfterDispatchesAsync(
+            50,
+            0,
+            new OperationCanceledException());
+
+        Ensure(!completion.IsCompleted, "local completion must wait for the acquired dispatch");
+        Ensure(events.SequenceEqual(["dispatch-entered", "dispatcher-completed"]),
+            "receive credit must not flush before the acquired dispatch exits");
+
+        dispatcher.Release();
+        await dispatch;
+        await completion;
+        Ensure(events.SequenceEqual([
+                "dispatch-entered",
+                "dispatcher-completed",
+                "dispatch-released",
+                "credit-flushed"
+            ]),
+            "the final credit flush must follow the last acquired dispatch");
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
@@ -179,5 +219,35 @@ public class StreamManagerTests
             CompleteCount++;
             LastException = exception;
         }
+    }
+
+    private sealed class GatedDispatcher(List<string> events) : IStreamDispatcher
+    {
+        private readonly TaskCompletionSource _entered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Entered => _entered.Task;
+
+        public async ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+        {
+            _ = payload;
+            events.Add("dispatch-entered");
+            _entered.TrySetResult();
+            await _release.Task.ConfigureAwait(false);
+            events.Add("dispatch-released");
+        }
+
+        public void Complete(bool isError, string? errorMessage)
+            => Complete(isError ? new Exception(errorMessage) : null);
+
+        public void Complete(Exception? exception)
+        {
+            _ = exception;
+            events.Add("dispatcher-completed");
+        }
+
+        public void Release() => _release.TrySetResult();
     }
 }

@@ -45,7 +45,7 @@ internal sealed partial class SharpLinkClient
     {
         while (true)
         {
-            if (State == SharpLinkConnectionState.Ready && ReadyConnectionCount != 0)
+            if (!_shutdownCts.IsCancellationRequested && ReadyConnectionCount != 0)
                 return GetReadyConnection();
 
             if (!waitForReady)

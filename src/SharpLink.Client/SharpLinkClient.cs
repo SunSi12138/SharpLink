@@ -162,7 +162,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         }
     }
 
-    private void TrackBackgroundTask(Task task)
+    internal void TrackBackgroundTask(Task task)
     {
         lock (_backgroundTasksGate)
             _backgroundTasks.Add(task);
