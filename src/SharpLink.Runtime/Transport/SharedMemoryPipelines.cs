@@ -567,7 +567,6 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
     private long _reservedWritePosition;
     private long _cachedReadPosition;
     private PooledSpillBuffer? _spill;
-    private int _spillOffset;
     private SpillReason _lastSpillReason;
     private int _lastMemoryLength;
     private BufferKind _lastBufferKind;
@@ -593,7 +592,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
 
     public override long UnflushedBytes
         => unchecked(_reservedWritePosition - _publishedWritePosition) +
-           (_spill is null ? 0 : _spill.WrittenCount - _spillOffset);
+           (_spill?.WrittenCount ?? 0);
 
     public override void Advance(int bytes)
     {
@@ -641,7 +640,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
 
         if (_spill is null)
         {
-            _spill = new PooledSpillBuffer(sizeHint);
+            _spill = new PooledSpillBuffer();
             _lastSpillReason = spillReason;
         }
         else
@@ -762,7 +761,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
 
     private async ValueTask<bool> DrainSpillAsync(CancellationToken cancellationToken)
     {
-        while (_spill is not null && _spillOffset < _spill.WrittenCount)
+        while (_spill is not null && _spill.WrittenCount != 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (Interlocked.Exchange(ref _cancelPending, 0) != 0)
@@ -807,10 +806,10 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
             var index = (int)(unchecked((ulong)_publishedWritePosition) & (uint)_direction.Mask);
             var count = Math.Min(
                 Math.Min(free, _direction.Capacity - index),
-                _spill.WrittenCount - _spillOffset);
-            _spill.WrittenMemory.Span.Slice(_spillOffset, count)
+                _spill.FirstMemory.Length);
+            _spill.FirstMemory.Span[..count]
                 .CopyTo(_direction.Memory.Span.Slice(index, count));
-            _spillOffset += count;
+            _spill.Consume(count);
             _publishedWritePosition = unchecked(_publishedWritePosition + count);
             _reservedWritePosition = _publishedWritePosition;
             _direction.PublishWritePosition(_publishedWritePosition);
@@ -822,7 +821,6 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
         {
             _spill.Dispose();
             _spill = null;
-            _spillOffset = 0;
         }
         return true;
     }
@@ -893,53 +891,148 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
 
     private sealed class PooledSpillBuffer : IDisposable
     {
-        private byte[] _buffer;
+        private const int MaxRetainedSegments = 256;
+        private static readonly ConcurrentStack<SpillSegment> SegmentPool = [];
+        private static int s_retainedSegments;
 
-        public PooledSpillBuffer(int initialCapacity)
-        {
-            _buffer = ArrayPool<byte>.Shared.Rent(Math.Max(256, initialCapacity));
-        }
+        private SpillSegment? _first;
+        private SpillSegment? _last;
+        private int _firstOffset;
+        private int _writtenCount;
+        private int _disposed;
 
-        public int WrittenCount { get; private set; }
-        public ReadOnlyMemory<byte> WrittenMemory => _buffer.AsMemory(0, WrittenCount);
+        public int WrittenCount => _writtenCount;
+        public ReadOnlyMemory<byte> FirstMemory
+            => _first!.WrittenMemory[_firstOffset..];
 
         public Memory<byte> GetMemory(int sizeHint)
         {
-            var required = checked(WrittenCount + sizeHint);
-            if (required > SharedMemoryTransportOptions.MaxCapacityPerDirectionBytes)
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            if (WrittenCount > SharedMemoryTransportOptions.MaxCapacityPerDirectionBytes - sizeHint)
             {
                 throw new SharpLinkException(
                     SharpLinkErrorCode.ResourceExhausted,
                     "Shared-memory spill buffer exceeded the maximum per-direction capacity.");
             }
-            EnsureCapacity(required);
-            return _buffer.AsMemory(WrittenCount);
+            if (_last is null || _last.AvailableCapacity < sizeHint)
+                AppendSegment(Math.Max(256, sizeHint));
+            return _last!.AvailableMemory;
         }
 
         public void Advance(int count)
         {
-            if (count < 0 || WrittenCount > _buffer.Length - count)
+            if (_last is null || count < 0 || count > _last.AvailableCapacity)
                 throw new ArgumentOutOfRangeException(nameof(count));
-            WrittenCount += count;
+            if (WrittenCount > SharedMemoryTransportOptions.MaxCapacityPerDirectionBytes - count)
+            {
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.ResourceExhausted,
+                    "Shared-memory spill buffer exceeded the maximum per-direction capacity.");
+            }
+            _last.Advance(count);
+            _writtenCount = checked(_writtenCount + count);
         }
 
-        private void EnsureCapacity(int capacity)
+        public void Consume(int count)
         {
-            if (capacity <= _buffer.Length)
-                return;
-            var newBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(capacity, checked(_buffer.Length * 2)));
-            _buffer.AsSpan(0, WrittenCount).CopyTo(newBuffer);
-            SharpLinkTelemetry.RecordSharedMemorySpillCopyBytes(WrittenCount);
-            ArrayPool<byte>.Shared.Return(_buffer);
-            _buffer = newBuffer;
+            if (count < 0 || count > WrittenCount)
+                throw new ArgumentOutOfRangeException(nameof(count));
+            _writtenCount -= count;
+            while (count != 0)
+            {
+                var available = _first!.WrittenCount - _firstOffset;
+                if (count < available)
+                {
+                    _firstOffset += count;
+                    return;
+                }
+
+                count -= available;
+                var consumed = _first;
+                _first = consumed.Next;
+                consumed.Next = null;
+                ReturnSegment(consumed);
+                _firstOffset = 0;
+            }
+
+            if (_first is null)
+                _last = null;
         }
 
         public void Dispose()
         {
-            var buffer = Interlocked.Exchange(ref _buffer, Array.Empty<byte>());
-            if (buffer.Length != 0)
-                ArrayPool<byte>.Shared.Return(buffer);
-            WrittenCount = 0;
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+            while (_first is not null)
+            {
+                var segment = _first;
+                _first = segment.Next;
+                segment.Next = null;
+                ReturnSegment(segment);
+            }
+            _last = null;
+            _firstOffset = 0;
+            _writtenCount = 0;
+        }
+
+        private void AppendSegment(int capacity)
+        {
+            var segment = RentSegment(capacity);
+            if (_last is null)
+                _first = segment;
+            else
+                _last.Next = segment;
+            _last = segment;
+        }
+
+        private static SpillSegment RentSegment(int capacity)
+        {
+            if (!SegmentPool.TryPop(out var segment))
+                segment = new SpillSegment();
+            else
+                Interlocked.Decrement(ref s_retainedSegments);
+            segment.Initialize(capacity);
+            return segment;
+        }
+
+        private static void ReturnSegment(SpillSegment segment)
+        {
+            segment.Release();
+            if (Interlocked.Increment(ref s_retainedSegments) <= MaxRetainedSegments)
+            {
+                SegmentPool.Push(segment);
+                return;
+            }
+            Interlocked.Decrement(ref s_retainedSegments);
+        }
+
+        private sealed class SpillSegment
+        {
+            private byte[] _buffer = Array.Empty<byte>();
+
+            public int WrittenCount { get; private set; }
+            public int AvailableCapacity => _buffer.Length - WrittenCount;
+            public Memory<byte> AvailableMemory => _buffer.AsMemory(WrittenCount);
+            public ReadOnlyMemory<byte> WrittenMemory => _buffer.AsMemory(0, WrittenCount);
+            public SpillSegment? Next { get; set; }
+
+            public void Initialize(int capacity)
+            {
+                _buffer = ArrayPool<byte>.Shared.Rent(capacity);
+                WrittenCount = 0;
+                Next = null;
+            }
+
+            public void Advance(int count) => WrittenCount += count;
+
+            public void Release()
+            {
+                var buffer = Interlocked.Exchange(ref _buffer, Array.Empty<byte>());
+                if (buffer.Length != 0)
+                    ArrayPool<byte>.Shared.Return(buffer);
+                WrittenCount = 0;
+                Next = null;
+            }
         }
     }
 }
