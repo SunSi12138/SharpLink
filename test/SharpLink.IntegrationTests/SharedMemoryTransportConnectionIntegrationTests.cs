@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.IO.Pipelines;
 using System.IO.Pipes;
 using System.Security.Cryptography;
@@ -300,6 +301,70 @@ public class SharedMemoryTransportConnectionIntegrationTests
             Ensure(exception.Code == SharpLinkErrorCode.ResourceExhausted,
                 "shared-memory oversized spill error code");
         }
+    }
+
+    [Test]
+    public async Task SharedMemoryEvidenceShouldDistinguishDirectAndWrapSpillBytes()
+    {
+        const int capacity = 64 * 1024;
+        var directBytes = 0L;
+        var wrapSpillBytes = 0L;
+        using var meterListener = new MeterListener();
+        meterListener.InstrumentPublished = static (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == "SharpLink" && instrument.Name is
+                "sharplink.shared_memory.direct_write.bytes" or
+                "sharplink.shared_memory.spill.bytes")
+            {
+                listener.EnableMeasurementEvents(instrument);
+            }
+        };
+        meterListener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            if (instrument.Name == "sharplink.shared_memory.direct_write.bytes")
+            {
+                Interlocked.Add(ref directBytes, measurement);
+                return;
+            }
+
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "sharplink.shared_memory.spill_reason" &&
+                    Equals(tag.Value, "wrap"))
+                {
+                    Interlocked.Add(ref wrapSpillBytes, measurement);
+                    return;
+                }
+            }
+        });
+        meterListener.Start();
+
+        var (listener, factory, client, server) = await CreateRawPairAsync();
+        await using var listenerScope = listener;
+        await using var factoryScope = factory;
+        await using var clientScope = client;
+        await using var serverScope = server;
+
+        var direct = client.Output.GetMemory(capacity - 8);
+        direct.Span[..(capacity - 8)].Fill(0x31);
+        client.Output.Advance(capacity - 8);
+        _ = await client.Output.FlushAsync();
+        var firstRead = await server.Input.ReadAsync();
+        Ensure(firstRead.Buffer.Length == capacity - 8, "shared-memory direct evidence payload");
+        server.Input.AdvanceTo(firstRead.Buffer.End);
+
+        var wrapped = client.Output.GetMemory(16);
+        wrapped.Span[..16].Fill(0x32);
+        client.Output.Advance(16);
+        _ = await client.Output.FlushAsync();
+        var wrappedRead = await server.Input.ReadAsync();
+        Ensure(wrappedRead.Buffer.Length == 16, "shared-memory wrap evidence payload");
+        server.Input.AdvanceTo(wrappedRead.Buffer.End);
+
+        Ensure(Volatile.Read(ref directBytes) >= capacity - 8,
+            "shared-memory direct evidence bytes");
+        Ensure(Volatile.Read(ref wrapSpillBytes) == 16,
+            "shared-memory wrap spill evidence bytes");
     }
 
     [Test]

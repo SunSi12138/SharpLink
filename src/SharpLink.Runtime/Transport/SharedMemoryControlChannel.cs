@@ -46,13 +46,11 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
 
     public void SignalDataAvailable()
     {
-        if (QueueSignal(DataAvailableBit))
-            SharpLinkTelemetry.RecordSharedMemoryNotification("data");
+        QueueSignal(DataAvailableBit, "data");
     }
     public void SignalSpaceAvailable()
     {
-        if (QueueSignal(SpaceAvailableBit))
-            SharpLinkTelemetry.RecordSharedMemoryNotification("space");
+        QueueSignal(SpaceAvailableBit, "space");
     }
     public void PulseDataWaiter() => _dataAvailable.Writer.TryWrite(true);
     public void PulseSpaceWaiter() => _spaceAvailable.Writer.TryWrite(true);
@@ -123,12 +121,12 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
             {
                 var pending = Interlocked.Exchange(ref _pendingOutboundSignals, 0);
                 if ((pending & DataAvailableBit) != 0)
-                    await WriteSignalAsync(DataAvailableSignal).ConfigureAwait(false);
+                    await WriteSignalAsync(DataAvailableSignal, "data").ConfigureAwait(false);
                 if ((pending & SpaceAvailableBit) != 0)
-                    await WriteSignalAsync(SpaceAvailableSignal).ConfigureAwait(false);
+                    await WriteSignalAsync(SpaceAvailableSignal, "space").ConfigureAwait(false);
                 if ((pending & CloseBit) != 0)
                 {
-                    await WriteSignalAsync(CloseSignal).ConfigureAwait(false);
+                    await WriteSignalAsync(CloseSignal, kind: null).ConfigureAwait(false);
                     return;
                 }
             }
@@ -145,10 +143,12 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
             MarkClosed();
         }
 
-        async ValueTask WriteSignalAsync(byte value)
+        async ValueTask WriteSignalAsync(byte value, string? kind)
         {
             signal[0] = value;
             await _stream.WriteAsync(signal).ConfigureAwait(false);
+            if (kind is not null)
+                SharpLinkTelemetry.RecordSharedMemoryNotification(kind);
         }
     }
 
@@ -158,7 +158,7 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
             return;
 
         if (!IsClosed)
-            QueueSignal(CloseBit);
+            QueueSignal(CloseBit, kind: null);
         _outboundWake.Writer.TryComplete();
         try
         {
@@ -196,13 +196,18 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         _outboundWake.Writer.TryComplete();
     }
 
-    private bool QueueSignal(int bit)
+    private bool QueueSignal(int bit, string? kind)
     {
         if (IsClosed)
             return false;
+        if (kind is not null)
+            SharpLinkTelemetry.RecordSharedMemoryNotificationRequest(kind);
         var previous = Interlocked.Or(ref _pendingOutboundSignals, bit);
         _outboundWake.Writer.TryWrite(true);
-        return (previous & bit) == 0;
+        var queued = (previous & bit) == 0;
+        if (!queued && kind is not null)
+            SharpLinkTelemetry.RecordSharedMemoryNotificationCoalesced(kind);
+        return queued;
     }
 
     private static bool IsExpectedControlClose(Exception exception)

@@ -204,7 +204,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         }
 
         var readPosition = _direction.ReadReadPosition();
-        var writePosition = _direction.ReadWritePosition();
+        var writePosition = RefreshWritePosition();
         var available = _direction.GetAvailableBytes(writePosition, readPosition);
         if (available == 0)
         {
@@ -287,7 +287,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         if (_staging is null)
             return 0;
         var readPosition = _direction.ReadReadPosition();
-        var writePosition = _direction.ReadWritePosition();
+        var writePosition = RefreshWritePosition();
         var available = _direction.GetAvailableBytes(writePosition, readPosition);
         if (available == 0)
             return 0;
@@ -314,6 +314,12 @@ internal sealed class SharedMemoryPipeReader : PipeReader
     {
         for (var index = 0; index < _spinCount; index++)
             Thread.SpinWait(4);
+    }
+
+    private long RefreshWritePosition()
+    {
+        SharpLinkTelemetry.RecordSharedMemoryCursorRefresh("reader_write");
+        return _direction.ReadWritePosition();
     }
 
     private void RegisterReadCancellation(CancellationToken cancellationToken)
@@ -366,6 +372,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
             EnsureCapacity(source.Length);
             source.CopyTo(_buffer.AsSpan(_end));
             _end += source.Length;
+            SharpLinkTelemetry.RecordSharedMemoryStagingBytes(source.Length);
         }
 
         public void Consume(int count)
@@ -385,6 +392,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
             if (additionalBytes <= _buffer.Length - written)
             {
                 _buffer.AsSpan(_start, written).CopyTo(_buffer);
+                SharpLinkTelemetry.RecordSharedMemoryStagingCopyBytes(written);
                 _start = 0;
                 _end = written;
                 return;
@@ -393,6 +401,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
             var required = checked(written + additionalBytes);
             var replacement = ArrayPool<byte>.Shared.Rent(Math.Max(required, checked(_buffer.Length * 2)));
             _buffer.AsSpan(_start, written).CopyTo(replacement);
+            SharpLinkTelemetry.RecordSharedMemoryStagingCopyBytes(written);
             ArrayPool<byte>.Shared.Return(_buffer);
             _buffer = replacement;
             _start = 0;
@@ -419,6 +428,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
     private long _reservedWritePosition;
     private PooledSpillBuffer? _spill;
     private int _spillOffset;
+    private SpillReason _lastSpillReason;
     private int _lastMemoryLength;
     private BufferKind _lastBufferKind;
     private CancellationToken _registeredFlushCancellation;
@@ -452,11 +462,14 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
             throw new InvalidOperationException("GetMemory or GetSpan must be called before Advance.");
 
         if (_lastBufferKind == BufferKind.Direct)
+        {
             _reservedWritePosition = unchecked(_reservedWritePosition + bytes);
+            SharpLinkTelemetry.RecordSharedMemoryDirectWriteBytes(bytes);
+        }
         else
         {
             _spill!.Advance(bytes);
-            SharpLinkTelemetry.RecordSharedMemorySpillBytes(bytes);
+            SharpLinkTelemetry.RecordSharedMemorySpillBytes(bytes, GetSpillReasonName(_lastSpillReason));
         }
         _lastBufferKind = BufferKind.None;
         _lastMemoryLength = 0;
@@ -476,14 +489,24 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
                 "Shared-memory spill requests cannot exceed the maximum per-direction capacity.");
         }
 
-        if (_spill is null && TryGetDirectMemory(sizeHint, out var memory))
+        var spillReason = SpillReason.Pending;
+        Memory<byte> memory;
+        if (_spill is null && TryGetDirectMemory(sizeHint, out memory, out spillReason))
         {
             _lastBufferKind = BufferKind.Direct;
             _lastMemoryLength = memory.Length;
             return memory;
         }
 
-        _spill ??= new PooledSpillBuffer(sizeHint);
+        if (_spill is null)
+        {
+            _spill = new PooledSpillBuffer(sizeHint);
+            _lastSpillReason = spillReason;
+        }
+        else
+        {
+            _lastSpillReason = SpillReason.Pending;
+        }
         memory = _spill.GetMemory(sizeHint);
         _lastBufferKind = BufferKind.Spill;
         _lastMemoryLength = memory.Length;
@@ -559,14 +582,18 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
         Complete(exception);
     }
 
-    private bool TryGetDirectMemory(int sizeHint, out Memory<byte> memory)
+    private bool TryGetDirectMemory(
+        int sizeHint,
+        out Memory<byte> memory,
+        out SpillReason spillReason)
     {
-        var readPosition = _direction.ReadReadPosition();
+        var readPosition = RefreshReadPosition();
         var reserved = _direction.GetAvailableBytes(_reservedWritePosition, readPosition);
         var free = _direction.Capacity - reserved;
         if (free < sizeHint)
         {
             memory = default;
+            spillReason = SpillReason.Backpressure;
             return false;
         }
 
@@ -575,10 +602,12 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
         if (contiguous < sizeHint)
         {
             memory = default;
+            spillReason = SpillReason.Wrap;
             return false;
         }
 
         memory = _direction.Memory.Slice(index, contiguous);
+        spillReason = default;
         return true;
     }
 
@@ -606,20 +635,20 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
                 throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Shared-memory peer stopped reading.");
             }
 
-            var readPosition = _direction.ReadReadPosition();
+            var readPosition = RefreshReadPosition();
             var occupied = _direction.GetAvailableBytes(_publishedWritePosition, readPosition);
             var free = _direction.Capacity - occupied;
             if (free == 0)
             {
                 SpinBriefly();
-                readPosition = _direction.ReadReadPosition();
+                readPosition = RefreshReadPosition();
                 occupied = _direction.GetAvailableBytes(_publishedWritePosition, readPosition);
                 free = _direction.Capacity - occupied;
             }
             if (free == 0)
             {
                 _direction.SetWriterWaiting();
-                readPosition = _direction.ReadReadPosition();
+                readPosition = RefreshReadPosition();
                 occupied = _direction.GetAvailableBytes(_publishedWritePosition, readPosition);
                 free = _direction.Capacity - occupied;
                 if (free == 0)
@@ -668,6 +697,21 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
             Thread.SpinWait(4);
     }
 
+    private long RefreshReadPosition()
+    {
+        SharpLinkTelemetry.RecordSharedMemoryCursorRefresh("writer_read");
+        return _direction.ReadReadPosition();
+    }
+
+    private static string GetSpillReasonName(SpillReason reason)
+        => reason switch
+        {
+            SpillReason.Wrap => "wrap",
+            SpillReason.Backpressure => "backpressure",
+            SpillReason.Pending => "pending",
+            _ => "unknown"
+        };
+
     private void RegisterFlushCancellation(CancellationToken cancellationToken)
     {
         if (cancellationToken == _registeredFlushCancellation)
@@ -686,6 +730,14 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
         None,
         Direct,
         Spill
+    }
+
+    private enum SpillReason
+    {
+        None,
+        Wrap,
+        Backpressure,
+        Pending
     }
 
     private sealed class PooledSpillBuffer : IDisposable
@@ -726,6 +778,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
                 return;
             var newBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(capacity, checked(_buffer.Length * 2)));
             _buffer.AsSpan(0, WrittenCount).CopyTo(newBuffer);
+            SharpLinkTelemetry.RecordSharedMemorySpillCopyBytes(WrittenCount);
             ArrayPool<byte>.Shared.Return(_buffer);
             _buffer = newBuffer;
         }

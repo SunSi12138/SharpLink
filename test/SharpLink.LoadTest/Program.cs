@@ -30,7 +30,7 @@ public static class Program
         }
 
         var options = LoadTestOptions.Parse(args);
-        using var evidenceCollector = new PerformanceEvidenceCollector();
+        using var evidenceCollector = new PerformanceEvidenceCollector(options.DetailedSharedMemoryEvidence);
         s_evidenceCollector = evidenceCollector;
         var metrics = new MetricsRegistry();
         using var metricsServer = options.MetricsPort > 0 ? new MetricsServer(options.MetricsPort, metrics) : null;
@@ -82,6 +82,7 @@ public static class Program
         Console.WriteLine("  --profile balanced|lowlatency|throughput");
         Console.WriteLine("  --request-timeout default|disabled|1ms|10ms|100ms");
         Console.WriteLine("  --shm-name sharplink-loadtest --shm-capacity 8388608 --shm-spin-count 8");
+        Console.WriteLine("  --detailed-shm-evidence (diagnostic counters; do not use for formal timing)");
         Console.WriteLine("  --json-output artifacts/perf/load.json");
         Console.WriteLine("  --metrics-port 9464");
         Console.WriteLine("  --heartbeat-interval 10 --heartbeat-check-interval 10 --heartbeat-timeout 120");
@@ -414,6 +415,7 @@ public sealed class LoadTestOptions
     public string SharedMemoryName { get; private init; } = TransportDefaults.GetDefaultSharedMemoryName("sharplink-loadtest");
     public int? SharedMemoryCapacity { get; private init; }
     public int? SharedMemorySpinCount { get; private init; }
+    public bool DetailedSharedMemoryEvidence { get; private init; }
     public int DurationSeconds { get; private init; } = 20;
     public int WarmupSeconds { get; private init; } = 5;
     public int[] ConcurrencyConfig { get; private init; } = [1, 2, 4, 8, 16, 32];
@@ -517,6 +519,8 @@ public sealed class LoadTestOptions
             SharedMemoryName = map.GetValueOrDefault("shm-name", TransportDefaults.GetDefaultSharedMemoryName("sharplink-loadtest")),
             SharedMemoryCapacity = sharedMemoryCapacity,
             SharedMemorySpinCount = sharedMemorySpinCount,
+            DetailedSharedMemoryEvidence = map.TryGetValue("detailed-shm-evidence", out var detailedEvidence) &&
+                                           bool.Parse(detailedEvidence),
             DurationSeconds = int.Parse(map.GetValueOrDefault("duration", "20")),
             WarmupSeconds = int.Parse(map.GetValueOrDefault("warmup", "5")),
             ConcurrencyConfig = concurrencyNum.Length == 0 ? [1] : concurrencyNum,
