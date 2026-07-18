@@ -203,9 +203,10 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         if (kind is not null)
             SharpLinkTelemetry.RecordSharedMemoryNotificationRequest(kind);
         var previous = Interlocked.Or(ref _pendingOutboundSignals, bit);
-        _outboundWake.Writer.TryWrite(true);
         var queued = (previous & bit) == 0;
-        if (!queued && kind is not null)
+        if (queued)
+            _outboundWake.Writer.TryWrite(true);
+        else if (kind is not null)
             SharpLinkTelemetry.RecordSharedMemoryNotificationCoalesced(kind);
         return queued;
     }

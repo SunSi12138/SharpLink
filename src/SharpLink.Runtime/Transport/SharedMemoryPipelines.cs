@@ -85,15 +85,14 @@ internal sealed class SharedMemoryPipeReader : PipeReader
                 _stagingExaminedAll = true;
                 _readPosition = unchecked(readPosition + _currentRingLength);
                 _direction.PublishReadPosition(_readPosition);
-                if (_direction.TakeWriterWaiting() || _currentRingLength == _direction.Capacity)
+                if (_direction.TakeWriterWaiting())
                     _control.SignalSpaceAvailable();
             }
             else
             {
                 _readPosition = unchecked(readPosition + consumedBytes);
                 _direction.PublishReadPosition(_readPosition);
-                if (consumedBytes != 0 &&
-                    (_direction.TakeWriterWaiting() || _currentRingLength == _direction.Capacity))
+                if (consumedBytes != 0 && _direction.TakeWriterWaiting())
                     _control.SignalSpaceAvailable();
             }
         }
@@ -323,7 +322,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
             _staging.Append(_direction.Memory.Span[..(available - firstLength)]);
         _readPosition = unchecked(readPosition + available);
         _direction.PublishReadPosition(_readPosition);
-        if (_direction.TakeWriterWaiting() || available == _direction.Capacity)
+        if (_direction.TakeWriterWaiting())
             _control.SignalSpaceAvailable();
         return available;
     }
@@ -658,10 +657,9 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
     {
         if (_reservedWritePosition == _publishedWritePosition)
             return;
-        var wasEmpty = _publishedWritePosition == _cachedReadPosition;
         _publishedWritePosition = _reservedWritePosition;
         _direction.PublishWritePosition(_publishedWritePosition);
-        if (_direction.TakeReaderWaiting() || wasEmpty)
+        if (_direction.TakeReaderWaiting())
             _control.SignalDataAvailable();
     }
 
@@ -716,11 +714,10 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
             _spill.WrittenMemory.Span.Slice(_spillOffset, count)
                 .CopyTo(_direction.Memory.Span.Slice(index, count));
             _spillOffset += count;
-            var wasEmpty = _publishedWritePosition == readPosition;
             _publishedWritePosition = unchecked(_publishedWritePosition + count);
             _reservedWritePosition = _publishedWritePosition;
             _direction.PublishWritePosition(_publishedWritePosition);
-            if (_direction.TakeReaderWaiting() || wasEmpty)
+            if (_direction.TakeReaderWaiting())
                 _control.SignalDataAvailable();
         }
 

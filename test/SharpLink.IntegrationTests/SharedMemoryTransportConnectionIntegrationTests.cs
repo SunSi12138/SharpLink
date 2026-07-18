@@ -429,6 +429,79 @@ public class SharedMemoryTransportConnectionIntegrationTests
     }
 
     [Test]
+    public async Task SharedMemoryWriterShouldNotifyOnlyAfterReaderRegistersAsWaiting()
+    {
+        var readerWaits = 0L;
+        var dataRequests = 0L;
+        var dataNotifications = 0L;
+        using var meterListener = new MeterListener();
+        meterListener.InstrumentPublished = static (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == "SharpLink" && instrument.Name is
+                "sharplink.shared_memory.waits" or
+                "sharplink.shared_memory.notification.requests" or
+                "sharplink.shared_memory.notifications")
+            {
+                listener.EnableMeasurementEvents(instrument);
+            }
+        };
+        meterListener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            var kind = instrument.Name == "sharplink.shared_memory.waits"
+                ? FindMetricTag(tags, "sharplink.shared_memory.wait_kind")
+                : FindMetricTag(tags, "sharplink.shared_memory.notification_kind");
+            if (instrument.Name == "sharplink.shared_memory.waits" && kind == "reader")
+                Interlocked.Add(ref readerWaits, measurement);
+            else if (instrument.Name == "sharplink.shared_memory.notification.requests" && kind == "data")
+                Interlocked.Add(ref dataRequests, measurement);
+            else if (instrument.Name == "sharplink.shared_memory.notifications" && kind == "data")
+                Interlocked.Add(ref dataNotifications, measurement);
+        });
+        meterListener.Start();
+
+        var (listener, factory, client, server) = await CreateRawPairAsync();
+        await using var listenerScope = listener;
+        await using var factoryScope = factory;
+        await using var clientScope = client;
+        await using var serverScope = server;
+
+        var requestBaseline = Volatile.Read(ref dataRequests);
+        var notificationBaseline = Volatile.Read(ref dataNotifications);
+        var immediate = client.Output.GetMemory(1);
+        immediate.Span[0] = 0x21;
+        client.Output.Advance(1);
+        _ = await client.Output.FlushAsync();
+        Ensure(Volatile.Read(ref dataRequests) == requestBaseline &&
+               Volatile.Read(ref dataNotifications) == notificationBaseline,
+            "shared-memory writer skips control notification while reader is active");
+
+        var immediateRead = await server.Input.ReadAsync();
+        Ensure(immediateRead.Buffer.FirstSpan[0] == 0x21, "shared-memory unnotified cursor read");
+        server.Input.AdvanceTo(immediateRead.Buffer.End);
+
+        var waitBaseline = Volatile.Read(ref readerWaits);
+        var waitingRead = server.Input.ReadAsync().AsTask();
+        await WaitUntilAsync(
+            () => Volatile.Read(ref readerWaits) > waitBaseline,
+            TimeSpan.FromSeconds(2));
+
+        var notified = client.Output.GetMemory(1);
+        notified.Span[0] = 0x22;
+        client.Output.Advance(1);
+        _ = await client.Output.FlushAsync();
+
+        var notifiedRead = await waitingRead.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(notifiedRead.Buffer.FirstSpan[0] == 0x22, "shared-memory notified cursor read");
+        server.Input.AdvanceTo(notifiedRead.Buffer.End);
+        await WaitUntilAsync(
+            () => Volatile.Read(ref dataNotifications) > notificationBaseline,
+            TimeSpan.FromSeconds(2));
+        Ensure(Volatile.Read(ref dataRequests) == requestBaseline + 1 &&
+               Volatile.Read(ref dataNotifications) == notificationBaseline + 1,
+            "shared-memory registered reader receives exactly one control notification");
+    }
+
+    [Test]
     public async Task SharedMemoryConnectionDisposeShouldBeIdempotent()
     {
         var (listener, factory, client, server) = await CreateRawPairAsync();
@@ -807,6 +880,18 @@ public class SharedMemoryTransportConnectionIntegrationTests
         using var cancellation = new CancellationTokenSource(timeout);
         while (!condition())
             await Task.Delay(10, cancellation.Token);
+    }
+
+    private static string? FindMetricTag(
+        ReadOnlySpan<KeyValuePair<string, object?>> tags,
+        string name)
+    {
+        foreach (var tag in tags)
+        {
+            if (tag.Key == name)
+                return tag.Value as string;
+        }
+        return null;
     }
 
     private static long Checksum(long sequence, int salt)
