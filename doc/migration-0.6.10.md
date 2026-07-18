@@ -16,6 +16,7 @@
 - 没有业务 Token 的调用超时后，服务端不会强制终止用户 Task；调用进入 abandoned，迟到成功或异常响应被丢弃，Task 和 DI scope 继续被观察到真实结束。
 - 业务方法拥有 Token 时，服务端在取消 Token 前先发布稳定原因。应用不应根据取消回调发生的线程或绝对 UTC wall clock 推断原因。
 - stream 提前退出现在明确映射为 `ConsumerAbandoned`，并立即释放框架额度；它不表示服务业务已成功。
+- 收到 GoAway 后，`WaitForReady=false` 且没有其他 Ready connection 的新调用返回 `Unavailable`；Client 已 Stop/Dispose 后的新调用仍返回 `ConnectionClosed`。`WaitForReady=true` 继续等待连接、取消或 deadline。
 
 可观测性新增两个兼容指标：
 

@@ -25,13 +25,16 @@
 - 非协作调用不再仅因携带 deadline 创建 invocation CTS；超时后继续观察用户 Task，但抑制其迟到成功或异常响应。
 - deadline 扫描快照同时保存 request ID 与池化 state；旧代扫描不能获取已经归池并被新请求租用的对象。
 - 修复无业务 Token 的 server streaming 提前停止消费后，框架流泵可能无法及时终止的问题。
+- 修复本地 stream 取消与已取得的异步 dispatch 竞争时，Cancel 可能先于最后的 WindowUpdate 到达并使对端把合法 credit 误判为协议错误、关闭健康连接的问题。
+- 修复连接池扩容恰逢滚动重启失败后可能没有把零 Ready 池交给持久重连 worker，客户端永久停留在 `Draining/Reconnecting` 的问题。
+- Ready connection snapshot 现在是请求选择的事实来源；全局状态发布的瞬时滞后不再拒绝已就绪连接。GoAway 排空且暂无连接返回 `Unavailable`，只有 Client Stop/Dispose 返回 `ConnectionClosed`。
 
 ### 性能与稳定性
 
 - `ServerCallCancellationState` 专项基准中，cooperative deadline 从实验性独立 CTS 的 368 B/op 降至 80 B/op；相对 0.6.9 的 320 B/op 也显著下降。non-cooperative deadline 从 320 B/op 降至 32 B/op。
 - 增加 100,000 次客户端 Response/Cancel/Deadline 和服务端 Cancel/Response/Deadline 终态竞态、10,000 次真实 stream early-break，以及 Stop/Connection 并发取消测试。
 - 五轮交替 A/B 的所有 Unary/Streaming 场景均通过 97%/105% 门禁；`Rpc_Add` ShortRun 保持 672 B/op。
-- 120 秒混合 Chaos 完成 2,943,131 次成功调用、10 次滚动重启与 0 次非预期失败；最大恢复 6.589 秒，最终所有框架 gauge 为 0。
+- 最终修复提交的 120 秒混合 Chaos 完成 3,027,164 次成功调用、10 次滚动重启与 0 次非预期失败；最大恢复 8.095 秒，最终所有框架 gauge 为 0。
 
 完整协议、迁移和证据见 `doc/protocol-v2.md`、`doc/migration-0.6.10.md`、`doc/performance-0.6.10.md` 与 `doc/chaos-0.6.10.md`。
 

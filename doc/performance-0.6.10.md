@@ -72,12 +72,23 @@ A 为 `7e03729`（v0.6.9），B 为 `f3b7fd3`（0.6.10 功能候选）。每份�
 
 `UnaryBenchmarks.Rpc_Add` 的 ShortRun 在 16 B 与 256 B payload 下均为 672 B/op，与 0.6.9 已接受基线相同。固定 1,024 invocation job 分别为 672 B/op 与 682 B/op，后者相对 0.6.9 的 674–675 B/op 增加约 1%，仍在 105% 门禁内。
 
+Release Gate 竞态修复提交 `f8a86a0` 再次执行 ShortRun 与固定 1,024 invocation job，16 B/256 B 四个结果均为 672 B/op。Ready snapshot 判定与取消 dispatch drain 没有增加正常 Unary allocation。
+
+针对 Ready 判定正常分支，以 `7e03729` 为 A、`f8a86a0` 为 B 再执行五轮交替 TCP/Balanced/pool 1/1，2 秒预热、5 秒采样，取中位数：
+
+| 并发 | 0.6.9 QPS | 最终 0.6.10 QPS | QPS 变化 | 0.6.9 P99 | 最终 0.6.10 P99 | P99 变化 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 25,959.81 | 26,150.94 | +0.74% | 70 us | 70 us | 0% |
+| 128 | 1,246,368.22 | 1,227,205.53 | -1.54% | 150 us | 148 us | -1.33% |
+
+十份报告 Failure 均为 0，QPS/P99 全部通过 97%/105% 门禁。
+
 ## 本地发布 Gate
 
 - Release 全解决方案构建：0 warning / 0 error。
-- Unit 155、Generator 17、Integration 83：全部通过。
+- Unit 157、Generator 17、Integration 83：全部通过；Integration 额外连续运行 10 轮均通过。
 - macOS arm64 NativeAOT publish/run：`AOT_SMOKE_PASS`，无 AOT/trimming 警告。
 - 0.6.10 正式包与 PackageSmoke：通过；`SharpLink.Sdk` 包含 Generator Analyzer。
-- 120 秒混合 Chaos：2,943,131 success、2,933,391 injected、10 次滚动重启、0 unexpected；最大恢复 6.589 秒，结束时 connections/calls/pending/streams/send queue 全部为 0。
+- 最终修复提交 `f8a86a0` 的 120 秒混合 Chaos：3,027,164 success、2,749,080 injected、10 次滚动重启、0 unexpected；最大恢复 8.095 秒，结束时 connections/calls/pending/streams/send queue 全部为 0。
 
 两分钟 retained memory 只包含启动和对象池预热，不适用六小时增长门禁。连续 24 小时 release soak 必须在最终 release commit 上单独执行，不能用短样本替代。

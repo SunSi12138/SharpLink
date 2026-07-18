@@ -2,16 +2,18 @@
 
 ## 本地 120 秒 Release Chaos
 
-- commit：`f3b7fd3997735b9cd688e07677d94c500e0ca972`
+- commit：`f8a86a0d4b07b402b919f53608d0a6a243c3c46f`
 - Runtime：.NET 10.0.2，macOS arm64，concurrency 32。
-- 成功调用：2,943,131。
-- 预期故障注入结果：2,933,391。
+- 成功调用：3,027,164。
+- 预期故障注入结果：2,749,080。
 - 非预期失败：0。
 - 滚动重启：10 次。
-- 最慢稳定恢复：6.589 秒。
+- 最慢稳定恢复：8.095 秒。
 - 最终 gauge：connections、active calls、pending requests、streams、send queue bytes 全部为 0。
 
 故障阶段继续使用真实滚动 listener 重启、连接失败、调用取消/deadline、Unary 与 Streaming 混合负载，以及连续五次成功探针作为恢复判定。迟到 Response/Cancel/deadline 由单一终态吸收，不得形成 tombstone、重复完成或关闭健康连接。
+
+该轮同时验证 Release Gate 暴露的两个恢复缺口：机会式 pool expansion 在 listener 停止窗口失败后会把低于最小容量的池交给持久 reconnect worker；本地取消会等待已经取得的 stream dispatch 归还最后 credit，再发送 Cancel。短于六小时的进程只记录绝对 retained bytes，不使用启动/JIT/有界池预热百分比判定内存门禁。
 
 ## 24 小时发布长稳
 
