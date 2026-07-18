@@ -116,7 +116,8 @@ public partial class RpcGenerator
         foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
         {
             if (method.Parameters.Any(IsCancellationTokenParameter) ||
-                method.GetAttributes().Any(IsNonCancellableAttribute))
+                method.GetAttributes().Any(IsNonCancellableAttribute) ||
+                IsStreamingMethod(method))
             {
                 continue;
             }
@@ -125,6 +126,59 @@ public partial class RpcGenerator
         }
         return list.ToImmutable();
     }
+
+    private static ImmutableArray<StreamingWithoutCancellationModel> GetStreamingWithoutCancellationMethods(
+        GeneratorAttributeSyntaxContext context,
+        CancellationToken _)
+    {
+        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface ||
+            !InheritsIService(symbol))
+        {
+            return ImmutableArray<StreamingWithoutCancellationModel>.Empty;
+        }
+
+        var list = ImmutableArray.CreateBuilder<StreamingWithoutCancellationModel>();
+        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        {
+            if (!IsStreamingMethod(method) ||
+                method.Parameters.Any(IsCancellationTokenParameter) ||
+                method.GetAttributes().Any(IsNonCancellableAttribute))
+            {
+                continue;
+            }
+
+            list.Add(new StreamingWithoutCancellationModel(method.Name, method.Locations.FirstOrDefault()));
+        }
+        return list.ToImmutable();
+    }
+
+    private static ImmutableArray<ConflictingCancellationContractModel> GetConflictingCancellationContractMethods(
+        GeneratorAttributeSyntaxContext context,
+        CancellationToken _)
+    {
+        if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface ||
+            !InheritsIService(symbol))
+        {
+            return ImmutableArray<ConflictingCancellationContractModel>.Empty;
+        }
+
+        var list = ImmutableArray.CreateBuilder<ConflictingCancellationContractModel>();
+        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        {
+            if (!method.Parameters.Any(IsCancellationTokenParameter) ||
+                !method.GetAttributes().Any(IsNonCancellableAttribute))
+            {
+                continue;
+            }
+
+            list.Add(new ConflictingCancellationContractModel(method.Name, method.Locations.FirstOrDefault()));
+        }
+        return list.ToImmutable();
+    }
+
+    private static bool IsStreamingMethod(IMethodSymbol method)
+        => IsAsyncEnumerable(method.ReturnType, out _) ||
+           method.Parameters.Any(static parameter => IsAsyncEnumerable(parameter.Type, out _));
 
     private static ImmutableArray<InvalidCallOptionsMethodModel> GetInvalidCallOptionsMethods(
         GeneratorAttributeSyntaxContext context,

@@ -162,7 +162,9 @@ public partial class RpcGenerator
     private static void AppendCancellationSupport(StringBuilder sb, EquatableArray<RpcMethodModel> methods)
     {
         var cancellableMethods = methods
-            .Where(static method => method.HasCancellationToken || method.Parameters.Any(static parameter => parameter.IsStream))
+            .Where(static method => method.HasCancellationToken ||
+                                    method.IsStreamReturn ||
+                                    method.Parameters.Any(static parameter => parameter.IsStream))
             .ToArray();
 
         if (cancellableMethods.Length == 0)

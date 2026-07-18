@@ -58,6 +58,16 @@ public partial class RpcGenerator : IIncrementalGenerator
                 static (node, _) => node is InterfaceDeclarationSyntax,
                 static (attributeContext, ct) => GetNonCancellableRpcMethods(attributeContext, ct))
             .Where(x => x.Length > 0);
+        var streamingWithoutCancellationMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RpcContractAttributeMetadataName,
+                static (node, _) => node is InterfaceDeclarationSyntax,
+                static (attributeContext, ct) => GetStreamingWithoutCancellationMethods(attributeContext, ct))
+            .Where(x => x.Length > 0);
+        var conflictingCancellationContractMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RpcContractAttributeMetadataName,
+                static (node, _) => node is InterfaceDeclarationSyntax,
+                static (attributeContext, ct) => GetConflictingCancellationContractMethods(attributeContext, ct))
+            .Where(x => x.Length > 0);
         var invalidGenericUsage = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcContractAttributeMetadataName,
                 static (node, _) => node is InterfaceDeclarationSyntax,
@@ -118,6 +128,22 @@ public partial class RpcGenerator : IIncrementalGenerator
         {
             foreach (var method in methods)
                 spc.ReportDiagnostic(Diagnostic.Create(MissingCancellationTokenRule, method.Location, method.MethodName));
+        });
+        context.RegisterSourceOutput(streamingWithoutCancellationMethods, static (spc, methods) =>
+        {
+            foreach (var method in methods)
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    StreamingMissingCancellationTokenRule,
+                    method.Location,
+                    method.MethodName));
+        });
+        context.RegisterSourceOutput(conflictingCancellationContractMethods, static (spc, methods) =>
+        {
+            foreach (var method in methods)
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    ConflictingCancellationContractRule,
+                    method.Location,
+                    method.MethodName));
         });
         context.RegisterSourceOutput(invalidGenericUsage, static (spc, models) =>
         {

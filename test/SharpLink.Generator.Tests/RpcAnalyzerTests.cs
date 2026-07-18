@@ -91,6 +91,54 @@ public interface IHelloService : SharpLink.Sdk.IService
     }
 
     [Test]
+    public Task StreamingWithoutCancellationTokenShouldReportSharplink014()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    IAsyncEnumerable<int> Download(int count);
+}
+""");
+
+        EnsureHasRule(source, "SHARPLINK014");
+        EnsureDoesNotHaveRule(source, "SHARPLINK004");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ExplicitNonCancellableShouldSuppressSharplink014()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    [SharpLink.Sdk.NonCancellable]
+    IAsyncEnumerable<int> Download(int count);
+}
+""");
+
+        EnsureDoesNotHaveRule(source, "SHARPLINK014");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task NonCancellableWithCancellationTokenShouldReportSharplink015()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    [SharpLink.Sdk.NonCancellable]
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+""");
+
+        EnsureHasRule(source, "SHARPLINK015");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task MultipleCallOptionsShouldReportSharplink007()
     {
         var source = BuildSource("""
@@ -194,6 +242,11 @@ public sealed class HelloService : IHelloService
         Ensure(!allGenerated.Contains("byte[] tmp_"), "Segmented fixed-width arguments must not allocate arrays");
         Ensure(!proxy.Contains("Action<IBufferWriter<byte>>"), "Captured payload delegate must not be generated");
         Ensure(!proxy.Contains("InvokeCancellableWithTimeoutAsync"), "Legacy combinatorial API must not be generated");
+        Ensure(allGenerated.Contains("public bool SupportsCancellation(long methodHash)"),
+            "streaming stubs must publish framework cancellation support");
+        var supportsCancellationCases = allGenerated.Split("=> true", StringSplitOptions.None).Length - 1;
+        Ensure(supportsCancellationCases >= 3,
+            "client, server, and duplex streaming methods must all support framework cancellation");
         return Task.CompletedTask;
     }
 

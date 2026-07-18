@@ -106,4 +106,21 @@ public partial class RpcGenerator
         category: "SharpLink.Generator",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor StreamingMissingCancellationTokenRule = new(
+        id: "SHARPLINK014",
+        title: "Streaming RPC Must Declare Its Cancellation Contract",
+        messageFormat: "Streaming RPC method '{0}' has no CancellationToken; add one or explicitly annotate the method with [NonCancellable]",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        description: "Streaming calls retain connection, flow-control, and dispatcher resources until their framework pump is terminated.");
+
+    private static readonly DiagnosticDescriptor ConflictingCancellationContractRule = new(
+        id: "SHARPLINK015",
+        title: "RPC Cancellation Contract Is Contradictory",
+        messageFormat: "RPC method '{0}' cannot declare both [NonCancellable] and CancellationToken",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
 }
