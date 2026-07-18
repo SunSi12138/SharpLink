@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace SharpLink.Client;
 
 internal enum ClientConnectionState : byte
@@ -16,6 +18,7 @@ internal sealed class ClientConnection :
     private readonly SharpLinkClient _client;
     private readonly CancellationTokenSource _cancellation;
     private readonly Action<long> _consumerAbandonedCallback;
+    private LateResponseLogLimiter _lateResponseLogLimiter;
     private int _state = (int)ClientConnectionState.Ready;
     private int _activeCallCount;
     private int _disposed;
@@ -49,6 +52,9 @@ internal sealed class ClientConnection :
     public CancellationToken CancellationToken => _cancellation.Token;
 
     public Action<long> ConsumerAbandonedCallback => _consumerAbandonedCallback;
+
+    internal bool ShouldLogLateResponse(out int suppressedCount)
+        => _lateResponseLogLimiter.ShouldLog(Stopwatch.GetTimestamp(), out suppressedCount);
 
     public void MarkDraining()
     {
@@ -221,6 +227,37 @@ internal sealed class ClientConnection :
             SharpLinkErrorCode.ResourceExhausted or
             SharpLinkErrorCode.Unavailable)
         {
+        }
+    }
+}
+
+internal struct LateResponseLogLimiter
+{
+    internal static readonly long IntervalTimestampTicks = 5L * Stopwatch.Frequency;
+
+    private long _nextLogTimestamp;
+    private int _suppressedCount;
+
+    internal bool ShouldLog(long timestamp, out int suppressedCount)
+    {
+        while (true)
+        {
+            var next = Volatile.Read(ref _nextLogTimestamp);
+            if (next != 0 && timestamp < next)
+            {
+                Interlocked.Increment(ref _suppressedCount);
+                suppressedCount = 0;
+                return false;
+            }
+
+            var newNext = timestamp > long.MaxValue - IntervalTimestampTicks
+                ? long.MaxValue
+                : timestamp + IntervalTimestampTicks;
+            if (Interlocked.CompareExchange(ref _nextLogTimestamp, newNext, next) != next)
+                continue;
+
+            suppressedCount = Interlocked.Exchange(ref _suppressedCount, 0);
+            return true;
         }
     }
 }

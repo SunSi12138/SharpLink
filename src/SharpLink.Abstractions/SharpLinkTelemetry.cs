@@ -45,6 +45,8 @@ public static class SharpLinkTelemetry
         Meter.CreateCounter<long>("sharplink.resource_exhausted", unit: "{failure}");
     private static readonly Counter<long> AbandonedCalls =
         Meter.CreateCounter<long>("sharplink.calls.abandoned", unit: "{call}");
+    private static readonly Counter<long> LateDroppedResponses =
+        Meter.CreateCounter<long>("sharplink.responses.late_dropped", unit: "{response}");
     private static readonly Counter<long> ForcedStopCalls =
         Meter.CreateCounter<long>("sharplink.server.stop.unfinished_calls", unit: "{call}");
 
@@ -68,7 +70,19 @@ public static class SharpLinkTelemetry
     internal static void RecordProtocolFailure(string side) => Record(ProtocolFailures, 1, side);
     internal static void RecordAuthenticationFailure(string side) => Record(AuthenticationFailures, 1, side);
     internal static void RecordResourceExhausted(string side) => Record(ResourceExhausted, 1, side);
-    internal static void RecordAbandonedCall(string side) => Record(AbandonedCalls, 1, side);
+    internal static void RecordAbandonedCall(string side, string terminationReason)
+    {
+        if (!AbandonedCalls.Enabled)
+            return;
+        AbandonedCalls.Add(
+            1,
+            new KeyValuePair<string, object?>("rpc.side", side),
+            new KeyValuePair<string, object?>(
+                "rpc.sharplink.termination_reason",
+                terminationReason));
+    }
+    internal static void RecordLateResponseDropped(string side)
+        => Record(LateDroppedResponses, 1, side);
     internal static void RecordForcedStopCalls(long count) => RecordPositive(ForcedStopCalls, count);
 
     private static bool CallMetricsEnabled =>

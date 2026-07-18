@@ -31,8 +31,8 @@ internal sealed partial class SharpLinkClient
     [LoggerMessage(EventId = LogEvents.Connection.HeartbeatTimeout, Level = LogLevel.Warning, Message = "Server disconnected due to heartbeat timeout.")]
     private static partial void LogServerHeartbeatTimeout(ILogger logger);
 
-    [LoggerMessage(EventId = LogEvents.Client.UnknownOrTimedOutResponse, Level = LogLevel.Warning, Message = "Response for unknown or timed-out request.")]
-    private static partial void LogUnknownOrTimedOutResponse(ILogger logger);
+    [LoggerMessage(EventId = LogEvents.Client.UnknownOrTimedOutResponse, Level = LogLevel.Warning, Message = "Response for unknown or timed-out request; {SuppressedCount} similar responses were suppressed since the previous warning.")]
+    private static partial void LogUnknownOrTimedOutResponse(ILogger logger, int suppressedCount);
 
     [LoggerMessage(EventId = LogEvents.Connection.ClientDisconnected, Level = LogLevel.Information, Message = "Client disconnected.")]
     private static partial void LogClientDisconnected(ILogger logger);

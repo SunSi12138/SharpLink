@@ -464,8 +464,17 @@ internal sealed partial class SharpLinkClient
                 return;
         }
 
+        RecordLateResponse(connection, requestId);
+    }
+
+    private void RecordLateResponse(ClientConnection connection, long requestId)
+    {
+        SharpLinkTelemetry.RecordLateResponseDropped("client");
+        if (!connection.ShouldLogLateResponse(out var suppressedCount))
+            return;
+
         using var requestScope = BeginRequestLogScope(_logger, requestId);
-        LogUnknownOrTimedOutResponse(_logger);
+        LogUnknownOrTimedOutResponse(_logger, suppressedCount);
     }
 
     private static long ReadMonotonicTimestamp(ReadOnlySequence<byte> payload)

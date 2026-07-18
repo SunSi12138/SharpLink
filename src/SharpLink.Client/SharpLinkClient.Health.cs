@@ -49,8 +49,7 @@ internal sealed partial class SharpLinkClient
         if (connection.PendingCalls.Dispatch(requestId, ref payload))
             return;
 
-        using var requestScope = BeginRequestLogScope(_logger, requestId);
-        LogUnknownOrTimedOutResponse(_logger);
+        RecordLateResponse(connection, requestId);
     }
 
     private sealed class HealthResponseCodec : IRpcCodec<SharpLinkHealthCheckResult>

@@ -1102,7 +1102,9 @@ internal sealed partial class SharpLinkServer
             return true;
         if (callState.TryRecordAbandoned())
         {
-            SharpLinkTelemetry.RecordAbandonedCall("server");
+            SharpLinkTelemetry.RecordAbandonedCall(
+                "server",
+                GetTerminationReasonTag(callState.Reason));
             LogRpcCallAbandoned(_logger, callState.Reason);
         }
         return false;
@@ -1124,7 +1126,7 @@ internal sealed partial class SharpLinkServer
         if (reason == ServerCallCancellationReason.None)
             return true;
 
-        SharpLinkTelemetry.RecordAbandonedCall("server");
+        SharpLinkTelemetry.RecordAbandonedCall("server", GetTerminationReasonTag(reason));
         LogRpcCallAbandoned(_logger, reason);
         return false;
     }
@@ -1157,6 +1159,17 @@ internal sealed partial class SharpLinkServer
             ProtocolV2CancelReason.Unspecified or
             ProtocolV2CancelReason.UserCancellation => ServerCallCancellationReason.RemoteCancel,
             _ => throw new ArgumentOutOfRangeException(nameof(reason), reason, null)
+        };
+
+    private static string GetTerminationReasonTag(ServerCallCancellationReason reason)
+        => reason switch
+        {
+            ServerCallCancellationReason.RemoteCancel => "remote_cancel",
+            ServerCallCancellationReason.ConsumerAbandoned => "consumer_abandoned",
+            ServerCallCancellationReason.DeadlineExceeded => "deadline_exceeded",
+            ServerCallCancellationReason.ServerStopping => "server_stopping",
+            ServerCallCancellationReason.ConnectionClosed => "connection_closed",
+            _ => "unknown"
         };
 
     private static SharpLinkException CreateRemoteCancellationException(

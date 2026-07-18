@@ -73,7 +73,9 @@ public class TelemetryIntegrationTests
             "sharplink.streams.active",
             "sharplink.protocol.failures",
             "sharplink.authentication.failures",
-            "sharplink.resource_exhausted"
+            "sharplink.resource_exhausted",
+            "sharplink.calls.abandoned",
+            "sharplink.responses.late_dropped"
         };
         foreach (var name in requiredInstruments)
             Ensure(instrumentNames.ContainsKey(name), $"published metric {name}");
