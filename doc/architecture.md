@@ -29,7 +29,7 @@ SharpLink.Serializer.MemoryPack
 - `SharpLink.Runtime`
   - `RpcSession`、`StreamManager`、`Request/Stream` 调度基础设施
   - Context 所属的 `IRpcCodecProvider` 与内置不可变编解码器
-  - 传输实现（Socket、NamedPipe、AnonymousPipe 的 client factory / server listener / 独立 connection）
+  - 传输实现（Socket、NamedPipe、AnonymousPipe、SharedMemory 的 client factory / server listener / 独立 connection）
   - Protocol v2 帧编解码、发送泵、池化缓冲与并发容器
 
 - `SharpLink.Sdk`
@@ -129,6 +129,11 @@ SharpLink.Serializer.MemoryPack
 - Unix/macOS 上 `NamedPipe` 由 .NET 映射到 Unix Domain Socket 路径
 - 当前运行时会对过长的 pipe name 做确定性缩短，避免触发路径长度限制
 - `AnonymousPipe` 适合本机协同进程，不适合跨主机场景
+- `SharedMemory` 只支持同机同用户。命名管道是权限边界和控制通道；数据不经过控制通道。
+- 每条共享内存连接拥有一个 4 KiB 版本化小端头部和两个 SPSC 环。读写游标、等待标志与关闭位按 128 字节隔离；文件映射只在双方 nonce、版本、容量和长度全部校验后开放。
+- Unix/macOS 在双方确认映射后 unlink 文件；Windows 使用 delete sharing 与 `DeleteOnClose`。新建映射前只清理能够独占打开的遗留 `.shm` 文件，不删除活跃连接资源。
+- Writer 优先直接返回映射内存；只有回卷、空间不足或已有待处理数据时使用有界池化 spill。Reader 直接返回映射上的 `ReadOnlySequence<byte>`，只有跨环且协议尚未消费的半帧进入池化 staging。
+- 通知后端当前统一为 `named-pipe-control`。共享等待标志使用“设置后重新检查”，并在 empty→non-empty / full→non-full 边界补发合并信号，避免过期通知积压或丢失唤醒。
 
 ## TCP TLS
 
@@ -159,7 +164,7 @@ SharpLink.Serializer.MemoryPack
 
 - 公共 `SharpLinkTelemetry` 暴露 `SharpLink.Client`、`SharpLink.Server` 两个 `ActivitySource` 和名为 `SharpLink` 的 `Meter`。
 - Activity 只在 source 有 listener 时创建，并携带 contract ID、method ID、method kind、server request ID 与结构化状态；不写入 payload、token、证书或业务异常消息。
-- Meter 覆盖 active connections、reconnect、calls started/completed/failed/active/abandoned/duration、sent/received bytes、send queue bytes、pending requests、active streams、late responses、protocol/auth/resource-exhausted failures。
+- Meter 覆盖 active connections、reconnect、calls started/completed/failed/active/abandoned/duration、sent/received bytes、send queue bytes、pending requests、active streams、late responses、protocol/auth/resource-exhausted failures，以及共享内存协商容量、spill bytes、waits 和 notifications。
 - abandoned call 带低基数 termination reason；迟到响应逐次计数，但每连接 Warning 使用五秒限频窗口并报告被抑制数量。
 - Counter/Histogram/Activity 均先检查 listener/instrument；无 listener 时不创建 TagList、Activity、Stopwatch 对象或 observer state machine。
 - 日志全部使用 `LoggerMessage` source-generated 方法；普通日志不包含 payload、token 或证书内容。
