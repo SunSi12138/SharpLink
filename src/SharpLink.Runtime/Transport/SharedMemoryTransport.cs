@@ -349,7 +349,7 @@ internal sealed class SharedMemoryTransportConnection : ITransportConnection
 internal static class SharedMemoryHandshake
 {
     private const int Magic = 0x53484D31;
-    private const int Version = 1;
+    private const int Version = 2;
     private const int ClientHelloBytes = 4 + 4 + 4 + 4 + SharedMemoryLayout.NonceBytes;
     private const int ClientAckBytes = 4 + 4 + SharedMemoryLayout.NonceBytes;
     private const int ServerResponseHeaderBytes = 20 + SharedMemoryLayout.NonceBytes;

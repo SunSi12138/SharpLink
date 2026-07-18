@@ -4,7 +4,8 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
 {
     private const byte DataAvailableSignal = 1;
     private const byte SpaceAvailableSignal = 2;
-    private const byte CloseSignal = 3;
+    private const byte CloseSignal = 4;
+    private const byte KnownSignals = DataAvailableSignal | SpaceAvailableSignal | CloseSignal;
     private const int DataAvailableBit = 1;
     private const int SpaceAvailableBit = 2;
     private const int CloseBit = 4;
@@ -76,21 +77,19 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
                 var read = await _stream.ReadAsync(signal).ConfigureAwait(false);
                 if (read == 0)
                     break;
-                switch (signal[0])
+                var received = signal[0];
+                if (received == 0 || (received & ~KnownSignals) != 0)
                 {
-                    case DataAvailableSignal:
-                        _dataAvailable.Pulse();
-                        break;
-                    case SpaceAvailableSignal:
-                        _spaceAvailable.Pulse();
-                        break;
-                    case CloseSignal:
-                        return;
-                    default:
-                        throw new SharpLinkException(
-                            SharpLinkErrorCode.ProtocolViolation,
-                            "Shared-memory control channel received an unknown signal.");
+                    throw new SharpLinkException(
+                        SharpLinkErrorCode.ProtocolViolation,
+                        "Shared-memory control channel received an unknown signal.");
                 }
+                if ((received & DataAvailableSignal) != 0)
+                    _dataAvailable.Pulse();
+                if ((received & SpaceAvailableSignal) != 0)
+                    _spaceAvailable.Pulse();
+                if ((received & CloseSignal) != 0)
+                    return;
             }
         }
         catch (Exception ex) when (IsExpectedControlClose(ex))
@@ -114,15 +113,11 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
             while (await _outboundWake.WaitAsync().ConfigureAwait(false))
             {
                 var pending = Interlocked.Exchange(ref _pendingOutboundSignals, 0);
-                if ((pending & DataAvailableBit) != 0)
-                    await WriteSignalAsync(DataAvailableSignal, "data").ConfigureAwait(false);
-                if ((pending & SpaceAvailableBit) != 0)
-                    await WriteSignalAsync(SpaceAvailableSignal, "space").ConfigureAwait(false);
+                if (pending == 0)
+                    continue;
+                await WriteSignalsAsync((byte)pending).ConfigureAwait(false);
                 if ((pending & CloseBit) != 0)
-                {
-                    await WriteSignalAsync(CloseSignal, kind: null).ConfigureAwait(false);
                     return;
-                }
             }
         }
         catch (Exception ex) when (IsExpectedControlClose(ex))
@@ -137,12 +132,14 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
             MarkClosed();
         }
 
-        async ValueTask WriteSignalAsync(byte value, string? kind)
+        async ValueTask WriteSignalsAsync(byte value)
         {
             signal[0] = value;
             await _stream.WriteAsync(signal).ConfigureAwait(false);
-            if (kind is not null)
-                SharpLinkTelemetry.RecordSharedMemoryNotification(kind);
+            if ((value & DataAvailableSignal) != 0)
+                SharpLinkTelemetry.RecordSharedMemoryNotification("data");
+            if ((value & SpaceAvailableSignal) != 0)
+                SharpLinkTelemetry.RecordSharedMemoryNotification("space");
         }
     }
 

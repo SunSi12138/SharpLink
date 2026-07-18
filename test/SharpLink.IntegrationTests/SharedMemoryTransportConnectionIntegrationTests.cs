@@ -652,7 +652,7 @@ public class SharedMemoryTransportConnectionIntegrationTests
         var nonce = RandomNumberGenerator.GetBytes(32);
         var hello = new byte[48];
         BinaryPrimitives.WriteInt32LittleEndian(hello, 0x53484D31);
-        BinaryPrimitives.WriteInt32LittleEndian(hello.AsSpan(4), 1);
+        BinaryPrimitives.WriteInt32LittleEndian(hello.AsSpan(4), 2);
         BinaryPrimitives.WriteInt32LittleEndian(hello.AsSpan(8), 64 * 1024);
         BinaryPrimitives.WriteInt32LittleEndian(hello.AsSpan(12), Environment.ProcessId);
         nonce.CopyTo(hello, 16);
@@ -669,7 +669,7 @@ public class SharedMemoryTransportConnectionIntegrationTests
 
         var invalidAck = new byte[40];
         BinaryPrimitives.WriteInt32LittleEndian(invalidAck, 0x53484D31);
-        BinaryPrimitives.WriteInt32LittleEndian(invalidAck.AsSpan(4), 1);
+        BinaryPrimitives.WriteInt32LittleEndian(invalidAck.AsSpan(4), 2);
         RandomNumberGenerator.Fill(invalidAck.AsSpan(8));
         await pipe.WriteAsync(invalidAck);
         await pipe.FlushAsync();

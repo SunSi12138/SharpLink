@@ -4,8 +4,51 @@ using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
 
+[NotInParallel]
 public class SharedMemoryControlChannelTests
 {
+    [Test]
+    public async Task ConcurrentDataAndSpaceSignalsShouldShareControlWrites()
+    {
+        var pipeName = $"sc{Guid.NewGuid():N}"[..20];
+        await using var server = new NamedPipeServerStream(
+            pipeName,
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        await using var client = new NamedPipeClientStream(
+            ".",
+            pipeName,
+            PipeDirection.InOut,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+
+        var accept = server.WaitForConnectionAsync();
+        await client.ConnectAsync();
+        await accept;
+        await using var control = new SharedMemoryControlChannel(server);
+
+        const int pairCount = 1_000;
+        var combinedWrites = 0;
+        var buffer = new byte[1];
+        for (var index = 0; index < pairCount; index++)
+        {
+            control.SignalDataAvailable();
+            control.SignalSpaceAvailable();
+
+            byte observed = 0;
+            while ((observed & 3) != 3)
+            {
+                await client.ReadExactlyAsync(buffer);
+                if ((buffer[0] & 3) == 3)
+                    combinedWrites++;
+                observed |= buffer[0];
+            }
+        }
+
+        await Assert.That(combinedWrites).IsGreaterThan(0);
+    }
+
     [Test]
     public async Task DisposeShouldDrainTheFinalCloseSignalBeforeCompletingWakeSource()
     {
@@ -32,7 +75,7 @@ public class SharedMemoryControlChannelTests
         await client.ReadExactlyAsync(signal).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
         await dispose.WaitAsync(TimeSpan.FromSeconds(2));
 
-        await Assert.That(signal[0]).IsEqualTo((byte)3);
+        await Assert.That(signal[0]).IsEqualTo((byte)4);
     }
 
     [Test]
