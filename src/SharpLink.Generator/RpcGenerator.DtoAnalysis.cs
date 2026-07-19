@@ -210,7 +210,8 @@ public partial class RpcGenerator
                     ImmutableArray<string>.Empty,
                     elementType is null ? null : GetTypeName(elementType),
                     keyType is null ? null : GetTypeName(keyType),
-                    valueType is null ? null : GetTypeName(valueType));
+                    valueType is null ? null : GetTypeName(valueType),
+                    GetAssemblyDependencies([type]));
                 return;
             }
 
@@ -323,6 +324,8 @@ public partial class RpcGenerator
             var schema = new StringBuilder(typeName);
             foreach (var member in generatedMembers)
                 schema.Append('|').Append(member.FieldId).Append(':').Append(member.TypeName).Append(':').Append(member.Required);
+            var dependencyTypes = new List<ITypeSymbol>(analyzedMembers.Count + 1) { type };
+            dependencyTypes.AddRange(analyzedMembers.Select(static member => member.Type));
             _models[typeName] = new GeneratedCodecModel(
                 typeName,
                 GetCodecName(typeName),
@@ -333,7 +336,37 @@ public partial class RpcGenerator
                 constructorMembers.ToImmutableArray(),
                 null,
                 null,
-                null);
+                null,
+                GetAssemblyDependencies(dependencyTypes));
+        }
+
+        private ImmutableArray<string> GetAssemblyDependencies(IEnumerable<ITypeSymbol> types)
+        {
+            var identities = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var type in types)
+                CollectAssemblyDependencies(type, identities);
+            return identities.OrderBy(static identity => identity, StringComparer.Ordinal).ToImmutableArray();
+        }
+
+        private void CollectAssemblyDependencies(ITypeSymbol type, HashSet<string> identities)
+        {
+            if (type is IArrayTypeSymbol array)
+            {
+                CollectAssemblyDependencies(array.ElementType, identities);
+                return;
+            }
+            if (type is not INamedTypeSymbol named)
+                return;
+
+            var assembly = named.ContainingAssembly;
+            if (assembly is not null &&
+                !SymbolEqualityComparer.Default.Equals(assembly, _compilation.Assembly) &&
+                _allowedAssemblyNames.Contains(assembly.Identity.Name))
+            {
+                identities.Add(assembly.Identity.ToString());
+            }
+            foreach (var argument in named.TypeArguments)
+                CollectAssemblyDependencies(argument, identities);
         }
 
         private List<ISymbol> GetSerializableMembers(INamedTypeSymbol type)

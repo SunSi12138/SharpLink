@@ -329,6 +329,8 @@ namespace ReferencedDtoContract
                 "OwnerAssembly => typeof(global::ReferencedDtoContract.Payload).Assembly",
                 StringComparison.Ordinal),
             "Codec-only manifests must not identify a referenced DTO assembly as their owner.");
+        Ensure(manifest.Contains("ReferencedDtoContract, Version=0.0.0.0", StringComparison.Ordinal),
+            "Codec-only manifests must depend on the assembly that owns referenced DTO types.");
         return Task.CompletedTask;
     }
 
@@ -677,6 +679,45 @@ public sealed class SecondHelloService : IHelloService
 """);
 
         EnsureHasRuleContaining(source, "SHARPLINK023", "IHelloService");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task MarkedServiceConstructorsShouldParticipateInStaticConflictAnalysis()
+    {
+        var source = BuildSource("""
+namespace Microsoft.Extensions.DependencyInjection
+{
+    [System.AttributeUsage(System.AttributeTargets.Constructor)]
+    public sealed class ActivatorUtilitiesConstructorAttribute : System.Attribute { }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IMarkedContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class FirstMarkedService : IMarkedContract
+{
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    public FirstMarkedService() { }
+    public FirstMarkedService(string ignored) { }
+    public ValueTask<int> Echo(int value) => new(value);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class SecondMarkedService : IMarkedContract
+{
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    public SecondMarkedService() { }
+    public SecondMarkedService(string ignored) { }
+    public ValueTask<int> Echo(int value) => new(value);
+}
+""");
+
+        EnsureHasRuleContaining(source, "SHARPLINK023", "IMarkedContract");
         return Task.CompletedTask;
     }
 

@@ -65,6 +65,15 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         return sum;
     }
 
+    public ValueTask<int> RejectClientStreamAsync(
+        IAsyncEnumerable<int> values,
+        CancellationToken cancellationToken)
+    {
+        _ = values;
+        _ = cancellationToken;
+        return ValueTask.FromResult(-1);
+    }
+
     public async IAsyncEnumerable<int> ServerStreamAsync(
         int count,
         [EnumeratorCancellation] CancellationToken cancellationToken)

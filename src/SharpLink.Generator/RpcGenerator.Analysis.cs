@@ -32,16 +32,7 @@ public partial class RpcGenerator
         var interfaceSymbol = contracts[0];
         if (HasInvalidRpcMethod(interfaceSymbol)) return null;
 
-        var constructors = symbol.InstanceConstructors
-            .Where(static constructor => constructor.DeclaredAccessibility == Accessibility.Public)
-            .ToArray();
-        var markedConstructors = constructors
-            .Where(static constructor => constructor.GetAttributes().Any(static attribute =>
-                IsAttribute(attribute, "Microsoft.Extensions.DependencyInjection", "ActivatorUtilitiesConstructorAttribute")))
-            .ToArray();
-        IMethodSymbol? constructor = markedConstructors.Length == 1
-            ? markedConstructors[0]
-            : constructors.Length == 1 ? constructors[0] : null;
+        var constructor = SelectServiceConstructor(symbol);
         if (constructor is null)
             return null;
 
@@ -72,6 +63,20 @@ public partial class RpcGenerator
             lifetime,
             parameters,
             assemblyDependencies);
+    }
+
+    private static IMethodSymbol? SelectServiceConstructor(INamedTypeSymbol symbol)
+    {
+        var constructors = symbol.InstanceConstructors
+            .Where(static constructor => constructor.DeclaredAccessibility == Accessibility.Public)
+            .ToArray();
+        var markedConstructors = constructors
+            .Where(static constructor => constructor.GetAttributes().Any(static attribute =>
+                IsAttribute(attribute, "Microsoft.Extensions.DependencyInjection", "ActivatorUtilitiesConstructorAttribute")))
+            .ToArray();
+        return markedConstructors.Length == 1
+            ? markedConstructors[0]
+            : constructors.Length == 1 ? constructors[0] : null;
     }
 
     private static RpcServiceDiagnosticModel? GetRpcServiceDiagnosticOrNull(
@@ -640,13 +645,52 @@ public partial class RpcGenerator
         var canonicalContract = $"{fullname}|{interfaceHash}|" + string.Join("|", methods
             .OrderBy(static method => method.Hash)
             .Select(static method => method.Fingerprint));
+        var dependencyTypes = symbol.GetMembers().OfType<IMethodSymbol>()
+            .Where(static method => method.MethodKind == MethodKind.Ordinary)
+            .SelectMany(static method => method.Parameters.Select(static parameter => parameter.Type)
+                .Append(method.ReturnType));
         return new RpcInterfaceModel(
             symbol.Name,
             ns,
             fullname,
             interfaceHash,
             methods,
-            Hashing.GetSha256(canonicalContract));
+            Hashing.GetSha256(canonicalContract),
+            GetArtifactAssemblyDependencies(symbol.ContainingAssembly, dependencyTypes));
+    }
+
+    private static ImmutableArray<string> GetArtifactAssemblyDependencies(
+        IAssemblySymbol owner,
+        IEnumerable<ITypeSymbol> types)
+    {
+        var identities = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var type in types)
+            CollectArtifactAssemblyDependencies(owner, type, identities);
+        return identities.OrderBy(static identity => identity, StringComparer.Ordinal).ToImmutableArray();
+    }
+
+    private static void CollectArtifactAssemblyDependencies(
+        IAssemblySymbol owner,
+        ITypeSymbol type,
+        HashSet<string> identities)
+    {
+        if (type is IArrayTypeSymbol array)
+        {
+            CollectArtifactAssemblyDependencies(owner, array.ElementType, identities);
+            return;
+        }
+        if (type is not INamedTypeSymbol named)
+            return;
+
+        var assembly = named.ContainingAssembly;
+        if (assembly is not null &&
+            !SymbolEqualityComparer.Default.Equals(assembly, owner) &&
+            ReferencesSharpLinkSdk(assembly))
+        {
+            identities.Add(assembly.Identity.ToString());
+        }
+        foreach (var argument in named.TypeArguments)
+            CollectArtifactAssemblyDependencies(owner, argument, identities);
     }
 
     private static ImmutableArray<RpcInterfaceModel> GetReferencedInterfaceModels(
@@ -822,10 +866,8 @@ public partial class RpcGenerator
             type.GetAttributes().Any(IsRpcServiceAttribute))
         {
             var rpcContracts = type.AllInterfaces.Where(HasRpcContractAttribute).ToArray();
-            var constructors = type.InstanceConstructors
-                .Where(static constructor => constructor.DeclaredAccessibility == Accessibility.Public)
-                .ToArray();
-            if (rpcContracts.Length == 1 && constructors.Length == 1 &&
+            var constructor = SelectServiceConstructor(type);
+            if (rpcContracts.Length == 1 && constructor is not null &&
                 !HasInvalidRpcMethod(rpcContracts[0]))
             {
                 var serviceNamespace = type.ContainingNamespace.IsGlobalNamespace
@@ -837,7 +879,7 @@ public partial class RpcGenerator
                     type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                     CreateInterfaceModel(rpcContracts[0]),
                     GetServiceLifetime(type, out _),
-                    constructors[0].Parameters.Select(static parameter => new RpcConstructorParameterModel(
+                    constructor.Parameters.Select(static parameter => new RpcConstructorParameterModel(
                         parameter.Name,
                         parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))).ToImmutableArray(),
                     ImmutableArray.Create(rpcContracts[0].ContainingAssembly.Identity.ToString())),

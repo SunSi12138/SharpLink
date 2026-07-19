@@ -26,8 +26,9 @@ public partial class RpcGenerator
             : serviceModels.Length != 0 ? serviceModels[0].ServiceFullName : codecs[0].TypeName;
         var manifestTypeName = "__SharpLinkGeneratedAssemblyManifest_" +
             Hashing.GetSha256(ownerType).Substring(0, 16);
-        var dependencies = serviceModels
-            .SelectMany(static service => service.AssemblyDependencies)
+        var dependencies = serviceModels.SelectMany(static service => service.AssemblyDependencies)
+            .Concat(contracts.SelectMany(static contract => contract.AssemblyDependencies))
+            .Concat(codecs.SelectMany(static codec => codec.AssemblyDependencies))
             .Distinct(StringComparer.Ordinal)
             .OrderBy(static dependency => dependency, StringComparer.Ordinal)
             .ToArray();

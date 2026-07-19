@@ -17,6 +17,10 @@ public interface IDynamicPluginService : IService
         IAsyncEnumerable<int> values,
         CancellationToken cancellationToken);
 
+    ValueTask<int> RejectClientStreamAsync(
+        IAsyncEnumerable<int> values,
+        CancellationToken cancellationToken);
+
     IAsyncEnumerable<int> ServerStreamAsync(
         int count,
         CancellationToken cancellationToken);

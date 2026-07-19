@@ -179,6 +179,60 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task EarlyServerResponseShouldRetainOnlyTheActiveClientStreamProducer()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var plugin = PluginBundle.Load("dynamic-early-client-stream-response");
+        RegisterAll(harness, plugin);
+
+        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var producerRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            var response = InvokeValueTaskAsync<int>(
+                proxy,
+                plugin.ContractType,
+                "RejectClientStreamAsync",
+                BlockingValues(producerStarted, producerRelease.Task),
+                CancellationToken.None);
+            await producerStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(await response == -1, "server may return without consuming the request stream");
+
+            var serverService = await harness.Server.UnregisterAssemblyAsync(
+                plugin.ServiceAssembly,
+                TimeSpan.FromSeconds(2));
+            Ensure(serverService.ReferencesReleased,
+                "server request dispatchers are retired before the service module lease is released");
+            Ensure(serverService.RemainingStreams == 0,
+                "early server completion leaves no service-module stream lease");
+
+            var clientContract = await harness.Client.UnregisterAssemblyAsync(
+                plugin.ContractAssembly,
+                TimeSpan.FromMilliseconds(20));
+            Ensure(!clientContract.ReferencesReleased,
+                "client contract remains leased by the background request-stream producer");
+            Ensure(clientContract.RemainingStreams > 0,
+                "the active request-stream producer is reported as a remaining stream");
+        }
+        finally
+        {
+            producerRelease.TrySetResult();
+        }
+
+        Ensure((await harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "client contract releases after its producer exits");
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "server contract releases after request-dispatcher cleanup");
+        proxy = null;
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task DisposalFailuresShouldNotSkipRemainingModuleCleanup()
     {
         await using var harness = await DynamicHarness.CreateAsync();
@@ -672,6 +726,17 @@ public sealed class RuntimeAssemblyIntegrationTests
             yield return values[index];
             await Task.Yield();
         }
+    }
+
+    private static async IAsyncEnumerable<int> BlockingValues(
+        TaskCompletionSource started,
+        Task release,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        _ = cancellationToken;
+        started.TrySetResult();
+        await release.ConfigureAwait(false);
+        yield return 1;
     }
 
     private static async Task<int[]> CollectAsync(IAsyncEnumerable<int> values)

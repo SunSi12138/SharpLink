@@ -17,7 +17,8 @@ internal record RpcInterfaceModel(
     string FullName,
     long Hash,
     EquatableArray<RpcMethodModel> Methods,
-    string Fingerprint);
+    string Fingerprint,
+    EquatableArray<string> AssemblyDependencies);
 
 internal record RpcMethodModel(
     string Name,
@@ -133,7 +134,8 @@ internal sealed record GeneratedCodecModel(
     ImmutableArray<string> ConstructorMembers,
     string? ElementType,
     string? KeyType,
-    string? ValueType);
+    string? ValueType,
+    ImmutableArray<string> AssemblyDependencies);
 
 internal enum DtoDiagnosticKind
 {

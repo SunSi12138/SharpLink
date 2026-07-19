@@ -28,11 +28,14 @@ internal sealed partial class SharpLinkServer
         }
 
         var isStream = false;
+        var hasRequestStreams = false;
         if (registration.Module is not null)
         {
             var descriptor = GetMethodDescriptor(registration.Stub, methodId);
             isStream = descriptor.Kind is RpcMethodKind.ClientStreaming or
                 RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
+            hasRequestStreams = descriptor.Kind is RpcMethodKind.ClientStreaming or
+                RpcMethodKind.DuplexStreaming;
         }
 
         SharpLinkDynamicModuleLease dynamicSingletonLease = default;
@@ -55,15 +58,34 @@ internal sealed partial class SharpLinkServer
                     context);
                 if (invocation.IsCompletedSuccessfully)
                 {
-                    dynamicSingletonLease.Dispose();
+                    try
+                    {
+                        CompleteDynamicRequestStreams(session, requestId, hasRequestStreams);
+                    }
+                    finally
+                    {
+                        dynamicSingletonLease.Dispose();
+                    }
                     return invocation;
                 }
-                return CompleteDynamicSingletonInvocationAsync(invocation, dynamicSingletonLease);
+                return CompleteDynamicSingletonInvocationAsync(
+                    invocation,
+                    dynamicSingletonLease,
+                    session,
+                    requestId,
+                    hasRequestStreams);
             }
         }
         catch (Exception exception)
         {
-            dynamicSingletonLease.Dispose();
+            try
+            {
+                CompleteDynamicRequestStreams(session, requestId, hasRequestStreams);
+            }
+            finally
+            {
+                dynamicSingletonLease.Dispose();
+            }
             var failedTelemetry = SharpLinkTelemetry.StartServerCall(
                 GetMethodDescriptor(registration.Stub, methodId), requestId);
             failedTelemetry.Complete(exception);
@@ -94,7 +116,8 @@ internal sealed partial class SharpLinkServer
                 arguments,
                 output,
                 cancellationToken,
-                context);
+                context,
+                hasRequestStreams);
         }
 
         return InvokeAcquiredServiceAsync(
@@ -106,12 +129,16 @@ internal sealed partial class SharpLinkServer
             arguments,
             output,
             cancellationToken,
-            context);
+            context,
+            hasRequestStreams);
     }
 
     private static async ValueTask CompleteDynamicSingletonInvocationAsync(
         ValueTask invocation,
-        SharpLinkDynamicModuleLease moduleLease)
+        SharpLinkDynamicModuleLease moduleLease,
+        IRpcSession session,
+        long requestId,
+        bool hasRequestStreams)
     {
         try
         {
@@ -119,7 +146,14 @@ internal sealed partial class SharpLinkServer
         }
         finally
         {
-            moduleLease.Dispose();
+            try
+            {
+                CompleteDynamicRequestStreams(session, requestId, hasRequestStreams);
+            }
+            finally
+            {
+                moduleLease.Dispose();
+            }
         }
     }
 
@@ -132,7 +166,8 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
-        SharpLinkCallContextSnapshot context)
+        SharpLinkCallContextSnapshot context,
+        bool hasRequestStreams)
     {
 
         if (!lease.RequiresDisposal)
@@ -158,7 +193,8 @@ internal sealed partial class SharpLinkServer
             arguments,
             output,
             cancellationToken,
-            context);
+            context,
+            hasRequestStreams);
     }
 
     private async ValueTask InvokeServiceAfterAcquisitionAsync(
@@ -170,7 +206,8 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
-        SharpLinkCallContextSnapshot context)
+        SharpLinkCallContextSnapshot context,
+        bool hasRequestStreams)
     {
         ServiceLease lease;
         try
@@ -194,7 +231,8 @@ internal sealed partial class SharpLinkServer
             arguments,
             output,
             cancellationToken,
-            context).ConfigureAwait(false);
+            context,
+            hasRequestStreams).ConfigureAwait(false);
     }
 
     private ValueTask InvokeServiceTrackedAsync(
@@ -247,7 +285,8 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
-        SharpLinkCallContextSnapshot context)
+        SharpLinkCallContextSnapshot context,
+        bool hasRequestStreams)
     {
         Exception? invocationException = null;
         try
@@ -272,11 +311,32 @@ internal sealed partial class SharpLinkServer
         {
             try
             {
-                await lease.DisposeAsync().ConfigureAwait(false);
+                CompleteDynamicRequestStreams(session, requestId, hasRequestStreams);
             }
-            catch when (invocationException is not null)
+            finally
             {
+                try
+                {
+                    await lease.DisposeAsync().ConfigureAwait(false);
+                }
+                catch when (invocationException is not null)
+                {
+                }
             }
+        }
+    }
+
+    private static void CompleteDynamicRequestStreams(
+        IRpcSession session,
+        long requestId,
+        bool hasRequestStreams)
+    {
+        if (hasRequestStreams && session.StreamManager is StreamManager manager)
+        {
+            manager.CompleteRequestStreams(
+                requestId,
+                new OperationCanceledException(
+                    "The RPC handler completed before its request streams drained."));
         }
     }
 

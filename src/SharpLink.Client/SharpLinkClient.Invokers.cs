@@ -384,6 +384,7 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
+        var moduleProducerLifetime = SharpLinkClientStreamModuleLeaseContext.Current;
         ClientConnection connection;
         long requestId;
         RpcRequestOperation<TResponse> operation;
@@ -417,10 +418,12 @@ internal sealed partial class SharpLinkClient
             ? ProtocolV2FrameFlags.HasReturn | ProtocolV2FrameFlags.Cancellable
             : ProtocolV2FrameFlags.Cancellable;
         var streamCancellationToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
+        SharpLinkDynamicModuleLease producerLease = default;
         try
         {
             if (connection.PendingCalls.Contains(requestId))
             {
+                producerLease = moduleProducerLifetime?.TakeLease() ?? default;
                 SendRpcCall(
                     connection.Session,
                     contractId,
@@ -431,11 +434,14 @@ internal sealed partial class SharpLinkClient
                     requestCodec,
                     control.Deadline,
                     control.Metadata);
-                TrackBackgroundTask(RunGeneratedClientStreamsAsync(
+                var producerTask = RunGeneratedClientStreamsAsync(
                     connection,
                     streams,
                     requestId,
-                    streamCancellationToken));
+                    streamCancellationToken,
+                    producerLease);
+                producerLease = default;
+                TrackBackgroundTask(producerTask);
             }
         }
         catch (Exception exception)
@@ -445,6 +451,10 @@ internal sealed partial class SharpLinkClient
                 PendingCallCompletionReason.SendFailure,
                 exception);
         }
+        finally
+        {
+            producerLease.Dispose();
+        }
 
         return await operation.AsValueTask().ConfigureAwait(false);
     }
@@ -453,7 +463,8 @@ internal sealed partial class SharpLinkClient
         ClientConnection connection,
         TStreams streams,
         long requestId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SharpLinkDynamicModuleLease producerLease)
         where TStreams : struct, IRpcClientStreamWriter
     {
         try
@@ -466,6 +477,10 @@ internal sealed partial class SharpLinkClient
                 requestId,
                 PendingCallCompletionReason.SendFailure,
                 exception);
+        }
+        finally
+        {
+            producerLease.Dispose();
         }
     }
 
@@ -524,6 +539,8 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
+        var moduleProducerLifetime = SharpLinkClientStreamModuleLeaseContext.Current;
+        SharpLinkDynamicModuleLease producerLease = default;
         dispatcher.RetainForRegistration();
         ClientConnection? connection = null;
         var requestId = 0L;
@@ -537,6 +554,7 @@ internal sealed partial class SharpLinkClient
             connection = registration.Connection;
             requestId = registration.RequestId;
             var streamCancellationToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
+            producerLease = moduleProducerLifetime?.TakeLease() ?? default;
             SendRpcCall(
                 connection.Session,
                 contractId,
@@ -555,6 +573,7 @@ internal sealed partial class SharpLinkClient
         }
         finally
         {
+            producerLease.Dispose();
             dispatcher.ReleaseRegistrationRetention();
         }
     }
