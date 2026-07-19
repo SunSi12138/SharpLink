@@ -82,13 +82,14 @@ public class ServerCallCancellationStateTests
             CancellationToken.None,
             supportsCooperativeCancellation: true);
         using var scheduledCall = Schedule(state);
-        var observedReason = ServerCallCancellationReason.None;
+        var observedReason = new TaskCompletionSource<ServerCallCancellationReason>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         using var registration = state.InvocationToken.Register(
-            () => observedReason = state.Reason);
+            () => observedReason.TrySetResult(state.Reason));
 
-        await WaitUntilAsync(() => state.Reason == ServerCallCancellationReason.DeadlineExceeded);
+        var callbackReason = await observedReason.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
-        Ensure(observedReason == ServerCallCancellationReason.DeadlineExceeded,
+        Ensure(callbackReason == ServerCallCancellationReason.DeadlineExceeded,
             "business cancellation callbacks must observe the published deadline reason");
     }
 
