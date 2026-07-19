@@ -59,14 +59,22 @@ public sealed class ServiceLifetimeIntegrationTests
             "unary call scopes end with each invocation");
 
         var stream = service.StreamInstanceIdAsync().GetAsyncEnumerator();
-        Ensure(await stream.MoveNextAsync(), "stream first item");
-        var streamId = stream.Current;
-        Ensure(CallLifetimeProbe.Created == 3 && CallLifetimeProbe.Disposed == 2,
-            "stream instance remains alive while enumerating");
-        Ensure(await stream.MoveNextAsync() && stream.Current == streamId,
-            "whole stream uses one service instance");
-        Ensure(!await stream.MoveNextAsync(), "stream completes");
-        await stream.DisposeAsync();
+        try
+        {
+            Ensure(await stream.MoveNextAsync(), "stream first item");
+            var streamId = stream.Current;
+            Ensure(CallLifetimeProbe.Created == 3 && CallLifetimeProbe.Disposed == 2,
+                "stream instance remains alive while server enumeration is active");
+            CallLifetimeProbe.ReleaseStream();
+            Ensure(await stream.MoveNextAsync() && stream.Current == streamId,
+                "whole stream uses one service instance");
+            Ensure(!await stream.MoveNextAsync(), "stream completes");
+        }
+        finally
+        {
+            CallLifetimeProbe.ReleaseStream();
+            await stream.DisposeAsync();
+        }
         await WaitUntilAsync(() => CallLifetimeProbe.Disposed == 3);
 
         await client.StopAsync();
@@ -231,6 +239,7 @@ public interface ICallLifetimeProbe : IService
 [RpcService(Lifetime = SharpLinkServiceLifetime.Call)]
 public sealed class CallLifetimeProbe : ICallLifetimeProbe, IAsyncDisposable
 {
+    private static TaskCompletionSource _streamRelease = NewSignal();
     private static int _nextId;
     private static int _created;
     private static int _disposed;
@@ -247,17 +256,20 @@ public sealed class CallLifetimeProbe : ICallLifetimeProbe, IAsyncDisposable
 
     internal static void Reset()
     {
+        Volatile.Write(ref _streamRelease, NewSignal());
         Volatile.Write(ref _nextId, 0);
         Volatile.Write(ref _created, 0);
         Volatile.Write(ref _disposed, 0);
     }
+
+    internal static void ReleaseStream() => Volatile.Read(ref _streamRelease).TrySetResult();
 
     public ValueTask<int> GetInstanceIdAsync() => ValueTask.FromResult(_id);
 
     public async IAsyncEnumerable<int> StreamInstanceIdAsync()
     {
         yield return _id;
-        await Task.Yield();
+        await Volatile.Read(ref _streamRelease).Task.ConfigureAwait(false);
         yield return _id;
     }
 
@@ -266,4 +278,7 @@ public sealed class CallLifetimeProbe : ICallLifetimeProbe, IAsyncDisposable
         Interlocked.Increment(ref _disposed);
         return ValueTask.CompletedTask;
     }
+
+    private static TaskCompletionSource NewSignal()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
