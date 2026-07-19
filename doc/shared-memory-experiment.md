@@ -2,7 +2,7 @@
 
 ## 当前结论
 
-本实现已在 macOS arm64、.NET SDK 10.0.102 / runtime 10.0.2 上完成 Release JIT、独立进程 NativeAOT、包消费和 10 分钟 Chaos 正确性验证。Windows x64 与 Linux x64 目前只有 framework-dependent publish 构建检查；两平台运行时测试、两平台 NativeAOT、正式五轮性能矩阵、2 小时 nightly 和 24 小时最终 soak 尚未执行。因此当前状态是“macOS arm64 正确性实验通过，其余门禁待验证”：可以作为显式选择的实验性功能随版本提供，但不得进入正式支持矩阵。
+本实现已在 Windows x64、Linux x64、macOS arm64 的 GitHub 托管宿主上完成 Release 构建、Unit、Generator、Integration、PackageSmoke、独立进程 NativeAOT 和两分钟 SharedMemory Chaos smoke；macOS arm64 另有本地 10 分钟 Chaos 正确性证据。正式五轮性能矩阵、2 小时 nightly 和 24 小时最终 soak 尚未执行。因此当前状态是“三个主平台的发布正确性 smoke 通过，长稳与正式性能门禁待验证”：可以作为显式选择的实验性功能随版本提供，但不得进入正式支持矩阵。
 
 性能定位先发现仅靠共享等待标志存在丢失唤醒窗口：32 B、c1 会偶发约 10 秒停顿。无条件发送 data 通知虽然消除停顿，但使高并发吞吐下降约 20%–45%，因此被撤销。最终实现增加仅在真正休眠前发送的 waiter-arm 控制信号；随后又修复了控制线程把竞态游标快照误判为 `DataLoss` 的问题。修复后 c1 连续五轮均无长停顿，10 分钟 Chaos 无 unexpected failure。
 
@@ -30,12 +30,12 @@
 
 ## 已覆盖证据
 
-- Release solution build：0 warning、0 error。Unit 187/187、Generator 17/17、Integration 118/118。
+- Release solution build：0 warning、0 error。Unit 188/188、Generator 17/17、Integration 118/118。
 - 共享内存选项/profile、非法容量/SpinCount/timeout、路径权限、nonce/ack、未知控制信号、游标有符号溢出、越界 spill 和 stale 文件清理。
 - 原始双向各 1,000,000 条带序号/checksum 记录，在 64 KiB 环上反复回卷，零损坏。
 - 完整生成代理调用形态同时在 TCP 与 SharedMemory 上执行：Unary、Void、OneWay、client stream、server stream、duplex 及多流变体；另覆盖 1-byte stream/connection window 背压。
 - 基础 RPC、256 KiB 超环帧、容量协商、连接池 1→2 扩容、多客户端认证上下文隔离与拒绝、心跳空闲、无服务 timeout、调用方取消、未知握手版本、nonce 错误、监听空闲、并发关闭、断连、重连和双方独立子进程强杀。
-- PackageSmoke 从本地生成的 NuGet 包和全新 NuGet 缓存独立 restore/run，并分别完成 TCP 与 SharedMemory RPC；macOS arm64 SharedMemory NativeAOT server/client 独立进程通过，publish 无 trimming/AOT warning。Linux x64 与 Windows x64 framework-dependent publish 均为 0 warning/0 error，但没有冒充运行时验证。
+- commit `7aa9d4c0c1334e196f02829ff6a10a7ed0cce1c6` 的 [Release Gate](https://github.com/SunSi12138/SharpLink/actions/runs/29695324913) 在 Windows x64、Linux x64、macOS arm64 全部通过：完整构建与测试、从本地 NuGet 包和全新缓存执行的 TCP/SharedMemory PackageSmoke、三平台独立进程 SharedMemory NativeAOT，以及并发 32、每 10 秒重启的两分钟 SharedMemory Chaos smoke。三平台构建、publish 与测试均无 warning、失败或 trimming/AOT warning。
 - Linux x64 容器额外执行了 PR 失败的控制通知合并用例，以及坏握手隔离、用户目录隔离、满环 spill 释放和 ACK nonce 清理的针对性回归，全部通过；这仍不替代 Linux 宿主全量门禁。
 - commit `4bc081e20816e15df8959230ab85ead664420b2d` 的 SharedMemory Chaos：600 秒、并发 32、114 次服务重启；3,947,962 success、1,653,066 expected failure、0 unexpected failure，最长恢复 371 ms。结束后五项 tracked metrics、115 次 server stop 的 active call 与临时映射文件均为 0。
 - PR 审查修复候选工作树的复测证据位于 `artifacts/chaos/review-fixes-10m.json`：600 秒、并发 32、114 次服务重启；4,308,099 success、1,832,245 expected failure、0 unexpected failure，最长恢复 386 ms。结束后五项 tracked metrics、115 次 server stop 的 active call、临时映射文件和测试进程均为 0。
@@ -76,6 +76,5 @@
 
 - 当前只实现统一命名管道通知后端。只有正式 trace 证明通知、映射或回卷路径是平台瓶颈时，才增加 eventfd/kqueue/Windows event 等平台特化，并以相同 A/B 拒绝无收益实现。
 - 当前只有一轮方向性性能样本；仍需完成五轮正反顺序，并重点降低 SharedMemory 的 `AllocatedBytes / Success` 与 c128 尾延迟。
-- Windows x64、Linux x64 的运行时正确性与 NativeAOT 均待各自宿主验证；现有 cross-RID framework-dependent publish 只证明编译，不证明运行兼容。
-- 2 小时和 24 小时 Chaos 尚未对本候选执行；短时 retained-memory 增长不判定通过或失败。
+- 三个主平台的两分钟 Chaos smoke 已通过；2 小时和 24 小时 Chaos 尚未对本候选执行，短时 retained-memory 增长不判定通过或失败。
 - 其他架构只能做可行的 build smoke，不宣称完整支持。

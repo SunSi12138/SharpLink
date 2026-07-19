@@ -26,7 +26,8 @@
 ### 性能与稳定性
 
 - macOS arm64 完成 Release JIT、独立进程 NativeAOT、包消费与两轮 10 分钟 SharedMemory Chaos；最新一轮为 4,308,099 次成功、0 次非预期失败，结束后指标、活动调用、临时映射与测试进程归零。
-- 32 B / LowLatency 的单轮方向性样本中，SharedMemory 在 c1/c8/c32/c128 吞吐均领先 UDS；正式五轮性能矩阵、Windows/Linux 运行时与 NativeAOT、2 小时及 24 小时门禁仍待完成，因此该传输仍为实验性功能，不进入正式支持矩阵。
+- Windows x64、Linux x64、macOS arm64 的 Release 构建、Unit、Generator、Integration、PackageSmoke、独立进程 SharedMemory NativeAOT 和两分钟 Chaos smoke 全部通过；正式五轮性能矩阵、2 小时及 24 小时门禁仍待完成，因此该传输仍为实验性功能，不进入正式支持矩阵。
+- 32 B / LowLatency 的单轮方向性样本中，SharedMemory 在 c1/c8/c32/c128 吞吐均领先 UDS；该样本不替代正式五轮性能门禁。
 
 完整设计、正确性证据、性能数据和未完成门禁见 `doc/shared-memory-experiment.md`。
 
