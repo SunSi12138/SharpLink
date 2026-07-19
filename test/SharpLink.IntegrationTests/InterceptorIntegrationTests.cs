@@ -264,7 +264,6 @@ public class InterceptorIntegrationTests
         {
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
-                .AddService<IInterceptorTestService, InterceptorTestService>()
                 .UseTcp(0, IPAddress.Loopback.ToString())
                 .UseSerializer(MemoryPackCodec.Resolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));

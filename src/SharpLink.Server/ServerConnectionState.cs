@@ -15,11 +15,15 @@ internal sealed class ServerConnectionState
     private readonly CancellationToken _connectionToken;
     private readonly TaskCompletionSource _sessionCompleted =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _callsDrained =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly ConcurrentDictionary<ServiceRegistration, Lazy<Task<ConnectionServiceInstance>>> _services = [];
     private SharpLinkAuthenticationContext? _authenticationContext;
     private long _lastAcceptedRequestId;
     private int _activeCalls;
     private int _lifecycleState = (int)ServerConnectionLifecycleState.Handshaking;
     private int _closeStarted;
+    private Task? _serviceCleanupTask;
 
     internal ServerConnectionState(
         RpcSession session,
@@ -100,8 +104,56 @@ internal sealed class ServerConnectionState
 
     internal void ReleaseCall()
     {
-        if (Interlocked.Decrement(ref _activeCalls) < 0)
+        var remaining = Interlocked.Decrement(ref _activeCalls);
+        if (remaining < 0)
             throw new InvalidOperationException("Server connection active call count underflowed.");
+        if (remaining == 0 && LifecycleState >= ServerConnectionLifecycleState.Draining)
+            _callsDrained.TrySetResult();
+    }
+
+    internal ValueTask<ServiceLease> AcquireServiceAsync(
+        ServiceRegistration registration,
+        SharpLinkDynamicModuleLease moduleLease)
+    {
+        if (LifecycleState != ServerConnectionLifecycleState.Ready)
+        {
+            moduleLease.Dispose();
+            return ValueTask.FromException<ServiceLease>(new SharpLinkException(
+                SharpLinkErrorCode.Unavailable,
+                "RPC connection is draining."));
+        }
+        if (_services.TryGetValue(registration, out var existing))
+            return AwaitConnectionServiceAsync(existing.Value, moduleLease);
+
+        var candidate = new Lazy<Task<ConnectionServiceInstance>>(
+            () => registration.CreateConnectionServiceAsync().AsTask(),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        var selected = _services.GetOrAdd(registration, candidate);
+        return AwaitConnectionServiceAsync(selected.Value, moduleLease);
+    }
+
+    internal async ValueTask DisposeServiceAsync(ServiceRegistration registration)
+    {
+        if (!_services.TryRemove(registration, out var service) || !service.IsValueCreated)
+            return;
+        var instance = await service.Value.ConfigureAwait(false);
+        await instance.DisposeAsync().ConfigureAwait(false);
+    }
+
+    private static async ValueTask<ServiceLease> AwaitConnectionServiceAsync(
+        Task<ConnectionServiceInstance> serviceTask,
+        SharpLinkDynamicModuleLease moduleLease)
+    {
+        try
+        {
+            var service = await serviceTask.ConfigureAwait(false);
+            return new ServiceLease(service.Service, moduleLease: moduleLease);
+        }
+        catch
+        {
+            moduleLease.Dispose();
+            throw;
+        }
     }
 
     internal ServerConnectionDiagnosticSnapshot CaptureStopDiagnostics(int maximumCalls)
@@ -148,6 +200,8 @@ internal sealed class ServerConnectionState
                     (int)ServerConnectionLifecycleState.Draining,
                     current) == current)
             {
+                if (ActiveCalls == 0)
+                    _callsDrained.TrySetResult();
                 return;
             }
         }
@@ -184,10 +238,11 @@ internal sealed class ServerConnectionState
         }
         finally
         {
-            DeadlineScheduler.Dispose();
+            if (ActiveCalls == 0)
+                _callsDrained.TrySetResult();
             Interlocked.Exchange(ref _lifecycleState, (int)ServerConnectionLifecycleState.Closed);
             Volatile.Write(ref _authenticationContext, null);
-            _connectionCancellation.Dispose();
+            _serviceCleanupTask = CleanupServicesWhenCallsDrainAsync();
             if (firstException is null)
                 _sessionCompleted.TrySetResult();
             else
@@ -196,5 +251,29 @@ internal sealed class ServerConnectionState
 
         if (firstException is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+    }
+
+    private async Task CleanupServicesWhenCallsDrainAsync()
+    {
+        await _callsDrained.Task.ConfigureAwait(false);
+        foreach (var service in _services.Values)
+        {
+            if (!service.IsValueCreated)
+                continue;
+            try
+            {
+                var instance = await service.Value.ConfigureAwait(false);
+                await instance.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // Connection teardown has already completed. Service cleanup is
+                // best-effort here and must never turn a bounded stop into a wait
+                // for uncooperative user code.
+            }
+        }
+        _services.Clear();
+        DeadlineScheduler.Dispose();
+        _connectionCancellation.Dispose();
     }
 }

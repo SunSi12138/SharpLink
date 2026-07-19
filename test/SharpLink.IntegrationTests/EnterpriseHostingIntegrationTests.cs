@@ -5,7 +5,7 @@ namespace SharpLink.IntegrationTests;
 public class EnterpriseHostingIntegrationTests
 {
     [Test]
-    public async Task ScopedTypeServiceShouldResolveDependenciesAndLiveThroughStream()
+    public async Task CallServiceShouldResolveDependenciesAndLiveThroughStream()
     {
         LifetimeServiceState.Reset();
         await using var provider = new ServiceCollection()
@@ -14,7 +14,10 @@ public class EnterpriseHostingIntegrationTests
             .BuildServiceProvider();
         await using var harness = await EnterpriseHarness.CreateAsync(builder => builder
             .UseServiceProvider(provider)
-            .AddService<IEnterpriseLifetimeService, EnterpriseLifetimeService>(ServiceLifetime.Scoped));
+            .ReplaceService<IEnterpriseLifetimeService>(
+                static services => new EnterpriseLifetimeService(
+                    services.GetRequiredService<LifetimeDependency>()),
+                SharpLinkServiceLifetime.Call));
         var service = harness.Client.Get<IEnterpriseLifetimeService>();
 
         var first = await service.GetValueAsync();
@@ -48,10 +51,10 @@ public class EnterpriseHostingIntegrationTests
             .BuildServiceProvider();
         await using (var harness = await EnterpriseHarness.CreateAsync(builder => builder
             .UseServiceProvider(provider)
-            .AddService<IEnterpriseLifetimeService>(
+            .ReplaceService<IEnterpriseLifetimeService>(
                 static services => new EnterpriseLifetimeService(
                     services.GetRequiredService<LifetimeDependency>()),
-                ServiceLifetime.Scoped)))
+                SharpLinkServiceLifetime.Call)))
         {
             _ = await harness.Client.Get<IEnterpriseLifetimeService>().GetValueAsync();
             Ensure(LifetimeServiceState.Disposed == 1, "factory scoped service disposed");
@@ -60,7 +63,7 @@ public class EnterpriseHostingIntegrationTests
         LifetimeServiceState.Reset();
         var instance = new EnterpriseLifetimeService(new LifetimeDependency(3));
         await using (var harness = await EnterpriseHarness.CreateAsync(builder =>
-            builder.AddService<IEnterpriseLifetimeService>(instance)))
+            builder.ReplaceService<IEnterpriseLifetimeService>(instance)))
         {
             _ = await harness.Client.Get<IEnterpriseLifetimeService>().GetValueAsync();
         }
@@ -78,7 +81,10 @@ public class EnterpriseHostingIntegrationTests
             .BuildServiceProvider();
         await using (var transientHarness = await EnterpriseHarness.CreateAsync(builder => builder
             .UseServiceProvider(provider)
-            .AddService<IEnterpriseLifetimeService, EnterpriseLifetimeService>(ServiceLifetime.Transient)))
+            .ReplaceService<IEnterpriseLifetimeService>(
+                static services => new EnterpriseLifetimeService(
+                    services.GetRequiredService<LifetimeDependency>()),
+                SharpLinkServiceLifetime.Call)))
         {
             var service = transientHarness.Client.Get<IEnterpriseLifetimeService>();
             _ = await service.GetValueAsync();
@@ -89,9 +95,9 @@ public class EnterpriseHostingIntegrationTests
 
         LifetimeServiceState.Reset();
         await using (var singletonHarness = await EnterpriseHarness.CreateAsync(builder => builder
-            .AddService<IEnterpriseLifetimeService>(
+            .ReplaceService<IEnterpriseLifetimeService>(
                 static _ => new EnterpriseLifetimeService(new LifetimeDependency(9)),
-                ServiceLifetime.Singleton)))
+                SharpLinkServiceLifetime.Singleton)))
         {
             var singleton = singletonHarness.Client.Get<IEnterpriseLifetimeService>();
             var first = await singleton.GetValueAsync();
@@ -106,8 +112,7 @@ public class EnterpriseHostingIntegrationTests
     public async Task HealthControlFrameAndServerReadinessShouldTrackDrainLifecycle()
     {
         LifetimeServiceState.Reset();
-        await using var harness = await EnterpriseHarness.CreateAsync(builder =>
-            builder.AddService<IEnterpriseLifetimeService, EnterpriseLifetimeService>());
+        await using var harness = await EnterpriseHarness.CreateAsync(static _ => { });
 
         Ensure(harness.Server.HealthStatus == SharpLinkHealthStatus.Ready, "server ready after listen");
         var health = await harness.Client.CheckHealthAsync();
@@ -138,9 +143,9 @@ public class EnterpriseHostingIntegrationTests
     {
         UncooperativeLifetimeService.Reset();
         await using var harness = await EnterpriseHarness.CreateAsync(builder => builder
-            .AddService<IUncooperativeLifetimeService>(
+            .ReplaceService<IUncooperativeLifetimeService>(
                 static _ => new UncooperativeLifetimeService(),
-                ServiceLifetime.Singleton));
+                SharpLinkServiceLifetime.Singleton));
         var service = harness.Client.Get<IUncooperativeLifetimeService>();
 
         var invocation = service.WaitForReleaseAsync(CancellationToken.None).AsTask();
@@ -345,6 +350,7 @@ public sealed class EnterpriseLifetimeService : IEnterpriseLifetimeService, IAsy
     private readonly LifetimeDependency _dependency;
     private readonly int _instanceId = LifetimeServiceState.CreateInstance();
 
+    [ActivatorUtilitiesConstructor]
     public EnterpriseLifetimeService() : this(new LifetimeDependency(0))
     {
     }

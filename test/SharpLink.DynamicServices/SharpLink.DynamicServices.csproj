@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>SharpLink.DynamicPlugin.Services</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpLink.DynamicContracts\SharpLink.DynamicContracts.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Sdk\SharpLink.Sdk.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Generator\SharpLink.Generator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

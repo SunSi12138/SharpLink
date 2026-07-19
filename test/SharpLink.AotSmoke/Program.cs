@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Abstractions;
@@ -42,8 +43,7 @@ public static class Program
         var cts = new CancellationTokenSource();
         var runToken = cts.Token;
 
-        var serverBuilder = SharpLinkServerBuilder.Create()
-            .AddService<IAotService, AotService>();
+        var serverBuilder = SharpLinkServerBuilder.Create();
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
         else
@@ -53,6 +53,7 @@ public static class Program
             ? 0
             : ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
+        VerifyRuntimeAssemblyBoundary(server);
 
         var serverTask = Task.Run(async () =>
         {
@@ -98,9 +99,9 @@ public static class Program
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await using var server = SharpLinkServerBuilder.Create()
-            .AddService<IAotService, AotService>()
             .UseSharedMemory(name)
             .Build();
+        VerifyRuntimeAssemblyBoundary(server);
         var runTask = server.RunAsync(timeout.Token).AsTask();
         Console.WriteLine("AOT_SMOKE_SERVER_READY");
         try
@@ -138,6 +139,7 @@ public static class Program
 
     private static async Task VerifyClientAsync(ISharpLinkClient client, CancellationToken cancellationToken)
     {
+        VerifyRuntimeAssemblyBoundary(client);
         await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
 
         var health = await client.CheckHealthAsync(cancellationToken).ConfigureAwait(false);
@@ -173,6 +175,24 @@ public static class Program
         var pair = await svc.EchoPairAsync(new AotPair(7, "pair")).ConfigureAwait(false);
         if (pair.Number != 14 || pair.Text != "pair-ok")
             throw new Exception("unexpected pair result");
+    }
+
+    private static void VerifyRuntimeAssemblyBoundary(ISharpLinkClient client)
+    {
+        if (RuntimeFeature.IsDynamicCodeSupported)
+            return;
+        var result = client.RegisterAssembly(typeof(Program).Assembly);
+        if (result.Succeeded || result.Error?.Code != SharpLinkAssemblyRegistrationErrorCode.PlatformNotSupported)
+            throw new Exception($"unexpected NativeAOT client registration result: {result.Error}");
+    }
+
+    private static void VerifyRuntimeAssemblyBoundary(ISharpLinkServer server)
+    {
+        if (RuntimeFeature.IsDynamicCodeSupported)
+            return;
+        var result = server.RegisterAssembly(typeof(Program).Assembly);
+        if (result.Succeeded || result.Error?.Code != SharpLinkAssemblyRegistrationErrorCode.PlatformNotSupported)
+            throw new Exception($"unexpected NativeAOT server registration result: {result.Error}");
     }
 }
 

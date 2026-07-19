@@ -236,8 +236,13 @@ internal sealed partial class SharpLinkClient
 
     public T Get<T>() where T : IService
     {
-        if (GeneratedProxyRegistry.TryCreate(typeof(T), this, out var proxy))
-            return (T)proxy!;
+        if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
+        {
+            IRpcChannel channel = registration.Module is null
+                ? this
+                : new SharpLinkModuleRpcChannel(this, registration.Module);
+            return (T)registration.Descriptor.ProxyFactory(channel);
+        }
 
         throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
     }

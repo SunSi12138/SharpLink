@@ -225,7 +225,6 @@ public class RpcChannelCallShapeIntegrationTests
         {
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
-                .AddService<ICallShapeService, CallShapeService>()
                 .UseSerializer(MemoryPackCodec.Resolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
 

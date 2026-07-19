@@ -8,6 +8,7 @@ internal enum ServerCallCancellationReason : byte
     RemoteCancel,
     ConsumerAbandoned,
     DeadlineExceeded,
+    ModuleDraining,
     ServerStopping,
     ConnectionClosed,
     Completed
@@ -27,8 +28,10 @@ internal sealed class ServerCallCancellationState : IDisposable
     private CancellationTokenSource? _invocationCancellation;
     private CancellationTokenRegistration _serverStoppingRegistration;
     private CancellationTokenRegistration _connectionClosedRegistration;
+    private CancellationTokenRegistration _moduleDrainingRegistration;
     private int _reason;
     private int _abandonedRecorded;
+    private int _moduleDrainResponseClaimed;
     private bool _disposeRequested;
     private int _externalUsers;
 
@@ -57,6 +60,23 @@ internal sealed class ServerCallCancellationState : IDisposable
         CancellationToken connectionClosedToken,
         CancellationToken serverStoppingToken,
         bool supportsCooperativeCancellation)
+        => Rent(
+            requestId,
+            deadline,
+            deadlineTimestamp,
+            connectionClosedToken,
+            serverStoppingToken,
+            CancellationToken.None,
+            supportsCooperativeCancellation);
+
+    public static ServerCallCancellationState Rent(
+        long requestId,
+        DateTimeOffset? deadline,
+        long deadlineTimestamp,
+        CancellationToken connectionClosedToken,
+        CancellationToken serverStoppingToken,
+        CancellationToken moduleDrainingToken,
+        bool supportsCooperativeCancellation)
     {
         if (!Pool.TryPop(out var state))
             state = new ServerCallCancellationState();
@@ -68,13 +88,23 @@ internal sealed class ServerCallCancellationState : IDisposable
         state.DeadlineTimestamp = deadlineTimestamp;
         state._reason = (int)ServerCallCancellationReason.None;
         state._abandonedRecorded = 0;
+        state._moduleDrainResponseClaimed = 0;
         state._disposeRequested = false;
         state._externalUsers = 0;
         state._serverStoppingRegistration = default;
         state._connectionClosedRegistration = default;
+        state._moduleDrainingRegistration = default;
         state._invocationCancellation = supportsCooperativeCancellation
             ? new CancellationTokenSource()
             : null;
+        if (moduleDrainingToken.CanBeCanceled)
+        {
+            state._moduleDrainingRegistration = moduleDrainingToken.UnsafeRegister(
+                static callbackState =>
+                    ((ServerCallCancellationState)callbackState!).InvokeCancellation(
+                        ServerCallCancellationReason.ModuleDraining),
+                state);
+        }
         // Register server shutdown before connection closure so forced server shutdown has a
         // deterministic reason when both tokens have already been canceled.
         if (serverStoppingToken.CanBeCanceled)
@@ -165,6 +195,10 @@ internal sealed class ServerCallCancellationState : IDisposable
     public bool TryRecordAbandoned()
         => IsAbandoned && Interlocked.Exchange(ref _abandonedRecorded, 1) == 0;
 
+    public bool TryClaimModuleDrainResponse()
+        => Reason == ServerCallCancellationReason.ModuleDraining &&
+           Interlocked.Exchange(ref _moduleDrainResponseClaimed, 1) == 0;
+
     public void Dispose()
     {
         var shouldDispose = false;
@@ -200,17 +234,20 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     private void ReturnCore()
     {
+        _moduleDrainingRegistration.Dispose();
         _connectionClosedRegistration.Dispose();
         _serverStoppingRegistration.Dispose();
         _invocationCancellation?.Dispose();
         _invocationCancellation = null;
         _connectionClosedRegistration = default;
         _serverStoppingRegistration = default;
+        _moduleDrainingRegistration = default;
         RequestId = 0;
         Deadline = null;
         DeadlineTimestamp = 0;
         _reason = (int)ServerCallCancellationReason.None;
         _abandonedRecorded = 0;
+        _moduleDrainResponseClaimed = 0;
 
         while (true)
         {

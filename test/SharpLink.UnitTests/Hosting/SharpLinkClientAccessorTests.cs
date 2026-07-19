@@ -1,4 +1,5 @@
 using System.Threading;
+using System.Reflection;
 using SharpLink.Hosting;
 using SharpLink.Sdk;
 
@@ -73,5 +74,14 @@ public class SharpLinkClientAccessorTests
 
         public T Get<T>() where T : IService
             => throw new NotSupportedException();
+
+        public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
+            => default;
+
+        public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
+            Assembly assembly,
+            TimeSpan gracefulTimeout,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = true });
     }
 }

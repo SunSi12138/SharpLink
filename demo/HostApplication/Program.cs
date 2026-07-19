@@ -21,7 +21,6 @@ builder.Logging.SetMinimumLevel(LogLevel.Information);
 builder.Services.AddSharpLinkServer(server =>
 {
     server
-        .AddService<IHelloService, HelloService>()
         .UseTcp(port, "127.0.0.1")
         .UseSerializer(MemoryPackCodec.Resolver);
 });

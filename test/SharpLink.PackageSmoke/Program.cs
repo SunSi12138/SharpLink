@@ -48,8 +48,7 @@ public static class Program
         CancellationToken cancellationToken)
     {
         var sharedMemoryName = $"sharplink-package-smoke-{Guid.NewGuid():N}";
-        var serverBuilder = SharpLinkServerBuilder.Create()
-            .AddService<IPackageSmokeService, PackageSmokeService>();
+        var serverBuilder = SharpLinkServerBuilder.Create();
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
         else

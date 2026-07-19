@@ -37,7 +37,6 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
         ArgumentNullException.ThrowIfNull(codec);
         Id = id;
         _codec = codec;
-        _core.Reset(); // 重置状态机
     }
     // 【新增】发送失败时的手动归还
     public void ReturnError() => ReturnToPool();
@@ -86,6 +85,10 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     private void ReturnToPool()
     {
         _codec = null;
+        // Clear the continuation and its state before this operation enters the
+        // process-wide generic pool. A continuation can close over request types
+        // from a collectible AssemblyLoadContext even when T itself is static.
+        _core.Reset();
         _returnAction(this);
     }
 

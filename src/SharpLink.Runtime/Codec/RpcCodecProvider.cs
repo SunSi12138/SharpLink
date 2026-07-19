@@ -2,12 +2,21 @@ using System.Text;
 
 namespace SharpLink.Runtime;
 
-internal sealed class RpcCodecProvider(
-    Func<Type, IRpcCodec?>? resolver,
-    IReadOnlyDictionary<Type, IRpcCodec> explicitCodecs,
-    IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> generatedFactories) : IRpcCodecProvider
+internal sealed class RpcCodecProvider : IRpcCodecProvider
 {
-    private readonly ConcurrentDictionary<Type, IRpcCodec> _resolvedCodecs = new(explicitCodecs);
+    private readonly Func<Type, IRpcCodec?>? _resolver;
+    private readonly ConcurrentDictionary<Type, IRpcCodec> _resolvedCodecs;
+    private IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> _generatedFactories;
+
+    internal RpcCodecProvider(
+        Func<Type, IRpcCodec?>? resolver,
+        IReadOnlyDictionary<Type, IRpcCodec> explicitCodecs,
+        IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> generatedFactories)
+    {
+        _resolver = resolver;
+        _resolvedCodecs = new ConcurrentDictionary<Type, IRpcCodec>(explicitCodecs);
+        _generatedFactories = generatedFactories;
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public IRpcCodec<T> GetCodec<T>()
@@ -21,6 +30,7 @@ internal sealed class RpcCodecProvider(
         if (_resolvedCodecs.TryGetValue(typeof(T), out var registered))
             return Cast<T>(registered);
 
+        var generatedFactories = Volatile.Read(ref _generatedFactories);
         if (generatedFactories.TryGetValue(typeof(T), out var generatedFactory))
         {
             var generated = generatedFactory.Create(this);
@@ -28,7 +38,7 @@ internal sealed class RpcCodecProvider(
             return Cast<T>(selected);
         }
 
-        var resolved = resolver?.Invoke(typeof(T));
+        var resolved = _resolver?.Invoke(typeof(T));
         if (resolved is not null)
         {
             var typed = Cast<T>(resolved);
@@ -46,6 +56,18 @@ internal sealed class RpcCodecProvider(
     private static IRpcCodec<T> Cast<T>(IRpcCodec codec)
         => codec as IRpcCodec<T> ?? throw new InvalidOperationException(
             $"The codec registered for '{typeof(T).FullName}' implements an incompatible codec interface.");
+
+    internal IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> CreateGeneratedFactorySnapshot()
+        => Volatile.Read(ref _generatedFactories);
+
+    internal void PublishGeneratedFactories(IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> factories)
+        => Volatile.Write(ref _generatedFactories, factories);
+
+    internal void RemoveResolvedCodecs(IEnumerable<Type> types)
+    {
+        foreach (var type in types)
+            _resolvedCodecs.TryRemove(type, out _);
+    }
 }
 
 internal static class SharedRpcCodec<T>

@@ -14,10 +14,23 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext
     {
         _options = options.CloneValidated();
         Concurrency = concurrency.CloneValidated();
-        Codecs = new RpcCodecProvider(
-            resolver,
-            codecs,
+        var generatedFactories = new Dictionary<Type, IRpcGeneratedCodecFactory>(
             RpcGeneratedCodecRegistry.CreateSnapshot());
+        foreach (var manifest in SharpLinkGeneratedAssemblyCatalog.CreateSnapshot())
+        {
+            foreach (var factory in manifest.Codecs)
+            {
+                if (generatedFactories.TryGetValue(factory.TargetType, out var existing) &&
+                    !string.Equals(existing.SchemaId, factory.SchemaId, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"Generated Codec schema conflict for '{factory.TargetType.FullName}': " +
+                        $"'{existing.SchemaId}' and '{factory.SchemaId}'.");
+                }
+                generatedFactories[factory.TargetType] = factory;
+            }
+        }
+        Codecs = new RpcCodecProvider(resolver, codecs, generatedFactories);
         Buffers = new SharpLinkBufferWriterPool(bufferPool);
     }
 
@@ -37,6 +50,15 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext
     internal SharpLinkProtocolOptions Protocol => _options.Protocol;
 
     internal SharpLinkFlowControlOptions FlowControl => _options.FlowControl;
+
+    internal IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> CreateGeneratedCodecSnapshot()
+        => ((RpcCodecProvider)Codecs).CreateGeneratedFactorySnapshot();
+
+    internal void PublishGeneratedCodecs(IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> factories)
+        => ((RpcCodecProvider)Codecs).PublishGeneratedFactories(factories);
+
+    internal void RemoveResolvedGeneratedCodecs(IEnumerable<Type> types)
+        => ((RpcCodecProvider)Codecs).RemoveResolvedCodecs(types);
 
     internal static SharpLinkRuntimeContext Default { get; } = new SharpLinkRuntimeContextBuilder().Build();
 }

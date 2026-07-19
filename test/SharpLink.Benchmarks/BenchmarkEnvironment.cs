@@ -43,7 +43,6 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         var localService = new BenchmarkRpcService();
 
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .AddService<IBenchmarkRpc, BenchmarkRpcService>()
             .UseTcp(0, IPAddress.Loopback.ToString())
             .UseSerializer(MemoryPackCodec.Resolver);
 

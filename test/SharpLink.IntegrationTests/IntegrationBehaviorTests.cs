@@ -573,7 +573,6 @@ public class IntegrationBehaviorTests
             codecResolver ??= MemoryPackCodec.Resolver;
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
-                .AddService<ITestService, TestService>()
                 .UseSerializer(codecResolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
             if (runtimeConfigure is not null)

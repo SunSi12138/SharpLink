@@ -1,10 +1,11 @@
 using System.Diagnostics;
+using System.Reflection;
 
 namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer(
     IServerTransportListener transportListener,
-    FrozenDictionary<long, ServiceRegistration> services,
+    FrozenDictionary<long, ServiceRegistration> initialServices,
     TimeSpan heartbeatCheckInterval,
     TimeSpan heartbeatTimeout,
     ILoggerFactory loggerFactory,
@@ -15,7 +16,9 @@ internal sealed partial class SharpLinkServer(
     RpcSessionFlushOptions? rpcSessionFlushOptions = null,
     ISharpLinkServerInterceptor[]? serverInterceptors = null,
     IRpcExceptionMapper? exceptionMapper = null,
-    IAsyncDisposable? ownedServiceProvider = null) : ISharpLinkServer
+    IAsyncDisposable? ownedServiceProvider = null,
+    IServiceProvider? serviceProvider = null,
+    IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null) : ISharpLinkServer
 {
     private enum ServerState
     {
@@ -35,6 +38,17 @@ internal sealed partial class SharpLinkServer(
     }
 
     private readonly SharpLinkRuntimeContext _runtimeContext = runtimeContext ?? new SharpLinkRuntimeContextBuilder().Build();
+    private FrozenDictionary<long, ServiceRegistration> _services = initialServices;
+    private readonly IServiceProvider _serviceProvider = serviceProvider ??
+        throw new ArgumentNullException(nameof(serviceProvider));
+    private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests =
+        staticManifests ?? [];
+    private readonly Lock _registryGate = new();
+    private readonly Dictionary<Assembly, SharpLinkDynamicModule> _dynamicModules =
+        new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Assembly, Task<SharpLinkAssemblyUnregisterResult>> _unregisterOperations =
+        new(ReferenceEqualityComparer.Instance);
+    private long _registryGeneration;
     private readonly ConcurrentDictionary<string, ServerConnectionState> _connections = [];
     private readonly ILogger _logger = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory))).CreateLogger<SharpLinkServer>();
     private readonly ISharpLinkServerAuthenticator? _authenticator = authenticator;
@@ -57,7 +71,7 @@ internal sealed partial class SharpLinkServer(
         serverInterceptors is { Length: > 0 } ? [.. serverInterceptors] : [];
     private readonly IRpcExceptionMapper _exceptionMapper =
         exceptionMapper ?? new DefaultRpcExceptionMapper(includeDetails: false);
-    private readonly ServerServiceCleanup _serviceCleanup = new(services.Values, ownedServiceProvider);
+    private readonly ServerServiceCleanup _serviceCleanup = new(initialServices.Values, ownedServiceProvider);
     private Task? _deferredServiceCleanupTask;
     private Task? _shutdownCleanupObserver;
     private Task? _serviceCleanupObserver;
@@ -103,6 +117,7 @@ internal sealed partial class SharpLinkServer(
         var faulted = false;
 
         TransitionTo(ServerState.Draining);
+        BeginDrainDynamicModules();
         CancelForShutdown(_acceptCts, _logger, "AcceptCancellation");
         var listenerDisposeTask = StartListenerDispose(transportListener);
         var goAwayTask = SendGoAwayToAllAsync();
@@ -124,10 +139,7 @@ internal sealed partial class SharpLinkServer(
                 Volatile.Write(ref _lastStopDiagnostics, CaptureStopDiagnostics(unfinishedCalls));
                 LogForcedCallsRemaining(_logger, unfinishedCalls);
                 SharpLinkTelemetry.RecordForcedStopCalls(unfinishedCalls);
-                _deferredServiceCleanupTask = DisposeServicesWhenDrainedAsync(
-                    _callsDrained.Task,
-                    _serviceCleanup,
-                    _logger);
+                _deferredServiceCleanupTask = DisposeServicesWhenDrainedAsync(_callsDrained.Task);
             }
 
             CancelForShutdown(_forceStopCts, _logger, "CallCancellation");
@@ -172,7 +184,7 @@ internal sealed partial class SharpLinkServer(
 
             if (unfinishedCalls == 0)
             {
-                var serviceCleanupTask = _serviceCleanup.DisposeAsync().AsTask();
+                var serviceCleanupTask = DisposeRegisteredServicesAsync();
                 if (!await WaitUntilAsync(serviceCleanupTask, finalDeadline).ConfigureAwait(false))
                 {
                     faulted = true;
@@ -200,6 +212,7 @@ internal sealed partial class SharpLinkServer(
             TimeSpan.FromSeconds(cleanupBudgetSeconds));
 
         CancelForShutdown(_acceptCts, _logger, "AcceptCancellation");
+        BeginDrainDynamicModules();
         CancelForShutdown(_forceStopCts, _logger, "CallCancellation");
         if (Volatile.Read(ref _globalActiveCalls) == 0)
             _callsDrained.TrySetResult(true);
@@ -208,10 +221,7 @@ internal sealed partial class SharpLinkServer(
             var unfinishedCalls = Volatile.Read(ref _globalActiveCalls);
             LogForcedCallsRemaining(_logger, unfinishedCalls);
             SharpLinkTelemetry.RecordForcedStopCalls(unfinishedCalls);
-            _deferredServiceCleanupTask ??= DisposeServicesWhenDrainedAsync(
-                _callsDrained.Task,
-                _serviceCleanup,
-                _logger);
+            _deferredServiceCleanupTask ??= DisposeServicesWhenDrainedAsync(_callsDrained.Task);
         }
 
         var frameworkCleanupTask = Task.WhenAll(
@@ -247,7 +257,7 @@ internal sealed partial class SharpLinkServer(
 
         if (_callsDrained.Task.IsCompletedSuccessfully)
         {
-            var serviceCleanupTask = _serviceCleanup.DisposeAsync().AsTask();
+            var serviceCleanupTask = DisposeRegisteredServicesAsync();
             try
             {
                 if (!await WaitUntilAsync(serviceCleanupTask, deadline).ConfigureAwait(false))
@@ -444,20 +454,23 @@ internal sealed partial class SharpLinkServer(
         return TimeSpan.FromSeconds((double)remainingTicks / Stopwatch.Frequency);
     }
 
-    private static async Task DisposeServicesWhenDrainedAsync(
-        Task callsDrained,
-        ServerServiceCleanup serviceCleanup,
-        ILogger logger)
+    private async Task DisposeServicesWhenDrainedAsync(Task callsDrained)
     {
         try
         {
             await callsDrained.ConfigureAwait(false);
-            await serviceCleanup.DisposeAsync().ConfigureAwait(false);
+            await DisposeRegisteredServicesAsync().ConfigureAwait(false);
         }
         catch (Exception exception)
         {
-            LogDeferredCleanupFailed(logger, "Services", exception);
+            LogDeferredCleanupFailed(_logger, "Services", exception);
         }
+    }
+
+    private async Task DisposeRegisteredServicesAsync()
+    {
+        await ReleaseDrainedDynamicModulesAsync().ConfigureAwait(false);
+        await _serviceCleanup.DisposeAsync().ConfigureAwait(false);
     }
 
     private static async Task ObserveShutdownAndDisposeTokensAsync(

@@ -10,8 +10,10 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     private TimeSpan _heartbeatCheckInterval = TimeSpan.FromSeconds(10);
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
     private RpcSessionFlushOptions? _rpcSessionFlushOptions;
-    private readonly Dictionary<long, ServiceRegistrationDefinition> _services = [];
-    private readonly List<ServiceDescriptor> _serviceDescriptors = [];
+    private bool _automaticServiceRegistration = true;
+    private readonly HashSet<Type> _enabledServices = [];
+    private readonly HashSet<Type> _excludedServices = [];
+    private readonly Dictionary<Type, ReplacementServiceDefinition> _replacementServices = [];
     private IServiceProvider? _serviceProvider;
     private ILoggerFactory? _loggerFactory;
     private ISharpLinkServerAuthenticator? _authenticator;
@@ -163,69 +165,58 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
-    /// <summary>Registers a caller-owned singleton service instance.</summary>
-    /// <typeparam name="TContract">The generated RPC contract.</typeparam>
-    /// <param name="instance">The instance to dispatch. SharpLink does not dispose it.</param>
-    public SharpLinkServerBuilder AddService<TContract>(TContract instance)
+    /// <summary>Disables automatic service exposure for this builder; explicitly enabled and replaced services remain.</summary>
+    public SharpLinkServerBuilder DisableAutomaticServiceRegistration()
+    {
+        _automaticServiceRegistration = false;
+        return this;
+    }
+
+    /// <summary>Requires and enables the generated service for a contract on this builder.</summary>
+    public SharpLinkServerBuilder EnableService<TContract>()
+        where TContract : class, IService
+    {
+        _excludedServices.Remove(typeof(TContract));
+        _enabledServices.Add(typeof(TContract));
+        return this;
+    }
+
+    /// <summary>Excludes the generated service for a contract from this builder.</summary>
+    public SharpLinkServerBuilder ExcludeService<TContract>()
+        where TContract : class, IService
+    {
+        _enabledServices.Remove(typeof(TContract));
+        _excludedServices.Add(typeof(TContract));
+        return this;
+    }
+
+    /// <summary>Replaces an automatically generated service with a caller-owned singleton instance.</summary>
+    public SharpLinkServerBuilder ReplaceService<TContract>(TContract instance)
         where TContract : class, IService
     {
         ArgumentNullException.ThrowIfNull(instance);
-        var stub = ResolveStub(instance.GetType(), typeof(TContract));
-        AddServiceDefinition(new ServiceRegistrationDefinition(
-            stub,
-            ServiceLifetime.Singleton,
-            factory: null,
+        _replacementServices[typeof(TContract)] = new ReplacementServiceDefinition(
             instance,
-            callerOwned: true,
-            providerOwnsService: false));
+            Factory: null,
+            SharpLinkServiceLifetime.Singleton,
+            CallerOwned: true);
         return this;
     }
 
-    /// <summary>Registers a service type with an explicit server-managed lifetime.</summary>
-    /// <typeparam name="TContract">The generated RPC contract.</typeparam>
-    /// <typeparam name="TService">The implementation constructed from the configured provider.</typeparam>
-    /// <param name="lifetime">Singleton by default to preserve the allocation-free dispatch path.</param>
-    public SharpLinkServerBuilder AddService<
-        TContract,
-        [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(
-            System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicConstructors)] TService>(
-        ServiceLifetime lifetime = ServiceLifetime.Singleton)
-        where TContract : class, IService
-        where TService : class, TContract
-    {
-        ValidateLifetime(lifetime);
-        var stub = ResolveStub(typeof(TService), typeof(TContract));
-        if (!_serviceDescriptors.Any(static descriptor => descriptor.ServiceType == typeof(TService)))
-            _serviceDescriptors.Add(ServiceDescriptor.Describe(typeof(TService), typeof(TService), lifetime));
-        AddServiceDefinition(new ServiceRegistrationDefinition(
-            stub,
-            lifetime,
-            static provider => provider.GetRequiredService<TService>(),
-            instance: null,
-            callerOwned: false,
-            providerOwnsService: true));
-        return this;
-    }
-
-    /// <summary>Registers a provider-aware service factory with an explicit lifetime.</summary>
-    /// <typeparam name="TContract">The generated RPC contract.</typeparam>
-    /// <param name="factory">Creates a service from the root or current per-call provider.</param>
-    /// <param name="lifetime">Scoped by default; scoped and transient instances are disposed after the call or stream.</param>
-    public SharpLinkServerBuilder AddService<TContract>(
+    /// <summary>Replaces an automatically generated service with a provider-aware factory.</summary>
+    public SharpLinkServerBuilder ReplaceService<TContract>(
         Func<IServiceProvider, TContract> factory,
-        ServiceLifetime lifetime = ServiceLifetime.Scoped)
+        SharpLinkServiceLifetime lifetime = SharpLinkServiceLifetime.Singleton)
         where TContract : class, IService
     {
         ArgumentNullException.ThrowIfNull(factory);
         ValidateLifetime(lifetime);
-        var stub = ResolveStub(typeof(TContract), typeof(TContract));
-        AddServiceDefinition(new ServiceRegistrationDefinition(
-            stub,
+        _replacementServices[typeof(TContract)] = new ReplacementServiceDefinition(
+            Instance: null,
+            provider => factory(provider) ?? throw new InvalidOperationException(
+                $"Replacement factory for '{typeof(TContract).FullName}' returned null."),
             lifetime,
-            provider => factory(provider),
-            instance: null,
-            callerOwned: false,
-            providerOwnsService: false));
+            CallerOwned: false);
         return this;
     }
 
@@ -244,19 +235,18 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         IAsyncDisposable? ownedServiceProvider = null;
         if (serviceProvider is null)
         {
-            IServiceCollection internalServices = new ServiceCollection();
-            for (var index = 0; index < _serviceDescriptors.Count; index++)
-                internalServices.Add(_serviceDescriptors[index]);
-            var internalProvider = internalServices.BuildServiceProvider(
+            var internalProvider = new ServiceCollection().BuildServiceProvider(
                 new ServiceProviderOptions { ValidateScopes = true });
             serviceProvider = internalProvider;
             ownedServiceProvider = internalProvider;
         }
 
+        var manifests = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
         FrozenDictionary<long, ServiceRegistration> registrations;
         try
         {
-            registrations = _services.ToDictionary(
+            var definitions = BuildServiceDefinitions(manifests, serviceProvider);
+            registrations = definitions.ToDictionary(
                     static pair => pair.Key,
                     pair => pair.Value.Build(serviceProvider))
                 .ToFrozenDictionary();
@@ -281,58 +271,176 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             _rpcSessionFlushOptions,
             _interceptors.ToArray(),
             _exceptionMapper ?? new DefaultRpcExceptionMapper(_includeExceptionDetails),
-            ownedServiceProvider);
+            ownedServiceProvider,
+            serviceProvider,
+            manifests);
     }
 
-    private void AddServiceDefinition(ServiceRegistrationDefinition definition)
+    private Dictionary<long, ServiceRegistrationDefinition> BuildServiceDefinitions(
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
+        IServiceProvider serviceProvider)
     {
-        if (!_services.TryAdd(definition.Stub.InterfaceHash, definition))
+        var contracts = new Dictionary<long, (SharpLinkGeneratedContractDescriptor Descriptor, ISharpLinkGeneratedAssemblyManifest Manifest)>();
+        var services = new Dictionary<long, (SharpLinkGeneratedServiceDescriptor Descriptor, ISharpLinkGeneratedAssemblyManifest Manifest)>();
+        for (var manifestIndex = 0; manifestIndex < manifests.Count; manifestIndex++)
         {
-            throw new InvalidOperationException(
-                $"RPC contract {definition.Stub.InterfaceHash} is already registered on this builder.");
-        }
-    }
-
-    internal void AddServiceRegistrationsTo(IServiceCollection services)
-    {
-        ArgumentNullException.ThrowIfNull(services);
-        for (var index = 0; index < _serviceDescriptors.Count; index++)
-        {
-            var descriptor = _serviceDescriptors[index];
-            var existing = services.LastOrDefault(candidate =>
-                candidate.ServiceType == descriptor.ServiceType);
-            if (existing is null)
+            var manifest = manifests[manifestIndex];
+            ValidateManifest(manifest);
+            for (var index = 0; index < manifest.Contracts.Count; index++)
             {
-                services.Add(descriptor);
-                continue;
+                var incoming = manifest.Contracts[index];
+                if (contracts.TryGetValue(incoming.ContractId, out var existing))
+                    throw CreateBuildConflict("Contract", incoming, manifest, existing.Descriptor, existing.Manifest);
+                contracts.Add(incoming.ContractId, (incoming, manifest));
             }
-            if (existing.Lifetime != descriptor.Lifetime)
+            for (var index = 0; index < manifest.Services.Count; index++)
+            {
+                var incoming = manifest.Services[index];
+                if (services.TryGetValue(incoming.ContractId, out var existing) &&
+                    !_replacementServices.ContainsKey(incoming.ContractType))
+                {
+                    throw CreateBuildConflict("Service", incoming, manifest, existing.Descriptor, existing.Manifest);
+                }
+                services.TryAdd(incoming.ContractId, (incoming, manifest));
+            }
+        }
+
+        var definitions = new Dictionary<long, ServiceRegistrationDefinition>();
+        var foundEnabled = new HashSet<Type>();
+        foreach (var pair in services)
+        {
+            var service = pair.Value.Descriptor;
+            if (_replacementServices.ContainsKey(service.ContractType))
+                continue;
+            var explicitlyEnabled = _enabledServices.Contains(service.ContractType);
+            if (explicitlyEnabled)
+                foundEnabled.Add(service.ContractType);
+            if ((!_automaticServiceRegistration && !explicitlyEnabled) ||
+                _excludedServices.Contains(service.ContractType))
+                continue;
+            if (!contracts.TryGetValue(service.ContractId, out var contract) ||
+                !ReferenceEquals(contract.Descriptor.ContractType, service.ContractType))
             {
                 throw new InvalidOperationException(
-                    $"Service '{descriptor.ServiceType.FullName}' is registered as {existing.Lifetime}, " +
-                    $"but SharpLink requested {descriptor.Lifetime}.");
+                    $"Generated service '{service.ImplementationName}' requires contract '{service.ContractName}' " +
+                    $"({service.ContractId}), but its contract-owned manifest is not loaded.");
+            }
+            ValidateDependencies(service, serviceProvider);
+            definitions.Add(service.ContractId, new ServiceRegistrationDefinition(
+                service.ContractType,
+                contract.Descriptor.StubFactory(),
+                service.Lifetime,
+                service.Activator,
+                instance: null,
+                callerOwned: false));
+        }
+
+        foreach (var replacement in _replacementServices)
+        {
+            var contract = contracts.Values.FirstOrDefault(candidate =>
+                ReferenceEquals(candidate.Descriptor.ContractType, replacement.Key));
+            if (contract.Descriptor is null)
+            {
+                throw new InvalidOperationException(
+                    $"Generated contract '{replacement.Key.FullName}' required by ReplaceService was not found.");
+            }
+            var value = replacement.Value;
+            definitions[contract.Descriptor.ContractId] = new ServiceRegistrationDefinition(
+                replacement.Key,
+                contract.Descriptor.StubFactory(),
+                value.Lifetime,
+                value.Factory,
+                value.Instance,
+                value.CallerOwned);
+            foundEnabled.Add(replacement.Key);
+        }
+
+        foreach (var required in _enabledServices)
+        {
+            if (!foundEnabled.Contains(required))
+            {
+                throw new InvalidOperationException(
+                    $"Generated service for required contract '{required.FullName}' was not found.");
+            }
+        }
+        return definitions;
+    }
+
+    private static void ValidateDependencies(
+        SharpLinkGeneratedServiceDescriptor service,
+        IServiceProvider provider)
+    {
+        if (service.Dependencies.Count == 0)
+            return;
+        var availability = provider.GetService<IServiceProviderIsService>();
+        if (availability is null)
+            return;
+        for (var index = 0; index < service.Dependencies.Count; index++)
+        {
+            var dependency = service.Dependencies[index];
+            if (!availability.IsService(dependency))
+            {
+                throw new InvalidOperationException(
+                    $"Required dependency '{dependency.FullName}' for generated RPC service " +
+                    $"'{service.ImplementationName}' is not registered.");
             }
         }
     }
 
-    private static IRpcStub ResolveStub(Type serviceType, Type contractType)
+    private static void ValidateManifest(ISharpLinkGeneratedAssemblyManifest manifest)
     {
-        if (GeneratedStubRegistry.TryCreate(serviceType, out var serviceStub) && serviceStub is not null)
-            return serviceStub;
-        if (GeneratedStubRegistry.TryCreateContract(contractType, out var contractStub) && contractStub is not null)
-            return contractStub;
-        throw new InvalidOperationException(
-            $"Generated stub for service '{serviceType.FullName}' and contract '{contractType.FullName}' is not registered.");
+        if (manifest.ApiVersion != SharpLinkGeneratedManifestVersions.Api ||
+            manifest.ProtocolVersion != SharpLinkGeneratedManifestVersions.Protocol)
+        {
+            throw new InvalidOperationException(
+                $"Generated manifest '{manifest.OwnerAssembly.FullName}' is incompatible: " +
+                $"API={manifest.ApiVersion}, Protocol={manifest.ProtocolVersion}, Generator={manifest.GeneratorVersion}.");
+        }
     }
 
-    private static void ValidateLifetime(ServiceLifetime lifetime)
+    private static InvalidOperationException CreateBuildConflict(
+        string kind,
+        SharpLinkGeneratedContractDescriptor incoming,
+        ISharpLinkGeneratedAssemblyManifest incomingManifest,
+        SharpLinkGeneratedContractDescriptor existing,
+        ISharpLinkGeneratedAssemblyManifest existingManifest)
+        => new(
+            $"{kind} conflict for '{incoming.ContractName}' ({incoming.ContractId}). " +
+            $"Incoming Assembly='{incomingManifest.OwnerAssembly.FullName}', " +
+            $"ALC='{SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(incomingManifest.OwnerAssembly)}', " +
+            $"Fingerprint='{incoming.Fingerprint}'; Existing Assembly='{existingManifest.OwnerAssembly.FullName}', " +
+            $"ALC='{SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(existingManifest.OwnerAssembly)}', " +
+            $"Fingerprint='{existing.Fingerprint}'.");
+
+    private static InvalidOperationException CreateBuildConflict(
+        string kind,
+        SharpLinkGeneratedServiceDescriptor incoming,
+        ISharpLinkGeneratedAssemblyManifest incomingManifest,
+        SharpLinkGeneratedServiceDescriptor existing,
+        ISharpLinkGeneratedAssemblyManifest existingManifest)
+        => new(
+            $"{kind} conflict for '{incoming.ContractName}' ({incoming.ContractId}). " +
+            $"Incoming Service='{incoming.ImplementationName}', Assembly='{incomingManifest.OwnerAssembly.FullName}', " +
+            $"ALC='{SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(incomingManifest.OwnerAssembly)}', " +
+            $"Fingerprint='{incoming.Fingerprint}'; Existing Service='{existing.ImplementationName}', " +
+            $"Assembly='{existingManifest.OwnerAssembly.FullName}', " +
+            $"ALC='{SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(existingManifest.OwnerAssembly)}', " +
+            $"Fingerprint='{existing.Fingerprint}'.");
+
+    private static void ValidateLifetime(SharpLinkServiceLifetime lifetime)
     {
-        if (lifetime is not ServiceLifetime.Singleton and
-            not ServiceLifetime.Scoped and
-            not ServiceLifetime.Transient)
+        if (lifetime is not SharpLinkServiceLifetime.Singleton and
+            not SharpLinkServiceLifetime.Connection and
+            not SharpLinkServiceLifetime.Call)
         {
             throw new ArgumentOutOfRangeException(nameof(lifetime));
         }
     }
+
+    private sealed record ReplacementServiceDefinition(
+        object? Instance,
+        Func<IServiceProvider, object>? Factory,
+        SharpLinkServiceLifetime Lifetime,
+        bool CallerOwned);
 
 }

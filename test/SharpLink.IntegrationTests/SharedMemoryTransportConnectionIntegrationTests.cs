@@ -765,7 +765,6 @@ public class SharedMemoryTransportConnectionIntegrationTests
         var name = $"sharplink-shm-auth-{Guid.NewGuid():N}";
         using var serverCts = new CancellationTokenSource();
         var server = SharpLinkServerBuilder.Create()
-            .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
             .UseSharedMemory(name)
             .UseSerializer(MemoryPackCodec.Resolver)
             .UseAuthenticator(SharpLinkAuthenticator.CreateServer((request, _) =>
@@ -1208,7 +1207,6 @@ public class SharedMemoryTransportConnectionIntegrationTests
         {
             var cts = new CancellationTokenSource();
             var server = SharpLinkServerBuilder.Create()
-                .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
                 .UseSharedMemory(name, options =>
                 {
                     options.CapacityPerDirectionBytes = 64 * 1024;

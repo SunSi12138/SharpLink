@@ -4,6 +4,7 @@ internal sealed partial class SharpLinkServer
 {
     private ValueTask InvokeServiceAsync(
         ServiceRegistration registration,
+        ServerConnectionState connection,
         IRpcSession session,
         long methodId,
         long requestId,
@@ -15,7 +16,10 @@ internal sealed partial class SharpLinkServer
         ValueTask<ServiceLease> acquisition;
         try
         {
-            acquisition = registration.AcquireAsync();
+            var descriptor = GetMethodDescriptor(registration.Stub, methodId);
+            var isStream = descriptor.Kind is RpcMethodKind.ClientStreaming or
+                RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
+            acquisition = registration.AcquireAsync(connection, isStream);
         }
         catch (Exception exception)
         {
@@ -377,7 +381,7 @@ internal sealed partial class SharpLinkServer
         if (SharpLinkCallContext.Current is SharpLinkServerInvocationContext context)
             return MapServiceException(exception, context);
         if (SharpLinkCallContext.Current is { } callContext &&
-            services.TryGetValue(contractId, out var serviceInfo))
+            Volatile.Read(ref _services).TryGetValue(contractId, out var serviceInfo))
         {
             return MapServiceException(
                 exception,
