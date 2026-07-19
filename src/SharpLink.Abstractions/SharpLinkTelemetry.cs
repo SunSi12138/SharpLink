@@ -49,6 +49,28 @@ public static class SharpLinkTelemetry
         Meter.CreateCounter<long>("sharplink.responses.late_dropped", unit: "{response}");
     private static readonly Counter<long> ForcedStopCalls =
         Meter.CreateCounter<long>("sharplink.server.stop.unfinished_calls", unit: "{call}");
+    private static readonly Counter<long> SharedMemoryConnections =
+        Meter.CreateCounter<long>("sharplink.shared_memory.connections", unit: "{connection}");
+    private static readonly Counter<long> SharedMemorySpillBytes =
+        Meter.CreateCounter<long>("sharplink.shared_memory.spill.bytes", unit: "By");
+    private static readonly Counter<long> SharedMemoryDirectWriteBytes =
+        Meter.CreateCounter<long>("sharplink.shared_memory.direct_write.bytes", unit: "By");
+    private static readonly Counter<long> SharedMemorySpillCopyBytes =
+        Meter.CreateCounter<long>("sharplink.shared_memory.spill.copy.bytes", unit: "By");
+    private static readonly Counter<long> SharedMemoryStagingBytes =
+        Meter.CreateCounter<long>("sharplink.shared_memory.staging.bytes", unit: "By");
+    private static readonly Counter<long> SharedMemoryStagingCopyBytes =
+        Meter.CreateCounter<long>("sharplink.shared_memory.staging.copy.bytes", unit: "By");
+    private static readonly Counter<long> SharedMemoryWaits =
+        Meter.CreateCounter<long>("sharplink.shared_memory.waits", unit: "{wait}");
+    private static readonly Counter<long> SharedMemoryNotificationRequests =
+        Meter.CreateCounter<long>("sharplink.shared_memory.notification.requests", unit: "{notification}");
+    private static readonly Counter<long> SharedMemoryNotificationCoalesced =
+        Meter.CreateCounter<long>("sharplink.shared_memory.notification.coalesced", unit: "{notification}");
+    private static readonly Counter<long> SharedMemoryNotifications =
+        Meter.CreateCounter<long>("sharplink.shared_memory.notifications", unit: "{notification}");
+    private static readonly Counter<long> SharedMemoryCursorRefreshes =
+        Meter.CreateCounter<long>("sharplink.shared_memory.cursor.refreshes", unit: "{refresh}");
 
     internal static CallScope StartClientCall(RpcMethodDescriptor method)
         => StartCall(ClientActivitySource, ActivityKind.Client, "client", method, requestId: 0);
@@ -84,6 +106,58 @@ public static class SharpLinkTelemetry
     internal static void RecordLateResponseDropped(string side)
         => Record(LateDroppedResponses, 1, side);
     internal static void RecordForcedStopCalls(long count) => RecordPositive(ForcedStopCalls, count);
+    internal static void RecordSharedMemoryConnection(string side, int capacity)
+    {
+        if (!SharedMemoryConnections.Enabled)
+            return;
+        SharedMemoryConnections.Add(
+            1,
+            new KeyValuePair<string, object?>("rpc.side", side),
+            new KeyValuePair<string, object?>("sharplink.shared_memory.capacity", capacity),
+            new KeyValuePair<string, object?>("sharplink.shared_memory.notification_backend", "named-pipe-control"));
+    }
+    internal static void RecordSharedMemoryDirectWriteBytes(long bytes)
+        => RecordPositive(SharedMemoryDirectWriteBytes, bytes);
+    internal static void RecordSharedMemorySpillBytes(long bytes, string reason)
+    {
+        if (bytes <= 0 || !SharedMemorySpillBytes.Enabled)
+            return;
+        SharedMemorySpillBytes.Add(
+            bytes,
+            new KeyValuePair<string, object?>("sharplink.shared_memory.spill_reason", reason));
+    }
+    internal static void RecordSharedMemorySpillCopyBytes(long bytes)
+        => RecordPositive(SharedMemorySpillCopyBytes, bytes);
+    internal static void RecordSharedMemoryStagingBytes(long bytes)
+        => RecordPositive(SharedMemoryStagingBytes, bytes);
+    internal static void RecordSharedMemoryStagingCopyBytes(long bytes)
+        => RecordPositive(SharedMemoryStagingCopyBytes, bytes);
+    internal static void RecordSharedMemoryWait(string kind)
+    {
+        if (SharedMemoryWaits.Enabled)
+            SharedMemoryWaits.Add(1, new KeyValuePair<string, object?>("sharplink.shared_memory.wait_kind", kind));
+    }
+    internal static void RecordSharedMemoryNotificationRequest(string kind)
+        => RecordSharedMemoryNotificationMetric(SharedMemoryNotificationRequests, kind);
+    internal static void RecordSharedMemoryNotificationCoalesced(string kind)
+        => RecordSharedMemoryNotificationMetric(SharedMemoryNotificationCoalesced, kind);
+    internal static void RecordSharedMemoryNotification(string kind)
+        => RecordSharedMemoryNotificationMetric(SharedMemoryNotifications, kind);
+    internal static void RecordSharedMemoryCursorRefresh(string kind)
+    {
+        if (SharedMemoryCursorRefreshes.Enabled)
+            SharedMemoryCursorRefreshes.Add(
+                1,
+                new KeyValuePair<string, object?>("sharplink.shared_memory.cursor_kind", kind));
+    }
+
+    private static void RecordSharedMemoryNotificationMetric(Counter<long> instrument, string kind)
+    {
+        if (instrument.Enabled)
+            instrument.Add(
+                1,
+                new KeyValuePair<string, object?>("sharplink.shared_memory.notification_kind", kind));
+    }
 
     private static bool CallMetricsEnabled =>
         StartedCalls.Enabled || CompletedCalls.Enabled || FailedCalls.Enabled ||

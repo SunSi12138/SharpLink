@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -13,16 +14,44 @@ namespace SharpLink.AotSmoke;
 
 public static class Program
 {
-    public static async Task<int> Main()
+    public static async Task<int> Main(string[] args)
     {
+        var useSharedMemory = args.Any(static value =>
+            value.Equals("sharedmemory", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("shared-memory", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("shm", StringComparison.OrdinalIgnoreCase));
+        var sharedMemoryName = "sharplink-aot-smoke";
+        for (var index = 0; index + 1 < args.Length; index++)
+        {
+            if (args[index].Equals("--shm-name", StringComparison.OrdinalIgnoreCase))
+                sharedMemoryName = args[index + 1];
+        }
+        var role = "local";
+        for (var index = 0; index + 1 < args.Length; index++)
+        {
+            if (args[index].Equals("--role", StringComparison.OrdinalIgnoreCase))
+                role = args[index + 1].ToLowerInvariant();
+        }
+        if (role == "server")
+            return await RunServerOnlyAsync(sharedMemoryName).ConfigureAwait(false);
+        if (role == "client")
+            return await RunClientOnlyAsync(sharedMemoryName).ConfigureAwait(false);
+        if (role != "local")
+            throw new ArgumentException($"Unsupported AOT smoke role '{role}'.");
+
         var cts = new CancellationTokenSource();
         var runToken = cts.Token;
 
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .AddService<IAotService, AotService>()
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .AddService<IAotService, AotService>();
+        if (useSharedMemory)
+            serverBuilder.UseSharedMemory(sharedMemoryName);
+        else
+            serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
 
-        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        var port = useSharedMemory
+            ? 0
+            : ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
 
         var serverTask = Task.Run(async () =>
@@ -36,49 +65,18 @@ public static class Program
             }
         }, CancellationToken.None);
 
-        var client = SharpClientBuilder.Create()
-            .UseTcp(IPAddress.Loopback.ToString(), port)
-            .Build();
+        var clientBuilder = SharpClientBuilder.Create();
+        if (useSharedMemory)
+            clientBuilder.UseSharedMemory(sharedMemoryName);
+        else
+            clientBuilder.UseTcp(IPAddress.Loopback.ToString(), port);
+        var client = clientBuilder.Build();
 
         try
         {
-            await client.ConnectAsync(runToken);
+            await VerifyClientAsync(client, runToken).ConfigureAwait(false);
 
-            var health = await client.CheckHealthAsync(runToken);
-            if (health.Status != SharpLinkHealthStatus.Ready)
-                throw new Exception($"unexpected health status: {health.Status}");
-
-            var svc = client.Get<IAotService>();
-            var result = await svc.PingAsync();
-            if (result != "pong")
-                throw new Exception($"unexpected result: {result}");
-
-            var profile = new UserProfile
-            {
-                Name = "SharpLink",
-                Tags = new[] { "rpc", "aot", "smoke" },
-            };
-            var profileEcho = await svc.EchoProfileAsync(profile);
-            if (profileEcho.Name != "SharpLink" || profileEcho.Tags.Length != 3 || profileEcho.Tags[2] != "smoke")
-                throw new Exception("unexpected profile echo");
-
-            var ints = await svc.ReverseIntsAsync(new[] { 1, 2, 3, 4 });
-            if (ints.Length != 4 || ints[0] != 4 || ints[3] != 1)
-                throw new Exception("unexpected int[] echo");
-
-            var nested = await svc.EchoNestedStringsAsync(new[] { new[] { "a", "b" }, new[] { "c" } });
-            if (nested.Length != 2 || nested[0].Length != 2 || nested[1][0] != "c")
-                throw new Exception("unexpected string[][] echo");
-
-            var moved = await svc.OffsetAsync(new Point2D { X = 3, Y = 7 }, 2, -5);
-            if (moved.X != 5 || moved.Y != 2)
-                throw new Exception("unexpected struct result");
-
-            var pair = await svc.EchoPairAsync(new AotPair(7, "pair"));
-            if (pair.Number != 14 || pair.Text != "pair-ok")
-                throw new Exception("unexpected pair result");
-
-            Console.WriteLine("AOT_SMOKE_PASS");
+            Console.WriteLine($"AOT_SMOKE_PASS transport={(useSharedMemory ? "sharedmemory" : "tcp")}");
             return 0;
         }
         catch (Exception ex)
@@ -94,6 +92,87 @@ public static class Program
             await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
             cts.Dispose();
         }
+    }
+
+    private static async Task<int> RunServerOnlyAsync(string name)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using var server = SharpLinkServerBuilder.Create()
+            .AddService<IAotService, AotService>()
+            .UseSharedMemory(name)
+            .Build();
+        var runTask = server.RunAsync(timeout.Token).AsTask();
+        Console.WriteLine("AOT_SMOKE_SERVER_READY");
+        try
+        {
+            await AotService.FinalCall.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
+            await server.StopAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+            await runTask.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            Console.WriteLine("AOT_SMOKE_SERVER_PASS");
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            await Console.Error.WriteLineAsync($"AOT_SMOKE_SERVER_FAIL: {exception}");
+            return 1;
+        }
+    }
+
+    private static async Task<int> RunClientOnlyAsync(string name)
+    {
+        await using var client = SharpClientBuilder.Create()
+            .UseSharedMemory(name)
+            .Build();
+        try
+        {
+            await VerifyClientAsync(client, CancellationToken.None).ConfigureAwait(false);
+            Console.WriteLine("AOT_SMOKE_CLIENT_PASS");
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            await Console.Error.WriteLineAsync($"AOT_SMOKE_CLIENT_FAIL: {exception}");
+            return 1;
+        }
+    }
+
+    private static async Task VerifyClientAsync(ISharpLinkClient client, CancellationToken cancellationToken)
+    {
+        await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
+
+        var health = await client.CheckHealthAsync(cancellationToken).ConfigureAwait(false);
+        if (health.Status != SharpLinkHealthStatus.Ready)
+            throw new Exception($"unexpected health status: {health.Status}");
+
+        var svc = client.Get<IAotService>();
+        var result = await svc.PingAsync().ConfigureAwait(false);
+        if (result != "pong")
+            throw new Exception($"unexpected result: {result}");
+
+        var profile = new UserProfile
+        {
+            Name = "SharpLink",
+            Tags = ["rpc", "aot", "smoke"]
+        };
+        var profileEcho = await svc.EchoProfileAsync(profile).ConfigureAwait(false);
+        if (profileEcho.Name != "SharpLink" || profileEcho.Tags.Length != 3 || profileEcho.Tags[2] != "smoke")
+            throw new Exception("unexpected profile echo");
+
+        var ints = await svc.ReverseIntsAsync([1, 2, 3, 4]).ConfigureAwait(false);
+        if (ints.Length != 4 || ints[0] != 4 || ints[3] != 1)
+            throw new Exception("unexpected int[] echo");
+
+        var nested = await svc.EchoNestedStringsAsync([["a", "b"], ["c"]]).ConfigureAwait(false);
+        if (nested.Length != 2 || nested[0].Length != 2 || nested[1][0] != "c")
+            throw new Exception("unexpected string[][] echo");
+
+        var moved = await svc.OffsetAsync(new Point2D { X = 3, Y = 7 }, 2, -5).ConfigureAwait(false);
+        if (moved.X != 5 || moved.Y != 2)
+            throw new Exception("unexpected struct result");
+
+        var pair = await svc.EchoPairAsync(new AotPair(7, "pair")).ConfigureAwait(false);
+        if (pair.Number != 14 || pair.Text != "pair-ok")
+            throw new Exception("unexpected pair result");
     }
 }
 
@@ -117,6 +196,9 @@ public interface IAotService : IService
 [RpcService]
 public class AotService : IAotService
 {
+    internal static TaskCompletionSource<bool> FinalCall { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public ValueTask<string> PingAsync() => ValueTask.FromResult("pong");
 
     public ValueTask<UserProfile> EchoProfileAsync(UserProfile profile) => ValueTask.FromResult(profile);
@@ -133,7 +215,10 @@ public class AotService : IAotService
         => ValueTask.FromResult(new Point2D { X = point.X + dx, Y = point.Y + dy });
 
     public ValueTask<AotPair> EchoPairAsync(AotPair value)
-        => ValueTask.FromResult(value with { Number = value.Number * 2, Text = value.Text + "-ok" });
+    {
+        FinalCall.TrySetResult(true);
+        return ValueTask.FromResult(value with { Number = value.Number * 2, Text = value.Text + "-ok" });
+    }
 }
 
 public sealed class UserProfile

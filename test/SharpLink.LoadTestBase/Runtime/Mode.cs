@@ -12,5 +12,6 @@ public enum TransportMode
     Tcp,
     Uds,
     NamedPipe,
-    AnonymousPipe
+    AnonymousPipe,
+    SharedMemory
 }

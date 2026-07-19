@@ -416,7 +416,19 @@ internal sealed partial class SharpLinkClient
             }
             finally
             {
-                reader.AdvanceTo(buffer.Start, buffer.End);
+                try
+                {
+                    reader.AdvanceTo(buffer.Start, buffer.End);
+                }
+                catch (InvalidOperationException exception)
+                {
+                    // Transport disposal may complete the reader after ReadAsync returns but
+                    // before this iteration releases its buffer. Normalize that pipe-level
+                    // race to the connection error observed by every other close path.
+                    throw CreateConnectionClosedException(
+                        "Transport reader completed while processing a response.",
+                        exception);
+                }
             }
         }
 

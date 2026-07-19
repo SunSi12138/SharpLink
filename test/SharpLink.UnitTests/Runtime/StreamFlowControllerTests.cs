@@ -127,6 +127,21 @@ public class StreamFlowControllerTests
     }
 
     [Test]
+    public async Task UnknownWindowUpdateShouldRemainAProtocolViolation()
+    {
+        var controller = new StreamFlowController(4, 4, 1024);
+        try
+        {
+            controller.ApplyWindowUpdate(99, 1, 1);
+            throw new Exception("expected unknown stream violation");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+        }
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task RequestCancelShouldAbortAllResponseStreamsEvenAfterCallDispatchCompleted()
     {
         var controller = new StreamFlowController(4, 8, 1024, maxConcurrentStreams: 2);

@@ -18,7 +18,10 @@ public static class LoadTestTransportFactory
         int heartbeatCheckIntervalSeconds,
         int heartbeatTimeoutSeconds,
         Func<SharpLinkServerBuilder, SharpLinkServerBuilder> configure,
-        SharpLinkPerformanceProfile performanceProfile = SharpLinkPerformanceProfile.Balanced)
+        SharpLinkPerformanceProfile performanceProfile = SharpLinkPerformanceProfile.Balanced,
+        string? sharedMemoryName = null,
+        int? sharedMemoryCapacity = null,
+        int? sharedMemorySpinCount = null)
     {
         var builder = configure(SharpLinkServerBuilder.Create())
             .UseSerializer(MemoryPackCodec.Resolver)
@@ -30,6 +33,9 @@ public static class LoadTestTransportFactory
             TransportMode.Tcp => builder.UseTcp(port, bindIp).Build(),
             TransportMode.Uds => builder.UseUds(udsPath).Build(),
             TransportMode.NamedPipe => builder.UseNamedPipe(pipeName).Build(),
+            TransportMode.SharedMemory => builder.UseSharedMemory(
+                RequireSharedMemoryName(sharedMemoryName),
+                options => ConfigureSharedMemory(options, sharedMemoryCapacity, sharedMemorySpinCount)).Build(),
             TransportMode.AnonymousPipe => throw new InvalidOperationException("Anonymous pipe transport only supports --mode local."),
             _ => throw new ArgumentOutOfRangeException(nameof(transport))
         };
@@ -47,7 +53,10 @@ public static class LoadTestTransportFactory
         int maxConnections,
         SharpLinkPerformanceProfile performanceProfile = SharpLinkPerformanceProfile.Balanced,
         bool disableRequestTimeout = false,
-        TimeSpan? requestTimeout = null)
+        TimeSpan? requestTimeout = null,
+        string? sharedMemoryName = null,
+        int? sharedMemoryCapacity = null,
+        int? sharedMemorySpinCount = null)
     {
         var builder = SharpClientBuilder.Create()
             .UseSerializer(MemoryPackCodec.Resolver)
@@ -69,6 +78,9 @@ public static class LoadTestTransportFactory
             TransportMode.Tcp => builder.UseTcp(host, port).Build(),
             TransportMode.Uds => builder.UseUds(udsPath).Build(),
             TransportMode.NamedPipe => builder.UseNamedPipe(pipeName).Build(),
+            TransportMode.SharedMemory => builder.UseSharedMemory(
+                RequireSharedMemoryName(sharedMemoryName),
+                options => ConfigureSharedMemory(options, sharedMemoryCapacity, sharedMemorySpinCount)).Build(),
             TransportMode.AnonymousPipe => throw new InvalidOperationException("Anonymous pipe transport only supports --mode local."),
             _ => throw new ArgumentOutOfRangeException(nameof(transport))
         };
@@ -89,13 +101,17 @@ public static class LoadTestTransportFactory
         Func<SharpLinkServerBuilder, SharpLinkServerBuilder> configure,
         SharpLinkPerformanceProfile performanceProfile = SharpLinkPerformanceProfile.Balanced,
         bool disableRequestTimeout = false,
-        TimeSpan? requestTimeout = null)
+        TimeSpan? requestTimeout = null,
+        string? sharedMemoryName = null,
+        int? sharedMemoryCapacity = null,
+        int? sharedMemorySpinCount = null)
     {
         if (transport != TransportMode.AnonymousPipe)
         {
             var server = CreateServer(
                 transport, bindIp, port, udsPath, pipeName,
-                heartbeatCheckIntervalSeconds, heartbeatTimeoutSeconds, configure, performanceProfile);
+                heartbeatCheckIntervalSeconds, heartbeatTimeoutSeconds, configure, performanceProfile,
+                sharedMemoryName, sharedMemoryCapacity, sharedMemorySpinCount);
             var client = CreateClient(
                 transport,
                 host,
@@ -108,7 +124,10 @@ public static class LoadTestTransportFactory
                 maxConnections,
                 performanceProfile,
                 disableRequestTimeout,
-                requestTimeout);
+                requestTimeout,
+                sharedMemoryName,
+                sharedMemoryCapacity,
+                sharedMemorySpinCount);
             return new LocalHarness(server, client, static () => { });
         }
 
@@ -138,5 +157,19 @@ public static class LoadTestTransportFactory
             clientAnonymous.UseRequestTimeout(timeout);
         
         return new LocalHarness(serverAnonymous, clientAnonymous.Build(), static () => { });
+    }
+
+    private static string RequireSharedMemoryName(string? name)
+        => !string.IsNullOrWhiteSpace(name)
+            ? name
+            : throw new ArgumentException("Shared-memory transport requires a logical endpoint name.");
+
+    private static void ConfigureSharedMemory(
+        SharedMemoryTransportOptions options,
+        int? capacity,
+        int? spinCount)
+    {
+        options.CapacityPerDirectionBytes = capacity;
+        options.SpinCount = spinCount;
     }
 }

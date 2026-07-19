@@ -54,5 +54,17 @@ public static class TransportExtensions
             ArgumentException.ThrowIfNullOrWhiteSpace(outHandle);
             return builder.UseTransport(new AnonymousPipeClientTransportFactory(inHandle, outHandle));
         }
+
+        /// <summary>Uses an explicit same-user, same-machine shared-memory transport.</summary>
+        public SharpClientBuilder UseSharedMemory(
+            string name,
+            Action<SharedMemoryTransportOptions>? configure = null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(name);
+            var options = new SharedMemoryTransportOptions();
+            configure?.Invoke(options);
+            options.Validate();
+            return builder.UseTransport(new SharedMemoryClientTransportFactory(name, options));
+        }
     }
 }

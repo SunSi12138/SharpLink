@@ -237,6 +237,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             throw new InvalidOperationException("RequireAuthentication needs an ISharpLinkServerAuthenticator.");
 
         var runtimeContext = _runtimeContextBuilder.Build();
+        if (_transport is IPerformanceProfileAwareTransport profileAwareTransport)
+            profileAwareTransport.BindPerformanceProfile(runtimeContext.Options.PerformanceProfile);
         var protocolOptions = runtimeContext.Protocol;
         var serviceProvider = _serviceProvider;
         IAsyncDisposable? ownedServiceProvider = null;

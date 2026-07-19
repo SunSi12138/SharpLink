@@ -256,6 +256,7 @@ public class ServerCallCancellationStateTests
     }
 
     [Test]
+    [NotInParallel]
     public void OldSnapshotShouldNotAcquireAReusedPooledState()
     {
         var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());

@@ -7,7 +7,7 @@
 - Protocol v2 协议级取消（`ProtocolV2FrameType.Cancel`）
 - TLS/mTLS、认证、Interceptor、deadline、背压、健康检查与 OpenTelemetry
 - `Microsoft.Extensions.Hosting`、DI 生命周期、readiness 与优雅排空
-- `Socket / NamedPipe / AnonymousPipe / UDS` 传输
+- `Socket / NamedPipe / AnonymousPipe / UDS` 传输，以及实验性的同用户共享内存传输
 - 内置基础编解码器，并可接入 `MemoryPack` 作为复杂类型回退序列化器
 
 ## 项目结构
@@ -131,6 +131,36 @@ var client = SharpClientBuilder.Create()
 | UDS | 不承诺 | 支持 | 支持 | 本机 |
 | NamedPipe | 支持 | 支持（映射到 UDS） | 支持（映射到 UDS） | 本机 |
 | AnonymousPipe | 支持 | 支持 | 支持 | 本机协同进程 |
+| SharedMemory（实验） | CI 目标，待门禁 | CI 目标，待门禁 | arm64 本机已验证 | 同机、同一用户 |
+
+### 实验性共享内存传输
+
+共享内存传输必须在 Client 与 Server 两端显式选择；创建、映射或握手失败会直接报错，绝不静默降级到其他传输。它只允许同机、同一操作系统用户的进程连接，数据通过每连接双向 SPSC 环传输，命名管道只承载握手、合并唤醒、关闭和存活信号。
+
+```csharp
+var server = SharpLinkServerBuilder.Create()
+    .UseSharedMemory("orders", options =>
+    {
+        options.CapacityPerDirectionBytes = 8 * 1024 * 1024;
+        options.SpinCount = 8;
+        options.HandshakeTimeout = TimeSpan.FromSeconds(10);
+    })
+    .Build();
+
+var client = SharpClientBuilder.Create()
+    .UseSharedMemory("orders")
+    .Build();
+```
+
+容量必须是 64 KiB–256 MiB 的 2 的幂；双方不一致时取较小值。显式配置优先于运行时 profile，默认值如下：
+
+| Profile | 每方向容量 | SpinCount |
+| --- | ---: | ---: |
+| LowLatency | 1 MiB | 64 |
+| Balanced | 8 MiB | 8 |
+| Throughput | 32 MiB | 0 |
+
+该传输不提供 TLS；同用户隔离依赖命名管道权限、用户私有映射目录、随机 nonce 和映射头校验。SharpLink RPC 认证、授权、deadline、流控和心跳照常生效。普通日志和性能报告不会记录映射路径、nonce 或 payload。正式支持状态以三平台 JIT/NativeAOT、性能与 24 小时 Chaos 门禁为准，当前实验结论见 [`doc/shared-memory-experiment.md`](doc/shared-memory-experiment.md)。
 
 正式 NuGet 包中，`SharpLink.Sdk` 会携带 `SharpLink.Generator` Analyzer。通过 NuGet 使用时只需引用 SDK，无需再手工添加 Generator DLL 或 Analyzer 项目引用。
 
@@ -215,7 +245,7 @@ var client = SharpClientBuilder.Create()
     .Build();
 ```
 
-UDS、NamedPipe 与 AnonymousPipe 默认依赖操作系统权限，不叠加 TLS。TLS 建立日志只记录协商协议与 cipher suite，不记录证书私钥、token 或 payload。
+UDS、NamedPipe、AnonymousPipe 与 SharedMemory 默认依赖操作系统权限，不叠加 TLS。TLS 建立日志只记录协商协议与 cipher suite，不记录证书私钥、token 或 payload。
 
 契约方法可以在尾部声明一个 `SharpLinkCallOptions`，并可在其后再声明一个 `CancellationToken`。控制参数不会进入业务 payload：
 

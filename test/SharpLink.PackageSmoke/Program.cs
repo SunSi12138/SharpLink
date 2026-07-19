@@ -38,23 +38,39 @@ public static class Program
 {
     public static async Task Main()
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await RunTransportSmokeAsync(useSharedMemory: false, timeout.Token);
+        await RunTransportSmokeAsync(useSharedMemory: true, timeout.Token);
+    }
+
+    private static async Task RunTransportSmokeAsync(
+        bool useSharedMemory,
+        CancellationToken cancellationToken)
+    {
+        var sharedMemoryName = $"sharplink-package-smoke-{Guid.NewGuid():N}";
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .AddService<IPackageSmokeService, PackageSmokeService>()
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .AddService<IPackageSmokeService, PackageSmokeService>();
+        if (useSharedMemory)
+            serverBuilder.UseSharedMemory(sharedMemoryName);
+        else
+            serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
 
-        var localEndPoint = serverBuilder.Transport!.LocalEndPoint as IPEndPoint
-            ?? throw new InvalidOperationException("Package smoke server did not expose its TCP endpoint.");
+        var localEndPoint = serverBuilder.Transport!.LocalEndPoint as IPEndPoint;
+        if (!useSharedMemory && localEndPoint is null)
+            throw new InvalidOperationException("Package smoke server did not expose its TCP endpoint.");
         var server = serverBuilder.Build();
-        var serverTask = RunServerAsync(server, timeout.Token);
+        var serverTask = RunServerAsync(server, cancellationToken);
 
-        var client = SharpClientBuilder.Create()
-            .UseTcp(IPAddress.Loopback.ToString(), localEndPoint.Port)
-            .Build();
+        var clientBuilder = SharpClientBuilder.Create();
+        if (useSharedMemory)
+            clientBuilder.UseSharedMemory(sharedMemoryName);
+        else
+            clientBuilder.UseTcp(IPAddress.Loopback.ToString(), localEndPoint!.Port);
+        var client = clientBuilder.Build();
 
         try
         {
-            await client.ConnectAsync(timeout.Token);
+            await client.ConnectAsync(cancellationToken);
 
             var proxy = client.Get<IPackageSmokeService>();
             var result = await proxy.AddAsync(20, 22);

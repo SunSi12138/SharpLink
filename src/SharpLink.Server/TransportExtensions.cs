@@ -63,5 +63,17 @@ public static class TransportExtensions
             return builder.UseTransport(new AnonymousPipeServerTransportListener());
         }
 
+        /// <summary>Uses an explicit same-user, same-machine shared-memory transport.</summary>
+        public SharpLinkServerBuilder UseSharedMemory(
+            string name,
+            Action<SharedMemoryTransportOptions>? configure = null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(name);
+            var options = new SharedMemoryTransportOptions();
+            configure?.Invoke(options);
+            options.Validate();
+            return builder.UseTransport(new SharedMemoryServerTransportListener(name, options));
+        }
+
     }
 }

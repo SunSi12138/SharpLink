@@ -12,7 +12,7 @@
 ## 目标
 
 - 支持 `local | server | client`
-- 支持 `tcp | uds | namedpipe | anonymous`
+- 支持 `tcp | uds | namedpipe | anonymous | sharedmemory`
 - 支持并发阶梯压测与统计输出
 - `LoadTest` 支持 Prometheus 指标导出
 
@@ -70,6 +70,16 @@ dotnet run -c Release --project test/SharpLink.LoadTest -- --mode local --transp
 dotnet run -c Release --project test/SharpLink.StreamLoadTest -- --mode local --transport anonymous
 ```
 
+6. 共享内存（同机同用户）
+
+```bash
+dotnet run -c Release --project test/SharpLink.LoadTest -- \
+  --mode local --transport sharedmemory --profile throughput \
+  --shm-name sharplink-loadtest --shm-capacity 33554432 --shm-spin-count 0
+dotnet run -c Release --project test/SharpLink.StreamLoadTest -- \
+  --mode local --transport sharedmemory --operation all
+```
+
 ## 异机模式（TCP）
 
 1. 机器 A（server）
@@ -105,12 +115,16 @@ dotnet run -c Release --project test/SharpLink.LoadTest -- \
 通用参数（两者都有）：
 
 - `--mode`: `local | server | client`
-- `--transport`: `tcp | uds | namedpipe | anonymous`
+- `--transport`: `tcp | uds | namedpipe | anonymous | sharedmemory`
 - `--host`: client 目标地址（默认 `127.0.0.1`）
 - `--bind-ip`: server 监听地址（默认 `0.0.0.0`）
 - `--port`: TCP 端口（`LoadTest=19100`，`StreamLoadTest=19150`）
 - `--uds-path`: UDS 路径（可覆盖默认值）
 - `--pipe-name`: 命名管道名（可覆盖默认值）
+- `--shm-name`: 共享内存逻辑端点名
+- `--shm-capacity`: 可选的每方向容量（64 KiB–256 MiB、2 的幂）
+- `--shm-spin-count`: 可选的本端自旋次数（0–4096）
+- `--detailed-shm-evidence`: 启用共享内存热路径诊断计数；仅用于正确性与瓶颈定位，不得用于正式计时
 - `--concurrency`: 并发列表，逗号分隔
 - `--warmup`: 预热秒数
 - `--duration`: 正式压测秒数
@@ -120,7 +134,7 @@ dotnet run -c Release --project test/SharpLink.LoadTest -- \
 - `--min-connections`: Client 初始连接数（默认 `1`）
 - `--max-connections`: Client 压力扩容上限（默认 `1`，范围 `1..64`）
 
-`anonymous` 传输的 `--max-connections` 必须为 `1`。验证连接池时可在 TCP/UDS/NamedPipe 模式增加 `--min-connections 1 --max-connections 4`；最终实际连接数仍由并发压力触发，不会按每次 RPC 新建连接。
+`anonymous` 传输的 `--max-connections` 必须为 `1`。验证连接池时可在 TCP/UDS/NamedPipe/SharedMemory 模式增加 `--min-connections 1 --max-connections 4`；最终实际连接数仍由并发压力触发，不会按每次 RPC 新建连接。
 
 LoadTest 专有：
 
@@ -153,6 +167,13 @@ StreamLoadTest 专有：
 - `avg / max`
 - `dur`
 - `Failures`（异常 TopN）
+- JSON evidence 中的 CPU、allocated bytes、Gen0/1/2 GC
+- SharedMemory 模式默认记录 negotiated capacity、notification backend、spill/wait/实际 notification 计数
+- 使用 `--detailed-shm-evidence` 时，额外记录直接写入、spill 原因与复制、staging、通知请求/合并及游标刷新；这些高频观测会扰动热路径，只能作为诊断证据
+
+`eng/run-performance-matrix.sh` 的 full tier 覆盖全部适用本机传输、三个 profile、payload `0/32/256/4096/65536/1048576`、并发 `1/8/32/128`、连接池 `1/1` 与 `1/4`。默认执行五轮，偶数轮反转传输顺序；原始 JSON 写入 `artifacts/perf`。SharedMemory 的正式基线必须取同平台 TCP、UDS、NamedPipe、AnonymousPipe 中最快的适用传输，不能只与 TCP 比较。NativeAOT 独立进程 smoke 使用 `eng/run-shared-memory-aot-process-smoke.sh`。
+
+运行矩阵或 trace 前必须确认同机没有其他 LoadTest、StreamLoadTest、Chaos 或诊断采集进程。存在资源竞争时，整批吞吐、延迟、分配和 trace 均标记无效并从头重跑；错误数与资源归零仍可单独作为正确性线索，但不得转化为性能结论。
 
 `LoadTest` 额外输出：
 

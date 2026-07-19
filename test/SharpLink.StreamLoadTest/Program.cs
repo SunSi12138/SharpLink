@@ -16,6 +16,8 @@ namespace SharpLink.StreamLoadTest;
 
 public static class Program
 {
+    private static PerformanceEvidenceCollector? s_evidenceCollector;
+
     public static async Task Main(string[] args)
     {
         if (args.Any(static x => x is "--help" or "-h"))
@@ -25,6 +27,8 @@ public static class Program
         }
 
         var options = StreamLoadOptions.Parse(args);
+        using var evidenceCollector = new PerformanceEvidenceCollector(options.DetailedSharedMemoryEvidence);
+        s_evidenceCollector = evidenceCollector;
         PrintConfig(options);
 
         switch (options.Mode)
@@ -45,7 +49,7 @@ public static class Program
     {
         Console.WriteLine("SharpLink.StreamLoadTest options:");
         Console.WriteLine("  --mode local|server|client");
-        Console.WriteLine("  --transport tcp|uds|namedpipe|anonymous");
+        Console.WriteLine("  --transport tcp|uds|namedpipe|anonymous|sharedmemory");
         Console.WriteLine("  --host 127.0.0.1 --bind-ip 0.0.0.0 --port 19150");
         Console.WriteLine("  --duration 20 --warmup 5 --concurrency 1,2,4,8,16");
         Console.WriteLine("  --operation all|unary|c2s|s2c|duplex");
@@ -53,12 +57,15 @@ public static class Program
         Console.WriteLine("  --consumer-delay-ms 0 --early-break-after 0 --pause-after 0 --pause-ms 0");
         Console.WriteLine("  --min-connections 1 --max-connections 1");
         Console.WriteLine("  --profile balanced|lowlatency|throughput");
+        Console.WriteLine("  --shm-name sharplink-stream-loadtest --shm-capacity 8388608 --shm-spin-count 8");
+        Console.WriteLine("  --detailed-shm-evidence (diagnostic counters; do not use for formal timing)");
         Console.WriteLine("  --json-output artifacts/perf/stream.json");
         Console.WriteLine("  --heartbeat-interval 10 --heartbeat-check-interval 10 --heartbeat-timeout 120");
         Console.WriteLine();
         Console.WriteLine("Examples:");
         Console.WriteLine("  dotnet run --project test/SharpLink.StreamLoadTest -- --mode local --transport tcp --operation all --concurrency 1,4,16 --stream-size 512");
         Console.WriteLine("  dotnet run --project test/SharpLink.StreamLoadTest -- --mode local --transport namedpipe --operation duplex");
+        Console.WriteLine("  dotnet run --project test/SharpLink.StreamLoadTest -- --mode local --transport sharedmemory --operation duplex");
         Console.WriteLine("  dotnet run --project test/SharpLink.StreamLoadTest -- --mode server --transport tcp --port 19150");
         Console.WriteLine("  dotnet run --project test/SharpLink.StreamLoadTest -- --mode client --transport tcp --host 127.0.0.1 --port 19150 --operation duplex");
     }
@@ -78,6 +85,8 @@ public static class Program
             Console.WriteLine($"[Config] uds://{options.UdsPath}");
         else if (options.Transport == TransportMode.NamedPipe)
             Console.WriteLine($"[Config] pipe://{options.PipeName}");
+        else if (options.Transport == TransportMode.SharedMemory)
+            Console.WriteLine($"[Config] shm://{options.SharedMemoryName} capacity={options.SharedMemoryCapacity?.ToString() ?? "profile"} spin={options.SharedMemorySpinCount?.ToString() ?? "profile"}");
         else
             Console.WriteLine("[Config] anonymous-pipe(local only)");
     }
@@ -97,7 +106,10 @@ public static class Program
             options.MinConnections,
             options.MaxConnections,
             static builder => builder.AddService<IStreamLoadService, StreamLoadService>(),
-            options.PerformanceProfile);
+            options.PerformanceProfile,
+            sharedMemoryName: options.SharedMemoryName,
+            sharedMemoryCapacity: options.SharedMemoryCapacity,
+            sharedMemorySpinCount: options.SharedMemorySpinCount);
 
         using var serverCts = new CancellationTokenSource();
         var serverTask = RunServerLoopAsync(harness.Server, serverCts.Token);
@@ -124,6 +136,11 @@ public static class Program
         catch (OperationCanceledException)
         {
         }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine($"[ServerFailure] {exception}");
+            throw;
+        }
     }
 
     private static async Task RunServerOnlyAsync(StreamLoadOptions options)
@@ -141,7 +158,10 @@ public static class Program
             options.HeartbeatCheckIntervalSeconds,
             options.HeartbeatTimeoutSeconds,
             static builder => builder.AddService<IStreamLoadService, StreamLoadService>(),
-            options.PerformanceProfile);
+            options.PerformanceProfile,
+            options.SharedMemoryName,
+            options.SharedMemoryCapacity,
+            options.SharedMemorySpinCount);
 
         Console.WriteLine("[Server] started");
         await server.RunAsync(cancel.Token);
@@ -162,7 +182,10 @@ public static class Program
             options.HeartbeatTimeoutSeconds,
             options.MinConnections,
             options.MaxConnections,
-            options.PerformanceProfile);
+            options.PerformanceProfile,
+            sharedMemoryName: options.SharedMemoryName,
+            sharedMemoryCapacity: options.SharedMemoryCapacity,
+            sharedMemorySpinCount: options.SharedMemorySpinCount);
 
         try
         {
@@ -222,6 +245,7 @@ public static class Program
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(durationSeconds));
         var token = cts.Token;
         var timer = Stopwatch.StartNew();
+        var evidenceBefore = s_evidenceCollector!.Capture();
         var workers = new Task[concurrency];
 
         for (var i = 0; i < concurrency; i++)
@@ -255,6 +279,9 @@ public static class Program
         var elapsed = Math.Max(0.001, timer.Elapsed.TotalSeconds);
         var total = success + failure;
         var errRate = total == 0 ? 0 : failure * 100.0 / total;
+        var evidence = PerformanceEvidenceCollector.Delta(
+            evidenceBefore,
+            s_evidenceCollector.Capture());
         return new StageResult(
             operation,
             concurrency,
@@ -268,7 +295,8 @@ public static class Program
             histogram.Max,
             elapsed,
             errRate,
-            failures.Top(3));
+            failures.Top(3),
+            evidence);
     }
 
     private static async Task InvokeOperationAsync(
@@ -339,6 +367,10 @@ public sealed class StreamLoadOptions
     public int Port { get; private init; } = 19150;
     public string UdsPath { get; private init; } = TransportDefaults.GetDefaultUdsPath("sl_stream_loadtest");
     public string PipeName { get; private init; } = TransportDefaults.GetDefaultPipeName("sharplink-stream-loadtest");
+    public string SharedMemoryName { get; private init; } = TransportDefaults.GetDefaultSharedMemoryName("sharplink-stream-loadtest");
+    public int? SharedMemoryCapacity { get; private init; }
+    public int? SharedMemorySpinCount { get; private init; }
+    public bool DetailedSharedMemoryEvidence { get; private init; }
     public int DurationSeconds { get; private init; } = 20;
     public int WarmupSeconds { get; private init; } = 5;
     public int[] ConcurrencyConfig { get; private init; } = [1, 2, 4, 8, 16];
@@ -398,6 +430,16 @@ public sealed class StreamLoadOptions
         }.Validate();
         if (transport == TransportMode.AnonymousPipe && maxConnections != 1)
             throw new ArgumentException("Anonymous-pipe load tests require --max-connections 1.");
+        var sharedMemoryCapacity = ParseOptionalInt(map, "shm-capacity");
+        var sharedMemorySpinCount = ParseOptionalInt(map, "shm-spin-count");
+        if (transport == TransportMode.SharedMemory)
+        {
+            new SharedMemoryTransportOptions
+            {
+                CapacityPerDirectionBytes = sharedMemoryCapacity,
+                SpinCount = sharedMemorySpinCount
+            }.Validate();
+        }
 
         var profileText = map.GetValueOrDefault("profile", "balanced");
         var profile = profileText.ToLowerInvariant() switch
@@ -417,6 +459,11 @@ public sealed class StreamLoadOptions
             Port = int.Parse(map.GetValueOrDefault("port", "19150")),
             UdsPath = map.GetValueOrDefault("uds-path", TransportDefaults.GetDefaultUdsPath("sl_stream_loadtest")),
             PipeName = map.GetValueOrDefault("pipe-name", TransportDefaults.GetDefaultPipeName("sharplink-stream-loadtest")),
+            SharedMemoryName = map.GetValueOrDefault("shm-name", TransportDefaults.GetDefaultSharedMemoryName("sharplink-stream-loadtest")),
+            SharedMemoryCapacity = sharedMemoryCapacity,
+            SharedMemorySpinCount = sharedMemorySpinCount,
+            DetailedSharedMemoryEvidence = map.TryGetValue("detailed-shm-evidence", out var detailedEvidence) &&
+                                           bool.Parse(detailedEvidence),
             DurationSeconds = int.Parse(map.GetValueOrDefault("duration", "20")),
             WarmupSeconds = int.Parse(map.GetValueOrDefault("warmup", "5")),
             ConcurrencyConfig = concurrencyConfig.Length == 0 ? [1] : concurrencyConfig,
@@ -441,6 +488,9 @@ public sealed class StreamLoadOptions
         var value = int.Parse(map.GetValueOrDefault(key, "0"));
         return value >= 0 ? value : throw new ArgumentOutOfRangeException(key);
     }
+
+    private static int? ParseOptionalInt(Dictionary<string, string> map, string key)
+        => map.TryGetValue(key, out var value) ? int.Parse(value) : null;
 }
 
 public sealed record StageResult(
@@ -456,7 +506,8 @@ public sealed record StageResult(
     double MaxUs,
     double ElapsedSeconds,
     double ErrorRatePercent,
-    string TopFailures);
+    string TopFailures,
+    PerformanceStageEvidence Evidence);
 
 [JsonSourceGenerationOptions(
     WriteIndented = true,
