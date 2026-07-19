@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using System.IO.Pipes;
+using System.Security.Cryptography;
 using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
@@ -185,6 +186,43 @@ public class SharedMemoryControlChannelTests
         await client.FlushAsync();
         while (Volatile.Read(ref dataWaiters) != 2 || Volatile.Read(ref spaceWaiters) != 2)
             await Task.Delay(10, timeout.Token);
+    }
+
+    [Test]
+    public async Task WaiterArmHintsShouldTolerateTransientCursorSnapshots()
+    {
+        var nonce = RandomNumberGenerator.GetBytes(SharedMemoryLayout.NonceBytes);
+        await using var mapping = SharedMemoryMapping.CreateServer(64 * 1024, nonce, out _);
+        var direction = SharedMemoryLayout.GetDirection(mapping, clientToServer: true);
+        direction.PublishReadPosition(1);
+        direction.PublishWritePosition(0);
+
+        var pipeName = $"sc{Guid.NewGuid():N}"[..20];
+        await using var server = new NamedPipeServerStream(
+            pipeName,
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        await using var client = new NamedPipeClientStream(
+            ".",
+            pipeName,
+            PipeDirection.InOut,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+
+        var accept = server.WaitForConnectionAsync();
+        await client.ConnectAsync();
+        await accept;
+        await using var control = new SharedMemoryControlChannel(server);
+        var reader = new SharedMemoryPipeReader(direction, control, spinCount: 0);
+        var writer = new SharedMemoryPipeWriter(direction, control, spinCount: 0);
+
+        writer.OnPeerReaderArmed();
+        reader.OnPeerWriterArmed();
+
+        await Assert.That(control.IsClosed).IsFalse();
+        writer.Complete();
+        reader.Complete();
     }
 
     [Test]

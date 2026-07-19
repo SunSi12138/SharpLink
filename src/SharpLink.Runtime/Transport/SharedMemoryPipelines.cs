@@ -336,9 +336,14 @@ internal sealed class SharedMemoryPipeReader : PipeReader
             return;
 
         Interlocked.Exchange(ref _peerWriterArmed, 1);
-        var readPosition = Volatile.Read(ref _readPosition);
+        // This callback runs on the control-channel reader, concurrently with the
+        // pipe consumer. A pair of cursor snapshots can therefore be transiently
+        // inconsistent. Only decide whether a wake might help here; the pipe hot
+        // path performs the authoritative bounded-cursor validation.
         var writePosition = _direction.ReadWritePosition();
-        if (_direction.GetAvailableBytes(writePosition, readPosition) < _direction.Capacity &&
+        var readPosition = _direction.ReadReadPosition();
+        var available = unchecked((ulong)(writePosition - readPosition));
+        if (available != (ulong)_direction.Capacity &&
             Interlocked.Exchange(ref _peerWriterArmed, 0) != 0)
         {
             _control.SignalSpaceAvailable();
@@ -854,9 +859,13 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
             return;
 
         Interlocked.Exchange(ref _peerReaderArmed, 1);
-        var writePosition = Volatile.Read(ref _publishedWritePosition);
+        // Read the peer-owned cursor first and the published cursor second. A
+        // concurrent advance may produce a false-positive wake, which is safe;
+        // it must not turn a notification hint into a connection-fatal layout
+        // validation failure.
         var readPosition = _direction.ReadReadPosition();
-        if (_direction.GetAvailableBytes(writePosition, readPosition) != 0 &&
+        var writePosition = _direction.ReadWritePosition();
+        if (writePosition != readPosition &&
             Interlocked.Exchange(ref _peerReaderArmed, 0) != 0)
         {
             _control.SignalDataAvailable();
