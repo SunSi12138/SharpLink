@@ -336,6 +336,11 @@ internal sealed class SharedMemoryPipeReader : PipeReader
             return;
 
         Interlocked.Exchange(ref _peerWriterArmed, 1);
+        if (!_direction.IsWriterWaiting)
+        {
+            Interlocked.Exchange(ref _peerWriterArmed, 0);
+            return;
+        }
         // This callback runs on the control-channel reader, concurrently with the
         // pipe consumer. A pair of cursor snapshots can therefore be transiently
         // inconsistent. Only decide whether a wake might help here; the pipe hot
@@ -859,6 +864,11 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
             return;
 
         Interlocked.Exchange(ref _peerReaderArmed, 1);
+        if (!_direction.IsReaderWaiting)
+        {
+            Interlocked.Exchange(ref _peerReaderArmed, 0);
+            return;
+        }
         // Read the peer-owned cursor first and the published cursor second. A
         // concurrent advance may produce a false-positive wake, which is safe;
         // it must not turn a notification hint into a connection-fatal layout

@@ -135,16 +135,42 @@ public class SharedMemoryControlChannelTests
         await using var control = new SharedMemoryControlChannel(server);
 
         const int signalCount = 10_000;
-        for (var index = 0; index < signalCount; index++)
-            control.SignalDataAvailable();
+        using var drainCancellation = new CancellationTokenSource();
+        var drainTask = DrainControlSignalsAsync(client, drainCancellation.Token);
+        try
+        {
+            for (var index = 0; index < signalCount; index++)
+                control.SignalDataAvailable();
 
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        while (Volatile.Read(ref notifications) + Volatile.Read(ref coalesced) != signalCount)
-            await Task.Delay(10, timeout.Token);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (Volatile.Read(ref notifications) + Volatile.Read(ref coalesced) < signalCount)
+                await Task.Delay(10, timeout.Token);
 
-        await Assert.That(Volatile.Read(ref requests)).IsEqualTo(signalCount);
-        await Assert.That(Volatile.Read(ref coalesced)).IsGreaterThan(0);
-        await Assert.That(Volatile.Read(ref notifications)).IsLessThan(signalCount);
+            await Assert.That(Volatile.Read(ref requests)).IsEqualTo(signalCount);
+            await Assert.That(Volatile.Read(ref notifications) + Volatile.Read(ref coalesced))
+                .IsEqualTo(signalCount);
+            await Assert.That(Volatile.Read(ref coalesced)).IsGreaterThan(0);
+            await Assert.That(Volatile.Read(ref notifications)).IsLessThan(signalCount);
+        }
+        finally
+        {
+            drainCancellation.Cancel();
+            try
+            {
+                await drainTask;
+            }
+            catch (OperationCanceledException) when (drainCancellation.IsCancellationRequested)
+            {
+            }
+        }
+
+        static async Task DrainControlSignalsAsync(PipeStream stream, CancellationToken cancellationToken)
+        {
+            var buffer = new byte[256];
+            while (await stream.ReadAsync(buffer, cancellationToken) != 0)
+            {
+            }
+        }
     }
 
     [Test]

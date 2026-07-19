@@ -77,12 +77,12 @@ run_project() {
   local name
   name="$(basename "$project")"
   local publish="$OUTPUT_ROOT/aot/$name"
-  if [[ ! -x "$publish/$name" ]]; then
-    dotnet publish "$project" -c Release -r "$RID" /p:PublishAot=true -o "$publish" -v minimal
-  fi
   local executable="$publish/$name"
   if [[ "$RID" == win-* ]]; then
     executable="$executable.exe"
+  fi
+  if [[ ! -x "$executable" ]]; then
+    dotnet publish "$project" -c Release -r "$RID" /p:PublishAot=true -o "$publish" -v minimal
   fi
   "$executable" "$@"
 }

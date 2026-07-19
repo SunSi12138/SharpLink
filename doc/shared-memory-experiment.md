@@ -13,10 +13,11 @@
 - 公共入口为 `UseSharedMemory(name, configure)`、`SharedMemoryClientTransportFactory` 和 `SharedMemoryServerTransportListener`；Protocol v2 与第三方传输接口未修改。
 - 命名管道使用 `CurrentUserOnly`，承载有界握手、资源描述、合并唤醒、关闭和存活检测。RPC 数据只经过每连接双向共享内存环。
 - 映射为 4 KiB 固定头部加 Client→Server、Server→Client 两个等容量环。头部包含 magic、布局版本、容量、nonce、隔离游标、等待标志和关闭状态。
-- 客户端只接受用户私有临时目录内、GUID 命名、`.shm` 后缀、非符号链接的映射；Unix 权限不得包含 group/other 位。
+- 客户端只接受按当前用户哈希隔离的私有临时目录内、GUID 命名、`.shm` 后缀、非符号链接的映射；Unix 目录固定为 0700，映射权限不得包含 group/other 位。
 - 双方容量不一致取较小值；SpinCount 仅影响本端。失败直接返回结构化错误，不回退到 TCP、UDS 或 Pipe。
 - 通知后端为 `named-pipe-control`。双方使用“登记等待后重新检查 + waiter-arm 确认”协议，只有实际等待者才触发控制通知；data/space/arm 使用 bitmask 合并写，进程内 waiter 使用可复用 ValueTask source。控制语义变更由共享内存握手版本 3 隔离，旧版本会在映射前失败。
 - 未知控制 bit 会作为 `ProtocolViolation` 暴露，不会被吞成普通断连；spill 总量受 256 MiB 上限约束，越界在分配前返回 `ResourceExhausted`。入站 staging 与出站累积 spill 使用池化 sequence segments，不在增长时复制已有字节。
+- listener 会在单条连接的损坏、截断或超时握手后清理资源并继续接受下一条连接，不把不可信握手升级成整个服务故障；连接释放直接丢弃未 flush 的 spill，不等待未读取对端腾出环空间。
 
 ## 正确性优先的热路径改造
 
@@ -28,13 +29,15 @@
 
 ## 已覆盖证据
 
-- Release solution build：0 warning、0 error。Unit 185/185、Generator 17/17、Integration 116/116。
+- Release solution build：0 warning、0 error。Unit 186/186、Generator 17/17、Integration 117/117。
 - 共享内存选项/profile、非法容量/SpinCount/timeout、路径权限、nonce/ack、未知控制信号、游标有符号溢出、越界 spill 和 stale 文件清理。
 - 原始双向各 1,000,000 条带序号/checksum 记录，在 64 KiB 环上反复回卷，零损坏。
 - 完整生成代理调用形态同时在 TCP 与 SharedMemory 上执行：Unary、Void、OneWay、client stream、server stream、duplex 及多流变体；另覆盖 1-byte stream/connection window 背压。
 - 基础 RPC、256 KiB 超环帧、容量协商、连接池 1→2 扩容、多客户端认证上下文隔离与拒绝、心跳空闲、无服务 timeout、调用方取消、未知握手版本、nonce 错误、监听空闲、并发关闭、断连、重连和双方独立子进程强杀。
 - PackageSmoke 从本地生成的 NuGet 包和全新 NuGet 缓存独立 restore/run，并分别完成 TCP 与 SharedMemory RPC；macOS arm64 SharedMemory NativeAOT server/client 独立进程通过，publish 无 trimming/AOT warning。Linux x64 与 Windows x64 framework-dependent publish 均为 0 warning/0 error，但没有冒充运行时验证。
+- Linux x64 容器额外执行了 PR 失败的控制通知合并用例，以及坏握手隔离、用户目录隔离、满环 spill 释放和 ACK nonce 清理的针对性回归，全部通过；这仍不替代 Linux 宿主全量门禁。
 - commit `4bc081e20816e15df8959230ab85ead664420b2d` 的 SharedMemory Chaos：600 秒、并发 32、114 次服务重启；3,947,962 success、1,653,066 expected failure、0 unexpected failure，最长恢复 371 ms。结束后五项 tracked metrics、115 次 server stop 的 active call 与临时映射文件均为 0。
+- PR 审查修复候选工作树的复测证据位于 `artifacts/chaos/review-fixes-10m.json`：600 秒、并发 32、114 次服务重启；4,308,099 success、1,832,245 expected failure、0 unexpected failure，最长恢复 386 ms。结束后五项 tracked metrics、115 次 server stop 的 active call、临时映射文件和测试进程均为 0。
 
 10 分钟 Chaos 的 retained memory 从 1,890,592 B 到 4,074,448 B。起点很小使百分比增长达到 115.5%，但绝对增量约 2.1 MiB；短样本不能据此判定泄漏，也不能代替 24 小时最后六小时增长门禁。
 

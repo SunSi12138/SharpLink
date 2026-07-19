@@ -46,6 +46,16 @@ public class SharedMemoryLayoutTests
     }
 
     [Test]
+    public async Task MappingDirectoryShouldBeScopedToTheCurrentUser()
+    {
+        var directory = SharedMemoryMapping.GetMappingDirectory();
+        var processWideDirectory = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "sharplink-shm"));
+
+        await Assert.That(string.Equals(directory, processWideDirectory, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(Path.GetFileName(directory).StartsWith("sharplink-shm-", StringComparison.Ordinal)).IsTrue();
+    }
+
+    [Test]
     public async Task CreatingMappingShouldRemoveExclusivelyOpenableStaleFiles()
     {
         var directory = SharedMemoryMapping.GetMappingDirectory();

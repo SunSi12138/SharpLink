@@ -149,6 +149,20 @@ public sealed class SharedMemoryServerTransportListener : IServerTransportListen
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         Volatile.Write(ref _started, 1);
         var resolved = _options.Resolve(_profile);
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            var connection = await AcceptConnectionAsync(resolved, cancellationToken).ConfigureAwait(false);
+            if (connection is not null)
+                return connection;
+        }
+    }
+
+    private async ValueTask<ITransportConnection?> AcceptConnectionAsync(
+        SharedMemoryResolvedOptions resolved,
+        CancellationToken cancellationToken)
+    {
         var pipe = new NamedPipeServerStream(
             _pipeName,
             PipeDirection.InOut,
@@ -164,6 +178,7 @@ public sealed class SharedMemoryServerTransportListener : IServerTransportListen
         SharedMemoryMapping? mapping = null;
         string? path = null;
         CancellationTokenSource? timeoutCts = null;
+        var handshakeStage = HandshakeStage.Accepting;
         using var acceptCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             _disposeCts.Token);
@@ -171,6 +186,7 @@ public sealed class SharedMemoryServerTransportListener : IServerTransportListen
         {
             await pipe.WaitForConnectionAsync(acceptCts.Token).ConfigureAwait(false);
             RemovePending(pipe);
+            handshakeStage = HandshakeStage.ClientHello;
             timeoutCts = new CancellationTokenSource(resolved.HandshakeTimeout);
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken,
@@ -178,16 +194,20 @@ public sealed class SharedMemoryServerTransportListener : IServerTransportListen
                 _disposeCts.Token);
             var hello = await SharedMemoryHandshake.ReadClientHelloAsync(pipe, handshakeCts.Token).ConfigureAwait(false);
             var capacity = Math.Min(resolved.CapacityPerDirectionBytes, hello.Capacity);
+            handshakeStage = HandshakeStage.CreatingMapping;
             mapping = SharedMemoryMapping.CreateServer(capacity, hello.Nonce, out path);
+            handshakeStage = HandshakeStage.ServerResponse;
             await SharedMemoryHandshake.WriteServerResponseAsync(
                 pipe,
                 capacity,
                 path,
                 hello.Nonce,
                 handshakeCts.Token).ConfigureAwait(false);
+            handshakeStage = HandshakeStage.ClientAck;
             await SharedMemoryHandshake.ReadClientAckAsync(pipe, hello.Nonce, handshakeCts.Token).ConfigureAwait(false);
             mapping.UnlinkAfterClientOpened();
 
+            handshakeStage = HandshakeStage.Completed;
             var control = new SharedMemoryControlChannel(pipe);
             pipe = null!;
             var connection = SharedMemoryTransportConnection.Create(
@@ -198,14 +218,15 @@ public sealed class SharedMemoryServerTransportListener : IServerTransportListen
             mapping = null;
             return connection;
         }
-        catch (OperationCanceledException exception) when (
+        catch (OperationCanceledException) when (
             timeoutCts?.IsCancellationRequested == true && !cancellationToken.IsCancellationRequested &&
             !_disposeCts.IsCancellationRequested)
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.Unavailable,
-                $"Shared-memory transport handshake timed out after {resolved.HandshakeTimeout}.",
-                exception);
+            return null;
+        }
+        catch (Exception exception) when (IsRejectedHandshake(handshakeStage, exception))
+        {
+            return null;
         }
         catch (UnauthorizedAccessException exception)
         {
@@ -223,6 +244,18 @@ public sealed class SharedMemoryServerTransportListener : IServerTransportListen
             if (pipe is not null)
                 await pipe.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    private static bool IsRejectedHandshake(HandshakeStage stage, Exception exception)
+    {
+        if (stage is not (HandshakeStage.ClientHello or HandshakeStage.ServerResponse or HandshakeStage.ClientAck))
+            return false;
+
+        return exception is EndOfStreamException or IOException or SocketException ||
+               exception is SharpLinkException
+               {
+                   Code: SharpLinkErrorCode.FailedPrecondition or SharpLinkErrorCode.ProtocolViolation
+               };
     }
 
     void IPerformanceProfileAwareTransport.BindPerformanceProfile(SharpLinkPerformanceProfile profile)
@@ -274,6 +307,16 @@ public sealed class SharedMemoryServerTransportListener : IServerTransportListen
             return;
         lock (_gate)
             _pendingAccepts.Remove(pipe);
+    }
+
+    private enum HandshakeStage
+    {
+        Accepting,
+        ClientHello,
+        CreatingMapping,
+        ServerResponse,
+        ClientAck,
+        Completed
     }
 }
 
@@ -334,7 +377,7 @@ internal sealed class SharedMemoryTransportConnection : ITransportConnection
     {
         try
         {
-            await Output.CompleteAsync().ConfigureAwait(false);
+            Output.Complete();
         }
         catch (Exception ex) when (StreamTransportConnection.IsExpectedDisposeException(ex) || ex is SharpLinkException)
         {

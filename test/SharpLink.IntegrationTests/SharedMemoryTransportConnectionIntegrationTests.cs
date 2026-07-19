@@ -143,32 +143,44 @@ public class SharedMemoryTransportConnectionIntegrationTests
     }
 
     [Test]
-    public async Task SharedMemoryUnknownHandshakeVersionShouldFailBeforeMapping()
+    public async Task SharedMemoryListenerShouldRejectBadHandshakesAndAcceptNextClient()
     {
         var name = $"sv{Guid.NewGuid():N}"[..10];
-        await using var listener = new SharedMemoryServerTransportListener(name);
+        var options = new SharedMemoryTransportOptions
+        {
+            CapacityPerDirectionBytes = 64 * 1024,
+            HandshakeTimeout = TimeSpan.FromMilliseconds(100)
+        };
+        await using var listener = new SharedMemoryServerTransportListener(name, options);
         var accept = listener.AcceptAsync().AsTask();
-        await using var pipe = new NamedPipeClientStream(
-            ".",
-            $"shm-{name}",
-            PipeDirection.InOut,
-            PipeStreamOptions.Asynchronous | PipeStreamOptions.CurrentUserOnly);
-        await pipe.ConnectAsync();
-        var invalidHello = new byte[48];
-        BinaryPrimitives.WriteInt32LittleEndian(invalidHello, 0x53484D31);
-        BinaryPrimitives.WriteInt32LittleEndian(invalidHello.AsSpan(4), 999);
-        BinaryPrimitives.WriteInt32LittleEndian(invalidHello.AsSpan(8), 64 * 1024);
-        await pipe.WriteAsync(invalidHello);
-        await pipe.FlushAsync();
-        try
+
+        await using (var unknownVersion = CreateRawSharedMemoryPipe(name))
         {
-            await accept;
-            throw new Exception("expected unsupported shared-memory handshake version");
+            await unknownVersion.ConnectAsync();
+            var invalidHello = new byte[48];
+            BinaryPrimitives.WriteInt32LittleEndian(invalidHello, 0x53484D31);
+            BinaryPrimitives.WriteInt32LittleEndian(invalidHello.AsSpan(4), 999);
+            BinaryPrimitives.WriteInt32LittleEndian(invalidHello.AsSpan(8), 64 * 1024);
+            await unknownVersion.WriteAsync(invalidHello);
+            await unknownVersion.FlushAsync();
         }
-        catch (SharpLinkException exception)
+
+        await using (var truncated = CreateRawSharedMemoryPipe(name))
         {
-            Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition, "unsupported handshake error code");
+            await truncated.ConnectAsync();
+            await truncated.WriteAsync(new byte[] { 0x31, 0x4D, 0x48, 0x53 });
+            await truncated.FlushAsync();
         }
+
+        await using (var idle = CreateRawSharedMemoryPipe(name))
+        {
+            await idle.ConnectAsync();
+            await Task.Delay(200);
+        }
+
+        await using var factory = new SharedMemoryClientTransportFactory(name, options);
+        await using var client = await factory.ConnectAsync();
+        await using var server = await accept.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Test]
@@ -280,6 +292,37 @@ public class SharedMemoryTransportConnectionIntegrationTests
         Ensure(spillRead.Buffer.Length == 1 && spillRead.Buffer.FirstSpan[0] == 0x7E,
             "shared-memory spill preserved after cancellation");
         server.Input.AdvanceTo(spillRead.Buffer.End);
+    }
+
+    [Test]
+    public async Task SharedMemoryConnectionDisposeShouldDiscardSpillWhenPeerIsNotReading()
+    {
+        const int capacity = 64 * 1024;
+        var (listener, factory, client, server) = await CreateRawPairAsync();
+        await using var listenerScope = listener;
+        await using var factoryScope = factory;
+        Task? disposeTask = null;
+        try
+        {
+            var ring = client.Output.GetMemory(capacity);
+            ring.Span[..capacity].Fill(0x41);
+            client.Output.Advance(capacity);
+            _ = await client.Output.FlushAsync();
+
+            var spill = client.Output.GetMemory(1);
+            spill.Span[0] = 0x7E;
+            client.Output.Advance(1);
+
+            disposeTask = client.DisposeAsync().AsTask();
+            await disposeTask.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            await server.DisposeAsync();
+            if (disposeTask is null)
+                disposeTask = client.DisposeAsync().AsTask();
+            await disposeTask.WaitAsync(TimeSpan.FromSeconds(2));
+        }
     }
 
     [Test]
@@ -572,9 +615,11 @@ public class SharedMemoryTransportConnectionIntegrationTests
         await WaitUntilAsync(
             () => Volatile.Read(ref dataNotifications) > notificationBaseline,
             TimeSpan.FromSeconds(2));
-        Ensure(Volatile.Read(ref dataRequests) == requestBaseline + 1 &&
-               Volatile.Read(ref dataNotifications) == notificationBaseline + 1,
-            "shared-memory registered reader receives exactly one control notification");
+        var requestDelta = Volatile.Read(ref dataRequests) - requestBaseline;
+        var notificationDelta = Volatile.Read(ref dataNotifications) - notificationBaseline;
+        Ensure(requestDelta == 1 && notificationDelta == 1,
+            $"shared-memory registered reader receives exactly one control notification " +
+            $"(requests={requestDelta}, notifications={notificationDelta})");
     }
 
     [Test]
@@ -673,19 +718,13 @@ public class SharedMemoryTransportConnectionIntegrationTests
         RandomNumberGenerator.Fill(invalidAck.AsSpan(8));
         await pipe.WriteAsync(invalidAck);
         await pipe.FlushAsync();
-
-        try
-        {
-            await accept;
-            throw new Exception("expected shared-memory acknowledgement nonce rejection");
-        }
-        catch (SharpLinkException exception)
-        {
-            Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
-                "shared-memory acknowledgement nonce error code");
-        }
+        await pipe.DisposeAsync();
 
         await WaitUntilAsync(() => !File.Exists(mappingPath), TimeSpan.FromSeconds(2));
+
+        await using var factory = new SharedMemoryClientTransportFactory(name);
+        await using var client = await factory.ConnectAsync();
+        await using var server = await accept.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Test]
@@ -1006,6 +1045,13 @@ public class SharedMemoryTransportConnectionIntegrationTests
             throw;
         }
     }
+
+    private static NamedPipeClientStream CreateRawSharedMemoryPipe(string name)
+        => new(
+            ".",
+            $"shm-{name}",
+            PipeDirection.InOut,
+            PipeStreamOptions.Asynchronous | PipeStreamOptions.CurrentUserOnly);
 
     private static ISharpLinkClient CreateAuthenticatedSharedMemoryClient(string name, string token)
     {

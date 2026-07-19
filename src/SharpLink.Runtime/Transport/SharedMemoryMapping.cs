@@ -1,4 +1,6 @@
 using System.IO.MemoryMappedFiles;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace SharpLink.Runtime;
 
@@ -36,9 +38,7 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
     public static SharedMemoryMapping CreateServer(int capacity, ReadOnlySpan<byte> nonce, out string path)
     {
         var directory = GetMappingDirectory();
-        Directory.CreateDirectory(directory);
-        if (!OperatingSystem.IsWindows())
-            File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        EnsureMappingDirectory(directory);
         CleanupUnownedMappings(directory);
 
         path = Path.Combine(directory, $"{Guid.NewGuid():N}.shm");
@@ -130,7 +130,30 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
     }
 
     internal static string GetMappingDirectory()
-        => Path.GetFullPath(Path.Combine(Path.GetTempPath(), "sharplink-shm"));
+    {
+        var userHash = SHA256.HashData(Encoding.UTF8.GetBytes(Environment.UserName));
+        var userSuffix = Convert.ToHexString(userHash.AsSpan(0, 8)).ToLowerInvariant();
+        return Path.GetFullPath(Path.Combine(Path.GetTempPath(), $"sharplink-shm-{userSuffix}"));
+    }
+
+    private static void EnsureMappingDirectory(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var directoryInfo = new DirectoryInfo(directory);
+        if (directoryInfo.LinkTarget is not null)
+            throw new UnauthorizedAccessException("Shared-memory mapping directory cannot be a symbolic link.");
+
+        const UnixFileMode userOnly = UnixFileMode.UserRead |
+                                      UnixFileMode.UserWrite |
+                                      UnixFileMode.UserExecute;
+        File.SetUnixFileMode(directory, userOnly);
+        directoryInfo.Refresh();
+        if (directoryInfo.LinkTarget is not null || File.GetUnixFileMode(directory) != userOnly)
+            throw new UnauthorizedAccessException("Shared-memory mapping directory permissions are not user-only.");
+    }
 
     private static void CleanupUnownedMappings(string directory)
     {
@@ -334,6 +357,8 @@ internal sealed unsafe class SharedMemoryRingDirection
     public void PublishReadPosition(long value) => Volatile.Write(ref ReadPosition, value);
     public bool IsWriterClosed => Volatile.Read(ref WriterClosed) != 0;
     public bool IsReaderClosed => Volatile.Read(ref ReaderClosed) != 0;
+    public bool IsReaderWaiting => Volatile.Read(ref ReaderWaiting) != 0;
+    public bool IsWriterWaiting => Volatile.Read(ref WriterWaiting) != 0;
     public void CloseWriter() => Volatile.Write(ref WriterClosed, 1);
     public void CloseReader() => Volatile.Write(ref ReaderClosed, 1);
     public void SetReaderWaiting() => Volatile.Write(ref ReaderWaiting, 1);
