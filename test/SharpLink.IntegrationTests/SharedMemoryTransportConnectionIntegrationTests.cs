@@ -1008,6 +1008,9 @@ public class SharedMemoryTransportConnectionIntegrationTests
                     Ensure(!flush.IsCanceled && !flush.IsCompleted, "raw shared-memory writer remained connected");
                 }
             }
+            var finalFlush = await writer.FlushAsync();
+            Ensure(!finalFlush.IsCanceled && !finalFlush.IsCompleted,
+                "raw shared-memory final flush remained connected");
             await writer.CompleteAsync();
         });
 

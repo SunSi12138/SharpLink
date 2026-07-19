@@ -67,6 +67,29 @@ public class SharedMemoryLayoutTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task MappingFileShouldDisappearAfterBothSidesClose()
+    {
+        const int capacity = 64 * 1024;
+        var nonce = RandomNumberGenerator.GetBytes(SharedMemoryLayout.NonceBytes);
+        var server = SharedMemoryMapping.CreateServer(capacity, nonce, out var path);
+        var client = SharedMemoryMapping.OpenClient(path, capacity, nonce);
+        try
+        {
+            server.UnlinkAfterClientOpened();
+            await server.DisposeAsync();
+            await client.DisposeAsync();
+
+            await Assert.That(File.Exists(path)).IsFalse();
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await server.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task MappingPathShouldRejectLocationsOutsideTransportDirectory()
     {
         var outsidePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.shm");

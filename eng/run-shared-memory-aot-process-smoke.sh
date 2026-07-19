@@ -17,7 +17,7 @@ fi
 
 mkdir -p "$OUTPUT"
 dotnet publish "$ROOT/test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj" \
-  -c Release -r "$RID" /p:PublishAot=true -o "$OUTPUT" -v minimal
+  -c Release -r "$RID" -p:PublishAot=true -o "$OUTPUT" -v minimal
 
 EXE="$OUTPUT/SharpLink.AotSmoke"
 if [[ "$RID" == win-* ]]; then

@@ -64,7 +64,10 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
             file.SetLength(length);
             if (!OperatingSystem.IsWindows())
                 File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            mapping = Create(file, length, path);
+            // Windows DeleteOnClose owns removal after every shared mapping handle
+            // closes. An explicit File.Delete while the client view is still open
+            // races that disposition and fails with UnauthorizedAccessException.
+            mapping = Create(file, length, OperatingSystem.IsWindows() ? null : path);
             SharedMemoryLayout.Initialize(mapping, capacity, nonce);
             return mapping;
         }
@@ -74,7 +77,8 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
                 mapping.Dispose();
             else
                 file?.Dispose();
-            TryDelete(path);
+            if (!OperatingSystem.IsWindows())
+                TryDelete(path);
             throw;
         }
     }
