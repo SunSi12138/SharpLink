@@ -2,9 +2,9 @@
 
 ## 当前结论
 
-本分支实现已在 macOS arm64、.NET SDK 10.0.102 / runtime 10.0.2 上完成 Release JIT、独立进程 NativeAOT、包消费和短时 Chaos 正确性验证。Windows x64 与 Linux x64 目前只有 framework-dependent publish 构建检查；两平台运行时测试、两平台 NativeAOT、正式性能矩阵、2 小时 nightly 和 24 小时最终 soak 尚未执行。因此当前状态是“macOS arm64 正确性实验通过，其余门禁待验证”，不得进入正式支持矩阵、合并或发布。
+本分支实现已在 macOS arm64、.NET SDK 10.0.102 / runtime 10.0.2 上完成 Release JIT、独立进程 NativeAOT、包消费和 10 分钟 Chaos 正确性验证。Windows x64 与 Linux x64 目前只有 framework-dependent publish 构建检查；两平台运行时测试、两平台 NativeAOT、正式五轮性能矩阵、2 小时 nightly 和 24 小时最终 soak 尚未执行。因此当前状态是“macOS arm64 正确性实验通过，其余门禁待验证”，不得进入正式支持矩阵、合并或发布。
 
-本轮主动暂停性能判定：采样期间发现同机另一个仓库正在运行 24 小时 Chaos，已采集的 LoadTest 与 trace 会受到资源竞争影响。相关文件已移至本地忽略目录 `artifacts/invalid/background-chaos-20260718-*`，不得用于任何吞吐、延迟、分配或平台特化结论。待环境干净后必须从头重跑，不复用这些样本。
+性能定位先发现仅靠共享等待标志存在丢失唤醒窗口：32 B、c1 会偶发约 10 秒停顿。无条件发送 data 通知虽然消除停顿，但使高并发吞吐下降约 20%–45%，因此被撤销。最终实现增加仅在真正休眠前发送的 waiter-arm 控制信号；随后又修复了控制线程把竞态游标快照误判为 `DataLoss` 的问题。修复后 c1 连续五轮均无长停顿，10 分钟 Chaos 无 unexpected failure。
 
 不满足任一正式门槛时应保留本分支和原始 JSON，标记实验未通过；不得通过放宽阈值、忽略错误或静默降级获得通过结论。
 
@@ -15,7 +15,7 @@
 - 映射为 4 KiB 固定头部加 Client→Server、Server→Client 两个等容量环。头部包含 magic、布局版本、容量、nonce、隔离游标、等待标志和关闭状态。
 - 客户端只接受用户私有临时目录内、GUID 命名、`.shm` 后缀、非符号链接的映射；Unix 权限不得包含 group/other 位。
 - 双方容量不一致取较小值；SpinCount 仅影响本端。失败直接返回结构化错误，不回退到 TCP、UDS 或 Pipe。
-- 通知后端为 `named-pipe-control`。双方使用“登记等待后重新检查”协议，只有实际等待者才触发控制通知；data/space 使用 bitmask 合并写，进程内 waiter 使用可复用 ValueTask source。控制语义变更由共享内存握手版本 2 隔离，旧版本会在映射前失败。
+- 通知后端为 `named-pipe-control`。双方使用“登记等待后重新检查 + waiter-arm 确认”协议，只有实际等待者才触发控制通知；data/space/arm 使用 bitmask 合并写，进程内 waiter 使用可复用 ValueTask source。控制语义变更由共享内存握手版本 3 隔离，旧版本会在映射前失败。
 - 未知控制 bit 会作为 `ProtocolViolation` 暴露，不会被吞成普通断连；spill 总量受 256 MiB 上限约束，越界在分配前返回 `ResourceExhausted`。入站 staging 与出站累积 spill 使用池化 sequence segments，不在增长时复制已有字节。
 
 ## 正确性优先的热路径改造
@@ -28,19 +28,28 @@
 
 ## 已覆盖证据
 
-- Release solution build：0 warning、0 error。Unit 183/183、Generator 17/17、Integration 114/114；其中 SharedMemory 传输专项 27/27。
+- Release solution build：0 warning、0 error。Unit 185/185、Generator 17/17、Integration 116/116。
 - 共享内存选项/profile、非法容量/SpinCount/timeout、路径权限、nonce/ack、未知控制信号、游标有符号溢出、越界 spill 和 stale 文件清理。
 - 原始双向各 1,000,000 条带序号/checksum 记录，在 64 KiB 环上反复回卷，零损坏。
 - 完整生成代理调用形态同时在 TCP 与 SharedMemory 上执行：Unary、Void、OneWay、client stream、server stream、duplex 及多流变体；另覆盖 1-byte stream/connection window 背压。
 - 基础 RPC、256 KiB 超环帧、容量协商、连接池 1→2 扩容、多客户端认证上下文隔离与拒绝、心跳空闲、无服务 timeout、调用方取消、未知握手版本、nonce 错误、监听空闲、并发关闭、断连、重连和双方独立子进程强杀。
 - PackageSmoke 从本地生成的 NuGet 包和全新 NuGet 缓存独立 restore/run，并分别完成 TCP 与 SharedMemory RPC；macOS arm64 SharedMemory NativeAOT server/client 独立进程通过，publish 无 trimming/AOT warning。Linux x64 与 Windows x64 framework-dependent publish 均为 0 warning/0 error，但没有冒充运行时验证。
-- commit `6631eaf8f97eb147a6313393b1d3797a280ed281` 的 SharedMemory Chaos：120 秒、并发 32、23 次服务重启；2,127,782 success、757,618 expected failure、0 unexpected failure，最长恢复 220 ms。结束后五项 tracked metrics 与临时映射文件均为 0。
+- commit `4bc081e20816e15df8959230ab85ead664420b2d` 的 SharedMemory Chaos：600 秒、并发 32、114 次服务重启；3,947,962 success、1,653,066 expected failure、0 unexpected failure，最长恢复 371 ms。结束后五项 tracked metrics、115 次 server stop 的 active call 与临时映射文件均为 0。
 
-120 秒 Chaos 只有起止两个 retained-memory 样本，不能据此作泄漏判断，也不能代替 24 小时最后六小时增长门禁。
+10 分钟 Chaos 的 retained memory 从 1,890,592 B 到 4,074,448 B。起点很小使百分比增长达到 115.5%，但绝对增量约 2.1 MiB；短样本不能据此判定泄漏，也不能代替 24 小时最后六小时增长门禁。
 
 ## 性能证据状态
 
-当前没有有效的性能或 trace 结论。正式复测时，每个场景必须把 SharedMemory 与该平台所有适用本机传输同时交替比较：TCP、UDS、NamedPipe、AnonymousPipe；门槛中的“最快本机基线”是这些候选的最快者，不是只与 TCP 比较。某项传输不在平台支持矩阵内（例如本项目当前不承诺 Windows UDS）时须在报告中明确记录，而不是补造数据。
+当前没有完成可用于正式门禁的五轮性能矩阵。应用户要求暂停时，只完成了一轮干净环境的 32 B / LowLatency / pool 1/1 JIT 对照；它是方向性证据，不是通过结论。该轮所有样本错误数为 0：
+
+| Transport | c1 QPS / P99 / B/op | c8 QPS / P99 / B/op | c32 QPS / P99 / B/op | c128 QPS / P99 / B/op |
+| --- | ---: | ---: | ---: | ---: |
+| SharedMemory | 44,640 / 51 us / 1,012 | 318,511 / 71 us / 689 | 597,806 / 185 us / 663 | 500,962 / 1,418 us / 667 |
+| UDS | 26,804 / 76 us / 849 | 174,469 / 98 us / 631 | 189,766 / 241 us / 610 | 194,984 / 930 us / 608 |
+| NamedPipe | 23,074 / 131 us / 1,146 | 196,667 / 72 us / 662 | 190,937 / 236 us / 625 | 190,950 / 1,411 us / 622 |
+| AnonymousPipe | 25,029 / 89 us / 1,141 | 166,898 / 115 us / 677 | 252,170 / 437 us / 624 | 273,307 / 2,914 us / 616 |
+
+这轮里 SharedMemory 吞吐在四个并发点都领先，但 allocation 相对各点最快/最低基线仍超过 105%，c128 P99 也没有达到最快基线的 105%。因此不能宣称性能门禁通过。完整复测必须把 SharedMemory 与平台所有适用本机 IPC 同时交替比较；当前用户指定排除 TCP，正式支持判定时仍应按既定门槛补回适用基线。
 
 性能恢复条件是同机没有其他 LoadTest、StreamLoadTest、Chaos 或诊断采集进程。恢复后先记录 commit、OS、CPU、runtime、频率/电源设置和后台进程，再执行 5 秒预热、20 秒采样、正反顺序各五轮。任何 trace 只用于定位已稳定复现的瓶颈；未证明通知、映射或回卷是主因前，不开始平台特化。
 
@@ -62,7 +71,7 @@
 ## 尚未解决/待证实
 
 - 当前只实现统一命名管道通知后端。只有正式 trace 证明通知、映射或回卷路径是平台瓶颈时，才增加 eventfd/kqueue/Windows event 等平台特化，并以相同 A/B 拒绝无收益实现。
-- 当前没有可接受的性能样本；分配门槛必须使用 `AllocatedBytes / Success` 比较，而不是只看进程总分配。
+- 当前只有一轮方向性性能样本；仍需完成五轮正反顺序，并重点降低 SharedMemory 的 `AllocatedBytes / Success` 与 c128 尾延迟。
 - Windows x64、Linux x64 的运行时正确性与 NativeAOT 均待各自宿主验证；现有 cross-RID framework-dependent publish 只证明编译，不证明运行兼容。
 - 2 小时和 24 小时 Chaos 尚未对本候选执行；短时 retained-memory 增长不判定通过或失败。
 - 其他架构只能做可行的 build smoke，不宣称完整支持。
