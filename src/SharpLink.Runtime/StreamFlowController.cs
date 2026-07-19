@@ -115,20 +115,18 @@ internal sealed class StreamFlowController
             {
                 if (state.AbortException is not null)
                 {
-                    _sendStates.Remove(key);
-                }
-                else if (exception is not null)
-                {
-                    var outstandingCredit = _streamWindow - state.Credit;
-                    _sendConnectionCredit = checked(_sendConnectionCredit + outstandingCredit);
-                    _sendStates.Remove(key);
+                    state.Completed = true;
                 }
                 else
                 {
                     state.Completed = true;
-                    if (state.Credit == _streamWindow)
-                        _sendStates.Remove(key);
+                    state.AbortException = exception;
                 }
+                // The receiver may already have consumed bytes and have a WindowUpdate in
+                // flight. Keep the terminal state until all outstanding credit is returned;
+                // deleting it here would turn that valid late update into ProtocolViolation.
+                if (state.Credit == _streamWindow)
+                    _sendStates.Remove(key);
             }
 
             var node = _waiters.First;

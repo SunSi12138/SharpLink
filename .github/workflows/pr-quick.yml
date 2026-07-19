@@ -78,5 +78,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: chaos-pr-smoke
-          path: artifacts/chaos/pr-smoke.json
+          path: |
+            artifacts/chaos/pr-smoke.json
+            artifacts/chaos/pr-smoke.dmp
+            artifacts/chaos/pr-smoke.dmp.crashreport.json
           if-no-files-found: warn

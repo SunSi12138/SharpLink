@@ -269,6 +269,41 @@ public class PooledAsyncStreamDispatcherTests
 
     [Test]
     [NotInParallel]
+    public async Task CompleteAllRacingAnIdleConsumerShouldAlwaysReleaseItsWaiter()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var codec = new ReferenceItemCodec();
+        var terminal = new SharpLinkException(
+            SharpLinkErrorCode.ConnectionClosed,
+            "session closed");
+        for (var iteration = 0; iteration < 100_000; iteration++)
+        {
+            var manager = new StreamManager();
+            var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, codec);
+            manager.Register(iteration + 1, 1, dispatcher);
+            var enumerator = dispatcher.GetAsyncEnumerator();
+            var waiting = enumerator.MoveNextAsync().AsTask();
+
+            manager.CompleteAll(terminal);
+            try
+            {
+                _ = await waiting.WaitAsync(TimeSpan.FromSeconds(1));
+                throw new Exception($"iteration {iteration} unexpectedly completed without the terminal error");
+            }
+            catch (SharpLinkException exception) when (
+                exception.Code == SharpLinkErrorCode.ConnectionClosed)
+            {
+            }
+
+            await enumerator.DisposeAsync();
+            Ensure(manager.ActiveStreamCount == 0,
+                $"iteration {iteration} retained an active stream after CompleteAll");
+        }
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task LongStreamShouldRecycleSegmentsBeyondBufferedElementLimit()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();

@@ -307,6 +307,65 @@ public class IntegrationBehaviorTests
 
     [Test]
     [NotInParallel]
+    public async Task ClientStreamingStopRaceShouldReleaseEveryServerInvocation()
+    {
+        const int callCount = 128;
+        TestService.ResetActiveUploads();
+        await using var harness = await TestHarness.CreateAsync(poolConfigure: options =>
+        {
+            options.MinConnections = 1;
+            options.MaxConnections = 4;
+        });
+        var service = harness.Client.Get<ITestService>();
+        using var producerCancellation = new CancellationTokenSource();
+        var calls = new Task<int>[callCount];
+        for (var index = 0; index < calls.Length; index++)
+        {
+            calls[index] = service.UploadAsync(
+                YieldOneThenWaitAsync(index, producerCancellation.Token)).AsTask();
+        }
+
+        await WaitUntilAsync(() => TestService.ActiveUploads == callCount);
+        var stopServer = harness.DisposeServerOnlyAsync(TimeSpan.Zero).AsTask();
+        var stopClient = harness.DisposeClientOnlyAsync().AsTask();
+        await producerCancellation.CancelAsync();
+        await Task.WhenAll(stopServer, stopClient).WaitAsync(TimeSpan.FromSeconds(10));
+
+        foreach (var call in calls)
+        {
+            try
+            {
+                _ = await call.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (Exception exception) when (exception is OperationCanceledException or SharpLinkException)
+            {
+            }
+        }
+        await WaitUntilAsync(() => TestService.ActiveUploads == 0);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ClientStreamProducerFailureShouldTerminateRemoteInvocationAndKeepConnectionHealthy()
+    {
+        TestService.ResetActiveUploads();
+        await using var harness = await TestHarness.CreateAsync();
+        var service = harness.Client.Get<ITestService>();
+
+        for (var iteration = 0; iteration < 1_000; iteration++)
+        {
+            await EnsureClientStreamProducerFailure(
+                service.UploadAsync(YieldThenFailAsync(iteration)).AsTask(),
+                "client stream producer failure");
+        }
+
+        await WaitUntilAsync(() => TestService.ActiveUploads == 0);
+        Ensure(await service.AddAsync(20, 22) == 42,
+            "connection should remain healthy after client stream producer failures");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task GracefulStopShouldDrainAcceptedCallAndRejectNewCallsAfterGoAway()
     {
         await using var harness = await TestHarness.CreateAsync();
@@ -386,6 +445,21 @@ public class IntegrationBehaviorTests
         }
     }
 
+    private static async Task EnsureClientStreamProducerFailure(Task task, string name)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(3));
+            throw new Exception($"assert failed: {name} should fail");
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.Internal)
+        {
+        }
+    }
+
     private static async Task EnsureThrowsSharpLinkFast(Task task, string name, SharpLinkErrorCode errorCode)
     {
         try
@@ -441,6 +515,21 @@ public class IntegrationBehaviorTests
             yield return value;
             await Task.Yield();
         }
+    }
+
+    private static async IAsyncEnumerable<int> YieldOneThenWaitAsync(
+        int value,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        yield return value;
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+    }
+
+    private static async IAsyncEnumerable<int> YieldThenFailAsync(int value)
+    {
+        yield return value;
+        await Task.Yield();
+        throw new InvalidOperationException("injected client stream producer failure");
     }
 
     private sealed class TestHarness : IAsyncDisposable
@@ -622,6 +711,11 @@ public class TestService : ITestService
     private static TaskCompletionSource s_nonCancellableCompletion = CreateCompletionSource();
     private static TaskCompletionSource s_nonCancellableFailure = CreateCompletionSource();
     private static TaskCompletionSource s_downloadDisposed = CreateCompletionSource();
+    private static int s_activeUploads;
+
+    internal static int ActiveUploads => Volatile.Read(ref s_activeUploads);
+
+    internal static void ResetActiveUploads() => Volatile.Write(ref s_activeUploads, 0);
 
     internal static void ResetNonCancellableCompletion()
         => Interlocked.Exchange(ref s_nonCancellableCompletion, CreateCompletionSource());
@@ -701,9 +795,17 @@ public class TestService : ITestService
 
     public async ValueTask<int> UploadAsync(IAsyncEnumerable<int> values)
     {
-        var sum = 0;
-        await foreach (var i in values) sum += i;
-        return sum;
+        Interlocked.Increment(ref s_activeUploads);
+        try
+        {
+            var sum = 0;
+            await foreach (var i in values) sum += i;
+            return sum;
+        }
+        finally
+        {
+            Interlocked.Decrement(ref s_activeUploads);
+        }
     }
 
     public async IAsyncEnumerable<string> DownloadAsync(int count)

@@ -10,5 +10,6 @@
       <InternalsVisibleTo Include="SharpLink.Hosting" />
       <InternalsVisibleTo Include="SharpLink.UnitTests" />
       <InternalsVisibleTo Include="SharpLink.Benchmarks" />
+      <InternalsVisibleTo Include="SharpLink.ChaosTests" />
     </ItemGroup>
 </Project>

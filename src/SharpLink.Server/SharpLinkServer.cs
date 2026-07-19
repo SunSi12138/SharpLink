@@ -61,6 +61,7 @@ internal sealed partial class SharpLinkServer(
     private Task? _deferredServiceCleanupTask;
     private Task? _shutdownCleanupObserver;
     private Task? _serviceCleanupObserver;
+    private ServerStopDiagnosticSnapshot? _lastStopDiagnostics;
     private int _globalActiveCalls;
     private long _rejectedOneWayCalls;
     private readonly int _globalMaxConcurrentCalls = (int)Math.Min(
@@ -120,6 +121,7 @@ internal sealed partial class SharpLinkServer(
             var unfinishedCalls = Volatile.Read(ref _globalActiveCalls);
             if (unfinishedCalls > 0)
             {
+                Volatile.Write(ref _lastStopDiagnostics, CaptureStopDiagnostics(unfinishedCalls));
                 LogForcedCallsRemaining(_logger, unfinishedCalls);
                 SharpLinkTelemetry.RecordForcedStopCalls(unfinishedCalls);
                 _deferredServiceCleanupTask = DisposeServicesWhenDrainedAsync(
@@ -596,6 +598,23 @@ internal sealed partial class SharpLinkServer(
         connection.ReleaseCall();
         if (active == 0 && CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
             _callsDrained.TrySetResult(true);
+    }
+
+    internal int ActiveCallCountForDiagnostics => Volatile.Read(ref _globalActiveCalls);
+
+    internal ServerStopDiagnosticSnapshot? LastStopDiagnostics
+        => Volatile.Read(ref _lastStopDiagnostics);
+
+    private ServerStopDiagnosticSnapshot CaptureStopDiagnostics(int activeCalls)
+    {
+        var connections = _connections.Values.ToArray();
+        var snapshots = new ServerConnectionDiagnosticSnapshot[connections.Length];
+        for (var index = 0; index < connections.Length; index++)
+        {
+            snapshots[index] = connections[index]
+                .CaptureStopDiagnostics(_maxConcurrentCallsPerConnection);
+        }
+        return new ServerStopDiagnosticSnapshot(DateTimeOffset.UtcNow, activeCalls, snapshots);
     }
 
     private ServerState CurrentState => (ServerState)Volatile.Read(ref _state);

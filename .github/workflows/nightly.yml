@@ -125,6 +125,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: chaos-nightly-2h
-          path: artifacts/chaos/nightly-2h.json
+          path: |
+            artifacts/chaos/nightly-2h.json
+            artifacts/chaos/nightly-2h.dmp
+            artifacts/chaos/nightly-2h.dmp.crashreport.json
           if-no-files-found: warn
           retention-days: 14

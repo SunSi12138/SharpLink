@@ -169,7 +169,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: chaos-release-smoke
-          path: artifacts/chaos/release-smoke.json
+          path: |
+            artifacts/chaos/release-smoke.json
+            artifacts/chaos/release-smoke.dmp
+            artifacts/chaos/release-smoke.dmp.crashreport.json
           if-no-files-found: warn
           retention-days: 30
 

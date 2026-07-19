@@ -104,6 +104,38 @@ internal sealed class ServerConnectionState
             throw new InvalidOperationException("Server connection active call count underflowed.");
     }
 
+    internal ServerConnectionDiagnosticSnapshot CaptureStopDiagnostics(int maximumCalls)
+    {
+        var entries = new KeyValuePair<long, ServerCallCancellationState>[maximumCalls];
+        var count = CallCancellations.CopyEntries(entries);
+        var calls = new List<ServerCallDiagnosticSnapshot>(count);
+        for (var index = 0; index < count; index++)
+        {
+            var entry = entries[index];
+            if (!entry.Value.TryAcquire(entry.Key))
+                continue;
+            try
+            {
+                calls.Add(new ServerCallDiagnosticSnapshot(
+                    entry.Key,
+                    entry.Value.Reason.ToString(),
+                    entry.Value.Deadline,
+                    entry.Value.DeadlineTimestamp));
+            }
+            finally
+            {
+                entry.Value.ReleaseUse();
+            }
+        }
+
+        return new ServerConnectionDiagnosticSnapshot(
+            Session.Id,
+            LifecycleState.ToString(),
+            ActiveCalls,
+            Session.StreamManager is StreamManager manager ? manager.ActiveStreamCount : -1,
+            calls);
+    }
+
     internal void MarkDraining()
     {
         while (true)

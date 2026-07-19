@@ -30,7 +30,7 @@ public static class ProtocolV2FrameParser
         if (!reader.TryRead(out var magic))
             return false;
         if (magic != ProtocolV2Constants.Magic)
-            throw Violation("Invalid Protocol v2 frame magic.");
+            throw Violation(CreateInvalidMagicMessage(buffer, magic));
         if (!reader.TryReadLittleEndian(out int payloadLength))
             return false;
         if (payloadLength < 0)
@@ -250,6 +250,18 @@ public static class ProtocolV2FrameParser
 
     internal static SharpLinkException Violation(string message)
         => new(SharpLinkErrorCode.ProtocolViolation, message);
+
+    private static string CreateInvalidMagicMessage(ReadOnlySequence<byte> buffer, byte actualMagic)
+    {
+        // This path is terminal for the connection. Preserve a small bounded prefix so a
+        // long-running failure report can distinguish a bad writer from parser misalignment
+        // without adding allocations or validation to healthy frames.
+        var prefixLength = (int)Math.Min(buffer.Length, 32);
+        Span<byte> prefix = stackalloc byte[prefixLength];
+        buffer.Slice(0, prefixLength).CopyTo(prefix);
+        return $"Invalid Protocol v2 frame magic 0x{actualMagic:X2}; " +
+               $"remaining={buffer.Length}, prefix={Convert.ToHexString(prefix)}.";
+    }
 }
 
 /// <summary>Writes SharpLink Protocol v2 frame headers and payload lengths.</summary>

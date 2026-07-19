@@ -108,7 +108,7 @@ public class StreamFlowControllerTests
     }
 
     [Test]
-    public async Task AbortedSendStreamShouldReclaimConnectionCreditAndCapacity()
+    public async Task FailedSendStreamShouldAcceptInFlightCreditBeforeReusingCapacity()
     {
         var controller = new StreamFlowController(4, 4, 1024, maxConcurrentStreams: 1);
         await controller.AcquireSendCreditAsync(1, 0, 4, CancellationToken.None);
@@ -117,7 +117,11 @@ public class StreamFlowControllerTests
             0,
             new SharpLinkException(SharpLinkErrorCode.Cancelled, "consumer abandoned"));
 
-        Ensure(controller.SendConnectionCredit == 4, "aborted stream must return outstanding connection credit");
+        Ensure(controller.SendConnectionCredit == 0,
+            "failed stream must not invent credit while a receiver update can still be in flight");
+        controller.ApplyWindowUpdate(1, 0, 4);
+        Ensure(controller.SendConnectionCredit == 4,
+            "the receiver's final update must reclaim the exact outstanding credit");
         await controller.AcquireSendCreditAsync(2, 0, 4, CancellationToken.None);
         Ensure(controller.SendConnectionCredit == 0, "new stream should reuse reclaimed capacity");
     }
