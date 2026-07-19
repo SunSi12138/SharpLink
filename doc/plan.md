@@ -44,11 +44,11 @@
 
 0.6.10 只增加可协商的 Protocol minor 2 capability，与 0.6.9 自动退回 legacy Cancel。完成 24 小时 release soak 与 tag Gate 前，不开始官方企业扩展包。
 
-## 0.7.0：官方企业扩展包
+## 0.7.x：运行时模块与官方企业扩展包
 
-1. `0.7.1`：Discovery 与不可变 Endpoint snapshot/watch。
-2. `0.7.2`：RoundRobin、LeastPending 与默认 PowerOfTwoChoices。
-3. `0.7.3`：只针对 `[Idempotent]` Unary 的 Retry 与 Circuit Breaker。
+1. `0.7.0`（已完成）：实验性 SharedMemory 传输。
+2. `0.7.1`（实现中）：Generator Manifest 自动服务注册、`Singleton/Connection/Call` 生命周期与运行时程序集安全注册/注销。
+3. 后续版本：Discovery、Load Balancing 与只针对 `[Idempotent]` Unary 的 Resilience 扩展。
 
 ## 0.8.0-rc：发布门禁
 

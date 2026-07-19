@@ -12,7 +12,7 @@ SharpLink.Sdk
   -> IService / RpcContract / RpcService / Oneway / Timeout / SharpLinkCallOptions
 
 SharpLink.Generator
-  -> 扫描契约与服务，生成 Proxy / Stub / Registration
+  -> 扫描契约与服务，生成 Proxy / Stub / Codec / Assembly Manifest
 
 SharpLink.Serializer.MemoryPack
   -> 作为复杂类型的可选编解码兜底
@@ -24,7 +24,7 @@ SharpLink.Serializer.MemoryPack
   - Protocol v2 模型（`ProtocolV2FrameType` / `ProtocolV2FrameFlags` / `ProtocolV2Constants`）
   - 核心抽象（`IRpcChannel`、`IRpcStub`、`IClientTransportFactory`、`IServerTransportListener`、`ITransportConnection`、`IRpcSession`、`IRpcCodec`）
   - 结构化错误模型（`SharpLinkException` / `SharpLinkErrorCode`）
-  - 生成代码注册表（`GeneratedProxyRegistry` / `GeneratedStubRegistry`）
+  - Assembly Manifest、弱 Catalog、结构化程序集注册结果与 Client/Server 公共接口
 
 - `SharpLink.Runtime`
   - `RpcSession`、`StreamManager`、`Request/Stream` 调度基础设施
@@ -57,8 +57,9 @@ SharpLink.Serializer.MemoryPack
 
 - `SharpLink.Generator`
   - 扫描 `[RpcContract]` 接口与 `[RpcService]` 实现
-  - 生成 `*_Proxy.g.cs`、`*_Stub.g.cs`
-  - 输出编译期诊断（取消令牌、超时、泛型、契约继承等）
+  - Contract 程序集生成 Descriptor、Proxy、contract-based Stub 与 Codec；Service 程序集生成 Descriptor、Activator、生命周期与依赖
+  - 每程序集生成唯一 Manifest、定位特性、Module Initializer 和 SHA-256 wire/schema 指纹
+  - 输出编译期诊断（取消令牌、超时、泛型、契约继承、服务声明和静态 Artifact 冲突等）
 
 ## Unary 调用链
 
@@ -118,8 +119,8 @@ SharpLink.Serializer.MemoryPack
 ## 序列化策略
 
 - 默认内置基础类型与 blittable 容器 Codec；RPC 可达的封闭 DTO/集合由 Source Generator 生成字段 ID Codec
-- 生成 assembly manifest 只允许按 type/schema 幂等追加；冲突 schema 立即抛出
-- 每个 Runtime Context 在 Build 时导入 manifest 快照，之后的注册不会改变已构建实例
+- 进程 Catalog 只保存有界、可清理的弱 Manifest 引用，collectible ALC 不会被它强引用
+- 每个 Runtime Context 在 Build 时导入已加载 Manifest 快照；Build 后插件通过实例的 `RegisterAssembly` 原子发布新快照
 - `[MemoryPackable]`、`[RpcExternalCodec]`、循环/多态图与第三方类型保留为显式插件边界
 - 显式 Context Codec 优先于生成 Codec，MemoryPack resolver 只处理未生成且用户明确选择的类型
 - Codec Provider、Buffer Pool、状态容器配置都冻结在各自的 `SharpLinkRuntimeContext` 中，不允许 Builder 覆盖进程级可变配置
@@ -169,12 +170,20 @@ SharpLink.Serializer.MemoryPack
 - Counter/Histogram/Activity 均先检查 listener/instrument；无 listener 时不创建 TagList、Activity、Stopwatch 对象或 observer state machine。
 - 日志全部使用 `LoggerMessage` source-generated 方法；普通日志不包含 payload、token 或证书内容。
 
-## DI、健康状态与排空
+## 自动注册、服务生命周期与排空
 
-- 默认类型注册是 Singleton，dispatch 只读取已缓存实例，不创建调用 scope；Scoped/Transient 是显式选择的调用级成本。
-- Hosting 在容器 Build 前加入缺失的实现类型注册；应用已有注册必须与 SharpLink 声明的 lifetime 一致。非 Hosting Builder 可使用内部 provider 或显式 `UseServiceProvider`。
-- 类型注册由 DI provider/scope 负责释放；factory 创建的对象由 SharpLink 释放；实例重载始终由调用方持有。激活失败也会异步释放已创建 scope。
-- Unary/OneWay scope 在调用完成后释放；server/client/duplex stream scope 覆盖完整 pump 生命周期，并在异常、取消、断线和强制停机路径释放。
+- Server Build 合并弱 Catalog 快照、Builder 筛选和 `ReplaceService`，完成全量验证后一次发布实例 Registry；一个 Contract 只能有一个 Owner。
+- 默认 `Singleton` 延迟且线程安全地创建一次，不建立调用 Scope。`Connection` 按物理连接和 registration 独立惰性创建 Scope，断连后等待相关调用结束再释放。`Call` 每次调用创建一个实例和 Scope，Streaming 保持到整条流真正终止。
+- Generator Activator 直接调用选定构造函数并从当前 Scope Provider 解析普通依赖；Microsoft DI 继续管理依赖，根 RPC 服务不再使用 `ServiceLifetime` 表示公共生命周期。
+- `ReplaceService` 实例始终由调用方持有且是 Singleton；factory 产物由 SharpLink 释放。激活失败也会释放已经创建的 Scope。
 - Protocol minor 1 引入 health-check capability，minor 2 引入带原因 Cancel；`HealthCheck/HealthResponse` 使用非零 correlation ID 和固定一字节状态，不进入业务 stub、interceptor 或服务并发额度。
 - Server 状态映射为 Starting/Stopped/Faulted=`Unhealthy`、Running=`Ready`、Draining=`Draining`。Hosted readiness 直接读取 Server 原子状态，Client accessor 只在至少一条连接 Ready 后发布。
 - Stop 先进入 Draining，再停止 accept 并发送强制 flush 的 GoAway；grace 内等待 active calls，超时后取消 session 调用，最后等待后台任务并释放 service/provider。
+
+## 动态程序集 Registry
+
+- Client/Server 各自持有带 generation 的原子不可变快照。注册在 RPC 路径外构造候选，只在短 writer gate 内重检 generation 和生命周期，然后用一次原子写发布；读路径不获取注册锁。
+- Assembly 使用对象引用身份；同一对象重复注册失败，不同 ALC 的同名程序集可进入验证，但 Contract/Method 路由、Codec 和 Service 冲突仍按 ID、名称、schema 与完整指纹拒绝，且不部分提交。
+- 动态模块状态为 `Running -> Draining -> Released/DrainTimedOut`。动态调用持有固定 stripe 的缓存行隔离租约；静态项不计数，也不进入动态锁。
+- Draining 期间模块继续占有路由。排空超时只取消该模块调用和流；不合作业务保留路由及资源，直到后台观察到计数归零后再释放框架持有的 Manifest、Proxy、Stub、Codec、Service、Scope 与 Timer 引用。
+- 依赖模块必须先注册且后注销；Stop/Dispose 与显式 Unregister 共享同一个幂等排空操作。NativeAOT 通过 feature switch 移除动态定位/计数路径，不提供反射 fallback。

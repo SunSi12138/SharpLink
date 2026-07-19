@@ -35,8 +35,9 @@
 - `0.6.8`（已完成）：统一服务端连接状态、取消原因仲裁、用户调用 observer 与证据驱动附加审计。
 - `0.6.9`（已完成）：有界 Server Stop、Stream Dispatcher 峰值回收、Chaos/长稳与最终性能收敛。
 - `0.6.10`（功能完成，待发布长稳）：完整取消契约、带原因 Cancel、monotonic 服务端 deadline、取消遥测与迟到响应限频；本地 Release/AOT/Package/性能/120 秒 Chaos Gate 已通过，创建 tag 前仍需最终提交的 24 小时连续长稳。
-- 当前按用户要求不开始 `0.7.0` 扩展包。
-- `0.7.0`：Discovery、Load Balancing 与 Resilience 官方扩展包。
+- `0.7.0`（已完成）：实验性 SharedMemory 传输。
+- `0.7.1`（实现中）：自动服务注册、三种根服务生命周期、运行时程序集原子注册、安全排空与 collectible ALC 验证。
+- 后续 `0.7.x`：Discovery、Load Balancing 与 Resilience 官方扩展包。
 - `0.8.0-rc`：Chaos、长稳、跨平台/AOT/Package/性能 Release Gate，只修复正确性、稳定性、性能回退和文档问题。
 - `1.0.0`：通过 RC 接受标准后发布稳定 API 与 Protocol v2。
 
