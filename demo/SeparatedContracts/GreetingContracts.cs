@@ -6,7 +6,9 @@ namespace SeparatedContracts;
 [RpcContract]
 public interface IGreetingService : IService
 {
+    [NonCancellable]
     ValueTask<string> Greet(GreetRequest request);
+    [NonCancellable]
     ValueTask<int> Add(int left, int right);
 }
 

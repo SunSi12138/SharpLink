@@ -123,4 +123,68 @@ public partial class RpcGenerator
         category: "SharpLink.Generator",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor RpcServiceMissingContractRule = new(
+        id: "SHARPLINK016",
+        title: "RPC Service Must Implement an RPC Contract",
+        messageFormat: "RPC service '{0}' is invalid: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor RpcServiceMultipleContractsRule = new(
+        id: "SHARPLINK017",
+        title: "RPC Service Must Own Exactly One Contract",
+        messageFormat: "RPC service '{0}' is invalid: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor RpcServiceTypeRule = new(
+        id: "SHARPLINK018",
+        title: "RPC Service Type Cannot Be Activated",
+        messageFormat: "RPC service '{0}' is invalid: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor RpcServiceConstructorRule = new(
+        id: "SHARPLINK019",
+        title: "RPC Service Constructor Is Ambiguous",
+        messageFormat: "RPC service '{0}' is invalid: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor RpcServiceLifetimeRule = new(
+        id: "SHARPLINK020",
+        title: "RPC Service Lifetime Is Invalid",
+        messageFormat: "RPC service '{0}' is invalid: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor StaticContractConflictRule = new(
+        id: "SHARPLINK021",
+        title: "Static RPC Contract Route Conflict",
+        messageFormat: "Static contract '{0}' ({1}) has conflicting fingerprints '{2}' and '{3}'",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor StaticMethodConflictRule = new(
+        id: "SHARPLINK022",
+        title: "Static RPC Method Route Conflict",
+        messageFormat: "Static method '{0}' ({1}) has conflicting fingerprints '{2}' and '{3}'",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor StaticServiceConflictRule = new(
+        id: "SHARPLINK023",
+        title: "Static RPC Service Ownership Conflict",
+        messageFormat: "Static service contract '{0}' ({1}) has conflicting owners '{2}' and '{3}'",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
 }

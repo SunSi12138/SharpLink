@@ -2,11 +2,11 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private static string GenerateStub(RpcServiceModel model)
+    private static string GenerateStub(RpcInterfaceModel model)
     {
-        var nsDeclaration = string.IsNullOrEmpty(model.ServiceNamespace) ? "" : $"namespace {model.ServiceNamespace};";
-        var noReturnMethods = model.Interface.Methods.Where(m => m.IsVoid || m.IsStreamReturn).ToArray();
-        var responseMethods = model.Interface.Methods.Where(m => !m.IsVoid && !m.IsStreamReturn).ToArray();
+        var nsDeclaration = string.IsNullOrEmpty(model.Namespace) ? "" : $"namespace {model.Namespace};";
+        var noReturnMethods = model.Methods.Where(m => m.IsVoid || m.IsStreamReturn).ToArray();
+        var responseMethods = model.Methods.Where(m => !m.IsVoid && !m.IsStreamReturn).ToArray();
 
         var sb = new StringBuilder();
         sb.AppendLine($$"""
@@ -23,13 +23,13 @@ public partial class RpcGenerator
 
                         {{nsDeclaration}}
 
-                        public class {{model.ServiceName}}_Stub : IRpcStub
+                        public sealed class {{model.Name}}_Stub : IRpcStub
                         {
-                            public long InterfaceHash => {{model.Interface.Hash}}L;
+                            public long InterfaceHash => {{model.Hash}}L;
                         """);
-        AppendSizeFieldsByType(sb, model.Interface.Methods);
-        AppendCancellationSupport(sb, model.Interface.Methods);
-        AppendMethodDescriptors(sb, model.Interface);
+        AppendSizeFieldsByType(sb, model.Methods);
+        AppendCancellationSupport(sb, model.Methods);
+        AppendMethodDescriptors(sb, model);
         sb.AppendLine($$"""
                             private static async ValueTask __AwaitTaskResultAsync<T>(Task<T> task, IRpcSession session, IRpcByteBufferWriter output)
                             {
@@ -84,7 +84,7 @@ public partial class RpcGenerator
 
                             private ValueTask InvokeNoReturnCoreAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
                             {
-                                var impl = ({{model.Interface.FullName}})service;
+                                var impl = ({{model.FullName}})service;
                                 var reader = new SequenceReader<byte>(args);
                         """);
 
@@ -102,7 +102,7 @@ public partial class RpcGenerator
         switch (methodHash)
         {
 """);
-            AppendStubDispatchCases(sb, noReturnMethods, model.Interface.Hash, writeResponse: false);
+            AppendStubDispatchCases(sb, noReturnMethods, model.Hash, writeResponse: false);
             sb.AppendLine("            default: throw new SharpLinkException(SharpLinkErrorCode.Unimplemented, \"Method is not implemented.\");");
             sb.AppendLine("        }");
             if (needsCompletedReturn)
@@ -119,7 +119,7 @@ public partial class RpcGenerator
 
                             private ValueTask InvokeCoreAsync(object service, IRpcSession session, long methodHash, long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output, CancellationToken cancellationToken)
                             {
-                                var impl = ({{model.Interface.FullName}})service;
+                                var impl = ({{model.FullName}})service;
                                 var reader = new SequenceReader<byte>(args);
                         """);
 
@@ -136,26 +136,14 @@ public partial class RpcGenerator
         switch (methodHash)
         {
 """);
-            AppendStubDispatchCases(sb, responseMethods, model.Interface.Hash, writeResponse: true);
+            AppendStubDispatchCases(sb, responseMethods, model.Hash, writeResponse: true);
             sb.AppendLine("            default: throw new SharpLinkException(SharpLinkErrorCode.Unimplemented, \"Method is not implemented.\");");
             sb.AppendLine("        }");
             sb.AppendLine("        return ValueTask.CompletedTask;");
             sb.AppendLine("    }");
         }
 
-        sb.AppendLine($$"""
-                      }
-                      
-                      internal static class {{model.ServiceName}}_StubRegistration
-                      {
-                          [ModuleInitializer]
-                          internal static void Register()
-                          {
-                              SharpLink.Abstractions.GeneratedStubRegistry.Register(typeof({{model.ServiceFullName}}), () => new {{model.ServiceName}}_Stub());
-                              SharpLink.Abstractions.GeneratedStubRegistry.RegisterContract(typeof({{model.Interface.FullName}}), () => new {{model.ServiceName}}_Stub());
-                          }
-                      }
-                      """);
+        sb.AppendLine("}");
         return sb.ToString();
     }
 

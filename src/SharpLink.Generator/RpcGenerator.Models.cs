@@ -1,13 +1,23 @@
 namespace SharpLink.Generator;
 
-internal record RpcServiceModel(string ServiceName, string ServiceNamespace, string ServiceFullName, RpcInterfaceModel Interface);
+internal record RpcServiceModel(
+    string ServiceName,
+    string ServiceNamespace,
+    string ServiceFullName,
+    RpcInterfaceModel Interface,
+    string Lifetime,
+    EquatableArray<RpcConstructorParameterModel> ConstructorParameters,
+    EquatableArray<string> AssemblyDependencies);
+
+internal record RpcConstructorParameterModel(string Name, string TypeName);
 
 internal record RpcInterfaceModel(
     string Name,
     string Namespace,
     string FullName,
     long Hash,
-    EquatableArray<RpcMethodModel> Methods);
+    EquatableArray<RpcMethodModel> Methods,
+    string Fingerprint);
 
 internal record RpcMethodModel(
     string Name,
@@ -24,7 +34,10 @@ internal record RpcMethodModel(
     double? TimeoutSeconds,
     bool IsIdempotent,
     long Hash,
-    EquatableArray<RpcParameterModel> Parameters);
+    EquatableArray<RpcParameterModel> Parameters,
+    string RequestSchema,
+    string ResponseSchema,
+    string Fingerprint);
 
 internal record RpcParameterModel(
     string Name,
@@ -47,6 +60,35 @@ internal readonly record struct StreamingWithoutCancellationModel(string MethodN
 internal readonly record struct ConflictingCancellationContractModel(string MethodName, Location? Location);
 internal readonly record struct InvalidGenericUsageModel(string SymbolName, string TypeName, Location? Location);
 internal readonly record struct InvalidRpcContractInheritanceModel(string InterfaceName, Location? Location);
+internal readonly record struct RpcServiceDiagnosticModel(
+    RpcServiceDiagnosticKind Kind,
+    string ServiceName,
+    string Detail,
+    Location? Location);
+
+internal enum RpcServiceDiagnosticKind
+{
+    MissingContract,
+    MultipleContracts,
+    InvalidType,
+    InvalidConstructor,
+    InvalidLifetime
+}
+
+internal readonly record struct StaticRouteConflictModel(
+    StaticRouteConflictKind Kind,
+    string Name,
+    long Id,
+    string ExistingFingerprint,
+    string IncomingFingerprint,
+    Location? Location);
+
+internal enum StaticRouteConflictKind
+{
+    Contract,
+    Method,
+    Service
+}
 
 internal enum GeneratedCodecKind
 {
@@ -126,6 +168,19 @@ internal static class Hashing
     public static long GetInterfaceHash(string iName)
     {
         return (long)Hash(iName.Replace("global::", "").Replace(" ", ""));
+    }
+
+    public static string GetSha256(string value)
+    {
+        using (var sha = System.Security.Cryptography.SHA256.Create())
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(value);
+            var hash = sha.ComputeHash(bytes);
+            var result = new StringBuilder(hash.Length * 2);
+            for (var index = 0; index < hash.Length; index++)
+                result.Append(hash[index].ToString("x2", CultureInfo.InvariantCulture));
+            return result.ToString();
+        }
     }
 
     private static ulong Hash(string s)

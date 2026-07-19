@@ -25,15 +25,6 @@ public partial class RpcGenerator
                 AppendCollectionCodec(sb, codec);
         }
 
-        sb.AppendLine("internal static class __SharpLinkGeneratedCodecManifest");
-        sb.AppendLine("{");
-        sb.AppendLine("    [ModuleInitializer]");
-        sb.AppendLine("    internal static void Register()");
-        sb.AppendLine("    {");
-        foreach (var codec in codecs)
-            sb.AppendLine($"        RpcGeneratedCodecRegistry.Register(new {codec.CodecName}.Factory());");
-        sb.AppendLine("    }");
-        sb.AppendLine("}");
         return sb.ToString();
     }
 
