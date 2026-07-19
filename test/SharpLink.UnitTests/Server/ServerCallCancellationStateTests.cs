@@ -8,6 +8,30 @@ namespace SharpLink.UnitTests.Server;
 public class ServerCallCancellationStateTests
 {
     [Test]
+    public void ModuleDrainingShouldCancelOnlyItsCooperativeInvocation()
+    {
+        using var moduleDraining = new CancellationTokenSource();
+        var state = ServerCallCancellationState.Rent(
+            100,
+            null,
+            0,
+            CancellationToken.None,
+            CancellationToken.None,
+            moduleDraining.Token,
+            supportsCooperativeCancellation: true);
+
+        moduleDraining.Cancel();
+
+        Ensure(state.Reason == ServerCallCancellationReason.ModuleDraining,
+            "module cancellation reason");
+        Ensure(state.InvocationToken.IsCancellationRequested,
+            "module drain cancels cooperative business code");
+        Ensure(state.TryClaimModuleDrainResponse(), "module drain response is claimed once");
+        Ensure(!state.TryClaimModuleDrainResponse(), "module drain response cannot be claimed twice");
+        state.Dispose();
+    }
+
+    [Test]
     public void FirstCancellationSourceShouldWin()
     {
         using var connectionClosed = new CancellationTokenSource();
