@@ -273,13 +273,17 @@ public interface IHelloService : SharpLink.Sdk.IService
 """);
 
         var generated = RunGeneratorAndGetSources(source);
-        var codecs = generated.FirstOrDefault(static text => text.Contains("__SharpLinkGeneratedCodecManifest"));
+        var codecs = generated.FirstOrDefault(static text => text.Contains("Missing required RPC member 'Name'"));
         if (codecs is null)
-            throw new Exception("Expected generated DTO codec manifest source.");
+            throw new Exception("Expected generated DTO codec source.");
+        var manifest = generated.FirstOrDefault(static text => text.Contains("__SharpLinkGeneratedAssemblyManifest"));
+        if (manifest is null)
+            throw new Exception("Expected generated assembly manifest source.");
         Ensure(codecs.Contains("IRpcCodec<global::Person>"), "Person codec");
         Ensure(codecs.Contains("IRpcCodec<global::Address>"), "nested record codec");
         Ensure(codecs.Contains("IRpcCodec<global::System.Collections.Generic.List<string>>"), "collection codec");
-        Ensure(codecs.Contains("RpcGeneratedCodecRegistry.Register"), "manifest registration");
+        Ensure(manifest.Contains("SharpLinkGeneratedAssemblyCatalog.Register"), "manifest registration");
+        Ensure(manifest.Contains(".Factory()"), "codec factories belong to the assembly manifest");
         Ensure(codecs.Contains("case 7U:"), "explicit field ID");
         Ensure(codecs.Contains("Missing required RPC member 'Name'"), "required member validation");
         return Task.CompletedTask;
@@ -350,6 +354,262 @@ public interface IHelloService : SharpLink.Sdk.IService
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task RpcServiceWithoutExplicitLifetimeShouldGenerateSingletonManifestEntry()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class HelloService : IHelloService
+{
+    public ValueTask<int> Echo(int value) => new(value);
+}
+""");
+
+        var manifest = GetGeneratedManifest(source);
+        Ensure(manifest.Contains("public const string CompileTimeDescriptor", StringComparison.Ordinal),
+            "Manifest must expose its compile-time descriptor.");
+        Ensure(manifest.Contains("global::HelloService", StringComparison.Ordinal),
+            "Manifest must identify the service implementation.");
+        Ensure(manifest.Contains("SharpLinkServiceLifetime.Singleton", StringComparison.Ordinal),
+            "RpcService without an explicit lifetime must be generated as Singleton.");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task RpcServiceExplicitLifetimesShouldBePreservedInManifest()
+    {
+        foreach (var lifetime in new[] { "Singleton", "Connection", "Call" })
+        {
+            var source = BuildSource($$"""
+[SharpLink.Sdk.RpcContract]
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Get(int value);
+}
+
+[SharpLink.Sdk.RpcService(Lifetime = SharpLink.Sdk.SharpLinkServiceLifetime.{{lifetime}})]
+public sealed class HelloService : IHelloService
+{
+    public ValueTask<int> Get(int value) => new(value);
+}
+""");
+
+            var manifest = GetGeneratedManifest(source);
+            Ensure(manifest.Contains("global::HelloService", StringComparison.Ordinal),
+                "Manifest must identify the service implementation.");
+            Ensure(manifest.Contains($"SharpLinkServiceLifetime.{lifetime}", StringComparison.Ordinal),
+                $"Manifest must preserve explicit {lifetime} lifetime.");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task InvalidRpcServiceLifetimeShouldReportSharplink020()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value);
+}
+
+[SharpLink.Sdk.RpcService(Lifetime = (SharpLink.Sdk.SharpLinkServiceLifetime)99)]
+public sealed class HelloService : IHelloService
+{
+    public ValueTask<int> Echo(int value) => new(value);
+}
+""");
+
+        EnsureHasRuleContaining(source, "SHARPLINK020", "99");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task RpcServiceWithoutRpcContractShouldReportSharplink016()
+    {
+        var source = BuildSource("""
+public interface IOrdinaryService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class OrdinaryService : IOrdinaryService
+{
+    public ValueTask<int> Echo(int value) => new(value);
+}
+""");
+
+        EnsureHasRuleContaining(source, "SHARPLINK016", "OrdinaryService");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task RpcServiceImplementingMultipleContractsShouldReportSharplink017()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IFirstService : SharpLink.Sdk.IService
+{
+    ValueTask<int> First(int value);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface ISecondService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Second(int value);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class AmbiguousService : IFirstService, ISecondService
+{
+    public ValueTask<int> First(int value) => new(value);
+    public ValueTask<int> Second(int value) => new(value);
+}
+""");
+
+        EnsureHasRuleContaining(source, "SHARPLINK017", "AmbiguousService");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task AbstractAndOpenGenericRpcServicesShouldReportSharplink018()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IAbstractContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Get(int value);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IGenericContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Get(int value);
+}
+
+[SharpLink.Sdk.RpcService]
+public abstract class AbstractService : IAbstractContract
+{
+    public abstract ValueTask<int> Get(int value);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class GenericService<T> : IGenericContract
+{
+    public ValueTask<int> Get(int value) => new(value);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK018", 2);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task AmbiguousAndInaccessibleConstructorsShouldReportSharplink019()
+    {
+        var source = BuildSource("""
+public sealed class FirstDependency;
+public sealed class SecondDependency;
+
+[SharpLink.Sdk.RpcContract]
+public interface IAmbiguousContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Get(int value);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IInaccessibleContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Get(int value);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class AmbiguousConstructorService : IAmbiguousContract
+{
+    public AmbiguousConstructorService(FirstDependency dependency) { }
+    public AmbiguousConstructorService(SecondDependency dependency) { }
+    public ValueTask<int> Get(int value) => new(value);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class InaccessibleConstructorService : IInaccessibleContract
+{
+    private InaccessibleConstructorService() { }
+    public ValueTask<int> Get(int value) => new(value);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK019", 2);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task DuplicateStaticContractOwnersShouldReportSharplink021()
+    {
+        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSdkSource());
+        var first = CreateMetadataReference("ContractOwnerA", BuildReferencedContractSource("ValueTask<int> Echo(int value);"), sdk);
+        var second = CreateMetadataReference("ContractOwnerB", BuildReferencedContractSource("ValueTask<int> Echo(int value);"), sdk);
+
+        EnsureHasRule(
+            "namespace Consumer { public sealed class Marker; }",
+            "SHARPLINK021",
+            sdk,
+            first,
+            second);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ConflictingStaticMethodDescriptorsShouldReportSharplink022()
+    {
+        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSdkSource());
+        var first = CreateMetadataReference("MethodOwnerA", BuildReferencedContractSource("ValueTask<int> Echo(int value);"), sdk);
+        var second = CreateMetadataReference("MethodOwnerB", BuildReferencedContractSource("ValueTask<string> Echo(int value);"), sdk);
+
+        EnsureHasRule(
+            "namespace Consumer { public sealed class Marker; }",
+            "SHARPLINK022",
+            sdk,
+            first,
+            second);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task MultipleStaticServicesForContractShouldReportSharplink023()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class FirstHelloService : IHelloService
+{
+    public ValueTask<int> Echo(int value) => new(value);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class SecondHelloService : IHelloService
+{
+    public ValueTask<int> Echo(int value) => new(value);
+}
+""");
+
+        EnsureHasRuleContaining(source, "SHARPLINK023", "IHelloService");
+        return Task.CompletedTask;
+    }
+
     private static string BuildSource(string contract)
     {
         return $$"""
@@ -387,9 +647,17 @@ namespace SharpLink.Sdk
     {
     }
 
+    public enum SharpLinkServiceLifetime
+    {
+        Singleton,
+        Connection,
+        Call
+    }
+
     [AttributeUsage(AttributeTargets.Class)]
     public sealed class RpcServiceAttribute : Attribute
     {
+        public SharpLinkServiceLifetime Lifetime { get; set; } = SharpLinkServiceLifetime.Singleton;
     }
 
     public readonly record struct SharpLinkCallOptions;
@@ -428,6 +696,34 @@ namespace SharpLink.Sdk
         Ensure(has, $"Expected diagnostic {ruleId}, but it was not reported.");
     }
 
+    private static void EnsureHasRule(
+        string source,
+        string ruleId,
+        params MetadataReference[] additionalReferences)
+    {
+        var diagnostics = RunGenerator(source, additionalReferences);
+        var has = diagnostics.Any(d => d.Id == ruleId);
+        Ensure(has, $"Expected diagnostic {ruleId}, but it was not reported. Actual: {FormatDiagnostics(diagnostics)}");
+    }
+
+    private static void EnsureHasRuleContaining(string source, string ruleId, string expectedText)
+    {
+        var diagnostics = RunGenerator(source);
+        var hit = diagnostics.FirstOrDefault(d => d.Id == ruleId);
+        if (hit is null)
+            throw new Exception($"Expected diagnostic {ruleId}, but it was not reported. Actual: {FormatDiagnostics(diagnostics)}");
+        Ensure(hit.GetMessage().Contains(expectedText, StringComparison.Ordinal),
+            $"Expected diagnostic {ruleId} to mention '{expectedText}', but got '{hit.GetMessage()}'.");
+    }
+
+    private static void EnsureRuleCount(string source, string ruleId, int expectedCount)
+    {
+        var diagnostics = RunGenerator(source);
+        var hits = diagnostics.Count(d => d.Id == ruleId);
+        Ensure(hits == expectedCount,
+            $"Expected {expectedCount} diagnostic(s) for {ruleId}, but got {hits}. Actual: {FormatDiagnostics(diagnostics)}");
+    }
+
     private static void EnsureDoesNotHaveRule(string source, string ruleId)
     {
         var diagnostics = RunGenerator(source);
@@ -435,13 +731,15 @@ namespace SharpLink.Sdk
         Ensure(!has, $"Did not expect diagnostic {ruleId}.");
     }
 
-    private static ImmutableArray<Diagnostic> RunGenerator(string source)
+    private static ImmutableArray<Diagnostic> RunGenerator(
+        string source,
+        params MetadataReference[] additionalReferences)
     {
         var syntaxTree = CSharpSyntaxTree.ParseText(source, CSharpParseOptions.Default);
         var compilation = CSharpCompilation.Create(
             assemblyName: "AnalyzerTestAssembly",
             syntaxTrees: [syntaxTree],
-            references: GetPlatformReferences(),
+            references: GetPlatformReferences().Concat(additionalReferences),
             options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
         IIncrementalGenerator generator = new RpcGenerator();
@@ -466,6 +764,68 @@ namespace SharpLink.Sdk
             .Select(static tree => tree.GetText().ToString())
             .ToArray();
     }
+
+    private static string GetGeneratedManifest(string source)
+    {
+        var generated = RunGeneratorAndGetSources(source);
+        return generated.FirstOrDefault(static text => text.Contains("__SharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal))
+            ?? throw new Exception("Expected generated assembly manifest source.");
+    }
+
+    private static MetadataReference CreateMetadataReference(
+        string assemblyName,
+        string source,
+        params MetadataReference[] additionalReferences)
+    {
+        var compilation = CSharpCompilation.Create(
+            assemblyName,
+            [CSharpSyntaxTree.ParseText(source, CSharpParseOptions.Default)],
+            GetPlatformReferences().Concat(additionalReferences),
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        using var image = new MemoryStream();
+        var emit = compilation.Emit(image);
+        Ensure(emit.Success,
+            $"Failed to build metadata fixture '{assemblyName}': {FormatDiagnostics(emit.Diagnostics)}");
+        return MetadataReference.CreateFromImage(image.ToArray());
+    }
+
+    private static string BuildReferencedContractSource(string method)
+    {
+        return $$"""
+using System.Threading.Tasks;
+
+namespace ConflictingContracts
+{
+    [SharpLink.Sdk.RpcContract]
+    public interface ISharedContract : SharpLink.Sdk.IService
+    {
+        {{method}}
+    }
+}
+""";
+    }
+
+    private static string BuildSdkSource()
+    {
+        return """
+using System;
+
+namespace SharpLink.Sdk
+{
+    public interface IService { }
+
+    [AttributeUsage(AttributeTargets.Interface)]
+    public sealed class RpcContractAttribute : Attribute { }
+
+    [AttributeUsage(AttributeTargets.Class)]
+    public sealed class RpcServiceAttribute : Attribute { }
+}
+""";
+    }
+
+    private static string FormatDiagnostics(IEnumerable<Diagnostic> diagnostics)
+        => string.Join(" | ", diagnostics.Select(static d => $"{d.Id}: {d.GetMessage()}"));
 
     private static IEnumerable<MetadataReference> GetPlatformReferences()
     {
