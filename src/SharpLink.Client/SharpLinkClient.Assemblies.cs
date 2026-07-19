@@ -154,10 +154,14 @@ internal sealed partial class SharpLinkClient
         {
             if (nextFactories.TryGetValue(codec.TargetType, out var existingCodec))
             {
-                error = CreateError(SharpLinkAssemblyRegistrationErrorCode.CodecConflict,
-                    $"Codec conflict for '{codec.TargetType.FullName}': existing schema '{existingCodec.SchemaId}', incoming schema '{codec.SchemaId}'.",
-                    incoming.OwnerAssembly, "Codec", existingCodec.SchemaId, codec.SchemaId);
-                return default;
+                if (!string.Equals(existingCodec.SchemaId, codec.SchemaId, StringComparison.Ordinal))
+                {
+                    error = CreateError(SharpLinkAssemblyRegistrationErrorCode.CodecConflict,
+                        $"Codec conflict for '{codec.TargetType.FullName}': existing schema '{existingCodec.SchemaId}', incoming schema '{codec.SchemaId}'.",
+                        incoming.OwnerAssembly, "Codec", existingCodec.SchemaId, codec.SchemaId);
+                    return default;
+                }
+                continue;
             }
             nextFactories.Add(codec.TargetType, codec);
         }
@@ -253,8 +257,16 @@ internal sealed partial class SharpLinkClient
                 .ToFrozenDictionary();
             var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
             codecTypes = module.Manifest.Codecs.Select(static codec => codec.TargetType).ToArray();
-            var nextFactories = factories.Where(pair => !codecTypes.Contains(pair.Key))
-                .ToDictionary(static pair => pair.Key, static pair => pair.Value);
+            var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
+            for (var index = 0; index < codecTypes.Length; index++)
+            {
+                var codecType = codecTypes[index];
+                var replacement = FindReplacementCodec(codecType, module);
+                if (replacement is null)
+                    nextFactories.Remove(codecType);
+                else
+                    nextFactories[codecType] = replacement;
+            }
             Volatile.Write(ref _proxies, nextProxies);
             _runtimeContext.PublishGeneratedCodecs(nextFactories);
             _dynamicModules.Remove(assembly);
@@ -262,6 +274,27 @@ internal sealed partial class SharpLinkClient
         }
         _runtimeContext.RemoveResolvedGeneratedCodecs(codecTypes);
         module.MarkReleased();
+    }
+
+    private IRpcGeneratedCodecFactory? FindReplacementCodec(
+        Type targetType,
+        SharpLinkDynamicModule removedModule)
+    {
+        for (var index = 0; index < _staticManifests.Count; index++)
+        {
+            var replacement = _staticManifests[index].Codecs.FirstOrDefault(codec => codec.TargetType == targetType);
+            if (replacement is not null)
+                return replacement;
+        }
+        foreach (var candidate in _dynamicModules.Values)
+        {
+            if (ReferenceEquals(candidate, removedModule))
+                continue;
+            var replacement = candidate.Manifest.Codecs.FirstOrDefault(codec => codec.TargetType == targetType);
+            if (replacement is not null)
+                return replacement;
+        }
+        return null;
     }
 
     private static ValueTask<SharpLinkAssemblyUnregisterResult> WaitForUnregisterAsync(
@@ -415,15 +448,9 @@ internal sealed class SharpLinkModuleRpcChannel(IRpcChannel inner, SharpLinkDyna
         in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
         SharpLinkCallOptions options, CancellationToken cancellationToken = default)
     {
-        if (!module.TryAcquire(true, out var lease))
-            return FailedStream<TResponse>(Draining());
-        var combined = Combine(cancellationToken, module.ForcedCancellation);
-        try
-        {
-            return HoldStream(inner.InvokeServerStreamingAsync(
-                method, request, requestCodec, responseCodec, options, combined.Token), lease, combined);
-        }
-        catch { lease.Dispose(); combined.Dispose(); throw; }
+        var requestValue = request;
+        return InvokeServerStreamingDeferred(
+            method, requestValue, requestCodec, responseCodec, options, cancellationToken);
     }
 
     public IAsyncEnumerable<TResponse> InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
@@ -431,15 +458,10 @@ internal sealed class SharpLinkModuleRpcChannel(IRpcChannel inner, SharpLinkDyna
         in TStreams streams, SharpLinkCallOptions options, CancellationToken cancellationToken = default)
         where TStreams : struct, IRpcClientStreamWriter
     {
-        if (!module.TryAcquire(true, out var lease))
-            return FailedStream<TResponse>(Draining());
-        var combined = Combine(cancellationToken, module.ForcedCancellation);
-        try
-        {
-            return HoldStream(inner.InvokeDuplexStreamingAsync(
-                method, request, requestCodec, responseCodec, streams, options, combined.Token), lease, combined);
-        }
-        catch { lease.Dispose(); combined.Dispose(); throw; }
+        var requestValue = request;
+        var streamsValue = streams;
+        return InvokeDuplexStreamingDeferred(
+            method, requestValue, requestCodec, responseCodec, streamsValue, options, cancellationToken);
     }
 
     public Task SendClientStreamAsync<T>(long requestId, ushort streamId, IAsyncEnumerable<T> stream,
@@ -460,27 +482,50 @@ internal sealed class SharpLinkModuleRpcChannel(IRpcChannel inner, SharpLinkDyna
         finally { lease.Dispose(); combined.Dispose(); }
     }
 
-    private static async IAsyncEnumerable<T> HoldStream<T>(IAsyncEnumerable<T> stream,
-        SharpLinkDynamicModuleLease lease, CombinedCancellation combined,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    private async IAsyncEnumerable<TResponse> InvokeServerStreamingDeferred<TRequest, TResponse>(
+        RpcMethodDescriptor method,
+        TRequest request,
+        IRpcCodec<TRequest> requestCodec,
+        IRpcCodec<TResponse> responseCodec,
+        SharpLinkCallOptions options,
+        CancellationToken callCancellation,
+        [EnumeratorCancellation] CancellationToken enumerationCancellation = default)
     {
+        if (!module.TryAcquire(true, out var lease))
+            throw Draining();
+        var combined = Combine(callCancellation, module.ForcedCancellation);
         try
         {
-            await foreach (var item in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
+            var stream = inner.InvokeServerStreamingAsync(
+                method, request, requestCodec, responseCodec, options, combined.Token);
+            await foreach (var item in stream.WithCancellation(enumerationCancellation).ConfigureAwait(false))
                 yield return item;
         }
         finally { lease.Dispose(); combined.Dispose(); }
     }
 
-    private static async IAsyncEnumerable<T> FailedStream<T>(Exception exception,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    private async IAsyncEnumerable<TResponse> InvokeDuplexStreamingDeferred<TRequest, TResponse, TStreams>(
+        RpcMethodDescriptor method,
+        TRequest request,
+        IRpcCodec<TRequest> requestCodec,
+        IRpcCodec<TResponse> responseCodec,
+        TStreams streams,
+        SharpLinkCallOptions options,
+        CancellationToken callCancellation,
+        [EnumeratorCancellation] CancellationToken enumerationCancellation = default)
+        where TStreams : struct, IRpcClientStreamWriter
     {
-        await Task.Yield();
-        cancellationToken.ThrowIfCancellationRequested();
-        throw exception;
-#pragma warning disable CS0162
-        yield break;
-#pragma warning restore CS0162
+        if (!module.TryAcquire(true, out var lease))
+            throw Draining();
+        var combined = Combine(callCancellation, module.ForcedCancellation);
+        try
+        {
+            var stream = inner.InvokeDuplexStreamingAsync(
+                method, request, requestCodec, responseCodec, streams, options, combined.Token);
+            await foreach (var item in stream.WithCancellation(enumerationCancellation).ConfigureAwait(false))
+                yield return item;
+        }
+        finally { lease.Dispose(); combined.Dispose(); }
     }
 
     private static SharpLinkException Draining() => new(SharpLinkErrorCode.Unavailable, "RPC module is draining");

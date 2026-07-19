@@ -204,24 +204,83 @@ internal sealed partial class SharpLinkServer
                 .ToFrozenDictionary();
             var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
             removedCodecTypes = module.Manifest.Codecs.Select(static codec => codec.TargetType).ToArray();
-            var nextFactories = factories
-                .Where(pair => !removedCodecTypes.Contains(pair.Key))
-                .ToDictionary(static pair => pair.Key, static pair => pair.Value);
+            var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
+            for (var index = 0; index < removedCodecTypes.Length; index++)
+            {
+                var codecType = removedCodecTypes[index];
+                var replacement = FindReplacementCodec(codecType, module);
+                if (replacement is null)
+                    nextFactories.Remove(codecType);
+                else
+                    nextFactories[codecType] = replacement;
+            }
             Volatile.Write(ref _services, nextServices);
             _runtimeContext.PublishGeneratedCodecs(nextFactories);
             _dynamicModules.Remove(assembly);
             _registryGeneration++;
         }
 
+        Exception? firstException = null;
         foreach (var connection in _connections.Values)
         {
             for (var index = 0; index < removedServices.Length; index++)
-                await connection.DisposeServiceAsync(removedServices[index]).ConfigureAwait(false);
+            {
+                try
+                {
+                    await connection.DisposeServiceAsync(removedServices[index]).ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    firstException ??= exception;
+                }
+            }
         }
         for (var index = 0; index < removedServices.Length; index++)
-            await removedServices[index].DisposeAsync().ConfigureAwait(false);
-        _runtimeContext.RemoveResolvedGeneratedCodecs(removedCodecTypes);
-        module.MarkReleased();
+        {
+            try
+            {
+                await removedServices[index].DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                firstException ??= exception;
+            }
+        }
+        try
+        {
+            _runtimeContext.RemoveResolvedGeneratedCodecs(removedCodecTypes);
+        }
+        catch (Exception exception)
+        {
+            firstException ??= exception;
+        }
+        finally
+        {
+            module.MarkReleased();
+        }
+        if (firstException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+    }
+
+    private IRpcGeneratedCodecFactory? FindReplacementCodec(
+        Type targetType,
+        SharpLinkDynamicModule removedModule)
+    {
+        for (var index = 0; index < _staticManifests.Count; index++)
+        {
+            var replacement = _staticManifests[index].Codecs.FirstOrDefault(codec => codec.TargetType == targetType);
+            if (replacement is not null)
+                return replacement;
+        }
+        foreach (var candidate in _dynamicModules.Values)
+        {
+            if (ReferenceEquals(candidate, removedModule))
+                continue;
+            var replacement = candidate.Manifest.Codecs.FirstOrDefault(codec => codec.TargetType == targetType);
+            if (replacement is not null)
+                return replacement;
+        }
+        return null;
     }
 
     private RegistrationCandidate BuildRegistrationCandidate(
@@ -305,14 +364,18 @@ internal sealed partial class SharpLinkServer
         {
             if (nextFactories.TryGetValue(codec.TargetType, out var existingCodec))
             {
-                error = CreateError(
-                    SharpLinkAssemblyRegistrationErrorCode.CodecConflict,
-                    $"Codec conflict for '{codec.TargetType.FullName}': existing schema '{existingCodec.SchemaId}', incoming schema '{codec.SchemaId}'.",
-                    incoming.OwnerAssembly,
-                    artifact: "Codec",
-                    existingFingerprint: existingCodec.SchemaId,
-                    incomingFingerprint: codec.SchemaId);
-                return default;
+                if (!string.Equals(existingCodec.SchemaId, codec.SchemaId, StringComparison.Ordinal))
+                {
+                    error = CreateError(
+                        SharpLinkAssemblyRegistrationErrorCode.CodecConflict,
+                        $"Codec conflict for '{codec.TargetType.FullName}': existing schema '{existingCodec.SchemaId}', incoming schema '{codec.SchemaId}'.",
+                        incoming.OwnerAssembly,
+                        artifact: "Codec",
+                        existingFingerprint: existingCodec.SchemaId,
+                        incomingFingerprint: codec.SchemaId);
+                    return default;
+                }
+                continue;
             }
             nextFactories.Add(codec.TargetType, codec);
         }

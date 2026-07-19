@@ -33,6 +33,12 @@ public sealed class RuntimeAssemblyIntegrationTests
         Ensure(clientContract.Succeeded, $"client contract registration: {clientContract.Error}");
         Ensure(harness.Server.RegisterAssembly(plugin.ContractAssembly).Succeeded, "server contract registration");
         Ensure(harness.Server.RegisterAssembly(plugin.ServiceAssembly).Succeeded, "server service registration");
+        Ensure(harness.Client.RegisterAssembly(plugin.ServiceAssembly).Succeeded,
+            "client accepts identical service-assembly DTO codecs");
+        Ensure((await harness.Client.UnregisterAssemblyAsync(
+            plugin.ServiceAssembly,
+            TimeSpan.Zero)).ReferencesReleased,
+            "removing duplicate client codecs preserves the contract-owned codecs");
 
         var duplicate = harness.Server.RegisterAssembly(plugin.ServiceAssembly);
         Ensure(!duplicate.Succeeded, "same Assembly object cannot be registered twice");
@@ -46,6 +52,11 @@ public sealed class RuntimeAssemblyIntegrationTests
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
         var unary = await InvokeValueTaskAsync<int>(proxy, plugin.ContractType, "UnaryAsync", 7, CancellationToken.None);
         Ensure(unary == 8, "dynamic unary");
+        var payloadType = plugin.GetContractType("SharpLink.DynamicPlugin.DynamicPayload");
+        var payload = Activator.CreateInstance(payloadType, 5, "codec")!;
+        var payloadResult = await InvokeValueTaskAsync<int>(
+            proxy, plugin.ContractType, "UsePayloadAsync", payload, CancellationToken.None);
+        Ensure(payloadResult == 10, "identical contract and service DTO codecs");
 
         await InvokeValueTaskAsync(proxy, plugin.ContractType, "NotifyAsync", 3, CancellationToken.None);
         await WaitUntilAsync(() => plugin.GetStaticInt("Notifications") == 3);
@@ -105,6 +116,91 @@ public sealed class RuntimeAssemblyIntegrationTests
                 "old proxy draining diagnostic");
         }
         proxy = null;
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task DormantDynamicStreamsShouldNotHoldModuleLeases()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var plugin = PluginBundle.Load("dynamic-dormant-streams");
+        RegisterAll(harness, plugin);
+
+        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        var serverStream = InvokeStream(
+            proxy, plugin.ContractType, "ServerStreamAsync", 1, CancellationToken.None);
+        var duplexStream = InvokeStream(
+            proxy, plugin.ContractType, "DuplexAsync", Values(1), CancellationToken.None);
+
+        var released = await harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly, TimeSpan.Zero);
+        Ensure(released.ReferencesReleased, "unstarted streams do not hold client module leases");
+        Ensure(released.RemainingCalls == 0 && released.RemainingStreams == 0,
+            "unstarted streams leave no client module counters");
+
+        await EnsureDrainingStreamAsync(serverStream, "dormant server stream");
+        await EnsureDrainingStreamAsync(duplexStream, "dormant duplex stream");
+
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ServiceAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased, "dormant stream service release");
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased, "dormant stream server contract release");
+        proxy = null;
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task DisposalFailuresShouldNotSkipRemainingModuleCleanup()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var plugin = PluginBundle.Load("dynamic-disposal-failure");
+        RegisterAll(harness, plugin);
+
+        const string firstContractName = "SharpLink.DynamicPlugin.IFirstThrowingDisposalService";
+        const string secondContractName = "SharpLink.DynamicPlugin.ISecondThrowingDisposalService";
+        const string firstServiceName = "SharpLink.DynamicPlugin.FirstThrowingDisposalService";
+        const string secondServiceName = "SharpLink.DynamicPlugin.SecondThrowingDisposalService";
+        var firstContract = plugin.GetContractType(firstContractName);
+        var secondContract = plugin.GetContractType(secondContractName);
+        object? firstProxy = GetProxy(harness.Client, firstContract);
+        object? secondProxy = GetProxy(harness.Client, secondContract);
+        plugin.InvokeServiceStatic(firstServiceName, "Reset");
+        plugin.InvokeServiceStatic(secondServiceName, "Reset");
+        Ensure(await InvokeValueTaskAsync<int>(
+            firstProxy, firstContract, "TouchAsync", 1, CancellationToken.None) == 11,
+            "first throwing service activation");
+        Ensure(await InvokeValueTaskAsync<int>(
+            secondProxy, secondContract, "TouchAsync", 2, CancellationToken.None) == 22,
+            "second throwing service activation");
+        plugin.InvokeServiceStatic(firstServiceName, "EnableDisposeFailure");
+        plugin.InvokeServiceStatic(secondServiceName, "EnableDisposeFailure");
+
+        try
+        {
+            _ = await harness.Server.UnregisterAssemblyAsync(
+                plugin.ServiceAssembly, TimeSpan.FromSeconds(2));
+            throw new Exception("assert failed: service disposal failure must be reported");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message.Contains("dynamic disposal failure", StringComparison.Ordinal),
+                "original disposal failure is preserved");
+        }
+
+        Ensure(plugin.GetServiceStaticInt(firstServiceName, "Disposed") == 1,
+            "first throwing service disposed once");
+        Ensure(plugin.GetServiceStaticInt(secondServiceName, "Disposed") == 1,
+            "second throwing service disposed despite the first failure");
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased, "contract releases after disposal failure");
+        Ensure((await harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased, "client releases after disposal failure");
+        firstProxy = null;
+        secondProxy = null;
     }
 
     [Test]
@@ -422,6 +518,21 @@ public sealed class RuntimeAssemblyIntegrationTests
         return [.. result];
     }
 
+    private static async Task EnsureDrainingStreamAsync(IAsyncEnumerable<int> stream, string name)
+    {
+        try
+        {
+            _ = await CollectAsync(stream);
+            throw new Exception($"assert failed: {name} must fail after module release");
+        }
+        catch (SharpLinkException exception)
+        {
+            Ensure(exception.Code == SharpLinkErrorCode.Unavailable, $"{name} draining error code");
+            Ensure(exception.Message.Contains("module is draining", StringComparison.Ordinal),
+                $"{name} draining diagnostic");
+        }
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         var deadline = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * 3d);
@@ -495,8 +606,20 @@ public sealed class RuntimeAssemblyIntegrationTests
             => (Task)(ServiceType!.GetProperty(propertyName)!.GetValue(null) ??
                 throw new InvalidOperationException($"Static task '{propertyName}' was null."));
 
+        internal Type GetContractType(string typeName)
+            => ContractAssembly.GetType(typeName, throwOnError: true)!;
+
+        internal int GetServiceStaticInt(string typeName, string propertyName)
+            => (int)(GetServiceType(typeName).GetProperty(propertyName)!.GetValue(null) ?? -1);
+
+        internal void InvokeServiceStatic(string typeName, string methodName)
+            => GetServiceType(typeName).GetMethod(methodName)!.Invoke(null, null);
+
         private void InvokeStatic(string methodName)
             => ServiceType!.GetMethod(methodName)!.Invoke(null, null);
+
+        private Type GetServiceType(string typeName)
+            => ServiceAssembly.GetType(typeName, throwOnError: true)!;
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         internal WeakReference Unload()

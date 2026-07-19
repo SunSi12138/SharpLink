@@ -57,7 +57,7 @@ public partial class RpcGenerator
         sb.AppendLine("    public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;");
         sb.AppendLine("    public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;");
         sb.AppendLine("    public string GeneratorVersion => \"0.7.1\";");
-        sb.AppendLine($"    public Assembly OwnerAssembly => typeof({ownerType}).Assembly;");
+        sb.AppendLine($"    public Assembly OwnerAssembly => typeof({manifestTypeName}).Assembly;");
         sb.AppendLine("    string ISharpLinkGeneratedAssemblyManifest.CompileTimeDescriptor => CompileTimeDescriptor;");
         sb.AppendLine();
         AppendContractManifestArray(sb, contracts);

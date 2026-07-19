@@ -3,6 +3,8 @@ using SharpLink.Sdk;
 
 namespace SharpLink.DynamicPlugin;
 
+public sealed record DynamicPayload(int Value, string Label);
+
 [RpcContract]
 public interface IDynamicPluginService : IService
 {
@@ -26,4 +28,18 @@ public interface IDynamicPluginService : IService
     ValueTask<int> BlockAsync(CancellationToken cancellationToken);
 
     ValueTask<int> BlockIgnoringCancellationAsync(CancellationToken cancellationToken);
+
+    ValueTask<int> UsePayloadAsync(DynamicPayload payload, CancellationToken cancellationToken);
+}
+
+[RpcContract]
+public interface IFirstThrowingDisposalService : IService
+{
+    ValueTask<int> TouchAsync(int value, CancellationToken cancellationToken);
+}
+
+[RpcContract]
+public interface ISecondThrowingDisposalService : IService
+{
+    ValueTask<int> TouchAsync(int value, CancellationToken cancellationToken);
 }

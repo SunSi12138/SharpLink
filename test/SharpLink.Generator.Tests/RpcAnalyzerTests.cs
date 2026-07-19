@@ -290,6 +290,49 @@ public interface IHelloService : SharpLink.Sdk.IService
     }
 
     [Test]
+    public Task CodecOnlyManifestShouldBeOwnedByTheGeneratedAssembly()
+    {
+        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSdkSource());
+        var contract = CreateMetadataReference(
+            "ReferencedDtoContract",
+            """
+using System.Threading.Tasks;
+
+namespace ReferencedDtoContract
+{
+    public sealed class Payload
+    {
+        public int Value { get; set; }
+    }
+
+    [SharpLink.Sdk.RpcContract]
+    public interface ICodecContract : SharpLink.Sdk.IService
+    {
+        ValueTask<Payload> Echo(Payload value);
+    }
+}
+""",
+            sdk);
+
+        var generated = RunGeneratorAndGetSources(
+            "namespace CodecConsumer { public sealed class Marker; }",
+            sdk,
+            contract);
+        var manifest = generated.FirstOrDefault(static text =>
+            text.Contains("__SharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal))
+            ?? throw new Exception("Expected a codec-only assembly manifest source.");
+        Ensure(manifest.Contains(
+                "public Assembly OwnerAssembly => typeof(__SharpLinkGeneratedAssemblyManifest_",
+                StringComparison.Ordinal),
+            "Codec-only manifests must identify the assembly containing the generated manifest.");
+        Ensure(!manifest.Contains(
+                "OwnerAssembly => typeof(global::ReferencedDtoContract.Payload).Assembly",
+                StringComparison.Ordinal),
+            "Codec-only manifests must not identify a referenced DTO assembly as their owner.");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task ContractsWithMatchingMethodHashesShouldGenerateDistinctHelperTypes()
     {
         var source = BuildSource("""
@@ -748,13 +791,15 @@ namespace SharpLink.Sdk
         return driver.GetRunResult().Diagnostics;
     }
 
-    private static string[] RunGeneratorAndGetSources(string source)
+    private static string[] RunGeneratorAndGetSources(
+        string source,
+        params MetadataReference[] additionalReferences)
     {
         var syntaxTree = CSharpSyntaxTree.ParseText(source, CSharpParseOptions.Default);
         var compilation = CSharpCompilation.Create(
             assemblyName: "GeneratorShapeTestAssembly",
             syntaxTrees: [syntaxTree],
-            references: GetPlatformReferences(),
+            references: GetPlatformReferences().Concat(additionalReferences),
             options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
         IIncrementalGenerator generator = new RpcGenerator();

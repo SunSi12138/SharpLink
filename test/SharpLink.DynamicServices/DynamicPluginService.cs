@@ -86,6 +86,9 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         return 43;
     }
 
+    public ValueTask<int> UsePayloadAsync(DynamicPayload payload, CancellationToken cancellationToken)
+        => ValueTask.FromResult(payload.Value + payload.Label.Length);
+
     public ValueTask DisposeAsync()
     {
         Interlocked.Increment(ref _disposed);
@@ -94,4 +97,60 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
 
     private static TaskCompletionSource NewSignal()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);
+}
+
+[RpcService]
+public sealed class FirstThrowingDisposalService : IFirstThrowingDisposalService, IAsyncDisposable
+{
+    private static int _disposed;
+    private static int _throwOnDispose;
+
+    public static int Disposed => Volatile.Read(ref _disposed);
+
+    public static void Reset()
+    {
+        Volatile.Write(ref _disposed, 0);
+        Volatile.Write(ref _throwOnDispose, 0);
+    }
+
+    public static void EnableDisposeFailure() => Volatile.Write(ref _throwOnDispose, 1);
+
+    public ValueTask<int> TouchAsync(int value, CancellationToken cancellationToken)
+        => ValueTask.FromResult(value + 10);
+
+    public ValueTask DisposeAsync()
+    {
+        Interlocked.Increment(ref _disposed);
+        if (Volatile.Read(ref _throwOnDispose) != 0)
+            throw new InvalidOperationException("First dynamic disposal failure.");
+        return ValueTask.CompletedTask;
+    }
+}
+
+[RpcService]
+public sealed class SecondThrowingDisposalService : ISecondThrowingDisposalService, IAsyncDisposable
+{
+    private static int _disposed;
+    private static int _throwOnDispose;
+
+    public static int Disposed => Volatile.Read(ref _disposed);
+
+    public static void Reset()
+    {
+        Volatile.Write(ref _disposed, 0);
+        Volatile.Write(ref _throwOnDispose, 0);
+    }
+
+    public static void EnableDisposeFailure() => Volatile.Write(ref _throwOnDispose, 1);
+
+    public ValueTask<int> TouchAsync(int value, CancellationToken cancellationToken)
+        => ValueTask.FromResult(value + 20);
+
+    public ValueTask DisposeAsync()
+    {
+        Interlocked.Increment(ref _disposed);
+        if (Volatile.Read(ref _throwOnDispose) != 0)
+            throw new InvalidOperationException("Second dynamic disposal failure.");
+        return ValueTask.CompletedTask;
+    }
 }
