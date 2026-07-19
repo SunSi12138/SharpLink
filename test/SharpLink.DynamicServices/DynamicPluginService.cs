@@ -12,7 +12,11 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     private static int _disposed;
     private static int _notifications;
 
-    public DynamicPluginService() => Interlocked.Increment(ref _created);
+    public DynamicPluginService(TimeProvider timeProvider)
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        Interlocked.Increment(ref _created);
+    }
 
     public static int Created => Volatile.Read(ref _created);
 

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 using SharpLink.Client;
@@ -84,6 +85,25 @@ public class SerializerBuilderTests
             "generated module cleanup must preserve an explicit codec");
     }
 
+    [Test]
+    public void PublishedGeneratedCodecShouldReplaceCachedFallbackCodec()
+    {
+        var fallback = new TaggedCodec("fallback");
+        var context = new SharpLinkRuntimeContextBuilder()
+            .UseCodecResolver(type => type == typeof(Payload) ? fallback : null)
+            .Build();
+        Ensure(ReferenceEquals(context.Codecs.GetCodec<Payload>(), fallback),
+            "fallback codec cached before module publication");
+
+        context.PublishGeneratedCodecs(new Dictionary<Type, IRpcGeneratedCodecFactory>
+        {
+            [typeof(Payload)] = new TaggedCodecFactory()
+        });
+
+        Ensure(context.Codecs.GetCodec<Payload>() is TaggedCodec { Tag: "generated" },
+            "generated codec takes precedence after publication");
+    }
+
     private static IRpcRuntimeContext GetClientContext(ISharpLinkClient client)
         => ((IRpcChannel)client).RuntimeContext;
 
@@ -130,6 +150,13 @@ public class SerializerBuilderTests
         }
 
         public Payload Deserialize(in ReadOnlySequence<byte> buffer) => new();
+    }
+
+    private sealed class TaggedCodecFactory : IRpcGeneratedCodecFactory
+    {
+        public Type TargetType => typeof(Payload);
+        public string SchemaId => "generated-test-v1";
+        public IRpcCodec Create(IRpcCodecProvider provider) => new TaggedCodec("generated");
     }
 
     private sealed class NoopTransport : IClientTransportFactory, IServerTransportListener

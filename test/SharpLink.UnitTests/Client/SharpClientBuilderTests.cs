@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 using SharpLink.Client;
@@ -6,6 +7,16 @@ namespace SharpLink.UnitTests.Client;
 
 public class SharpClientBuilderTests
 {
+    [Test]
+    public async Task StaticClientSnapshotShouldRejectIncompatibleManifestVersions()
+    {
+        await EnsureThrows<InvalidOperationException>(() =>
+        {
+            SharpLinkClient.ValidateStaticManifestCompatibility(new IncompatibleManifest());
+            return Task.CompletedTask;
+        });
+    }
+
     [Test]
     public async Task BuildShouldUseThirtySecondUnaryTimeoutByDefault()
     {
@@ -256,5 +267,18 @@ public class SharpClientBuilderTests
             => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class IncompatibleManifest : ISharpLinkGeneratedAssemblyManifest
+    {
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api + 1;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "future-test";
+        public Assembly OwnerAssembly => typeof(IncompatibleManifest).Assembly;
+        public string CompileTimeDescriptor => "future-test";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
+        public IReadOnlyList<string> Dependencies => [];
     }
 }

@@ -703,12 +703,13 @@ public partial class RpcGenerator
     {
         var contracts = new List<(RpcInterfaceModel Model, string Owner, Location? Location)>();
         var services = new List<(RpcServiceModel Model, string Owner, Location? Location)>();
+        var candidateAssemblyNames = ResolveReferenceAssemblyNames(compilation);
 
         CollectStaticRouteModels(compilation.Assembly, contracts, services);
         foreach (var reference in compilation.References)
         {
             if (compilation.GetAssemblyOrModuleSymbol(reference) is IAssemblySymbol assembly &&
-                ReferencesSharpLinkSdk(assembly))
+                candidateAssemblyNames.Contains(assembly.Identity.Name))
             {
                 CollectStaticRouteModels(assembly, contracts, services);
             }

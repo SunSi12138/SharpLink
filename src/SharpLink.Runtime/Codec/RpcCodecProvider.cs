@@ -5,7 +5,7 @@ namespace SharpLink.Runtime;
 internal sealed class RpcCodecProvider : IRpcCodecProvider
 {
     private readonly Func<Type, IRpcCodec?>? _resolver;
-    private readonly ConcurrentDictionary<Type, IRpcCodec> _resolvedCodecs;
+    private readonly ConcurrentDictionary<Type, ResolvedCodec> _resolvedCodecs;
     private readonly HashSet<Type> _explicitCodecTypes;
     private IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> _generatedFactories;
 
@@ -15,7 +15,13 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider
         IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> generatedFactories)
     {
         _resolver = resolver;
-        _resolvedCodecs = new ConcurrentDictionary<Type, IRpcCodec>(explicitCodecs);
+        _resolvedCodecs = new ConcurrentDictionary<Type, ResolvedCodec>();
+        foreach (var pair in explicitCodecs)
+        {
+            _resolvedCodecs.TryAdd(
+                pair.Key,
+                new ResolvedCodec(pair.Value, isFallback: false));
+        }
         _explicitCodecTypes = [.. explicitCodecs.Keys];
         _generatedFactories = generatedFactories;
     }
@@ -30,22 +36,40 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider
             return shared;
 
         if (_resolvedCodecs.TryGetValue(typeof(T), out var registered))
-            return Cast<T>(registered);
+        {
+            if (!registered.IsFallback)
+                return Cast<T>(registered.Codec);
+
+            var currentFactories = Volatile.Read(ref _generatedFactories);
+            if (!currentFactories.TryGetValue(typeof(T), out var replacementFactory))
+                return Cast<T>(registered.Codec);
+
+            var replacement = new ResolvedCodec(
+                replacementFactory.Create(this),
+                isFallback: false);
+            if (_resolvedCodecs.TryUpdate(typeof(T), replacement, registered))
+                return Cast<T>(replacement.Codec);
+            return GetCodec<T>();
+        }
 
         var generatedFactories = Volatile.Read(ref _generatedFactories);
         if (generatedFactories.TryGetValue(typeof(T), out var generatedFactory))
         {
-            var generated = generatedFactory.Create(this);
+            var generated = new ResolvedCodec(generatedFactory.Create(this), isFallback: false);
             var selected = _resolvedCodecs.GetOrAdd(typeof(T), generated);
-            return Cast<T>(selected);
+            if (selected.IsFallback && _resolvedCodecs.TryUpdate(typeof(T), generated, selected))
+                selected = generated;
+            return Cast<T>(selected.Codec);
         }
 
         var resolved = _resolver?.Invoke(typeof(T));
         if (resolved is not null)
         {
             var typed = Cast<T>(resolved);
-            _resolvedCodecs.TryAdd(typeof(T), typed);
-            return typed;
+            var selected = _resolvedCodecs.GetOrAdd(
+                typeof(T),
+                new ResolvedCodec(typed, isFallback: true));
+            return Cast<T>(selected.Codec);
         }
 
         if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
@@ -63,15 +87,36 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider
         => Volatile.Read(ref _generatedFactories);
 
     internal void PublishGeneratedFactories(IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> factories)
-        => Volatile.Write(ref _generatedFactories, factories);
+    {
+        Volatile.Write(ref _generatedFactories, factories);
+        foreach (var pair in factories)
+        {
+            while (_resolvedCodecs.TryGetValue(pair.Key, out var cached) && cached.IsFallback)
+            {
+                if (((ICollection<KeyValuePair<Type, ResolvedCodec>>)_resolvedCodecs)
+                    .Remove(new KeyValuePair<Type, ResolvedCodec>(pair.Key, cached)))
+                {
+                    break;
+                }
+            }
+        }
+    }
 
     internal void RemoveResolvedCodecs(IEnumerable<Type> types)
     {
         foreach (var type in types)
         {
             if (!_explicitCodecTypes.Contains(type))
+            {
                 _resolvedCodecs.TryRemove(type, out _);
+            }
         }
+    }
+
+    private sealed class ResolvedCodec(IRpcCodec codec, bool isFallback)
+    {
+        internal IRpcCodec Codec { get; } = codec;
+        internal bool IsFallback { get; } = isFallback;
     }
 }
 

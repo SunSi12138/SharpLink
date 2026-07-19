@@ -611,6 +611,33 @@ public sealed class InaccessibleConstructorService : IInaccessibleContract
     }
 
     [Test]
+    public Task ExplicitContractAssemblyFilterShouldExcludeUnselectedStaticConflicts()
+    {
+        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSdkSource());
+        var first = CreateMetadataReference(
+            "ContractOwnerA",
+            BuildReferencedContractSource("ValueTask<int> Echo(int value);") +
+            "\nnamespace ContractOwnerA { public sealed class Marker; }",
+            sdk);
+        var second = CreateMetadataReference(
+            "ContractOwnerB",
+            BuildReferencedContractSource("ValueTask<string> Echo(int value);") +
+            "\nnamespace ContractOwnerB { public sealed class Marker; }",
+            sdk);
+
+        var diagnostics = RunGenerator(
+            "[assembly: SharpLink.Sdk.SharpLinkRpcContracts(typeof(ContractOwnerA.Marker))]\n" +
+            "namespace Consumer { public sealed class Marker; }",
+            sdk,
+            first,
+            second);
+        Ensure(!diagnostics.Any(static diagnostic =>
+                diagnostic.Id is "SHARPLINK021" or "SHARPLINK022" or "SHARPLINK023"),
+            $"Explicit contract scan filter must exclude unselected assemblies. Actual: {FormatDiagnostics(diagnostics)}");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task ConflictingStaticMethodDescriptorsShouldReportSharplink022()
     {
         var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSdkSource());
@@ -865,6 +892,12 @@ namespace SharpLink.Sdk
 
     [AttributeUsage(AttributeTargets.Class)]
     public sealed class RpcServiceAttribute : Attribute { }
+
+    [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = false)]
+    public sealed class SharpLinkRpcContractsAttribute : Attribute
+    {
+        public SharpLinkRpcContractsAttribute(params Type[] contractTypes) { }
+    }
 }
 """;
     }

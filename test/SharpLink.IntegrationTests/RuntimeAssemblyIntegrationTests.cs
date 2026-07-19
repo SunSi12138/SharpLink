@@ -1,10 +1,37 @@
 using System.Reflection;
 using System.Runtime.Loader;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace SharpLink.IntegrationTests;
 
 public sealed class RuntimeAssemblyIntegrationTests
 {
+    [Test]
+    [NotInParallel]
+    public async Task DynamicServiceRegistrationShouldRejectMissingProviderDependenciesTransactionally()
+    {
+        await using var harness = await DynamicHarness.CreateAsync(registerDynamicServiceDependencies: false);
+        using var plugin = PluginBundle.Load("dynamic-missing-provider-dependency");
+        Ensure(harness.Client.RegisterAssembly(plugin.ContractAssembly).Succeeded,
+            "client contract registration");
+        Ensure(harness.Server.RegisterAssembly(plugin.ContractAssembly).Succeeded,
+            "server contract registration");
+
+        var result = harness.Server.RegisterAssembly(plugin.ServiceAssembly);
+        Ensure(!result.Succeeded, "missing provider dependency rejects dynamic service assembly");
+        Ensure(result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
+            "missing provider dependency error code");
+        Ensure(result.Error?.Message.Contains(typeof(TimeProvider).FullName!, StringComparison.Ordinal) == true,
+            "missing provider dependency diagnostic");
+
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "failed service registration publishes no server state");
+        Ensure((await harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "client contract release after failed service registration");
+    }
+
     [Test]
     [NotInParallel]
     public async Task RuntimeAssembliesShouldRegisterTransactionallyAndSupportEveryCallShape()
@@ -765,28 +792,37 @@ public sealed class RuntimeAssemblyIntegrationTests
     {
         private readonly CancellationTokenSource _serverCancellation;
         private readonly Task _serverTask;
+        private readonly ServiceProvider _serviceProvider;
 
         private DynamicHarness(
             ISharpLinkServer server,
             ISharpLinkClient client,
             CancellationTokenSource serverCancellation,
-            Task serverTask)
+            Task serverTask,
+            ServiceProvider serviceProvider)
         {
             Server = server;
             Client = client;
             _serverCancellation = serverCancellation;
             _serverTask = serverTask;
+            _serviceProvider = serviceProvider;
         }
 
         internal ISharpLinkServer Server { get; }
         internal ISharpLinkClient Client { get; }
 
-        internal static async Task<DynamicHarness> CreateAsync()
+        internal static async Task<DynamicHarness> CreateAsync(
+            bool registerDynamicServiceDependencies = true)
         {
             var serverCancellation = new CancellationTokenSource();
+            var services = new ServiceCollection();
+            if (registerDynamicServiceDependencies)
+                services.AddSingleton(TimeProvider.System);
+            var serviceProvider = services.BuildServiceProvider();
             var serverBuilder = SharpLinkServerBuilder.Create()
                 .UseTcp(0, IPAddress.Loopback.ToString())
-                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
+                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
+                .UseServiceProvider(serviceProvider);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = server.RunAsync(serverCancellation.Token).AsTask();
@@ -795,7 +831,7 @@ public sealed class RuntimeAssemblyIntegrationTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .Build();
             await client.ConnectAsync();
-            return new DynamicHarness(server, client, serverCancellation, serverTask);
+            return new DynamicHarness(server, client, serverCancellation, serverTask, serviceProvider);
         }
 
         public async ValueTask DisposeAsync()
@@ -812,6 +848,7 @@ public sealed class RuntimeAssemblyIntegrationTests
             {
             }
             _serverCancellation.Dispose();
+            await _serviceProvider.DisposeAsync();
         }
     }
 }

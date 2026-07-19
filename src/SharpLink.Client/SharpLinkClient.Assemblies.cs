@@ -101,6 +101,7 @@ internal sealed partial class SharpLinkClient
         for (var manifestIndex = 0; manifestIndex < manifests.Count; manifestIndex++)
         {
             var manifest = manifests[manifestIndex];
+            ValidateStaticManifestCompatibility(manifest);
             for (var index = 0; index < manifest.Contracts.Count; index++)
             {
                 var contract = manifest.Contracts[index];
@@ -118,6 +119,19 @@ internal sealed partial class SharpLinkClient
             }
         }
         return registrations.ToFrozenDictionary();
+    }
+
+    internal static void ValidateStaticManifestCompatibility(
+        ISharpLinkGeneratedAssemblyManifest manifest)
+    {
+        if (manifest.ApiVersion == SharpLinkGeneratedManifestVersions.Api &&
+            manifest.ProtocolVersion == SharpLinkGeneratedManifestVersions.Protocol)
+        {
+            return;
+        }
+        throw new InvalidOperationException(
+            $"Generated manifest '{manifest.OwnerAssembly.FullName}' is incompatible: " +
+            $"API={manifest.ApiVersion}, Protocol={manifest.ProtocolVersion}, Generator={manifest.GeneratorVersion}.");
     }
 
     private RegistrationCandidate BuildRegistrationCandidate(

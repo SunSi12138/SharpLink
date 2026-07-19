@@ -349,6 +349,9 @@ internal sealed partial class SharpLinkServer
                     incomingFingerprint: service.Fingerprint);
                 return default;
             }
+            error = ValidateServiceDependencies(incoming, service);
+            if (error is not null)
+                return default;
             var definition = new ServiceRegistrationDefinition(
                 service.ContractType,
                 contract.Contract.StubFactory(),
@@ -381,6 +384,34 @@ internal sealed partial class SharpLinkServer
             nextFactories.Add(codec.TargetType, codec);
         }
         return new RegistrationCandidate(nextServices.ToFrozenDictionary(), nextFactories);
+    }
+
+    private SharpLinkAssemblyRegistrationError? ValidateServiceDependencies(
+        ISharpLinkGeneratedAssemblyManifest incoming,
+        SharpLinkGeneratedServiceDescriptor service)
+    {
+        if (service.Dependencies.Count == 0 ||
+            _serviceProvider.GetService<IServiceProviderIsService>() is not { } availability)
+        {
+            return null;
+        }
+
+        for (var index = 0; index < service.Dependencies.Count; index++)
+        {
+            var dependency = service.Dependencies[index];
+            if (availability.IsService(dependency))
+                continue;
+            return CreateError(
+                SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
+                $"Required dependency '{dependency.FullName}' for generated RPC service " +
+                $"'{service.ImplementationName}' is not registered.",
+                incoming.OwnerAssembly,
+                artifact: "Service",
+                contractName: service.ContractName,
+                contractId: service.ContractId,
+                incomingFingerprint: service.Fingerprint);
+        }
+        return null;
     }
 
     private SharpLinkAssemblyRegistrationError? ValidateDependencies(
