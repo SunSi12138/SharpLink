@@ -5,10 +5,15 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     private const byte DataAvailableSignal = 1;
     private const byte SpaceAvailableSignal = 2;
     private const byte CloseSignal = 4;
-    private const byte KnownSignals = DataAvailableSignal | SpaceAvailableSignal | CloseSignal;
+    private const byte DataWaiterArmedSignal = 8;
+    private const byte SpaceWaiterArmedSignal = 16;
+    private const byte KnownSignals = DataAvailableSignal | SpaceAvailableSignal | CloseSignal |
+                                      DataWaiterArmedSignal | SpaceWaiterArmedSignal;
     private const int DataAvailableBit = 1;
     private const int SpaceAvailableBit = 2;
     private const int CloseBit = 4;
+    private const int DataWaiterArmedBit = 8;
+    private const int SpaceWaiterArmedBit = 16;
 
     private readonly PipeStream _stream;
     private readonly SharedMemoryAsyncPulse _outboundWake = new();
@@ -16,8 +21,13 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     private readonly SharedMemoryAsyncPulse _spaceAvailable = new();
     private readonly Task _readerTask;
     private readonly Task _writerTask;
+    private Action? _peerDataWaiterArmedHandler;
+    private Action? _peerSpaceWaiterArmedHandler;
     private Exception? _terminalException;
     private int _pendingOutboundSignals;
+    private int _pendingPeerDataWaiterArmed;
+    private int _pendingPeerSpaceWaiterArmed;
+    private int _waiterHandlersRegistered;
     private int _closed;
     private int _disposed;
 
@@ -43,12 +53,41 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     {
         QueueSignal(DataAvailableBit, "data");
     }
+
     public void SignalSpaceAvailable()
     {
         QueueSignal(SpaceAvailableBit, "space");
     }
+
+    public void SignalDataWaiterArmed()
+    {
+        QueueSignal(DataWaiterArmedBit, "data-waiter-armed");
+    }
+
+    public void SignalSpaceWaiterArmed()
+    {
+        QueueSignal(SpaceWaiterArmedBit, "space-waiter-armed");
+    }
+
     public void PulseDataWaiter() => _dataAvailable.Pulse();
     public void PulseSpaceWaiter() => _spaceAvailable.Pulse();
+
+    public void RegisterPeerWaiterHandlers(
+        Action peerDataWaiterArmed,
+        Action peerSpaceWaiterArmed)
+    {
+        ArgumentNullException.ThrowIfNull(peerDataWaiterArmed);
+        ArgumentNullException.ThrowIfNull(peerSpaceWaiterArmed);
+        if (Interlocked.Exchange(ref _waiterHandlersRegistered, 1) != 0)
+            throw new InvalidOperationException("Shared-memory peer waiter handlers are already registered.");
+
+        Volatile.Write(ref _peerDataWaiterArmedHandler, peerDataWaiterArmed);
+        Volatile.Write(ref _peerSpaceWaiterArmedHandler, peerSpaceWaiterArmed);
+        if (Interlocked.Exchange(ref _pendingPeerDataWaiterArmed, 0) != 0)
+            peerDataWaiterArmed();
+        if (Interlocked.Exchange(ref _pendingPeerSpaceWaiterArmed, 0) != 0)
+            peerSpaceWaiterArmed();
+    }
 
     public ValueTask WaitForDataAsync(CancellationToken cancellationToken)
         => WaitAsync(_dataAvailable, cancellationToken);
@@ -88,6 +127,14 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
                     _dataAvailable.Pulse();
                 if ((received & SpaceAvailableSignal) != 0)
                     _spaceAvailable.Pulse();
+                if ((received & DataWaiterArmedSignal) != 0)
+                    DispatchPeerWaiterArmed(
+                        ref _peerDataWaiterArmedHandler,
+                        ref _pendingPeerDataWaiterArmed);
+                if ((received & SpaceWaiterArmedSignal) != 0)
+                    DispatchPeerWaiterArmed(
+                        ref _peerSpaceWaiterArmedHandler,
+                        ref _pendingPeerSpaceWaiterArmed);
                 if ((received & CloseSignal) != 0)
                     return;
             }
@@ -140,6 +187,10 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
                 SharpLinkTelemetry.RecordSharedMemoryNotification("data");
             if ((value & SpaceAvailableSignal) != 0)
                 SharpLinkTelemetry.RecordSharedMemoryNotification("space");
+            if ((value & DataWaiterArmedSignal) != 0)
+                SharpLinkTelemetry.RecordSharedMemoryNotification("data-waiter-armed");
+            if ((value & SpaceWaiterArmedSignal) != 0)
+                SharpLinkTelemetry.RecordSharedMemoryNotification("space-waiter-armed");
         }
     }
 
@@ -198,6 +249,23 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         else if (kind is not null)
             SharpLinkTelemetry.RecordSharedMemoryNotificationCoalesced(kind);
         return queued;
+    }
+
+    private static void DispatchPeerWaiterArmed(
+        ref Action? handlerField,
+        ref int pendingField)
+    {
+        var handler = Volatile.Read(ref handlerField);
+        if (handler is not null)
+        {
+            handler();
+            return;
+        }
+
+        Volatile.Write(ref pendingField, 1);
+        handler = Volatile.Read(ref handlerField);
+        if (handler is not null && Interlocked.Exchange(ref pendingField, 0) != 0)
+            handler();
     }
 
     private static bool IsExpectedControlClose(Exception exception)

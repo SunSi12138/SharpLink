@@ -147,6 +147,47 @@ public class SharedMemoryControlChannelTests
     }
 
     [Test]
+    public async Task WaiterArmedSignalsShouldReachHandlersBeforeAndAfterRegistration()
+    {
+        var pipeName = $"sc{Guid.NewGuid():N}"[..20];
+        await using var server = new NamedPipeServerStream(
+            pipeName,
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        await using var client = new NamedPipeClientStream(
+            ".",
+            pipeName,
+            PipeDirection.InOut,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+
+        var accept = server.WaitForConnectionAsync();
+        await client.ConnectAsync();
+        await accept;
+        await using var control = new SharedMemoryControlChannel(server);
+
+        var dataWaiters = 0;
+        var spaceWaiters = 0;
+        await client.WriteAsync(new byte[] { 8 | 16 });
+        await client.FlushAsync();
+        await Task.Delay(50);
+
+        control.RegisterPeerWaiterHandlers(
+            () => Interlocked.Increment(ref dataWaiters),
+            () => Interlocked.Increment(ref spaceWaiters));
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (Volatile.Read(ref dataWaiters) != 1 || Volatile.Read(ref spaceWaiters) != 1)
+            await Task.Delay(10, timeout.Token);
+
+        await client.WriteAsync(new byte[] { 8 | 16 });
+        await client.FlushAsync();
+        while (Volatile.Read(ref dataWaiters) != 2 || Volatile.Read(ref spaceWaiters) != 2)
+            await Task.Delay(10, timeout.Token);
+    }
+
+    [Test]
     public async Task UnknownControlSignalShouldSurfaceProtocolViolation()
     {
         var pipeName = $"sc{Guid.NewGuid():N}"[..20];

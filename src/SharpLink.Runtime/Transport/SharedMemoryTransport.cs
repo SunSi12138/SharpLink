@@ -312,11 +312,16 @@ internal sealed class SharedMemoryTransportConnection : ITransportConnection
         var inputDirection = SharedMemoryLayout.GetDirection(mapping, clientToServer: !isClient);
         var outputDirection = SharedMemoryLayout.GetDirection(mapping, clientToServer: isClient);
         SharpLinkTelemetry.RecordSharedMemoryConnection(isClient ? "client" : "server", inputDirection.Capacity);
+        var input = new SharedMemoryPipeReader(inputDirection, control, spinCount);
+        var output = new SharedMemoryPipeWriter(outputDirection, control, spinCount);
+        control.RegisterPeerWaiterHandlers(
+            output.OnPeerReaderArmed,
+            input.OnPeerWriterArmed);
         return new SharedMemoryTransportConnection(
             mapping,
             control,
-            new SharedMemoryPipeReader(inputDirection, control, spinCount),
-            new SharedMemoryPipeWriter(outputDirection, control, spinCount));
+            input,
+            output);
     }
 
     public ValueTask DisposeAsync()
@@ -349,7 +354,7 @@ internal sealed class SharedMemoryTransportConnection : ITransportConnection
 internal static class SharedMemoryHandshake
 {
     private const int Magic = 0x53484D31;
-    private const int Version = 2;
+    private const int Version = 3;
     private const int ClientHelloBytes = 4 + 4 + 4 + 4 + SharedMemoryLayout.NonceBytes;
     private const int ClientAckBytes = 4 + 4 + SharedMemoryLayout.NonceBytes;
     private const int ServerResponseHeaderBytes = 20 + SharedMemoryLayout.NonceBytes;

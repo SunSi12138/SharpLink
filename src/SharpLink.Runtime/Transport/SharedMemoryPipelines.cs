@@ -18,6 +18,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
     private CancellationToken _registeredReadCancellation;
     private CancellationTokenRegistration _readCancellationRegistration;
     private TaskCompletionSource<bool>? _outstandingReadReleased;
+    private int _peerWriterArmed;
     private int _cancelPending;
     private int _completed;
 
@@ -85,14 +86,15 @@ internal sealed class SharedMemoryPipeReader : PipeReader
                 _stagingExaminedAll = true;
                 _readPosition = unchecked(readPosition + _currentRingLength);
                 _direction.PublishReadPosition(_readPosition);
-                if (_direction.TakeWriterWaiting())
+                if (_direction.TakeWriterWaiting() | TakePeerWriterArmed())
                     _control.SignalSpaceAvailable();
             }
             else
             {
                 _readPosition = unchecked(readPosition + consumedBytes);
                 _direction.PublishReadPosition(_readPosition);
-                if (consumedBytes != 0 && _direction.TakeWriterWaiting())
+                if (consumedBytes != 0 &&
+                    (_direction.TakeWriterWaiting() | TakePeerWriterArmed()))
                     _control.SignalSpaceAvailable();
             }
         }
@@ -114,7 +116,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         if (Interlocked.Exchange(ref _completed, 1) != 0)
             return;
         _direction.CloseReader();
-        if (_direction.TakeWriterWaiting())
+        if (_direction.TakeWriterWaiting() | TakePeerWriterArmed())
             _control.SignalSpaceAvailable();
         _control.PulseDataWaiter();
         _readCancellationRegistration.Dispose();
@@ -185,6 +187,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
             try
             {
                 SharpLinkTelemetry.RecordSharedMemoryWait("reader");
+                _control.SignalDataWaiterArmed();
                 await _control.WaitForDataAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (SharpLinkException exception) when (
@@ -322,10 +325,28 @@ internal sealed class SharedMemoryPipeReader : PipeReader
             _staging.Append(_direction.Memory.Span[..(available - firstLength)]);
         _readPosition = unchecked(readPosition + available);
         _direction.PublishReadPosition(_readPosition);
-        if (_direction.TakeWriterWaiting())
+        if (_direction.TakeWriterWaiting() | TakePeerWriterArmed())
             _control.SignalSpaceAvailable();
         return available;
     }
+
+    internal void OnPeerWriterArmed()
+    {
+        if (Volatile.Read(ref _completed) != 0)
+            return;
+
+        Interlocked.Exchange(ref _peerWriterArmed, 1);
+        var readPosition = Volatile.Read(ref _readPosition);
+        var writePosition = _direction.ReadWritePosition();
+        if (_direction.GetAvailableBytes(writePosition, readPosition) < _direction.Capacity &&
+            Interlocked.Exchange(ref _peerWriterArmed, 0) != 0)
+        {
+            _control.SignalSpaceAvailable();
+        }
+    }
+
+    private bool TakePeerWriterArmed()
+        => Interlocked.Exchange(ref _peerWriterArmed, 0) != 0;
 
     private void SpinBriefly()
     {
@@ -572,6 +593,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
     private BufferKind _lastBufferKind;
     private CancellationToken _registeredFlushCancellation;
     private CancellationTokenRegistration _flushCancellationRegistration;
+    private int _peerReaderArmed;
     private int _cancelPending;
     private int _completed;
 
@@ -700,7 +722,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
         if (Interlocked.Exchange(ref _completed, 1) != 0)
             return;
         _direction.CloseWriter();
-        if (_direction.TakeReaderWaiting())
+        if (_direction.TakeReaderWaiting() | TakePeerReaderArmed())
             _control.SignalDataAvailable();
         _control.PulseSpaceWaiter();
         _flushCancellationRegistration.Dispose();
@@ -755,7 +777,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
             return;
         _publishedWritePosition = _reservedWritePosition;
         _direction.PublishWritePosition(_publishedWritePosition);
-        if (_direction.TakeReaderWaiting())
+        if (_direction.TakeReaderWaiting() | TakePeerReaderArmed())
             _control.SignalDataAvailable();
     }
 
@@ -792,6 +814,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
                     SharpLinkTelemetry.RecordSharedMemoryWait("writer");
                     try
                     {
+                        _control.SignalSpaceWaiterArmed();
                         await _control.WaitForSpaceAsync(cancellationToken).ConfigureAwait(false);
                     }
                     finally
@@ -813,7 +836,7 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
             _publishedWritePosition = unchecked(_publishedWritePosition + count);
             _reservedWritePosition = _publishedWritePosition;
             _direction.PublishWritePosition(_publishedWritePosition);
-            if (_direction.TakeReaderWaiting())
+            if (_direction.TakeReaderWaiting() | TakePeerReaderArmed())
                 _control.SignalDataAvailable();
         }
 
@@ -824,6 +847,24 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
         }
         return true;
     }
+
+    internal void OnPeerReaderArmed()
+    {
+        if (Volatile.Read(ref _completed) != 0)
+            return;
+
+        Interlocked.Exchange(ref _peerReaderArmed, 1);
+        var writePosition = Volatile.Read(ref _publishedWritePosition);
+        var readPosition = _direction.ReadReadPosition();
+        if (_direction.GetAvailableBytes(writePosition, readPosition) != 0 &&
+            Interlocked.Exchange(ref _peerReaderArmed, 0) != 0)
+        {
+            _control.SignalDataAvailable();
+        }
+    }
+
+    private bool TakePeerReaderArmed()
+        => Interlocked.Exchange(ref _peerReaderArmed, 0) != 0;
 
     private void SpinBriefly()
     {
