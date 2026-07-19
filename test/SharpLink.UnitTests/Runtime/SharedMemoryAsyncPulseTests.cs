@@ -6,7 +6,10 @@ public class SharedMemoryAsyncPulseTests
     public async Task LatchedPulseFastPathShouldRemainAllocationFree()
     {
         var pulse = new SharedMemoryAsyncPulse();
-        for (var index = 0; index < 32; index++)
+        // Keep tiered compilation and dynamic PGO outside the allocation window. A
+        // short warmup can otherwise charge the runtime's one-time promotion work
+        // to this thread when the wider test suite changes scheduling.
+        for (var index = 0; index < 100_000; index++)
         {
             pulse.Pulse();
             Ensure(pulse.WaitAsync().Result, "shared-memory pulse warmup");
