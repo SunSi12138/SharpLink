@@ -4,6 +4,32 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-20
+
+### 新增
+
+- 增加显式启用、仅限同机同一用户的实验性共享内存传输，以及 Client/Server Builder 的 `UseSharedMemory` 配置入口。
+- 每条连接使用双向 SPSC 共享内存环传输 RPC 数据；命名管道控制通道只负责有界握手、合并唤醒、关闭和进程存活检测。
+- 增加容量、SpinCount 与握手超时配置，并按 LowLatency、Balanced、Throughput profile 提供默认值；双方容量不一致时协商较小值，初始化失败不会静默降级。
+- LoadTest、StreamLoadTest、Chaos、PackageSmoke 和 NativeAOT smoke 增加 SharedMemory 模式与结构化性能证据。
+
+### 变更
+
+- 共享内存读写管线支持环内直接写入/读取、分段回卷、有界池化 spill、背压和可复用异步等待，详细热路径计数仅在显式诊断模式启用。
+- 映射采用版本化布局和当前用户私有目录；握手校验 nonce、路径、权限与布局，RPC 认证、授权、deadline、流控和心跳继续生效。
+
+### 修复
+
+- 修复共享等待标志可能丢失唤醒、竞态游标快照被误判为数据损坏，以及映射校验失败、握手失败和关闭路径中的资源清理问题。
+- 修复通知合并、满环 spill、取消后恢复 Flush、连接强杀与 listener 重启等竞态；连接释放不会等待对端腾出环空间。
+
+### 性能与稳定性
+
+- macOS arm64 完成 Release JIT、独立进程 NativeAOT、包消费与两轮 10 分钟 SharedMemory Chaos；最新一轮为 4,308,099 次成功、0 次非预期失败，结束后指标、活动调用、临时映射与测试进程归零。
+- 32 B / LowLatency 的单轮方向性样本中，SharedMemory 在 c1/c8/c32/c128 吞吐均领先 UDS；正式五轮性能矩阵、Windows/Linux 运行时与 NativeAOT、2 小时及 24 小时门禁仍待完成，因此该传输仍为实验性功能，不进入正式支持矩阵。
+
+完整设计、正确性证据、性能数据和未完成门禁见 `doc/shared-memory-experiment.md`。
+
 ## [0.6.10] - 2026-07-18
 
 ### 新增

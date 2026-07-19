@@ -2,11 +2,11 @@
 
 ## 当前结论
 
-本分支实现已在 macOS arm64、.NET SDK 10.0.102 / runtime 10.0.2 上完成 Release JIT、独立进程 NativeAOT、包消费和 10 分钟 Chaos 正确性验证。Windows x64 与 Linux x64 目前只有 framework-dependent publish 构建检查；两平台运行时测试、两平台 NativeAOT、正式五轮性能矩阵、2 小时 nightly 和 24 小时最终 soak 尚未执行。因此当前状态是“macOS arm64 正确性实验通过，其余门禁待验证”，不得进入正式支持矩阵、合并或发布。
+本实现已在 macOS arm64、.NET SDK 10.0.102 / runtime 10.0.2 上完成 Release JIT、独立进程 NativeAOT、包消费和 10 分钟 Chaos 正确性验证。Windows x64 与 Linux x64 目前只有 framework-dependent publish 构建检查；两平台运行时测试、两平台 NativeAOT、正式五轮性能矩阵、2 小时 nightly 和 24 小时最终 soak 尚未执行。因此当前状态是“macOS arm64 正确性实验通过，其余门禁待验证”：可以作为显式选择的实验性功能随版本提供，但不得进入正式支持矩阵。
 
 性能定位先发现仅靠共享等待标志存在丢失唤醒窗口：32 B、c1 会偶发约 10 秒停顿。无条件发送 data 通知虽然消除停顿，但使高并发吞吐下降约 20%–45%，因此被撤销。最终实现增加仅在真正休眠前发送的 waiter-arm 控制信号；随后又修复了控制线程把竞态游标快照误判为 `DataLoss` 的问题。修复后 c1 连续五轮均无长停顿，10 分钟 Chaos 无 unexpected failure。
 
-不满足任一正式门槛时应保留本分支和原始 JSON，标记实验未通过；不得通过放宽阈值、忽略错误或静默降级获得通过结论。
+不满足任一正式门槛时应保留原始 JSON，并继续标记为实验性、不得进入正式支持矩阵；不得通过放宽阈值、忽略错误或静默降级获得通过结论。
 
 ## 设计与安全边界
 

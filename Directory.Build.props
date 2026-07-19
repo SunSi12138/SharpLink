@@ -7,12 +7,12 @@
     </PropertyGroup>
     <!-- Nuget包信息 -->
     <PropertyGroup>
-        <Version>0.6.10</Version>
+        <Version>0.7.0</Version>
         <Authors>sunsi</Authors>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
         <PackageReadmeFile>README.md</PackageReadmeFile>
-        <PackageTags>rpc;dotnet;source-generator;streaming;ipc;tcp</PackageTags>
+        <PackageTags>rpc;dotnet;source-generator;streaming;ipc;tcp;shared-memory</PackageTags>
         <PackageReleaseNotes>See CHANGELOG.md for release details.</PackageReleaseNotes>
         <RepositoryUrl>https://github.com/SunSi12138/SharpLink</RepositoryUrl>
         <PackageProjectUrl>https://github.com/SunSi12138/SharpLink</PackageProjectUrl>
