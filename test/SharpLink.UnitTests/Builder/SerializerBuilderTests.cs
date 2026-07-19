@@ -70,6 +70,20 @@ public class SerializerBuilderTests
         }
     }
 
+    [Test]
+    public void RemovingGeneratedCodecStateShouldPreserveExplicitCodecs()
+    {
+        var codec = new TaggedCodec("explicit");
+        var context = new SharpLinkRuntimeContextBuilder()
+            .AddCodec<Payload>(codec)
+            .Build();
+
+        context.RemoveResolvedGeneratedCodecs([typeof(Payload)]);
+
+        Ensure(ReferenceEquals(context.Codecs.GetCodec<Payload>(), codec),
+            "generated module cleanup must preserve an explicit codec");
+    }
+
     private static IRpcRuntimeContext GetClientContext(ISharpLinkClient client)
         => ((IRpcChannel)client).RuntimeContext;
 

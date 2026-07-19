@@ -17,7 +17,7 @@ internal sealed class ServerConnectionState
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _callsDrained =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly ConcurrentDictionary<ServiceRegistration, Lazy<Task<ConnectionServiceInstance>>> _services = [];
+    private readonly ConcurrentDictionary<ServiceRegistration, ConnectionServiceEntry> _services = [];
     private SharpLinkAuthenticationContext? _authenticationContext;
     private long _lastAcceptedRequestId;
     private int _activeCalls;
@@ -51,6 +51,8 @@ internal sealed class ServerConnectionState
     internal CancellationToken ConnectionToken => _connectionToken;
 
     internal Task SessionTask => _sessionCompleted.Task;
+
+    internal Task ServiceCleanupTask => Volatile.Read(ref _serviceCleanupTask) ?? Task.CompletedTask;
 
     internal int ActiveCalls => Volatile.Read(ref _activeCalls);
 
@@ -123,34 +125,42 @@ internal sealed class ServerConnectionState
                 "RPC connection is draining."));
         }
         if (_services.TryGetValue(registration, out var existing))
-            return AwaitConnectionServiceAsync(existing.Value, moduleLease);
+            return AwaitConnectionServiceAsync(registration, existing, moduleLease);
 
-        var candidate = new Lazy<Task<ConnectionServiceInstance>>(
-            () => registration.CreateConnectionServiceAsync().AsTask(),
-            LazyThreadSafetyMode.ExecutionAndPublication);
+        var candidate = new ConnectionServiceEntry(registration);
         var selected = _services.GetOrAdd(registration, candidate);
-        return AwaitConnectionServiceAsync(selected.Value, moduleLease);
+        return AwaitConnectionServiceAsync(registration, selected, moduleLease);
     }
 
     internal async ValueTask DisposeServiceAsync(ServiceRegistration registration)
     {
-        if (!_services.TryRemove(registration, out var service) || !service.IsValueCreated)
+        if (!_services.TryGetValue(registration, out var service))
             return;
-        var instance = await service.Value.ConfigureAwait(false);
-        await instance.DisposeAsync().ConfigureAwait(false);
+        try
+        {
+            await service.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _services.TryRemove(
+                new KeyValuePair<ServiceRegistration, ConnectionServiceEntry>(registration, service));
+        }
     }
 
-    private static async ValueTask<ServiceLease> AwaitConnectionServiceAsync(
-        Task<ConnectionServiceInstance> serviceTask,
+    private async ValueTask<ServiceLease> AwaitConnectionServiceAsync(
+        ServiceRegistration registration,
+        ConnectionServiceEntry entry,
         SharpLinkDynamicModuleLease moduleLease)
     {
         try
         {
-            var service = await serviceTask.ConfigureAwait(false);
+            var service = await entry.GetServiceAsync().ConfigureAwait(false);
             return new ServiceLease(service.Service, moduleLease: moduleLease);
         }
         catch
         {
+            _services.TryRemove(
+                new KeyValuePair<ServiceRegistration, ConnectionServiceEntry>(registration, entry));
             moduleLease.Dispose();
             throw;
         }
@@ -256,14 +266,11 @@ internal sealed class ServerConnectionState
     private async Task CleanupServicesWhenCallsDrainAsync()
     {
         await _callsDrained.Task.ConfigureAwait(false);
-        foreach (var service in _services.Values)
+        foreach (var registration in _services.Keys)
         {
-            if (!service.IsValueCreated)
-                continue;
             try
             {
-                var instance = await service.Value.ConfigureAwait(false);
-                await instance.DisposeAsync().ConfigureAwait(false);
+                await DisposeServiceAsync(registration).ConfigureAwait(false);
             }
             catch
             {
@@ -275,5 +282,43 @@ internal sealed class ServerConnectionState
         _services.Clear();
         DeadlineScheduler.Dispose();
         _connectionCancellation.Dispose();
+    }
+
+    private sealed class ConnectionServiceEntry
+    {
+        private readonly Lazy<Task<ConnectionServiceInstance>> _instance;
+        private readonly Lock _disposeGate = new();
+        private Task? _disposeTask;
+
+        internal ConnectionServiceEntry(ServiceRegistration registration)
+            => _instance = new Lazy<Task<ConnectionServiceInstance>>(
+                () => registration.CreateConnectionServiceAsync().AsTask(),
+                LazyThreadSafetyMode.ExecutionAndPublication);
+
+        internal Task<ConnectionServiceInstance> GetServiceAsync() => _instance.Value;
+
+        internal Task DisposeAsync()
+        {
+            lock (_disposeGate)
+                return _disposeTask ??= DisposeCoreAsync();
+        }
+
+        private async Task DisposeCoreAsync()
+        {
+            if (!_instance.IsValueCreated)
+                return;
+            ConnectionServiceInstance instance;
+            try
+            {
+                instance = await _instance.Value.ConfigureAwait(false);
+            }
+            catch
+            {
+                // Failed activation created no service instance. Acquisition evicts
+                // the entry so cleanup must not replay the constructor exception.
+                return;
+            }
+            await instance.DisposeAsync().ConfigureAwait(false);
+        }
     }
 }

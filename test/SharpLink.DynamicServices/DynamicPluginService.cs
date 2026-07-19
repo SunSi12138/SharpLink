@@ -154,3 +154,69 @@ public sealed class SecondThrowingDisposalService : ISecondThrowingDisposalServi
         return ValueTask.CompletedTask;
     }
 }
+
+[RpcService(Lifetime = SharpLinkServiceLifetime.Connection)]
+public sealed class FlakyConnectionService : IFlakyConnectionService, IAsyncDisposable
+{
+    private static int _activations;
+    private static int _disposed;
+
+    public FlakyConnectionService()
+    {
+        if (Interlocked.Increment(ref _activations) == 1)
+            throw new InvalidOperationException("Transient dynamic activation failure.");
+    }
+
+    public static int Activations => Volatile.Read(ref _activations);
+
+    public static int Disposed => Volatile.Read(ref _disposed);
+
+    public static void Reset()
+    {
+        Volatile.Write(ref _activations, 0);
+        Volatile.Write(ref _disposed, 0);
+    }
+
+    public ValueTask<int> TouchAsync(int value, CancellationToken cancellationToken)
+        => ValueTask.FromResult(value + 30);
+
+    public ValueTask DisposeAsync()
+    {
+        Interlocked.Increment(ref _disposed);
+        return ValueTask.CompletedTask;
+    }
+}
+
+[RpcService(Lifetime = SharpLinkServiceLifetime.Connection)]
+public sealed class RetiredConnectionService : IRetiredConnectionService, IAsyncDisposable
+{
+    private static TaskCompletionSource _disposeStarted = NewSignal();
+    private static TaskCompletionSource _disposeRelease = NewSignal();
+    private static int _disposed;
+
+    public static Task DisposeStarted => Volatile.Read(ref _disposeStarted).Task;
+
+    public static int Disposed => Volatile.Read(ref _disposed);
+
+    public static void Reset()
+    {
+        Volatile.Write(ref _disposeStarted, NewSignal());
+        Volatile.Write(ref _disposeRelease, NewSignal());
+        Volatile.Write(ref _disposed, 0);
+    }
+
+    public static void ReleaseDispose() => Volatile.Read(ref _disposeRelease).TrySetResult();
+
+    public ValueTask<int> TouchAsync(int value, CancellationToken cancellationToken)
+        => ValueTask.FromResult(value + 40);
+
+    public async ValueTask DisposeAsync()
+    {
+        Volatile.Read(ref _disposeStarted).TrySetResult();
+        await Volatile.Read(ref _disposeRelease).Task.ConfigureAwait(false);
+        Interlocked.Increment(ref _disposed);
+    }
+
+    private static TaskCompletionSource NewSignal()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
+}

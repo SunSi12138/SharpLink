@@ -357,6 +357,7 @@ internal sealed class SharpLinkDynamicModule
     private readonly int _stripeMask;
     private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly CancellationTokenSource _forcedCancellation = new();
+    private readonly CancellationToken _forcedCancellationToken;
     private Assembly? _assembly;
     private ISharpLinkGeneratedAssemblyManifest? _manifest;
     private int _state;
@@ -365,6 +366,7 @@ internal sealed class SharpLinkDynamicModule
     {
         _assembly = assembly;
         _manifest = manifest;
+        _forcedCancellationToken = _forcedCancellation.Token;
         var stripeCount = 1;
         var desired = Math.Min(64, Math.Max(2, Environment.ProcessorCount * 2));
         while (stripeCount < desired)
@@ -383,7 +385,7 @@ internal sealed class SharpLinkDynamicModule
     internal SharpLinkDynamicModuleState State
         => (SharpLinkDynamicModuleState)Volatile.Read(ref _state);
 
-    internal CancellationToken ForcedCancellation => _forcedCancellation.Token;
+    internal CancellationToken ForcedCancellation => _forcedCancellationToken;
 
     internal int RemainingCalls => Sum(_callCounters);
 
@@ -443,7 +445,9 @@ internal sealed class SharpLinkDynamicModule
         Interlocked.Exchange(ref _state, (int)SharpLinkDynamicModuleState.Released);
         Volatile.Write(ref _manifest, null);
         Volatile.Write(ref _assembly, null);
-        _forcedCancellation.Dispose();
+        // A dispatch can retain a route snapshot before acquiring its module lease.
+        // Keep the token source usable until that stale reader drops the module; all
+        // registered callbacks are already gone when the module counters drain.
     }
 
     internal void Release(int stripe, bool stream)

@@ -50,6 +50,7 @@ internal sealed partial class SharpLinkServer(
         new(ReferenceEqualityComparer.Instance);
     private long _registryGeneration;
     private readonly ConcurrentDictionary<string, ServerConnectionState> _connections = [];
+    private readonly ConcurrentDictionary<ServerConnectionState, byte> _retiredConnections = [];
     private readonly ILogger _logger = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory))).CreateLogger<SharpLinkServer>();
     private readonly ISharpLinkServerAuthenticator? _authenticator = authenticator;
     private readonly bool _authenticationRequired = authenticationRequired;
@@ -380,10 +381,9 @@ internal sealed partial class SharpLinkServer(
     private async Task DisposeAllSessionsAsync()
     {
         var connections = _connections.Values.ToArray();
-        _connections.Clear();
         var tasks = new Task[connections.Length];
         for (var index = 0; index < connections.Length; index++)
-            tasks[index] = connections[index].CloseAsync().AsTask();
+            tasks[index] = DisconnectConnectionAsync(connections[index]).AsTask();
         try
         {
             await Task.WhenAll(tasks).ConfigureAwait(false);

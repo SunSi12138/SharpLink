@@ -238,16 +238,57 @@ internal sealed partial class SharpLinkServer
             if (!_connections.TryUpdate(id, connection, previous))
                 continue;
 
-            await previous.CloseAsync().ConfigureAwait(false);
+            await RetireConnectionAsync(previous).ConfigureAwait(false);
             return;
         }
     }
 
     private async ValueTask DisconnectConnectionAsync(ServerConnectionState connection)
     {
+        connection.MarkDraining();
+        var added = _retiredConnections.TryAdd(connection, 0);
         _connections.TryRemove(
             new KeyValuePair<string, ServerConnectionState>(connection.Session.Id, connection));
-        await connection.CloseAsync().ConfigureAwait(false);
+        try
+        {
+            await connection.CloseAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            if (added)
+                _ = CompleteRetiredConnectionCleanupAsync(connection);
+        }
+    }
+
+    private async ValueTask RetireConnectionAsync(ServerConnectionState connection)
+    {
+        connection.MarkDraining();
+        var added = _retiredConnections.TryAdd(connection, 0);
+        try
+        {
+            await connection.CloseAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            if (added)
+                _ = CompleteRetiredConnectionCleanupAsync(connection);
+        }
+    }
+
+    private async Task CompleteRetiredConnectionCleanupAsync(ServerConnectionState connection)
+    {
+        try
+        {
+            await connection.ServiceCleanupTask.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            LogDeferredCleanupFailed(_logger, "ConnectionServices", exception);
+        }
+        finally
+        {
+            _retiredConnections.TryRemove(connection, out _);
+        }
     }
 
     private async Task HeartbeatCheckLoop(CancellationToken ct)
@@ -265,11 +306,8 @@ internal sealed partial class SharpLinkServer
                 using var sessionScope = BeginSessionLogScope(_logger, session.Id);
                 LogClientHeartbeatTimeout(_logger);
                 
-                if (_connections.TryRemove(
-                        new KeyValuePair<string, ServerConnectionState>(id, connection)))
-                {
-                    await connection.CloseAsync().ConfigureAwait(false);
-                }
+                if (_connections.TryGetValue(id, out var current) && ReferenceEquals(current, connection))
+                    await DisconnectConnectionAsync(connection).ConfigureAwait(false);
             }
         }
     }

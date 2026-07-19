@@ -6,6 +6,7 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider
 {
     private readonly Func<Type, IRpcCodec?>? _resolver;
     private readonly ConcurrentDictionary<Type, IRpcCodec> _resolvedCodecs;
+    private readonly HashSet<Type> _explicitCodecTypes;
     private IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> _generatedFactories;
 
     internal RpcCodecProvider(
@@ -15,6 +16,7 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider
     {
         _resolver = resolver;
         _resolvedCodecs = new ConcurrentDictionary<Type, IRpcCodec>(explicitCodecs);
+        _explicitCodecTypes = [.. explicitCodecs.Keys];
         _generatedFactories = generatedFactories;
     }
 
@@ -66,7 +68,10 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider
     internal void RemoveResolvedCodecs(IEnumerable<Type> types)
     {
         foreach (var type in types)
-            _resolvedCodecs.TryRemove(type, out _);
+        {
+            if (!_explicitCodecTypes.Contains(type))
+                _resolvedCodecs.TryRemove(type, out _);
+        }
     }
 }
 

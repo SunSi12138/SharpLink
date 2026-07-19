@@ -205,6 +205,91 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task FailedConnectionActivationShouldBeEvictedAndRetried()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var plugin = PluginBundle.Load("dynamic-flaky-connection");
+        RegisterAll(harness, plugin);
+
+        const string contractName = "SharpLink.DynamicPlugin.IFlakyConnectionService";
+        const string serviceName = "SharpLink.DynamicPlugin.FlakyConnectionService";
+        var contract = plugin.GetContractType(contractName);
+        object? proxy = GetProxy(harness.Client, contract);
+        plugin.InvokeServiceStatic(serviceName, "Reset");
+
+        try
+        {
+            _ = await InvokeValueTaskAsync<int>(
+                proxy, contract, "TouchAsync", 1, CancellationToken.None);
+            throw new Exception("assert failed: first connection activation must fail");
+        }
+        catch (SharpLinkException)
+        {
+        }
+
+        Ensure(await InvokeValueTaskAsync<int>(
+            proxy, contract, "TouchAsync", 2, CancellationToken.None) == 32,
+            "same connection retries a transient service activation failure");
+        Ensure(plugin.GetServiceStaticInt(serviceName, "Activations") == 2,
+            "connection activation retried exactly once");
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ServiceAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased, "flaky connection service release");
+        Ensure(plugin.GetServiceStaticInt(serviceName, "Disposed") == 1,
+            "successfully activated connection service disposed once");
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased, "flaky server contract release");
+        Ensure((await harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased, "flaky client contract release");
+        proxy = null;
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ModuleUnregisterShouldJoinRetiredConnectionServiceCleanup()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var plugin = PluginBundle.Load("dynamic-retired-connection");
+        RegisterAll(harness, plugin);
+
+        const string contractName = "SharpLink.DynamicPlugin.IRetiredConnectionService";
+        const string serviceName = "SharpLink.DynamicPlugin.RetiredConnectionService";
+        var contract = plugin.GetContractType(contractName);
+        object? proxy = GetProxy(harness.Client, contract);
+        plugin.InvokeServiceStatic(serviceName, "Reset");
+        Ensure(await InvokeValueTaskAsync<int>(
+            proxy, contract, "TouchAsync", 2, CancellationToken.None) == 42,
+            "retired connection service activation");
+
+        await harness.Client.StopAsync();
+        await plugin.GetServiceStaticTask(serviceName, "DisposeStarted")
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        var unregister = harness.Server.UnregisterAssemblyAsync(
+            plugin.ServiceAssembly,
+            TimeSpan.FromSeconds(2)).AsTask();
+        await Task.Delay(20);
+        Ensure(!unregister.IsCompleted,
+            "module unregister joins cleanup owned by a disconnected connection");
+
+        plugin.InvokeServiceStatic(serviceName, "ReleaseDispose");
+        Ensure((await unregister).ReferencesReleased,
+            "retired connection service references released after shared cleanup");
+        Ensure(plugin.GetServiceStaticInt(serviceName, "Disposed") == 1,
+            "retired connection service disposed exactly once");
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased, "retired server contract release");
+        Ensure(!(await harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "client stop already released the retired client contract module");
+        proxy = null;
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task UnregisterTimeoutShouldKeepRouteOwnedUntilIgnoredCallActuallyEnds()
     {
         await using var harness = await DynamicHarness.CreateAsync();
@@ -611,6 +696,10 @@ public sealed class RuntimeAssemblyIntegrationTests
 
         internal int GetServiceStaticInt(string typeName, string propertyName)
             => (int)(GetServiceType(typeName).GetProperty(propertyName)!.GetValue(null) ?? -1);
+
+        internal Task GetServiceStaticTask(string typeName, string propertyName)
+            => (Task)(GetServiceType(typeName).GetProperty(propertyName)!.GetValue(null) ??
+                throw new InvalidOperationException($"Static task '{propertyName}' was null."));
 
         internal void InvokeServiceStatic(string typeName, string methodName)
             => GetServiceType(typeName).GetMethod(methodName)!.Invoke(null, null);

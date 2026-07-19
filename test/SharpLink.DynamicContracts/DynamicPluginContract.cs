@@ -43,3 +43,15 @@ public interface ISecondThrowingDisposalService : IService
 {
     ValueTask<int> TouchAsync(int value, CancellationToken cancellationToken);
 }
+
+[RpcContract]
+public interface IFlakyConnectionService : IService
+{
+    ValueTask<int> TouchAsync(int value, CancellationToken cancellationToken);
+}
+
+[RpcContract]
+public interface IRetiredConnectionService : IService
+{
+    ValueTask<int> TouchAsync(int value, CancellationToken cancellationToken);
+}

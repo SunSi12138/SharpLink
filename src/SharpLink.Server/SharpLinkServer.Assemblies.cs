@@ -221,7 +221,8 @@ internal sealed partial class SharpLinkServer
         }
 
         Exception? firstException = null;
-        foreach (var connection in _connections.Values)
+        var connections = _connections.Values.Concat(_retiredConnections.Keys).Distinct().ToArray();
+        foreach (var connection in connections)
         {
             for (var index = 0; index < removedServices.Length; index++)
             {
