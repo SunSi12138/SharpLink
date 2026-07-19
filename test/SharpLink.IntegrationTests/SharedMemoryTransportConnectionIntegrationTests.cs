@@ -326,6 +326,37 @@ public class SharedMemoryTransportConnectionIntegrationTests
     }
 
     [Test]
+    public async Task SharedMemoryWriterCompleteAsyncShouldDiscardSpillWhenPeerIsNotReading()
+    {
+        const int capacity = 64 * 1024;
+        var (listener, factory, client, server) = await CreateRawPairAsync();
+        await using var listenerScope = listener;
+        await using var factoryScope = factory;
+        Task? completeTask = null;
+        try
+        {
+            var ring = client.Output.GetMemory(capacity);
+            ring.Span[..capacity].Fill(0x41);
+            client.Output.Advance(capacity);
+            _ = await client.Output.FlushAsync();
+
+            var spill = client.Output.GetMemory(1);
+            spill.Span[0] = 0x7E;
+            client.Output.Advance(1);
+
+            completeTask = client.Output.CompleteAsync().AsTask();
+            await completeTask.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            await server.DisposeAsync();
+            if (completeTask is not null)
+                await completeTask.WaitAsync(TimeSpan.FromSeconds(2));
+            await client.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task SharedMemoryOversizedSpillRequestShouldFailWithoutAllocation()
     {
         var (listener, factory, client, server) = await CreateRawPairAsync();
@@ -347,6 +378,7 @@ public class SharedMemoryTransportConnectionIntegrationTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task SharedMemoryEvidenceShouldDistinguishDirectAndWrapSpillBytes()
     {
         const int capacity = 64 * 1024;

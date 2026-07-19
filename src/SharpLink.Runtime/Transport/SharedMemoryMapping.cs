@@ -6,6 +6,7 @@ namespace SharpLink.Runtime;
 
 internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
 {
+    private static int s_activeMappingCount;
     private readonly FileStream _file;
     private readonly MemoryMappedFile _mappedFile;
     private readonly MemoryMappedViewAccessor _view;
@@ -29,11 +30,13 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
         Length = length;
         _pathToDelete = pathToDelete;
         _memoryManager = new UnmanagedMemoryManager(pointer, length);
+        Interlocked.Increment(ref s_activeMappingCount);
     }
 
     public int Length { get; }
     public Memory<byte> Memory => _memoryManager.Memory;
     internal byte* Pointer => _pointer;
+    internal static int ActiveMappingCount => Volatile.Read(ref s_activeMappingCount);
 
     public static SharedMemoryMapping CreateServer(int capacity, ReadOnlySpan<byte> nonce, out string path)
     {
@@ -48,6 +51,7 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
             options |= FileOptions.DeleteOnClose;
 
         FileStream? file = null;
+        SharedMemoryMapping? mapping = null;
         try
         {
             file = new FileStream(
@@ -60,13 +64,16 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
             file.SetLength(length);
             if (!OperatingSystem.IsWindows())
                 File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            var mapping = Create(file, length, path);
+            mapping = Create(file, length, path);
             SharedMemoryLayout.Initialize(mapping, capacity, nonce);
             return mapping;
         }
         catch
         {
-            file?.Dispose();
+            if (mapping is not null)
+                mapping.Dispose();
+            else
+                file?.Dispose();
             TryDelete(path);
             throw;
         }
@@ -77,6 +84,7 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
         ValidateMappingPath(path);
         var length = SharedMemoryLayout.GetMappingLength(capacity);
         FileStream? file = null;
+        SharedMemoryMapping? mapping = null;
         try
         {
             file = new FileStream(
@@ -97,13 +105,16 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
             }
             if (file.Length != length)
                 throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "Shared-memory mapping length did not match the negotiated layout.");
-            var mapping = Create(file, length, pathToDelete: null);
+            mapping = Create(file, length, pathToDelete: null);
             SharedMemoryLayout.Validate(mapping, capacity, nonce);
             return mapping;
         }
         catch
         {
-            file?.Dispose();
+            if (mapping is not null)
+                mapping.Dispose();
+            else
+                file?.Dispose();
             throw;
         }
     }
@@ -211,10 +222,10 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
         }
     }
 
-    public ValueTask DisposeAsync()
+    private void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return ValueTask.CompletedTask;
+            return;
 
         _memoryManager.Invalidate();
         if (_pointer is not null)
@@ -225,8 +236,14 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
         _view.Dispose();
         _mappedFile.Dispose();
         _file.Dispose();
+        Interlocked.Decrement(ref s_activeMappingCount);
         if (_pathToDelete is not null)
             TryDelete(_pathToDelete);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Dispose();
         return ValueTask.CompletedTask;
     }
 

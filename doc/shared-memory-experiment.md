@@ -18,6 +18,7 @@
 - 通知后端为 `named-pipe-control`。双方使用“登记等待后重新检查 + waiter-arm 确认”协议，只有实际等待者才触发控制通知；data/space/arm 使用 bitmask 合并写，进程内 waiter 使用可复用 ValueTask source。控制语义变更由共享内存握手版本 3 隔离，旧版本会在映射前失败。
 - 未知控制 bit 会作为 `ProtocolViolation` 暴露，不会被吞成普通断连；spill 总量受 256 MiB 上限约束，越界在分配前返回 `ResourceExhausted`。入站 staging 与出站累积 spill 使用池化 sequence segments，不在增长时复制已有字节。
 - listener 会在单条连接的损坏、截断或超时握手后清理资源并继续接受下一条连接，不把不可信握手升级成整个服务故障；连接释放直接丢弃未 flush 的 spill，不等待未读取对端腾出环空间。
+- 客户端映射头校验失败会同步释放 view、pointer、映射和文件句柄；writer 正常完成会发布无需等待的 ring 直写，但丢弃可能等待对端空间的 spill，避免关闭路径无界阻塞。
 
 ## 正确性优先的热路径改造
 
@@ -29,7 +30,7 @@
 
 ## 已覆盖证据
 
-- Release solution build：0 warning、0 error。Unit 186/186、Generator 17/17、Integration 117/117。
+- Release solution build：0 warning、0 error。Unit 187/187、Generator 17/17、Integration 118/118。
 - 共享内存选项/profile、非法容量/SpinCount/timeout、路径权限、nonce/ack、未知控制信号、游标有符号溢出、越界 spill 和 stale 文件清理。
 - 原始双向各 1,000,000 条带序号/checksum 记录，在 64 KiB 环上反复回卷，零损坏。
 - 完整生成代理调用形态同时在 TCP 与 SharedMemory 上执行：Unary、Void、OneWay、client stream、server stream、duplex 及多流变体；另覆盖 1-byte stream/connection window 背压。

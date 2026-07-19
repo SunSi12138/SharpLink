@@ -740,18 +740,15 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
         _spill = null;
     }
 
-    public override async ValueTask CompleteAsync(Exception? exception = null)
+    public override ValueTask CompleteAsync(Exception? exception = null)
     {
-        if (Volatile.Read(ref _completed) != 0)
-            return;
-        try
-        {
-            _ = await FlushAsync().ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is IOException or ObjectDisposedException or SharpLinkException)
-        {
-        }
+        // Direct reservations already live in the ring and can be published
+        // without waiting. Spill may require peer progress, so completion drops
+        // it rather than turning shutdown into an unbounded flush.
+        if (Volatile.Read(ref _completed) == 0 && _lastBufferKind == BufferKind.None)
+            PublishDirectWrites();
         Complete(exception);
+        return ValueTask.CompletedTask;
     }
 
     private bool TryGetDirectMemory(

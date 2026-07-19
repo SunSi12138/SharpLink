@@ -31,6 +31,42 @@ public class SharedMemoryLayoutTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task OpeningInvalidMappingShouldReleaseMappedView()
+    {
+        const int capacity = 64 * 1024;
+        var nonce = RandomNumberGenerator.GetBytes(SharedMemoryLayout.NonceBytes);
+        var wrongNonce = RandomNumberGenerator.GetBytes(SharedMemoryLayout.NonceBytes);
+        var baseline = SharedMemoryMapping.ActiveMappingCount;
+        var serverMapping = SharedMemoryMapping.CreateServer(capacity, nonce, out var path);
+        try
+        {
+            await Assert.That(SharedMemoryMapping.ActiveMappingCount).IsEqualTo(baseline + 1);
+            for (var attempt = 0; attempt < 32; attempt++)
+            {
+                try
+                {
+                    var unexpected = SharedMemoryMapping.OpenClient(path, capacity, wrongNonce);
+                    await unexpected.DisposeAsync();
+                    throw new Exception("expected invalid shared-memory mapping rejection");
+                }
+                catch (SharpLinkException exception)
+                {
+                    await Assert.That(exception.Code).IsEqualTo(SharpLinkErrorCode.FailedPrecondition);
+                }
+
+                await Assert.That(SharedMemoryMapping.ActiveMappingCount).IsEqualTo(baseline + 1);
+            }
+        }
+        finally
+        {
+            await serverMapping.DisposeAsync();
+        }
+
+        await Assert.That(SharedMemoryMapping.ActiveMappingCount).IsEqualTo(baseline);
+    }
+
+    [Test]
     public async Task MappingPathShouldRejectLocationsOutsideTransportDirectory()
     {
         var outsidePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.shm");
