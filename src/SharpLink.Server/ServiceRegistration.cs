@@ -122,6 +122,32 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         return true;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TryAcquireDynamicSingleton(
+        bool isStream,
+        out object service,
+        out SharpLinkDynamicModuleLease moduleLease)
+    {
+        var module = Module;
+        if (module is null || Lifetime != SharpLinkServiceLifetime.Singleton)
+        {
+            service = null!;
+            moduleLease = default;
+            return false;
+        }
+
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (!module.TryAcquire(isStream, out moduleLease))
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.Unavailable,
+                "RPC module is draining");
+        }
+
+        service = Volatile.Read(ref _singleton) ?? GetOrCreateSingleton();
+        return true;
+    }
+
     internal static ServiceRegistration CreateSingleton(
         Type contractType,
         IRpcStub stub,

@@ -27,16 +27,52 @@ internal sealed partial class SharpLinkServer
                 context);
         }
 
+        var isStream = false;
+        if (registration.Module is not null)
+        {
+            var descriptor = GetMethodDescriptor(registration.Stub, methodId);
+            isStream = descriptor.Kind is RpcMethodKind.ClientStreaming or
+                RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
+        }
+
+        SharpLinkDynamicModuleLease dynamicSingletonLease = default;
+        try
+        {
+            if (registration.TryAcquireDynamicSingleton(
+                    isStream,
+                    out var dynamicSingleton,
+                    out dynamicSingletonLease))
+            {
+                var invocation = InvokeServiceTrackedAsync(
+                    registration.Stub,
+                    dynamicSingleton,
+                    session,
+                    methodId,
+                    requestId,
+                    arguments,
+                    output,
+                    cancellationToken,
+                    context);
+                if (invocation.IsCompletedSuccessfully)
+                {
+                    dynamicSingletonLease.Dispose();
+                    return invocation;
+                }
+                return CompleteDynamicSingletonInvocationAsync(invocation, dynamicSingletonLease);
+            }
+        }
+        catch (Exception exception)
+        {
+            dynamicSingletonLease.Dispose();
+            var failedTelemetry = SharpLinkTelemetry.StartServerCall(
+                GetMethodDescriptor(registration.Stub, methodId), requestId);
+            failedTelemetry.Complete(exception);
+            throw;
+        }
+
         ValueTask<ServiceLease> acquisition;
         try
         {
-            var isStream = false;
-            if (registration.Module is not null)
-            {
-                var descriptor = GetMethodDescriptor(registration.Stub, methodId);
-                isStream = descriptor.Kind is RpcMethodKind.ClientStreaming or
-                    RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
-            }
             acquisition = registration.AcquireAsync(connection, isStream);
         }
         catch (Exception exception)
@@ -71,6 +107,20 @@ internal sealed partial class SharpLinkServer
             output,
             cancellationToken,
             context);
+    }
+
+    private static async ValueTask CompleteDynamicSingletonInvocationAsync(
+        ValueTask invocation,
+        SharpLinkDynamicModuleLease moduleLease)
+    {
+        try
+        {
+            await invocation.ConfigureAwait(false);
+        }
+        finally
+        {
+            moduleLease.Dispose();
+        }
     }
 
     private ValueTask InvokeAcquiredServiceAsync(
