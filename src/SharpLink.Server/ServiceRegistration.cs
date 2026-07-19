@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace SharpLink.Server;
 
 internal sealed class ServiceRegistrationDefinition
@@ -105,6 +107,20 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal SharpLinkDynamicModule? Module { get; }
     internal CancellationToken ModuleCancellation => Module?.ForcedCancellation ?? CancellationToken.None;
     internal bool AcceptsCalls => Module is null || Module.State == SharpLinkDynamicModuleState.Running;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TryGetStaticSingleton(out object service)
+    {
+        if (Module is not null || Lifetime != SharpLinkServiceLifetime.Singleton)
+        {
+            service = null!;
+            return false;
+        }
+
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        service = Volatile.Read(ref _singleton) ?? GetOrCreateSingleton();
+        return true;
+    }
 
     internal static ServiceRegistration CreateSingleton(
         Type contractType,

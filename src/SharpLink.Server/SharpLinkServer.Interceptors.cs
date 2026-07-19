@@ -13,12 +13,30 @@ internal sealed partial class SharpLinkServer
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context)
     {
+        if (registration.TryGetStaticSingleton(out var singleton))
+        {
+            return InvokeServiceTrackedAsync(
+                registration.Stub,
+                singleton,
+                session,
+                methodId,
+                requestId,
+                arguments,
+                output,
+                cancellationToken,
+                context);
+        }
+
         ValueTask<ServiceLease> acquisition;
         try
         {
-            var descriptor = GetMethodDescriptor(registration.Stub, methodId);
-            var isStream = descriptor.Kind is RpcMethodKind.ClientStreaming or
-                RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
+            var isStream = false;
+            if (registration.Module is not null)
+            {
+                var descriptor = GetMethodDescriptor(registration.Stub, methodId);
+                isStream = descriptor.Kind is RpcMethodKind.ClientStreaming or
+                    RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
+            }
             acquisition = registration.AcquireAsync(connection, isStream);
         }
         catch (Exception exception)
