@@ -8,6 +8,25 @@ namespace SharpLink.UnitTests.Runtime;
 public class DynamicModuleTests
 {
     [Test]
+    public void DrainShouldWaitUntilEveryConcurrentLeaseIsReleased()
+    {
+        var module = new SharpLinkDynamicModule(
+            typeof(DynamicModuleTests).Assembly,
+            new EmptyManifest());
+        Ensure(module.TryAcquire(stream: false, out var first), "first lease");
+        Ensure(module.TryAcquire(stream: false, out var second), "second lease");
+
+        module.TryBeginDraining();
+        first.Dispose();
+        Ensure(!module.WaitForDrainAsync().IsCompleted,
+            "first completion cannot release a module with another active call");
+
+        second.Dispose();
+        Ensure(module.WaitForDrainAsync().IsCompletedSuccessfully,
+            "last completion releases the drained module");
+    }
+
+    [Test]
     public void ReleasedModuleCancellationTokenShouldRemainSafeForStaleRouteReaders()
     {
         var module = new SharpLinkDynamicModule(

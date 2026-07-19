@@ -29,6 +29,9 @@ public interface IDynamicPluginService : IService
 
     ValueTask<int> BlockIgnoringCancellationAsync(CancellationToken cancellationToken);
 
+    [NonCancellable]
+    ValueTask<int> BlockSynchronously();
+
     ValueTask<int> UsePayloadAsync(DynamicPayload payload, CancellationToken cancellationToken);
 }
 

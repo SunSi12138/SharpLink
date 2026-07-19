@@ -54,6 +54,11 @@ internal sealed partial class SharpLinkClient
                     if (IsAssemblyRegistered(assembly))
                         return Failure(SharpLinkAssemblyRegistrationErrorCode.DuplicateAssembly,
                             "The same Assembly object is already registered on this client.", assembly);
+                    var dependencyError = ValidateDependencies(
+                        manifest!,
+                        [.. _dynamicModules.Values]);
+                    if (dependencyError is not null)
+                        return SharpLinkAssemblyRegistrationResult.Failure(dependencyError);
                     _runtimeContext.PublishGeneratedCodecs(candidate.Codecs);
                     Volatile.Write(ref _proxies, candidate.Proxies);
                     _dynamicModules.Add(assembly, module);
@@ -186,15 +191,22 @@ internal sealed partial class SharpLinkClient
         ISharpLinkGeneratedAssemblyManifest incoming,
         SharpLinkDynamicModule[] currentModules)
     {
-        var available = new HashSet<string>(EnumerateRegisteredManifests(currentModules)
-            .Select(static manifest => manifest.OwnerAssembly.FullName ?? string.Empty), StringComparer.Ordinal);
+        var available = new HashSet<string>(StringComparer.Ordinal);
+        for (var index = 0; index < _staticManifests.Count; index++)
+            available.Add(_staticManifests[index].OwnerAssembly.FullName ?? string.Empty);
+        for (var index = 0; index < currentModules.Length; index++)
+        {
+            var module = currentModules[index];
+            if (module.State == SharpLinkDynamicModuleState.Running)
+                available.Add(module.Manifest.OwnerAssembly.FullName ?? string.Empty);
+        }
         var self = incoming.OwnerAssembly.FullName;
         foreach (var dependency in incoming.Dependencies)
         {
             if (string.Equals(dependency, self, StringComparison.Ordinal) || available.Contains(dependency))
                 continue;
             return CreateError(SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
-                $"Generated dependency '{dependency}' must be registered before '{self}'.",
+                $"Generated dependency '{dependency}' must be registered and running before '{self}'.",
                 incoming.OwnerAssembly, "Dependency");
         }
         return null;

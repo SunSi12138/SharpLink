@@ -8,6 +8,8 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
 {
     private static TaskCompletionSource _blockStarted = NewSignal();
     private static TaskCompletionSource _blockRelease = NewSignal();
+    private static TaskCompletionSource _synchronousBlockStarted = NewSignal();
+    private static TaskCompletionSource _synchronousBlockRelease = NewSignal();
     private static int _created;
     private static int _disposed;
     private static int _notifications;
@@ -26,16 +28,23 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
 
     public static Task BlockStarted => Volatile.Read(ref _blockStarted).Task;
 
+    public static Task SynchronousBlockStarted => Volatile.Read(ref _synchronousBlockStarted).Task;
+
     public static void Reset()
     {
         Volatile.Write(ref _blockStarted, NewSignal());
         Volatile.Write(ref _blockRelease, NewSignal());
+        Volatile.Write(ref _synchronousBlockStarted, NewSignal());
+        Volatile.Write(ref _synchronousBlockRelease, NewSignal());
         Volatile.Write(ref _created, 0);
         Volatile.Write(ref _disposed, 0);
         Volatile.Write(ref _notifications, 0);
     }
 
     public static void ReleaseBlock() => Volatile.Read(ref _blockRelease).TrySetResult();
+
+    public static void ReleaseSynchronousBlock()
+        => Volatile.Read(ref _synchronousBlockRelease).TrySetResult();
 
     public ValueTask<int> UnaryAsync(int value, CancellationToken cancellationToken)
         => ValueTask.FromResult(value + 1);
@@ -88,6 +97,13 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         Volatile.Read(ref _blockStarted).TrySetResult();
         await Volatile.Read(ref _blockRelease).Task.ConfigureAwait(false);
         return 43;
+    }
+
+    public ValueTask<int> BlockSynchronously()
+    {
+        Volatile.Read(ref _synchronousBlockStarted).TrySetResult();
+        Volatile.Read(ref _synchronousBlockRelease).Task.GetAwaiter().GetResult();
+        return ValueTask.FromResult(44);
     }
 
     public ValueTask<int> UsePayloadAsync(DynamicPayload payload, CancellationToken cancellationToken)

@@ -456,7 +456,7 @@ internal sealed class SharpLinkDynamicModule
             throw new InvalidOperationException("Dynamic module stream counter underflowed.");
         if (Interlocked.Decrement(ref _callCounters[stripe].Value) < 0)
             throw new InvalidOperationException("Dynamic module call counter underflowed.");
-        if (State is SharpLinkDynamicModuleState.Draining or SharpLinkDynamicModuleState.DrainTimedOut &&
+        if (State is (SharpLinkDynamicModuleState.Draining or SharpLinkDynamicModuleState.DrainTimedOut) &&
             RemainingCalls == 0)
         {
             _drained.TrySetResult();

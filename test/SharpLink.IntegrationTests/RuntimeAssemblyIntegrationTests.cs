@@ -372,6 +372,58 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task NonCooperativeSynchronousCallShouldObserveModuleDrainBeforeResponding()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var plugin = PluginBundle.Load("dynamic-synchronous-drain");
+        plugin.ResetServiceState();
+        RegisterAll(harness, plugin);
+
+        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        var blocked = InvokeValueTaskAsync<int>(
+            proxy,
+            plugin.ContractType,
+            "BlockSynchronously").AsTask();
+        await plugin.GetStaticTask("SynchronousBlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
+
+        var timedOut = await harness.Server.UnregisterAssemblyAsync(
+            plugin.ServiceAssembly,
+            TimeSpan.FromMilliseconds(20));
+        Ensure(!timedOut.ReferencesReleased && timedOut.RemainingCalls == 1,
+            "non-cooperative synchronous call keeps its module lease through timeout");
+
+        plugin.ReleaseSynchronousBlock();
+        try
+        {
+            _ = await blocked.WaitAsync(TimeSpan.FromSeconds(2));
+            throw new Exception("assert failed: drained synchronous call must not return success");
+        }
+        catch (SharpLinkException exception)
+        {
+            Ensure(exception.Code == SharpLinkErrorCode.Unavailable,
+                "drained synchronous call error code");
+            Ensure(exception.Message.Contains("module is draining", StringComparison.Ordinal),
+                "drained synchronous call diagnostic");
+        }
+        finally
+        {
+            plugin.ReleaseSynchronousBlock();
+        }
+
+        await WaitUntilAsync(() => plugin.GetStaticInt("Disposed") == 1);
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "synchronous drain server contract release");
+        Ensure((await harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "synchronous drain client contract release");
+        proxy = null;
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task UnregisterTimeoutShouldCancelCooperativeCallAndNotifyItsClient()
     {
         await using var harness = await DynamicHarness.CreateAsync();
@@ -710,6 +762,8 @@ public sealed class RuntimeAssemblyIntegrationTests
         internal void ResetServiceState() => InvokeStatic("Reset");
 
         internal void ReleaseBlock() => InvokeStatic("ReleaseBlock");
+
+        internal void ReleaseSynchronousBlock() => InvokeStatic("ReleaseSynchronousBlock");
 
         internal int GetStaticInt(string propertyName)
             => (int)(ServiceType!.GetProperty(propertyName)!.GetValue(null) ?? -1);

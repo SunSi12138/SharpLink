@@ -662,7 +662,9 @@ internal sealed partial class SharpLinkServer
             serviceInfo.ModuleCancellation,
             supportsCooperativeCancellation,
             requestCancellationMap);
-        var invokeToken = callState?.InvocationToken ?? serverLoopToken;
+        var invokeToken = supportsCooperativeCancellation
+            ? callState!.InvocationToken
+            : serverLoopToken;
 
         var callContext = CreateCallContext(
             session, connection.AuthenticationContext, serviceInfo.Stub, request.MethodHash, requestId,
@@ -831,7 +833,9 @@ internal sealed partial class SharpLinkServer
             serviceInfo.ModuleCancellation,
             supportsCooperativeCancellation,
             requestCancellationMap);
-        var invokeToken = callState?.InvocationToken ?? serverLoopToken;
+        var invokeToken = supportsCooperativeCancellation
+            ? callState!.InvocationToken
+            : serverLoopToken;
 
         if (!hasReturnPayload)
         {
@@ -1154,7 +1158,7 @@ internal sealed partial class SharpLinkServer
         bool supportsCooperativeCancellation,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap)
     {
-        if (!supportsCooperativeCancellation)
+        if (!supportsCooperativeCancellation && !moduleDrainingToken.CanBeCanceled)
             return null;
 
         var callState = ServerCallCancellationState.Rent(
@@ -1164,7 +1168,7 @@ internal sealed partial class SharpLinkServer
             serverLoopToken,
             _forceStopCts.Token,
             moduleDrainingToken,
-            supportsCooperativeCancellation: true);
+            supportsCooperativeCancellation);
         requestCancellationMap.Set(requestId, callState);
         connection.DeadlineScheduler.Register(callState);
         return callState;
