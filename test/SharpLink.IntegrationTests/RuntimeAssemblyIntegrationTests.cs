@@ -521,7 +521,7 @@ public sealed class RuntimeAssemblyIntegrationTests
         private static string GetPluginOutputDirectory()
         {
             var directory = new DirectoryInfo(AppContext.BaseDirectory);
-            while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "SharpLink.slnx")))
+            while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Sharplink.slnx")))
                 directory = directory.Parent;
             if (directory is null)
                 throw new DirectoryNotFoundException("SharpLink workspace root was not found.");
