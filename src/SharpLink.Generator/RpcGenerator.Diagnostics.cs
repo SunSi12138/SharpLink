@@ -187,4 +187,54 @@ public partial class RpcGenerator
         category: "SharpLink.Generator",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor ContractBaselineInvalidRule = CompatibilityRule(
+        "SHARPLINK024", "Contract Baseline Is Invalid");
+
+    private static readonly DiagnosticDescriptor ContractBaselineVersionRule = CompatibilityRule(
+        "SHARPLINK025", "Contract Baseline Version Is Unsupported");
+
+    private static readonly DiagnosticDescriptor ContractIdCompatibilityRule = CompatibilityRule(
+        "SHARPLINK026", "Contract ID Is Incompatible");
+
+    private static readonly DiagnosticDescriptor MethodIdCompatibilityRule = CompatibilityRule(
+        "SHARPLINK027", "Method ID Is Incompatible");
+
+    private static readonly DiagnosticDescriptor MemberIdCompatibilityRule = CompatibilityRule(
+        "SHARPLINK028", "DTO Member ID Is Incompatible");
+
+    private static readonly DiagnosticDescriptor CallShapeCompatibilityRule = CompatibilityRule(
+        "SHARPLINK029", "RPC Call Shape Is Incompatible");
+
+    private static readonly DiagnosticDescriptor WireTypeCompatibilityRule = CompatibilityRule(
+        "SHARPLINK030", "RPC Wire Type Is Incompatible");
+
+    private static readonly DiagnosticDescriptor RequiredMemberCompatibilityRule = CompatibilityRule(
+        "SHARPLINK031", "Required DTO Member Change Is Incompatible");
+
+    private static readonly DiagnosticDescriptor EnumCompatibilityRule = CompatibilityRule(
+        "SHARPLINK032", "Enum Underlying Type Is Incompatible");
+
+    private static readonly DiagnosticDescriptor UnionTagCompatibilityRule = CompatibilityRule(
+        "SHARPLINK033", "Union Tag Was Reused");
+
+    private static readonly DiagnosticDescriptor MethodRemovedCompatibilityRule = CompatibilityRule(
+        "SHARPLINK034", "Existing RPC Method Was Removed");
+
+    private static readonly DiagnosticDescriptor ContractManifestOutputRule = new(
+        id: "SHARPLINK036",
+        title: "Contract Manifest Could Not Be Written",
+        messageFormat: "Could not write SharpLink contract Manifest '{0}': {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static DiagnosticDescriptor CompatibilityRule(string id, string title)
+        => new(
+            id: id,
+            title: title,
+            messageFormat: "Contract compatibility error for '{0}': {1}. Suggested fix: {2}.",
+            category: "SharpLink.Compatibility",
+            defaultSeverity: DiagnosticSeverity.Error,
+            isEnabledByDefault: true);
 }

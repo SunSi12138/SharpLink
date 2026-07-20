@@ -7,7 +7,8 @@ internal record RpcServiceModel(
     RpcInterfaceModel Interface,
     string Lifetime,
     EquatableArray<RpcConstructorParameterModel> ConstructorParameters,
-    EquatableArray<string> AssemblyDependencies);
+    EquatableArray<string> AssemblyDependencies,
+    Location? Location);
 
 internal record RpcConstructorParameterModel(string Name, string TypeName);
 
@@ -18,7 +19,8 @@ internal record RpcInterfaceModel(
     long Hash,
     EquatableArray<RpcMethodModel> Methods,
     string Fingerprint,
-    EquatableArray<string> AssemblyDependencies);
+    EquatableArray<string> AssemblyDependencies,
+    Location? Location);
 
 internal record RpcMethodModel(
     string Name,
@@ -38,7 +40,11 @@ internal record RpcMethodModel(
     EquatableArray<RpcParameterModel> Parameters,
     string RequestSchema,
     string ResponseSchema,
-    string Fingerprint);
+    string Fingerprint,
+    bool ResponseNullable,
+    string? ResponseEnumUnderlyingType,
+    string? StreamItemEnumUnderlyingType,
+    Location? Location);
 
 internal record RpcParameterModel(
     string Name,
@@ -48,8 +54,12 @@ internal record RpcParameterModel(
     bool IsBlittable,
     bool IsValueType,
     bool IsNullableReference,
+    bool PayloadNullable,
     bool IsCancellationToken,
-    bool IsCallOptions);
+    bool IsCallOptions,
+    string? EnumUnderlyingType,
+    string? StreamItemEnumUnderlyingType,
+    Location? Location);
 
 internal readonly record struct InvalidRpcMethodModel(string MethodName, string ReturnType, Location? Location);
 internal readonly record struct InvalidCancellationTokenMethodModel(string MethodName, Location? Location);
@@ -82,6 +92,16 @@ internal readonly record struct StaticRouteConflictModel(
     long Id,
     string ExistingFingerprint,
     string IncomingFingerprint,
+    Location? Location);
+
+internal sealed record RpcUnionModel(
+    string TypeName,
+    EquatableArray<RpcUnionCaseModel> Cases,
+    Location? Location);
+
+internal sealed record RpcUnionCaseModel(
+    int Tag,
+    string TypeName,
     Location? Location);
 
 internal enum StaticRouteConflictKind
@@ -120,9 +140,13 @@ internal sealed record GeneratedMemberModel(
     string? FixedTypeName,
     int FixedSize,
     bool Required,
+    bool Nullable,
     bool NonNullableReference,
     bool ConstructorBound,
-    bool InitializerBound);
+    bool InitializerBound,
+    bool HasExplicitId,
+    string? EnumUnderlyingType,
+    Location? Location);
 
 internal sealed record GeneratedCodecModel(
     string TypeName,
@@ -135,7 +159,8 @@ internal sealed record GeneratedCodecModel(
     string? ElementType,
     string? KeyType,
     string? ValueType,
-    ImmutableArray<string> AssemblyDependencies);
+    ImmutableArray<string> AssemblyDependencies,
+    Location? Location);
 
 internal enum DtoDiagnosticKind
 {
@@ -155,6 +180,77 @@ internal readonly record struct DtoDiagnosticModel(
 internal sealed record DtoGenerationResult(
     ImmutableArray<GeneratedCodecModel> Codecs,
     ImmutableArray<DtoDiagnosticModel> Diagnostics);
+
+internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerationResult>
+{
+    internal static DtoGenerationResultComparer Instance { get; } = new();
+
+    public bool Equals(DtoGenerationResult? x, DtoGenerationResult? y)
+    {
+        if (ReferenceEquals(x, y))
+            return true;
+        if (x is null || y is null || x.Codecs.Length != y.Codecs.Length ||
+            x.Diagnostics.Length != y.Diagnostics.Length)
+        {
+            return false;
+        }
+        for (var index = 0; index < x.Codecs.Length; index++)
+        {
+            if (!CodecEquals(x.Codecs[index], y.Codecs[index]))
+                return false;
+        }
+        for (var index = 0; index < x.Diagnostics.Length; index++)
+        {
+            var left = x.Diagnostics[index];
+            var right = y.Diagnostics[index];
+            if (left.Kind != right.Kind ||
+                !string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
+                !string.Equals(left.Detail, right.Detail, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public int GetHashCode(DtoGenerationResult obj)
+    {
+        var hash = 17;
+        foreach (var codec in obj.Codecs)
+        {
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.TypeName));
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(codec.SchemaId));
+        }
+        foreach (var diagnostic in obj.Diagnostics)
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(diagnostic.Detail));
+        return hash;
+    }
+
+    private static bool CodecEquals(GeneratedCodecModel left, GeneratedCodecModel right)
+    {
+        if (!string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
+            !string.Equals(left.CodecName, right.CodecName, StringComparison.Ordinal) ||
+            !string.Equals(left.SchemaId, right.SchemaId, StringComparison.Ordinal) ||
+            left.Kind != right.Kind || left.IsReferenceType != right.IsReferenceType ||
+            !string.Equals(left.ElementType, right.ElementType, StringComparison.Ordinal) ||
+            !string.Equals(left.KeyType, right.KeyType, StringComparison.Ordinal) ||
+            !string.Equals(left.ValueType, right.ValueType, StringComparison.Ordinal) ||
+            !left.ConstructorMembers.SequenceEqual(right.ConstructorMembers, StringComparer.Ordinal) ||
+            !left.AssemblyDependencies.SequenceEqual(right.AssemblyDependencies, StringComparer.Ordinal) ||
+            left.Members.Length != right.Members.Length)
+        {
+            return false;
+        }
+        for (var index = 0; index < left.Members.Length; index++)
+        {
+            var first = left.Members[index];
+            var second = right.Members[index];
+            if (first with { Location = null } != second with { Location = null })
+                return false;
+        }
+        return true;
+    }
+}
 
 internal static class Hashing
 {

@@ -211,7 +211,8 @@ public partial class RpcGenerator
                     elementType is null ? null : GetTypeName(elementType),
                     keyType is null ? null : GetTypeName(keyType),
                     valueType is null ? null : GetTypeName(valueType),
-                    GetAssemblyDependencies([type]));
+                    GetAssemblyDependencies([type]),
+                    type.Locations.FirstOrDefault());
                 return;
             }
 
@@ -260,7 +261,7 @@ public partial class RpcGenerator
             foreach (var member in memberSymbols)
             {
                 var memberType = GetMemberType(member);
-                var fieldId = GetMemberId(member, out var validId);
+                var fieldId = GetMemberId(member, out var validId, out var hasExplicitId);
                 if (!validId)
                 {
                     Report(DtoDiagnosticKind.Unsupported, type, $"member '{member.Name}' has an invalid RpcMember ID", member.Locations.FirstOrDefault());
@@ -290,8 +291,11 @@ public partial class RpcGenerator
                     fixedType,
                     fixedSize,
                     IsRequired(member),
+                    IsNullable(member, memberType),
                     IsNonNullableReference(member, memberType),
-                    IsAssignable(member)));
+                    IsAssignable(member),
+                    hasExplicitId,
+                    GetEnumUnderlyingType(memberType)));
             }
             stack.RemoveAt(stack.Count - 1);
             if (_failed.Contains(typeName))
@@ -316,9 +320,13 @@ public partial class RpcGenerator
                     member.FixedType is null ? null : GetTypeName(member.FixedType),
                     member.FixedSize,
                     member.Required,
+                    member.Nullable,
                     member.NonNullableReference,
                     constructorSet.Contains(member.Symbol.Name),
-                    member.Assignable && (!constructorSet.Contains(member.Symbol.Name) || member.Required)))
+                    member.Assignable && (!constructorSet.Contains(member.Symbol.Name) || member.Required),
+                    member.HasExplicitId,
+                    member.EnumUnderlyingType,
+                    member.Symbol.Locations.FirstOrDefault()))
                 .ToImmutableArray();
 
             var schema = new StringBuilder(typeName);
@@ -337,7 +345,8 @@ public partial class RpcGenerator
                 null,
                 null,
                 null,
-                GetAssemblyDependencies(dependencyTypes));
+                GetAssemblyDependencies(dependencyTypes),
+                named.Locations.FirstOrDefault());
         }
 
         private ImmutableArray<string> GetAssemblyDependencies(IEnumerable<ITypeSymbol> types)
@@ -629,7 +638,24 @@ public partial class RpcGenerator
             };
         }
 
-        private static uint GetMemberId(ISymbol member, out bool valid)
+        private static bool IsNullable(ISymbol member, ITypeSymbol type)
+        {
+            if (type is INamedTypeSymbol nullable &&
+                nullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T)
+            {
+                return true;
+            }
+            if (!type.IsReferenceType)
+                return false;
+            return member switch
+            {
+                IFieldSymbol field => field.NullableAnnotation != NullableAnnotation.NotAnnotated,
+                IPropertySymbol property => property.NullableAnnotation != NullableAnnotation.NotAnnotated,
+                _ => true
+            };
+        }
+
+        private static uint GetMemberId(ISymbol member, out bool valid, out bool hasExplicitId)
         {
             foreach (var attribute in member.GetAttributes())
             {
@@ -638,9 +664,11 @@ public partial class RpcGenerator
                 if (attribute.ConstructorArguments.Length == 1 && attribute.ConstructorArguments[0].Value is int id &&
                     id is > 0 and <= 0x1FFF_FFFF)
                 {
+                    hasExplicitId = true;
                     valid = true;
                     return (uint)id;
                 }
+                hasExplicitId = true;
                 valid = false;
                 return 0;
             }
@@ -654,6 +682,7 @@ public partial class RpcGenerator
             hash &= 0x1FFF_FFFFU;
             if (hash == 0)
                 hash = 1;
+            hasExplicitId = false;
             valid = true;
             return hash;
         }
@@ -714,7 +743,10 @@ public partial class RpcGenerator
             ITypeSymbol? FixedType,
             int FixedSize,
             bool Required,
+            bool Nullable,
             bool NonNullableReference,
-            bool Assignable);
+            bool Assignable,
+            bool HasExplicitId,
+            string? EnumUnderlyingType);
     }
 }

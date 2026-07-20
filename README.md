@@ -86,6 +86,32 @@ dotnet run --project demo/SeparatedClient/SeparatedClient.csproj
 [assembly: SharpLinkRpcContracts(typeof(MyContract1), typeof(MyContract2))]
 ```
 
+## 契约 Manifest 与兼容性基线
+
+`SharpLink.Sdk` 包会把当前契约写到 `obj/<configuration>/<tfm>/SharpLink.Contracts.sharplink.json`。JSON 按 Contract、Method、DTO member、enum、union 与 Service route 的稳定 ID 排序，不包含时间戳或源码路径；`schemaFingerprint` 覆盖规范化后的完整内容，可直接作为 CI 构建产物保存。
+
+把上一个已发布版本的文件保存到仓库，并在项目中指定基线：
+
+```xml
+<PropertyGroup>
+  <SharpLinkContractBaseline>contracts/previous.sharplink.json</SharpLinkContractBaseline>
+  <!-- 可选：覆盖当前 Manifest 的输出位置 -->
+  <SharpLinkContractManifestOutput>artifacts/contracts/current.sharplink.json</SharpLinkContractManifestOutput>
+</PropertyGroup>
+```
+
+没有基线时只生成当前 Manifest。存在基线时，`SHARPLINK024`–`SHARPLINK034` 会在准确的 Contract、Method 或 DTO member 位置报告格式错误和破坏性变化，并在消息中给出修复方式。例如 DTO 成员重命名应显式保留旧 ID：
+
+```csharp
+public sealed class Customer
+{
+    [RpcMember(7)] // 重命名前后都保留 7
+    public string DisplayName { get; init; } = string.Empty;
+}
+```
+
+新增 Contract、Method 和 optional DTO member 是兼容变化。多态契约可用 `[RpcUnionCase(tag, typeof(CaseType))]` 固定 union tag；已发布的 tag 不能改派给其他类型。分析全部发生在编译期，不进入运行时路由或 RPC 热路径，NativeAOT 继续使用生成代码而不做反射扫描。
+
 ## 序列化与 AOT
 
 RPC 可达的常规 DTO 会自动生成无反射 Codec，不需要注册序列化器：

@@ -25,3 +25,15 @@
  SHARPLINK021 | SharpLink.Generator | Error    | Static contract route ownership conflict
  SHARPLINK022 | SharpLink.Generator | Error    | Static method descriptor conflict
  SHARPLINK023 | SharpLink.Generator | Error    | Static service ownership conflict
+ SHARPLINK024 | SharpLink.Generator | Error    | Contract baseline is missing or malformed
+ SHARPLINK025 | SharpLink.Generator | Error    | Contract baseline format version is unsupported
+ SHARPLINK026 | SharpLink.Compatibility | Error | Contract ID changed or collided
+ SHARPLINK027 | SharpLink.Compatibility | Error | Method ID changed or collided
+ SHARPLINK028 | SharpLink.Compatibility | Error | DTO member ID changed
+ SHARPLINK029 | SharpLink.Compatibility | Error | RPC call shape changed
+ SHARPLINK030 | SharpLink.Compatibility | Error | Request, response, stream item, or DTO wire type changed
+ SHARPLINK031 | SharpLink.Compatibility | Error | Required DTO member was added, removed, or tightened
+ SHARPLINK032 | SharpLink.Compatibility | Error | Enum underlying type changed
+ SHARPLINK033 | SharpLink.Compatibility | Error | Union tag was assigned to a different type
+ SHARPLINK034 | SharpLink.Compatibility | Error | Existing RPC method was removed
+ SHARPLINK036 | SharpLink.Generator | Error    | Contract Manifest output could not be written

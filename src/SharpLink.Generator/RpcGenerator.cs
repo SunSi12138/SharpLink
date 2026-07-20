@@ -16,13 +16,19 @@ public partial class RpcGenerator : IIncrementalGenerator
             .Where(m => m != null);
 
         var generatedCodecs = context.CompilationProvider.Select(static (compilation, ct) =>
-            AnalyzeGeneratedCodecs(compilation, ct));
+                AnalyzeGeneratedCodecs(compilation, ct))
+            .WithComparer(DtoGenerationResultComparer.Instance);
 
         var services = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcServiceAttributeMetadataName,
                 static (node, _) => node is ClassDeclarationSyntax,
                 static (attributeContext, ct) => GetServiceModelOrNull(attributeContext, ct))
             .Where(m => m != null);
+        var unions = context.SyntaxProvider.ForAttributeWithMetadataName(
+                "SharpLink.Sdk.RpcUnionCaseAttribute",
+                static (node, _) => node is TypeDeclarationSyntax,
+                static (attributeContext, ct) => GetUnionModelOrNull(attributeContext, ct))
+            .Where(static model => model is not null);
         var serviceDiagnostics = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcServiceAttributeMetadataName,
                 static (node, _) => node is ClassDeclarationSyntax,
@@ -252,6 +258,72 @@ public partial class RpcGenerator : IIncrementalGenerator
                     "SharpLink.GeneratedAssemblyManifest.g.cs",
                     SourceText.From(code, Encoding.UTF8));
             }
+        });
+
+        var contractManifestModels = interfaces.Collect()
+            .Combine(services.Collect())
+            .Combine(generatedCodecs)
+            .Combine(unions.Collect())
+            .Select(static (value, _) => new ContractManifestModels(
+                value.Left.Left.Left,
+                value.Left.Left.Right,
+                value.Left.Right.Codecs,
+                value.Right));
+        var contractManifestOptions = context.AnalyzerConfigOptionsProvider
+            .Select(static (provider, _) => GetContractManifestOptions(provider));
+        var contractManifestAnalysis = contractManifestModels
+            .Combine(context.AdditionalTextsProvider.Collect())
+            .Combine(contractManifestOptions)
+            .Select(static (value, ct) => AnalyzeContractManifest(
+                value.Left.Left.Interfaces,
+                value.Left.Left.Services,
+                value.Left.Left.Codecs,
+                value.Left.Left.Unions,
+                value.Left.Right,
+                value.Right,
+                ct))
+            .WithTrackingName("SharpLink.ContractManifestAnalysis");
+        context.RegisterSourceOutput(contractManifestAnalysis, static (spc, analysis) =>
+        {
+            foreach (var item in analysis.Diagnostics)
+            {
+                var descriptor = item.Kind switch
+                {
+                    ContractCompatibilityKind.BaselineInvalid => ContractBaselineInvalidRule,
+                    ContractCompatibilityKind.BaselineVersion => ContractBaselineVersionRule,
+                    ContractCompatibilityKind.ContractId => ContractIdCompatibilityRule,
+                    ContractCompatibilityKind.MethodId => MethodIdCompatibilityRule,
+                    ContractCompatibilityKind.MemberId => MemberIdCompatibilityRule,
+                    ContractCompatibilityKind.CallShape => CallShapeCompatibilityRule,
+                    ContractCompatibilityKind.WireType => WireTypeCompatibilityRule,
+                    ContractCompatibilityKind.Required => RequiredMemberCompatibilityRule,
+                    ContractCompatibilityKind.EnumUnderlyingType => EnumCompatibilityRule,
+                    ContractCompatibilityKind.UnionTag => UnionTagCompatibilityRule,
+                    ContractCompatibilityKind.MethodRemoved => MethodRemovedCompatibilityRule,
+                    _ => throw new InvalidOperationException("Unknown contract compatibility diagnostic kind.")
+                };
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    descriptor,
+                    item.Location,
+                    item.Item,
+                    item.Detail,
+                    item.Fix));
+            }
+            try
+            {
+                WriteContractManifest(analysis.OutputPath, analysis.Json);
+            }
+            catch (Exception exception) when (exception is System.IO.IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    ContractManifestOutputRule,
+                    Location.None,
+                    analysis.OutputPath,
+                    exception.Message));
+            }
+            spc.AddSource(
+                "SharpLink.ContractManifest.g.cs",
+                SourceText.From(GenerateContractManifestSource(analysis.Json), Encoding.UTF8));
         });
     }
 }

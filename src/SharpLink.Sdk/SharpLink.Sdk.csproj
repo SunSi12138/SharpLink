@@ -12,5 +12,9 @@
           Pack="true"
           PackagePath="analyzers/dotnet/cs"
           Visible="false" />
+    <None Update="buildTransitive\SharpLink.Sdk.targets"
+          Pack="true"
+          PackagePath="build\SharpLink.Sdk.targets;buildTransitive\SharpLink.Sdk.targets"
+          Visible="false" />
   </ItemGroup>
 </Project>

@@ -182,6 +182,7 @@ SharpLink.Serializer.MemoryPack
 - Server Build 合并弱 Catalog 快照、Builder 筛选和 `ReplaceService`，完成全量验证后一次发布实例 Registry；一个 Contract 只能有一个 Owner。
 - 默认 `Singleton` 延迟且线程安全地创建一次，不建立调用 Scope。`Connection` 按物理连接和 registration 独立惰性创建 Scope，断连后等待相关调用结束再释放。`Call` 每次调用创建一个实例和 Scope，Streaming 保持到整条流真正终止。
 - Generator Activator 直接调用选定构造函数并从当前 Scope Provider 解析普通依赖；Microsoft DI 继续管理依赖，根 RPC 服务不再使用 `ServiceLifetime` 表示公共生命周期。
+- Generator 以稳定顺序输出 JSON 契约 Manifest；可选 `SharpLinkContractBaseline` 只在编译期执行一次完整差异分析，运行时替换仅验证生成 Manifest、route identity 与 registration ownership，不复制源码级兼容规则。
 - `ReplaceService` 实例始终由调用方持有且是 Singleton；factory 产物由 SharpLink 释放。激活失败也会释放已经创建的 Scope。
 - Protocol minor 1 引入 health-check capability，minor 2 引入带原因 Cancel；`HealthCheck/HealthResponse` 使用非零 correlation ID 和固定一字节状态，不进入业务 stub、interceptor 或服务并发额度。
 - Server 状态映射为 Starting/Stopped/Faulted=`Unhealthy`、Running=`Ready`、Draining=`Draining`。Hosted readiness 直接读取 Server 原子状态，Client accessor 只在至少一条连接 Ready 后发布。
