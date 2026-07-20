@@ -1279,31 +1279,11 @@ internal sealed partial class SharpLinkServer
             }
             if (!admissionTask.IsCompletedSuccessfully)
             {
-                if (descriptor.ClientStreamCount > 0 && session.StreamManager is StreamManager streamManager)
-                {
-                    streamManager.ReservePreAdmissionStreams(
-                        requestId,
-                        descriptor.ClientStreamCount,
-                        _runtimeContext.Buffers,
-                        _admissionController.TryReserveAdditionalQueuedBytes,
-                        _admissionController.ReleaseAdditionalQueuedBytes,
-                        () => admittedCallState.TryCancel(
-                            ServerCallCancellationReason.AdmissionResourceExhausted),
-                        compressedPayload =>
-                        {
-                            var decodedPayload = ((RpcSession)session).DecodeInboundPayload(
-                                ProtocolV2FrameType.StreamData,
-                                ProtocolV2FrameFlags.Compressed,
-                                compressedPayload,
-                                admittedCallState.InvocationToken,
-                                out var decodedOwner);
-                            return new PreAdmissionDecodedPayload(
-                                decodedPayload.Slice(sizeof(ushort)),
-                                decodedOwner ?? throw new InvalidOperationException(
-                                    "Compressed stream decoding did not return an owner."),
-                                _runtimeContext.Buffers);
-                        });
-                }
+                ReservePreAdmissionRequestStreams(
+                    session,
+                    requestId,
+                    descriptor.ClientStreamCount,
+                    admittedCallState);
                 var retainedPayload = CopyAdmissionPayload(payload);
                 return AwaitRpcAdmissionAsync(
                     admissionTask,
@@ -1543,6 +1523,41 @@ internal sealed partial class SharpLinkServer
             ReleaseDispatchResources(callState, requestId, requestCancellationMap, connection);
             return ValueTask.CompletedTask;
         }
+    }
+
+    private void ReservePreAdmissionRequestStreams(
+        IRpcSession session,
+        long requestId,
+        int clientStreamCount,
+        ServerCallCancellationState callState)
+    {
+        if (clientStreamCount == 0 || session.StreamManager is not StreamManager streamManager)
+            return;
+
+        var admissionController = _admissionController ?? throw new InvalidOperationException(
+            "Pre-admission streams require an admission controller.");
+        streamManager.ReservePreAdmissionStreams(
+            requestId,
+            clientStreamCount,
+            _runtimeContext.Buffers,
+            admissionController.TryReserveAdditionalQueuedBytes,
+            admissionController.ReleaseAdditionalQueuedBytes,
+            () => callState.TryCancel(
+                ServerCallCancellationReason.AdmissionResourceExhausted),
+            compressedPayload =>
+            {
+                var decodedPayload = ((RpcSession)session).DecodeInboundPayload(
+                    ProtocolV2FrameType.StreamData,
+                    ProtocolV2FrameFlags.Compressed,
+                    compressedPayload,
+                    callState.InvocationToken,
+                    out var decodedOwner);
+                return new PreAdmissionDecodedPayload(
+                    decodedPayload.Slice(sizeof(ushort)),
+                    decodedOwner ?? throw new InvalidOperationException(
+                        "Compressed stream decoding did not return an owner."),
+                    _runtimeContext.Buffers);
+            });
     }
 
     private async ValueTask AwaitDispatchRpcNoReturnAsync(
