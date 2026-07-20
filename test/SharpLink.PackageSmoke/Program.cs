@@ -49,7 +49,8 @@ public static class Program
     {
         var sharedMemoryName = $"sharplink-package-smoke-{Guid.NewGuid():N}";
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseRuntime(ConfigureCompression);
+            .UseRuntime(ConfigureCompression)
+            .UseAdmissionControl(options => options.Global.UseConcurrency(64));
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
         else

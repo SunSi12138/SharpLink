@@ -46,6 +46,8 @@ public class StreamManager : IStreamManager
         var requestDispatchers = _dispatchersByRequestId.GetOrAdd(
             requestId,
             static _ => new RequestDispatchers());
+        if (requestDispatchers.TryAttachPreAdmission(streamId, dispatcher))
+            return;
         SharpLinkTelemetry.AddActiveStreams(1);
         Interlocked.Increment(ref _activeStreamCount);
         if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
@@ -190,6 +192,9 @@ public class StreamManager : IStreamManager
         if (!_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
             return;
 
+        if (requestDispatchers.TryCompletePreAdmission(streamId, exception))
+            return;
+
         if (requestDispatchers.TryRemove(streamId, out var entry))
         {
             var dispatcher = entry.Dispatcher;
@@ -302,6 +307,48 @@ public class StreamManager : IStreamManager
         Interlocked.Add(ref _activeStreamCount, -completed);
     }
 
+    internal void ReservePreAdmissionStreams(
+        long requestId,
+        int streamCount,
+        SharpLinkBufferWriterPool buffers,
+        Func<int, bool> reserveBytes,
+        Action<int> releaseBytes,
+        Action capacityExceeded,
+        Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(streamCount);
+        for (var index = 1; index <= streamCount; index++)
+        {
+            Register(
+                requestId,
+                checked((ushort)index),
+                new PreAdmissionStreamDispatcher(
+                    buffers,
+                    reserveBytes,
+                    releaseBytes,
+                    capacityExceeded,
+                    decodeCompressed));
+        }
+    }
+
+    internal bool TryDispatchPreAdmissionCompressed(
+        long requestId,
+        ushort streamId,
+        ReadOnlySequence<byte> wirePayload,
+        int originalByteCount,
+        out ValueTask dispatch)
+    {
+        if (_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
+            requestDispatchers.TryGetPreAdmission(streamId, out var preAdmission))
+        {
+            _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
+            dispatch = preAdmission.DispatchCompressedAsync(wirePayload, originalByteCount);
+            return true;
+        }
+        dispatch = default;
+        return false;
+    }
+
     private void CompleteTerminatedRegistration(
         long requestId,
         ushort streamId,
@@ -366,6 +413,79 @@ public class StreamManager : IStreamManager
 
             lock (_gate)
                 _byStreamId.Add(streamId, new DispatcherEntry(dispatcher));
+        }
+
+        public bool TryAttachPreAdmission(ushort streamId, IStreamDispatcher dispatcher)
+        {
+            if (streamId == 0)
+            {
+                if (Volatile.Read(ref _defaultDispatcher)?.Dispatcher is not
+                    PreAdmissionStreamDispatcher preAdmission || preAdmission.IsAttached)
+                {
+                    return false;
+                }
+                preAdmission.Attach(dispatcher);
+                return true;
+            }
+
+            lock (_gate)
+            {
+                if (!_byStreamId.TryGetValue(streamId, out var entry) ||
+                    entry.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
+                    preAdmission.IsAttached)
+                {
+                    return false;
+                }
+                preAdmission.Attach(dispatcher);
+                return true;
+            }
+        }
+
+        public bool TryCompletePreAdmission(ushort streamId, Exception? exception)
+        {
+            if (streamId == 0)
+            {
+                if (Volatile.Read(ref _defaultDispatcher)?.Dispatcher is not
+                    PreAdmissionStreamDispatcher preAdmission || preAdmission.IsAttached)
+                {
+                    return false;
+                }
+                preAdmission.Complete(exception);
+                return true;
+            }
+
+            lock (_gate)
+            {
+                if (!_byStreamId.TryGetValue(streamId, out var entry) ||
+                    entry.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
+                    preAdmission.IsAttached)
+                {
+                    return false;
+                }
+                preAdmission.Complete(exception);
+                return true;
+            }
+        }
+
+        public bool TryGetPreAdmission(
+            ushort streamId,
+            out PreAdmissionStreamDispatcher dispatcher)
+        {
+            if (streamId == 0)
+            {
+                var found = Volatile.Read(ref _defaultDispatcher)?.Dispatcher as
+                    PreAdmissionStreamDispatcher;
+                dispatcher = found!;
+                return found is not null;
+            }
+            lock (_gate)
+            {
+                var found = _byStreamId.TryGetValue(streamId, out var entry)
+                    ? entry.Dispatcher as PreAdmissionStreamDispatcher
+                    : null;
+                dispatcher = found!;
+                return found is not null;
+            }
         }
 
         public bool TryAcquire(ushort streamId, out DispatcherEntry entry)

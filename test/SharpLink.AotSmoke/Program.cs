@@ -44,7 +44,8 @@ public static class Program
         var runToken = cts.Token;
 
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseRuntime(ConfigureCompression);
+            .UseRuntime(ConfigureCompression)
+            .UseAdmissionControl(ConfigureAdmission);
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
         else
@@ -103,6 +104,7 @@ public static class Program
         await using var server = SharpLinkServerBuilder.Create()
             .UseSharedMemory(name)
             .UseRuntime(ConfigureCompression)
+            .UseAdmissionControl(ConfigureAdmission)
             .Build();
         VerifyRuntimeAssemblyBoundary(server);
         var runTask = server.RunAsync(timeout.Token).AsTask();
@@ -202,6 +204,9 @@ public static class Program
 
     private static void ConfigureCompression(SharpLinkRuntimeOptions options)
         => options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli());
+
+    private static void ConfigureAdmission(SharpLinkAdmissionControlOptions options)
+        => options.Global.UseConcurrency(64);
 }
 
 [RpcContract]

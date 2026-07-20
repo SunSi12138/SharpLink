@@ -118,32 +118,20 @@ public sealed partial class RpcSession
         if ((flags & ProtocolV2FrameFlags.Compressed) == 0)
             return payload;
 
+        ValidateInboundPayloadEnvelope(type, flags, payload);
+
         var provider = Volatile.Read(ref _compressionProvider);
-        if (provider is null || (NegotiatedCapabilities & ProtocolV2Capabilities.Compression) == 0)
-        {
-            throw ProtocolV2FrameParser.Violation(
-                "A compressed frame was received without negotiated compression.");
-        }
+        if (provider is null)
+            throw ProtocolV2FrameParser.Violation("A compressed frame has no negotiated provider.");
 
         var prefixLength = GetBusinessPrefixLength(type, flags, payload);
-        if (prefixLength < 0)
-            throw ProtocolV2FrameParser.Violation($"Frame {type} cannot carry compressed payload data.");
-        if (payload.Length < prefixLength + sizeof(uint) + 1L)
-            throw ProtocolV2FrameParser.Violation("Compressed payload is missing its original length or body.");
 
         var compressedEnvelope = payload.Slice(prefixLength);
         var lengthReader = new SequenceReader<byte>(compressedEnvelope);
         if (!lengthReader.TryReadLittleEndian(out int originalLengthBits))
             throw ProtocolV2FrameParser.Violation("Compressed payload original length is truncated.");
         var originalLengthUnsigned = unchecked((uint)originalLengthBits);
-        if (originalLengthUnsigned == 0 || originalLengthUnsigned > int.MaxValue)
-            throw ProtocolV2FrameParser.Violation("Compressed payload original length is outside the supported range.");
         var originalLength = checked((int)originalLengthUnsigned);
-        if ((long)prefixLength + originalLength > NegotiatedMaxFramePayloadBytes)
-        {
-            throw ProtocolV2FrameParser.Violation(
-                "Compressed payload original length exceeds the negotiated frame limit.");
-        }
 
         var compressedBody = compressedEnvelope.Slice(sizeof(uint));
         owner = RuntimeContext.Buffers.Rent(checked(prefixLength + originalLength));
@@ -203,6 +191,38 @@ public sealed partial class RpcSession
         }
     }
 
+    internal void ValidateInboundPayloadEnvelope(
+        ProtocolV2FrameType type,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload)
+    {
+        if ((flags & ProtocolV2FrameFlags.Compressed) == 0)
+            return;
+        if (Volatile.Read(ref _compressionProvider) is null ||
+            (NegotiatedCapabilities & ProtocolV2Capabilities.Compression) == 0)
+        {
+            throw ProtocolV2FrameParser.Violation(
+                "A compressed frame was received without negotiated compression.");
+        }
+
+        var prefixLength = GetBusinessPrefixLength(type, flags, payload);
+        if (prefixLength < 0)
+            throw ProtocolV2FrameParser.Violation($"Frame {type} cannot carry compressed payload data.");
+        if (payload.Length < prefixLength + sizeof(uint) + 1L)
+            throw ProtocolV2FrameParser.Violation("Compressed payload is missing its original length or body.");
+        var reader = new SequenceReader<byte>(payload.Slice(prefixLength));
+        if (!reader.TryReadLittleEndian(out int originalLengthBits))
+            throw ProtocolV2FrameParser.Violation("Compressed payload original length is truncated.");
+        var originalLength = unchecked((uint)originalLengthBits);
+        if (originalLength == 0 || originalLength > int.MaxValue)
+            throw ProtocolV2FrameParser.Violation("Compressed payload original length is outside the supported range.");
+        if ((long)prefixLength + originalLength > NegotiatedMaxFramePayloadBytes)
+        {
+            throw ProtocolV2FrameParser.Violation(
+                "Compressed payload original length exceeds the negotiated frame limit.");
+        }
+    }
+
     internal void ReturnDecodedPayload(IRpcByteBufferWriter? owner)
     {
         if (owner is not null)
@@ -215,6 +235,18 @@ public sealed partial class RpcSession
         if (!reader.TryReadLittleEndian(out short streamIdBits))
             throw ProtocolV2FrameParser.Violation("Compressed StreamData stream ID is truncated.");
         return unchecked((ushort)streamIdBits);
+    }
+
+    internal static int ReadCompressedOriginalLength(
+        ProtocolV2FrameType type,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload)
+    {
+        var prefixLength = GetBusinessPrefixLength(type, flags, payload);
+        var reader = new SequenceReader<byte>(payload.Slice(prefixLength));
+        if (!reader.TryReadLittleEndian(out int originalLengthBits))
+            throw ProtocolV2FrameParser.Violation("Compressed payload original length is truncated.");
+        return checked((int)unchecked((uint)originalLengthBits));
     }
 
     private static SharpLinkCompressionResult CompleteProviderOperation(

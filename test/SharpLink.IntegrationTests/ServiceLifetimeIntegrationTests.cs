@@ -84,6 +84,55 @@ public sealed class ServiceLifetimeIntegrationTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task AdmissionRejectionShouldNotCreateCallLifetimeService()
+    {
+        CallLifetimeProbe.Reset();
+        using var serverCancellation = new CancellationTokenSource();
+        var builder = SharpLinkServerBuilder.Create()
+            .UseAdmissionControl(options =>
+                options.AddContract<ICallLifetimeProbe>(rule => rule.UseConcurrency(1)))
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
+        var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
+        await using var server = builder.Build();
+        var serverTask = server.RunAsync(serverCancellation.Token).AsTask();
+        await using var client = CreateClient(port);
+        await client.ConnectAsync();
+        var service = client.Get<ICallLifetimeProbe>();
+
+        await using var stream = service.StreamInstanceIdAsync().GetAsyncEnumerator();
+        Ensure(await stream.MoveNextAsync(), "admitted call-lifetime stream");
+        Ensure(CallLifetimeProbe.Created == 1 && CallLifetimeProbe.Disposed == 0,
+            "one active call instance");
+        try
+        {
+            _ = await service.GetInstanceIdAsync();
+            throw new Exception("assert failed: call-lifetime overload should be rejected");
+        }
+        catch (SharpLinkException exception)
+        {
+            Ensure(exception.Code == SharpLinkErrorCode.ResourceExhausted,
+                "call-lifetime overload status");
+        }
+        Ensure(CallLifetimeProbe.Created == 1,
+            "rejected call must not construct a call-lifetime instance");
+
+        CallLifetimeProbe.ReleaseStream();
+        Ensure(await stream.MoveNextAsync(), "active stream resumes");
+        Ensure(!await stream.MoveNextAsync(), "active stream completes");
+        await WaitUntilAsync(() => CallLifetimeProbe.Disposed == 1);
+        _ = await service.GetInstanceIdAsync();
+        Ensure(CallLifetimeProbe.Created == 2 && CallLifetimeProbe.Disposed == 2,
+            "new call admitted and disposed after recovery");
+
+        await client.StopAsync();
+        await server.StopAsync(TimeSpan.FromSeconds(2));
+        await serverCancellation.CancelAsync();
+        await IgnoreStopAsync(serverTask);
+    }
+
+    [Test]
     public async Task BuilderFiltersShouldBeValidatedAndIsolatedPerServer()
     {
         using var firstCancellation = new CancellationTokenSource();

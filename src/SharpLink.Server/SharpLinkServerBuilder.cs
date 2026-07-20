@@ -21,6 +21,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     private readonly List<ISharpLinkServerInterceptor> _interceptors = [];
     private IRpcExceptionMapper? _exceptionMapper;
     private bool _includeExceptionDetails;
+    private SharpLinkAdmissionControlOptions? _admissionControlOptions;
 
     /// <summary>Uses a server listener owned by the built server.</summary>
     /// <param name="transport">The listener used to accept independent connections.</param>
@@ -82,6 +83,21 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     public SharpLinkServerBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)
     {
         _runtimeContextBuilder.Configure(configure);
+        return this;
+    }
+
+    /// <summary>Enables bounded active admission control for calls accepted by this server.</summary>
+    /// <param name="configure">Configures global, contract, method, partition and queue limits.</param>
+    /// <returns>This builder.</returns>
+    public SharpLinkServerBuilder UseAdmissionControl(Action<SharpLinkAdmissionControlOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        if (_admissionControlOptions is not null)
+            throw new InvalidOperationException("Admission control has already been configured for this builder.");
+        var options = new SharpLinkAdmissionControlOptions();
+        configure(options);
+        options.Validate();
+        _admissionControlOptions = options;
         return this;
     }
 
@@ -242,9 +258,16 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         }
 
         var manifests = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
+        SharpLinkAdmissionController? admissionController = null;
         FrozenDictionary<long, ServiceRegistration> registrations;
         try
         {
+            if (_admissionControlOptions is not null)
+            {
+                admissionController = SharpLinkAdmissionController.Create(
+                    _admissionControlOptions,
+                    manifests);
+            }
             var definitions = BuildServiceDefinitions(manifests, serviceProvider);
             registrations = definitions.ToDictionary(
                     static pair => pair.Key,
@@ -253,6 +276,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         }
         catch
         {
+            if (admissionController is not null)
+                admissionController.DisposeAsync().AsTask().GetAwaiter().GetResult();
             if (ownedServiceProvider is IDisposable disposable)
                 disposable.Dispose();
             throw;
@@ -273,7 +298,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             _exceptionMapper ?? new DefaultRpcExceptionMapper(_includeExceptionDetails),
             ownedServiceProvider,
             serviceProvider,
-            manifests);
+            manifests,
+            admissionController);
     }
 
     private Dictionary<long, ServiceRegistrationDefinition> BuildServiceDefinitions(

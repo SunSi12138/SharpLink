@@ -135,6 +135,73 @@ public class SharpLinkTelemetryTests
         Ensure(Volatile.Read(ref cursorRefreshes) == 1, "shared-memory cursor refreshes");
     }
 
+    [Test]
+    public void AdmissionMetricsShouldExposeStableNamesAndLowCardinalityReasons()
+    {
+        var permits = 0L;
+        var queued = 0L;
+        var rejected = 0L;
+        var dropped = 0L;
+        var partitions = 0L;
+        var duration = 0d;
+        string? rejectionScope = null;
+        string? rejectionReason = null;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = static (instrument, meterListener) =>
+        {
+            if (instrument.Meter.Name == "SharpLink" &&
+                instrument.Name.StartsWith("sharplink.admission.", StringComparison.Ordinal))
+            {
+                meterListener.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            switch (instrument.Name)
+            {
+                case "sharplink.admission.permits.active":
+                    Interlocked.Add(ref permits, measurement);
+                    break;
+                case "sharplink.admission.calls.queued":
+                    Interlocked.Add(ref queued, measurement);
+                    break;
+                case "sharplink.admission.calls.rejected":
+                    Interlocked.Add(ref rejected, measurement);
+                    rejectionScope = FindTag(tags, "sharplink.admission.scope");
+                    rejectionReason = FindTag(tags, "sharplink.admission.reason");
+                    break;
+                case "sharplink.admission.oneway.dropped":
+                    Interlocked.Add(ref dropped, measurement);
+                    break;
+                case "sharplink.admission.partitions.active":
+                    Interlocked.Add(ref partitions, measurement);
+                    break;
+            }
+        });
+        listener.SetMeasurementEventCallback<double>((instrument, measurement, _, _) =>
+        {
+            if (instrument.Name == "sharplink.admission.queue.duration")
+                duration = measurement;
+        });
+        listener.Start();
+
+        SharpLinkTelemetry.AddAdmissionActivePermits(1);
+        SharpLinkTelemetry.AddAdmissionQueuedCalls(1);
+        SharpLinkTelemetry.RecordAdmissionRejected("method", "concurrency");
+        SharpLinkTelemetry.RecordAdmissionQueueDuration(TimeSpan.FromMilliseconds(25));
+        SharpLinkTelemetry.RecordAdmissionOneWayDropped("method", "concurrency");
+        SharpLinkTelemetry.AddAdmissionActivePartitions(1);
+
+        Ensure(Volatile.Read(ref permits) == 1, "admission permits metric");
+        Ensure(Volatile.Read(ref queued) == 1, "admission queue metric");
+        Ensure(Volatile.Read(ref rejected) == 1, "admission rejected metric");
+        Ensure(Volatile.Read(ref dropped) == 1, "admission OneWay metric");
+        Ensure(Volatile.Read(ref partitions) == 1, "admission partitions metric");
+        Ensure(Math.Abs(duration - 0.025d) < 0.0001d, "admission queue duration seconds");
+        Ensure(rejectionScope == "method" && rejectionReason == "concurrency",
+            "admission rejection low-cardinality tags");
+    }
+
     private static string? FindTag(
         ReadOnlySpan<KeyValuePair<string, object?>> tags,
         string key)

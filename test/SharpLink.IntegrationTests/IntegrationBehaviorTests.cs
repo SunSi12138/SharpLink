@@ -620,6 +620,425 @@ public class IntegrationBehaviorTests
         Ensure(await svc.AddAsync(20, 22) == 42, "connection should recover after call capacity is released");
     }
 
+    [Test]
+    [NotInParallel]
+    public async Task AdmissionQueueShouldRemainBoundedAndRecoverOnSameConnection()
+    {
+        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
+            builder.UseAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.MaxQueuedCalls = 1;
+                options.MaxQueuedBytes = 64 * 1024;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+            }));
+        var service = harness.Client.Get<ITestService>();
+
+        var active = service.SlowAddWithoutTimeoutAsync(20, 1).AsTask();
+        await Task.Delay(75);
+        var queued = service.SlowAddWithoutTimeoutAsync(20, 2).AsTask();
+        await Task.Delay(75);
+        await EnsureThrowsSharpLinkFast(
+            service.AddAsync(20, 3).AsTask(),
+            "admission queue count",
+            SharpLinkErrorCode.ResourceExhausted);
+
+        Ensure(await active.WaitAsync(TimeSpan.FromSeconds(2)) == 21, "active admitted call");
+        Ensure(await queued.WaitAsync(TimeSpan.FromSeconds(2)) == 22, "queued admitted call");
+        Ensure(await service.AddAsync(20, 4) == 24, "connection recovers after overload");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task QueuedClientStreamShouldSpoolUntilAdmissionAndPreserveOrder()
+    {
+        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
+            builder.UseAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.MaxQueuedCalls = 1;
+                options.MaxQueuedBytes = 64 * 1024;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+            }));
+        var service = harness.Client.Get<ITestService>();
+
+        var active = service.SlowAddWithoutTimeoutAsync(1, 1).AsTask();
+        await Task.Delay(75);
+        var queuedStream = service.UploadAsync(
+            ToAsyncEnumerable([1, 2, 3, 4], CancellationToken.None)).AsTask();
+
+        Ensure(await active.WaitAsync(TimeSpan.FromSeconds(2)) == 2, "active call before stream");
+        Ensure(await queuedStream.WaitAsync(TimeSpan.FromSeconds(2)) == 10,
+            "pre-admission stream spool order");
+        Ensure(TestService.ActiveUploads == 0, "queued stream permit and dispatcher released");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task QueuedDuplexStreamShouldSpoolAndHoldPermitForBothDirections()
+    {
+        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
+            builder.UseAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.MaxQueuedCalls = 1;
+                options.MaxQueuedBytes = 64 * 1024;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+            }));
+        var active = harness.Client.Get<ITestService>()
+            .SlowAddWithoutTimeoutAsync(1, 1).AsTask();
+        await Task.Delay(75);
+        var payloads = new[]
+        {
+            Enumerable.Repeat((byte)0x11, 256).ToArray(),
+            Enumerable.Repeat((byte)0x22, 512).ToArray()
+        };
+        var duplex = CollectAsync(
+            harness.Client.Get<ICompressionService>().DuplexBytesAsync(
+                ToAsyncEnumerable(payloads, CancellationToken.None)),
+            CancellationToken.None);
+
+        Ensure(await active.WaitAsync(TimeSpan.FromSeconds(2)) == 2,
+            "active call before queued duplex");
+        var received = await duplex.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(received.Count == 2 && received[0].SequenceEqual(payloads[0]) &&
+            received[1].SequenceEqual(payloads[1]), "queued duplex preserves both directions");
+        Ensure(await harness.Client.Get<ITestService>().AddAsync(20, 22) == 42,
+            "duplex releases admission permit");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task QueuedCompressedRequestAndClientStreamShouldDecodeAfterAdmission()
+    {
+        await using var harness = await TestHarness.CreateAsync(
+            clientRuntimeConfigure: options => options.Compression.Providers.Add(
+                SharpLinkCompressionProviders.CreateBrotli()),
+            serverRuntimeConfigure: options => options.Compression.Providers.Add(
+                SharpLinkCompressionProviders.CreateBrotli()),
+            serverConfigure: builder => builder.UseAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.MaxQueuedCalls = 1;
+                options.MaxQueuedBytes = 64 * 1024;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+            }));
+
+        var active = harness.Client.Get<ITestService>()
+            .SlowAddWithoutTimeoutAsync(20, 22).AsTask();
+        await Task.Delay(75);
+        var item = Enumerable.Repeat((byte)0x2a, 8192).ToArray();
+        var upload = harness.Client.Get<ICompressionService>().UploadBytesAsync(
+            ToAsyncEnumerable([item, item, item], CancellationToken.None)).AsTask();
+
+        Ensure(await active.WaitAsync(TimeSpan.FromSeconds(2)) == 42,
+            "active call before compressed stream");
+        Ensure(await upload.WaitAsync(TimeSpan.FromSeconds(2)) == item.Length * 3,
+            "queued compressed request and stream items");
+        Ensure((await harness.Client.Get<ICompressionService>().EchoBytesAsync([1, 2, 3]))
+            .SequenceEqual(new byte[] { 1, 2, 3 }), "combined overload connection recovery");
+    }
+
+    [Test]
+    public async Task MethodRateLimitShouldNotThrottleOtherMethodsAndShouldRecover()
+    {
+        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
+            builder.UseAdmissionControl(options =>
+                options.AddMethod<ITestService>(nameof(ITestService.AddAsync), rule =>
+                    rule.UseFixedWindow(rate =>
+                    {
+                        rate.PermitLimit = 1;
+                        rate.Window = TimeSpan.FromMilliseconds(100);
+                    }))));
+        var service = harness.Client.Get<ITestService>();
+
+        Ensure(await service.AddAsync(1, 1) == 2, "first method-rate permit");
+        await EnsureThrowsSharpLinkFast(
+            service.AddAsync(2, 2).AsTask(),
+            "method rate rejection",
+            SharpLinkErrorCode.ResourceExhausted);
+        Ensure((await service.EchoAsync(new Person { Name = "other", Age = 1 })).Age == 2,
+            "unlimited method remains healthy");
+        await Task.Delay(150);
+        Ensure(await service.AddAsync(3, 4) == 7, "method rate replenishment");
+    }
+
+    [Test]
+    public async Task ContractLimitShouldNotThrottleAnotherContract()
+    {
+        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
+            builder.UseAdmissionControl(options =>
+                options.AddContract<ITestService>(rule => rule.UseConcurrency(1))));
+        var testService = harness.Client.Get<ITestService>();
+        var active = testService.SlowAddWithoutTimeoutAsync(20, 1).AsTask();
+        await Task.Delay(75);
+
+        await EnsureThrowsSharpLinkFast(
+            testService.AddAsync(1, 1).AsTask(),
+            "contract concurrency rejection",
+            SharpLinkErrorCode.ResourceExhausted);
+        var other = await harness.Client.Get<ICompressionService>().EchoBytesAsync([7, 8, 9]);
+        Ensure(other.SequenceEqual(new byte[] { 7, 8, 9 }), "other contract remains admitted");
+        Ensure(await active == 21, "contract permit owner completes");
+    }
+
+    [Test]
+    public async Task PartitionSelectorShouldIsolateMetadataKeys()
+    {
+        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
+            builder.UseAdmissionControl(options => options.UsePartition(
+                context => context.Metadata is { Count: > 0 } metadata ? metadata[0].Value : null,
+                partition =>
+                {
+                    partition.MaxPartitions = 8;
+                    partition.UseConcurrency(1);
+                })));
+        var service = harness.Client.Get<ITestService>();
+        using var cancellation = new CancellationTokenSource();
+        var tenantA = new SharpLinkCallOptions
+        {
+            Metadata = new SharpLinkMetadata(new KeyValuePair<string, string>("tenant", "a"))
+        };
+        var tenantB = new SharpLinkCallOptions
+        {
+            Metadata = new SharpLinkMetadata(new KeyValuePair<string, string>("tenant", "b"))
+        };
+        var active = service.SlowAddWithOptionsAsync(1, 2, tenantA, cancellation.Token).AsTask();
+        await Task.Delay(75);
+
+        await EnsureThrowsSharpLinkFast(
+            service.DescribeCallAsync(1, tenantA, CancellationToken.None).AsTask(),
+            "same partition concurrency",
+            SharpLinkErrorCode.ResourceExhausted);
+        var other = await service.DescribeCallAsync(2, tenantB, CancellationToken.None);
+        Ensure(other.StartsWith("2:b:", StringComparison.Ordinal), "independent partition permit");
+        cancellation.Cancel();
+        await EnsureThrows<OperationCanceledException>(active, "partition active cancellation");
+    }
+
+    [Test]
+    public async Task AdmissionQueueByteLimitShouldRejectBeforeServiceCreation()
+    {
+        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
+            builder.UseAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.MaxQueuedCalls = 2;
+                options.MaxQueuedBytes = 64;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+            }));
+        var service = harness.Client.Get<ITestService>();
+        var active = service.SlowAddWithoutTimeoutAsync(10, 1).AsTask();
+        await Task.Delay(75);
+
+        await EnsureThrowsSharpLinkFast(
+            service.EchoAsync(new Person
+            {
+                Name = new string('x', 2048),
+                Age = 1,
+                Tags = ["queue-bytes"]
+            }).AsTask(),
+            "admission queue bytes",
+            SharpLinkErrorCode.ResourceExhausted);
+        Ensure(await active == 11, "queue-byte permit owner");
+        Ensure(await service.AddAsync(20, 22) == 42, "queue-byte rejection connection recovery");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task PreAdmissionStreamSpoolShouldRejectWhenRetainedBytesOverflow()
+    {
+        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
+            builder.UseAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.MaxQueuedCalls = 1;
+                options.MaxQueuedBytes = 128;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+            }));
+        var service = harness.Client.Get<ITestService>();
+        var active = service.SlowAddWithoutTimeoutAsync(10, 1).AsTask();
+        await Task.Delay(75);
+        var oversized = service.UploadAsync(ToAsyncEnumerable(
+            Enumerable.Range(1, 100), CancellationToken.None)).AsTask();
+
+        // The initial request fits, then the pre-admission stream frames consume the
+        // remaining retained-byte budget and terminate the call without service execution.
+        await EnsureThrowsSharpLinkFast(
+            oversized,
+            "pre-admission stream retained bytes",
+            SharpLinkErrorCode.ResourceExhausted);
+        Ensure(TestService.ActiveUploads == 0, "overflowed stream service did not execute");
+        Ensure(await active == 11, "spool overflow permit owner");
+        Ensure(await service.AddAsync(20, 22) == 42, "spool overflow connection recovery");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task QueuedCancellationAndDeadlineShouldNotLeakPermits()
+    {
+        await using (var cancellationHarness = await TestHarness.CreateAsync(
+            serverConfigure: builder => builder.UseAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.MaxQueuedCalls = 1;
+                options.MaxQueuedBytes = 4096;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+            })))
+        {
+            var service = cancellationHarness.Client.Get<ITestService>();
+            var active = service.SlowAddWithoutTimeoutAsync(1, 1).AsTask();
+            await Task.Delay(75);
+            using var cancellation = new CancellationTokenSource();
+            var queued = service.SlowAddAsync(2, 2, cancellation.Token).AsTask();
+            cancellation.CancelAfter(50);
+            await EnsureThrows<OperationCanceledException>(queued, "queued cancellation");
+            Ensure(await active == 2, "active call after queued cancellation");
+            Ensure(await service.AddAsync(3, 4) == 7, "permit after queued cancellation");
+        }
+
+        TestService.ResetNonCancellableCompletion();
+        await using var deadlineHarness = await TestHarness.CreateAsync(
+            requestTimeout: TimeSpan.FromMilliseconds(100),
+            serverConfigure: builder => builder.UseAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.MaxQueuedCalls = 1;
+                options.MaxQueuedBytes = 4096;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+            }));
+        var deadlineService = deadlineHarness.Client.Get<ITestService>();
+        var deadlineActive = deadlineService.SlowAddWithoutTimeoutAsync(1, 1).AsTask();
+        await Task.Delay(25);
+        await EnsureThrowsSharpLinkFast(
+            deadlineService.AddAsync(2, 2).AsTask(),
+            "queued deadline",
+            SharpLinkErrorCode.DeadlineExceeded);
+        await EnsureThrowsSharpLinkFast(
+            deadlineActive,
+            "active default deadline",
+            SharpLinkErrorCode.DeadlineExceeded);
+        await TestService.WaitForNonCancellableCompletionAsync().WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RejectedAndQueuedOneWayCallsShouldFollowConfiguredPolicy()
+    {
+        TestService.ResetNotify();
+        await using (var rejectHarness = await TestHarness.CreateAsync(serverConfigure: builder =>
+            builder.UseAdmissionControl(options => options.Global.UseConcurrency(1))))
+        {
+            var service = rejectHarness.Client.Get<ITestService>();
+            var active = service.SlowAddWithoutTimeoutAsync(1, 1).AsTask();
+            await Task.Delay(75);
+            await service.NotifyAsync("drop");
+            await Task.Delay(75);
+            Ensure(TestService.NotifyCount == 0, "rejected OneWay service must not execute");
+            Ensure(await active == 2, "OneWay rejection permit owner");
+        }
+
+        TestService.ResetNotify();
+        await using var queueHarness = await TestHarness.CreateAsync(serverConfigure: builder =>
+            builder.UseAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.MaxQueuedCalls = 1;
+                options.MaxQueuedBytes = 4096;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+                options.QueueOneWayCalls = true;
+            }));
+        var queuedService = queueHarness.Client.Get<ITestService>();
+        var queuedActive = queuedService.SlowAddWithoutTimeoutAsync(2, 2).AsTask();
+        await Task.Delay(75);
+        await queuedService.NotifyAsync("queue");
+        Ensure(await queuedActive == 4, "queued OneWay permit owner");
+        await TestService.WaitForNotifyAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(TestService.NotifyCount == 1, "explicitly queued OneWay executes once");
+    }
+
+    [Test]
+    public async Task ServerStreamEarlyBreakShouldReleaseAdmissionPermit()
+    {
+        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
+            builder.UseAdmissionControl(options => options.Global.UseConcurrency(1)));
+        var service = harness.Client.Get<ITestService>();
+        await using (var enumerator = service.SlowDownloadAsync(
+            20, 50, CancellationToken.None).GetAsyncEnumerator())
+        {
+            Ensure(await enumerator.MoveNextAsync(), "admitted server stream first item");
+            await EnsureThrowsSharpLinkFast(
+                service.AddAsync(1, 1).AsTask(),
+                "permit held for server stream",
+                SharpLinkErrorCode.ResourceExhausted);
+        }
+
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            try
+            {
+                Ensure(await service.AddAsync(20, 22) == 42, "permit after stream early break");
+                return;
+            }
+            catch (SharpLinkException exception) when (
+                exception.Code == SharpLinkErrorCode.ResourceExhausted)
+            {
+                await Task.Delay(10);
+            }
+        }
+        throw new Exception("assert failed: stream early-break permit was not released");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ServerStopShouldCancelAdmissionWaitersWithoutUnboundedDelay()
+    {
+        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
+            builder.UseAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.MaxQueuedCalls = 1;
+                options.MaxQueuedBytes = 4096;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(10);
+            }));
+        var service = harness.Client.Get<ITestService>();
+        var active = service.SlowAddWithoutTimeoutAsync(1, 1).AsTask();
+        await Task.Delay(75);
+        var queued = service.SlowAddWithoutTimeoutAsync(2, 2).AsTask();
+        await Task.Delay(50);
+
+        var started = Stopwatch.GetTimestamp();
+        await harness.DisposeServerOnlyAsync(TimeSpan.Zero).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(2), "bounded stop with waiter");
+        await EnsureThrows<SharpLinkException>(queued, "queued call stopped before execution");
+        await EnsureThrows<SharpLinkException>(active, "active call disconnected by forced stop");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ClientDisconnectShouldCancelAdmissionWaiterAndAllowBoundedServerStop()
+    {
+        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
+            builder.UseAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.MaxQueuedCalls = 1;
+                options.MaxQueuedBytes = 4096;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(10);
+            }));
+        var service = harness.Client.Get<ITestService>();
+        var active = service.SlowAddWithoutTimeoutAsync(1, 1).AsTask();
+        await Task.Delay(75);
+        var queued = service.SlowAddWithoutTimeoutAsync(2, 2).AsTask();
+        await Task.Delay(50);
+
+        await harness.DisposeClientOnlyAsync();
+        await EnsureThrows<SharpLinkException>(queued, "disconnected admission waiter");
+        await EnsureThrows<SharpLinkException>(active, "disconnected active call");
+        await harness.DisposeServerOnlyAsync(TimeSpan.FromSeconds(1))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
     private static async Task EnsureThrows<TException>(Task task, string name) where TException : Exception
     {
         try
@@ -749,7 +1168,8 @@ public class IntegrationBehaviorTests
             bool disableRequestTimeout = false,
             bool useSharedMemory = false,
             Action<SharpLinkRuntimeOptions>? serverRuntimeConfigure = null,
-            Action<SharpLinkRuntimeOptions>? clientRuntimeConfigure = null)
+            Action<SharpLinkRuntimeOptions>? clientRuntimeConfigure = null,
+            Action<SharpLinkServerBuilder>? serverConfigure = null)
         {
             codecResolver ??= MemoryPackCodec.Resolver;
             var cts = new CancellationTokenSource();
@@ -760,6 +1180,7 @@ public class IntegrationBehaviorTests
                 serverBuilder.UseRuntime(runtimeConfigure);
             if (serverRuntimeConfigure is not null)
                 serverBuilder.UseRuntime(serverRuntimeConfigure);
+            serverConfigure?.Invoke(serverBuilder);
 
             var sharedMemoryName = $"sharplink-behavior-{Guid.NewGuid():N}";
             var port = 0;
@@ -995,8 +1416,19 @@ public class TestService : ITestService
     private static TaskCompletionSource s_nonCancellableFailure = CreateCompletionSource();
     private static TaskCompletionSource s_downloadDisposed = CreateCompletionSource();
     private static int s_activeUploads;
+    private static int s_notifyCount;
+    private static TaskCompletionSource s_notify = CreateCompletionSource();
 
     internal static int ActiveUploads => Volatile.Read(ref s_activeUploads);
+    internal static int NotifyCount => Volatile.Read(ref s_notifyCount);
+
+    internal static void ResetNotify()
+    {
+        Volatile.Write(ref s_notifyCount, 0);
+        Interlocked.Exchange(ref s_notify, CreateCompletionSource());
+    }
+
+    internal static Task WaitForNotifyAsync() => Volatile.Read(ref s_notify).Task;
 
     internal static void ResetActiveUploads() => Volatile.Write(ref s_activeUploads, 0);
 
@@ -1120,6 +1552,8 @@ public class TestService : ITestService
     public ValueTask NotifyAsync(string message)
     {
         _ = message;
+        Interlocked.Increment(ref s_notifyCount);
+        Volatile.Read(ref s_notify).TrySetResult();
         return ValueTask.CompletedTask;
     }
 

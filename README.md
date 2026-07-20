@@ -167,6 +167,44 @@ var server = SharpLinkServerBuilder.Create()
 
 内置 Provider 只使用框架自带的 `System.IO.Compression`，同时提供 Gzip、Deflate 和 Brotli。自定义 Provider 实现 `ISharpLinkCompressionProvider`，token 必须是唯一的 1–64 字节规范 ASCII；实现必须线程安全、NativeAOT 安全，并准确返回 consumed/written bytes。压缩只覆盖业务 payload，路由、deadline、metadata 与 stream ID 保持未压缩；默认收益门槛为 1024 B、64 B 和 5%。完整 wire 格式和故障域见 [`doc/protocol-v2.md`](doc/protocol-v2.md)。
 
+## 主动接入控制
+
+服务端可在创建 Service、DI Scope、Codec 调用状态和执行 Interceptor 之前启用累计 admission 规则。默认完全关闭；启用后依次取得 `Global → Contract → Method → Partition` 中所有已配置的 permit，现有每连接和进程硬并发上限仍作为最后安全边界：
+
+```csharp
+var server = SharpLinkServerBuilder.Create()
+    .UseTcp(5000)
+    .UseAdmissionControl(options =>
+    {
+        options.Global.UseConcurrency(256);
+        options.MaxQueuedCalls = 512;
+        options.MaxQueuedBytes = 16 * 1024 * 1024;
+        options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+        options.AddMethod<IOrders>(nameof(IOrders.SubmitAsync), method =>
+            method.UseTokenBucket(rate =>
+            {
+                rate.TokenLimit = 1_000;
+                rate.TokensPerPeriod = 1_000;
+                rate.ReplenishmentPeriod = TimeSpan.FromSeconds(1);
+            }));
+        options.UsePartition(
+            context => context.Metadata is { Count: > 0 } metadata ? metadata[0].Value : null,
+            partition =>
+            {
+                partition.MaxPartitions = 1_024;
+                partition.IdleTimeout = TimeSpan.FromMinutes(5);
+                partition.UseConcurrency(8);
+            });
+    })
+    .Build();
+```
+
+速率策略可选 TokenBucket、FixedWindow 或 SlidingWindow，公共 API 不暴露底层 `System.Threading.RateLimiting` 类型。等待队列同时受调用数、保留字节、最长等待、调用 deadline、取消、断连和 Server Draining 限制；任一容量不足立即返回 `ResourceExhausted`。分区键为空时进入明确的默认分区，池满且没有安全可回收的空闲项时按 `partition_capacity` 拒绝，不记录真实分区键。
+
+OneWay 默认不排队；被过载策略拒绝时服务方法不会执行，只记录 dropped/resource-exhausted 指标和限频日志。`QueueOneWayCalls=true` 才允许它进入相同有界队列。客户端本地 `await` OneWay 成功只表示 SendPump 接受了帧，不代表服务端已经执行。
+
+Admission 指标为 `sharplink.admission.permits.active`、`calls.queued`、`calls.rejected`、`queue.duration`、`oneway.dropped` 与 `partitions.active`；拒绝只使用低基数 `scope`/`reason`。功能未启用时普通调用不创建 admission 状态、Task、TagList 或后台任务。
+
 ## 传输说明
 
 - `NamedPipe` 在 Unix/macOS 下最终会映射到 Unix Domain Socket 路径
