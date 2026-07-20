@@ -95,3 +95,38 @@ public readonly record struct SharpLinkAssemblyUnregisterResult
     /// <summary>Gets the number of streams still using the module.</summary>
     public int RemainingStreams { get; init; }
 }
+
+/// <summary>Reports whether a replacement was published and how far the old registration drained.</summary>
+/// <remarks>
+/// <para>A successful publication is never rolled back when the caller cancels its wait or the graceful timeout expires.</para>
+/// <para>When <see cref="ReferencesReleased"/> is <see langword="false"/>, SharpLink completes cleanup after the last old call or stream exits.</para>
+/// </remarks>
+public readonly record struct SharpLinkAssemblyReplacementResult
+{
+    /// <summary>Gets whether the new registration was atomically published.</summary>
+    public bool Succeeded { get; init; }
+
+    /// <summary>Gets the preparation or publication rejection, or <see langword="null"/> after publication.</summary>
+    public SharpLinkAssemblyRegistrationError? Error { get; init; }
+
+    /// <summary>Gets whether SharpLink released all framework-owned references to the old registration before returning.</summary>
+    public bool ReferencesReleased { get; init; }
+
+    /// <summary>Gets the number of old calls still running when the bounded drain returned.</summary>
+    public int RemainingCalls { get; init; }
+
+    /// <summary>Gets the number of old streams still running when the bounded drain returned.</summary>
+    public int RemainingStreams { get; init; }
+
+    internal static SharpLinkAssemblyReplacementResult Failure(SharpLinkAssemblyRegistrationError error)
+        => new() { Error = error ?? throw new ArgumentNullException(nameof(error)) };
+
+    internal static SharpLinkAssemblyReplacementResult Published(SharpLinkAssemblyUnregisterResult drain)
+        => new()
+        {
+            Succeeded = true,
+            ReferencesReleased = drain.ReferencesReleased,
+            RemainingCalls = drain.RemainingCalls,
+            RemainingStreams = drain.RemainingStreams
+        };
+}

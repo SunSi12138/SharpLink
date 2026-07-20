@@ -120,7 +120,8 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
 
     private async Task StopCoreAsync()
     {
-        TransitionTo(SharpLinkConnectionState.Draining);
+        lock (_registryGate)
+            TransitionTo(SharpLinkConnectionState.Draining);
         _shutdownCts.Cancel();
         Volatile.Read(ref _readySignal).TrySetResult(true);
 

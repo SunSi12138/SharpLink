@@ -48,6 +48,7 @@ internal sealed partial class SharpLinkServer(
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Assembly, Task<SharpLinkAssemblyUnregisterResult>> _unregisterOperations =
         new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<SharpLinkDynamicModule, ServiceRegistration[]> _detachedModuleServices = [];
     private long _registryGeneration;
     private readonly ConcurrentDictionary<string, ServerConnectionState> _connections = [];
     private readonly ConcurrentDictionary<ServerConnectionState, byte> _retiredConnections = [];
@@ -117,7 +118,8 @@ internal sealed partial class SharpLinkServer(
         var finalDeadline = AddStopwatchDuration(gracefulDeadline, TimeSpan.FromSeconds(cleanupBudgetSeconds));
         var faulted = false;
 
-        TransitionTo(ServerState.Draining);
+        lock (_registryGate)
+            TransitionTo(ServerState.Draining);
         BeginDrainDynamicModules();
         CancelForShutdown(_acceptCts, _logger, "AcceptCancellation");
         var listenerDisposeTask = StartListenerDispose(transportListener);
@@ -526,8 +528,7 @@ internal sealed partial class SharpLinkServer(
     }
 
     private SharpLinkCallContextSnapshot CreateCallContext(
-        IRpcSession session,
-        SharpLinkAuthenticationContext? authenticationContext,
+        ServerConnectionState connection,
         IRpcStub stub,
         long methodId,
         long requestId,
@@ -535,15 +536,16 @@ internal sealed partial class SharpLinkServer(
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken)
     {
+        var session = connection.Session;
         if (_serverInterceptors.Length == 0)
-            return new SharpLinkCallContextSnapshot(session.Id, authenticationContext, deadline, metadata);
+            return connection.GetCallContextSnapshot(deadline, metadata);
 
         return CreateServerInvocationContext(
             session,
             stub,
             methodId,
             requestId,
-            authenticationContext,
+            connection.AuthenticationContext,
             deadline,
             metadata,
             cancellationToken);

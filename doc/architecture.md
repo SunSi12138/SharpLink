@@ -182,6 +182,7 @@ SharpLink.Serializer.MemoryPack
 - Server Build 合并弱 Catalog 快照、Builder 筛选和 `ReplaceService`，完成全量验证后一次发布实例 Registry；一个 Contract 只能有一个 Owner。
 - 默认 `Singleton` 延迟且线程安全地创建一次，不建立调用 Scope。`Connection` 按物理连接和 registration 独立惰性创建 Scope，断连后等待相关调用结束再释放。`Call` 每次调用创建一个实例和 Scope，Streaming 保持到整条流真正终止。
 - Generator Activator 直接调用选定构造函数并从当前 Scope Provider 解析普通依赖；Microsoft DI 继续管理依赖，根 RPC 服务不再使用 `ServiceLifetime` 表示公共生命周期。
+- Generator 以稳定顺序输出 JSON 契约 Manifest；可选 `SharpLinkContractBaseline` 只在编译期执行一次完整差异分析，运行时替换仅验证生成 Manifest、route identity 与 registration ownership，不复制源码级兼容规则。
 - `ReplaceService` 实例始终由调用方持有且是 Singleton；factory 产物由 SharpLink 释放。激活失败也会释放已经创建的 Scope。
 - Protocol minor 1 引入 health-check capability，minor 2 引入带原因 Cancel；`HealthCheck/HealthResponse` 使用非零 correlation ID 和固定一字节状态，不进入业务 stub、interceptor 或服务并发额度。
 - Server 状态映射为 Starting/Stopped/Faulted=`Unhealthy`、Running=`Ready`、Draining=`Draining`。Hosted readiness 直接读取 Server 原子状态，Client accessor 只在至少一条连接 Ready 后发布。
@@ -190,7 +191,8 @@ SharpLink.Serializer.MemoryPack
 ## 动态程序集 Registry
 
 - Client/Server 各自持有带 generation 的原子不可变快照。注册在 RPC 路径外构造候选，只在短 writer gate 内重检 generation 和生命周期，然后用一次原子写发布；读路径不获取注册锁。
+- 原子替换在 writer gate 内从当前快照同时移除旧 registration route 并加入新 route，再用一次写发布；旧模块随后进入既有 Draining 状态机，已取得的调用和流租约不迁移。
 - Assembly 使用对象引用身份；同一对象重复注册失败，不同 ALC 的同名程序集可进入验证，但 Contract/Method 路由、Codec 和 Service 冲突仍按 ID、名称、schema 与完整指纹拒绝，且不部分提交。
 - 动态模块状态为 `Running -> Draining -> Released/DrainTimedOut`。动态调用持有固定 stripe 的缓存行隔离租约；静态项不计数，也不进入动态锁。
-- Draining 期间模块继续占有路由。排空超时只取消该模块调用和流；不合作业务保留路由及资源，直到后台观察到计数归零后再释放框架持有的 Manifest、Proxy、Stub、Codec、Service、Scope 与 Timer 引用。
+- 普通注销的 Draining 期间模块继续占有路由；原子替换则在进入 Draining 前先发布新 route。排空超时只取消该模块调用和流；不合作业务保留其已取得的资源，直到后台观察到计数归零后再释放框架持有的 Manifest、Proxy、Stub、Codec、Service、Scope 与 Timer 引用。
 - 依赖模块必须先注册且后注销；Stop/Dispose 与显式 Unregister 共享同一个幂等排空操作。NativeAOT 通过 feature switch 移除动态定位/计数路径，不提供反射 fallback。

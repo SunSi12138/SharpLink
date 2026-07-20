@@ -9,7 +9,7 @@ using Microsoft.CodeAnalysis.CSharp;
 
 namespace SharpLink.Generator.Tests;
 
-public class RpcAnalyzerTests
+public partial class RpcAnalyzerTests
 {
     [Test]
     public Task InvalidReturnTypeShouldReportSharplink001()
@@ -787,6 +787,13 @@ namespace SharpLink.Sdk
 
     [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
     public sealed class RpcRequiredAttribute : Attribute;
+
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface, AllowMultiple = true)]
+    public sealed class RpcUnionCaseAttribute(int tag, Type caseType) : Attribute
+    {
+        public int Tag { get; } = tag;
+        public Type CaseType { get; } = caseType;
+    }
 
     [AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true)]
     public sealed class RpcExternalCodecAttribute : Attribute

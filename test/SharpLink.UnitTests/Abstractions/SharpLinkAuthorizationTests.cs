@@ -3,6 +3,48 @@ namespace SharpLink.UnitTests.Abstractions;
 public class SharpLinkAuthorizationTests
 {
     [Test]
+    public void CallContextSnapshotShouldPreserveDeadlineTicksAndOffset()
+    {
+        DateTimeOffset[] deadlines =
+        [
+            DateTimeOffset.MinValue,
+            DateTimeOffset.MaxValue,
+            new DateTimeOffset(
+                2026,
+                7,
+                20,
+                12,
+                30,
+                45,
+                TimeSpan.FromMinutes(330)).AddTicks(1234),
+            new DateTimeOffset(
+                2026,
+                7,
+                20,
+                12,
+                30,
+                45,
+                TimeSpan.FromHours(-7)).AddTicks(5678)
+        ];
+
+        foreach (var deadline in deadlines)
+        {
+            var snapshot = new SharpLinkCallContextSnapshot(
+                "session-1",
+                authentication: null,
+                deadline);
+            var actual = snapshot.Deadline ?? throw new Exception("deadline must be present");
+
+            Ensure(actual.Ticks == deadline.Ticks, "deadline ticks");
+            Ensure(actual.Offset == deadline.Offset, "deadline offset");
+        }
+
+        Ensure(
+            new SharpLinkCallContextSnapshot("session-1", authentication: null).Deadline is null,
+            "absent deadline");
+    }
+
+    [Test]
     public async Task CallContextScopeShouldFlowAcrossAwaitAndRestoreNestedScope()
     {
         var previous = SharpLinkCallContext.Current;

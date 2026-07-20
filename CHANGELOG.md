@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-07-20
+
+### 新增
+
+- Client 与 Server 增加 `ReplaceAssemblyAsync`，在完整准备和冲突验证后一次发布新路由快照，并复用现有调用/流排空、定点取消、延迟清理与 collectible ALC 引用释放机制。
+- Source Generator 输出确定性的 JSON 契约 Manifest，并通过 `SharpLinkContractBaseline` 对上一版本执行 Contract、Method、DTO member、调用形态、wire type、required、enum、union 与 route 兼容性诊断。
+
 ## [0.7.2] - 2026-07-20
 
 ### 性能

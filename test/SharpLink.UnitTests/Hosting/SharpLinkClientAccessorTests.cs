@@ -83,5 +83,16 @@ public class SharpLinkClientAccessorTests
             TimeSpan gracefulTimeout,
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = true });
+
+        public ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
+            Assembly oldAssembly,
+            Assembly newAssembly,
+            TimeSpan gracefulTimeout,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new SharpLinkAssemblyReplacementResult
+            {
+                Succeeded = true,
+                ReferencesReleased = true
+            });
     }
 }

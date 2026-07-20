@@ -20,6 +20,18 @@ public interface ISharpLinkServer : IAsyncDisposable
         TimeSpan gracefulTimeout,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Prepares a generated assembly and atomically replaces one runtime registration before draining it.</summary>
+    /// <param name="oldAssembly">The exact Assembly object used for the running registration.</param>
+    /// <param name="newAssembly">The assembly whose validated generated artifacts replace the old routes.</param>
+    /// <param name="gracefulTimeout">Maximum time to wait before canceling calls owned by the old registration.</param>
+    /// <param name="cancellationToken">Cancels only this caller's wait; publication, draining, and cleanup continue.</param>
+    /// <returns>The transactional publication result and the bounded old-registration drain state.</returns>
+    ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
+        System.Reflection.Assembly oldAssembly,
+        System.Reflection.Assembly newAssembly,
+        TimeSpan gracefulTimeout,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Runs the accept loop until stopped, canceled, or faulted.</summary>
     /// <param name="cancellationToken">Requests immediate shutdown when canceled.</param>
     ValueTask RunAsync(CancellationToken cancellationToken = default);

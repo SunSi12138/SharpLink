@@ -62,7 +62,8 @@ public partial class RpcGenerator
             CreateInterfaceModel(interfaceSymbol),
             lifetime,
             parameters,
-            assemblyDependencies);
+            assemblyDependencies,
+            symbol.Locations.FirstOrDefault());
     }
 
     private static IMethodSymbol? SelectServiceConstructor(INamedTypeSymbol symbol)
@@ -587,6 +588,7 @@ public partial class RpcGenerator
                     var isStream = IsAsyncEnumerable(p.Type, out var pItemType);
                     var isValueType = p.Type.IsValueType;
                     var isNullableReference = !isValueType && p.NullableAnnotation == NullableAnnotation.Annotated;
+                    var payloadType = isStream ? pItemType! : p.Type;
                     var isCancellationToken = IsCancellationTokenParameter(p);
                     var isCallOptions = IsCallOptionsParameter(p);
                     return new RpcParameterModel(
@@ -597,8 +599,12 @@ public partial class RpcGenerator
                         p.Type.IsUnmanagedType,
                         isValueType,
                         isNullableReference,
+                        IsNullablePayload(payloadType),
                         isCancellationToken,
-                        isCallOptions);
+                        isCallOptions,
+                        GetEnumUnderlyingType(p.Type),
+                        pItemType is null ? null : GetEnumUnderlyingType(pItemType),
+                        p.Locations.FirstOrDefault());
                 }).ToImmutableArray();
 
                 var paramTypes = paramArray
@@ -610,7 +616,7 @@ public partial class RpcGenerator
                 var requestSchema = string.Join(";", paramArray
                     .Where(static parameter => !parameter.IsCancellationToken && !parameter.IsCallOptions)
                     .Select(static parameter =>
-                        $"{parameter.Name}:{parameter.Type}:{(parameter.IsStream ? "stream" : "value")}:{(parameter.IsNullableReference ? "nullable" : "required")}"));
+                        $"{parameter.Name}:{parameter.Type}:{(parameter.IsStream ? "stream" : "value")}:{(parameter.PayloadNullable ? "nullable" : "required")}"));
                 var responseSchema = isStreamReturn
                     ? $"stream:{streamItemType}"
                     : $"value:{returnType}";
@@ -618,6 +624,9 @@ public partial class RpcGenerator
                     ? (paramArray.Any(static parameter => parameter.IsStream) ? "DuplexStreaming" : "ServerStreaming")
                     : paramArray.Any(static parameter => parameter.IsStream) ? "ClientStreaming" : "Unary";
                 var canonical = $"{m.Name}|{methodHash}|{kind}|{requestSchema}|{responseSchema}|cancel={paramArray.Any(static parameter => parameter.IsCancellationToken)}|timeout={hasTimeoutAttribute}:{timeoutSeconds?.ToString("R", CultureInfo.InvariantCulture)}|idempotent={isIdempotent}";
+                var responsePayload = isGenericTask
+                    ? ((INamedTypeSymbol)m.ReturnType).TypeArguments[0]
+                    : itemTypeSymbol;
 
                 return new RpcMethodModel(
                     Name: m.Name,
@@ -637,7 +646,11 @@ public partial class RpcGenerator
                     Parameters: paramArray,
                     RequestSchema: requestSchema,
                     ResponseSchema: responseSchema,
-                    Fingerprint: Hashing.GetSha256(canonical));
+                    Fingerprint: Hashing.GetSha256(canonical),
+                    ResponseNullable: responsePayload is not null && IsNullablePayload(responsePayload),
+                    ResponseEnumUnderlyingType: responsePayload is null ? null : GetEnumUnderlyingType(responsePayload),
+                    StreamItemEnumUnderlyingType: itemTypeSymbol is null ? null : GetEnumUnderlyingType(itemTypeSymbol),
+                    Location: m.Locations.FirstOrDefault());
             }).ToImmutableArray();
 
         var fullname = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -656,8 +669,19 @@ public partial class RpcGenerator
             interfaceHash,
             methods,
             Hashing.GetSha256(canonicalContract),
-            GetArtifactAssemblyDependencies(symbol.ContainingAssembly, dependencyTypes));
+            GetArtifactAssemblyDependencies(symbol.ContainingAssembly, dependencyTypes),
+            symbol.Locations.FirstOrDefault());
     }
+
+    private static string? GetEnumUnderlyingType(ITypeSymbol type)
+        => type is INamedTypeSymbol { TypeKind: TypeKind.Enum, EnumUnderlyingType: { } underlying }
+            ? underlying.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+            : null;
+
+    private static bool IsNullablePayload(ITypeSymbol type)
+        => type.NullableAnnotation == NullableAnnotation.Annotated ||
+           type is INamedTypeSymbol named &&
+           named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T;
 
     private static ImmutableArray<string> GetArtifactAssemblyDependencies(
         IAssemblySymbol owner,
@@ -882,7 +906,8 @@ public partial class RpcGenerator
                     constructor.Parameters.Select(static parameter => new RpcConstructorParameterModel(
                         parameter.Name,
                         parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))).ToImmutableArray(),
-                    ImmutableArray.Create(rpcContracts[0].ContainingAssembly.Identity.ToString())),
+                    ImmutableArray.Create(rpcContracts[0].ContainingAssembly.Identity.ToString()),
+                    type.Locations.FirstOrDefault()),
                     owner,
                     type.Locations.FirstOrDefault()));
             }
@@ -1035,7 +1060,8 @@ public partial class RpcGenerator
                         CreateInterfaceModel(interfaceSymbol),
                         GetServiceLifetime(typeSymbol, out _),
                         parameters,
-                        ImmutableArray.Create(interfaceSymbol.ContainingAssembly.Identity.ToString())));
+                        ImmutableArray.Create(interfaceSymbol.ContainingAssembly.Identity.ToString()),
+                        typeSymbol.Locations.FirstOrDefault()));
                 }
             }
         }

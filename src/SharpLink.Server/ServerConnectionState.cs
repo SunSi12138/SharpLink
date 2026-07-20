@@ -19,6 +19,7 @@ internal sealed class ServerConnectionState
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ConcurrentDictionary<ServiceRegistration, ConnectionServiceEntry> _services = [];
     private SharpLinkAuthenticationContext? _authenticationContext;
+    private SharpLinkCallContextSnapshot? _defaultCallContext;
     private long _lastAcceptedRequestId;
     private int _activeCalls;
     private int _lifecycleState = (int)ServerConnectionLifecycleState.Handshaking;
@@ -44,6 +45,26 @@ internal sealed class ServerConnectionState
     internal SharpLinkAuthenticationContext? AuthenticationContext
         => Volatile.Read(ref _authenticationContext);
 
+    internal SharpLinkCallContextSnapshot? DefaultCallContext
+        => Volatile.Read(ref _defaultCallContext);
+
+    internal SharpLinkCallContextSnapshot GetCallContextSnapshot(
+        DateTimeOffset? deadline,
+        SharpLinkMetadata? metadata)
+    {
+        if (deadline is null && metadata is null &&
+            Volatile.Read(ref _defaultCallContext) is { } defaultCallContext)
+        {
+            return defaultCallContext;
+        }
+
+        return new SharpLinkCallContextSnapshot(
+            Session.Id,
+            Volatile.Read(ref _authenticationContext),
+            deadline,
+            metadata);
+    }
+
     internal StripedLongMap<ServerCallCancellationState> CallCancellations { get; }
 
     internal ServerCallDeadlineScheduler DeadlineScheduler { get; }
@@ -63,7 +84,9 @@ internal sealed class ServerConnectionState
 
     internal bool MarkReady(SharpLinkAuthenticationContext? authenticationContext)
     {
+        var defaultCallContext = new SharpLinkCallContextSnapshot(Session.Id, authenticationContext);
         Volatile.Write(ref _authenticationContext, authenticationContext);
+        Volatile.Write(ref _defaultCallContext, defaultCallContext);
         if (Interlocked.CompareExchange(
                 ref _lifecycleState,
                 (int)ServerConnectionLifecycleState.Ready,
@@ -74,6 +97,7 @@ internal sealed class ServerConnectionState
         }
 
         Volatile.Write(ref _authenticationContext, null);
+        Volatile.Write(ref _defaultCallContext, null);
         return false;
     }
 
@@ -252,6 +276,7 @@ internal sealed class ServerConnectionState
                 _callsDrained.TrySetResult();
             Interlocked.Exchange(ref _lifecycleState, (int)ServerConnectionLifecycleState.Closed);
             Volatile.Write(ref _authenticationContext, null);
+            Volatile.Write(ref _defaultCallContext, null);
             _serviceCleanupTask = CleanupServicesWhenCallsDrainAsync();
             if (firstException is null)
                 _sessionCompleted.TrySetResult();

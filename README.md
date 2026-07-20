@@ -86,6 +86,32 @@ dotnet run --project demo/SeparatedClient/SeparatedClient.csproj
 [assembly: SharpLinkRpcContracts(typeof(MyContract1), typeof(MyContract2))]
 ```
 
+## 契约 Manifest 与兼容性基线
+
+`SharpLink.Sdk` 包会把当前契约写到 `obj/<configuration>/<tfm>/SharpLink.Contracts.sharplink.json`。JSON 按 Contract、Method、DTO member、enum、union 与 Service route 的稳定 ID 排序，不包含时间戳或源码路径；`schemaFingerprint` 覆盖规范化后的完整内容，可直接作为 CI 构建产物保存。
+
+把上一个已发布版本的文件保存到仓库，并在项目中指定基线：
+
+```xml
+<PropertyGroup>
+  <SharpLinkContractBaseline>contracts/previous.sharplink.json</SharpLinkContractBaseline>
+  <!-- 可选：覆盖当前 Manifest 的输出位置 -->
+  <SharpLinkContractManifestOutput>artifacts/contracts/current.sharplink.json</SharpLinkContractManifestOutput>
+</PropertyGroup>
+```
+
+没有基线时只生成当前 Manifest。存在基线时，`SHARPLINK024`–`SHARPLINK035` 与 `SHARPLINK037` 会在可用的 Contract、Method、DTO member 或 Service 位置报告格式错误和破坏性变化，并在消息中给出修复方式。例如 DTO 成员重命名应显式保留旧 ID：
+
+```csharp
+public sealed class Customer
+{
+    [RpcMember(7)] // 重命名前后都保留 7
+    public string DisplayName { get; init; } = string.Empty;
+}
+```
+
+新增 Contract、Method 和 optional DTO member 是兼容变化。多态契约可用 `[RpcUnionCase(tag, typeof(CaseType))]` 固定 union tag；已发布的 tag 不能改派给其他类型。分析全部发生在编译期，不进入运行时路由或 RPC 热路径，NativeAOT 继续使用生成代码而不做反射扫描。
+
 ## 序列化与 AOT
 
 RPC 可达的常规 DTO 会自动生成无反射 Codec，不需要注册序列化器：
@@ -364,9 +390,19 @@ SharpLinkAssemblyUnregisterResult drained = await server.UnregisterAssemblyAsync
     pluginAssembly,
     TimeSpan.FromSeconds(10),
     cancellationToken);
+
+SharpLinkAssemblyReplacementResult replaced = await server.ReplaceAssemblyAsync(
+    pluginAssembly,
+    nextPluginAssembly,
+    TimeSpan.FromSeconds(10),
+    cancellationToken);
+if (!replaced.Succeeded)
+    Console.Error.WriteLine($"{replaced.Error!.Code}: {replaced.Error.Message}");
 ```
 
-排空期间路由继续由原模块占有，新调用得到 `Unavailable: RPC module is draining`。超时会定点取消该模块的调用和流；业务代码不配合取消时 `ReferencesReleased=false`，框架在计数最终归零后后台完成释放。Client API 语义相同。NativeAOT 的运行时注册返回 `PlatformNotSupported`，静态 Manifest 路径不受影响。
+`ReplaceAssemblyAsync` 在修改线上状态前完成新 Manifest、Codec、Stub、Service 与 route 验证；旧 registration 拥有的 route 可由新程序集接管，但第三方 registration 的 route 仍受冲突保护。提交时只发布一次新不可变路由快照，随后复用注销路径排空旧调用。已进入旧 registration 的 Unary 和 Stream 固定使用旧 Codec、Stub、Service 与 Scope；新请求只读取新快照。
+
+普通注销的排空期间路由继续由原模块占有，新调用得到 `Unavailable: RPC module is draining`。替换和注销超时都会定点取消旧模块调用和流；业务代码不配合取消时 `ReferencesReleased=false`，框架在计数最终归零后后台完成释放。Client API 语义相同。NativeAOT 的运行时注册与替换返回 `PlatformNotSupported`，静态 Manifest 路径不受影响。
 
 客户端可以直接使用协议控制帧检查远端状态，不需要定义业务契约：
 
