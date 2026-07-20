@@ -67,6 +67,7 @@ data/
 project.lock.json
 project.fragment.lock.json
 artifacts/
+.nuget-package-smoke/
 
 # Tye
 .tye/

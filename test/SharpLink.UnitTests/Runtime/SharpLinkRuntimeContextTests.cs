@@ -1,7 +1,33 @@
+using System.Collections.Generic;
+using System.Reflection;
+
 namespace SharpLink.UnitTests.Runtime;
 
 public class SharpLinkRuntimeContextTests
 {
+    [Test]
+    public void ProcessDefaultShouldNotSnapshotGeneratedAssemblyCatalog()
+    {
+        var manifest = new CatalogManifest();
+        SharpLinkGeneratedAssemblyCatalog.Register(manifest);
+
+        var instanceContext = new SharpLinkRuntimeContextBuilder().Build();
+        var processDefault = new SharpLinkRuntimeContextBuilder()
+            .Build(includeGeneratedAssemblyCatalog: false);
+
+        Ensure(instanceContext.Codecs.GetCodec<CatalogValue>() is CatalogCodec,
+            "instance context snapshots generated manifest codecs");
+        try
+        {
+            _ = processDefault.Codecs.GetCodec<CatalogValue>();
+            throw new Exception("process default must not capture a catalog codec");
+        }
+        catch (NotSupportedException)
+        {
+        }
+        GC.KeepAlive(manifest);
+    }
+
     [Test]
     public void DefaultOptionsShouldMatchBalancedProfile()
     {
@@ -126,6 +152,37 @@ public class SharpLinkRuntimeContextTests
         }
 
         public int Deserialize(in ReadOnlySequence<byte> buffer) => 0;
+    }
+
+    private sealed class CatalogValue;
+
+    private sealed class CatalogCodec : IRpcCodec<CatalogValue>
+    {
+        public void Serialize(in CatalogValue value, IBufferWriter<byte> buffer)
+        {
+        }
+
+        public CatalogValue Deserialize(in ReadOnlySequence<byte> buffer) => new();
+    }
+
+    private sealed class CatalogCodecFactory : IRpcGeneratedCodecFactory
+    {
+        public Type TargetType => typeof(CatalogValue);
+        public string SchemaId => "catalog-test-v1";
+        public IRpcCodec Create(IRpcCodecProvider provider) => new CatalogCodec();
+    }
+
+    private sealed class CatalogManifest : ISharpLinkGeneratedAssemblyManifest
+    {
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "test";
+        public Assembly OwnerAssembly => typeof(CatalogManifest).Assembly;
+        public string CompileTimeDescriptor => "catalog-test";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } = [new CatalogCodecFactory()];
+        public IReadOnlyList<string> Dependencies => [];
     }
 
     private static void Ensure(bool condition, string message)

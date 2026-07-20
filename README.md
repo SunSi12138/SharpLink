@@ -2,11 +2,12 @@
 
 一个面向 .NET 的高性能 RPC 框架（当前主目标框架为 `net10.0`），支持：
 
-- Source Generator 自动生成 `Proxy/Stub`
+- Source Generator 自动生成 `Proxy/Stub/Codec/Assembly Manifest`
 - Unary、`[Oneway]`、客户端流、服务端流、双向流、多流参数
 - Protocol v2 协议级取消（`ProtocolV2FrameType.Cancel`）
 - TLS/mTLS、认证、Interceptor、deadline、背压、健康检查与 OpenTelemetry
-- `Microsoft.Extensions.Hosting`、DI 生命周期、readiness 与优雅排空
+- 自动服务注册、`Singleton/Connection/Call` 生命周期、运行时程序集安全注册/注销
+- `Microsoft.Extensions.Hosting`、DI、readiness 与优雅排空
 - `Socket / NamedPipe / AnonymousPipe / UDS` 传输，以及实验性的同用户共享内存传输
 - 内置基础编解码器，并可接入 `MemoryPack` 作为复杂类型回退序列化器
 
@@ -76,7 +77,9 @@ dotnet run --project demo/SeparatedClient/SeparatedClient.csproj
 - RPC 契约接口必须标记 `[RpcContract]`
 - RPC 服务实现必须标记 `[RpcService]`
 - 契约接口必须继承 `IService`
-- 生成器默认扫描“引用了 `SharpLink.Sdk`”的引用程序集
+- Contract 所在程序集生成 Descriptor、Proxy、contract-based Stub 和 Codec；Service 所在程序集生成 Activator、生命周期与显式依赖
+- 每个生成程序集只有一个可由程序集特性直接定位的 Manifest，不使用 `Assembly.GetTypes()` 扫描
+- Server `Build()` 默认快照当时已加载的 Manifest 并自动注册 `[RpcService]`；Build 后加载的插件需要显式 `RegisterAssembly`
 - 可以通过程序集级特性缩小扫描范围：
 
 ```csharp
@@ -114,7 +117,7 @@ var client = SharpClientBuilder.Create()
     .Build();
 ```
 
-生成 manifest 是幂等、不可重配置的进程元数据；Codec 实例与依赖仍在每个 Client/Server 的 `SharpLinkRuntimeContext` 构建时冻结，因此同进程实例不会互相覆盖。`test/SharpLink.AotSmoke` 使用纯生成 Codec 完成 NativeAOT publish/run，不扫描程序集或调用 `MakeGenericType`。
+生成 manifest 由所属程序集锚定，进程 Catalog 只保留有界弱引用；每个 Client/Server 在 Build 或运行时注册时发布自己的 Registry 快照，因此同进程实例不会互相覆盖。`test/SharpLink.AotSmoke` 使用纯生成 Codec 完成 NativeAOT publish/run，不扫描程序集或调用 `MakeGenericType`。
 
 ## 传输说明
 
@@ -291,7 +294,6 @@ var client = SharpClientBuilder.Create()
     .Build();
 
 var server = SharpLinkServerBuilder.Create()
-    .AddService<IMyService, MyService>()
     .UseTcp(5000)
     .AddInterceptor(serverInterceptor)
     .UseExceptionMapper(exceptionMapper)
@@ -318,28 +320,53 @@ meterProviderBuilder
 
 内置指标覆盖 active connections、reconnect、started/completed/failed/active/abandoned calls、duration、sent/received bytes、send queue bytes、pending requests、active streams、迟到响应，以及 protocol/auth/resource-exhausted failures。`sharplink.calls.abandoned` 使用 `rpc.sharplink.termination_reason` 区分 deadline、远端取消、consumer abandoned、停机与断连；`sharplink.responses.late_dropped` 逐次记录被安全丢弃的迟到响应。Activity 和指标不记录完整 payload、token、证书或未审核的业务异常消息。没有 listener 时不会创建 TagList、Activity、Stopwatch 对象或额外调用 observer。
 
-## DI、健康检查与优雅排空
+## 自动服务注册、DI 与生命周期
 
-默认 `AddService<TContract,TService>()` 使用 Singleton，保留基础 RPC 的无 scope 快路径。需要调用级依赖时可显式选择 Scoped 或 Transient；scope 会持续到 Unary/OneWay 完成，stream 则持续到整条流完成、取消或断线：
+服务实现只需标记 `[RpcService]`。默认 `Singleton` 保留无调用 Scope 的快速路径；`Connection` 按认证成功的物理连接惰性创建，`Call` 为每次调用创建，并在完整 Unary、OneWay 或 Streaming 调用真正结束后释放：
 
 ```csharp
-services.AddScoped<MyService>();
-services.AddSharpLinkServer(server => server
-    .AddService<IMyService, MyService>(ServiceLifetime.Scoped)
-    .UseTcp(5000));
+[RpcService(Lifetime = SharpLinkServiceLifetime.Connection)]
+public sealed class MyService(Dependency dependency) : IMyService
+{
+    // Generated activator resolves Dependency from the current scope provider.
+}
+
+var server = SharpLinkServerBuilder.Create()
+    .UseServiceProvider(provider)
+    .UseTcp(5000)
+    .Build();
 ```
 
-Hosting 会把匹配 lifetime 的服务注册加入宿主容器；如果应用已注册同一实现类型，则 lifetime 必须一致。非 Hosting 场景可使用 `UseServiceProvider(provider)`。也可以注册调用方持有的 singleton 实例，或注册由 SharpLink 管理生命周期的 provider-aware factory：
+可以按 Builder 排除、重新启用或只启用白名单服务。调用方传入的实例始终是 caller-owned Singleton；factory 产物由 SharpLink 按指定生命周期释放：
 
 ```csharp
 serverBuilder
-    .AddService<IMyService>(existingInstance)
-    .AddService<IOtherService>(
+    .ExcludeService<IMyService>()
+    .EnableService<IMyService>()
+    .ReplaceService<IMyService>(existingInstance)
+    .ReplaceService<IOtherService>(
         sp => new OtherService(sp.GetRequiredService<Dependency>()),
-        ServiceLifetime.Transient);
+        SharpLinkServiceLifetime.Call);
 ```
 
-实例重载不会释放调用方对象；类型注册由 DI scope/provider 释放；factory 返回值由 SharpLink 在对应生命周期边界释放。
+`DisableAutomaticServiceRegistration()` 可切换为 `EnableService<TContract>()` 白名单模式。`EnableService` 找不到生成服务时 Build 失败，`ExcludeService` 找不到目标时无操作。Hosting 与 `UseServiceProvider` 继续管理普通依赖的生命周期，但根 RPC 服务的公共生命周期只由 `SharpLinkServiceLifetime` 定义。
+
+### 运行时程序集注册与注销
+
+Build 后加载的插件需要分别注册到使用其 Artifact 的 Client/Server。注册不会用异常表示预期失败，而是原子返回结构化诊断；只有完整 Manifest 验证通过才会发布：
+
+```csharp
+SharpLinkAssemblyRegistrationResult registration = server.RegisterAssembly(pluginAssembly);
+if (!registration.Succeeded)
+    Console.Error.WriteLine($"{registration.Error!.Code}: {registration.Error.Message}");
+
+SharpLinkAssemblyUnregisterResult drained = await server.UnregisterAssemblyAsync(
+    pluginAssembly,
+    TimeSpan.FromSeconds(10),
+    cancellationToken);
+```
+
+排空期间路由继续由原模块占有，新调用得到 `Unavailable: RPC module is draining`。超时会定点取消该模块的调用和流；业务代码不配合取消时 `ReferencesReleased=false`，框架在计数最终归零后后台完成释放。Client API 语义相同。NativeAOT 的运行时注册返回 `PlatformNotSupported`，静态 Manifest 路径不受影响。
 
 客户端可以直接使用协议控制帧检查远端状态，不需要定义业务契约：
 
@@ -358,7 +385,8 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 握手认证：`ISharpLinkClientAuthenticator` / `ISharpLinkServerAuthenticator` 与 `RequireAuthentication()`
 - 调用管线：Client/Server `AddInterceptor(...)` 与 Server `UseExceptionMapper(...)`
 - 遥测：`SharpLinkTelemetry.ClientActivitySource`、`ServerActivitySource` 与 `Meter`
-- 服务生命周期：`AddService(instance/type/factory)`、`UseServiceProvider(...)` 与 `ServiceLifetime`
+- 服务注册与生命周期：`[RpcService]`、`EnableService` / `ExcludeService` / `ReplaceService`、`UseServiceProvider(...)` 与 `SharpLinkServiceLifetime`
+- 运行时插件：Client/Server `RegisterAssembly(...)` 与 `UnregisterAssemblyAsync(...)`
 - 健康检查：`CheckHealthAsync()`、`ISharpLinkServer.HealthStatus` 与 Hosting health checks
 - 请求超时：`UseRequestTimeout(...)`；需要真正无默认超时时使用 `DisableRequestTimeout()`
 - `RpcSession` flush：`UseRpcSessionFlush(...)`
@@ -392,6 +420,7 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 压测：`doc/loadtest.md`
 - Protocol v2：`doc/protocol-v2.md`
 - 0.6.10 迁移：`doc/migration-0.6.10.md`
+- 0.7.1 迁移：`doc/migration-0.7.1.md`
 - 0.6.10 性能与 Chaos：`doc/performance-0.6.10.md`、`doc/chaos-0.6.10.md`
 - 贡献指南：`CONTRIBUTING.md`
 - 更新日志：`CHANGELOG.md`

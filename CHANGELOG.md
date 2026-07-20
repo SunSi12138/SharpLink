@@ -4,6 +4,33 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-20
+
+### 新增
+
+- Source Generator 为每个程序集生成唯一的 RPC Manifest、定位特性与模块初始化器；Contract 程序集拥有 Descriptor、Proxy、contract-based Stub 和 Codec，Service 程序集拥有 Activator、生命周期与显式依赖。
+- `[RpcService]` 服务在 Server `Build()` 时自动注册，默认生命周期为 `Singleton`；新增 `Connection` 与 `Call` 生命周期，以及 `EnableService`、`ExcludeService`、`DisableAutomaticServiceRegistration` 和 `ReplaceService` 筛选/替换入口。
+- Client 与 Server 支持运行时程序集原子注册和异步安全注销；注册使用结构化成功/错误结果，注销报告剩余调用、流和框架引用释放状态。
+- 动态模块支持 Running、Draining、Released/DrainTimedOut 状态、分片租约计数、依赖阻止卸载、超时定点取消，以及 collectible `AssemblyLoadContext` 卸载验证。
+- Generator 增加服务声明、Contract/Method/Codec/Service 碰撞诊断，并为规范化描述生成 SHA-256 wire/schema 指纹。
+
+### 变更
+
+- 删除全部旧 `AddService` 重载；类型服务迁移为 `[RpcService]` 自动注册，实例和 factory 迁移为 `ReplaceService`。
+- Singleton 根服务不创建调用 Scope；Connection 按物理连接惰性创建独立 Scope；Call Scope 覆盖完整 Unary、OneWay 或 Streaming 调用。
+- Builder 和运行时动态 Registry 使用实例级原子快照；静态冲突优先由 Generator 报告，Build 与动态注册继续执行防御性验证和事务回滚。
+- NativeAOT 保留纯静态 Manifest 路径，运行时程序集注册返回 `PlatformNotSupported`，不增加反射扫描 fallback。
+
+### 修复
+
+- 池化请求操作归还时立即清除 `ManualResetValueTaskSourceCore` 的 continuation，避免动态 DTO、Task 和 collectible ALC 被进程级对象池意外保留。
+- Stop、Dispose、Disconnect 与并发注销复用幂等排空操作，避免重复释放、过早移除路由或同步完成留下陈旧操作。
+
+### 性能与兼容性
+
+- Protocol v2 wire format 未改变；静态 Singleton 保留无 Scope、无动态计数的快速路径，动态读路径不进入注册 writer gate。
+- 完整性能报告和机器可读逐轮证据保存在本地忽略目录 `artifacts/performance/v0.7.1/`，不进入源代码包。
+
 ## [0.7.0] - 2026-07-20
 
 ### 新增

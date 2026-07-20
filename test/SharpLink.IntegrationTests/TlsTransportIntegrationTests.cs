@@ -129,7 +129,6 @@ public class TlsTransportIntegrationTests
     private static async Task<TlsServerHarness> StartServerAsync(int port, SslServerAuthenticationOptions options)
     {
         var builder = SharpLinkServerBuilder.Create()
-            .AddService<ITlsIntegrationService, TlsIntegrationService>()
             .UseTcp(port, options, IPAddress.Loopback.ToString(), tlsHandshakeTimeout: TimeSpan.FromSeconds(2))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
         var boundPort = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;

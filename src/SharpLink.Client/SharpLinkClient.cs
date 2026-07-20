@@ -1,11 +1,21 @@
 ﻿
-
+using System.Reflection;
 
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient(IClientTransportFactory transportFactory) : IRpcChannel, ISharpLinkClient
 {
     private readonly SharpLinkRuntimeContext _runtimeContext = new SharpLinkRuntimeContextBuilder().Build();
+    private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests =
+        SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
+    private FrozenDictionary<Type, ClientProxyRegistration> _proxies =
+        FrozenDictionary<Type, ClientProxyRegistration>.Empty;
+    private readonly Lock _registryGate = new();
+    private readonly Dictionary<Assembly, SharpLinkDynamicModule> _dynamicModules =
+        new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Assembly, Task<SharpLinkAssemblyUnregisterResult>> _unregisterOperations =
+        new(ReferenceEqualityComparer.Instance);
+    private long _registryGeneration;
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly Lock _stateGate = new();
     private readonly Lock _poolGate = new();
@@ -65,6 +75,7 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         _rpcSessionFlushOptions = rpcSessionFlushOptions;
         _connectionPoolOptions = (connectionPoolOptions ?? new SharpLinkConnectionPoolOptions()).CloneValidated();
         _clientInterceptors = clientInterceptors is { Length: > 0 } ? [.. clientInterceptors] : [];
+        _proxies = BuildStaticProxySnapshot(_staticManifests);
     }
 
     public SharpLinkClient(
@@ -142,6 +153,12 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         if (!ReferenceEquals(expansionTask, connectTask) && !ReferenceEquals(expansionTask, reconnectTask))
             await IgnoreExpectedStopExceptionAsync(expansionTask).ConfigureAwait(false);
         await WaitForBackgroundTasksAsync().ConfigureAwait(false);
+
+        Assembly[] dynamicAssemblies;
+        lock (_registryGate)
+            dynamicAssemblies = [.. _dynamicModules.Keys];
+        for (var index = 0; index < dynamicAssemblies.Length; index++)
+            await UnregisterAssemblyAsync(dynamicAssemblies[index], TimeSpan.Zero).ConfigureAwait(false);
 
         await transportFactory.DisposeAsync().ConfigureAwait(false);
         _reconnectSignal.Dispose();

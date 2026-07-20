@@ -58,17 +58,6 @@ public partial class RpcGenerator
                 AppendGeneratedStreams(sb, model, method);
         }
 
-        sb.AppendLine($$"""
-
-                        internal static class {{model.Name}}_ProxyRegistration
-                        {
-                            [ModuleInitializer]
-                            internal static void Register()
-                            {
-                                SharpLink.Abstractions.GeneratedProxyRegistry.Register(typeof({{model.FullName}}), static channel => new {{model.Name}}_Proxy(channel));
-                            }
-                        }
-                        """);
         return sb.ToString();
     }
 

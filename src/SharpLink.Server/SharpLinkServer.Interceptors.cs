@@ -4,6 +4,7 @@ internal sealed partial class SharpLinkServer
 {
     private ValueTask InvokeServiceAsync(
         ServiceRegistration registration,
+        ServerConnectionState connection,
         IRpcSession session,
         long methodId,
         long requestId,
@@ -12,10 +13,89 @@ internal sealed partial class SharpLinkServer
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context)
     {
+        if (registration.TryGetStaticSingleton(out var singleton))
+        {
+            return InvokeServiceTrackedAsync(
+                registration.Stub,
+                singleton,
+                session,
+                methodId,
+                requestId,
+                arguments,
+                output,
+                cancellationToken,
+                context);
+        }
+
+        var isStream = false;
+        var hasRequestStreams = false;
+        if (registration.Module is not null)
+        {
+            var descriptor = GetMethodDescriptor(registration.Stub, methodId);
+            isStream = descriptor.Kind is RpcMethodKind.ClientStreaming or
+                RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
+            hasRequestStreams = descriptor.Kind is RpcMethodKind.ClientStreaming or
+                RpcMethodKind.DuplexStreaming;
+        }
+
+        SharpLinkDynamicModuleLease dynamicSingletonLease = default;
+        try
+        {
+            if (registration.TryAcquireDynamicSingleton(
+                    isStream,
+                    out var dynamicSingleton,
+                    out dynamicSingletonLease))
+            {
+                var invocation = InvokeServiceTrackedAsync(
+                    registration.Stub,
+                    dynamicSingleton,
+                    session,
+                    methodId,
+                    requestId,
+                    arguments,
+                    output,
+                    cancellationToken,
+                    context);
+                if (invocation.IsCompletedSuccessfully)
+                {
+                    try
+                    {
+                        CompleteDynamicRequestStreams(session, requestId, hasRequestStreams);
+                    }
+                    finally
+                    {
+                        dynamicSingletonLease.Dispose();
+                    }
+                    return invocation;
+                }
+                return CompleteDynamicSingletonInvocationAsync(
+                    invocation,
+                    dynamicSingletonLease,
+                    session,
+                    requestId,
+                    hasRequestStreams);
+            }
+        }
+        catch (Exception exception)
+        {
+            try
+            {
+                CompleteDynamicRequestStreams(session, requestId, hasRequestStreams);
+            }
+            finally
+            {
+                dynamicSingletonLease.Dispose();
+            }
+            var failedTelemetry = SharpLinkTelemetry.StartServerCall(
+                GetMethodDescriptor(registration.Stub, methodId), requestId);
+            failedTelemetry.Complete(exception);
+            throw;
+        }
+
         ValueTask<ServiceLease> acquisition;
         try
         {
-            acquisition = registration.AcquireAsync();
+            acquisition = registration.AcquireAsync(connection, isStream);
         }
         catch (Exception exception)
         {
@@ -36,7 +116,8 @@ internal sealed partial class SharpLinkServer
                 arguments,
                 output,
                 cancellationToken,
-                context);
+                context,
+                hasRequestStreams);
         }
 
         return InvokeAcquiredServiceAsync(
@@ -48,7 +129,32 @@ internal sealed partial class SharpLinkServer
             arguments,
             output,
             cancellationToken,
-            context);
+            context,
+            hasRequestStreams);
+    }
+
+    private static async ValueTask CompleteDynamicSingletonInvocationAsync(
+        ValueTask invocation,
+        SharpLinkDynamicModuleLease moduleLease,
+        IRpcSession session,
+        long requestId,
+        bool hasRequestStreams)
+    {
+        try
+        {
+            await invocation.ConfigureAwait(false);
+        }
+        finally
+        {
+            try
+            {
+                CompleteDynamicRequestStreams(session, requestId, hasRequestStreams);
+            }
+            finally
+            {
+                moduleLease.Dispose();
+            }
+        }
     }
 
     private ValueTask InvokeAcquiredServiceAsync(
@@ -60,7 +166,8 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
-        SharpLinkCallContextSnapshot context)
+        SharpLinkCallContextSnapshot context,
+        bool hasRequestStreams)
     {
 
         if (!lease.RequiresDisposal)
@@ -86,7 +193,8 @@ internal sealed partial class SharpLinkServer
             arguments,
             output,
             cancellationToken,
-            context);
+            context,
+            hasRequestStreams);
     }
 
     private async ValueTask InvokeServiceAfterAcquisitionAsync(
@@ -98,7 +206,8 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
-        SharpLinkCallContextSnapshot context)
+        SharpLinkCallContextSnapshot context,
+        bool hasRequestStreams)
     {
         ServiceLease lease;
         try
@@ -122,7 +231,8 @@ internal sealed partial class SharpLinkServer
             arguments,
             output,
             cancellationToken,
-            context).ConfigureAwait(false);
+            context,
+            hasRequestStreams).ConfigureAwait(false);
     }
 
     private ValueTask InvokeServiceTrackedAsync(
@@ -175,7 +285,8 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
-        SharpLinkCallContextSnapshot context)
+        SharpLinkCallContextSnapshot context,
+        bool hasRequestStreams)
     {
         Exception? invocationException = null;
         try
@@ -200,11 +311,32 @@ internal sealed partial class SharpLinkServer
         {
             try
             {
-                await lease.DisposeAsync().ConfigureAwait(false);
+                CompleteDynamicRequestStreams(session, requestId, hasRequestStreams);
             }
-            catch when (invocationException is not null)
+            finally
             {
+                try
+                {
+                    await lease.DisposeAsync().ConfigureAwait(false);
+                }
+                catch when (invocationException is not null)
+                {
+                }
             }
+        }
+    }
+
+    private static void CompleteDynamicRequestStreams(
+        IRpcSession session,
+        long requestId,
+        bool hasRequestStreams)
+    {
+        if (hasRequestStreams && session.StreamManager is StreamManager manager)
+        {
+            manager.CompleteRequestStreams(
+                requestId,
+                new OperationCanceledException(
+                    "The RPC handler completed before its request streams drained."));
         }
     }
 
@@ -377,7 +509,7 @@ internal sealed partial class SharpLinkServer
         if (SharpLinkCallContext.Current is SharpLinkServerInvocationContext context)
             return MapServiceException(exception, context);
         if (SharpLinkCallContext.Current is { } callContext &&
-            services.TryGetValue(contractId, out var serviceInfo))
+            Volatile.Read(ref _services).TryGetValue(contractId, out var serviceInfo))
         {
             return MapServiceException(
                 exception,

@@ -15,10 +15,6 @@ public partial class RpcGenerator : IIncrementalGenerator
                 static (attributeContext, ct) => GetInterfaceModelOrNull(attributeContext, ct))
             .Where(m => m != null);
 
-        var referencedInterfaces = context.CompilationProvider.Select(static (compilation, ct) =>
-            GetReferencedInterfaceModels(compilation, ct));
-        var referencedServices = context.CompilationProvider.Select(static (compilation, ct) =>
-            GetReferencedServiceModels(compilation, ct));
         var generatedCodecs = context.CompilationProvider.Select(static (compilation, ct) =>
             AnalyzeGeneratedCodecs(compilation, ct));
 
@@ -27,6 +23,13 @@ public partial class RpcGenerator : IIncrementalGenerator
                 static (node, _) => node is ClassDeclarationSyntax,
                 static (attributeContext, ct) => GetServiceModelOrNull(attributeContext, ct))
             .Where(m => m != null);
+        var serviceDiagnostics = context.SyntaxProvider.ForAttributeWithMetadataName(
+                RpcServiceAttributeMetadataName,
+                static (node, _) => node is ClassDeclarationSyntax,
+                static (attributeContext, ct) => GetRpcServiceDiagnosticOrNull(attributeContext, ct))
+            .Where(static diagnostic => diagnostic is not null);
+        var staticRouteConflicts = context.CompilationProvider.Select(static (compilation, ct) =>
+            AnalyzeStaticRouteConflicts(compilation, ct));
 
         var invalidMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcContractAttributeMetadataName,
@@ -166,33 +169,50 @@ public partial class RpcGenerator : IIncrementalGenerator
             spc.ReportDiagnostic(diagnostic);
         });
 
-        context.RegisterSourceOutput(services, (spc, model) =>
+        context.RegisterSourceOutput(serviceDiagnostics, static (spc, diagnostic) =>
         {
-            var code = GenerateStub(model!);
-            spc.AddSource(GetStubHintName(model!), SourceText.From(code, Encoding.UTF8));
-        });
-        context.RegisterSourceOutput(referencedServices, (spc, models) =>
-        {
-            foreach (var model in models)
+            var value = diagnostic!.Value;
+            var descriptor = value.Kind switch
             {
-                var code = GenerateStub(model);
-                spc.AddSource(GetStubHintName(model), SourceText.From(code, Encoding.UTF8));
+                RpcServiceDiagnosticKind.MissingContract => RpcServiceMissingContractRule,
+                RpcServiceDiagnosticKind.MultipleContracts => RpcServiceMultipleContractsRule,
+                RpcServiceDiagnosticKind.InvalidType => RpcServiceTypeRule,
+                RpcServiceDiagnosticKind.InvalidConstructor => RpcServiceConstructorRule,
+                _ => RpcServiceLifetimeRule
+            };
+            spc.ReportDiagnostic(Diagnostic.Create(
+                descriptor,
+                value.Location,
+                value.ServiceName,
+                value.Detail));
+        });
+
+        context.RegisterSourceOutput(staticRouteConflicts, static (spc, conflicts) =>
+        {
+            foreach (var conflict in conflicts)
+            {
+                var descriptor = conflict.Kind switch
+                {
+                    StaticRouteConflictKind.Method => StaticMethodConflictRule,
+                    StaticRouteConflictKind.Service => StaticServiceConflictRule,
+                    _ => StaticContractConflictRule
+                };
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    descriptor,
+                    conflict.Location,
+                    conflict.Name,
+                    conflict.Id,
+                    conflict.ExistingFingerprint,
+                    conflict.IncomingFingerprint));
             }
         });
 
         context.RegisterSourceOutput(interfaces, (spc, model) =>
         {
-            var code = GenerateProxy(model!);
-            spc.AddSource(GetProxyHintName(model!), SourceText.From(code, Encoding.UTF8));
-        });
-
-        context.RegisterSourceOutput(referencedInterfaces, (spc, models) =>
-        {
-            foreach (var model in models)
-            {
-                var code = GenerateProxy(model);
-                spc.AddSource(GetProxyHintName(model), SourceText.From(code, Encoding.UTF8));
-            }
+            var proxy = GenerateProxy(model!);
+            spc.AddSource(GetProxyHintName(model!), SourceText.From(proxy, Encoding.UTF8));
+            var stub = GenerateStub(model!);
+            spc.AddSource(GetStubHintName(model!), SourceText.From(stub, Encoding.UTF8));
         });
 
         context.RegisterSourceOutput(generatedCodecs, static (spc, result) =>
@@ -219,6 +239,18 @@ public partial class RpcGenerator : IIncrementalGenerator
                 spc.AddSource(
                     "SharpLink.GeneratedCodecs.g.cs",
                     SourceText.From(GenerateCodecs(result.Codecs), Encoding.UTF8));
+            }
+        });
+
+        var manifest = interfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);
+        context.RegisterSourceOutput(manifest, static (spc, value) =>
+        {
+            var code = GenerateAssemblyManifest(value.Left.Left, value.Left.Right, value.Right.Codecs);
+            if (!string.IsNullOrEmpty(code))
+            {
+                spc.AddSource(
+                    "SharpLink.GeneratedAssemblyManifest.g.cs",
+                    SourceText.From(code, Encoding.UTF8));
             }
         });
     }

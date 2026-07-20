@@ -77,6 +77,36 @@ public class StreamManagerTests
     }
 
     [Test]
+    public async Task CompleteRequestStreamsShouldRetireOnlyTheTargetRequest()
+    {
+        var manager = new StreamManager();
+        var target1 = new RecordingDispatcher();
+        var target2 = new RecordingDispatcher();
+        var unrelated = new RecordingDispatcher();
+        var exception = new OperationCanceledException("handler returned early");
+        manager.Register(10, 1, target1);
+        manager.Register(10, 2, target2);
+        manager.Register(11, 1, unrelated);
+
+        manager.CompleteRequestStreams(10, exception);
+
+        Ensure(target1.CompleteCount == 1, "first target stream completed");
+        Ensure(target2.CompleteCount == 1, "second target stream completed");
+        Ensure(ReferenceEquals(exception, target1.LastException), "first target preserves exception");
+        Ensure(ReferenceEquals(exception, target2.LastException), "second target preserves exception");
+        Ensure(unrelated.CompleteCount == 0, "unrelated request remains active");
+        Ensure(manager.ActiveStreamCount == 1, "only the unrelated request remains registered");
+
+        await manager.DispatchChunkAsync(10, 1, new ReadOnlySequence<byte>(new byte[] { 1 }));
+        Ensure(target1.DispatchCount == 0, "late target frames are dropped after completion");
+        Ensure(manager.DroppedStreamFrames == 1, "late target frame is counted as dropped");
+
+        manager.CompleteRequestStreams(10, exception);
+        Ensure(target1.CompleteCount == 1 && target2.CompleteCount == 1,
+            "request completion is idempotent");
+    }
+
+    [Test]
     public void RegisterAfterCompleteAllShouldCompleteWithoutPublishingAnActiveStream()
     {
         var manager = new StreamManager();

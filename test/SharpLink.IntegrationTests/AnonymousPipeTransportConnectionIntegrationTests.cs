@@ -89,7 +89,6 @@ public class AnonymousPipeTransportConnectionIntegrationTests
         {
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
-                .AddService<IConnectionBehaviorService, ConnectionBehaviorService>()
                 .UseAnonymousPipe()
                 .UseSerializer(MemoryPackCodec.Resolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));

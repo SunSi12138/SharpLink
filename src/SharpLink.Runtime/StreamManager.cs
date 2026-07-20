@@ -292,6 +292,16 @@ public class StreamManager : IStreamManager
         }
     }
 
+    internal void CompleteRequestStreams(long requestId, Exception? exception)
+    {
+        if (!_dispatchersByRequestId.TryRemove(requestId, out var requestDispatchers))
+            return;
+
+        var completed = requestDispatchers.CompleteAll(exception);
+        SharpLinkTelemetry.AddActiveStreams(-completed);
+        Interlocked.Add(ref _activeStreamCount, -completed);
+    }
+
     private void CompleteTerminatedRegistration(
         long requestId,
         ushort streamId,

@@ -796,8 +796,7 @@ internal sealed class ChaosServer(SharpLinkServer server, Task runTask, int port
         int port)
     {
         var builder = SharpLinkServerBuilder.Create()
-            .UseHeartbeat(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5))
-            .AddService<IChaosService, ChaosService>();
+            .UseHeartbeat(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
         if (transport == ChaosTransport.SharedMemory)
             builder.UseSharedMemory(sharedMemoryName);
         else

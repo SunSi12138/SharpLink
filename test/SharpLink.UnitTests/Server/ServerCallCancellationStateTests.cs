@@ -8,6 +8,30 @@ namespace SharpLink.UnitTests.Server;
 public class ServerCallCancellationStateTests
 {
     [Test]
+    public void ModuleDrainingShouldCancelOnlyItsCooperativeInvocation()
+    {
+        using var moduleDraining = new CancellationTokenSource();
+        var state = ServerCallCancellationState.Rent(
+            100,
+            null,
+            0,
+            CancellationToken.None,
+            CancellationToken.None,
+            moduleDraining.Token,
+            supportsCooperativeCancellation: true);
+
+        moduleDraining.Cancel();
+
+        Ensure(state.Reason == ServerCallCancellationReason.ModuleDraining,
+            "module cancellation reason");
+        Ensure(state.InvocationToken.IsCancellationRequested,
+            "module drain cancels cooperative business code");
+        Ensure(state.TryClaimModuleDrainResponse(), "module drain response is claimed once");
+        Ensure(!state.TryClaimModuleDrainResponse(), "module drain response cannot be claimed twice");
+        state.Dispose();
+    }
+
+    [Test]
     public void FirstCancellationSourceShouldWin()
     {
         using var connectionClosed = new CancellationTokenSource();
@@ -58,13 +82,14 @@ public class ServerCallCancellationStateTests
             CancellationToken.None,
             supportsCooperativeCancellation: true);
         using var scheduledCall = Schedule(state);
-        var observedReason = ServerCallCancellationReason.None;
+        var observedReason = new TaskCompletionSource<ServerCallCancellationReason>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         using var registration = state.InvocationToken.Register(
-            () => observedReason = state.Reason);
+            () => observedReason.TrySetResult(state.Reason));
 
-        await WaitUntilAsync(() => state.Reason == ServerCallCancellationReason.DeadlineExceeded);
+        var callbackReason = await observedReason.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
-        Ensure(observedReason == ServerCallCancellationReason.DeadlineExceeded,
+        Ensure(callbackReason == ServerCallCancellationReason.DeadlineExceeded,
             "business cancellation callbacks must observe the published deadline reason");
     }
 

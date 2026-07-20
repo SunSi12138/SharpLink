@@ -10,14 +10,31 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext
         RuntimeConcurrencyOptions concurrency,
         BufferWriterPoolOptions bufferPool,
         Func<Type, IRpcCodec?>? resolver,
-        IReadOnlyDictionary<Type, IRpcCodec> codecs)
+        IReadOnlyDictionary<Type, IRpcCodec> codecs,
+        bool includeGeneratedAssemblyCatalog)
     {
         _options = options.CloneValidated();
         Concurrency = concurrency.CloneValidated();
-        Codecs = new RpcCodecProvider(
-            resolver,
-            codecs,
+        var generatedFactories = new Dictionary<Type, IRpcGeneratedCodecFactory>(
             RpcGeneratedCodecRegistry.CreateSnapshot());
+        var manifests = includeGeneratedAssemblyCatalog
+            ? SharpLinkGeneratedAssemblyCatalog.CreateSnapshot()
+            : [];
+        foreach (var manifest in manifests)
+        {
+            foreach (var factory in manifest.Codecs)
+            {
+                if (generatedFactories.TryGetValue(factory.TargetType, out var existing) &&
+                    !string.Equals(existing.SchemaId, factory.SchemaId, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"Generated Codec schema conflict for '{factory.TargetType.FullName}': " +
+                        $"'{existing.SchemaId}' and '{factory.SchemaId}'.");
+                }
+                generatedFactories[factory.TargetType] = factory;
+            }
+        }
+        Codecs = new RpcCodecProvider(resolver, codecs, generatedFactories);
         Buffers = new SharpLinkBufferWriterPool(bufferPool);
     }
 
@@ -38,7 +55,20 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext
 
     internal SharpLinkFlowControlOptions FlowControl => _options.FlowControl;
 
-    internal static SharpLinkRuntimeContext Default { get; } = new SharpLinkRuntimeContextBuilder().Build();
+    internal IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> CreateGeneratedCodecSnapshot()
+        => ((RpcCodecProvider)Codecs).CreateGeneratedFactorySnapshot();
+
+    internal void PublishGeneratedCodecs(IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> factories)
+        => ((RpcCodecProvider)Codecs).PublishGeneratedFactories(factories);
+
+    internal void RemoveResolvedGeneratedCodecs(IEnumerable<Type> types)
+        => ((RpcCodecProvider)Codecs).RemoveResolvedCodecs(types);
+
+    // This process-wide fallback is used only before an instance-owned Context is attached.
+    // It must never snapshot weak manifest entries because it has no unregister boundary and
+    // would otherwise become a permanent root for collectible plugin load contexts.
+    internal static SharpLinkRuntimeContext Default { get; } =
+        new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
 }
 
 /// <summary>Builds and validates an immutable <see cref="SharpLinkRuntimeContext"/>.</summary>
@@ -98,11 +128,14 @@ public sealed class SharpLinkRuntimeContextBuilder
 
     /// <summary>Validates and freezes a new context.</summary>
     public SharpLinkRuntimeContext Build()
+        => Build(includeGeneratedAssemblyCatalog: true);
+
+    internal SharpLinkRuntimeContext Build(bool includeGeneratedAssemblyCatalog)
     {
         var options = _options.CloneValidated();
         var concurrency = _concurrency.CloneValidated();
         var bufferPool = _bufferPool.CloneValidated();
         return new SharpLinkRuntimeContext(options, concurrency, bufferPool, _resolver,
-            new Dictionary<Type, IRpcCodec>(_codecs));
+            new Dictionary<Type, IRpcCodec>(_codecs), includeGeneratedAssemblyCatalog);
     }
 }

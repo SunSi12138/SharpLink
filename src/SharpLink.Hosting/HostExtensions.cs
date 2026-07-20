@@ -10,7 +10,6 @@ public static class HostExtensions
         {
             var builder = SharpLinkServerBuilder.Create();
             configure?.Invoke(builder);
-            builder.AddServiceRegistrationsTo(services);
             services.TryAddSingleton(builder);
             services.TryAddSingleton<SharpLinkServerReadiness>();
             services.TryAddSingleton<ISharpLinkServerReadiness>(static provider =>
