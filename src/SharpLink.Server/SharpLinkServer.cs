@@ -48,6 +48,7 @@ internal sealed partial class SharpLinkServer(
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Assembly, Task<SharpLinkAssemblyUnregisterResult>> _unregisterOperations =
         new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<SharpLinkDynamicModule, ServiceRegistration[]> _detachedModuleServices = [];
     private long _registryGeneration;
     private readonly ConcurrentDictionary<string, ServerConnectionState> _connections = [];
     private readonly ConcurrentDictionary<ServerConnectionState, byte> _retiredConnections = [];
@@ -117,7 +118,8 @@ internal sealed partial class SharpLinkServer(
         var finalDeadline = AddStopwatchDuration(gracefulDeadline, TimeSpan.FromSeconds(cleanupBudgetSeconds));
         var faulted = false;
 
-        TransitionTo(ServerState.Draining);
+        lock (_registryGate)
+            TransitionTo(ServerState.Draining);
         BeginDrainDynamicModules();
         CancelForShutdown(_acceptCts, _logger, "AcceptCancellation");
         var listenerDisposeTask = StartListenerDispose(transportListener);

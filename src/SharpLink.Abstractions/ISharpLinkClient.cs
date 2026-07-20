@@ -20,6 +20,18 @@ public interface ISharpLinkClient : IAsyncDisposable
         TimeSpan gracefulTimeout,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Prepares a generated assembly and atomically replaces one runtime registration before draining it.</summary>
+    /// <param name="oldAssembly">The exact Assembly object used for the running registration.</param>
+    /// <param name="newAssembly">The assembly whose validated generated artifacts replace the old routes.</param>
+    /// <param name="gracefulTimeout">Maximum time to wait before canceling calls owned by the old registration.</param>
+    /// <param name="cancellationToken">Cancels only this caller's wait; publication, draining, and cleanup continue.</param>
+    /// <returns>The transactional publication result and the bounded old-registration drain state.</returns>
+    ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
+        System.Reflection.Assembly oldAssembly,
+        System.Reflection.Assembly newAssembly,
+        TimeSpan gracefulTimeout,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Connects and completes only after the RPC handshake succeeds.</summary>
     /// <param name="cancellationToken">Cancels the shared connection attempt.</param>
     /// <exception cref="SharpLinkException">The transport or handshake failed.</exception>

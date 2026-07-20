@@ -364,9 +364,19 @@ SharpLinkAssemblyUnregisterResult drained = await server.UnregisterAssemblyAsync
     pluginAssembly,
     TimeSpan.FromSeconds(10),
     cancellationToken);
+
+SharpLinkAssemblyReplacementResult replaced = await server.ReplaceAssemblyAsync(
+    pluginAssembly,
+    nextPluginAssembly,
+    TimeSpan.FromSeconds(10),
+    cancellationToken);
+if (!replaced.Succeeded)
+    Console.Error.WriteLine($"{replaced.Error!.Code}: {replaced.Error.Message}");
 ```
 
-排空期间路由继续由原模块占有，新调用得到 `Unavailable: RPC module is draining`。超时会定点取消该模块的调用和流；业务代码不配合取消时 `ReferencesReleased=false`，框架在计数最终归零后后台完成释放。Client API 语义相同。NativeAOT 的运行时注册返回 `PlatformNotSupported`，静态 Manifest 路径不受影响。
+`ReplaceAssemblyAsync` 在修改线上状态前完成新 Manifest、Codec、Stub、Service 与 route 验证；旧 registration 拥有的 route 可由新程序集接管，但第三方 registration 的 route 仍受冲突保护。提交时只发布一次新不可变路由快照，随后复用注销路径排空旧调用。已进入旧 registration 的 Unary 和 Stream 固定使用旧 Codec、Stub、Service 与 Scope；新请求只读取新快照。
+
+普通注销的排空期间路由继续由原模块占有，新调用得到 `Unavailable: RPC module is draining`。替换和注销超时都会定点取消旧模块调用和流；业务代码不配合取消时 `ReferencesReleased=false`，框架在计数最终归零后后台完成释放。Client API 语义相同。NativeAOT 的运行时注册与替换返回 `PlatformNotSupported`，静态 Manifest 路径不受影响。
 
 客户端可以直接使用协议控制帧检查远端状态，不需要定义业务契约：
 

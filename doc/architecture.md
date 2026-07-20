@@ -190,7 +190,8 @@ SharpLink.Serializer.MemoryPack
 ## 动态程序集 Registry
 
 - Client/Server 各自持有带 generation 的原子不可变快照。注册在 RPC 路径外构造候选，只在短 writer gate 内重检 generation 和生命周期，然后用一次原子写发布；读路径不获取注册锁。
+- 原子替换在 writer gate 内从当前快照同时移除旧 registration route 并加入新 route，再用一次写发布；旧模块随后进入既有 Draining 状态机，已取得的调用和流租约不迁移。
 - Assembly 使用对象引用身份；同一对象重复注册失败，不同 ALC 的同名程序集可进入验证，但 Contract/Method 路由、Codec 和 Service 冲突仍按 ID、名称、schema 与完整指纹拒绝，且不部分提交。
 - 动态模块状态为 `Running -> Draining -> Released/DrainTimedOut`。动态调用持有固定 stripe 的缓存行隔离租约；静态项不计数，也不进入动态锁。
-- Draining 期间模块继续占有路由。排空超时只取消该模块调用和流；不合作业务保留路由及资源，直到后台观察到计数归零后再释放框架持有的 Manifest、Proxy、Stub、Codec、Service、Scope 与 Timer 引用。
+- 普通注销的 Draining 期间模块继续占有路由；原子替换则在进入 Draining 前先发布新 route。排空超时只取消该模块调用和流；不合作业务保留其已取得的资源，直到后台观察到计数归零后再释放框架持有的 Manifest、Proxy、Stub、Codec、Service、Scope 与 Timer 引用。
 - 依赖模块必须先注册且后注销；Stop/Dispose 与显式 Unregister 共享同一个幂等排空操作。NativeAOT 通过 feature switch 移除动态定位/计数路径，不提供反射 fallback。
