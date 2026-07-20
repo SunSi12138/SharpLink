@@ -469,8 +469,27 @@ internal sealed partial class SharpLinkServer(
 
     private async Task DisposeRegisteredServicesAsync()
     {
-        await ReleaseDrainedDynamicModulesAsync().ConfigureAwait(false);
-        await _serviceCleanup.DisposeAsync().ConfigureAwait(false);
+        Exception? firstException = null;
+        try
+        {
+            await ReleaseDrainedDynamicModulesAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            firstException = exception;
+        }
+
+        try
+        {
+            await _serviceCleanup.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            firstException ??= exception;
+        }
+
+        if (firstException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
     }
 
     private static async Task ObserveShutdownAndDisposeTokensAsync(

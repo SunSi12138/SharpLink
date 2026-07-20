@@ -483,13 +483,25 @@ internal sealed partial class SharpLinkServer
         KeyValuePair<Assembly, SharpLinkDynamicModule>[] modules;
         lock (_registryGate)
             modules = [.. _dynamicModules];
+
+        Exception? firstException = null;
         for (var index = 0; index < modules.Length; index++)
         {
             var pair = modules[index];
-            pair.Value.TryBeginDraining();
-            await pair.Value.WaitForDrainAsync().ConfigureAwait(false);
-            await ReleaseModuleAsync(pair.Key, pair.Value).ConfigureAwait(false);
+            try
+            {
+                pair.Value.TryBeginDraining();
+                await pair.Value.WaitForDrainAsync().ConfigureAwait(false);
+                await ReleaseModuleAsync(pair.Key, pair.Value).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                firstException ??= exception;
+            }
         }
+
+        if (firstException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
     }
 
     private bool IsAssemblyRegistered(Assembly assembly)

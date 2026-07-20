@@ -286,6 +286,50 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task ServerStopShouldFinishStaticCleanupAfterDynamicDisposalFailure()
+    {
+        ShutdownCleanupProbe.Reset();
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var plugin = PluginBundle.Load("dynamic-stop-disposal-failure");
+        RegisterAll(harness, plugin);
+
+        const string firstContractName = "SharpLink.DynamicPlugin.IFirstThrowingDisposalService";
+        const string secondContractName = "SharpLink.DynamicPlugin.ISecondThrowingDisposalService";
+        const string firstServiceName = "SharpLink.DynamicPlugin.FirstThrowingDisposalService";
+        const string secondServiceName = "SharpLink.DynamicPlugin.SecondThrowingDisposalService";
+        var firstContract = plugin.GetContractType(firstContractName);
+        var secondContract = plugin.GetContractType(secondContractName);
+        object? firstProxy = GetProxy(harness.Client, firstContract);
+        object? secondProxy = GetProxy(harness.Client, secondContract);
+        var staticProxy = harness.Client.Get<IShutdownCleanupProbe>();
+        plugin.InvokeServiceStatic(firstServiceName, "Reset");
+        plugin.InvokeServiceStatic(secondServiceName, "Reset");
+
+        Ensure(await InvokeValueTaskAsync<int>(
+            firstProxy, firstContract, "TouchAsync", 1, CancellationToken.None) == 11,
+            "first dynamic shutdown service activation");
+        Ensure(await InvokeValueTaskAsync<int>(
+            secondProxy, secondContract, "TouchAsync", 2, CancellationToken.None) == 22,
+            "second dynamic shutdown service activation");
+        Ensure(await staticProxy.TouchAsync(3, CancellationToken.None) == 103,
+            "static shutdown service activation");
+        plugin.InvokeServiceStatic(firstServiceName, "EnableDisposeFailure");
+
+        await harness.Client.StopAsync();
+        await harness.Server.StopAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(plugin.GetServiceStaticInt(firstServiceName, "Disposed") == 1,
+            "throwing dynamic service disposed once during stop");
+        Ensure(plugin.GetServiceStaticInt(secondServiceName, "Disposed") == 1,
+            "remaining dynamic service disposed after the first failure");
+        Ensure(ShutdownCleanupProbe.Disposed == 1,
+            "static service cleanup continues after dynamic module disposal fails");
+        firstProxy = null;
+        secondProxy = null;
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task FailedConnectionActivationShouldBeEvictedAndRetried()
     {
         await using var harness = await DynamicHarness.CreateAsync();
@@ -969,5 +1013,33 @@ public sealed class RuntimeAssemblyIntegrationTests
             _serverCancellation.Dispose();
             await _serviceProvider.DisposeAsync();
         }
+    }
+}
+
+[RpcContract]
+public interface IShutdownCleanupProbe : IService
+{
+    ValueTask<int> TouchAsync(int value, CancellationToken cancellationToken);
+}
+
+[RpcService]
+public sealed class ShutdownCleanupProbe : IShutdownCleanupProbe, IAsyncDisposable
+{
+    private static int _disposed;
+
+    internal static int Disposed => Volatile.Read(ref _disposed);
+
+    internal static void Reset() => Volatile.Write(ref _disposed, 0);
+
+    public ValueTask<int> TouchAsync(int value, CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        return ValueTask.FromResult(value + 100);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Interlocked.Increment(ref _disposed);
+        return ValueTask.CompletedTask;
     }
 }
