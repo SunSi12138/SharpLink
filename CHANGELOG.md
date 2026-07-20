@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-07-20
+
+### 性能
+
+- 静态 Singleton Unary 默认路径直接返回池化 `ValueTask`，不再为只负责等待响应的包装方法生成额外 async 状态机；`WaitForReady` 继续使用独立慢路径，取消、deadline、metadata、遥测和 interceptor 语义不变。
+- 客户端请求操作池和 PendingCall 池改用无节点分配的并发队列，移除稳态归还时的 `ConcurrentStack` 节点分配。
+- 同机五轮交替 A/B 的静态 Unary `add` 关键点中，五种传输相对 0.7.1 的 QPS 中位数提升 3.69%–13.10%，P99 均改善；进程级分配由约 482–520 B/op 降到约 138–166 B/op。
+- BenchmarkDotNet 的 `Rpc_Add` 精确分配由 672 B/op 降到 360–364 B/op；剩余调用上下文与 `AsyncLocal` 分配保留认证、授权和公共 `SharpLinkCallContext.Current` 语义。
+
+### 测试与文档
+
+- 完整性能矩阵增加 c256/c512，并把原始输出统一到 `artifacts/performance/v0.7.2/`；补充多连接、流式、CPU、锁竞争、Allocation 与历史版本二分证据。
+- 增加 0.7.2 性能报告和迁移说明。Protocol v2 wire format、公共 API、服务生命周期和资源上限均未改变。
+
 ## [0.7.1] - 2026-07-20
 
 ### 新增

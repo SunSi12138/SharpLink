@@ -136,6 +136,13 @@ SharpLink.Serializer.MemoryPack
 - Writer 优先直接返回映射内存；只有回卷、空间不足或已有待处理数据时使用有界池化 spill。累积 spill 与超环 staging 都使用池化 sequence segments，避免扩容时重复复制已积累字节。Reader 直接返回映射上的 `ReadOnlySequence<byte>`，只有跨环且协议尚未消费的半帧进入 staging。
 - 通知后端当前统一为 `named-pipe-control`。共享等待标志使用“设置后重新检查”：只有对端实际登记等待时才发控制信号，登记前发生的游标变化由重新检查观察，因此不依赖过期通知。data/space 可在一次 bitmask 写中合并，进程内 waiter 使用可复用的单消费者 ValueTask source。
 
+## 客户端 Unary 热路径
+
+- 静态、无遥测、无 interceptor、非 `WaitForReady` 的 Unary 调用直接把池化 `RpcRequestOperation<T>` 暴露为 `ValueTask<T>`；响应、错误、取消、deadline 和断连仍由 PendingRequestTable 的单一完成仲裁负责。
+- `WaitForReady` 保持独立异步慢路径，连接尚未就绪时仍按 deadline 与取消等待；默认调用不会为这个未启用能力创建包装状态机。
+- `RpcRequestOperation<T>` 与 PendingCall 使用有界、可清理的并发队列复用。队列槽位复用不改变请求 ID、资源上限或回收时清除 continuation 的要求。
+- Server `SharpLinkCallContext`、认证上下文和 `AsyncLocal` 流动没有被性能快路径绕过；它们是当前剩余稳态分配的主要来源。
+
 ## TCP TLS
 
 - `SocketClientTransportFactory` 在 TCP connect 后执行 `SslStream.AuthenticateAsClientAsync`，成功后才进入 RPC handshake。

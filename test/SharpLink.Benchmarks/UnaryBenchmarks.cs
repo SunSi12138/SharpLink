@@ -12,7 +12,7 @@ namespace SharpLink.Benchmarks;
     RunStrategy.Throughput,
     launchCount: 1,
     warmupCount: 3,
-    invocationCount:1024,
+    invocationCount: 4096,
     iterationCount: 10)]
 public class UnaryBenchmarks
 {

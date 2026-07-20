@@ -139,7 +139,7 @@ public class FlowControlHotPathBenchmarks
     private StreamFlowController _flowController = null!;
     private long[] _requestIds = null!;
 
-    [Params(1, 8, 32, 128)]
+    [Params(1, 8, 32, 128, 512)]
     public int FlowStreams { get; set; }
 
     [GlobalSetup]

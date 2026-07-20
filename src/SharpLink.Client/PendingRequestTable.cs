@@ -609,12 +609,12 @@ internal sealed class PendingRequestTable : IDisposable
     private static class RpcOperationPool<T>
     {
         private const int MaxRetainedOperations = 4096;
-        private static readonly ConcurrentStack<RpcRequestOperation<T>> Stack = new();
+        private static readonly ConcurrentQueue<RpcRequestOperation<T>> Queue = new();
         private static int _retainedCount;
 
         public static RpcRequestOperation<T> Rent()
         {
-            if (Stack.TryPop(out var operation))
+            if (Queue.TryDequeue(out var operation))
             {
                 Interlocked.Decrement(ref _retainedCount);
                 return operation;
@@ -634,14 +634,14 @@ internal sealed class PendingRequestTable : IDisposable
                     break;
             }
 
-            Stack.Push(operation);
+            Queue.Enqueue(operation);
         }
     }
 
     private sealed class PendingCall
     {
         private const int MaxRetained = 4096;
-        private static readonly ConcurrentStack<PendingCall> Pool = new();
+        private static readonly ConcurrentQueue<PendingCall> Pool = new();
         private static int s_retainedCount;
 
         private PendingRequestTable? _table;
@@ -667,7 +667,7 @@ internal sealed class PendingRequestTable : IDisposable
             long deadlineTimestamp,
             CancellationToken cancellationToken)
         {
-            if (!Pool.TryPop(out var call))
+            if (!Pool.TryDequeue(out var call))
                 call = new PendingCall();
             else
                 Interlocked.Decrement(ref s_retainedCount);
@@ -751,7 +751,7 @@ internal sealed class PendingRequestTable : IDisposable
                 if (Interlocked.CompareExchange(ref s_retainedCount, retained + 1, retained) == retained)
                     break;
             }
-            Pool.Push(this);
+            Pool.Enqueue(this);
         }
     }
 }

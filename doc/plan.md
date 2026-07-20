@@ -47,8 +47,9 @@
 ## 0.7.x：运行时模块与官方企业扩展包
 
 1. `0.7.0`（已完成）：实验性 SharedMemory 传输。
-2. `0.7.1`（实现中）：Generator Manifest 自动服务注册、`Singleton/Connection/Call` 生命周期与运行时程序集安全注册/注销。
-3. 后续版本：Discovery、Load Balancing 与只针对 `[Idempotent]` Unary 的 Resilience 扩展。
+2. `0.7.1`（已完成）：Generator Manifest 自动服务注册、`Singleton/Connection/Call` 生命周期与运行时程序集安全注册/注销。
+3. `0.7.2`（已完成）：静态 Singleton Unary 性能恢复、稳态分配削减与完整回归归因。
+4. 后续版本：Discovery、Load Balancing 与只针对 `[Idempotent]` Unary 的 Resilience 扩展。
 
 ## 0.8.0-rc：发布门禁
 

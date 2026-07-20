@@ -171,7 +171,7 @@ StreamLoadTest 专有：
 - SharedMemory 模式默认记录 negotiated capacity、notification backend、spill/wait/实际 notification 计数
 - 使用 `--detailed-shm-evidence` 时，额外记录直接写入、spill 原因与复制、staging、通知请求/合并及游标刷新；这些高频观测会扰动热路径，只能作为诊断证据
 
-`eng/run-performance-matrix.sh` 的 full tier 覆盖全部适用本机传输、三个 profile、payload `0/32/256/4096/65536/1048576`、并发 `1/8/32/128`、连接池 `1/1` 与 `1/4`。默认执行五轮，偶数轮反转传输顺序；原始 JSON 写入 `artifacts/perf`。SharedMemory 的正式基线必须取同平台 TCP、UDS、NamedPipe、AnonymousPipe 中最快的适用传输，不能只与 TCP 比较。NativeAOT 独立进程 smoke 使用 `eng/run-shared-memory-aot-process-smoke.sh`。
+`eng/run-performance-matrix.sh` 的 full tier 覆盖全部适用本机传输、三个 profile、payload `0/32/256/4096/65536/1048576`、并发 `1/8/32/128/256/512`、连接池 `1/1` 与 `1/4`。默认执行五轮，偶数轮反转传输顺序；原始 JSON 写入 `artifacts/performance/v0.7.2/matrix`。SharedMemory 的正式基线必须取同平台 TCP、UDS、NamedPipe、AnonymousPipe 中最快的适用传输，不能只与 TCP 比较。NativeAOT 独立进程 smoke 使用 `eng/run-shared-memory-aot-process-smoke.sh`。
 
 运行矩阵或 trace 前必须确认同机没有其他 LoadTest、StreamLoadTest、Chaos 或诊断采集进程。存在资源竞争时，整批吞吐、延迟、分配和 trace 均标记无效并从头重跑；错误数与资源归零仍可单独作为正确性线索，但不得转化为性能结论。
 
