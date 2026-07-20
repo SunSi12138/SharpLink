@@ -187,6 +187,41 @@ public sealed class AdmissionControlTests
         Ensure(controller.QueuedBytes == 0, "race queued bytes");
     }
 
+    [Test]
+    public async Task DeadlineThatLimitsQueueWaitShouldReturnDeadlineExceeded()
+    {
+        var options = new SharpLinkAdmissionControlOptions
+        {
+            MaxQueuedCalls = 1,
+            MaxQueuedBytes = 1024,
+            MaxQueueDelay = TimeSpan.FromSeconds(2)
+        };
+        options.Global.UseConcurrency(1);
+        await using var controller = SharpLinkAdmissionController.Create(options, []);
+        var first = await controller.AcquireAsync(
+            CreateContext(), 1, allowQueue: true, CancellationToken.None);
+        var deadlineContext = new SharpLinkAdmissionContext(
+            1,
+            2,
+            RpcMethodKind.Unary,
+            "connection",
+            authenticationContext: null,
+            metadata: null,
+            DateTimeOffset.UtcNow.AddMilliseconds(50));
+
+        var rejected = await controller.AcquireAsync(
+            deadlineContext, 1, allowQueue: true, CancellationToken.None);
+
+        Ensure(!rejected.IsAcquired, "deadline-limited call should be rejected");
+        Ensure(rejected.ErrorCode == SharpLinkErrorCode.DeadlineExceeded,
+            "deadline-limited call error code");
+        Ensure(rejected.Reason == "deadline", "deadline-limited call reason");
+        Ensure(controller.QueuedCalls == 0 && controller.QueuedBytes == 0,
+            "deadline queue accounting released");
+        first.Lease!.Dispose();
+        Ensure(controller.ActivePermits == 0, "deadline active permit released");
+    }
+
     private static SharpLinkAdmissionContext CreateContext()
         => new(1, 2, RpcMethodKind.Unary, "connection", null, null, null);
 

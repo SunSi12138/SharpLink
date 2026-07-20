@@ -230,13 +230,20 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             cancellationToken,
             _draining.Token);
         var maximumDelay = _maxQueueDelay;
+        var deadlineLimitsWait = false;
         if (deadline is { } absoluteDeadline)
         {
             var deadlineDelay = absoluteDeadline - DateTimeOffset.UtcNow;
             if (deadlineDelay <= TimeSpan.Zero)
+            {
                 maximumDelay = TimeSpan.Zero;
+                deadlineLimitsWait = true;
+            }
             else if (deadlineDelay < maximumDelay)
+            {
                 maximumDelay = deadlineDelay;
+                deadlineLimitsWait = true;
+            }
         }
         if (maximumDelay <= TimeSpan.Zero)
             waitCancellation.Cancel();
@@ -261,7 +268,13 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
-                    return AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);
+                    // The admission timer and the server deadline scheduler intentionally race.
+                    // Preserve the deadline result when this local bounded-wait timer wins;
+                    // otherwise identical calls could surface ResourceExhausted or
+                    // DeadlineExceeded depending on scheduler timing.
+                    return deadlineLimitsWait
+                        ? AdmissionDecision.Reject("deadline", SharpLinkErrorCode.DeadlineExceeded)
+                        : AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);
                 }
 
                 if (!waitedLease.IsAcquired)
