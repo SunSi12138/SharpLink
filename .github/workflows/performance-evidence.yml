@@ -1,0 +1,71 @@
+name: 0.7.4 Performance Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Alternating repetitions per scenario
+        required: true
+        default: '5'
+
+jobs:
+  performance-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_EVIDENCE_ROUNDS: ${{ inputs.rounds }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Run five-round load evidence
+        run: ./eng/run-v074-performance-evidence.sh
+
+      - name: Run admission RPC benchmark
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --
+          --filter '*AdmissionRpcBenchmarks*'
+          --artifacts artifacts/performance/v0.7.4/bdn/admission-rpc
+          --exporters json --iterationCount 5 --warmupCount 2
+
+      - name: Run admission controller benchmark
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --
+          --filter '*AdmissionControllerBenchmarks*'
+          --artifacts artifacts/performance/v0.7.4/bdn/admission-controller
+          --exporters json --iterationCount 5 --warmupCount 2
+
+      - name: Run representative compression provider benchmark
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --
+          --filter '*CompressionProviderBenchmarks.Compress*gzip*fastest*4096*True*'
+          --artifacts artifacts/performance/v0.7.4/bdn/compression-provider
+          --exporters json --iterationCount 5 --warmupCount 2
+
+      - name: Run representative compression RPC benchmark
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --
+          --filter '*CompressionRpcBenchmarks*gzip*fastest*4096*'
+          --artifacts artifacts/performance/v0.7.4/bdn/compression-rpc
+          --exporters json --iterationCount 5 --warmupCount 2
+
+      - name: Upload complete performance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sharplink-v0.7.4-performance-${{ github.sha }}
+          path: artifacts/performance/v0.7.4
+          if-no-files-found: error
+          retention-days: 30

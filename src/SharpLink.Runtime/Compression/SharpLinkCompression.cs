@@ -14,7 +14,11 @@ public readonly record struct SharpLinkCompressionResult(int ConsumedBytes, int 
 /// </remarks>
 public interface ISharpLinkCompressionProvider
 {
-    /// <summary>Gets the stable, case-sensitive wire token advertised during the handshake.</summary>
+    /// <summary>
+    /// Gets the stable, case-sensitive wire-profile token advertised during the handshake.
+    /// Every setting required for successful decoding, such as a dictionary identity, must be represented by this token.
+    /// Encode-only tuning such as compression level may differ between peers using the same token.
+    /// </summary>
     string Algorithm { get; }
 
     /// <summary>Compresses one single- or multi-segment business payload into a bounded output.</summary>
@@ -55,7 +59,10 @@ public sealed class SharpLinkCompressionOptions
     /// <summary>The maximum number of advertised providers.</summary>
     public const int MaxProviders = 16;
 
-    /// <summary>Gets providers in local preference order. An empty list completely disables compression.</summary>
+    /// <summary>
+    /// Gets wire-profile providers in local preference order. An empty list completely disables compression.
+    /// Multiple configurations may participate in negotiation when they expose distinct tokens.
+    /// </summary>
     public IList<ISharpLinkCompressionProvider> Providers { get; } = new List<ISharpLinkCompressionProvider>();
 
     /// <summary>Gets or sets the smallest business payload considered for compression.</summary>
@@ -124,14 +131,17 @@ public sealed class SharpLinkCompressionOptions
 public static class SharpLinkCompressionProviders
 {
     /// <summary>Creates a provider using <see cref="GZipStream"/>.</summary>
+    /// <param name="level">The local encoding preference. It is not negotiated and does not affect Gzip decoding compatibility.</param>
     public static ISharpLinkCompressionProvider CreateGzip(CompressionLevel level = CompressionLevel.Fastest)
         => new SystemCompressionProvider("gzip", SystemCompressionKind.Gzip, ValidateLevel(level));
 
     /// <summary>Creates a provider using <see cref="DeflateStream"/>.</summary>
+    /// <param name="level">The local encoding preference. It is not negotiated and does not affect Deflate decoding compatibility.</param>
     public static ISharpLinkCompressionProvider CreateDeflate(CompressionLevel level = CompressionLevel.Fastest)
         => new SystemCompressionProvider("deflate", SystemCompressionKind.Deflate, ValidateLevel(level));
 
     /// <summary>Creates a provider using <see cref="BrotliStream"/>.</summary>
+    /// <param name="level">The local encoding preference. It is not negotiated and does not affect Brotli decoding compatibility.</param>
     public static ISharpLinkCompressionProvider CreateBrotli(CompressionLevel level = CompressionLevel.Fastest)
         => new SystemCompressionProvider("brotli", SystemCompressionKind.Brotli, ValidateLevel(level));
 

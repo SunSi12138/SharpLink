@@ -21,11 +21,16 @@ public static class LoadTestTransportFactory
         SharpLinkPerformanceProfile performanceProfile = SharpLinkPerformanceProfile.Balanced,
         string? sharedMemoryName = null,
         int? sharedMemoryCapacity = null,
-        int? sharedMemorySpinCount = null)
+        int? sharedMemorySpinCount = null,
+        Action<SharpLinkRuntimeOptions>? configureRuntime = null)
     {
         var builder = configure(SharpLinkServerBuilder.Create())
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseRuntime(options => options.PerformanceProfile = performanceProfile)
+            .UseRuntime(options =>
+            {
+                options.PerformanceProfile = performanceProfile;
+                configureRuntime?.Invoke(options);
+            })
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
 
         return transport switch
@@ -56,11 +61,16 @@ public static class LoadTestTransportFactory
         TimeSpan? requestTimeout = null,
         string? sharedMemoryName = null,
         int? sharedMemoryCapacity = null,
-        int? sharedMemorySpinCount = null)
+        int? sharedMemorySpinCount = null,
+        Action<SharpLinkRuntimeOptions>? configureRuntime = null)
     {
         var builder = SharpClientBuilder.Create()
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseRuntime(options => options.PerformanceProfile = performanceProfile)
+            .UseRuntime(options =>
+            {
+                options.PerformanceProfile = performanceProfile;
+                configureRuntime?.Invoke(options);
+            })
             .UseConnectionPool(options =>
             {
                 options.MinConnections = minConnections;
@@ -104,14 +114,16 @@ public static class LoadTestTransportFactory
         TimeSpan? requestTimeout = null,
         string? sharedMemoryName = null,
         int? sharedMemoryCapacity = null,
-        int? sharedMemorySpinCount = null)
+        int? sharedMemorySpinCount = null,
+        Action<SharpLinkRuntimeOptions>? configureServerRuntime = null,
+        Action<SharpLinkRuntimeOptions>? configureClientRuntime = null)
     {
         if (transport != TransportMode.AnonymousPipe)
         {
             var server = CreateServer(
                 transport, bindIp, port, udsPath, pipeName,
                 heartbeatCheckIntervalSeconds, heartbeatTimeoutSeconds, configure, performanceProfile,
-                sharedMemoryName, sharedMemoryCapacity, sharedMemorySpinCount);
+                sharedMemoryName, sharedMemoryCapacity, sharedMemorySpinCount, configureServerRuntime);
             var client = CreateClient(
                 transport,
                 host,
@@ -127,13 +139,18 @@ public static class LoadTestTransportFactory
                 requestTimeout,
                 sharedMemoryName,
                 sharedMemoryCapacity,
-                sharedMemorySpinCount);
+                sharedMemorySpinCount,
+                configureClientRuntime);
             return new LocalHarness(server, client, static () => { });
         }
 
         var serverBuilder = configure(SharpLinkServerBuilder.Create())
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseRuntime(options => options.PerformanceProfile = performanceProfile)
+            .UseRuntime(options =>
+            {
+                options.PerformanceProfile = performanceProfile;
+                configureServerRuntime?.Invoke(options);
+            })
             .UseAnonymousPipe()
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
         var anonymousPipeAllocator = (IAnonymousPipeAllocator)serverBuilder.Transport!;
@@ -143,7 +160,11 @@ public static class LoadTestTransportFactory
         var clientAnonymous = SharpClientBuilder.Create()
             .UseTransport(new AnonymousPipeClientTransportFactory(inHandler, outHandler))
             .UseSerializer(MemoryPackCodec.Resolver)
-            .UseRuntime(options => options.PerformanceProfile = performanceProfile)
+            .UseRuntime(options =>
+            {
+                options.PerformanceProfile = performanceProfile;
+                configureClientRuntime?.Invoke(options);
+            })
             .UseConnectionPool(options =>
             {
                 options.MinConnections = minConnections;

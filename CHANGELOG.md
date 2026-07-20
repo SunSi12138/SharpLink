@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-07-20
+
 ### 新增
 
 - Protocol v2 minor 3 增加有界、确定性的压缩算法协商；Request/Response/StreamData 只压缩业务 payload，保持路由、deadline、metadata 和 stream ID 可在分配前验证。
@@ -16,6 +18,7 @@
 - 解压在精确有界 owner 中核验 consumed/written、原始长度和内置 Provider 完整性尾部；截断、损坏与尾部垃圾只终止当前调用/流，健康连接继续使用。
 - 压缩默认关闭；普通 RPC 仅增加 Session 级空 Provider 分支，SendPump 不感知压缩且不新增锁、后台任务或每调用状态。
 - Admission 默认关闭；普通调用只增加 Server 级空 controller 分支。拒绝调用保持连接健康，OneWay 不伪造执行成功，分区池机会式回收且不会永久增长。
+- 压缩 token 明确定义为完整 wire profile：内置 `CompressionLevel` 可按方向独立配置，dictionary 等影响解码的设置必须使用不同 token；五轮吞吐矩阵覆盖关闭、三算法、Fastest/Optimal/Smallest、收益阈值和可压缩/随机数据。
 
 ## [0.7.3] - 2026-07-20
 

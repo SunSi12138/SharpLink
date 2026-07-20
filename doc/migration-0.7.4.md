@@ -10,6 +10,8 @@ Protocol v2 minor 升为 3，HandshakeRequest/Response 增加压缩算法 token�
 
 在 Client 与 Server 的 `UseRuntime` 中按偏好添加 Provider。内置 Gzip、Deflate、Brotli 只依赖 `System.IO.Compression`；自定义 Provider 必须线程安全、NativeAOT 安全，完整消费输入并准确报告 written bytes。框架仅在达到 payload、最小字节收益和最小比例三个阈值时发送压缩候选。
 
+协商 token 表示 wire profile，不是算法参数字典。内置 `CompressionLevel` 只影响本地方向的编码成本和压缩比，因此两端可以不同且不进入握手；dictionary identity、window/profile 限制等影响解码的设置必须编码到不同 token，并注册为不同 Provider。不要让两个不兼容配置复用同一 token。
+
 ## 启用 admission control
 
 服务端调用 `UseAdmissionControl` 并至少配置一个 Global、Contract、Method 或 Partition 限制。等待只有在 `MaxQueuedCalls`、`MaxQueuedBytes` 和 `MaxQueueDelay` 三者都为正数时启用；任一缺失会在 Build 前明确失败。公共配置模型不暴露 `System.Threading.RateLimiting` 类型，但 `SharpLink.Server` 包新增该成熟实现的 10.0.2 运行时依赖。

@@ -76,6 +76,27 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    public async Task EncodingLevelsMayDifferAcrossOneNegotiatedWireProfile()
+    {
+        var clientProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli(
+            System.IO.Compression.CompressionLevel.Optimal));
+        var serverProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli(
+            System.IO.Compression.CompressionLevel.SmallestSize));
+        await using var harness = await TestHarness.CreateAsync(
+            clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
+            serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
+
+        var payload = Enumerable.Repeat((byte)0x2a, 16 * 1024).ToArray();
+        var response = await harness.Client.Get<ICompressionService>().EchoBytesAsync(payload);
+
+        Ensure(response.SequenceEqual(payload), "different local encoding levels");
+        Ensure(clientProvider.CompressCount > 0 && clientProvider.DecompressCount > 0,
+            "client should encode and decode with its local provider configuration");
+        Ensure(serverProvider.CompressCount > 0 && serverProvider.DecompressCount > 0,
+            "server should encode and decode with its local provider configuration");
+    }
+
+    [Test]
     public async Task ServerProviderOrderShouldSelectFirstMutualAlgorithm()
     {
         var clientGzip = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateGzip());

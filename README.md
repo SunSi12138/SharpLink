@@ -165,7 +165,7 @@ var server = SharpLinkServerBuilder.Create()
     .Build();
 ```
 
-内置 Provider 只使用框架自带的 `System.IO.Compression`，同时提供 Gzip、Deflate 和 Brotli。自定义 Provider 实现 `ISharpLinkCompressionProvider`，token 必须是唯一的 1–64 字节规范 ASCII；实现必须线程安全、NativeAOT 安全，并准确返回 consumed/written bytes。压缩只覆盖业务 payload，路由、deadline、metadata 与 stream ID 保持未压缩；默认收益门槛为 1024 B、64 B 和 5%。完整 wire 格式和故障域见 [`doc/protocol-v2.md`](doc/protocol-v2.md)。
+内置 Provider 只使用框架自带的 `System.IO.Compression`，同时提供 Gzip、Deflate 和 Brotli，并允许为每个方向选择 `CompressionLevel`。自定义 Provider 实现 `ISharpLinkCompressionProvider`，token 必须是唯一的 1–64 字节规范 ASCII；token 表示完整 wire profile，dictionary 等影响解码的配置必须进入 token，只影响编码成本的 level 不协商。实现必须线程安全、NativeAOT 安全，并准确返回 consumed/written bytes。压缩只覆盖业务 payload，路由、deadline、metadata 与 stream ID 保持未压缩；默认收益门槛为 1024 B、64 B 和 5%。完整 wire 格式和故障域见 [`doc/protocol-v2.md`](doc/protocol-v2.md)。
 
 ## 主动接入控制
 
@@ -518,6 +518,7 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 0.6.10 迁移：`doc/migration-0.6.10.md`
 - 0.7.1 迁移：`doc/migration-0.7.1.md`
 - 0.7.2 性能与迁移：`doc/performance-0.7.2.md`、`doc/migration-0.7.2.md`
+- 0.7.4 压缩、接入控制与性能：`doc/migration-0.7.4.md`、`doc/performance-0.7.4.md`
 - 0.6.10 性能与 Chaos：`doc/performance-0.6.10.md`、`doc/chaos-0.6.10.md`
 - 贡献指南：`CONTRIBUTING.md`
 - 更新日志：`CHANGELOG.md`
