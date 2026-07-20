@@ -414,7 +414,7 @@ public interface IHelloService : SharpLink.Sdk.IService
             .Select(static tree => tree.GetText().ToString())
             .First(static text => text.Contains("__SharpLinkContractManifest", StringComparison.Ordinal));
         const string startMarker = "internal const string Json = @\"";
-        const string endMarker = "\";\n}";
+        const string endMarker = "\";";
         var start = generated.IndexOf(startMarker, StringComparison.Ordinal) + startMarker.Length;
         var end = generated.LastIndexOf(endMarker, StringComparison.Ordinal);
         Ensure(start >= startMarker.Length && end > start, "generated contract Manifest constant");
