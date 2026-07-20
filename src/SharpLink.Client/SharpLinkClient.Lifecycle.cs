@@ -258,17 +258,27 @@ internal sealed partial class SharpLinkClient
                 SharpLinkErrorCode.ResourceExhausted,
                 $"Authentication payload exceeds {_protocolOptions.MaxMetadataBytes} bytes.");
         }
-        var handshakeRequest = new ProtocolV2HandshakeRequest(
-            ProtocolV2Constants.MinorVersion,
+        var compressionAlgorithms = _runtimeContext.Compression.Providers.Count == 0
+            ? ReadOnlyMemory<string>.Empty
+            : _runtimeContext.Compression.Providers
+                .Select(static provider => provider.Algorithm)
+                .ToArray();
+        var supportedCapabilities =
             ProtocolV2Capabilities.Metadata |
             ProtocolV2Capabilities.FlowControl |
             ProtocolV2Capabilities.HealthCheck |
-            ProtocolV2Capabilities.CancellationReason,
+            ProtocolV2Capabilities.CancellationReason;
+        if (!compressionAlgorithms.IsEmpty)
+            supportedCapabilities |= ProtocolV2Capabilities.Compression;
+        var handshakeRequest = new ProtocolV2HandshakeRequest(
+            ProtocolV2Constants.MinorVersion,
+            supportedCapabilities,
             ProtocolV2Capabilities.None,
             _protocolOptions.MaxFramePayloadBytes,
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
-            authPayload);
+            authPayload,
+            compressionAlgorithms);
         await session.SendHandshakeRequestAndFlushAsync(handshakeRequest, _protocolOptions, ct).ConfigureAwait(false);
 
         var reader = session.Input;
@@ -296,6 +306,11 @@ internal sealed partial class SharpLinkClient
                         var runtimeSession = (RpcSession)session;
                         runtimeSession.NegotiatedCapabilities = response.NegotiatedCapabilities;
                         runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
+                        var compressionProvider = ValidateNegotiatedCompression(
+                            response,
+                            compressionAlgorithms.Span);
+                        if (compressionProvider is not null)
+                            runtimeSession.EnableCompression(compressionProvider);
                         if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
                         {
                             runtimeSession.EnableStreamFlowControl(
@@ -343,6 +358,38 @@ internal sealed partial class SharpLinkClient
             : CreateConnectionClosedException("Server disconnected during handshake.");
     }
 
+    private ISharpLinkCompressionProvider? ValidateNegotiatedCompression(
+        in ProtocolV2HandshakeResponse response,
+        ReadOnlySpan<string> offeredAlgorithms)
+    {
+        var negotiated =
+            (response.NegotiatedCapabilities & ProtocolV2Capabilities.Compression) != 0;
+        if (!negotiated)
+        {
+            if (response.CompressionAlgorithm is not null)
+            {
+                throw CreateProtocolViolationException(
+                    "The server selected a compression algorithm without negotiating compression.");
+            }
+            return null;
+        }
+        if (response.CompressionAlgorithm is not { } algorithm)
+            throw CreateProtocolViolationException("Negotiated compression is missing its selected algorithm.");
+
+        var offered = false;
+        foreach (var candidate in offeredAlgorithms)
+        {
+            if (string.Equals(candidate, algorithm, StringComparison.Ordinal))
+            {
+                offered = true;
+                break;
+            }
+        }
+        var provider = offered ? _runtimeContext.Compression.FindProvider(algorithm) : null;
+        return provider ?? throw CreateProtocolViolationException(
+            $"The server selected compression algorithm '{algorithm}' that the client did not offer.");
+    }
+
     private async Task ProcessRequestLoop(ClientConnection connection, CancellationToken ct)
     {
         var session = connection.Session;
@@ -359,8 +406,30 @@ internal sealed partial class SharpLinkClient
                 {
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                     session.LastActive = DateTime.UtcNow;
-                    switch (header.Type)
-                    { 
+                    IRpcByteBufferWriter? decodedOwner = null;
+                    try
+                    {
+                        payload = session.DecodeInboundPayload(
+                            header.Type, header.Flags, payload, ct, out decodedOwner);
+                    }
+                    catch (SharpLinkException exception) when (
+                        exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
+                    {
+                        var requestId = unchecked((long)header.RequestId);
+                        if (header.Type == ProtocolV2FrameType.Response)
+                            connection.PendingCalls.DispatchError(requestId, exception);
+                        else if (header.Type == ProtocolV2FrameType.StreamData)
+                            session.StreamManager.CompleteStream(
+                                requestId,
+                                RpcSession.ReadCompressedStreamId(payload),
+                                exception);
+                        continue;
+                    }
+
+                    try
+                    {
+                        switch (header.Type)
+                        {
                         case ProtocolV2FrameType.Ping:
                             session.SendPongAsync(ReadMonotonicTimestamp(payload));
                             break;
@@ -408,11 +477,16 @@ internal sealed partial class SharpLinkClient
                         case ProtocolV2FrameType.HandshakeResponse:
                         case ProtocolV2FrameType.Request:
                         case ProtocolV2FrameType.HealthCheck:
-                        default:
-                            SharpLinkTelemetry.RecordProtocolFailure("client");
-                            await session.DisposeAsync();
-                            HandleDisconnected(connection, CreateProtocolViolationException("Received unexpected packet from server."));
-                            return;
+                            default:
+                                SharpLinkTelemetry.RecordProtocolFailure("client");
+                                await session.DisposeAsync();
+                                HandleDisconnected(connection, CreateProtocolViolationException("Received unexpected packet from server."));
+                                return;
+                        }
+                    }
+                    finally
+                    {
+                        session.ReturnDecodedPayload(decodedOwner);
                     }
                 }
 

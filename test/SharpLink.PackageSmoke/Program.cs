@@ -48,7 +48,8 @@ public static class Program
         CancellationToken cancellationToken)
     {
         var sharedMemoryName = $"sharplink-package-smoke-{Guid.NewGuid():N}";
-        var serverBuilder = SharpLinkServerBuilder.Create();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .UseRuntime(ConfigureCompression);
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
         else
@@ -60,7 +61,8 @@ public static class Program
         var server = serverBuilder.Build();
         var serverTask = RunServerAsync(server, cancellationToken);
 
-        var clientBuilder = SharpClientBuilder.Create();
+        var clientBuilder = SharpClientBuilder.Create()
+            .UseRuntime(ConfigureCompression);
         if (useSharedMemory)
             clientBuilder.UseSharedMemory(sharedMemoryName);
         else
@@ -77,7 +79,7 @@ public static class Program
                 throw new InvalidOperationException($"Package smoke returned {result} instead of 42.");
 
             var expected = new PackageSmokeEnvelope(
-                "native-codec",
+                new string('p', 4096),
                 new PackageSmokeAddress("Shanghai", 200000),
                 [1, 2, 3]);
             var actual = await proxy.EchoAsync(expected);
@@ -110,4 +112,7 @@ public static class Program
         {
         }
     }
+
+    private static void ConfigureCompression(SharpLinkRuntimeOptions options)
+        => options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateGzip());
 }

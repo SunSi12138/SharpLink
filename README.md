@@ -145,6 +145,28 @@ var client = SharpClientBuilder.Create()
 
 生成 manifest 由所属程序集锚定，进程 Catalog 只保留有界弱引用；每个 Client/Server 在 Build 或运行时注册时发布自己的 Registry 快照，因此同进程实例不会互相覆盖。`test/SharpLink.AotSmoke` 使用纯生成 Codec 完成 NativeAOT publish/run，不扫描程序集或调用 `MakeGenericType`。
 
+## 协商压缩
+
+压缩默认完全关闭。Client 与 Server 分别按本地偏好注册 Provider；握手有交集时 Server 选择自身列表中的第一个算法，没有交集或只有一端启用时自动发送原始帧：
+
+```csharp
+var server = SharpLinkServerBuilder.Create()
+    .UseTcp(5000)
+    .UseRuntime(options =>
+    {
+        options.Compression.Providers.Add(
+            SharpLinkCompressionProviders.CreateBrotli());
+        options.Compression.Providers.Add(
+            SharpLinkCompressionProviders.CreateGzip());
+        options.Compression.MinimumPayloadBytes = 2048;
+        options.Compression.MinimumSavingsBytes = 96;
+        options.Compression.MinimumSavingsRatio = 0.08;
+    })
+    .Build();
+```
+
+内置 Provider 只使用框架自带的 `System.IO.Compression`，同时提供 Gzip、Deflate 和 Brotli。自定义 Provider 实现 `ISharpLinkCompressionProvider`，token 必须是唯一的 1–64 字节规范 ASCII；实现必须线程安全、NativeAOT 安全，并准确返回 consumed/written bytes。压缩只覆盖业务 payload，路由、deadline、metadata 与 stream ID 保持未压缩；默认收益门槛为 1024 B、64 B 和 5%。完整 wire 格式和故障域见 [`doc/protocol-v2.md`](doc/protocol-v2.md)。
+
 ## 传输说明
 
 - `NamedPipe` 在 Unix/macOS 下最终会映射到 Unix Domain Socket 路径

@@ -229,6 +229,15 @@ public sealed partial class RpcSession : IRpcSession
             throw terminal.Exception;
         }
 
+        try
+        {
+            packet = PrepareOutboundPacket(packet, CancellationToken.None);
+        }
+        catch
+        {
+            RuntimeContext.Buffers.Return(packet);
+            throw;
+        }
         ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
 
         var result = GetOrCreatePump().TryEnqueue(new OwnedFrame(packet, forceFlush: false, flushCompletion: null));
@@ -268,6 +277,18 @@ public sealed partial class RpcSession : IRpcSession
             throw terminal.Exception;
         }
 
+        if (!allowEmpty)
+        {
+            try
+            {
+                packet = PrepareOutboundPacket(packet, ct);
+            }
+            catch
+            {
+                RuntimeContext.Buffers.Return(packet);
+                throw;
+            }
+        }
         ValidateOutboundPacketOrReturn(packet, allowEmpty);
 
         var completion = forceFlush

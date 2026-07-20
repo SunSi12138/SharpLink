@@ -500,8 +500,8 @@ public class TransportConnectionIntegrationTests
                 requestWriter,
                 new ProtocolV2HandshakeRequest(
                     ProtocolV2Constants.MinorVersion,
-                    ProtocolV2Capabilities.Compression,
-                    ProtocolV2Capabilities.Compression,
+                    (ProtocolV2Capabilities)(1UL << 63),
+                    (ProtocolV2Capabilities)(1UL << 63),
                     SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
                     1024 * 1024,
                     16 * 1024 * 1024,

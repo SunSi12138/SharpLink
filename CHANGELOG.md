@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### 新增
+
+- Protocol v2 minor 3 增加有界、确定性的压缩算法协商；Request/Response/StreamData 只压缩业务 payload，保持路由、deadline、metadata 和 stream ID 可在分配前验证。
+- `SharpLinkRuntimeOptions.Compression` 支持 Gzip、Deflate、Brotli 以及线程安全的自定义 `ISharpLinkCompressionProvider`，默认按 1024 B、64 B 与 5% 三重收益门槛选择候选帧。
+
+### 安全性与性能
+
+- 解压在精确有界 owner 中核验 consumed/written、原始长度和内置 Provider 完整性尾部；截断、损坏与尾部垃圾只终止当前调用/流，健康连接继续使用。
+- 压缩默认关闭；普通 RPC 仅增加 Session 级空 Provider 分支，SendPump 不感知压缩且不新增锁、后台任务或每调用状态。
+
 ## [0.7.3] - 2026-07-20
 
 ### 新增

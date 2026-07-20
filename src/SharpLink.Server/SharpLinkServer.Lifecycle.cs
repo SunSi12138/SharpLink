@@ -331,6 +331,8 @@ internal sealed partial class SharpLinkServer
                     ProtocolV2Capabilities.FlowControl |
                     ProtocolV2Capabilities.HealthCheck |
                     ProtocolV2Capabilities.CancellationReason;
+                if (_runtimeContext.Compression.Providers.Count != 0)
+                    supportedCapabilities |= ProtocolV2Capabilities.Compression;
                 if (header.Type != ProtocolV2FrameType.HandshakeRequest)
                 {
                     authResult = SharpLinkAuthenticationResult.Reject(
@@ -347,6 +349,13 @@ internal sealed partial class SharpLinkServer
                             SharpLinkErrorCode.Unimplemented,
                             $"Required capabilities are unsupported: {unsupportedRequired}.");
                     }
+                    else if ((request.RequiredCapabilities & ProtocolV2Capabilities.Compression) != 0 &&
+                             SelectCompressionProvider(request) is null)
+                    {
+                        authResult = SharpLinkAuthenticationResult.Reject(
+                            SharpLinkErrorCode.Unimplemented,
+                            "Required compression has no mutually supported algorithm.");
+                    }
                     else
                     {
                         authResult = await AuthenticateAsync(session, request.AuthenticationPayload, ct)
@@ -356,15 +365,22 @@ internal sealed partial class SharpLinkServer
 
                 if (authResult.IsAuthenticated)
                 {
+                    var compressionProvider = SelectCompressionProvider(request);
+                    var negotiatedCapabilities = request.SupportedCapabilities & supportedCapabilities;
+                    if (compressionProvider is null)
+                        negotiatedCapabilities &= ~ProtocolV2Capabilities.Compression;
                     var response = new ProtocolV2HandshakeResponse(
                         Math.Min(request.MinorVersion, ProtocolV2Constants.MinorVersion),
-                        request.SupportedCapabilities & supportedCapabilities,
+                        negotiatedCapabilities,
                         Math.Min(request.MaxFramePayloadBytes, _protocolOptions.MaxFramePayloadBytes),
                         Math.Min(request.StreamReceiveWindowBytes, _runtimeContext.FlowControl.StreamReceiveWindowBytes),
-                        Math.Min(request.ConnectionReceiveWindowBytes, _runtimeContext.FlowControl.ConnectionReceiveWindowBytes));
+                        Math.Min(request.ConnectionReceiveWindowBytes, _runtimeContext.FlowControl.ConnectionReceiveWindowBytes),
+                        compressionProvider?.Algorithm);
                     var runtimeSession = (RpcSession)session;
                     runtimeSession.NegotiatedCapabilities = response.NegotiatedCapabilities;
                     runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
+                    if (compressionProvider is not null)
+                        runtimeSession.EnableCompression(compressionProvider);
                     if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
                     {
                         runtimeSession.EnableStreamFlowControl(
@@ -406,6 +422,26 @@ internal sealed partial class SharpLinkServer
         return SharpLinkAuthenticationResult.Reject(
             SharpLinkErrorCode.ConnectionClosed,
             "Client disconnected during handshake.");
+    }
+
+    private ISharpLinkCompressionProvider? SelectCompressionProvider(
+        in ProtocolV2HandshakeRequest request)
+    {
+        if ((request.SupportedCapabilities & ProtocolV2Capabilities.Compression) == 0 ||
+            request.CompressionAlgorithms.IsEmpty)
+        {
+            return null;
+        }
+
+        foreach (var provider in _runtimeContext.Compression.Providers)
+        {
+            foreach (var algorithm in request.CompressionAlgorithms.Span)
+            {
+                if (string.Equals(provider.Algorithm, algorithm, StringComparison.Ordinal))
+                    return provider;
+            }
+        }
+        return null;
     }
 
     private async ValueTask<SharpLinkAuthenticationResult> AuthenticateAsync(
@@ -478,10 +514,38 @@ internal sealed partial class SharpLinkServer
                     {
                         SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                         session.LastActive = DateTime.UtcNow;
+                        IRpcByteBufferWriter? decodedOwner = null;
+                        try
+                        {
+                            payload = ((RpcSession)session).DecodeInboundPayload(
+                                header.Type, header.Flags, payload, ct, out decodedOwner);
+                        }
+                        catch (SharpLinkException exception) when (
+                            exception.Code is SharpLinkErrorCode.DataLoss or SharpLinkErrorCode.Internal)
+                        {
+                            var failedRequestId = unchecked((long)header.RequestId);
+                            if (header.Type == ProtocolV2FrameType.Request)
+                            {
+                                if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
+                                    Interlocked.Increment(ref _rejectedOneWayCalls);
+                                else
+                                    session.SendRpcErrorAsync(failedRequestId, exception);
+                            }
+                            else if (header.Type == ProtocolV2FrameType.StreamData)
+                            {
+                                session.StreamManager.CompleteStream(
+                                    failedRequestId,
+                                    RpcSession.ReadCompressedStreamId(payload),
+                                    exception);
+                            }
+                            continue;
+                        }
                         // 3. 处理完整的消息 (这里不需要 await 阻塞网络读取，最好由 Task.Run 处理业务)
                         // 注意：messagePayload 在 Advance 之后就会失效，如果需要异步处理，必须 Copy
-                        switch (header.Type)
+                        try
                         {
+                            switch (header.Type)
+                            {
                             case ProtocolV2FrameType.Ping:
                                 DebugLogClientHeartbeatReceived(_logger);
                                 session.LastActive = DateTime.UtcNow;
@@ -573,12 +637,17 @@ internal sealed partial class SharpLinkServer
                             case ProtocolV2FrameType.HandshakeResponse:
                             case ProtocolV2FrameType.Response:
                             case ProtocolV2FrameType.HealthResponse:
-                            default:
-                            {
-                                SharpLinkTelemetry.RecordProtocolFailure("server");
-                                await session.DisposeAsync();
-                                break;
+                                default:
+                                {
+                                    SharpLinkTelemetry.RecordProtocolFailure("server");
+                                    await session.DisposeAsync();
+                                    break;
+                                }
                             }
+                        }
+                        finally
+                        {
+                            ((RpcSession)session).ReturnDecodedPayload(decodedOwner);
                         }
                     }
 

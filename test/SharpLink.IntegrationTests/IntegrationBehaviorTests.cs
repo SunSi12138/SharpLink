@@ -52,6 +52,185 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    public async Task NegotiatedBrotliShouldCompressUnaryRequestAndResponse()
+    {
+        var clientProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
+        var serverProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
+        await using var harness = await TestHarness.CreateAsync(
+            clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
+            serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
+
+        var source = new Person
+        {
+            Name = new string('a', 16 * 1024),
+            Age = 7,
+            Tags = [new string('b', 4096)]
+        };
+        var response = await harness.Client.Get<ITestService>().EchoAsync(source);
+
+        Ensure(response.Name == source.Name + "-r", "compressed unary response");
+        Ensure(clientProvider.CompressCount > 0 && clientProvider.DecompressCount > 0,
+            "client compression provider should handle both directions");
+        Ensure(serverProvider.CompressCount > 0 && serverProvider.DecompressCount > 0,
+            "server compression provider should handle both directions");
+    }
+
+    [Test]
+    public async Task ServerProviderOrderShouldSelectFirstMutualAlgorithm()
+    {
+        var clientGzip = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateGzip());
+        var clientBrotli = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
+        var serverBrotli = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
+        var serverGzip = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateGzip());
+        await using var harness = await TestHarness.CreateAsync(
+            clientRuntimeConfigure: options =>
+            {
+                options.Compression.Providers.Add(clientGzip);
+                options.Compression.Providers.Add(clientBrotli);
+            },
+            serverRuntimeConfigure: options =>
+            {
+                options.Compression.Providers.Add(serverBrotli);
+                options.Compression.Providers.Add(serverGzip);
+            });
+
+        var result = await harness.Client.Get<ICompressionService>()
+            .EchoBytesAsync(Enumerable.Repeat((byte)3, 4096).ToArray());
+        Ensure(result.Length == 4096, "provider preference call");
+        Ensure(clientBrotli.CompressCount > 0 && serverBrotli.DecompressCount > 0,
+            "server-first mutual provider should be selected");
+        Ensure(clientGzip.CompressCount == 0 && serverGzip.DecompressCount == 0,
+            "lower-priority provider should remain idle");
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task OneSidedOrDisjointCompressionShouldFallBackToRawFrames(bool oneSided)
+    {
+        var clientProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateGzip());
+        var serverProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
+        await using var harness = await TestHarness.CreateAsync(
+            clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
+            serverRuntimeConfigure: oneSided
+                ? null
+                : options => options.Compression.Providers.Add(serverProvider));
+
+        var result = await harness.Client.Get<ITestService>().EchoAsync(new Person
+        {
+            Name = new string('x', 4096),
+            Age = 1,
+            Tags = ["fallback"]
+        });
+
+        Ensure(result.Age == 2, "fallback unary result");
+        Ensure(clientProvider.CompressCount == 0 && clientProvider.DecompressCount == 0,
+            "unselected client provider must remain idle");
+        Ensure(serverProvider.CompressCount == 0 && serverProvider.DecompressCount == 0,
+            "unselected server provider must remain idle");
+    }
+
+    [Test]
+    public async Task NegotiatedCompressionShouldCoverOneWayAndEveryStreamingShape()
+    {
+        CompressionService.ResetOneWay();
+        var clientProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateGzip());
+        var serverProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateGzip());
+        await using var harness = await TestHarness.CreateAsync(
+            clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
+            serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
+        var service = harness.Client.Get<ICompressionService>();
+        var payload = Enumerable.Repeat((byte)0x2a, 8192).ToArray();
+
+        var unary = await service.EchoBytesAsync(payload);
+        Ensure(unary.SequenceEqual(payload), "compressed unary bytes");
+
+        await service.NotifyBytesAsync(payload);
+        Ensure(await CompressionService.WaitForOneWayAsync().WaitAsync(TimeSpan.FromSeconds(2)) == payload.Length,
+            "compressed one-way execution");
+
+        var upload = await service.UploadBytesAsync(
+            ToAsyncEnumerable([payload, payload, payload], CancellationToken.None));
+        Ensure(upload == payload.Length * 3, "compressed client stream");
+
+        var download = await CollectAsync(service.DownloadBytesAsync(3, payload.Length), CancellationToken.None);
+        Ensure(download.Count == 3 && download.All(item => item.SequenceEqual(payload)),
+            "compressed server stream");
+
+        var duplex = await CollectAsync(
+            service.DuplexBytesAsync(ToAsyncEnumerable([payload, payload], CancellationToken.None)),
+            CancellationToken.None);
+        Ensure(duplex.Count == 2 && duplex.All(item => item.SequenceEqual(payload)),
+            "compressed duplex stream");
+
+        Ensure(clientProvider.CompressCount >= 5 && clientProvider.DecompressCount >= 5,
+            "client provider should cover streaming frames");
+        Ensure(serverProvider.CompressCount >= 5 && serverProvider.DecompressCount >= 5,
+            "server provider should cover streaming frames");
+    }
+
+    [Test]
+    public async Task SmallOrUnprofitablePayloadShouldRemainUncompressed()
+    {
+        var clientProvider = new CountingCompressionProvider(new NoBenefitCompressionProvider());
+        var serverProvider = new CountingCompressionProvider(new NoBenefitCompressionProvider());
+        await using var harness = await TestHarness.CreateAsync(
+            clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
+            serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
+        var service = harness.Client.Get<ICompressionService>();
+
+        var small = Enumerable.Repeat((byte)1, 128).ToArray();
+        Ensure((await service.EchoBytesAsync(small)).SequenceEqual(small), "small raw fallback");
+        Ensure(clientProvider.CompressCount == 0 && serverProvider.CompressCount == 0,
+            "small payload should bypass providers");
+
+        var large = Enumerable.Range(0, 4096).Select(static value => (byte)value).ToArray();
+        Ensure((await service.EchoBytesAsync(large)).SequenceEqual(large), "unprofitable raw fallback");
+        Ensure(clientProvider.CompressCount > 0 && serverProvider.CompressCount > 0,
+            "large payload should evaluate provider benefit");
+        Ensure(clientProvider.DecompressCount == 0 && serverProvider.DecompressCount == 0,
+            "unprofitable candidates must not reach the peer decoder");
+    }
+
+    [Test]
+    public async Task CompressionProviderFailureShouldFailOneCallAndKeepConnectionHealthy()
+    {
+        var clientProvider = new ThrowingCompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli(), throwOnCompress: true, throwOnDecompress: false);
+        await using var harness = await TestHarness.CreateAsync(
+            clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
+            serverRuntimeConfigure: options => options.Compression.Providers.Add(
+                SharpLinkCompressionProviders.CreateBrotli()));
+        var service = harness.Client.Get<ICompressionService>();
+
+        await EnsureThrowsSharpLinkFast(
+            service.EchoBytesAsync(Enumerable.Repeat((byte)7, 4096).ToArray()).AsTask(),
+            "custom compression failure",
+            SharpLinkErrorCode.Internal);
+        Ensure((await service.EchoBytesAsync(new byte[] { 1, 2, 3 })).SequenceEqual(new byte[] { 1, 2, 3 }),
+            "connection should remain healthy after local compression failure");
+    }
+
+    [Test]
+    public async Task DecompressionProviderFailureShouldReturnInternalAndKeepConnectionHealthy()
+    {
+        var serverProvider = new ThrowingCompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli(), throwOnCompress: false, throwOnDecompress: true);
+        await using var harness = await TestHarness.CreateAsync(
+            clientRuntimeConfigure: options => options.Compression.Providers.Add(
+                SharpLinkCompressionProviders.CreateBrotli()),
+            serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
+        var service = harness.Client.Get<ICompressionService>();
+
+        await EnsureThrowsSharpLinkFast(
+            service.EchoBytesAsync(Enumerable.Repeat((byte)7, 4096).ToArray()).AsTask(),
+            "custom decompression failure",
+            SharpLinkErrorCode.Internal);
+        Ensure((await service.EchoBytesAsync(new byte[] { 4, 5, 6 })).SequenceEqual(new byte[] { 4, 5, 6 }),
+            "connection should remain healthy after remote decompression failure");
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task OneByteFlowWindowsShouldResumeBothStreamDirections(bool useSharedMemory)
@@ -568,7 +747,9 @@ public class IntegrationBehaviorTests
             Action<SharpLinkRuntimeOptions>? runtimeConfigure = null,
             Action<SharpLinkConnectionPoolOptions>? poolConfigure = null,
             bool disableRequestTimeout = false,
-            bool useSharedMemory = false)
+            bool useSharedMemory = false,
+            Action<SharpLinkRuntimeOptions>? serverRuntimeConfigure = null,
+            Action<SharpLinkRuntimeOptions>? clientRuntimeConfigure = null)
         {
             codecResolver ??= MemoryPackCodec.Resolver;
             var cts = new CancellationTokenSource();
@@ -577,6 +758,8 @@ public class IntegrationBehaviorTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
             if (runtimeConfigure is not null)
                 serverBuilder.UseRuntime(runtimeConfigure);
+            if (serverRuntimeConfigure is not null)
+                serverBuilder.UseRuntime(serverRuntimeConfigure);
 
             var sharedMemoryName = $"sharplink-behavior-{Guid.NewGuid():N}";
             var port = 0;
@@ -618,6 +801,8 @@ public class IntegrationBehaviorTests
                 clientBuilder.UseTcp(IPAddress.Loopback.ToString(), port);
             if (runtimeConfigure is not null)
                 clientBuilder.UseRuntime(runtimeConfigure);
+            if (clientRuntimeConfigure is not null)
+                clientBuilder.UseRuntime(clientRuntimeConfigure);
             if (poolConfigure is not null)
                 clientBuilder.UseConnectionPool(poolConfigure);
 
@@ -658,6 +843,86 @@ public class IntegrationBehaviorTests
             await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
             _serverCts.Dispose();
         }
+    }
+
+    private sealed class CountingCompressionProvider(ISharpLinkCompressionProvider inner)
+        : ISharpLinkCompressionProvider
+    {
+        private int _compressCount;
+        private int _decompressCount;
+        public string Algorithm => inner.Algorithm;
+        public int CompressCount => Volatile.Read(ref _compressCount);
+        public int DecompressCount => Volatile.Read(ref _decompressCount);
+
+        public async ValueTask<SharpLinkCompressionResult> CompressAsync(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _compressCount);
+            return await inner.CompressAsync(input, output, maxOutputBytes, cancellationToken);
+        }
+
+        public async ValueTask<SharpLinkCompressionResult> DecompressAsync(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _decompressCount);
+            return await inner.DecompressAsync(input, output, maxOutputBytes, cancellationToken);
+        }
+    }
+
+    private sealed class NoBenefitCompressionProvider : ISharpLinkCompressionProvider
+    {
+        public string Algorithm => "test.identity/v1";
+
+        public ValueTask<SharpLinkCompressionResult> CompressAsync(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            foreach (var segment in input)
+                output.Write(segment.Span);
+            return ValueTask.FromResult(new SharpLinkCompressionResult(
+                checked((int)input.Length), checked((int)input.Length)));
+        }
+
+        public ValueTask<SharpLinkCompressionResult> DecompressAsync(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("Identity candidates must never be selected.");
+    }
+
+    private sealed class ThrowingCompressionProvider(
+        ISharpLinkCompressionProvider inner,
+        bool throwOnCompress,
+        bool throwOnDecompress) : ISharpLinkCompressionProvider
+    {
+        public string Algorithm => inner.Algorithm;
+
+        public ValueTask<SharpLinkCompressionResult> CompressAsync(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+            => throwOnCompress
+                ? throw new InvalidOperationException("Injected compression failure.")
+                : inner.CompressAsync(input, output, maxOutputBytes, cancellationToken);
+
+        public ValueTask<SharpLinkCompressionResult> DecompressAsync(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+            => throwOnDecompress
+                ? throw new InvalidOperationException("Injected decompression failure.")
+                : inner.DecompressAsync(input, output, maxOutputBytes, cancellationToken);
     }
 
     private sealed class MarkerPersonCodec(byte marker) : IRpcCodec<Person>
@@ -859,6 +1124,72 @@ public class TestService : ITestService
     }
 
     private static TaskCompletionSource CreateCompletionSource()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
+}
+
+[RpcContract]
+public interface ICompressionService : IService
+{
+    [NonCancellable]
+    ValueTask<byte[]> EchoBytesAsync(byte[] value);
+
+    [Oneway]
+    [NonCancellable]
+    ValueTask NotifyBytesAsync(byte[] value);
+
+    [NonCancellable]
+    ValueTask<int> UploadBytesAsync(IAsyncEnumerable<byte[]> values);
+
+    [NonCancellable]
+    IAsyncEnumerable<byte[]> DownloadBytesAsync(int count, int size);
+
+    [NonCancellable]
+    IAsyncEnumerable<byte[]> DuplexBytesAsync(IAsyncEnumerable<byte[]> values);
+}
+
+[RpcService]
+public sealed class CompressionService : ICompressionService
+{
+    private static TaskCompletionSource<int> s_oneWay = CreateOneWayCompletion();
+
+    internal static void ResetOneWay()
+        => Interlocked.Exchange(ref s_oneWay, CreateOneWayCompletion());
+
+    internal static Task<int> WaitForOneWayAsync() => Volatile.Read(ref s_oneWay).Task;
+
+    public ValueTask<byte[]> EchoBytesAsync(byte[] value) => ValueTask.FromResult(value);
+
+    public ValueTask NotifyBytesAsync(byte[] value)
+    {
+        Volatile.Read(ref s_oneWay).TrySetResult(value.Length);
+        return ValueTask.CompletedTask;
+    }
+
+    public async ValueTask<int> UploadBytesAsync(IAsyncEnumerable<byte[]> values)
+    {
+        var total = 0;
+        await foreach (var value in values)
+            total += value.Length;
+        return total;
+    }
+
+    public async IAsyncEnumerable<byte[]> DownloadBytesAsync(int count, int size)
+    {
+        var payload = Enumerable.Repeat((byte)0x2a, size).ToArray();
+        for (var index = 0; index < count; index++)
+        {
+            yield return payload;
+            await Task.Yield();
+        }
+    }
+
+    public async IAsyncEnumerable<byte[]> DuplexBytesAsync(IAsyncEnumerable<byte[]> values)
+    {
+        await foreach (var value in values)
+            yield return value;
+    }
+
+    private static TaskCompletionSource<int> CreateOneWayCompletion()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
 

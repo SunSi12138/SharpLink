@@ -55,6 +55,8 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext
 
     internal SharpLinkFlowControlOptions FlowControl => _options.FlowControl;
 
+    internal SharpLinkCompressionOptions Compression => _options.Compression;
+
     internal IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> CreateGeneratedCodecSnapshot()
         => ((RpcCodecProvider)Codecs).CreateGeneratedFactorySnapshot();
 
