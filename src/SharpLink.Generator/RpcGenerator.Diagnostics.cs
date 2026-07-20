@@ -221,6 +221,9 @@ public partial class RpcGenerator
     private static readonly DiagnosticDescriptor MethodRemovedCompatibilityRule = CompatibilityRule(
         "SHARPLINK034", "Existing RPC Method Was Removed");
 
+    private static readonly DiagnosticDescriptor ContractRemovedCompatibilityRule = CompatibilityRule(
+        "SHARPLINK035", "Existing RPC Contract Was Removed");
+
     private static readonly DiagnosticDescriptor ContractManifestOutputRule = new(
         id: "SHARPLINK036",
         title: "Contract Manifest Could Not Be Written",
@@ -228,6 +231,9 @@ public partial class RpcGenerator
         category: "SharpLink.Generator",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor ServiceRouteRemovedCompatibilityRule = CompatibilityRule(
+        "SHARPLINK037", "Existing Service Route Was Removed");
 
     private static DiagnosticDescriptor CompatibilityRule(string id, string title)
         => new(

@@ -15,6 +15,7 @@ public partial class RpcGenerator
         private readonly HashSet<string> _allowedAssemblyNames;
         private readonly HashSet<ITypeSymbol> _externalTypes = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<string, GeneratedCodecModel> _models = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, GeneratedEnumModel> _enums = new(StringComparer.Ordinal);
         private readonly HashSet<string> _failed = new(StringComparer.Ordinal);
         private readonly HashSet<string> _diagnosticKeys = new(StringComparer.Ordinal);
         private readonly List<DtoDiagnosticModel> _diagnostics = [];
@@ -42,7 +43,8 @@ public partial class RpcGenerator
 
             return new DtoGenerationResult(
                 _models.Values.OrderBy(static model => model.TypeName, StringComparer.Ordinal).ToImmutableArray(),
-                _diagnostics.ToImmutableArray());
+                _diagnostics.ToImmutableArray(),
+                _enums.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal).ToImmutableArray());
         }
 
         private void CollectCurrentAssemblyRoots(
@@ -159,6 +161,7 @@ public partial class RpcGenerator
         private void Visit(ITypeSymbol type, List<ITypeSymbol> stack, int depth)
         {
             _cancellationToken.ThrowIfCancellationRequested();
+            CollectEnums(type);
             var typeName = GetTypeName(type);
             if (_models.ContainsKey(typeName) || _failed.Contains(typeName) || IsBuiltin(type))
                 return;
@@ -261,6 +264,7 @@ public partial class RpcGenerator
             foreach (var member in memberSymbols)
             {
                 var memberType = GetMemberType(member);
+                CollectEnums(memberType);
                 var fieldId = GetMemberId(member, out var validId, out var hasExplicitId);
                 if (!validId)
                 {
@@ -376,6 +380,31 @@ public partial class RpcGenerator
             }
             foreach (var argument in named.TypeArguments)
                 CollectAssemblyDependencies(argument, identities);
+        }
+
+        private void CollectEnums(ITypeSymbol type)
+        {
+            if (type is IArrayTypeSymbol array)
+            {
+                CollectEnums(array.ElementType);
+                return;
+            }
+            if (type is not INamedTypeSymbol named)
+                return;
+            if (named.TypeKind == TypeKind.Enum && named.EnumUnderlyingType is { } underlying)
+            {
+                var typeName = GetTypeName(named);
+                if (!_enums.ContainsKey(typeName))
+                {
+                    _enums.Add(typeName, new GeneratedEnumModel(
+                        typeName,
+                        GetTypeName(underlying),
+                        named.Locations.FirstOrDefault()));
+                }
+                return;
+            }
+            foreach (var argument in named.TypeArguments)
+                CollectEnums(argument);
         }
 
         private List<ISymbol> GetSerializableMembers(INamedTypeSymbol type)

@@ -177,6 +177,13 @@ internal sealed partial class SharpLinkServer
                         "The new Assembly object is already registered on this server.",
                         newAssembly)));
                 }
+                if (_dynamicModules.Count >= MaximumDynamicModules)
+                {
+                    return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                        SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded,
+                        $"The server runtime module limit of {MaximumDynamicModules} has been reached; wait for a draining replacement to finish.",
+                        newAssembly)));
+                }
 
                 var replacementDependencyError = ValidateReplacementDependants(oldModule, manifest!);
                 if (replacementDependencyError is not null)

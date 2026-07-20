@@ -100,7 +100,7 @@ dotnet run --project demo/SeparatedClient/SeparatedClient.csproj
 </PropertyGroup>
 ```
 
-没有基线时只生成当前 Manifest。存在基线时，`SHARPLINK024`–`SHARPLINK034` 会在准确的 Contract、Method 或 DTO member 位置报告格式错误和破坏性变化，并在消息中给出修复方式。例如 DTO 成员重命名应显式保留旧 ID：
+没有基线时只生成当前 Manifest。存在基线时，`SHARPLINK024`–`SHARPLINK035` 与 `SHARPLINK037` 会在可用的 Contract、Method、DTO member 或 Service 位置报告格式错误和破坏性变化，并在消息中给出修复方式。例如 DTO 成员重命名应显式保留旧 ID：
 
 ```csharp
 public sealed class Customer

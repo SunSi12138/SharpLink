@@ -167,6 +167,36 @@ IAsyncEnumerable<long> Echo(int value, CancellationToken cancellationToken);
     }
 
     [Test]
+    public Task ContractAndServiceRouteRemovalShouldBeRejected()
+    {
+        var contractSource = SimpleContract(
+            "ValueTask<int> Echo(int value, CancellationToken cancellationToken);");
+        var contractBaseline = RunContractGenerator(contractSource).Json;
+        var removedContract = RunContractGenerator(BuildSource("public sealed class Implementation { }"), contractBaseline);
+        Ensure(removedContract.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK035"),
+            "contract removal diagnostic");
+
+        var serviceSource = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class HelloService : IHelloService
+{
+    public ValueTask<int> Echo(int value, CancellationToken cancellationToken) => new(value);
+}
+""");
+        var serviceBaseline = RunContractGenerator(serviceSource).Json;
+        var removedService = RunContractGenerator(contractSource, serviceBaseline);
+        Ensure(removedService.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK037"),
+            "service route removal diagnostic");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task RequiredMemberChangesAndDefaultIdRenameShouldBeRejected()
     {
         var baselineSource = DtoContract("""
@@ -230,6 +260,33 @@ public interface IHelloService : SharpLink.Sdk.IService
             "enum underlying type diagnostic");
         Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK033"),
             "union tag reuse diagnostic");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task NestedCollectionEnumUnderlyingTypeChangesShouldBeRejected()
+    {
+        var baselineSource = BuildSource("""
+public enum NestedStatus : byte { None, Ready }
+
+[SharpLink.Sdk.RpcSerializable]
+public sealed class Payload
+{
+    public List<NestedStatus> Values { get; set; } = [];
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IHelloService : SharpLink.Sdk.IService
+{
+    ValueTask<Payload> Echo(Payload value, CancellationToken cancellationToken);
+}
+""");
+        var baseline = RunContractGenerator(baselineSource).Json;
+        var changed = RunContractGenerator(
+            baselineSource.Replace("NestedStatus : byte", "NestedStatus : int", StringComparison.Ordinal),
+            baseline);
+        Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK032"),
+            "nested collection enum underlying type diagnostic");
         return Task.CompletedTask;
     }
 

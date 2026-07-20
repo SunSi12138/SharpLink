@@ -36,4 +36,6 @@
  SHARPLINK032 | SharpLink.Compatibility | Error | Enum underlying type changed
  SHARPLINK033 | SharpLink.Compatibility | Error | Union tag was assigned to a different type
  SHARPLINK034 | SharpLink.Compatibility | Error | Existing RPC method was removed
+ SHARPLINK035 | SharpLink.Compatibility | Error | Existing RPC contract was removed
  SHARPLINK036 | SharpLink.Generator | Error    | Contract Manifest output could not be written
+ SHARPLINK037 | SharpLink.Compatibility | Error | Existing service route was removed

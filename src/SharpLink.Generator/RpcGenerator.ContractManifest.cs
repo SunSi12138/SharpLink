@@ -57,13 +57,14 @@ public partial class RpcGenerator
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
         ImmutableArray<GeneratedCodecModel> codecs,
+        ImmutableArray<GeneratedEnumModel> generatedEnums,
         ImmutableArray<RpcUnionModel?> unions,
         ImmutableArray<AdditionalText> additionalTexts,
         ContractManifestOptions options,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var document = CreateContractManifest(interfaces, services, codecs, unions);
+        var document = CreateContractManifest(interfaces, services, codecs, generatedEnums, unions);
         var diagnostics = ValidateCurrentContractManifest(document);
 
         if (!string.IsNullOrWhiteSpace(options.BaselinePath))
@@ -147,6 +148,7 @@ public partial class RpcGenerator
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
         ImmutableArray<GeneratedCodecModel> codecs,
+        ImmutableArray<GeneratedEnumModel> generatedEnums,
         ImmutableArray<RpcUnionModel?> unions)
     {
         var document = new ContractManifestDocument();
@@ -279,6 +281,8 @@ public partial class RpcGenerator
             foreach (var member in codec.Members)
                 AddEnum(member.TypeName, member.EnumUnderlyingType, member.Location);
         }
+        foreach (var item in generatedEnums)
+            AddEnum(item.TypeName, item.UnderlyingType, item.Location);
         document.Enums.AddRange(enums.Values.OrderBy(static item => item.Name, StringComparer.Ordinal));
 
         foreach (var union in unions
@@ -404,7 +408,15 @@ public partial class RpcGenerator
                         .Take(2)
                         .ToArray();
                     if (renameCandidates.Length != 1)
+                    {
+                        diagnostics.Add(Change(
+                            ContractCompatibilityKind.ContractRemoved,
+                            Location.None,
+                            oldContract.Name,
+                            $"existing contract ID {oldContract.Id} and all of its routes were removed",
+                            "restore the contract and deprecate it without removing its published routes"));
                         continue;
+                    }
                     newContract = renameCandidates[0];
                     diagnostics.Add(Change(
                         ContractCompatibilityKind.ContractId,
@@ -583,6 +595,24 @@ public partial class RpcGenerator
                 }
             }
         }
+
+        var currentServiceContractIds = new HashSet<long>(
+            current.Services.Select(static service => service.ContractId));
+        foreach (var oldService in baseline.Services
+                     .GroupBy(static service => service.ContractId)
+                     .Select(static group => group.First()))
+        {
+            if (currentServiceContractIds.Contains(oldService.ContractId))
+                continue;
+            var location = current.Contracts
+                .FirstOrDefault(contract => contract.Id == oldService.ContractId)?.SourceLocation;
+            diagnostics.Add(Change(
+                ContractCompatibilityKind.ServiceRouteRemoved,
+                location,
+                oldService.ContractName,
+                $"service route for contract ID {oldService.ContractId} no longer has an [RpcService] implementation",
+                "restore a service implementation for the published contract route"));
+        }
         return diagnostics;
     }
 
@@ -747,6 +777,7 @@ internal static class __SharpLinkContractManifest
         ImmutableArray<RpcInterfaceModel?> Interfaces,
         ImmutableArray<RpcServiceModel?> Services,
         ImmutableArray<GeneratedCodecModel> Codecs,
+        ImmutableArray<GeneratedEnumModel> Enums,
         ImmutableArray<RpcUnionModel?> Unions);
 
     private readonly record struct ContractCompatibilityDiagnostic(
@@ -769,6 +800,8 @@ internal static class __SharpLinkContractManifest
         EnumUnderlyingType,
         UnionTag,
         MethodRemoved,
+        ContractRemoved,
+        ServiceRouteRemoved,
         ManifestOutput
     }
 

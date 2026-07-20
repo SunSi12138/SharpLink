@@ -268,6 +268,7 @@ public partial class RpcGenerator : IIncrementalGenerator
                 value.Left.Left.Left,
                 value.Left.Left.Right,
                 value.Left.Right.Codecs,
+                value.Left.Right.Enums,
                 value.Right));
         var contractManifestOptions = context.AnalyzerConfigOptionsProvider
             .Select(static (provider, _) => GetContractManifestOptions(provider));
@@ -278,6 +279,7 @@ public partial class RpcGenerator : IIncrementalGenerator
                 value.Left.Left.Interfaces,
                 value.Left.Left.Services,
                 value.Left.Left.Codecs,
+                value.Left.Left.Enums,
                 value.Left.Left.Unions,
                 value.Left.Right,
                 value.Right,
@@ -300,6 +302,8 @@ public partial class RpcGenerator : IIncrementalGenerator
                     ContractCompatibilityKind.EnumUnderlyingType => EnumCompatibilityRule,
                     ContractCompatibilityKind.UnionTag => UnionTagCompatibilityRule,
                     ContractCompatibilityKind.MethodRemoved => MethodRemovedCompatibilityRule,
+                    ContractCompatibilityKind.ContractRemoved => ContractRemovedCompatibilityRule,
+                    ContractCompatibilityKind.ServiceRouteRemoved => ServiceRouteRemovedCompatibilityRule,
                     _ => throw new InvalidOperationException("Unknown contract compatibility diagnostic kind.")
                 };
                 spc.ReportDiagnostic(Diagnostic.Create(

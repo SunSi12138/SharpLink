@@ -179,7 +179,13 @@ internal readonly record struct DtoDiagnosticModel(
 
 internal sealed record DtoGenerationResult(
     ImmutableArray<GeneratedCodecModel> Codecs,
-    ImmutableArray<DtoDiagnosticModel> Diagnostics);
+    ImmutableArray<DtoDiagnosticModel> Diagnostics,
+    ImmutableArray<GeneratedEnumModel> Enums);
+
+internal sealed record GeneratedEnumModel(
+    string TypeName,
+    string UnderlyingType,
+    Location? Location);
 
 internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerationResult>
 {
@@ -190,7 +196,7 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         if (ReferenceEquals(x, y))
             return true;
         if (x is null || y is null || x.Codecs.Length != y.Codecs.Length ||
-            x.Diagnostics.Length != y.Diagnostics.Length)
+            x.Diagnostics.Length != y.Diagnostics.Length || x.Enums.Length != y.Enums.Length)
         {
             return false;
         }
@@ -210,6 +216,16 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
                 return false;
             }
         }
+        for (var index = 0; index < x.Enums.Length; index++)
+        {
+            var left = x.Enums[index];
+            var right = y.Enums[index];
+            if (!string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
+                !string.Equals(left.UnderlyingType, right.UnderlyingType, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
         return true;
     }
 
@@ -223,6 +239,11 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
         }
         foreach (var diagnostic in obj.Diagnostics)
             hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(diagnostic.Detail));
+        foreach (var item in obj.Enums)
+        {
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(item.TypeName));
+            hash = unchecked(hash * 31 + StringComparer.Ordinal.GetHashCode(item.UnderlyingType));
+        }
         return hash;
     }
 
