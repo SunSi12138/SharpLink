@@ -218,7 +218,7 @@ internal sealed partial class SharpLinkClient
         return dispatcher;
     }
 
-    private async ValueTask<TResponse> InvokeUnaryCoreAsync<TRequest, TResponse>(
+    private ValueTask<TResponse> InvokeUnaryCoreAsync<TRequest, TResponse>(
         long contractId,
         long methodId,
         bool hasResponsePayload,
@@ -228,35 +228,92 @@ internal sealed partial class SharpLinkClient
         ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
-        ClientConnection connection;
-        long requestId;
-        RpcRequestOperation<TResponse> operation;
-        if (!control.WaitForReady)
+        if (control.WaitForReady)
         {
-            connection = GetReadyConnection();
-            operation = connection.PendingCalls.Rent(
+            return InvokeUnaryWaitForReadyAsync(
+                contractId,
+                methodId,
+                hasResponsePayload,
+                request,
+                requestCodec,
+                responseCodec,
+                control,
+                cancellationToken);
+        }
+
+        try
+        {
+            var connection = GetReadyConnection();
+            var operation = connection.PendingCalls.Rent(
                 responseCodec,
                 PendingCallKind.Unary,
                 control.DeadlineTimestamp,
                 cancellationToken,
-                out requestId);
+                out var requestId);
+            return StartUnaryCall(
+                connection,
+                contractId,
+                methodId,
+                requestId,
+                hasResponsePayload,
+                request,
+                requestCodec,
+                operation,
+                control,
+                cancellationToken);
         }
-        else
+        catch (Exception exception)
         {
-            connection = await GetReadyConnectionAsync(
-                waitForReady: true,
-                control.Deadline,
-                cancellationToken).ConfigureAwait(false);
-            var lease = await connection.PendingCalls.RentAsync(
-                responseCodec,
-                PendingCallKind.Unary,
-                control.DeadlineTimestamp,
-                waitForSlot: true,
-                control.Deadline,
-                cancellationToken).ConfigureAwait(false);
-            requestId = lease.Id;
-            operation = lease.Operation;
+            return ValueTask.FromException<TResponse>(exception);
         }
+    }
+
+    private async ValueTask<TResponse> InvokeUnaryWaitForReadyAsync<TRequest, TResponse>(
+        long contractId,
+        long methodId,
+        bool hasResponsePayload,
+        TRequest request,
+        IRpcCodec<TRequest> requestCodec,
+        IRpcCodec<TResponse> responseCodec,
+        ResolvedCallControl control,
+        CancellationToken cancellationToken)
+    {
+        var connection = await GetReadyConnectionAsync(
+            waitForReady: true,
+            control.Deadline,
+            cancellationToken).ConfigureAwait(false);
+        var lease = await connection.PendingCalls.RentAsync(
+            responseCodec,
+            PendingCallKind.Unary,
+            control.DeadlineTimestamp,
+            waitForSlot: true,
+            control.Deadline,
+            cancellationToken).ConfigureAwait(false);
+        return await StartUnaryCall(
+            connection,
+            contractId,
+            methodId,
+            lease.Id,
+            hasResponsePayload,
+            request,
+            requestCodec,
+            lease.Operation,
+            control,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private ValueTask<TResponse> StartUnaryCall<TRequest, TResponse>(
+        ClientConnection connection,
+        long contractId,
+        long methodId,
+        long requestId,
+        bool hasResponsePayload,
+        TRequest request,
+        IRpcCodec<TRequest> requestCodec,
+        RpcRequestOperation<TResponse> operation,
+        ResolvedCallControl control,
+        CancellationToken cancellationToken)
+    {
         var flags = hasResponsePayload
             ? ProtocolV2FrameFlags.HasReturn
             : ProtocolV2FrameFlags.None;
@@ -287,7 +344,7 @@ internal sealed partial class SharpLinkClient
                 exception);
         }
 
-        return await operation.AsValueTask().ConfigureAwait(false);
+        return operation.AsValueTask();
     }
 
     private async ValueTask InvokeOneWayCoreAsync<TRequest, TStreams>(
