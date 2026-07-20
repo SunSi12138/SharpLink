@@ -5,7 +5,7 @@
 这里的“百万并发”经 0.3.0 原生 LoadTest 复核，含义是每秒百万次完成调用（QPS/ops/s），不是百万个同时在途调用。正式门禁使用静态 `Singleton` Unary `add`、单连接、Balanced profile、c128/c512；同机交替 0.7.1 与候选五轮，报告中位数，原始 JSON 保留最小值、最大值和离散程度。
 
 - 机器：Apple M4，10 核，16 GiB，arm64；macOS 26.4.1 (25E253)
-- SDK/Runtime：.NET SDK 10.0.102，Runtime 10.0.2；Release、Server GC
+- SDK/Runtime：.NET SDK 10.0.102，Runtime 10.0.2；Release、Workstation GC、Interactive latency mode
 - 电源：交流电、100% 电量；测试期间无 thermal/performance warning
 - 基线：0.3.0 `729e123f6ccb4d70aa9127468611d352644e3c7d`；0.7.1 `38afb69cd26d83239626bc879b8fd49cf803b18e`
 - 候选实现：`7b9d309`（Unary 直接 ValueTask）与 `a5aa3f7`（无节点分配请求池）
@@ -72,7 +72,7 @@ SharedMemory 的两点均高于 0.7.1 的 99% QPS 门槛，P99 没有恶化；�
 
 ## 宽矩阵、连接池与流式覆盖
 
-五种传输各覆盖 payload 0/32/256/4096/65536 B 与 c1/c8/c32/c128/c256/c512。0–4096 B 的 150 个候选 stage 均零失败；单轮方向性 A/B 中，绝大多数中高并发点提升，4 KiB c128/c512 为 +2.0% 至 +18.5%。SharedMemory 256 B c128 的单轮 -3.2% 和 0 B c512 的 -1.8% 位于短样本噪声内，正式五轮 add 门槛仍分别 +10.99%/+3.69%。
+五种传输各覆盖 payload 0/32/256/4096/65536 B 与 c1/c8/c32/c128/c256/c512。0–4096 B 的 120 个候选 stage 均零失败；单轮方向性 A/B 中，绝大多数中高并发点提升，4 KiB c128/c512 为 +2.0% 至 +18.5%。SharedMemory 256 B c128 的单轮 -3.2% 和 0 B c512 的 -1.8% 位于短样本噪声内，正式五轮 add 门槛仍分别 +10.99%/+3.69%。
 
 64 KiB、单连接在 c128 以上会达到两版本共同的 8 MiB 发送队列上限并产生 `ResourceExhausted`；这些容量边界样本不混入吞吐门槛。AnonymousPipe 的 0.7.1 64 KiB 样本在失败后不能退出，超过四分钟后只终止该测试进程；0–4 KiB 数据完整。
 
@@ -88,4 +88,14 @@ SharedMemory 的两点均高于 0.7.1 的 99% QPS 门槛，P99 没有恶化；�
 | 禁用或改写 deadline 快路径 | profile 中单项不足 0.7%，禁用后无收益 | 保留完整 deadline 语义 |
 | Throughput profile/更激进批处理 | 本机单连接 Unary flush 与尾延迟更差 | 保留 Balanced 作为正式门槛 |
 
-最终实现没有改变 wire format，没有跳过取消、deadline、认证、流控、排空、资源上限、动态程序集租约或错误处理。完整 Release、AOT、Package、ALC、Chaos 与跨平台结果以该版本 PR 的 Release Gate 为准。
+## 本地正确性与稳定性门禁
+
+- Release solution build：0 warning、0 error。
+- Unit 196/196、Generator 30/30、Integration 137/137；Integration 包含取消/deadline、interceptor/telemetry、所有调用形态、连接池、生命周期、动态程序集和 collectible ALC。
+- osx-arm64 独立进程 SharedMemory NativeAOT：通过，无 AOT/trimming warning。
+- 0.7.2 七个 NuGet 包与干净还原 PackageSmoke：通过；SDK 包包含 Generator analyzer。
+- 五传输 StreamLoadTest 的 Unary/C2S/S2C/Duplex c1/c8：40/40 stage 零失败；PR Quick 同口径 Load 与 Oneway smoke 通过。
+- 120 秒 SharedMemory Chaos：893,433 success、321,939 injected、11 次滚动重启、0 unexpected，最长恢复 216 ms；最终 connections、calls、pending、streams、send queue 全为 0。
+- Chaos retained memory 为 1.90 MiB→5.13 MiB，30/60/90 秒样本为 8.18/8.21/7.93 MiB。短样本包含启动、JIT 与有界池预热，只证明本次运行没有持续单调增长，不替代至少六小时的 retained-memory 百分比门槛。
+
+最终实现没有改变 wire format，没有跳过取消、deadline、认证、流控、排空、资源上限、动态程序集租约或错误处理。跨平台结果以该版本 PR 的 Release Gate 为准。
