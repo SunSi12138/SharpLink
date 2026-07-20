@@ -667,7 +667,7 @@ internal sealed partial class SharpLinkServer
             : serverLoopToken;
 
         var callContext = CreateCallContext(
-            session, connection.AuthenticationContext, serviceInfo.Stub, request.MethodHash, requestId,
+            connection, serviceInfo.Stub, request.MethodHash, requestId,
             request.Deadline, request.Metadata, invokeToken);
         try
         {
@@ -840,7 +840,7 @@ internal sealed partial class SharpLinkServer
         if (!hasReturnPayload)
         {
             var callContext = CreateCallContext(
-                session, connection.AuthenticationContext, serviceInfo.Stub, request.MethodHash, requestId,
+                connection, serviceInfo.Stub, request.MethodHash, requestId,
                 request.Deadline, request.Metadata, invokeToken);
             try
             {
@@ -898,7 +898,7 @@ internal sealed partial class SharpLinkServer
         var token = writer.BeginPacket(
             ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((ulong)requestId));
         var responseCallContext = CreateCallContext(
-            session, connection.AuthenticationContext, serviceInfo.Stub, request.MethodHash, requestId,
+            connection, serviceInfo.Stub, request.MethodHash, requestId,
             request.Deadline, request.Metadata, invokeToken);
         try
         {

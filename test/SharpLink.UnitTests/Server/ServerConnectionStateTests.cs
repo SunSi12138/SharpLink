@@ -1,5 +1,6 @@
 using System.IO.Pipelines;
 using System.Threading;
+using SharpLink.Sdk;
 using SharpLink.Server;
 
 namespace SharpLink.UnitTests.Server;
@@ -14,8 +15,27 @@ public class ServerConnectionStateTests
         var authentication = new SharpLinkAuthenticationContext(subject: "alice");
 
         Ensure(state.LifecycleState == ServerConnectionLifecycleState.Handshaking, "initial state");
+        Ensure(state.DefaultCallContext is null, "handshaking connection must not publish a call context");
         Ensure(state.MarkReady(authentication), "handshake should mark the connection ready");
         Ensure(ReferenceEquals(authentication, state.AuthenticationContext), "authentication must belong to the connection");
+        var callContext = state.DefaultCallContext ??
+            throw new Exception("ready connection must publish a default call context");
+        Ensure(callContext.SessionId == state.Session.Id, "call context session ID");
+        Ensure(ReferenceEquals(authentication, callContext.Authentication), "call context authentication");
+        Ensure(callContext.Deadline is null, "default call context deadline");
+        Ensure(callContext.Metadata is null, "default call context metadata");
+        Ensure(ReferenceEquals(callContext, state.GetCallContextSnapshot(null, null)),
+            "plain calls must reuse the default call context");
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        var deadlineContext = state.GetCallContextSnapshot(deadline, null);
+        Ensure(!ReferenceEquals(callContext, deadlineContext), "deadline calls must not reuse the default context");
+        Ensure(deadlineContext.Deadline == deadline, "deadline call context");
+
+        var metadata = new SharpLinkMetadata();
+        var metadataContext = state.GetCallContextSnapshot(null, metadata);
+        Ensure(!ReferenceEquals(callContext, metadataContext), "metadata calls must not reuse the default context");
+        Ensure(ReferenceEquals(metadata, metadataContext.Metadata), "metadata call context");
         Ensure(state.TryRecordAcceptedRequest(42), "ready connection should accept request IDs");
         Ensure(state.LastAcceptedRequestId == 42, "last accepted request ID");
 
@@ -26,7 +46,32 @@ public class ServerConnectionStateTests
         Ensure(state.LifecycleState == ServerConnectionLifecycleState.Closed, "closed state");
         Ensure(state.SessionTask.IsCompletedSuccessfully, "session completion should be published");
         Ensure(state.AuthenticationContext is null, "closed connection must release authentication context");
+        Ensure(state.DefaultCallContext is null, "closed connection must release default call context");
         Ensure(disconnectCount == 1, "session should disconnect exactly once");
+    }
+
+    [Test]
+    public async Task DefaultCallContextShouldBeIsolatedPerConnectionAndSafeForConcurrentReads()
+    {
+        var first = CreateState(static () => { });
+        var second = CreateState(static () => { });
+        var firstAuthentication = new SharpLinkAuthenticationContext(subject: "alice");
+        var secondAuthentication = new SharpLinkAuthenticationContext(subject: "bob");
+
+        Ensure(first.MarkReady(firstAuthentication), "first ready");
+        Ensure(second.MarkReady(secondAuthentication), "second ready");
+
+        var firstContext = first.DefaultCallContext ?? throw new Exception("first context");
+        var secondContext = second.DefaultCallContext ?? throw new Exception("second context");
+        Ensure(!ReferenceEquals(firstContext, secondContext), "connections must not share call contexts");
+        Ensure(ReferenceEquals(firstAuthentication, firstContext.Authentication), "first authentication");
+        Ensure(ReferenceEquals(secondAuthentication, secondContext.Authentication), "second authentication");
+
+        Parallel.For(0, 1024, _ =>
+            Ensure(ReferenceEquals(firstContext, first.DefaultCallContext), "concurrent context read"));
+
+        await first.CloseAsync();
+        await second.CloseAsync();
     }
 
     [Test]

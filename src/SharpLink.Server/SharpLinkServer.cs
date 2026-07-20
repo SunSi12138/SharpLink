@@ -526,8 +526,7 @@ internal sealed partial class SharpLinkServer(
     }
 
     private SharpLinkCallContextSnapshot CreateCallContext(
-        IRpcSession session,
-        SharpLinkAuthenticationContext? authenticationContext,
+        ServerConnectionState connection,
         IRpcStub stub,
         long methodId,
         long requestId,
@@ -535,15 +534,16 @@ internal sealed partial class SharpLinkServer(
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken)
     {
+        var session = connection.Session;
         if (_serverInterceptors.Length == 0)
-            return new SharpLinkCallContextSnapshot(session.Id, authenticationContext, deadline, metadata);
+            return connection.GetCallContextSnapshot(deadline, metadata);
 
         return CreateServerInvocationContext(
             session,
             stub,
             methodId,
             requestId,
-            authenticationContext,
+            connection.AuthenticationContext,
             deadline,
             metadata,
             cancellationToken);
