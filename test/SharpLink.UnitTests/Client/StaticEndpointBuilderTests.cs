@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading;
 using SharpLink.Client;
 
@@ -41,6 +42,8 @@ public class StaticEndpointBuilderTests
 
         attributes["zone"] = "changed";
         Ensure(received is not null && received.Attributes["zone"] == "a", "endpoint attributes must be frozen");
+        var endpointField = client.GetType().GetField("_fixedEndpoint", BindingFlags.Instance | BindingFlags.NonPublic);
+        Ensure((endpointField?.GetValue(client) as SharpLinkEndpoint)?.Id == "one", "fixed mode must retain endpoint identity");
         await client.DisposeAsync();
         Ensure(factory.DisposeCount == 1, "single endpoint factory disposal count");
     }

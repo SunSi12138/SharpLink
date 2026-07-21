@@ -246,7 +246,7 @@ public class SharpClientBuilder
                 if (_clusterConfigured)
                     throw new InvalidOperationException("UseCluster requires two or more endpoints.");
                 var transport = CreateTransportFactory(endpoints[0], _endpointTransportFactory!, runtimeContext);
-                return CreateFixedClient(transport, runtimeContext, protocolOptions);
+                return CreateFixedClient(transport, runtimeContext, protocolOptions, fixedEndpoint: endpoints[0]);
             }
 
             if (_connectionPoolConfigured)
@@ -292,7 +292,8 @@ public class SharpClientBuilder
         IClientTransportFactory transport,
         SharpLinkRuntimeContext runtimeContext,
         SharpLinkProtocolOptions protocolOptions,
-        SharpLinkConnectionPoolOptions? connectionPool = null)
+        SharpLinkConnectionPoolOptions? connectionPool = null,
+        SharpLinkEndpoint? fixedEndpoint = null)
     {
         return new SharpLinkClient(
             transport,
@@ -305,7 +306,8 @@ public class SharpClientBuilder
             runtimeContext,
             _rpcSessionFlushOptions,
             connectionPool ?? CreateConnectionPoolSnapshot(runtimeContext),
-            _interceptors.ToArray()
+            _interceptors.ToArray(),
+            fixedEndpoint: fixedEndpoint
         );
     }
 

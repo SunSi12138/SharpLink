@@ -7,6 +7,8 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
 {
     private readonly IClientTransportFactory transportFactory;
     private readonly StaticClusterRuntime? _cluster;
+    // Retained for endpoint-aware diagnostics without routing fixed calls through cluster selection.
+    private readonly SharpLinkEndpoint? _fixedEndpoint;
     private readonly SharpLinkRuntimeContext _runtimeContext = new SharpLinkRuntimeContextBuilder().Build();
     private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests =
         SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
@@ -50,9 +52,11 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
         StaticEndpointConfiguration[]? staticEndpoints = null,
         SharpLinkClusterOptions? clusterOptions = null,
         SharpLinkLoadBalancingStrategy loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
-        ISharpLinkEndpointSelector? endpointSelector = null)
+        ISharpLinkEndpointSelector? endpointSelector = null,
+        SharpLinkEndpoint? fixedEndpoint = null)
     {
         this.transportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
+        _fixedEndpoint = fixedEndpoint;
         if (staticEndpoints is not null)
         {
             _cluster = new StaticClusterRuntime(
@@ -78,8 +82,9 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
         StaticEndpointConfiguration[]? staticEndpoints = null,
         SharpLinkClusterOptions? clusterOptions = null,
         SharpLinkLoadBalancingStrategy loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
-        ISharpLinkEndpointSelector? endpointSelector = null)
-        : this(transportFactory, staticEndpoints, clusterOptions, loadBalancingStrategy, endpointSelector)
+        ISharpLinkEndpointSelector? endpointSelector = null,
+        SharpLinkEndpoint? fixedEndpoint = null)
+        : this(transportFactory, staticEndpoints, clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatTimeout, TimeSpan.Zero);
@@ -118,10 +123,11 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
         StaticEndpointConfiguration[]? staticEndpoints = null,
         SharpLinkClusterOptions? clusterOptions = null,
         SharpLinkLoadBalancingStrategy loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
-        ISharpLinkEndpointSelector? endpointSelector = null)
+        ISharpLinkEndpointSelector? endpointSelector = null,
+        SharpLinkEndpoint? fixedEndpoint = null)
         : this(transportFactory, heartbeatInterval, heartbeatTimeout, requestTimeout, authenticator, protocolOptions,
             runtimeContext, rpcSessionFlushOptions, connectionPoolOptions, clientInterceptors, staticEndpoints,
-            clusterOptions, loadBalancingStrategy, endpointSelector)
+            clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _logger = loggerFactory.CreateLogger<SharpLinkClient>();
