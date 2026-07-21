@@ -471,7 +471,7 @@ internal sealed partial class SharpLinkClient
                 return;
 
             Exception? lastFailure = null;
-            var parallelism = Math.Min(Math.Min(_options.MaxConnections, endpoints.Length), 4);
+            var parallelism = Math.Min(Math.Min(_options.MinReadyEndpoints, endpoints.Length), 4);
             for (var start = 0; start < endpoints.Length; start += parallelism)
             {
                 var count = Math.Min(parallelism, endpoints.Length - start);
@@ -733,14 +733,23 @@ internal sealed partial class SharpLinkClient
 
         private async Task ReconnectAsync(EndpointState endpoint)
         {
+            int delayMilliseconds;
+            lock (_gate)
+                delayMilliseconds = endpoint.ReconnectDelayMilliseconds;
             try
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(100), _client._shutdownCts.Token).ConfigureAwait(false);
+                var jitterMilliseconds = Random.Shared.Next(delayMilliseconds / 4 + 1);
+                await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds + jitterMilliseconds), _client._shutdownCts.Token).ConfigureAwait(false);
                 var shouldConnect = false;
                 lock (_gate)
                     shouldConnect = NeedsReconnectLocked(endpoint);
                 if (shouldConnect)
+                {
+                    SharpLinkTelemetry.ReconnectAttempt();
                     await ConnectOneAsync(endpoint, _client._shutdownCts.Token).ConfigureAwait(false);
+                    lock (_gate)
+                        endpoint.ReconnectDelayMilliseconds = endpoint.ReadyConnections.Length != 0 ? 100 : NextReconnectDelay(delayMilliseconds);
+                }
             }
             catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
             {
@@ -749,6 +758,8 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception)
             {
                 LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ReconnectAsync), exception);
+                lock (_gate)
+                    endpoint.ReconnectDelayMilliseconds = NextReconnectDelay(delayMilliseconds);
             }
             finally
             {
@@ -758,6 +769,8 @@ internal sealed partial class SharpLinkClient
             if (Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
                 EnsureMinimumReadyEndpoints();
         }
+
+        private static int NextReconnectDelay(int delayMilliseconds) => Math.Min(delayMilliseconds * 2, 5000);
 
         private void UpdateClientReadiness()
         {
@@ -1012,12 +1025,31 @@ internal sealed partial class SharpLinkClient
                 catch (Exception) when (ReferenceEquals(worker, initialConnectTask)) { }
                 catch (Exception exception) { cleanupFailures.Add(exception); }
             }
+            await WaitForInitialDialsAsync(cleanupFailures).ConfigureAwait(false);
             for (var index = 0; index < factories.Length; index++)
             {
                 try { await DisposeFactoryQuietlyAsync(factories[index]).ConfigureAwait(false); }
                 catch (Exception exception) { cleanupFailures.Add(exception); }
             }
             ThrowCleanupFailures(cleanupFailures);
+        }
+
+        private async Task WaitForInitialDialsAsync(List<Exception> cleanupFailures)
+        {
+            while (true)
+            {
+                Task[] pending;
+                lock (_gate)
+                    pending = [.. _initialDialTasks.Where(static task => !task.IsCompleted)];
+                if (pending.Length == 0)
+                    return;
+                for (var index = 0; index < pending.Length; index++)
+                {
+                    try { await pending[index].ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested) { }
+                    catch (Exception exception) { cleanupFailures.Add(exception); }
+                }
+            }
         }
 
         private static void ThrowCleanupFailures(List<Exception> failures)
@@ -1116,6 +1148,7 @@ internal sealed partial class SharpLinkClient
             public Func<int> ReadyConnectionCountProvider => _readyConnectionCountProvider;
             public Func<int> ActiveCallCountProvider => _activeCallCountProvider;
             public int ConnectingCount { get; set; }
+            public int ReconnectDelayMilliseconds { get; set; } = 100;
             public bool Retiring { get; set; }
             public bool FactoryReleased { get; set; }
             public Task? ReconnectTask { get; set; }

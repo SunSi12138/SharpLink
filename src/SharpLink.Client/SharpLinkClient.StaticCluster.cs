@@ -470,14 +470,23 @@ internal sealed partial class SharpLinkClient
 
         private async Task ReconnectAsync(EndpointState endpoint)
         {
+            int delayMilliseconds;
+            lock (_gate)
+                delayMilliseconds = endpoint.ReconnectDelayMilliseconds;
             try
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(100), _client._shutdownCts.Token).ConfigureAwait(false);
+                var jitterMilliseconds = Random.Shared.Next(delayMilliseconds / 4 + 1);
+                await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds + jitterMilliseconds), _client._shutdownCts.Token).ConfigureAwait(false);
                 var shouldConnect = false;
                 lock (_gate)
                     shouldConnect = NeedsReconnectLocked(endpoint);
                 if (shouldConnect)
+                {
+                    SharpLinkTelemetry.ReconnectAttempt();
                     await ConnectOneAsync(endpoint, _client._shutdownCts.Token).ConfigureAwait(false);
+                    lock (_gate)
+                        endpoint.ReconnectDelayMilliseconds = endpoint.ReadyConnections.Length != 0 ? 100 : NextReconnectDelay(delayMilliseconds);
+                }
             }
             catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
             {
@@ -486,6 +495,8 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception)
             {
                 LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ReconnectAsync), exception);
+                lock (_gate)
+                    endpoint.ReconnectDelayMilliseconds = NextReconnectDelay(delayMilliseconds);
             }
             finally
             {
@@ -495,6 +506,8 @@ internal sealed partial class SharpLinkClient
             if (Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
                 EnsureMinimumReadyEndpoints();
         }
+
+        private static int NextReconnectDelay(int delayMilliseconds) => Math.Min(delayMilliseconds * 2, 5000);
 
         private void PublishClientReadiness()
         {
@@ -781,6 +794,7 @@ internal sealed partial class SharpLinkClient
             public Func<int> ReadyConnectionCountProvider => _readyConnectionCountProvider;
             public Func<int> ActiveCallCountProvider => _activeCallCountProvider;
             public int ConnectingCount { get; set; }
+            public int ReconnectDelayMilliseconds { get; set; } = 100;
             public Task? ReconnectTask { get; set; }
             public Task? ExpansionTask { get; set; }
             public int NonRetiringConnectionCount

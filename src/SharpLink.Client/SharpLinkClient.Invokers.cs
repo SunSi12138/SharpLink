@@ -435,7 +435,7 @@ internal sealed partial class SharpLinkClient
                 }
                 else
                 {
-                    outcome?.CompleteWithoutPending(PendingCallCompletionReason.Response);
+                    outcome?.CompleteWithoutPending(PendingCallCompletionReason.LocalStreamComplete);
                 }
             }
             catch (Exception exception)

@@ -41,6 +41,8 @@ internal sealed partial class SharpLinkClient
 
         public bool HasAdmissionGrant => Volatile.Read(ref _admissionGranted) != 0;
 
+        public bool HasCompletion => _completionReason is not null;
+
         public bool ShouldHonorAdmissionRetryAfter
             => HasAdmissionRejection && Volatile.Read(ref _admissionGranted) == 0;
 
@@ -125,10 +127,12 @@ internal sealed partial class SharpLinkClient
             CompleteWithoutPending(reason, exception);
         }
 
+        public void OnResponseObserved() => _responseObserved = true;
+
         public void OnPendingCallCompleted(in PendingCallCompletion completion)
         {
             _completionReason = completion.Reason;
-            _responseObserved = completion.Reason is
+            _responseObserved |= completion.Reason is
                 PendingCallCompletionReason.Response or PendingCallCompletionReason.RemoteError;
             SetLocalFailureIfPresent(completion.Exception);
             Report(completion.Reason, completion.Exception);

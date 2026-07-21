@@ -277,6 +277,9 @@ internal sealed partial class SharpLinkClient
         if (attemptOutcome is null || _fixedEndpoint is null)
             return GetReadyConnection();
 
+        if (ReadyConnectionCount == 0)
+            return GetReadyConnection();
+
         var candidate = new SharpLinkEndpointCandidate(
             _fixedEndpoint,
             ReadyConnectionCount,

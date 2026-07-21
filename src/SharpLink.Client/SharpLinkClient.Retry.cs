@@ -219,7 +219,8 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception exception)
         {
-            outcome.CompleteLocalFailure(exception);
+            if (!outcome.HasCompletion)
+                outcome.CompleteLocalFailure(exception);
             throw;
         }
     }

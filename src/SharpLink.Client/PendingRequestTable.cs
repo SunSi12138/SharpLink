@@ -44,6 +44,7 @@ internal interface IPendingCallOwner
 /// </summary>
 internal interface IPendingCallCompletionObserver
 {
+    void OnResponseObserved();
     void OnPendingCallCompleted(in PendingCallCompletion completion);
 }
 
@@ -277,6 +278,7 @@ internal sealed class PendingRequestTable : IDisposable
         {
             // A successful Response is only the server's acknowledgement; StreamComplete owns
             // the terminal transition for server and duplex streams.
+            current.CompletionObserver?.OnResponseObserved();
             return true;
         }
 
