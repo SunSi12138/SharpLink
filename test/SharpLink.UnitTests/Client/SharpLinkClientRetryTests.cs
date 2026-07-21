@@ -207,6 +207,54 @@ public class SharpLinkClientRetryTests
     }
 
     [Test]
+    public async Task RetryShouldNotDelayUntriedEndpointsAfterAnAdmittedAttemptFails()
+    {
+        var first = new TestClientTransportFactory();
+        var second = new TestClientTransportFactory();
+        var third = new TestClientTransportFactory();
+        var endpoints = new[]
+        {
+            new StaticEndpointConfiguration(Endpoint("first", 5001), first),
+            new StaticEndpointConfiguration(Endpoint("second", 5002), second),
+            new StaticEndpointConfiguration(Endpoint("third", 5003), third)
+        };
+        await using var client = new SharpLinkClient(
+            first,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            staticEndpoints: endpoints,
+            clusterOptions: new SharpLinkClusterOptions { MinReadyEndpoints = 3, MaxConnections = 3 },
+            endpointSelector: new FirstUnexcludedSelector(),
+            retryOptions: RetryOptions(2, TimeSpan.Zero),
+            endpointAdmissionPolicy: new RejectFirstEndpointWithDelayPolicy(TimeSpan.FromSeconds(1)));
+        await client.ConnectAsync();
+        await WaitForReadyConnectionCountAsync(client, 3);
+
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var secondRequest = await second.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await InjectErrorAsync(second, secondRequest, SharpLinkErrorCode.Unavailable);
+        var thirdRequest = await third.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
+            .WaitAsync(TimeSpan.FromMilliseconds(500));
+        await third.Connection.InjectPacketAsync(
+            ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((long)thirdRequest.RequestId));
+
+        Ensure(await invocation == 0, "untried endpoint retry response");
+    }
+
+    [Test]
+    public void CircuitBreakerShouldRejectZeroFailureRatio()
+    {
+        try
+        {
+            _ = new SharpLinkCircuitBreakerOptions { FailureRatio = 0 }.CloneValidated();
+            throw new Exception("zero failure ratio should be rejected");
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+        }
+    }
+
+    [Test]
     public void CircuitBreakerShouldOpenPerGenerationForInfrastructureFailures()
     {
         var breaker = new SharpLinkCircuitBreaker(new SharpLinkCircuitBreakerOptions
@@ -390,6 +438,17 @@ public class SharpLinkClientRetryTests
             => (context.ExcludedMask & 1UL) == 0 ? 0 : 1;
     }
 
+    private sealed class FirstUnexcludedSelector : ISharpLinkEndpointSelector
+    {
+        public int Select(in SharpLinkEndpointSelectionContext context)
+        {
+            for (var index = 0; index < context.Count; index++)
+                if ((context.ExcludedMask & (1UL << index)) == 0)
+                    return index;
+            return -1;
+        }
+    }
+
     private sealed class RejectFirstEndpointPolicy : ISharpLinkEndpointAdmissionPolicy
     {
         public int AcquireCount { get; private set; }
@@ -433,6 +492,20 @@ public class SharpLinkClientRetryTests
         {
             ReportCount++;
             Ensure(token == 1, "admitted retry token");
+        }
+    }
+
+    private sealed class RejectFirstEndpointWithDelayPolicy(TimeSpan retryAfter) : ISharpLinkEndpointAdmissionPolicy
+    {
+        public SharpLinkEndpointAdmissionDecision TryAcquire(
+            in SharpLinkEndpointCandidate endpoint,
+            in RpcMethodDescriptor method)
+            => endpoint.Endpoint.Id == "first"
+                ? new SharpLinkEndpointAdmissionDecision(false, Token: 0, RetryAfter: retryAfter)
+                : new SharpLinkEndpointAdmissionDecision(true, Token: 1, RetryAfter: null);
+
+        public void Report(in SharpLinkEndpointOutcome outcome, long token)
+        {
         }
     }
 }

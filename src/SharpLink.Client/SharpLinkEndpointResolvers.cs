@@ -258,11 +258,11 @@ public sealed class SharpLinkDnsEndpointResolver : ISharpLinkEndpointResolver
         for (var index = 0; index < addresses.Length; index++)
         {
             var address = addresses[index];
-            if (_options.AddressFamily is { } family && address.AddressFamily != family)
-                continue;
-            if (address.AddressFamily is not (System.Net.Sockets.AddressFamily.InterNetwork or System.Net.Sockets.AddressFamily.InterNetworkV6))
-                continue;
             var normalized = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+            if (_options.AddressFamily is { } family && normalized.AddressFamily != family)
+                continue;
+            if (normalized.AddressFamily is not (System.Net.Sockets.AddressFamily.InterNetwork or System.Net.Sockets.AddressFamily.InterNetworkV6))
+                continue;
             var key = $"{normalized.AddressFamily}:{normalized}";
             if (seen.Add(key))
                 values.Add((key, normalized));

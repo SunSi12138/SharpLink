@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Collections.Generic;
+using System.Diagnostics;
 using SharpLink.Client;
 using SharpLink.Sdk;
 
@@ -123,8 +124,10 @@ public class SharpLinkClientCallOptionsTests
             unchecked((long)request.RequestId));
 
         Ensure(await invocation == 0, "wait-for-ready response");
-        Ensure(policy.LastOutcome.Elapsed < TimeSpan.FromMilliseconds(150),
-            "endpoint outcome elapsed must start at admission rather than logical invocation");
+        var measuredEndpointInterval = Stopwatch.GetElapsedTime(policy.LastAdmissionTimestamp, policy.LastReportTimestamp);
+        var difference = (policy.LastOutcome.Elapsed - measuredEndpointInterval).Duration();
+        Ensure(difference < TimeSpan.FromMilliseconds(100),
+            "endpoint outcome elapsed must measure the interval after admission rather than pre-ready waiting");
     }
 
     [Test]
@@ -257,13 +260,21 @@ public class SharpLinkClientCallOptionsTests
         public List<SharpLinkEndpointOutcome> Outcomes { get; } = [];
         public int ReportCount => Outcomes.Count;
         public SharpLinkEndpointOutcome LastOutcome => Outcomes[^1];
+        public long LastAdmissionTimestamp { get; private set; }
+        public long LastReportTimestamp { get; private set; }
 
         public SharpLinkEndpointAdmissionDecision TryAcquire(
             in SharpLinkEndpointCandidate endpoint,
             in RpcMethodDescriptor method)
-            => new(true, Token: method.MethodId, RetryAfter: null);
+        {
+            LastAdmissionTimestamp = Stopwatch.GetTimestamp();
+            return new SharpLinkEndpointAdmissionDecision(true, Token: method.MethodId, RetryAfter: null);
+        }
 
         public void Report(in SharpLinkEndpointOutcome outcome, long token)
-            => Outcomes.Add(outcome);
+        {
+            LastReportTimestamp = Stopwatch.GetTimestamp();
+            Outcomes.Add(outcome);
+        }
     }
 }

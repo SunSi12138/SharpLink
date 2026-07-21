@@ -69,6 +69,30 @@ public sealed class DynamicEndpointResolverTests
     }
 
     [Test]
+    public async Task DnsResolverShouldFilterMappedIpv4AddressesByTheirNormalizedFamily()
+    {
+        var query = new TestDnsQuery { Addresses = [IPAddress.Parse("::ffff:127.0.0.1")] };
+        await using var ipv4 = new SharpLinkDnsEndpointResolver(
+            "service.example",
+            5001,
+            new SharpLinkDnsResolverOptions { AddressFamily = AddressFamily.InterNetwork },
+            query);
+        await using var ipv6 = new SharpLinkDnsEndpointResolver(
+            "service.example",
+            5001,
+            new SharpLinkDnsResolverOptions { AddressFamily = AddressFamily.InterNetworkV6 },
+            query);
+
+        var ipv4Snapshot = await ipv4.ResolveAsync(CancellationToken.None);
+        var ipv6Snapshot = await ipv6.ResolveAsync(CancellationToken.None);
+
+        Ensure(ipv4Snapshot.Endpoints.Count == 1, "mapped IPv4 must satisfy an IPv4 family filter");
+        Ensure(ipv4Snapshot.Endpoints[0].Address is SharpLinkTcpAddress { Host: "127.0.0.1" },
+            "mapped IPv4 endpoint must publish its normalized address");
+        Ensure(ipv6Snapshot.Endpoints.Count == 0, "mapped IPv4 must not satisfy an IPv6 family filter");
+    }
+
+    [Test]
     public async Task DynamicBuilderShouldOwnResolverAndRejectFixedTransportConflict()
     {
         var resolver = new TrackingResolver();

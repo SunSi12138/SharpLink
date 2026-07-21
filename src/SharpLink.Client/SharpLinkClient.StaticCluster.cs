@@ -226,6 +226,7 @@ internal sealed partial class SharpLinkClient
                     if (ReadyConnectionCount != 0)
                     {
                         TrackInitialDials(remaining);
+                        EnsureMinimumReadyEndpoints();
                         return;
                     }
                 }
@@ -259,7 +260,8 @@ internal sealed partial class SharpLinkClient
         {
             try
             {
-                if (await attempt.ConfigureAwait(false) is not null && Volatile.Read(ref _stopping) == 0)
+                _ = await attempt.ConfigureAwait(false);
+                if (Volatile.Read(ref _stopping) == 0)
                     EnsureMinimumReadyEndpoints();
             }
             catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
@@ -391,12 +393,14 @@ internal sealed partial class SharpLinkClient
                 if (Volatile.Read(ref _stopping) != 0)
                     return;
                 var readyCount = Volatile.Read(ref _readyEndpoints).Length;
-                var remaining = TargetReadyEndpointCount - readyCount;
+                var availableCapacity = _options.MaxConnections - TotalConnectionsLocked();
+                var remaining = Math.Min(TargetReadyEndpointCount - readyCount, availableCapacity);
                 for (var index = 0; remaining > 0 && index < _endpoints.Length; index++)
                 {
                     var endpoint = _endpoints[index];
                     if (endpoint.ReadyConnections.Length != 0 ||
-                        endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount != 0)
+                        endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount != 0 ||
+                        endpoint.ReconnectTask is { IsCompleted: false })
                     {
                         continue;
                     }
@@ -415,8 +419,7 @@ internal sealed partial class SharpLinkClient
         {
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0 || endpoint.ReconnectTask is { IsCompleted: false } ||
-                    endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount >= 1)
+                if (endpoint.ReconnectTask is { IsCompleted: false } || !NeedsReconnectLocked(endpoint))
                 {
                     return;
                 }
@@ -467,6 +470,11 @@ internal sealed partial class SharpLinkClient
                 try
                 {
                     await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds), _client._shutdownCts.Token).ConfigureAwait(false);
+                    lock (_gate)
+                    {
+                        if (!NeedsReconnectLocked(endpoint))
+                            return;
+                    }
                     await ConnectOneAsync(endpoint, _client._shutdownCts.Token).ConfigureAwait(false);
                     if (endpoint.ReadyConnections.Length != 0)
                         return;
@@ -651,6 +659,12 @@ internal sealed partial class SharpLinkClient
                 count += _endpoints[index].NonRetiringConnectionCount + _endpoints[index].ConnectingCount;
             return count;
         }
+
+        private bool NeedsReconnectLocked(EndpointState endpoint)
+            => Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested &&
+               Volatile.Read(ref _readyEndpoints).Length < TargetReadyEndpointCount &&
+               TotalConnectionsLocked() < _options.MaxConnections &&
+               endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount == 0;
 
         private int CountConnections(Func<ClientConnection, int> count)
         {

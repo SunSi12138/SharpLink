@@ -405,6 +405,41 @@ public sealed class StaticEndpointIntegrationTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task InitialStaticConnectShouldContinueFillingTargetsBeyondTheFirstBatch()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var second = await TcpServerScope.StartAsync("second");
+        await using var third = await TcpServerScope.StartAsync("third");
+        await using var fourth = await TcpServerScope.StartAsync("fourth");
+        await using var fifth = await TcpServerScope.StartAsync("fifth");
+        await using var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpoints(
+                [
+                    Endpoint("first", first.Port),
+                    Endpoint("second", second.Port),
+                    Endpoint("third", third.Port),
+                    Endpoint("fourth", fourth.Port),
+                    Endpoint("fifth", fifth.Port)
+                ],
+                SharpLinkTransportFactories.Sockets())
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 5;
+                options.MaxConnections = 5;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        await client.ConnectAsync();
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 5, TimeSpan.FromSeconds(3));
+
+        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 5,
+            "initial static connect must continue filling endpoints beyond its first parallel batch");
+    }
+
+    [Test]
     public async Task RoundRobinAndCustomAttributeSelectorsShouldChooseExpectedEndpoints()
     {
         await using var first = await TcpServerScope.StartAsync("east");

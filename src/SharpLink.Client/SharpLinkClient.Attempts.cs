@@ -18,6 +18,7 @@ internal sealed partial class SharpLinkClient
         private SharpLinkEndpointCandidate _admissionEndpoint;
         private long _admissionToken;
         private int _hasAdmissionLease;
+        private int _admissionGranted;
         private int _reported;
         private int _admissionRejected;
         private TimeSpan? _retryAfter;
@@ -37,6 +38,9 @@ internal sealed partial class SharpLinkClient
         public TimeSpan? RetryAfter => _retryAfter;
 
         public bool HasAdmissionRejection => Volatile.Read(ref _admissionRejected) != 0;
+
+        public bool ShouldHonorAdmissionRetryAfter
+            => HasAdmissionRejection && Volatile.Read(ref _admissionGranted) == 0;
 
         public bool TryAcquire(in SharpLinkEndpointCandidate endpoint)
         {
@@ -76,6 +80,7 @@ internal sealed partial class SharpLinkClient
             _admissionEndpoint = endpoint;
             _admissionToken = decision.Token;
             Volatile.Write(ref _endpointStarted, Stopwatch.GetTimestamp());
+            Volatile.Write(ref _admissionGranted, 1);
             Volatile.Write(ref _hasAdmissionLease, 1);
             Volatile.Write(ref _reported, 0);
             return true;

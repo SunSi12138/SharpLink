@@ -195,6 +195,27 @@ public sealed class DynamicEndpointIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task FailedInitialDynamicDialShouldReconnectWithoutANewerResolverVersion()
+    {
+        await using var server = await TcpServerScope.StartAsync("recovered");
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("recovered", server.Port, "green")]));
+        var factory = new FailOnceConnectFactory(SharpLinkTransportFactories.Sockets()(Endpoint("recovered", server.Port, "green")));
+        await using var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpointResolver(resolver, _ => factory)
+            .Build();
+
+        var initial = await CaptureSharpLinkException(client.ConnectAsync().AsTask());
+        Ensure(initial.Code == SharpLinkErrorCode.Unavailable, "initial failed dial reports unavailable");
+
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(3));
+        Ensure(factory.ConnectCount >= 2, "same accepted topology must reconnect after the first dial fails");
+        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "recovered",
+            "same-version dynamic topology recovers after its reconnect worker succeeds");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task RejectedDynamicSnapshotCleanupShouldContinueAfterFactoryDisposalFailure()
     {
         await using var first = await TcpServerScope.StartAsync("first");
@@ -255,7 +276,7 @@ public sealed class DynamicEndpointIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task DynamicReplacementShouldNotWaitBehindExcessRetiringConnections()
+    public async Task DynamicReplacementShouldWaitForExcessRetiringConnectionsToDrain()
     {
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
@@ -279,14 +300,50 @@ public sealed class DynamicEndpointIntegrationTests
         Ensure(await stream.MoveNextAsync() && stream.Current == 0, "initial active stream");
 
         resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("second", second.Port, "green")]));
-        await WaitUntilAsync(async () => await service.GetEndpointIdAsync() == "second", TimeSpan.FromSeconds(3));
-        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 1,
-            "replacement must become ready even when retired streams exceed their budget");
+        await Task.Delay(150);
+        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 0,
+            "retiring budget must defer replacement connection creation while an old stream is active");
         Ensure(await stream.MoveNextAsync() && stream.Current == 1,
             "budget pressure must not abort the already accepted stream");
         Ensure(await stream.MoveNextAsync() && stream.Current == 2,
             "retired stream must remain bound through its final item");
         Ensure(!await stream.MoveNextAsync(), "retired stream completion after replacement");
+        await WaitUntilAsync(async () => await service.GetEndpointIdAsync() == "second", TimeSpan.FromSeconds(3));
+        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 1,
+            "replacement must resume once the excess retiring stream has drained");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task DynamicReconnectShouldProbeHealthyEndpointsAfterAFailingEndpoint()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var second = await TcpServerScope.StartAsync("second");
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1,
+        [
+            Endpoint("bad", 1, "red"),
+            Endpoint("first", first.Port, "green"),
+            Endpoint("second", second.Port, "blue")
+        ]));
+        var failing = new FailingConnectFactory();
+        var sockets = SharpLinkTransportFactories.Sockets();
+        await using var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpointResolver(resolver, endpoint => endpoint.Id == "bad" ? failing : sockets(endpoint))
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        await client.ConnectAsync();
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
+
+        Ensure(failing.ConnectCount != 0, "the failing endpoint should have been probed");
+        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 2,
+            "a persistently failing endpoint must not monopolize the remaining ready target");
     }
 
     [Test]
@@ -494,6 +551,20 @@ public sealed class DynamicEndpointIntegrationTests
             Interlocked.Increment(ref _disposeCount);
             return ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class FailOnceConnectFactory(IClientTransportFactory inner) : IClientTransportFactory
+    {
+        private int _connectCount;
+
+        public int ConnectCount => Volatile.Read(ref _connectCount);
+
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => Interlocked.Increment(ref _connectCount) == 1
+                ? ValueTask.FromException<ITransportConnection>(new InvalidOperationException("test first dynamic dial failure"))
+                : inner.ConnectAsync(cancellationToken);
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
     }
 
     private sealed class BlockingConnectFactory : IClientTransportFactory

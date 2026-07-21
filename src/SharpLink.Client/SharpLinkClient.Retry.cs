@@ -77,7 +77,8 @@ internal sealed partial class SharpLinkClient
                         "The retry policy returned a negative delay.");
                 }
                 var delay = decision.Delay;
-                if (outcome.RetryAfter is { } admissionDelay && admissionDelay > delay)
+                if (outcome.ShouldHonorAdmissionRetryAfter &&
+                    outcome.RetryAfter is { } admissionDelay && admissionDelay > delay)
                     delay = admissionDelay;
                 if (delay == TimeSpan.Zero)
                     continue;

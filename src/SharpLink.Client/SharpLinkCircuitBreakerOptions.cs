@@ -22,7 +22,7 @@ public sealed class SharpLinkCircuitBreakerOptions
     {
         if (MinimumThroughput is < 1 or > 1024)
             throw new ArgumentOutOfRangeException(nameof(MinimumThroughput));
-        if (FailureRatio is < 0 or > 1 || double.IsNaN(FailureRatio))
+        if (FailureRatio is <= 0 or > 1 || double.IsNaN(FailureRatio))
             throw new ArgumentOutOfRangeException(nameof(FailureRatio));
         if (SamplingDuration <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(SamplingDuration));

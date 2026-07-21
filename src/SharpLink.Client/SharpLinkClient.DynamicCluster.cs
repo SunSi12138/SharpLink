@@ -28,6 +28,7 @@ internal sealed partial class SharpLinkClient
         private long _nextGeneration;
         private int _roundRobinCursor;
         private int _leastPendingCursor;
+        private int _reconnectCursor;
         private int _stopping;
         private int _resolverDisposed;
 
@@ -162,6 +163,7 @@ internal sealed partial class SharpLinkClient
                 ScheduleRetiredStateRelease(endpoint);
             else
                 EnsureReconnect(endpoint);
+            EnsureMinimumReadyEndpoints();
             UpdateClientReadiness();
         }
 
@@ -183,6 +185,7 @@ internal sealed partial class SharpLinkClient
                 ScheduleRetiredStateRelease(endpoint);
             else
                 EnsureReconnect(endpoint);
+            EnsureMinimumReadyEndpoints();
             UpdateClientReadiness();
         }
 
@@ -484,6 +487,7 @@ internal sealed partial class SharpLinkClient
                 }
             }
 
+            EnsureMinimumReadyEndpoints();
             throw new SharpLinkException(
                 SharpLinkErrorCode.Unavailable,
                 "No dynamic SharpLink endpoint could connect.",
@@ -513,6 +517,7 @@ internal sealed partial class SharpLinkClient
             {
                 if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested ||
                     endpoint.Retiring || !IsCurrentLocked(endpoint) ||
+                    IsRetiringBudgetExceededLocked() ||
                     TotalActiveConnectionsLocked() >= _options.MaxConnections ||
                     endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount >= _options.MaxConnectionsPerEndpoint)
                 {
@@ -556,7 +561,8 @@ internal sealed partial class SharpLinkClient
 
                 lock (_gate)
                 {
-                    if (Volatile.Read(ref _stopping) != 0 || endpoint.Retiring || !IsCurrentLocked(endpoint))
+                    if (Volatile.Read(ref _stopping) != 0 || endpoint.Retiring || !IsCurrentLocked(endpoint) ||
+                        IsRetiringBudgetExceededLocked())
                         throw CreateConnectionClosedException("Endpoint generation retired while connecting.");
                     endpoint.Connections.Add(connection);
                     PublishReadySnapshotLocked();
@@ -603,8 +609,9 @@ internal sealed partial class SharpLinkClient
             else if (Volatile.Read(ref _stopping) == 0)
             {
                 EnsureReconnect(endpoint);
-                EnsureMinimumReadyEndpoints();
             }
+            if (Volatile.Read(ref _stopping) == 0)
+                EnsureMinimumReadyEndpoints();
             UpdateClientReadiness();
         }
 
@@ -618,10 +625,14 @@ internal sealed partial class SharpLinkClient
                 var target = Math.Min(_options.MinReadyEndpoints, _current.Length);
                 var availableCapacity = _options.MaxConnections - TotalActiveConnectionsLocked();
                 var remaining = Math.Min(target - Volatile.Read(ref _readyEndpoints).Length, availableCapacity);
-                for (var index = 0; remaining > 0 && index < _current.Length; index++)
+                var start = unchecked((uint)Interlocked.Increment(ref _reconnectCursor));
+                for (var offset = 0; remaining > 0 && offset < _current.Length; offset++)
                 {
+                    var index = (int)((start + (uint)offset) % (uint)_current.Length);
                     var endpoint = _current[index];
-                    if (endpoint.ReadyConnections.Length != 0 || endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount != 0)
+                    if (endpoint.ReadyConnections.Length != 0 ||
+                        endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount != 0 ||
+                        endpoint.ReconnectTask is { IsCompleted: false })
                         continue;
                     (missing ??= []).Add(endpoint);
                     remaining--;
@@ -652,6 +663,7 @@ internal sealed partial class SharpLinkClient
             {
                 if (Volatile.Read(ref _stopping) != 0 || endpoint.Retiring || !IsCurrentLocked(endpoint) ||
                     endpoint.ExpansionTask is { IsCompleted: false } ||
+                    IsRetiringBudgetExceededLocked() ||
                     TotalActiveConnectionsLocked() >= _options.MaxConnections ||
                     endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount >= _options.MaxConnectionsPerEndpoint)
                 {
@@ -686,11 +698,6 @@ internal sealed partial class SharpLinkClient
             {
                 try
                 {
-                    lock (_gate)
-                    {
-                        if (!NeedsReconnectLocked(endpoint))
-                            return;
-                    }
                     await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds), _client._shutdownCts.Token).ConfigureAwait(false);
                     lock (_gate)
                     {
@@ -858,9 +865,13 @@ internal sealed partial class SharpLinkClient
         private bool NeedsReconnectLocked(EndpointState endpoint)
             => Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested &&
                !endpoint.Retiring && IsCurrentLocked(endpoint) &&
+               !IsRetiringBudgetExceededLocked() &&
                Volatile.Read(ref _readyEndpoints).Length < Math.Min(_options.MinReadyEndpoints, _current.Length) &&
                TotalActiveConnectionsLocked() < _options.MaxConnections &&
                endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount == 0;
+
+        private bool IsRetiringBudgetExceededLocked()
+            => _retiringConnections.Count > _options.MaxRetiringConnections;
 
         private int TotalActiveConnectionsLocked()
         {
