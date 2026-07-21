@@ -112,6 +112,20 @@ public class StaticEndpointBuilderTests
         });
     }
 
+    [Test]
+    public async Task ClusterShouldRejectAFactoryInstanceSharedAcrossEndpoints()
+    {
+        var shared = new TrackingFactory();
+        await EnsureThrows<InvalidOperationException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => shared)
+                .Build();
+            return Task.CompletedTask;
+        });
+        Ensure(shared.DisposeCount == 1, "rejected shared factory must be disposed exactly once");
+    }
+
     private static SharpLinkEndpoint Endpoint(string id, int port) => new()
     {
         Id = id,

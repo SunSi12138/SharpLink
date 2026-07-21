@@ -253,20 +253,27 @@ public class SharpClientBuilder
                 throw new InvalidOperationException("UseConnectionPool is only available for a fixed single endpoint.");
             var cluster = _cluster.CloneValidated(endpoints.Length);
             var configurations = new StaticEndpointConfiguration[endpoints.Length];
+            var ownedFactories = new HashSet<IClientTransportFactory>(ReferenceEqualityComparer.Instance);
             try
             {
                 for (var index = 0; index < endpoints.Length; index++)
                 {
+                    var factory = CreateTransportFactory(endpoints[index], _endpointTransportFactory!, runtimeContext);
+                    if (!ownedFactories.Add(factory))
+                    {
+                        throw new InvalidOperationException(
+                            "Each static endpoint must receive an independently owned transport factory.");
+                    }
                     configurations[index] = new StaticEndpointConfiguration(
                         endpoints[index],
-                        CreateTransportFactory(endpoints[index], _endpointTransportFactory!, runtimeContext));
+                        factory);
                 }
                 return CreateClusterClient(configurations, cluster, runtimeContext, protocolOptions);
             }
             catch
             {
-                for (var index = 0; index < configurations.Length; index++)
-                    configurations[index]?.TransportFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                foreach (var factory in ownedFactories)
+                    factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
                 throw;
             }
         }
