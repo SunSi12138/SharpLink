@@ -152,6 +152,40 @@ public sealed class StaticEndpointIntegrationTests
         Ensure(await client.Get<IConnectionBehaviorService>().PingAsync(10) == 11, "UDS static-cluster RPC");
     }
 
+    [Test]
+    public async Task ConcurrentConnectAndStopShouldConvergeStaticClusterResources()
+    {
+        await using var first = await TcpServerScope.StartAsync();
+        await using var second = await TcpServerScope.StartAsync();
+        var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpoints(
+                [Endpoint("first", first.Port), Endpoint("second", second.Port)],
+                SharpLinkTransportFactories.Sockets())
+            .Build();
+        try
+        {
+            var connects = new Task[16];
+            for (var index = 0; index < connects.Length; index++)
+                connects[index] = client.ConnectAsync().AsTask();
+            await Task.WhenAll(connects);
+
+            var stops = new Task[16];
+            for (var index = 0; index < stops.Length; index++)
+                stops[index] = client.StopAsync().AsTask();
+            await Task.WhenAll(stops);
+
+            var implementation = (SharpLinkClient)client;
+            Ensure(implementation.State == SharpLinkConnectionState.Stopped, "static cluster must stop");
+            Ensure(implementation.ReadyConnectionCount == 0, "static cluster connections must converge to zero");
+            await EnsureThrows<SharpLinkException>(client.ConnectAsync().AsTask(), "Connect after Stop");
+        }
+        finally
+        {
+            await client.DisposeAsync();
+        }
+    }
+
     private static SharpLinkEndpoint Endpoint(string id, int port) => new()
     {
         Id = id,
@@ -169,6 +203,18 @@ public sealed class StaticEndpointIntegrationTests
         var deadline = Stopwatch.GetTimestamp() + (long)(timeout.TotalSeconds * Stopwatch.Frequency);
         while (!condition() && Stopwatch.GetTimestamp() < deadline)
             await Task.Delay(20);
+    }
+
+    private static async Task EnsureThrows<TException>(Task action, string name) where TException : Exception
+    {
+        try
+        {
+            await action;
+            throw new Exception($"{name} should throw {typeof(TException).Name}");
+        }
+        catch (TException)
+        {
+        }
     }
 
     private sealed class TcpServerScope : IAsyncDisposable
