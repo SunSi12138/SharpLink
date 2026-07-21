@@ -47,6 +47,7 @@ internal sealed partial class SharpLinkClient
     {
         while (true)
         {
+            attemptOutcome?.BeginAdmissionSelection();
             try
             {
                 if (!_shutdownCts.IsCancellationRequested && ReadyConnectionCount != 0)

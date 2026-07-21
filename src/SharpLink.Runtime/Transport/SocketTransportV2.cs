@@ -239,11 +239,24 @@ internal static class SocketTransportSocketFactory
     {
         if (endPoint is DnsEndPoint)
         {
-            var dualMode = new Socket(AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp)
+            if (Socket.OSSupportsIPv6)
             {
-                DualMode = true
-            };
-            return dualMode;
+                Socket? dualMode = null;
+                try
+                {
+                    dualMode = new Socket(AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp)
+                    {
+                        DualMode = true
+                    };
+                    return dualMode;
+                }
+                catch (Exception exception) when (exception is SocketException or NotSupportedException)
+                {
+                    dualMode?.Dispose();
+                }
+            }
+
+            return new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         }
         var addressFamily = endPoint.AddressFamily == AddressFamily.Unspecified
             ? AddressFamily.InterNetwork

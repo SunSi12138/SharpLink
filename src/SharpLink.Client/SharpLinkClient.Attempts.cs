@@ -44,6 +44,13 @@ internal sealed partial class SharpLinkClient
         public bool ShouldHonorAdmissionRetryAfter
             => HasAdmissionRejection && Volatile.Read(ref _admissionGranted) == 0;
 
+        public void BeginAdmissionSelection()
+        {
+            Volatile.Write(ref _admissionRejected, 0);
+            Volatile.Write(ref _admissionGranted, 0);
+            _retryAfter = null;
+        }
+
         public bool TryAcquire(in SharpLinkEndpointCandidate endpoint)
         {
             var policy = _client._endpointAdmissionPolicy;

@@ -233,6 +233,7 @@ internal sealed partial class SharpLinkClient
     {
         while (true)
         {
+            outcome.BeginAdmissionSelection();
             try
             {
                 return GetReadyConnection(method, selection, outcome);

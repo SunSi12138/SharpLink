@@ -208,7 +208,7 @@ internal sealed partial class SharpLinkClient
         private async Task ConnectInitialAsync(CancellationToken cancellationToken)
         {
             Exception? lastFailure = null;
-            var parallelism = Math.Min(Math.Min(_options.MaxConnections, _endpoints.Length), 4);
+            var parallelism = Math.Min(Math.Min(TargetReadyEndpointCount, _endpoints.Length), 4);
             for (var start = 0; start < _endpoints.Length && ReadyConnectionCount == 0; start += parallelism)
             {
                 var count = Math.Min(parallelism, _endpoints.Length - start);
@@ -395,7 +395,8 @@ internal sealed partial class SharpLinkClient
                     return;
                 var readyCount = Volatile.Read(ref _readyEndpoints).Length;
                 var availableCapacity = _options.MaxConnections - TotalConnectionsLocked();
-                var remaining = Math.Min(TargetReadyEndpointCount - readyCount, availableCapacity);
+                var activeReconnects = _endpoints.Count(static endpoint => endpoint.ReconnectTask is { IsCompleted: false });
+                var remaining = Math.Min(TargetReadyEndpointCount - readyCount - activeReconnects, availableCapacity);
                 var start = unchecked((uint)Interlocked.Increment(ref _reconnectCursor));
                 for (var offset = 0; remaining > 0 && offset < _endpoints.Length; offset++)
                 {
@@ -422,7 +423,9 @@ internal sealed partial class SharpLinkClient
         {
             lock (_gate)
             {
-                if (endpoint.ReconnectTask is { IsCompleted: false } || !NeedsReconnectLocked(endpoint))
+                var activeReconnects = _endpoints.Count(static candidate => candidate.ReconnectTask is { IsCompleted: false });
+                if (endpoint.ReconnectTask is { IsCompleted: false } || !NeedsReconnectLocked(endpoint) ||
+                    activeReconnects >= TargetReadyEndpointCount - Volatile.Read(ref _readyEndpoints).Length)
                 {
                     return;
                 }
@@ -467,34 +470,30 @@ internal sealed partial class SharpLinkClient
 
         private async Task ReconnectAsync(EndpointState endpoint)
         {
-            var delayMilliseconds = 100;
-            while (Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
+            try
             {
-                try
-                {
-                    await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds), _client._shutdownCts.Token).ConfigureAwait(false);
-                    lock (_gate)
-                    {
-                        if (!NeedsReconnectLocked(endpoint))
-                            return;
-                    }
+                await Task.Delay(TimeSpan.FromMilliseconds(100), _client._shutdownCts.Token).ConfigureAwait(false);
+                var shouldConnect = false;
+                lock (_gate)
+                    shouldConnect = NeedsReconnectLocked(endpoint);
+                if (shouldConnect)
                     await ConnectOneAsync(endpoint, _client._shutdownCts.Token).ConfigureAwait(false);
-                    if (endpoint.ReadyConnections.Length != 0)
-                        return;
-                }
-                catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
-                {
-                    return;
-                }
-                catch (Exception exception)
-                {
-                    LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ReconnectAsync), exception);
-                    // A failing endpoint keeps its own backoff, while the coordinator probes another
-                    // candidate that can still satisfy MinReadyEndpoints.
-                    EnsureMinimumReadyEndpoints();
-                    delayMilliseconds = Math.Min(delayMilliseconds * 2, 5000);
-                }
             }
+            catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ReconnectAsync), exception);
+            }
+            finally
+            {
+                lock (_gate)
+                    endpoint.ReconnectTask = null;
+            }
+            if (Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
+                EnsureMinimumReadyEndpoints();
         }
 
         private void PublishClientReadiness()
