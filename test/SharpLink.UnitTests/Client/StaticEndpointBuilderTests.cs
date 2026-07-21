@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using SharpLink.Client;
@@ -113,6 +114,69 @@ public class StaticEndpointBuilderTests
                 .Build();
             return Task.CompletedTask;
         });
+
+        await EnsureThrows<ArgumentException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseEndpoints([], _ => new TrackingFactory())
+                .Build();
+            return Task.CompletedTask;
+        });
+
+        await EnsureThrows<ArgumentException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseEndpoints(
+                    Enumerable.Range(0, SharpLinkClusterOptions.MaximumEndpoints + 1)
+                        .Select(index => Endpoint($"endpoint-{index}", 5001 + index)),
+                    _ => new TrackingFactory())
+                .Build();
+            return Task.CompletedTask;
+        });
+
+        await EnsureThrows<ArgumentException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseEndpoints(
+                    [new SharpLinkEndpoint
+                    {
+                        Id = "one",
+                        Address = new SharpLinkTcpAddress("127.0.0.1", 5001),
+                        Attributes = new Dictionary<string, string> { [" "] = "invalid" }
+                    }],
+                    _ => new TrackingFactory())
+                .Build();
+            return Task.CompletedTask;
+        });
+
+        await EnsureThrows<ArgumentOutOfRangeException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => new TrackingFactory())
+                .UseCluster(static options => options.MaxRetiringConnections = -1)
+                .Build();
+            return Task.CompletedTask;
+        });
+    }
+
+    [Test]
+    public async Task ClusterMinReadyShouldUseTheEndpointCountAsItsEffectiveUpperBound()
+    {
+        var first = new TrackingFactory();
+        var second = new TrackingFactory();
+        await using var client = SharpClientBuilder.Create()
+            .UseEndpoints(
+                [Endpoint("one", 5001), Endpoint("two", 5002)],
+                endpoint => endpoint.Id == "one" ? first : second)
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 5;
+                options.MaxConnections = 5;
+                options.MaxConnectionsPerEndpoint = 2;
+            })
+            .Build();
+
+        Ensure(first.DisposeCount == 0 && second.DisposeCount == 0, "factories remain client-owned until stop");
     }
 
     [Test]

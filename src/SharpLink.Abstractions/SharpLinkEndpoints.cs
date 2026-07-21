@@ -183,12 +183,60 @@ public readonly ref struct SharpLinkEndpointSelectionContext
 }
 
 /// <summary>Describes a Ready endpoint visible to one selector invocation.</summary>
-/// <param name="endpoint">The frozen endpoint.</param>
-/// <param name="readyConnectionCount">The number of Ready connections at snapshot publication time.</param>
-/// <param name="activeCallCount">The current active-call count read atomically from the endpoint.</param>
-/// <param name="generation">The client-assigned endpoint generation.</param>
-public readonly record struct SharpLinkEndpointCandidate(
-    SharpLinkEndpoint Endpoint,
-    int ReadyConnectionCount,
-    int ActiveCallCount,
-    long Generation);
+/// <remarks>
+/// The endpoint identity and generation belong to the immutable candidate snapshot. Connection and
+/// active-call counts are read from endpoint-owned atomic state, so a selector never needs a rebuilt
+/// candidate array merely because in-flight work changed.
+/// </remarks>
+public readonly record struct SharpLinkEndpointCandidate
+{
+    private readonly int _readyConnectionCount;
+    private readonly int _activeCallCount;
+    private readonly Func<int>? _readyConnectionCountProvider;
+    private readonly Func<int>? _activeCallCountProvider;
+
+    /// <summary>Initializes a candidate with fixed diagnostic counts.</summary>
+    /// <param name="endpoint">The frozen endpoint.</param>
+    /// <param name="readyConnectionCount">The Ready connection count.</param>
+    /// <param name="activeCallCount">The active-call count.</param>
+    /// <param name="generation">The client-assigned endpoint generation.</param>
+    public SharpLinkEndpointCandidate(
+        SharpLinkEndpoint endpoint,
+        int readyConnectionCount,
+        int activeCallCount,
+        long generation)
+    {
+        Endpoint = endpoint ?? throw new ArgumentNullException(nameof(endpoint));
+        _readyConnectionCount = readyConnectionCount;
+        _activeCallCount = activeCallCount;
+        _readyConnectionCountProvider = null;
+        _activeCallCountProvider = null;
+        Generation = generation;
+    }
+
+    internal SharpLinkEndpointCandidate(
+        SharpLinkEndpoint endpoint,
+        Func<int> readyConnectionCountProvider,
+        Func<int> activeCallCountProvider,
+        long generation)
+    {
+        Endpoint = endpoint ?? throw new ArgumentNullException(nameof(endpoint));
+        _readyConnectionCount = 0;
+        _activeCallCount = 0;
+        _readyConnectionCountProvider = readyConnectionCountProvider ?? throw new ArgumentNullException(nameof(readyConnectionCountProvider));
+        _activeCallCountProvider = activeCallCountProvider ?? throw new ArgumentNullException(nameof(activeCallCountProvider));
+        Generation = generation;
+    }
+
+    /// <summary>Gets the frozen endpoint identity and attributes.</summary>
+    public SharpLinkEndpoint Endpoint { get; }
+
+    /// <summary>Gets the current number of Ready connections for this endpoint.</summary>
+    public int ReadyConnectionCount => _readyConnectionCountProvider?.Invoke() ?? _readyConnectionCount;
+
+    /// <summary>Gets the current active-call count for this endpoint.</summary>
+    public int ActiveCallCount => _activeCallCountProvider?.Invoke() ?? _activeCallCount;
+
+    /// <summary>Gets the client-assigned endpoint generation.</summary>
+    public long Generation { get; }
+}

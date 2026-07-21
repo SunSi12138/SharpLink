@@ -150,7 +150,7 @@ public class TlsTransportIntegrationTests
         await client.ConnectAsync();
         Ensure(await client.Get<ITlsIntegrationService>().AddAsync(5, 6) == 11, "static TLS RPC");
         await first.StopAsync();
-        await Task.Delay(150);
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1);
         Ensure(await client.Get<ITlsIntegrationService>().AddAsync(7, 8) == 15, "remaining static TLS endpoint");
     }
 

@@ -1546,6 +1546,7 @@ public interface IConnectionBehaviorService : IService
     [NonCancellable]
     ValueTask<string> CreatePayloadAsync(int length);
     ValueTask<int> SlowAsync(int delayMs, CancellationToken cancellationToken = default);
+    IAsyncEnumerable<int> SlowRangeAsync(int count, int delayMs, CancellationToken cancellationToken = default);
     [NonCancellable]
     ValueTask<string> GetAuthenticationSummaryAsync();
     [NonCancellable]
@@ -1578,6 +1579,19 @@ public sealed class ConnectionBehaviorService : IConnectionBehaviorService
         SlowCallStarted?.TrySetResult(EndpointId);
         await Task.Delay(delayMs, cancellationToken);
         return delayMs;
+    }
+
+    public async IAsyncEnumerable<int> SlowRangeAsync(
+        int count,
+        int delayMs,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        SlowCallStarted?.TrySetResult(EndpointId);
+        for (var value = 0; value < count; value++)
+        {
+            yield return value;
+            await Task.Delay(delayMs, cancellationToken);
+        }
     }
 
     public ValueTask<string> GetAuthenticationSummaryAsync()

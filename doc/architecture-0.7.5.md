@@ -36,17 +36,17 @@ StaticEndpoints
 
 ## Cluster 状态机与连接所有权
 
-Static Cluster 的 Client 拥有一个 `StaticClusterState`：冻结的 `EndpointState[]`、不可变 Ready candidate 数组、全局连接 reservation、一次性 topology signal 和已跟踪 worker 集合。每个 `EndpointState` 拥有一个 endpoint generation 的 factory、Ready connection snapshot、Connecting/Ready/Draining 计数、active-call 计数、reconnect 信号和该 endpoint 的 worker。
+Static Cluster 的 Client 拥有一个 `StaticClusterRuntime`：冻结的 `EndpointState[]`、不可变 Ready candidate 数组、全局连接 reservation、retiring connection 预算、一次性 topology signal 和已跟踪 worker 集合。每个 `EndpointState` 拥有一个 endpoint generation 的 factory、Ready connection snapshot、Connecting/Ready/Draining 计数、active-call 计数、reconnect 信号和该 endpoint 的 worker。
 
 连接建立采用 endpoint-first：在全局预算内先尝试让各 endpoint 各有一条连接，之后才扩展同一 endpoint。最多四个内部连接操作并发。`ConnectAsync` 在任意 endpoint 完成 RPC handshake 后成功；后台继续填充实际 `min(MinReadyEndpoints, endpointCount)`。任一 endpoint 的失败只启动自身退避重连，不阻塞其余 Ready endpoint。Stop 获胜后取消所有 endpoint worker，等待其退出，释放 connection 与 factory，且不会再建立连接。
 
-Ready candidate snapshot 只包含至少一条 Ready connection 的 endpoint。它仅在启动完成、连接数在零与非零间转换、或 endpoint 固定成员初始化时重建，并以 `Volatile.Write` 发布。调用路径只读取 snapshot 与原子计数，不取得 topology writer lock，也不重建数组。
+Ready candidate snapshot 只包含至少一条 Ready connection 的 endpoint。它仅在启动完成、连接数在零与非零间转换、或 endpoint 固定成员初始化时重建，并以 `Volatile.Write` 作为同一 endpoint/candidate 对发布。调用路径只读取这一快照与原子计数，不取得 topology writer lock，也不重建数组。Ready/active 计数通过 endpoint-owned provider 实时读取，因此连接扩缩容或 in-flight call 变化不会迫使快照重建。
 
 ## 选择与调用
 
 调用先从 Cluster Ready candidate snapshot 选择 endpoint，再用该 endpoint 内已有的连接 P2C 选择 connection。P2C 用两个不同候选的 `ActiveCallCount / ReadyConnectionCount` 作 64 位交叉相乘比较；Random、RoundRobin 和 LeastPending 也只在静态 snapshot 上运行。RoundRobin cursor 是 Client 实例字段，LeastPending 使用旋转起点消除固定并列偏差。
 
-endpoint 在选择后失去最后一个 Ready connection 时，该调用在同一 snapshot 上设置 exclusion bit 并重新选择，最多候选数次；无需 `HashSet`。所有 endpoint 不可用时保留既有 `WaitForReady`、deadline、cancellation 与 Stop 语义。Streaming/OneWay 在开始时选择一个 connection 后一直绑定它；GoAway 仅排空所属 endpoint 中的对应 connection。
+endpoint 在选择后失去最后一个 Ready connection 时，该调用在同一 snapshot 上设置 exclusion bit 并重新选择，最多候选数次；无需 `HashSet`。所有 endpoint 不可用时保留既有 `WaitForReady`、deadline、cancellation 与 Stop 语义。Streaming/OneWay 在开始时选择一个 connection 后一直绑定它；GoAway 仅排空所属 endpoint 中的对应 connection。Retiring connection 不消耗 Ready/Connecting budget，最多保留 `MaxRetiringConnections` 条；超出该独立预算的连接会被关闭并让当前调用得到连接关闭结果。
 
 ## 验收映射
 
