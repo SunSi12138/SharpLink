@@ -371,15 +371,28 @@ internal sealed partial class SharpLinkClient
         if (method.HasClientStreams && (cancellationToken.CanBeCanceled || control.Deadline is not null))
             flags |= ProtocolV2FrameFlags.Cancellable;
 
-        var oneWayStreamLease = method.HasClientStreams
-            ? connection.PendingCalls.RegisterOneWayClientStream(
-                control.DeadlineTimestamp,
-                cancellationToken,
-                outcome)
-            : default;
-        var requestId = method.HasClientStreams
-            ? oneWayStreamLease.Id
-            : connection.PendingCalls.AllocateRequestId();
+        PendingRequestLease<RpcEmptyRequest> oneWayStreamLease = default;
+        long requestId;
+        try
+        {
+            if (method.HasClientStreams)
+            {
+                oneWayStreamLease = connection.PendingCalls.RegisterOneWayClientStream(
+                    control.DeadlineTimestamp,
+                    cancellationToken,
+                    outcome);
+                requestId = oneWayStreamLease.Id;
+            }
+            else
+            {
+                requestId = connection.PendingCalls.AllocateRequestId();
+            }
+        }
+        catch (Exception exception)
+        {
+            outcome?.CompleteLocalFailure(exception);
+            throw;
+        }
         var streamCancellationToken = method.HasClientStreams
             ? connection.PendingCalls.GetProducerCancellationToken(requestId)
             : CancellationToken.None;
@@ -678,26 +691,46 @@ internal sealed partial class SharpLinkClient
         var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
         if (outcome is null)
             SharpLinkTelemetry.RecordClientAttempt();
-        var connection = await GetReadyConnectionAsync(
-            control.WaitForReady,
-            control.Deadline,
-            cancellationToken,
-            method,
-            outcome).ConfigureAwait(false);
-        var requestId = connection.PendingCalls.RegisterStream(
-            kind,
-            dispatcher,
-            control.DeadlineTimestamp,
-            cancellationToken,
-            outcome);
-        if (!connection.PendingCalls.Contains(requestId))
+        ClientConnection? connection = null;
+        var requestId = 0L;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            throw CreateDeadlineExceededException();
+            connection = await GetReadyConnectionAsync(
+                control.WaitForReady,
+                control.Deadline,
+                cancellationToken,
+                method,
+                outcome).ConfigureAwait(false);
+            requestId = connection.PendingCalls.RegisterStream(
+                kind,
+                dispatcher,
+                control.DeadlineTimestamp,
+                cancellationToken,
+                outcome);
+            if (!connection.PendingCalls.Contains(requestId))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw CreateDeadlineExceededException();
+            }
+            dispatcher.SetConsumerAbandonedCallback(connection.ConsumerAbandonedCallback, requestId);
+            connection.Session.StreamManager.Register(requestId, 0, dispatcher);
+            return new StreamCallRegistration(connection, requestId);
         }
-        dispatcher.SetConsumerAbandonedCallback(connection.ConsumerAbandonedCallback, requestId);
-        connection.Session.StreamManager.Register(requestId, 0, dispatcher);
-        return new StreamCallRegistration(connection, requestId);
+        catch (Exception exception)
+        {
+            if (connection is not null && requestId != 0)
+            {
+                connection.PendingCalls.TryComplete(
+                    requestId,
+                    PendingCallCompletionReason.SendFailure,
+                    exception);
+            }
+            else
+            {
+                outcome?.CompleteLocalFailure(exception);
+            }
+            throw;
+        }
     }
 
     private void CompleteFailedGeneratedStream<TResponse>(

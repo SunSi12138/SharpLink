@@ -170,6 +170,122 @@ public sealed class DynamicEndpointIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task DynamicInitialConnectShouldFailWhenEveryResolvedEndpointFails()
+    {
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("failed", 1, "red")]));
+        var factory = new FailingConnectFactory();
+        var client = SharpClientBuilder.Create()
+            .UseEndpointResolver(resolver, _ => factory)
+            .Build();
+
+        try
+        {
+            var first = await CaptureSharpLinkException(client.ConnectAsync().AsTask());
+            var second = await CaptureSharpLinkException(client.ConnectAsync().AsTask());
+
+            Ensure(first.Code == SharpLinkErrorCode.Unavailable, "initial failed dynamic topology error");
+            Ensure(second.Code == SharpLinkErrorCode.Unavailable, "failed initial dynamic topology must not cache success");
+            Ensure(factory.ConnectCount != 0, "resolved endpoint connection must have been attempted");
+        }
+        finally
+        {
+            await client.DisposeAsync();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RejectedDynamicSnapshotCleanupShouldContinueAfterFactoryDisposalFailure()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("first", first.Port, "blue")]));
+        var sockets = SharpLinkTransportFactories.Sockets();
+        TrackingTransportFactory? goodFactory = null;
+        var throwingFactory = new ThrowingDisposeFactory();
+        var remainingFactory = new FailingConnectFactory();
+        var factoryCreates = 0;
+        var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpointResolver(
+                resolver,
+                endpoint =>
+                {
+                    Interlocked.Increment(ref factoryCreates);
+                    return endpoint.Id switch
+                    {
+                        "first" => goodFactory ??= new TrackingTransportFactory(sockets(endpoint)),
+                        "throwing" => throwingFactory,
+                        "remaining" => remainingFactory,
+                        _ => throw new InvalidOperationException("test factory construction failure")
+                    };
+                })
+            .Build();
+
+        try
+        {
+            await client.ConnectAsync();
+            var service = client.Get<IConnectionBehaviorService>();
+            Ensure(await service.GetEndpointIdAsync() == "first", "initial retained topology");
+
+            resolver.Publish(new SharpLinkEndpointSnapshot(2,
+            [
+                Endpoint("throwing", first.Port, "red"),
+                Endpoint("remaining", first.Port, "green"),
+                Endpoint("factory-failure", first.Port, "yellow")
+            ]));
+            await WaitUntilAsync(
+                () => Volatile.Read(ref factoryCreates) == 4 &&
+                      throwingFactory.DisposeCount == 1 &&
+                      remainingFactory.DisposeCount == 1,
+                TimeSpan.FromSeconds(3));
+
+            Ensure(goodFactory is not null && goodFactory.DisposeCount == 0,
+                "failed cleanup must not affect the last-good factory");
+            Ensure(await service.GetEndpointIdAsync() == "first",
+                "failed snapshot cleanup must retain the last-good topology");
+        }
+        finally
+        {
+            await client.DisposeAsync();
+        }
+
+        Ensure(goodFactory is not null && goodFactory.DisposeCount == 1,
+            "last-good factory disposal after rejected snapshot cleanup");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task DynamicReplacementShouldNotWaitBehindExcessRetiringConnections()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var second = await TcpServerScope.StartAsync("second");
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("first", first.Port, "blue")]));
+        await using var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
+            .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 1;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+                options.MaxRetiringConnections = 0;
+            })
+            .Build();
+
+        await client.ConnectAsync();
+        var service = client.Get<IConnectionBehaviorService>();
+        await using var stream = service.SlowRangeAsync(3, 100, CancellationToken.None).GetAsyncEnumerator();
+        Ensure(await stream.MoveNextAsync() && stream.Current == 0, "initial active stream");
+
+        resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("second", second.Port, "green")]));
+        await WaitUntilAsync(async () => await service.GetEndpointIdAsync() == "second", TimeSpan.FromSeconds(3));
+        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 1,
+            "replacement must become ready even when retired streams exceed their budget");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task ResolverWatchEndAndFailureShouldRetryAndRetainTheLastGoodTopology()
     {
         await using var first = await TcpServerScope.StartAsync("first");
@@ -253,6 +369,19 @@ public sealed class DynamicEndpointIntegrationTests
             throw new Exception(message);
     }
 
+    private static async Task<SharpLinkException> CaptureSharpLinkException(Task task)
+    {
+        try
+        {
+            await task;
+            throw new Exception("expected SharpLinkException");
+        }
+        catch (SharpLinkException exception)
+        {
+            return exception;
+        }
+    }
+
     private sealed class ControllableResolver(SharpLinkEndpointSnapshot initial) : ISharpLinkEndpointResolver
     {
         private readonly Channel<SharpLinkEndpointSnapshot> _snapshots = Channel.CreateUnbounded<SharpLinkEndpointSnapshot>();
@@ -294,6 +423,43 @@ public sealed class DynamicEndpointIntegrationTests
         {
             Interlocked.Increment(ref _disposeCount);
             await inner.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private sealed class FailingConnectFactory : IClientTransportFactory
+    {
+        private int _connectCount;
+        private int _disposeCount;
+
+        public int ConnectCount => Volatile.Read(ref _connectCount);
+        public int DisposeCount => Volatile.Read(ref _disposeCount);
+
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _connectCount);
+            return ValueTask.FromException<ITransportConnection>(new InvalidOperationException("test transport failure"));
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            Interlocked.Increment(ref _disposeCount);
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class ThrowingDisposeFactory : IClientTransportFactory
+    {
+        private int _disposeCount;
+
+        public int DisposeCount => Volatile.Read(ref _disposeCount);
+
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(new InvalidOperationException("test transport failure"));
+
+        public ValueTask DisposeAsync()
+        {
+            Interlocked.Increment(ref _disposeCount);
+            return ValueTask.FromException(new InvalidOperationException("test disposal failure"));
         }
     }
 

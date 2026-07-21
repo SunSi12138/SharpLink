@@ -65,6 +65,25 @@ public class StaticEndpointBuilderTests
     }
 
     [Test]
+    public async Task SingleEndpointAnonymousPipeFactoryShouldRejectExpandedConnectionPools()
+    {
+        await EnsureThrows<InvalidOperationException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseEndpoint(
+                    new SharpLinkEndpoint
+                    {
+                        Id = "pipe",
+                        Address = new SharpLinkAnonymousPipeAddress("in-handle", "out-handle")
+                    },
+                    _ => new AnonymousPipeClientTransportFactory("in-handle", "out-handle"))
+                .UseConnectionPool(options => options.MaxConnections = 2)
+                .Build();
+            return Task.CompletedTask;
+        });
+    }
+
+    [Test]
     public async Task StaticClusterShouldOwnEveryFactoryExactlyOnce()
     {
         var first = new TrackingFactory();

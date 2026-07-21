@@ -151,7 +151,13 @@ internal sealed partial class SharpLinkClient
                 }
                 else
                 {
-                    _retiringConnections.Add(connection);
+                    if (_retiringConnections.Add(connection) &&
+                        _retiringConnections.Count > _options.MaxRetiringConnections)
+                    {
+                        _retiringConnections.Remove(connection);
+                        endpoint.Connections.Remove(connection);
+                        disposeNow = true;
+                    }
                 }
                 PublishReadySnapshotLocked();
             }
@@ -453,7 +459,13 @@ internal sealed partial class SharpLinkClient
                 }
                 else
                 {
-                    _retiringConnections.Add(connection);
+                    if (_retiringConnections.Add(connection) &&
+                        _retiringConnections.Count > _options.MaxRetiringConnections)
+                    {
+                        _retiringConnections.Remove(connection);
+                        endpoint.Connections.Remove(connection);
+                        connectionsToDispose.Add(connection);
+                    }
                 }
             }
             if (endpoint.Connections.Count == 0 && endpoint.ConnectingCount == 0)
@@ -465,6 +477,10 @@ internal sealed partial class SharpLinkClient
             EndpointState[] endpoints;
             lock (_gate)
                 endpoints = [.. _current];
+            if (endpoints.Length == 0)
+                return;
+
+            Exception? lastFailure = null;
             var parallelism = Math.Min(Math.Min(_options.MaxConnections, endpoints.Length), 4);
             for (var start = 0; start < endpoints.Length; start += parallelism)
             {
@@ -472,10 +488,17 @@ internal sealed partial class SharpLinkClient
                 var tasks = new Task<Exception?>[count];
                 for (var index = 0; index < count; index++)
                     tasks[index] = TryConnectOneAsync(endpoints[start + index], cancellationToken);
-                await Task.WhenAll(tasks).ConfigureAwait(false);
+                var failures = await Task.WhenAll(tasks).ConfigureAwait(false);
+                for (var index = 0; index < failures.Length; index++)
+                    lastFailure ??= failures[index];
                 if (ReadyConnectionCount != 0)
                     return;
             }
+
+            throw new SharpLinkException(
+                SharpLinkErrorCode.Unavailable,
+                "No dynamic SharpLink endpoint could connect.",
+                lastFailure);
         }
 
         private async Task<Exception?> TryConnectOneAsync(EndpointState endpoint, CancellationToken cancellationToken)
@@ -501,7 +524,6 @@ internal sealed partial class SharpLinkClient
             {
                 if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested ||
                     endpoint.Retiring || !IsCurrentLocked(endpoint) ||
-                    RetiringConnectionsSuppressNewConnectionsLocked() ||
                     TotalActiveConnectionsLocked() >= _options.MaxConnections ||
                     endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount >= _options.MaxConnectionsPerEndpoint)
                 {
@@ -625,7 +647,7 @@ internal sealed partial class SharpLinkClient
             lock (_gate)
             {
                 if (Volatile.Read(ref _stopping) != 0 || endpoint.Retiring || !IsCurrentLocked(endpoint) ||
-                    RetiringConnectionsSuppressNewConnectionsLocked() || endpoint.ReconnectTask is { IsCompleted: false } ||
+                    endpoint.ReconnectTask is { IsCompleted: false } ||
                     endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount >= 1)
                 {
                     return;
@@ -640,7 +662,7 @@ internal sealed partial class SharpLinkClient
             lock (_gate)
             {
                 if (Volatile.Read(ref _stopping) != 0 || endpoint.Retiring || !IsCurrentLocked(endpoint) ||
-                    RetiringConnectionsSuppressNewConnectionsLocked() || endpoint.ExpansionTask is { IsCompleted: false } ||
+                    endpoint.ExpansionTask is { IsCompleted: false } ||
                     TotalActiveConnectionsLocked() >= _options.MaxConnections ||
                     endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount >= _options.MaxConnectionsPerEndpoint)
                 {
@@ -842,9 +864,6 @@ internal sealed partial class SharpLinkClient
             return count;
         }
 
-        private bool RetiringConnectionsSuppressNewConnectionsLocked()
-            => _retiringConnections.Count > _options.MaxRetiringConnections;
-
         private int CountConnections(Func<ClientConnection, int> count)
         {
             lock (_gate)
@@ -989,7 +1008,7 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException) { }
         }
 
-        private static async Task DisposeCreatedFactoriesAsync(
+        private async Task DisposeCreatedFactoriesAsync(
             IEnumerable<EndpointState> states,
             ISet<IClientTransportFactory>? preservedFactories = null)
         {
@@ -998,7 +1017,16 @@ internal sealed partial class SharpLinkClient
             {
                 var factory = state.Configuration.TransportFactory;
                 if (factories.Add(factory) && (preservedFactories is null || !preservedFactories.Contains(factory)))
-                    await DisposeFactoryQuietlyAsync(factory).ConfigureAwait(false);
+                {
+                    try { await DisposeFactoryQuietlyAsync(factory).ConfigureAwait(false); }
+                    catch (Exception exception)
+                    {
+                        LogClientBackgroundLoopUnhandledException(
+                            _client._logger,
+                            nameof(DisposeCreatedFactoriesAsync),
+                            exception);
+                    }
+                }
             }
         }
 

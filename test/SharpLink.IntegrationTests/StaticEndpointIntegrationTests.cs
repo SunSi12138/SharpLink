@@ -387,6 +387,8 @@ public sealed class StaticEndpointIntegrationTests
                          .Build())
         {
             await roundRobin.ConnectAsync();
+            await WaitUntilAsync(() => ((SharpLinkClient)roundRobin).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
+            Ensure(((SharpLinkClient)roundRobin).ReadyConnectionCount == 2, "round robin endpoints must both be ready");
             var service = roundRobin.Get<IConnectionBehaviorService>();
             var ids = new[]
             {
@@ -404,6 +406,8 @@ public sealed class StaticEndpointIntegrationTests
             .UseEndpointSelector(new AttributeSelector("west"))
             .Build();
         await custom.ConnectAsync();
+        await WaitUntilAsync(() => ((SharpLinkClient)custom).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
+        Ensure(((SharpLinkClient)custom).ReadyConnectionCount == 2, "custom selector endpoints must both be ready");
         Ensure(await custom.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "west", "custom selector attributes");
     }
 

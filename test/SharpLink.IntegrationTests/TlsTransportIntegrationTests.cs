@@ -171,6 +171,7 @@ public class TlsTransportIntegrationTests
             .Build();
 
         await client.ConnectAsync();
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2);
         Ensure(await client.Get<ITlsIntegrationService>().AddAsync(5, 6) == 11, "static TLS RPC");
         await first.StopAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1);

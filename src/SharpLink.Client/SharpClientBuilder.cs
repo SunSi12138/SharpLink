@@ -365,7 +365,18 @@ public class SharpClientBuilder
                 var transport = CreateTransportFactory(endpoints[0], _endpointTransportFactory!, runtimeContext);
                 try
                 {
-                    return CreateFixedClient(transport, runtimeContext, protocolOptions, fixedEndpoint: endpoints[0]);
+                    var singleEndpointPool = CreateConnectionPoolSnapshot(runtimeContext);
+                    if (transport is AnonymousPipeClientTransportFactory && singleEndpointPool.MaxConnections != 1)
+                    {
+                        throw new InvalidOperationException(
+                            "Anonymous-pipe handle offers support exactly one client connection.");
+                    }
+                    return CreateFixedClient(
+                        transport,
+                        runtimeContext,
+                        protocolOptions,
+                        singleEndpointPool,
+                        fixedEndpoint: endpoints[0]);
                 }
                 catch
                 {

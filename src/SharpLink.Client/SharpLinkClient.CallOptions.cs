@@ -62,11 +62,12 @@ internal sealed partial class SharpLinkClient
             catch (SharpLinkException exception) when (
                 waitForReady && exception.Code == SharpLinkErrorCode.Unavailable)
             {
-                if (attemptOutcome?.RetryAfter is not { } retryAfter || retryAfter <= TimeSpan.Zero)
+                if (attemptOutcome?.HasAdmissionRejection != true || attemptOutcome.RetryAfter is not { } retryAfter)
                     throw;
-                if (deadline is { } retryDeadline && DateTimeOffset.UtcNow + retryAfter >= retryDeadline)
+                var delay = retryAfter > TimeSpan.Zero ? retryAfter : TimeSpan.FromMilliseconds(1);
+                if (deadline is { } retryDeadline && DateTimeOffset.UtcNow + delay >= retryDeadline)
                     throw CreateDeadlineExceededException();
-                await Task.Delay(retryAfter, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                 continue;
             }
 
