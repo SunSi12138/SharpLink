@@ -108,6 +108,39 @@ public sealed class AdmissionControlTests
     }
 
     [Test]
+    public async Task DefaultPartitionShouldNotAliasAUserBusinessKey()
+    {
+        string? key = null;
+        var options = new SharpLinkAdmissionControlOptions();
+        options.UsePartition(
+            _ => key,
+            partition =>
+            {
+                partition.MaxPartitions = 2;
+                partition.UseConcurrency(1);
+            });
+        await using var controller = SharpLinkAdmissionController.Create(options, []);
+
+        var defaultLease = await controller.AcquireAsync(
+            CreateContext(), 1, false, CancellationToken.None);
+        key = string.Empty;
+        var sameDefault = await controller.AcquireAsync(
+            CreateContext(), 1, false, CancellationToken.None);
+        key = "<default>";
+        var businessLease = await controller.AcquireAsync(
+            CreateContext(), 1, false, CancellationToken.None);
+
+        Ensure(defaultLease.IsAcquired, "default partition permit");
+        Ensure(!sameDefault.IsAcquired && sameDefault.Reason == "concurrency",
+            "null and empty selectors share the default partition");
+        Ensure(businessLease.IsAcquired, "sentinel-shaped user key has an independent permit");
+        Ensure(controller.ActivePartitions == 2, "default and user partitions are distinct");
+
+        defaultLease.Lease!.Dispose();
+        businessLease.Lease!.Dispose();
+    }
+
+    [Test]
     [Arguments("token")]
     [Arguments("fixed")]
     [Arguments("sliding")]

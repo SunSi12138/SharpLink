@@ -558,7 +558,13 @@ internal sealed partial class SharpLinkServer
                             if (header.Type == ProtocolV2FrameType.Request)
                             {
                                 if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
+                                {
                                     Interlocked.Increment(ref _rejectedOneWayCalls);
+                                    DrainRejectedOneWayStreams(
+                                        session,
+                                        failedRequestId,
+                                        ResolveRawRequestClientStreamCount(payload));
+                                }
                                 else
                                     session.SendRpcErrorAsync(failedRequestId, exception);
                             }
@@ -727,7 +733,8 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         ServerCallCancellationState? admittedCallState = null,
-        bool admissionGranted = false)
+        bool admissionGranted = false,
+        int admittedClientStreamCount = 0)
     {
         var session = connection.Session;
         using var requestScope = BeginRequestLogScope(_logger, requestId);
@@ -736,19 +743,28 @@ internal sealed partial class SharpLinkServer
         if (IsDeadlineExceeded(request.DeadlineTimestamp))
         {
             if (admittedCallState is not null)
-                ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
+            {
+                DrainRejectedOneWayStreams(session, requestId, admittedClientStreamCount);
+                ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
+            }
             return;
         }
         if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
         {
             if (admittedCallState is not null)
-                ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
+            {
+                DrainRejectedOneWayStreams(session, requestId, admittedClientStreamCount);
+                ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
+            }
             return;
         }
         if (!serviceInfo.AcceptsCalls)
         {
             if (admittedCallState is not null)
-                ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
+            {
+                DrainRejectedOneWayStreams(session, requestId, admittedClientStreamCount);
+                ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
+            }
             return;
         }
 
@@ -1030,7 +1046,8 @@ internal sealed partial class SharpLinkServer
                 requestCancellationMap,
                 serverLoopToken,
                 callState,
-                admissionGranted: true);
+                admissionGranted: true,
+                admittedClientStreamCount: clientStreamCount);
             transferred = true;
         }
         finally
@@ -1614,6 +1631,20 @@ internal sealed partial class SharpLinkServer
     {
         if (clientStreamCount != 0 && session.StreamManager is StreamManager streamManager)
             streamManager.DrainRejectedRequestStreams(requestId, clientStreamCount);
+    }
+
+    private int ResolveRawRequestClientStreamCount(ReadOnlySequence<byte> payload)
+    {
+        var reader = new SequenceReader<byte>(payload);
+        if (!reader.TryReadLittleEndian(out long contractId) ||
+            !reader.TryReadLittleEndian(out long methodId) ||
+            !Volatile.Read(ref _services).TryGetValue(contractId, out var registration) ||
+            !registration.Stub.TryGetMethodDescriptor(methodId, out var descriptor))
+        {
+            return 0;
+        }
+
+        return descriptor.ClientStreamCount;
     }
 
     private static void CompleteFailedRequestStreams(

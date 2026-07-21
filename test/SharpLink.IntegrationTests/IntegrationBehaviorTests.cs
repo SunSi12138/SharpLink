@@ -1166,6 +1166,39 @@ public class IntegrationBehaviorTests
 
     [Test]
     [NotInParallel]
+    public async Task OneWayRequestDecompressionFailureWithoutAdmissionShouldDrainClientStreams()
+    {
+        CompressionService.ResetOneWay();
+        var serverProvider = new ThrowingCompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli(), throwOnCompress: false, throwOnDecompress: true);
+        await using var harness = await TestHarness.CreateAsync(
+            runtimeConfigure: options =>
+            {
+                options.FlowControl.StreamReceiveWindowBytes = 64;
+                options.FlowControl.ConnectionReceiveWindowBytes = 64;
+            },
+            clientRuntimeConfigure: options => options.Compression.Providers.Add(
+                SharpLinkCompressionProviders.CreateBrotli()),
+            serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
+        var payloads = Enumerable.Range(0, 256)
+            .Select(static index => Enumerable.Repeat((byte)index, 128).ToArray());
+
+        await harness.Client.Get<ICompressionService>()
+            .NotifyStreamWithHeaderAsync(
+                Enumerable.Repeat((byte)0x41, 4096).ToArray(),
+                ToAsyncEnumerable(payloads, CancellationToken.None))
+            .AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(2));
+
+        await Task.Delay(100);
+        Ensure(!CompressionService.WaitForOneWayAsync().IsCompleted,
+            "failed compressed OneWay request must not execute without admission");
+        Ensure(await harness.Client.Get<ITestService>().AddAsync(20, 22) == 42,
+            "non-admission compressed OneWay failure connection recovery");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task QueuedOneWayStubFailureShouldDrainReservedStreams()
     {
         TestService.ResetMalformedOneWayInvocations();

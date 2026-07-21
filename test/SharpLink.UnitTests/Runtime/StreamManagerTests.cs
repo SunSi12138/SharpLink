@@ -371,10 +371,14 @@ public class StreamManagerTests
         await queuedDispatch;
 
         manager.DrainRejectedRequestStreams(53, 1);
+        await manager.DispatchChunkAsync(
+            53,
+            1,
+            new ReadOnlySequence<byte>(new byte[] { 8, 9, 10 }));
         manager.CompleteStream(53, 1, exception: null);
 
-        Ensure(accepted == 32 && consumed == 32,
-            "queued rejected compressed frame returns original credit");
+        Ensure(accepted == 35 && consumed == 35,
+            "queued rejection returns buffered and future frame credit");
         Ensure(released == 4, "queued rejected compressed wire bytes released");
         Ensure(manager.ActiveStreamCount == 0, "queued rejected compressed stream reclaimed");
     }

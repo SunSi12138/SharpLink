@@ -647,12 +647,11 @@ internal sealed class AdmissionRuleRuntime : IDisposable
 
 internal sealed class AdmissionPartitionPool : IDisposable
 {
-    private const string DefaultPartition = "<default>";
     private readonly Func<SharpLinkAdmissionContext, string?> _selector;
     private readonly SharpLinkPartitionAdmissionOptions _options;
     private readonly int _queueLimit;
     private readonly Lock _gate = new();
-    private readonly Dictionary<string, AdmissionPartitionEntry> _entries = new(StringComparer.Ordinal);
+    private readonly Dictionary<AdmissionPartitionKey, AdmissionPartitionEntry> _entries = [];
     private int _disposed;
 
     internal AdmissionPartitionPool(
@@ -668,9 +667,11 @@ internal sealed class AdmissionPartitionPool : IDisposable
     internal AdmissionPartitionLease? TryAcquire(SharpLinkAdmissionContext context)
     {
         var selected = _selector(context);
-        var key = string.IsNullOrEmpty(selected) ? DefaultPartition : selected;
-        if (key.Length > 256)
+        if (selected is { Length: > 256 })
             throw new InvalidOperationException("Admission partition keys cannot exceed 256 characters.");
+        var key = string.IsNullOrEmpty(selected)
+            ? AdmissionPartitionKey.Default
+            : AdmissionPartitionKey.ForUser(selected);
 
         List<AdmissionRuleRuntime>? evicted = null;
         AdmissionPartitionEntry entry;
@@ -709,7 +710,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
 
     private List<AdmissionRuleRuntime>? ReclaimIdleEntries(long now, bool stopAfterOne)
     {
-        List<string>? keys = null;
+        List<AdmissionPartitionKey>? keys = null;
         foreach (var pair in _entries)
         {
             if (pair.Value.References != 0 || pair.Value.IdleSince == 0 ||
@@ -765,6 +766,12 @@ internal sealed class AdmissionPartitionPool : IDisposable
             return;
         foreach (var rule in rules)
             rule.Dispose();
+    }
+
+    private readonly record struct AdmissionPartitionKey(string? Value, bool IsDefault)
+    {
+        internal static AdmissionPartitionKey Default { get; } = new(null, true);
+        internal static AdmissionPartitionKey ForUser(string value) => new(value, false);
     }
 }
 
