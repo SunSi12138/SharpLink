@@ -34,6 +34,13 @@ public class StreamManager : IStreamManager
     public void Register(long requestId, IStreamDispatcher dispatcher) => Register(requestId, 0, dispatcher);
 
     public void Register(long requestId, ushort streamId, IStreamDispatcher dispatcher)
+        => Register(requestId, streamId, dispatcher, ignoreExisting: false);
+
+    private void Register(
+        long requestId,
+        ushort streamId,
+        IStreamDispatcher dispatcher,
+        bool ignoreExisting)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
         var termination = Volatile.Read(ref _termination);
@@ -56,21 +63,16 @@ public class StreamManager : IStreamManager
         Interlocked.Increment(ref _activeStreamCount);
         if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
             consumptionAware.SetBytesConsumedCallback(_bytesConsumed, requestId, streamId);
-        try
-        {
-            // Publish the active-stream accounting before the entry. CompleteAll can
-            // otherwise remove a newly visible entry before Register increments the
-            // gauge, causing a transient negative value during session teardown.
-            requestDispatchers.Register(streamId, dispatcher);
-        }
-        catch
+        if (!requestDispatchers.TryRegister(streamId, dispatcher))
         {
             if (dispatcher is IStreamConsumptionAwareDispatcher failedRegistration)
                 failedRegistration.SetBytesConsumedCallback(null, 0, 0);
             SharpLinkTelemetry.AddActiveStreams(-1);
             Interlocked.Decrement(ref _activeStreamCount);
             RemoveEmptyRequest(requestId, requestDispatchers);
-            throw;
+            if (ignoreExisting)
+                return;
+            throw new InvalidOperationException("The stream is already registered.");
         }
 
         termination = Volatile.Read(ref _termination);
@@ -340,10 +342,12 @@ public class StreamManager : IStreamManager
         ArgumentOutOfRangeException.ThrowIfNegative(streamCount);
         for (var index = 1; index <= streamCount; index++)
         {
+            var streamId = checked((ushort)index);
             Register(
                 requestId,
-                checked((ushort)index),
-                new DiscardingStreamDispatcher());
+                streamId,
+                new DiscardingStreamDispatcher(),
+                ignoreExisting: true);
         }
     }
 
@@ -424,18 +428,21 @@ public class StreamManager : IStreamManager
         private readonly Lock _gate = new();
         private readonly Dictionary<ushort, DispatcherEntry> _byStreamId = [];
 
-        public void Register(ushort streamId, IStreamDispatcher dispatcher)
+        public bool TryRegister(ushort streamId, IStreamDispatcher dispatcher)
         {
             if (streamId == 0)
             {
                 var entry = new DispatcherEntry(dispatcher);
-                if (Interlocked.CompareExchange(ref _defaultDispatcher, entry, null) is not null)
-                    throw new InvalidOperationException("The default stream is already registered.");
-                return;
+                return Interlocked.CompareExchange(ref _defaultDispatcher, entry, null) is null;
             }
 
             lock (_gate)
+            {
+                if (_byStreamId.ContainsKey(streamId))
+                    return false;
                 _byStreamId.Add(streamId, new DispatcherEntry(dispatcher));
+                return true;
+            }
         }
 
         public bool TryAttachPreAdmission(

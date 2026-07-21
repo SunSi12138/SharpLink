@@ -154,6 +154,26 @@ public class CompressionFrameTests
         Ensure(provider.CompressCount == 0, "provider must not receive oversized original payload");
     }
 
+    [Test]
+    public async Task CompressionFailureShouldReturnAcquiredStreamCredit()
+    {
+        var provider = new ThrowIfCompressedProvider();
+        await using var session = CreateSession(provider);
+        session.NegotiatedCapabilities |= ProtocolV2Capabilities.FlowControl;
+        session.EnableStreamFlowControl(4096, 4096);
+
+        var exception = await CaptureSharpLinkExceptionAsync(
+            session.SendStreamChunkAsync(
+                requestId: 1,
+                streamId: 1,
+                Enumerable.Repeat((byte)0x2a, 2048).ToArray()).AsTask());
+        Ensure(exception.Code == SharpLinkErrorCode.Internal,
+            "provider failure should remain a call-level Internal error");
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        await session.AcquireStreamSendCreditAsync(2, 1, 4096, timeout.Token);
+    }
+
     private static RpcSession CreateSession(
         ISharpLinkCompressionProvider provider,
         bool enableCompression = true)
@@ -199,6 +219,19 @@ public class CompressionFrameTests
         try
         {
             action();
+        }
+        catch (SharpLinkException exception)
+        {
+            return exception;
+        }
+        throw new InvalidOperationException("Expected SharpLinkException.");
+    }
+
+    private static async Task<SharpLinkException> CaptureSharpLinkExceptionAsync(Task action)
+    {
+        try
+        {
+            await action;
         }
         catch (SharpLinkException exception)
         {

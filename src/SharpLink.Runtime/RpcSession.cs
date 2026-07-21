@@ -173,6 +173,9 @@ public sealed partial class RpcSession : IRpcSession
             : controller.AcquireSendCreditAsync(requestId, streamId, encodedBytes, cancellationToken);
     }
 
+    internal void ReturnUnsentStreamCredit(long requestId, ushort streamId, int encodedBytes)
+        => Volatile.Read(ref _streamFlowControl)?.ReturnUnsentCredit(requestId, streamId, encodedBytes);
+
     internal void ApplyWindowUpdate(long requestId, in ProtocolV2WindowUpdate update)
     {
         var controller = Volatile.Read(ref _streamFlowControl) ??

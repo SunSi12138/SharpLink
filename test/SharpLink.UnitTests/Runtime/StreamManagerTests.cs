@@ -323,6 +323,25 @@ public class StreamManagerTests
     }
 
     [Test]
+    public async Task FailureDrainerShouldNotReplaceAnAttachedGeneratedDispatcher()
+    {
+        var manager = new StreamManager();
+        var dispatcher = new RecordingDispatcher();
+        manager.Register(55, 1, dispatcher);
+
+        manager.DrainRejectedRequestStreams(55, 1);
+        await manager.DispatchChunkAsync(
+            55,
+            1,
+            new ReadOnlySequence<byte>(new byte[] { 1, 2 }));
+
+        Ensure(dispatcher.DispatchCount == 1, "existing generated dispatcher remains active");
+        Ensure(manager.ActiveStreamCount == 1, "ignored drainer does not change active accounting");
+        manager.CompleteStream(55, 1, exception: null);
+        Ensure(manager.ActiveStreamCount == 0, "existing dispatcher reclaimed once");
+    }
+
+    [Test]
     public async Task RejectedQueuedCompressedStreamShouldNotInvokeDecoder()
     {
         var accepted = 0;
@@ -358,6 +377,60 @@ public class StreamManagerTests
             "queued rejected compressed frame returns original credit");
         Ensure(released == 4, "queued rejected compressed wire bytes released");
         Ensure(manager.ActiveStreamCount == 0, "queued rejected compressed stream reclaimed");
+    }
+
+    [Test]
+    public async Task ReplayFailureShouldReleaseEveryRemainingPreAdmissionItem()
+    {
+        var accepted = 0;
+        var consumed = 0;
+        var retained = 0;
+        var manager = new StreamManager(
+            new RuntimeConcurrencyOptions(),
+            (_, _, bytes) => accepted += bytes,
+            (_, _, bytes) => consumed += bytes,
+            null);
+        var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
+        manager.ReservePreAdmissionStreams(
+            54,
+            1,
+            buffers,
+            bytes =>
+            {
+                retained += bytes;
+                return true;
+            },
+            bytes => retained -= bytes,
+            () => throw new InvalidOperationException("Capacity should not be exhausted."));
+        for (var value = 1; value <= 3; value++)
+        {
+            await manager.DispatchChunkAsync(
+                54,
+                1,
+                new ReadOnlySequence<byte>(new byte[] { checked((byte)value) }));
+        }
+
+        try
+        {
+            manager.Register(54, 1, new ThrowingReplayDispatcher());
+            throw new Exception("expected replay failure");
+        }
+        catch (InvalidDataException)
+        {
+        }
+
+        Ensure(retained == 0, "failed replay should release every retained owner");
+        Ensure(accepted == 3 && consumed == 3,
+            "failed replay should return credit for the failed and unvisited items");
+        manager.DrainRejectedRequestStreams(54, 1);
+        await manager.DispatchChunkAsync(
+            54,
+            1,
+            new ReadOnlySequence<byte>(new byte[] { 4 }));
+        manager.CompleteStream(54, 1, exception: null);
+        Ensure(accepted == 4 && consumed == 4,
+            "failed replay should recover in place as a credit-returning drainer");
+        Ensure(manager.ActiveStreamCount == 0, "failed replay stream reclaimed");
     }
 
     [Test]
@@ -461,5 +534,40 @@ public class StreamManagerTests
         }
 
         public void Release() => _release.TrySetResult();
+    }
+
+    private sealed class ThrowingReplayDispatcher : IStreamConsumptionAwareDispatcher
+    {
+        private Action<long, ushort, int>? _bytesConsumed;
+        private long _requestId;
+        private ushort _streamId;
+
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+            => DispatchAsync(payload, checked((int)payload.Length));
+
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
+        {
+            _ = payload;
+            _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
+            throw new InvalidDataException("Injected pre-admission replay failure.");
+        }
+
+        public void Complete(bool isError, string? errorMessage)
+        {
+            _ = isError;
+            _ = errorMessage;
+        }
+
+        public void Complete(Exception? exception) => _ = exception;
+
+        public void SetBytesConsumedCallback(
+            Action<long, ushort, int>? callback,
+            long requestId,
+            ushort streamId)
+        {
+            _bytesConsumed = callback;
+            _requestId = requestId;
+            _streamId = streamId;
+        }
     }
 }

@@ -855,12 +855,14 @@ internal sealed partial class SharpLinkServer
         {
             Interlocked.Increment(ref _rejectedOneWayCalls);
             LogOnewayRpcDispatchFailed(_logger, exception);
+            DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
             ReleaseOneWayDispatchResources(
                 admittedCallState, requestId, requestCancellationMap, connection);
             return;
         }
         catch (OperationCanceledException)
         {
+            DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
             ReleaseOneWayDispatchResources(
                 admittedCallState, requestId, requestCancellationMap, connection);
             return;
@@ -868,6 +870,7 @@ internal sealed partial class SharpLinkServer
         catch
         {
             ((RpcSession)session).ReturnDecodedPayload(decodedRequestOwner);
+            DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
             ReleaseOneWayDispatchResources(
                 admittedCallState, requestId, requestCancellationMap, connection);
             throw;
@@ -941,6 +944,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception ex)
         {
+            DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
             if (TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
             {
                 LogOnewayRpcDispatchFailed(_logger, MapServiceException(
@@ -1619,6 +1623,17 @@ internal sealed partial class SharpLinkServer
     {
         if (session.StreamManager is StreamManager streamManager)
             streamManager.CompleteRequestStreams(requestId, exception);
+    }
+
+    private static void DrainFailedOneWayStreams(
+        IRpcSession session,
+        long requestId,
+        int clientStreamCount)
+    {
+        if (clientStreamCount == 0 || session.StreamManager is not StreamManager streamManager)
+            return;
+
+        streamManager.DrainRejectedRequestStreams(requestId, clientStreamCount);
     }
 
     private async ValueTask AwaitDispatchRpcNoReturnAsync(

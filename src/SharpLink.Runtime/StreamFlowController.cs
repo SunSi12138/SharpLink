@@ -104,6 +104,36 @@ internal sealed class StreamFlowController
         CompleteReadyWaiters(ready);
     }
 
+    public void ReturnUnsentCredit(long requestId, ushort streamId, int credit)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(credit);
+        List<CreditWaiter>? ready;
+        lock (_gate)
+        {
+            if (_terminalException is not null)
+                return;
+            var key = new StreamKey(requestId, streamId);
+            if (!_sendStates.TryGetValue(key, out var state) || state.AbortException is not null)
+                return;
+
+            var updatedStreamCredit = checked(state.Credit + credit);
+            var updatedConnectionCredit = checked(_sendConnectionCredit + credit);
+            if (updatedStreamCredit > _streamWindow || updatedConnectionCredit > _connectionWindow)
+            {
+                throw new InvalidOperationException(
+                    "Unsent stream credit was returned more than once.");
+            }
+
+            state.Credit = updatedStreamCredit;
+            _sendConnectionCredit = updatedConnectionCredit;
+            if (state.Completed && state.Credit == _streamWindow)
+                _sendStates.Remove(key);
+            ready = AdmitWaiters();
+        }
+
+        CompleteReadyWaiters(ready);
+    }
+
     public void CompleteSendStream(long requestId, ushort streamId, Exception? exception = null)
     {
         List<CreditWaiter>? rejected = null;

@@ -22,6 +22,7 @@ internal sealed class PreAdmissionStreamDispatcher(
     private Exception? _completion;
     private bool _completed;
     private IStreamDispatchState? _dispatchState;
+    private IStreamDispatchLease? _failedDispatchLease;
 
     internal bool IsAttached
     {
@@ -164,27 +165,44 @@ internal sealed class PreAdmissionStreamDispatcher(
             if (dispatcher is IStreamDispatchLease dispatchLease && _dispatchState is not null)
                 dispatchLease.BindDispatchState(_dispatchState);
 
-            while (_items.TryDequeue(out var item))
+            try
             {
+                while (_items.TryDequeue(out var item))
+                {
+                    try
+                    {
+                        var bufferedPayload = new ReadOnlySequence<byte>(item.Owner.WrittenMemory);
+                        var dispatch = item.IsCompressed && dispatcher is not DiscardingStreamDispatcher
+                            ? DecodeAndDispatch(
+                                dispatcher,
+                                bufferedPayload,
+                                item.EncodedByteCount,
+                                decodeCompressed ?? throw new InvalidOperationException(
+                                    "The pre-admission stream has no compressed-frame decoder."))
+                            : DispatchAttached(dispatcher, bufferedPayload, item.EncodedByteCount);
+                        if (!dispatch.IsCompletedSuccessfully)
+                            dispatch.AsTask().GetAwaiter().GetResult();
+                    }
+                    finally
+                    {
+                        buffers.Return(item.Owner);
+                        releaseBytes(item.RetainedBytes);
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                ReleaseBufferedItems();
                 try
                 {
-                    var bufferedPayload = new ReadOnlySequence<byte>(item.Owner.WrittenMemory);
-                    var dispatch = item.IsCompressed && dispatcher is not DiscardingStreamDispatcher
-                        ? DecodeAndDispatch(
-                            dispatcher,
-                            bufferedPayload,
-                            item.EncodedByteCount,
-                            decodeCompressed ?? throw new InvalidOperationException(
-                                "The pre-admission stream has no compressed-frame decoder."))
-                        : DispatchAttached(dispatcher, bufferedPayload, item.EncodedByteCount);
-                    if (!dispatch.IsCompletedSuccessfully)
-                        dispatch.AsTask().GetAwaiter().GetResult();
+                    dispatcher.Complete(exception);
                 }
                 finally
                 {
-                    buffers.Return(item.Owner);
-                    releaseBytes(item.RetainedBytes);
+                    _failedDispatchLease = dispatcher as IStreamDispatchLease;
+                    _dispatcher = null;
                 }
+                throw;
             }
             if (_completed)
                 dispatcher.Complete(_completion);
@@ -247,6 +265,8 @@ internal sealed class PreAdmissionStreamDispatcher(
     {
         lock (_gate)
         {
+            _failedDispatchLease?.OnDispatchesDrained();
+            _failedDispatchLease = null;
             if (_dispatcher is IStreamDispatchLease dispatchLease)
                 dispatchLease.OnDispatchesDrained();
             else

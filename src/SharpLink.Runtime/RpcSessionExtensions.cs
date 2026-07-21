@@ -227,8 +227,16 @@ public static class RpcSessionExtensions
                     streamId,
                     encodedBytes,
                     cancellationToken).ConfigureAwait(false);
-                ownsWriter = false;
-                runtimeSession.SendPacket(writer);
+                try
+                {
+                    ownsWriter = false;
+                    runtimeSession.SendPacket(writer);
+                }
+                catch
+                {
+                    runtimeSession.ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
+                    throw;
+                }
             }
             finally
             {

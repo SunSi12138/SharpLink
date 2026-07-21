@@ -10,6 +10,8 @@ public class SharpClientBuilderTests
     [Test]
     public async Task StaticClientSnapshotShouldRejectIncompatibleManifestVersions()
     {
+        Ensure(SharpLinkGeneratedManifestVersions.Api == 2,
+            "client-stream descriptor metadata requires generated manifest API 2");
         await EnsureThrows<InvalidOperationException>(() =>
         {
             SharpLinkClient.ValidateStaticManifestCompatibility(new IncompatibleManifest());
@@ -271,9 +273,9 @@ public class SharpClientBuilderTests
 
     private sealed class IncompatibleManifest : ISharpLinkGeneratedAssemblyManifest
     {
-        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api + 1;
+        public int ApiVersion => 1;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
-        public string GeneratorVersion => "future-test";
+        public string GeneratorVersion => "0.7.3-legacy-test";
         public Assembly OwnerAssembly => typeof(IncompatibleManifest).Assembly;
         public string CompileTimeDescriptor => "future-test";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];

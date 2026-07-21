@@ -12,6 +12,7 @@
 - `SharpLinkRuntimeOptions.Compression` 支持 Gzip、Deflate、Brotli 以及线程安全的自定义 `ISharpLinkCompressionProvider`，默认按 1024 B、64 B 与 5% 三重收益门槛选择候选帧。
 - `SharpLinkServerBuilder.UseAdmissionControl` 增加 Global、Contract、Method 与有界 Partition 的累计并发/速率限制，支持 TokenBucket、FixedWindow、SlidingWindow、总队列 call/byte 边界和 deadline/cancellation/Draining 联动。
 - Generator 的 `RpcMethodDescriptor.ClientStreamCount` 为排队中的客户端流预留稳定 stream ID；permit 到达前按序 spool，压缩 item 按 wire bytes 记账并延迟解压。
+- Generated Manifest API 升为 2；0.7.3 及更早版本的预编译生成程序集会在注册阶段明确拒绝，升级时需要重新运行 Source Generator 并编译。
 
 ### 安全性与性能
 

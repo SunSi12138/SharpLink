@@ -89,7 +89,7 @@ public interface ISharpLinkGeneratedAssemblyManifest
 public static class SharpLinkGeneratedManifestVersions
 {
     /// <summary>The current generated manifest API version.</summary>
-    public const int Api = 1;
+    public const int Api = 2;
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;

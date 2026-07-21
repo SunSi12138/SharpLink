@@ -1120,6 +1120,91 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task QueuedOneWayRequestDecompressionFailureShouldDrainReservedStreams()
+    {
+        CompressionService.ResetOneWay();
+        var serverProvider = new ThrowingCompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli(), throwOnCompress: false, throwOnDecompress: true);
+        await using var harness = await TestHarness.CreateAsync(
+            runtimeConfigure: options =>
+            {
+                options.FlowControl.StreamReceiveWindowBytes = 64;
+                options.FlowControl.ConnectionReceiveWindowBytes = 64;
+            },
+            clientRuntimeConfigure: options => options.Compression.Providers.Add(
+                SharpLinkCompressionProviders.CreateBrotli()),
+            serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider),
+            serverConfigure: builder => builder.UseAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.MaxQueuedCalls = 1;
+                options.MaxQueuedBytes = 64 * 1024;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+                options.QueueOneWayCalls = true;
+            }));
+        var permitOwner = harness.Client.Get<ITestService>()
+            .SlowAddWithoutTimeoutAsync(9, 10).AsTask();
+        await Task.Delay(75);
+        var payloads = Enumerable.Range(0, 256)
+            .Select(static index => Enumerable.Repeat((byte)index, 128).ToArray());
+        var failedOneWay = harness.Client.Get<ICompressionService>()
+            .NotifyStreamWithHeaderAsync(
+                Enumerable.Repeat((byte)0x41, 4096).ToArray(),
+                ToAsyncEnumerable(payloads, CancellationToken.None))
+            .AsTask();
+
+        Ensure(await permitOwner.WaitAsync(TimeSpan.FromSeconds(2)) == 19,
+            "queued compressed OneWay permit owner");
+        await failedOneWay.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(100);
+        Ensure(!CompressionService.WaitForOneWayAsync().IsCompleted,
+            "failed compressed OneWay request must not execute the service");
+        Ensure(await harness.Client.Get<ITestService>().AddAsync(20, 22) == 42,
+            "compressed OneWay decode failure connection recovery");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task QueuedOneWayStubFailureShouldDrainReservedStreams()
+    {
+        TestService.ResetMalformedOneWayInvocations();
+        await using var harness = await TestHarness.CreateAsync(
+            runtimeConfigure: options =>
+            {
+                options.FlowControl.StreamReceiveWindowBytes = 64;
+                options.FlowControl.ConnectionReceiveWindowBytes = 64;
+            },
+            serverConfigure: builder =>
+            {
+                builder.UseCodec(new ThrowingPersonCodec());
+                builder.UseAdmissionControl(options =>
+                {
+                    options.Global.UseConcurrency(1);
+                    options.MaxQueuedCalls = 1;
+                    options.MaxQueuedBytes = 64 * 1024;
+                    options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+                    options.QueueOneWayCalls = true;
+                });
+            });
+        var service = harness.Client.Get<ITestService>();
+        var permitOwner = service.SlowAddWithoutTimeoutAsync(10, 11).AsTask();
+        await Task.Delay(75);
+        var failedOneWay = service.NotifyUploadWithHeaderAsync(
+            new Person { Name = "malformed-oneway", Age = 1 },
+            ToAsyncEnumerable(Enumerable.Range(1, 256), CancellationToken.None)).AsTask();
+
+        Ensure(await permitOwner.WaitAsync(TimeSpan.FromSeconds(2)) == 21,
+            "queued malformed OneWay permit owner");
+        await failedOneWay.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(100);
+        Ensure(TestService.MalformedOneWayInvocations == 0,
+            "malformed OneWay request must not execute the service");
+        Ensure(await service.AddAsync(20, 22) == 42,
+            "malformed OneWay stub failure connection recovery");
+    }
+
+    [Test]
     public async Task ServerStreamEarlyBreakShouldReleaseAdmissionPermit()
     {
         await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
@@ -1580,6 +1665,9 @@ public interface ITestService : IService
     [Oneway]
     [NonCancellable]
     ValueTask NotifyAsync(string message);
+    [Oneway]
+    [NonCancellable]
+    ValueTask NotifyUploadWithHeaderAsync(Person header, IAsyncEnumerable<int> values);
 }
 
 [RpcService]
@@ -1590,11 +1678,13 @@ public class TestService : ITestService
     private static TaskCompletionSource s_downloadDisposed = CreateCompletionSource();
     private static int s_activeUploads;
     private static int s_malformedUploadInvocations;
+    private static int s_malformedOneWayInvocations;
     private static int s_notifyCount;
     private static TaskCompletionSource s_notify = CreateCompletionSource();
 
     internal static int ActiveUploads => Volatile.Read(ref s_activeUploads);
     internal static int MalformedUploadInvocations => Volatile.Read(ref s_malformedUploadInvocations);
+    internal static int MalformedOneWayInvocations => Volatile.Read(ref s_malformedOneWayInvocations);
     internal static int NotifyCount => Volatile.Read(ref s_notifyCount);
 
     internal static void ResetNotify()
@@ -1602,6 +1692,9 @@ public class TestService : ITestService
         Volatile.Write(ref s_notifyCount, 0);
         Interlocked.Exchange(ref s_notify, CreateCompletionSource());
     }
+
+    internal static void ResetMalformedOneWayInvocations()
+        => Volatile.Write(ref s_malformedOneWayInvocations, 0);
 
     internal static Task WaitForNotifyAsync() => Volatile.Read(ref s_notify).Task;
 
@@ -1712,6 +1805,16 @@ public class TestService : ITestService
         return sum;
     }
 
+    public async ValueTask NotifyUploadWithHeaderAsync(
+        Person header,
+        IAsyncEnumerable<int> values)
+    {
+        _ = header;
+        Interlocked.Increment(ref s_malformedOneWayInvocations);
+        await foreach (var value in values)
+            _ = value;
+    }
+
     public async IAsyncEnumerable<string> DownloadAsync(int count)
     {
         try
@@ -1764,6 +1867,10 @@ public interface ICompressionService : IService
     [NonCancellable]
     ValueTask NotifyStreamBytesAsync(IAsyncEnumerable<byte[]> values);
 
+    [Oneway]
+    [NonCancellable]
+    ValueTask NotifyStreamWithHeaderAsync(byte[] header, IAsyncEnumerable<byte[]> values);
+
     [NonCancellable]
     ValueTask<int> UploadBytesAsync(IAsyncEnumerable<byte[]> values);
 
@@ -1795,6 +1902,16 @@ public sealed class CompressionService : ICompressionService
     public async ValueTask NotifyStreamBytesAsync(IAsyncEnumerable<byte[]> values)
     {
         var total = 0;
+        await foreach (var value in values)
+            total += value.Length;
+        Volatile.Read(ref s_oneWay).TrySetResult(total);
+    }
+
+    public async ValueTask NotifyStreamWithHeaderAsync(
+        byte[] header,
+        IAsyncEnumerable<byte[]> values)
+    {
+        var total = header.Length;
         await foreach (var value in values)
             total += value.Length;
         Volatile.Read(ref s_oneWay).TrySetResult(total);
