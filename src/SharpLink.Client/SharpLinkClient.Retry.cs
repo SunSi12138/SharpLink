@@ -81,7 +81,11 @@ internal sealed partial class SharpLinkClient
                     outcome.RetryAfter is { } admissionDelay && admissionDelay > delay)
                     delay = admissionDelay;
                 if (delay == TimeSpan.Zero)
+                {
+                    if (control.Deadline is { } zeroDelayDeadline && DateTimeOffset.UtcNow >= zeroDelayDeadline)
+                        throw CreateDeadlineExceededException();
                     continue;
+                }
 
                 if (control.Deadline is { } deadline && DateTimeOffset.UtcNow + delay >= deadline)
                     throw CreateDeadlineExceededException();
@@ -256,6 +260,9 @@ internal sealed partial class SharpLinkClient
                     await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
+
+                if (outcome.HasAdmissionRejection && !outcome.HasAdmissionGrant)
+                    throw;
 
                 var signal = Volatile.Read(ref _readySignal).Task;
                 if (deadline is not { } absoluteDeadline)

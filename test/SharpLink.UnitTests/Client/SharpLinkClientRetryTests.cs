@@ -289,6 +289,35 @@ public class SharpLinkClientRetryTests
     }
 
     [Test]
+    public void CircuitBreakerShouldIgnoreLocalResourceExhaustionDuringHalfOpenProbe()
+    {
+        var breaker = new SharpLinkCircuitBreaker(new SharpLinkCircuitBreakerOptions
+        {
+            MinimumThroughput = 1,
+            FailureRatio = 1,
+            SamplingDuration = TimeSpan.FromSeconds(10),
+            BreakDuration = TimeSpan.FromMilliseconds(1),
+            HalfOpenMaxCalls = 1
+        }.CloneValidated());
+        var method = new RpcMethodDescriptor(1, 2, RpcMethodKind.Unary, true, false, false, null);
+        var endpoint = new SharpLinkEndpointCandidate(Endpoint("breaker", 5001), 1, 0, generation: 1);
+        var infrastructureFailure = new SharpLinkEndpointOutcome(
+            endpoint, method, SharpLinkEndpointOutcomeKind.RemoteError, SharpLinkErrorCode.Unavailable, true, TimeSpan.Zero);
+        var localCapacityFailure = new SharpLinkEndpointOutcome(
+            endpoint, method, SharpLinkEndpointOutcomeKind.SendFailure, SharpLinkErrorCode.ResourceExhausted, false, TimeSpan.Zero);
+
+        breaker.Report(infrastructureFailure, breaker.TryAcquire(endpoint, method).Token);
+        Thread.Sleep(20);
+        var probe = breaker.TryAcquire(endpoint, method);
+        Ensure(probe.IsAllowed && probe.Token != 0, "half-open probe should be admitted");
+        breaker.Report(localCapacityFailure, probe.Token);
+
+        var nextProbe = breaker.TryAcquire(endpoint, method);
+        Ensure(nextProbe.IsAllowed && nextProbe.Token != 0,
+            "local capacity pressure must not close the breaker as a successful probe");
+    }
+
+    [Test]
     public void CircuitBreakerShouldIgnoreReportsFromAnExpiredHalfOpenEpoch()
     {
         var breaker = new SharpLinkCircuitBreaker(new SharpLinkCircuitBreakerOptions

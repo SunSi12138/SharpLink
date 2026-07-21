@@ -13,13 +13,15 @@ internal sealed partial class SharpLinkClient
         private readonly long _attemptStarted;
         private long _endpointStarted;
         private PendingCallCompletionReason? _completionReason;
-        private bool _responseObserved;
+        private int _responseObserved;
         private SharpLinkErrorCode? _localErrorCode;
         private SharpLinkEndpointCandidate _admissionEndpoint;
         private long _admissionToken;
         private int _hasAdmissionLease;
         private int _admissionGranted;
         private int _reported;
+        private int _admissionLeaseVersion;
+        private int _completionLeaseVersion;
         private int _admissionRejected;
         private TimeSpan? _retryAfter;
 
@@ -41,7 +43,8 @@ internal sealed partial class SharpLinkClient
 
         public bool HasAdmissionGrant => Volatile.Read(ref _admissionGranted) != 0;
 
-        public bool HasCompletion => _completionReason is not null;
+        public bool HasCompletion => Volatile.Read(ref _admissionLeaseVersion) != 0 &&
+                                     Volatile.Read(ref _completionLeaseVersion) == Volatile.Read(ref _admissionLeaseVersion);
 
         public bool ShouldHonorAdmissionRetryAfter
             => HasAdmissionRejection && Volatile.Read(ref _admissionGranted) == 0;
@@ -90,6 +93,11 @@ internal sealed partial class SharpLinkClient
 
             _admissionEndpoint = endpoint;
             _admissionToken = decision.Token;
+            Interlocked.Increment(ref _admissionLeaseVersion);
+            Volatile.Write(ref _completionLeaseVersion, 0);
+            _completionReason = null;
+            _localErrorCode = null;
+            Volatile.Write(ref _responseObserved, 0);
             Volatile.Write(ref _endpointStarted, Stopwatch.GetTimestamp());
             Volatile.Write(ref _admissionGranted, 1);
             Volatile.Write(ref _hasAdmissionLease, 1);
@@ -111,7 +119,9 @@ internal sealed partial class SharpLinkClient
         {
             SetLocalFailureIfPresent(exception);
             _completionReason = reason;
-            _responseObserved = reason is PendingCallCompletionReason.Response or PendingCallCompletionReason.RemoteError;
+            Volatile.Write(ref _completionLeaseVersion, Volatile.Read(ref _admissionLeaseVersion));
+            if (reason is PendingCallCompletionReason.Response or PendingCallCompletionReason.RemoteError)
+                Volatile.Write(ref _responseObserved, 1);
             Report(reason, exception);
         }
 
@@ -127,13 +137,14 @@ internal sealed partial class SharpLinkClient
             CompleteWithoutPending(reason, exception);
         }
 
-        public void OnResponseObserved() => _responseObserved = true;
+        public void OnResponseObserved() => Volatile.Write(ref _responseObserved, 1);
 
         public void OnPendingCallCompleted(in PendingCallCompletion completion)
         {
             _completionReason = completion.Reason;
-            _responseObserved |= completion.Reason is
-                PendingCallCompletionReason.Response or PendingCallCompletionReason.RemoteError;
+            Volatile.Write(ref _completionLeaseVersion, Volatile.Read(ref _admissionLeaseVersion));
+            if (completion.Reason is PendingCallCompletionReason.Response or PendingCallCompletionReason.RemoteError)
+                Volatile.Write(ref _responseObserved, 1);
             SetLocalFailureIfPresent(completion.Exception);
             Report(completion.Reason, completion.Exception);
         }
@@ -144,7 +155,7 @@ internal sealed partial class SharpLinkClient
                 EndpointGeneration,
                 ConnectionId,
                 _completionReason,
-                _responseObserved,
+                Volatile.Read(ref _responseObserved) != 0,
                 _localErrorCode ?? GetErrorCode(exception),
                 Stopwatch.GetElapsedTime(_attemptStarted));
 
@@ -161,7 +172,7 @@ internal sealed partial class SharpLinkClient
                 _method,
                 ToOutcomeKind(reason, exception),
                 _localErrorCode ?? (exception is null ? null : GetErrorCode(exception)),
-                _responseObserved,
+                Volatile.Read(ref _responseObserved) != 0,
                 Stopwatch.GetElapsedTime(Volatile.Read(ref _endpointStarted)));
             try
             {

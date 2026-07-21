@@ -1564,6 +1564,7 @@ public sealed class ConnectionBehaviorService : IConnectionBehaviorService
 {
     public string EndpointId { get; set; } = "default";
     public TaskCompletionSource<string>? SlowCallStarted { get; set; }
+    public TaskCompletionSource<string>? SlowUnaryStarted { get; set; }
 
     public ValueTask<int> PingAsync(int value) => ValueTask.FromResult(value + 1);
 
@@ -1577,6 +1578,7 @@ public sealed class ConnectionBehaviorService : IConnectionBehaviorService
     public async ValueTask<int> SlowAsync(int delayMs, CancellationToken cancellationToken = default)
     {
         SlowCallStarted?.TrySetResult(EndpointId);
+        SlowUnaryStarted?.TrySetResult(EndpointId);
         await Task.Delay(delayMs, cancellationToken);
         return delayMs;
     }

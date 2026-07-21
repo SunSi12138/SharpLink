@@ -290,6 +290,9 @@ public sealed class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
+        await WaitUntilAsync(
+            () => ((SharpLinkClient)client).ReadyConnectionCount == endpoints.Count,
+            TimeSpan.FromSeconds(3));
         var service = client.Get<IConnectionBehaviorService>();
         var observed = new HashSet<string>(StringComparer.Ordinal);
         for (var index = 0; index < endpoints.Count * 2; index++)
@@ -581,9 +584,10 @@ public sealed class StaticEndpointIntegrationTests
         await client.ConnectAsync();
         var service = client.Get<IConnectionBehaviorService>();
         var longUnary = service.SlowAsync(600, CancellationToken.None).AsTask();
+        Ensure(await first.Service.SlowUnaryStarted!.Task == "first", "accepted unary should start on first endpoint");
         await using var stream = service.SlowRangeAsync(3, 100, CancellationToken.None).GetAsyncEnumerator();
         Ensure(await stream.MoveNextAsync() && stream.Current == 0, "first stream item");
-        Ensure(await first.Service.SlowCallStarted!.Task == "first", "existing calls should start on first endpoint");
+        Ensure(await first.Service.SlowCallStarted!.Task == "first", "existing stream should start on first endpoint");
 
         var stopTask = first.StopAsync(TimeSpan.FromSeconds(2)).AsTask();
         var implementation = (SharpLinkClient)client;
@@ -681,7 +685,8 @@ public sealed class StaticEndpointIntegrationTests
             var service = new ConnectionBehaviorService
             {
                 EndpointId = endpointId,
-                SlowCallStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously)
+                SlowCallStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously),
+                SlowUnaryStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously)
             };
             builder.ReplaceService<IConnectionBehaviorService>(service);
             var boundPort = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;

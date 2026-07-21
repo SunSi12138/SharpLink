@@ -396,7 +396,8 @@ internal sealed partial class SharpLinkClient
                 var readyCount = Volatile.Read(ref _readyEndpoints).Length;
                 var availableCapacity = _options.MaxConnections - TotalConnectionsLocked();
                 var activeReconnects = _endpoints.Count(static endpoint => endpoint.ReconnectTask is { IsCompleted: false });
-                var remaining = Math.Min(TargetReadyEndpointCount - readyCount - activeReconnects, availableCapacity);
+                var activeInitialDials = _initialDialTasks.Count(static task => !task.IsCompleted);
+                var remaining = Math.Min(TargetReadyEndpointCount - readyCount - activeReconnects - activeInitialDials, availableCapacity);
                 var start = unchecked((uint)Interlocked.Increment(ref _reconnectCursor));
                 for (var offset = 0; remaining > 0 && offset < _endpoints.Length; offset++)
                 {

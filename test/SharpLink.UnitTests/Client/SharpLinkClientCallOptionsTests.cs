@@ -126,6 +126,9 @@ public class SharpLinkClientCallOptionsTests
         await InjectGoAwayAsync(second.Connection);
         await blockingSecond.ReconnectStarted.WaitAsync(TimeSpan.FromSeconds(2));
         await WaitForReadyConnectionCountAsync(client, 1);
+        var freshRejectionDelay = TimeSpan.FromMilliseconds(120);
+        policy.RejectNextFirstAdmission(freshRejectionDelay);
+        var releasedAt = Stopwatch.GetTimestamp();
         policy.ReleaseSecondAdmission();
 
         var request = await first.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
@@ -136,6 +139,9 @@ public class SharpLinkClientCallOptionsTests
             unchecked((long)request.RequestId));
 
         Ensure(await invocation == 0, "a granted endpoint disconnect must not retain a previous rejection delay");
+        Ensure(Stopwatch.GetElapsedTime(releasedAt) >= freshRejectionDelay - TimeSpan.FromMilliseconds(25),
+            "a fresh all-rejected selection must honor its retry delay after the lost grant");
+        Ensure(policy.FreshFirstRejectionCount == 1, "fresh rejection should be sampled exactly once");
     }
 
     [Test]
@@ -346,8 +352,12 @@ public class SharpLinkClientCallOptionsTests
         private readonly TaskCompletionSource _secondAdmissionEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _secondAdmissionRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _firstAdmissions;
+        private long _nextFirstAdmissionRetryAfterTicks;
+        private int _freshFirstRejectionCount;
 
         public Task SecondAdmissionEntered => _secondAdmissionEntered.Task;
+
+        public int FreshFirstRejectionCount => Volatile.Read(ref _freshFirstRejectionCount);
 
         public SharpLinkEndpointAdmissionDecision TryAcquire(
             in SharpLinkEndpointCandidate endpoint,
@@ -355,6 +365,13 @@ public class SharpLinkClientCallOptionsTests
         {
             if (endpoint.Endpoint.Id == "first")
             {
+                var freshRetryAfterTicks = Interlocked.Exchange(ref _nextFirstAdmissionRetryAfterTicks, 0);
+                if (freshRetryAfterTicks != 0)
+                {
+                    Interlocked.Increment(ref _freshFirstRejectionCount);
+                    return new SharpLinkEndpointAdmissionDecision(false, Token: 0,
+                        RetryAfter: TimeSpan.FromTicks(freshRetryAfterTicks));
+                }
                 return Interlocked.Increment(ref _firstAdmissions) == 1
                     ? new SharpLinkEndpointAdmissionDecision(false, Token: 0, RetryAfter: TimeSpan.FromSeconds(30))
                     : new SharpLinkEndpointAdmissionDecision(true, Token: 1, RetryAfter: null);
@@ -364,6 +381,9 @@ public class SharpLinkClientCallOptionsTests
             _secondAdmissionRelease.Task.GetAwaiter().GetResult();
             return new SharpLinkEndpointAdmissionDecision(true, Token: 2, RetryAfter: null);
         }
+
+        public void RejectNextFirstAdmission(TimeSpan retryAfter)
+            => Interlocked.Exchange(ref _nextFirstAdmissionRetryAfterTicks, retryAfter.Ticks);
 
         public void ReleaseSecondAdmission() => _secondAdmissionRelease.TrySetResult();
 
