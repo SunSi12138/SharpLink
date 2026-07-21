@@ -18,7 +18,7 @@ internal sealed partial class SharpLinkClient
         private readonly Dictionary<string, EndpointState> _currentById = new(StringComparer.Ordinal);
         private readonly List<EndpointState> _allStates = [];
         private readonly HashSet<ClientConnection> _retiringConnections = [];
-        private readonly HashSet<Task<Exception?>> _initialDialTasks = [];
+        private readonly Dictionary<EndpointState, HashSet<Task<Exception?>>> _initialDialTasks = [];
         private EndpointState[] _current = [];
         private EndpointState[] _readyEndpoints = [];
         private EndpointSelectionSnapshot _selectionSnapshot = EndpointSelectionSnapshot.Empty;
@@ -30,6 +30,7 @@ internal sealed partial class SharpLinkClient
         private int _roundRobinCursor;
         private int _leastPendingCursor;
         private int _reconnectCursor;
+        private int _initialConnectCoordinatorCount;
         private int _stopping;
         private int _resolverDisposed;
 
@@ -224,7 +225,7 @@ internal sealed partial class SharpLinkClient
             try
             {
                 var snapshot = await _resolver.ResolveAsync(cancellationToken).ConfigureAwait(false);
-                if (!await ApplySnapshotAsync(snapshot).ConfigureAwait(false))
+                if (!await ApplySnapshotAsync(snapshot, deferInitialReconciliation: true).ConfigureAwait(false))
                 {
                     throw new InvalidOperationException(
                         "The endpoint resolver returned an invalid initial topology.");
@@ -324,7 +325,9 @@ internal sealed partial class SharpLinkClient
                 .ConfigureAwait(false);
         }
 
-        private async Task<bool> ApplySnapshotAsync(SharpLinkEndpointSnapshot snapshot)
+        private async Task<bool> ApplySnapshotAsync(
+            SharpLinkEndpointSnapshot snapshot,
+            bool deferInitialReconciliation = false)
         {
             ArgumentNullException.ThrowIfNull(snapshot);
             SharpLinkEndpoint[] endpoints;
@@ -450,7 +453,8 @@ internal sealed partial class SharpLinkClient
                 _client.TrackBackgroundTask(DisposeConnectionAsync(connectionsToDispose[index]));
             for (var index = 0; index < statesToRelease.Count; index++)
                 ScheduleRetiredStateRelease(statesToRelease[index]);
-            EnsureMinimumReadyEndpoints();
+            if (!deferInitialReconciliation)
+                EnsureMinimumReadyEndpoints();
             return true;
         }
 
@@ -490,55 +494,81 @@ internal sealed partial class SharpLinkClient
             if (endpoints.Length == 0)
                 return;
 
-            Exception? lastFailure = null;
-            var parallelism = Math.Min(Math.Min(_options.MinReadyEndpoints, endpoints.Length), 4);
-            for (var start = 0; start < endpoints.Length; start += parallelism)
+            Interlocked.Increment(ref _initialConnectCoordinatorCount);
+            try
             {
-                var count = Math.Min(parallelism, endpoints.Length - start);
-                var tasks = new Task<Exception?>[count];
-                for (var index = 0; index < count; index++)
-                    tasks[index] = TryConnectOneAsync(endpoints[start + index], cancellationToken);
-                var remaining = new List<Task<Exception?>>(tasks);
-                while (remaining.Count != 0)
+                Exception? lastFailure = null;
+                var parallelism = Math.Min(Math.Min(_options.MinReadyEndpoints, endpoints.Length), 4);
+                for (var start = 0; start < endpoints.Length; start += parallelism)
                 {
-                    var completed = await Task.WhenAny(remaining).ConfigureAwait(false);
-                    remaining.Remove(completed);
-                    lastFailure ??= await completed.ConfigureAwait(false);
-                    if (ReadyConnectionCount != 0)
+                    var count = Math.Min(parallelism, endpoints.Length - start);
+                    var tasks = new Task<Exception?>[count];
+                    var batchEndpoints = new EndpointState[count];
+                    var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    for (var index = 0; index < count; index++)
                     {
-                        TrackInitialDials(remaining);
-                        EnsureMinimumReadyEndpoints();
-                        return;
+                        var endpoint = endpoints[start + index];
+                        batchEndpoints[index] = endpoint;
+                        tasks[index] = TryConnectOneAfterInitialReservationAsync(
+                            endpoint, cancellationToken, startGate.Task);
+                    }
+                    TrackInitialDials(batchEndpoints, tasks);
+                    startGate.TrySetResult();
+
+                    var remaining = new List<Task<Exception?>>(tasks);
+                    while (remaining.Count != 0)
+                    {
+                        var completed = await Task.WhenAny(remaining).ConfigureAwait(false);
+                        remaining.Remove(completed);
+                        lastFailure ??= await completed.ConfigureAwait(false);
+                        if (ReadyConnectionCount != 0)
+                        {
+                            EnsureMinimumReadyEndpoints();
+                            return;
+                        }
                     }
                 }
-            }
 
-            EnsureMinimumReadyEndpoints();
-            throw new SharpLinkException(
-                SharpLinkErrorCode.Unavailable,
-                "No dynamic SharpLink endpoint could connect.",
-                lastFailure);
+                EnsureMinimumReadyEndpoints();
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.Unavailable,
+                    "No dynamic SharpLink endpoint could connect.",
+                    lastFailure);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _initialConnectCoordinatorCount);
+            }
         }
 
-        private void TrackInitialDials(IEnumerable<Task<Exception?>> attempts)
+        private void TrackInitialDials(EndpointState[] endpoints, Task<Exception?>[] attempts)
         {
-            var tracked = attempts.ToArray();
+            ArgumentOutOfRangeException.ThrowIfNotEqual(endpoints.Length, attempts.Length);
             lock (_gate)
             {
-                foreach (var attempt in tracked)
-                    _initialDialTasks.Add(attempt);
+                for (var index = 0; index < attempts.Length; index++)
+                {
+                    var endpoint = endpoints[index];
+                    if (!_initialDialTasks.TryGetValue(endpoint, out var endpointAttempts))
+                    {
+                        endpointAttempts = [];
+                        _initialDialTasks.Add(endpoint, endpointAttempts);
+                    }
+                    endpointAttempts.Add(attempts[index]);
+                    endpoint.InitialDialReservations++;
+                }
             }
-            foreach (var attempt in tracked)
-                _client.TrackBackgroundTask(ObserveInitialDialAsync(attempt));
+            for (var index = 0; index < attempts.Length; index++)
+                _client.TrackBackgroundTask(ObserveInitialDialAsync(endpoints[index], attempts[index]));
         }
 
-        private async Task ObserveInitialDialAsync(Task<Exception?> attempt)
+        private async Task ObserveInitialDialAsync(EndpointState endpoint, Task<Exception?> attempt)
         {
+            var shouldReconcile = false;
             try
             {
                 _ = await attempt.ConfigureAwait(false);
-                if (Volatile.Read(ref _stopping) == 0)
-                    EnsureMinimumReadyEndpoints();
+                shouldReconcile = Volatile.Read(ref _stopping) == 0;
             }
             catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
             {
@@ -546,8 +576,28 @@ internal sealed partial class SharpLinkClient
             finally
             {
                 lock (_gate)
-                    _initialDialTasks.Remove(attempt);
+                {
+                    if (_initialDialTasks.TryGetValue(endpoint, out var endpointAttempts))
+                    {
+                        endpointAttempts.Remove(attempt);
+                        endpoint.InitialDialReservations--;
+                        if (endpointAttempts.Count == 0)
+                            _initialDialTasks.Remove(endpoint);
+                    }
+                }
             }
+
+            if (shouldReconcile && Volatile.Read(ref _initialConnectCoordinatorCount) == 0)
+                EnsureMinimumReadyEndpoints();
+        }
+
+        private async Task<Exception?> TryConnectOneAfterInitialReservationAsync(
+            EndpointState endpoint,
+            CancellationToken cancellationToken,
+            Task startGate)
+        {
+            await startGate.ConfigureAwait(false);
+            return await TryConnectOneAsync(endpoint, cancellationToken).ConfigureAwait(false);
         }
 
         private async Task<Exception?> TryConnectOneAsync(EndpointState endpoint, CancellationToken cancellationToken)
@@ -681,7 +731,7 @@ internal sealed partial class SharpLinkClient
                 var target = Math.Min(_options.MinReadyEndpoints, _current.Length);
                 var availableCapacity = _options.MaxConnections - TotalActiveConnectionsLocked();
                 var activeReconnects = _current.Count(static endpoint => endpoint.ReconnectTask is { IsCompleted: false });
-                var activeInitialDials = _initialDialTasks.Count(static task => !task.IsCompleted);
+                var activeInitialDials = CountActiveCurrentInitialDialsLocked();
                 var remaining = Math.Min(target - Volatile.Read(ref _readyEndpoints).Length - activeReconnects - activeInitialDials, availableCapacity);
                 var start = unchecked((uint)Interlocked.Increment(ref _reconnectCursor));
                 for (var offset = 0; remaining > 0 && offset < _current.Length; offset++)
@@ -700,6 +750,14 @@ internal sealed partial class SharpLinkClient
             if (missing is not null)
                 for (var index = 0; index < missing.Count; index++)
                     EnsureReconnect(missing[index]);
+        }
+
+        private int CountActiveCurrentInitialDialsLocked()
+        {
+            var count = 0;
+            for (var index = 0; index < _current.Length; index++)
+                count += _current[index].InitialDialReservations;
+            return count;
         }
 
         private void EnsureReconnect(EndpointState endpoint)
@@ -1004,7 +1062,7 @@ internal sealed partial class SharpLinkClient
                 connections = [.. _allStates.SelectMany(static state => state.Connections)];
                 workers = [.. _allStates
                     .SelectMany(static state => new[] { state.ReconnectTask, state.ExpansionTask })
-                    .Concat(_initialDialTasks)
+                    .Concat(_initialDialTasks.Values.SelectMany(static attempts => attempts))
                     .Append(initialConnectTask)
                     .Append(_resolverTask)
                     .Where(static task => task is not null)!];
@@ -1061,7 +1119,9 @@ internal sealed partial class SharpLinkClient
             {
                 Task[] pending;
                 lock (_gate)
-                    pending = [.. _initialDialTasks.Where(static task => !task.IsCompleted)];
+                    pending = [.. _initialDialTasks.Values
+                        .SelectMany(static attempts => attempts)
+                        .Where(static task => !task.IsCompleted)];
                 if (pending.Length == 0)
                     return;
                 for (var index = 0; index < pending.Length; index++)
@@ -1169,6 +1229,7 @@ internal sealed partial class SharpLinkClient
             public Func<int> ReadyConnectionCountProvider => _readyConnectionCountProvider;
             public Func<int> ActiveCallCountProvider => _activeCallCountProvider;
             public int ConnectingCount { get; set; }
+            public int InitialDialReservations { get; set; }
             public int ReconnectDelayMilliseconds { get; set; } = 100;
             public bool Retiring { get; set; }
             public bool FactoryReleased { get; set; }

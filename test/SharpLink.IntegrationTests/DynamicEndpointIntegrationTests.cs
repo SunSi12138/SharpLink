@@ -380,6 +380,53 @@ public sealed class DynamicEndpointIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task InitialDynamicDialReservationsShouldPreventSurplusTargetFill()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1,
+        [
+            Endpoint("first", first.Port, "blue"),
+            Endpoint("blocked", 1, "green"),
+            Endpoint("surplus", 2, "red")
+        ]));
+        var blocking = new BlockingConnectFactory();
+        var surplus = new FailingConnectFactory();
+        var sockets = SharpLinkTransportFactories.Sockets();
+        var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpointResolver(resolver, endpoint => endpoint.Id switch
+            {
+                "first" => sockets(endpoint),
+                "blocked" => blocking,
+                _ => surplus
+            })
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 3;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        try
+        {
+            var connect = client.ConnectAsync().AsTask();
+            await blocking.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+            await connect.WaitAsync(TimeSpan.FromSeconds(2));
+            await Task.Delay(200);
+
+            Ensure(surplus.ConnectCount == 0,
+                "a pending current-generation initial dial must reserve the remaining ready target");
+        }
+        finally
+        {
+            blocking.Release();
+            await client.DisposeAsync();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task ResolverWatchEndAndFailureShouldRetryAndRetainTheLastGoodTopology()
     {
         await using var first = await TcpServerScope.StartAsync("first");

@@ -23,6 +23,8 @@ internal sealed partial class SharpLinkClient
         private int _roundRobinCursor;
         private int _leastPendingCursor;
         private int _reconnectCursor;
+        private int _initialDialReservations;
+        private int _initialConnectCoordinatorCount;
         private int _stopping;
 
         private int TargetReadyEndpointCount => Math.Min(_options.MinReadyEndpoints, _endpoints.Length);
@@ -227,41 +229,53 @@ internal sealed partial class SharpLinkClient
 
         private async Task ConnectInitialAsync(CancellationToken cancellationToken)
         {
-            Exception? lastFailure = null;
-            var parallelism = Math.Min(Math.Min(TargetReadyEndpointCount, _endpoints.Length), 4);
-            for (var start = 0; start < _endpoints.Length && ReadyConnectionCount == 0; start += parallelism)
+            Interlocked.Increment(ref _initialConnectCoordinatorCount);
+            try
             {
-                var count = Math.Min(parallelism, _endpoints.Length - start);
-                var attempts = new Task<Exception?>[count];
-                for (var index = 0; index < count; index++)
+                Exception? lastFailure = null;
+                var parallelism = Math.Min(Math.Min(TargetReadyEndpointCount, _endpoints.Length), 4);
+                for (var start = 0; start < _endpoints.Length && ReadyConnectionCount == 0; start += parallelism)
                 {
-                    var endpoint = _endpoints[start + index];
-                    attempts[index] = TryConnectOneAsync(endpoint, cancellationToken);
-                }
-                var remaining = new List<Task<Exception?>>(attempts);
-                while (remaining.Count != 0)
-                {
-                    var completed = await Task.WhenAny(remaining).ConfigureAwait(false);
-                    remaining.Remove(completed);
-                    lastFailure ??= await completed.ConfigureAwait(false);
-                    if (ReadyConnectionCount != 0)
+                    var count = Math.Min(parallelism, _endpoints.Length - start);
+                    var attempts = new Task<Exception?>[count];
+                    var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    for (var index = 0; index < count; index++)
                     {
-                        TrackInitialDials(remaining);
-                        EnsureMinimumReadyEndpoints();
-                        return;
+                        var endpoint = _endpoints[start + index];
+                        attempts[index] = TryConnectOneAfterInitialReservationAsync(
+                            endpoint, cancellationToken, startGate.Task);
+                    }
+                    TrackInitialDials(attempts);
+                    startGate.TrySetResult();
+
+                    var remaining = new List<Task<Exception?>>(attempts);
+                    while (remaining.Count != 0)
+                    {
+                        var completed = await Task.WhenAny(remaining).ConfigureAwait(false);
+                        remaining.Remove(completed);
+                        lastFailure ??= await completed.ConfigureAwait(false);
+                        if (ReadyConnectionCount != 0)
+                        {
+                            EnsureMinimumReadyEndpoints();
+                            return;
+                        }
                     }
                 }
-            }
 
-            PublishClientReadiness();
-            EnsureMinimumReadyEndpoints();
-            if (ReadyConnectionCount == 0)
+                PublishClientReadiness();
+                EnsureMinimumReadyEndpoints();
+                if (ReadyConnectionCount == 0)
+                {
+                    _client.TransitionTo(SharpLinkConnectionState.Faulted);
+                    throw new SharpLinkException(
+                        SharpLinkErrorCode.Unavailable,
+                        "No static SharpLink endpoint could connect.",
+                        lastFailure);
+                }
+            }
+            finally
             {
-                _client.TransitionTo(SharpLinkConnectionState.Faulted);
-                throw new SharpLinkException(
-                    SharpLinkErrorCode.Unavailable,
-                    "No static SharpLink endpoint could connect.",
-                    lastFailure);
+                Interlocked.Decrement(ref _initialConnectCoordinatorCount);
             }
         }
 
@@ -272,6 +286,7 @@ internal sealed partial class SharpLinkClient
             {
                 foreach (var attempt in tracked)
                     _initialDialTasks.Add(attempt);
+                _initialDialReservations += tracked.Length;
             }
             foreach (var attempt in tracked)
                 _client.TrackBackgroundTask(ObserveInitialDialAsync(attempt));
@@ -279,11 +294,11 @@ internal sealed partial class SharpLinkClient
 
         private async Task ObserveInitialDialAsync(Task<Exception?> attempt)
         {
+            var shouldReconcile = false;
             try
             {
                 _ = await attempt.ConfigureAwait(false);
-                if (Volatile.Read(ref _stopping) == 0)
-                    EnsureMinimumReadyEndpoints();
+                shouldReconcile = Volatile.Read(ref _stopping) == 0;
             }
             catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
             {
@@ -291,8 +306,23 @@ internal sealed partial class SharpLinkClient
             finally
             {
                 lock (_gate)
+                {
                     _initialDialTasks.Remove(attempt);
+                    _initialDialReservations--;
+                }
             }
+
+            if (shouldReconcile && Volatile.Read(ref _initialConnectCoordinatorCount) == 0)
+                EnsureMinimumReadyEndpoints();
+        }
+
+        private async Task<Exception?> TryConnectOneAfterInitialReservationAsync(
+            EndpointState endpoint,
+            CancellationToken cancellationToken,
+            Task startGate)
+        {
+            await startGate.ConfigureAwait(false);
+            return await TryConnectOneAsync(endpoint, cancellationToken).ConfigureAwait(false);
         }
 
         private async Task<Exception?> TryConnectOneAsync(
@@ -416,7 +446,7 @@ internal sealed partial class SharpLinkClient
                 var readyCount = Volatile.Read(ref _readyEndpoints).Length;
                 var availableCapacity = _options.MaxConnections - TotalConnectionsLocked();
                 var activeReconnects = _endpoints.Count(static endpoint => endpoint.ReconnectTask is { IsCompleted: false });
-                var activeInitialDials = _initialDialTasks.Count(static task => !task.IsCompleted);
+                var activeInitialDials = _initialDialReservations;
                 var remaining = Math.Min(TargetReadyEndpointCount - readyCount - activeReconnects - activeInitialDials, availableCapacity);
                 var start = unchecked((uint)Interlocked.Increment(ref _reconnectCursor));
                 for (var offset = 0; remaining > 0 && offset < _endpoints.Length; offset++)

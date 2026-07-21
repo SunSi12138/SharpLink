@@ -272,14 +272,27 @@ internal sealed class PendingRequestTable : IDisposable
 
     public bool Dispatch(long id, ref ReadOnlySequence<byte> payload)
     {
-        var current = Volatile.Read(ref _slots[(int)(id & _indexMask)]);
+        var index = (int)(id & _indexMask);
+        var current = Volatile.Read(ref _slots[index]);
         if (current is not null && current.Id == id &&
             current.Kind is PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming)
         {
             // A successful Response is only the server's acknowledgement; StreamComplete owns
-            // the terminal transition for server and duplex streams.
-            current.CompletionObserver?.OnResponseObserved();
-            return true;
+            // the terminal transition for server and duplex streams. The callback shares the
+            // per-call completion gate with terminal removal, so a matching acknowledgement is
+            // observed before cancellation, deadline, or disconnect can report the terminal result.
+            lock (current.CompletionGate)
+            {
+                if (!ReferenceEquals(Volatile.Read(ref _slots[index]), current) ||
+                    current.Id != id ||
+                    current.Kind is not (PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming))
+                {
+                    return false;
+                }
+
+                current.CompletionObserver?.OnResponseObserved();
+                return true;
+            }
         }
 
         if (!TryTakeMatchingCall(id, out var call))
@@ -330,15 +343,12 @@ internal sealed class PendingRequestTable : IDisposable
         ArgumentNullException.ThrowIfNull(exception);
         for (var index = 0; index < _slots.Length; index++)
         {
-            var call = Interlocked.Exchange(ref _slots[index], null);
-            if (call is null)
+            if (!TryTakeCallAtIndex(index, out var call))
                 continue;
 
-            call.WaitUntilRegistered();
-            ReleaseSlot();
             var payload = ReadOnlySequence<byte>.Empty;
             CompleteTakenCall(
-                call,
+                call!,
                 PendingCallCompletionReason.ConnectionClosed,
                 exception,
                 ref payload);
@@ -481,14 +491,47 @@ internal sealed class PendingRequestTable : IDisposable
                 return false;
             }
 
-            var exchanged = Interlocked.CompareExchange(ref _slots[index], null, current);
-            if (!ReferenceEquals(exchanged, current))
-                continue;
+            lock (current.CompletionGate)
+            {
+                if (!ReferenceEquals(Volatile.Read(ref _slots[index]), current) || current.Id != id)
+                    continue;
 
-            current.WaitUntilRegistered();
-            call = current;
-            ReleaseSlot();
-            return true;
+                var exchanged = Interlocked.CompareExchange(ref _slots[index], null, current);
+                if (!ReferenceEquals(exchanged, current))
+                    continue;
+
+                current.WaitUntilRegistered();
+                call = current;
+                ReleaseSlot();
+                return true;
+            }
+        }
+    }
+
+    private bool TryTakeCallAtIndex(int index, out PendingCall? call)
+    {
+        while (true)
+        {
+            var current = Volatile.Read(ref _slots[index]);
+            if (current is null)
+            {
+                call = null;
+                return false;
+            }
+
+            lock (current.CompletionGate)
+            {
+                if (!ReferenceEquals(Volatile.Read(ref _slots[index]), current))
+                    continue;
+
+                if (!ReferenceEquals(Interlocked.CompareExchange(ref _slots[index], null, current), current))
+                    continue;
+
+                current.WaitUntilRegistered();
+                call = current;
+                ReleaseSlot();
+                return true;
+            }
         }
     }
 
@@ -685,6 +728,8 @@ internal sealed class PendingRequestTable : IDisposable
         private CancellationTokenSource? _producerCancellation;
         private IPendingCallCompletionObserver? _completionObserver;
         private int _registered;
+
+        public object CompletionGate { get; } = new();
 
         public long Id { get; private set; }
         public PendingCallKind Kind { get; private set; }

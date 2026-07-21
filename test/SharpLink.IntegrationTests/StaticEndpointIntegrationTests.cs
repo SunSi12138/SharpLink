@@ -374,6 +374,49 @@ public sealed class StaticEndpointIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task InitialStaticDialReservationsShouldPreventSurplusTargetFill()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        var blocking = new BlockingConnectFactory();
+        var surplus = new FailingConnectFactory();
+        var sockets = SharpLinkTransportFactories.Sockets();
+        var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpoints(
+                [Endpoint("first", first.Port), Endpoint("blocked", 1), Endpoint("surplus", 2)],
+                endpoint => endpoint.Id switch
+                {
+                    "first" => sockets(endpoint),
+                    "blocked" => blocking,
+                    _ => surplus
+                })
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 3;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        try
+        {
+            var connect = client.ConnectAsync().AsTask();
+            await blocking.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+            await connect.WaitAsync(TimeSpan.FromSeconds(2));
+            await Task.Delay(200);
+
+            Ensure(surplus.ConnectCount == 0,
+                "a pending initial sibling must reserve the remaining ready target before reconciliation");
+        }
+        finally
+        {
+            blocking.Release();
+            await client.DisposeAsync();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task FailedInitialSiblingDialShouldContinueFillingMinReadyEndpoints()
     {
         await using var first = await TcpServerScope.StartAsync("first");
