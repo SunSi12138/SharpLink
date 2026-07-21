@@ -18,7 +18,8 @@ internal sealed partial class SharpLinkServer(
     IRpcExceptionMapper? exceptionMapper = null,
     IAsyncDisposable? ownedServiceProvider = null,
     IServiceProvider? serviceProvider = null,
-    IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null) : ISharpLinkServer
+    IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null,
+    SharpLinkAdmissionController? admissionController = null) : ISharpLinkServer
 {
     private enum ServerState
     {
@@ -74,12 +75,14 @@ internal sealed partial class SharpLinkServer(
     private readonly IRpcExceptionMapper _exceptionMapper =
         exceptionMapper ?? new DefaultRpcExceptionMapper(includeDetails: false);
     private readonly ServerServiceCleanup _serviceCleanup = new(initialServices.Values, ownedServiceProvider);
+    private readonly SharpLinkAdmissionController? _admissionController = admissionController;
     private Task? _deferredServiceCleanupTask;
     private Task? _shutdownCleanupObserver;
     private Task? _serviceCleanupObserver;
     private ServerStopDiagnosticSnapshot? _lastStopDiagnostics;
     private int _globalActiveCalls;
     private long _rejectedOneWayCalls;
+    private long _oneWayAdmissionLogTimestamp;
     private readonly int _globalMaxConcurrentCalls = (int)Math.Min(
         (long)Environment.ProcessorCount * 1024,
         65_536L);
@@ -120,6 +123,7 @@ internal sealed partial class SharpLinkServer(
 
         lock (_registryGate)
             TransitionTo(ServerState.Draining);
+        _admissionController?.StopAccepting();
         BeginDrainDynamicModules();
         CancelForShutdown(_acceptCts, _logger, "AcceptCancellation");
         var listenerDisposeTask = StartListenerDispose(transportListener);
@@ -215,6 +219,7 @@ internal sealed partial class SharpLinkServer(
             TimeSpan.FromSeconds(cleanupBudgetSeconds));
 
         CancelForShutdown(_acceptCts, _logger, "AcceptCancellation");
+        _admissionController?.StopAccepting();
         BeginDrainDynamicModules();
         CancelForShutdown(_forceStopCts, _logger, "CallCancellation");
         if (Volatile.Read(ref _globalActiveCalls) == 0)
@@ -488,6 +493,18 @@ internal sealed partial class SharpLinkServer(
         catch (Exception exception)
         {
             firstException ??= exception;
+        }
+
+        if (_admissionController is not null)
+        {
+            try
+            {
+                await _admissionController.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                firstException ??= exception;
+            }
         }
 
         if (firstException is not null)

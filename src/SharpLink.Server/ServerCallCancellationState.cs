@@ -11,6 +11,7 @@ internal enum ServerCallCancellationReason : byte
     ModuleDraining,
     ServerStopping,
     ConnectionClosed,
+    AdmissionResourceExhausted,
     Completed
 }
 
@@ -34,6 +35,9 @@ internal sealed class ServerCallCancellationState : IDisposable
     private int _moduleDrainResponseClaimed;
     private bool _disposeRequested;
     private int _externalUsers;
+    private AdmissionLease? _admissionLease;
+    private SharpLinkBufferWriterPool? _payloadPool;
+    private IRpcByteBufferWriter? _payloadOwner;
 
     private ServerCallCancellationState()
     {
@@ -89,6 +93,9 @@ internal sealed class ServerCallCancellationState : IDisposable
         state._reason = (int)ServerCallCancellationReason.None;
         state._abandonedRecorded = 0;
         state._moduleDrainResponseClaimed = 0;
+        state._admissionLease = null;
+        state._payloadPool = null;
+        state._payloadOwner = null;
         state._disposeRequested = false;
         state._externalUsers = 0;
         state._serverStoppingRegistration = default;
@@ -125,6 +132,24 @@ internal sealed class ServerCallCancellationState : IDisposable
         }
 
         return state;
+    }
+
+    internal void AttachAdmissionLease(AdmissionLease lease)
+    {
+        ArgumentNullException.ThrowIfNull(lease);
+        if (Interlocked.CompareExchange(ref _admissionLease, lease, null) is not null)
+            throw new InvalidOperationException("An admission lease is already attached to this call.");
+    }
+
+    internal void AttachPayloadOwner(
+        SharpLinkBufferWriterPool pool,
+        IRpcByteBufferWriter owner)
+    {
+        ArgumentNullException.ThrowIfNull(pool);
+        ArgumentNullException.ThrowIfNull(owner);
+        if (Interlocked.CompareExchange(ref _payloadOwner, owner, null) is not null)
+            throw new InvalidOperationException("A retained payload owner is already attached to this call.");
+        _payloadPool = pool;
     }
 
     public bool TryAcquire(long expectedRequestId)
@@ -238,6 +263,12 @@ internal sealed class ServerCallCancellationState : IDisposable
         _connectionClosedRegistration.Dispose();
         _serverStoppingRegistration.Dispose();
         _invocationCancellation?.Dispose();
+        Interlocked.Exchange(ref _admissionLease, null)?.Dispose();
+        var payloadOwner = Interlocked.Exchange(ref _payloadOwner, null);
+        var payloadPool = Interlocked.Exchange(ref _payloadPool, null);
+        if (payloadOwner is not null)
+            (payloadPool ?? throw new InvalidOperationException("A retained payload has no owning pool."))
+                .Return(payloadOwner);
         _invocationCancellation = null;
         _connectionClosedRegistration = default;
         _serverStoppingRegistration = default;

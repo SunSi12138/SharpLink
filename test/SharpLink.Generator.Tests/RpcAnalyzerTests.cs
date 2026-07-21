@@ -211,6 +211,7 @@ public interface IHelloService : SharpLink.Sdk.IService
     [SharpLink.Sdk.Oneway]
     ValueTask Notify(string value);
     ValueTask<int> Upload(IAsyncEnumerable<int> values);
+    ValueTask<int> Merge(IAsyncEnumerable<int> left, IAsyncEnumerable<int> right);
     IAsyncEnumerable<int> Download(int count);
     IAsyncEnumerable<int> Duplex(IAsyncEnumerable<int> values);
 }
@@ -221,6 +222,7 @@ public sealed class HelloService : IHelloService
     public ValueTask<int> Unary(int value) => throw new NotImplementedException();
     public ValueTask Notify(string value) => throw new NotImplementedException();
     public ValueTask<int> Upload(IAsyncEnumerable<int> values) => throw new NotImplementedException();
+    public ValueTask<int> Merge(IAsyncEnumerable<int> left, IAsyncEnumerable<int> right) => throw new NotImplementedException();
     public IAsyncEnumerable<int> Download(int count) => throw new NotImplementedException();
     public IAsyncEnumerable<int> Duplex(IAsyncEnumerable<int> values) => throw new NotImplementedException();
 }
@@ -244,6 +246,14 @@ public sealed class HelloService : IHelloService
         Ensure(!proxy.Contains("InvokeCancellableWithTimeoutAsync"), "Legacy combinatorial API must not be generated");
         Ensure(allGenerated.Contains("public bool SupportsCancellation(long methodHash)"),
             "streaming stubs must publish framework cancellation support");
+        Ensure(allGenerated.Contains(
+                "RpcMethodKind.ClientStreaming, true, true, false, null, false, 1)",
+                StringComparison.Ordinal),
+            "single client-stream count must be generated deterministically");
+        Ensure(allGenerated.Contains(
+                "RpcMethodKind.ClientStreaming, true, true, false, null, false, 2)",
+                StringComparison.Ordinal),
+            "multiple client-stream count must be generated deterministically");
         var supportsCancellationCases = allGenerated.Split("=> true", StringSplitOptions.None).Length - 1;
         Ensure(supportsCancellationCases >= 3,
             "client, server, and duplex streaming methods must all support framework cancellation");

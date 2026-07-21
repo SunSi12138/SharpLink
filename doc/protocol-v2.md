@@ -2,7 +2,7 @@
 
 Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容或恢复扫描。任何 magic、长度、类型、标志或载荷结构错误都作为连接级 `ProtocolViolation` 处理并关闭连接。
 
-0.6.9 使用 protocol minor 1；0.6.10 升为 minor 2，并增加可协商的带原因 Cancel。minor 仍按双方较小值协商，新增能力为可选 bit，因此 0.6.9 与 0.6.10 可以互操作。
+0.6.9 使用 protocol minor 1；0.6.10 升为 minor 2，并增加可协商的带原因 Cancel。0.7.4 升为 minor 3，在握手中加入压缩算法列表和唯一选中 token。minor 仍取双方较小值，但 minor 3 的握手载荷布局已经改变，因此 0.7.4 不承诺与 0.7.3 及更早版本互操作；两个 0.7.4 对端在未启用、单方启用或算法无交集时都会使用未压缩连接。
 
 ## 固定帧头
 
@@ -22,8 +22,8 @@ Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容�
 
 | 类型 | Request ID | 载荷 |
 |---|---:|---|
-| `HandshakeRequest` | 0 | minor、supported/required capabilities、本端 frame/window 限制、认证载荷 |
-| `HandshakeResponse` | 0 | 协商后的 minor、capabilities、frame/window 限制；失败时为二进制错误 |
+| `HandshakeRequest` | 0 | minor、supported/required capabilities、本端 frame/window 限制、有界压缩算法列表、认证载荷 |
+| `HandshakeResponse` | 0 | 协商后的 minor、capabilities、frame/window 限制和唯一压缩 token；失败时为二进制错误 |
 | `Ping` / `Pong` | 0 | 发送端 monotonic timestamp (`int64`) |
 | `Request` | 非 0 | `contractId:uint64 + methodId:uint64`，随后是可选 deadline、metadata 和业务 payload |
 | `Response` | 非 0 | 成功时直接为返回 payload；`Error` 时为二进制错误 |
@@ -48,7 +48,7 @@ Stream ID 0 表示默认返回流，1–65535 表示显式流参数。Request ID
 - `OneWay`：单向请求，不得同时设置 `HasReturn`。
 - `HasReturn`：请求期待返回 payload。
 
-类型未列出的标志组合一律非法。
+类型未列出的标志组合一律非法。`Error` 与 `Compressed` 不得同时出现；控制帧、错误帧和空业务载荷不压缩。
 
 ## 握手与能力
 
@@ -60,7 +60,45 @@ Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `H
 - bit 3: protocol health check
 - bit 4: cancellation reason
 
+minor 3 的 `HandshakeRequest` 在三个固定限制字段后编码：
+
+```text
+algorithmCount:uint8
+repeat algorithmCount { tokenLength:uint8 + canonical ASCII token }
+authenticationLength:varuint32 + authentication bytes
+```
+
+算法最多 16 个；token 为 1–64 字节、大小写敏感的可见规范 ASCII，且列表内唯一。`HandshakeResponse` 在固定字段后编码 `selectedTokenLength:uint8 + selectedToken`。Server 按自身 Provider 注册顺序选择 Client 列表中的第一个匹配项；无交集时清除 compression capability 并发送零长度 token。协商 capability 与 token 缺失/多余或选择未被 Client 提供的 token 都是连接级 `ProtocolViolation`。
+
+token 表示完整的 **wire profile**，不是结构化参数协商。只影响发送端 CPU/压缩比而不影响解码的配置（内置 Provider 的 `CompressionLevel`）可以在两端不同；dictionary identity、必须支持的 window/profile 或其他会影响解码兼容性的配置必须编码进唯一 token，例如 `zstd/v1` 与 `zstd-dict/0123abcd`，并作为不同 Provider 参与现有优先级协商。对同一 token 配置出不兼容的解码参数属于 Provider 配置错误。这样后续可接入 [.NET 11 的 Zstandard 支持](https://learn.microsoft.com/dotnet/core/whats-new/dotnet-11/overview)及 [`ZstandardCompressionOptions`](https://learn.microsoft.com/dotnet/api/system.io.compression.zstandardcompressionoptions?view=net-11.0)，而无需让 v0.7.4 协议理解算法专属参数；.NET 11 API 在正式发布前仍可能变化。
+
 对端缺少任一 required capability 时，Server 返回 `Unimplemented` 错误并关闭连接。认证载荷不得超过握手/metadata 上限。
+
+## 压缩载荷
+
+压缩只覆盖 Generated Codec 产生的业务 payload，路由、deadline、metadata 和 stream ID 始终保持未压缩，便于在分配前完成路由、资源与长度校验：
+
+```text
+Request    = route/deadline/metadata envelope + originalBodyLength:uint32 + compressedBody
+Response   = originalBodyLength:uint32 + compressedBody
+StreamData = streamId:uint16 + originalItemLength:uint32 + compressedBody
+```
+
+`original*Length` 必须非零，并且与未压缩固定前缀相加后不超过协商的 frame 上限；框架在租借有界 owner 之前完成该检查。Provider 必须报告 consumed/written，框架同时核对实际 writer 长度、完整输入消费和声明的原始长度。Stream flow-control 始终按原始 item 字节计费，防止高压缩比数据绕过接收窗口。
+
+发送端仅在业务 payload 至少 1024 B、至少节省 64 B 且节省比例不低于 5% 时选用候选压缩帧；三个阈值均可配置。候选无收益时立即归还候选 owner，原始 owner 原样交给现有 SendPump。SendPump 不识别压缩，也不会同时持有两个候选。
+
+内置 `gzip`、`deflate`、`brotli` Provider 分别使用 `GZipStream`、`DeflateStream`、`BrotliStream`，默认 `CompressionLevel.Fastest`，也可在工厂方法中选择其他 level。level 是本地编码策略，不进入握手；请求和响应方向可以使用不同 level。其不透明 `compressedBody` 在标准压缩流后附加 8 字节 `SCP1 magic:uint32 + compressedBytesCrc32:uint32` 完整性尾部，用于确定性拒绝截断、损坏和尾部垃圾；自定义 Provider 可定义自己的不透明格式，但必须遵守 consumed/written 契约。
+
+未协商却设置 `Compressed`、非法固定前缀或原始长度属于连接级 `ProtocolViolation`。已协商载荷的截断、损坏、尾部数据或输出长度不符映射为当前调用/流的 `DataLoss`；自定义 Provider 的未预期异常映射为该调用/流的安全 `Internal`。这两类调用级错误不关闭健康连接。
+
+## 服务端主动接入控制
+
+Admission control 不增加 wire capability，也不改变客户端发送格式。服务端在未创建 Service、Scope、Codec 状态或执行 Interceptor 前，按 `Global → Contract → Method → Partition` 累计取得全部 permit。无等待策略、队列数量已满、队列保留字节已满、速率或并发限制拒绝时，普通调用返回 `ResourceExhausted`；Server Draining 时返回 `Unavailable`。拒绝当前调用不会关闭连接，过载解除后同一健康连接可继续调用。
+
+等待中的 Request 保留完整 wire payload。客户端流与双向流使用 Generator 输出的 `ClientStreamCount` 预留 stream ID，并按到达顺序有界保留 `StreamData/StreamComplete`；压缩帧按实际 wire bytes 进入队列字节预算，但在保留前验证 `originalItemLength`，取得 permit 后才解压并交给 Generated Codec。队列溢出、取消、deadline、断连或 Draining 会终止整次调用并一次归还所有 owner 与 flow-control credit。
+
+OneWay 的本地发送成功只表示帧已被客户端 SendPump 接受。服务端过载拒绝 OneWay 时不执行方法、不发送伪成功响应，并记录 dropped/resource-exhausted 指标；只有显式启用 `QueueOneWayCalls` 才允许 OneWay 等待。
 
 ## Cancel 原因与兼容
 
@@ -77,7 +115,7 @@ Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `H
 
 ## 流量控制
 
-协商 `flow control` 后，每个 `StreamData` 的 item payload 同时消耗所属 stream 和 connection 的发送额度。额度不足时 producer 异步等待；`WindowUpdate` 的 request ID 与 stream ID 精确定位原 stream，credit 同时补充两级窗口。
+协商 `flow control` 后，每个 `StreamData` 的原始 item payload 同时消耗所属 stream 和 connection 的发送额度；未压缩时即为 wire item 长度，压缩时取 `originalItemLength`。额度不足时 producer 异步等待；`WindowUpdate` 的 request ID 与 stream ID 精确定位原 stream，credit 同时补充两级窗口。
 
 接收端只在消费者实际取得或明确丢弃 item 后归还 encoded byte credit，默认达到任一半窗口阈值后批量发送更新。大于 stream window 的单个 item 在不超过 `MaxFramePayloadBytes` 时允许从空窗口临时借用一次；借用未归还前继续发送即为 `ProtocolViolation`。任何 credit 加法溢出、重复归还或超过协商初始窗口也按连接级协议错误处理。
 

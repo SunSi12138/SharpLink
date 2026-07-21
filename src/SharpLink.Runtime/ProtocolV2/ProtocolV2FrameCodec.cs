@@ -129,6 +129,11 @@ public static class ProtocolV2FrameParser
             throw Violation($"Frame {type} does not allow flags {flags}.");
         if ((flags & ProtocolV2FrameFlags.Truncated) != 0 && (flags & ProtocolV2FrameFlags.Error) == 0)
             throw Violation("Truncated is valid only on an error frame.");
+        if ((flags & (ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Compressed)) ==
+            (ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Compressed))
+        {
+            throw Violation("Error frames cannot carry compressed business payloads.");
+        }
         if (type == ProtocolV2FrameType.Request &&
             (flags & (ProtocolV2FrameFlags.OneWay | ProtocolV2FrameFlags.HasReturn)) ==
             (ProtocolV2FrameFlags.OneWay | ProtocolV2FrameFlags.HasReturn))
@@ -146,7 +151,9 @@ public static class ProtocolV2FrameParser
         switch (type)
         {
             case ProtocolV2FrameType.HandshakeRequest:
-                if (payload.Length < 31 || payload.Length > 35L + limits.MaxMetadataBytes)
+                if (payload.Length < 32 || payload.Length >
+                    36L + limits.MaxMetadataBytes +
+                    SharpLinkCompressionOptions.MaxProviders * (1 + SharpLinkCompressionToken.MaxUtf8Bytes))
                     throw Violation("HandshakeRequest payload has an invalid bounded length.");
                 break;
             case ProtocolV2FrameType.HandshakeResponse:
@@ -154,7 +161,7 @@ public static class ProtocolV2FrameParser
                     ProtocolV2PayloadCodec.ValidateErrorPayload(payload, limits.MaxErrorMessageBytes);
                 else
                 {
-                    if (payload.Length != 22)
+                    if (payload.Length < 23 || payload.Length > 87)
                         throw Violation("HandshakeResponse payload has an invalid length.");
                 }
                 break;

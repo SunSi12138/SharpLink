@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Runtime;
+using SharpLink.Sdk;
 using SharpLink.Server;
 
 namespace SharpLink.Benchmarks;
@@ -38,13 +39,19 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         _client = client;
     }
 
-    public static async Task<BenchmarkEnvironment> CreateAsync()
+    public static async Task<BenchmarkEnvironment> CreateAsync(
+        Action<SharpLinkServerBuilder>? configureServer = null,
+        Action<SharpLinkRuntimeOptions>? configureServerRuntime = null,
+        Action<SharpLinkRuntimeOptions>? configureClientRuntime = null)
     {
         var localService = new BenchmarkRpcService();
 
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
             .UseSerializer(MemoryPackCodec.Resolver);
+        if (configureServerRuntime is not null)
+            serverBuilder.UseRuntime(configureServerRuntime);
+        configureServer?.Invoke(serverBuilder);
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
@@ -63,19 +70,21 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
-            .Build();
+            .UseSerializer(MemoryPackCodec.Resolver);
+        if (configureClientRuntime is not null)
+            client.UseRuntime(configureClientRuntime);
+        var builtClient = client.Build();
 
-        await client.ConnectAsync(shutdown.Token);
+        await builtClient.ConnectAsync(shutdown.Token);
 
-        var rpc = client.Get<IBenchmarkRpc>();
+        var rpc = builtClient.Get<IBenchmarkRpc>();
         return new BenchmarkEnvironment(
             rpc,
             localService,
             shutdown,
             serverTask,
             server,
-            client);
+            builtClient);
     }
 
     public async ValueTask DisposeAsync()

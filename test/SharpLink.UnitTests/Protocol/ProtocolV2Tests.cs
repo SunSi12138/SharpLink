@@ -99,7 +99,8 @@ public class ProtocolV2Tests
             4 * 1024 * 1024,
             1024 * 1024,
             16 * 1024 * 1024,
-            new byte[] { 1, 2, 3, 4 });
+            new byte[] { 1, 2, 3, 4 },
+            new[] { "brotli", "gzip" });
         ProtocolV2PayloadCodec.WriteHandshakeRequest(requestPayload, request, Limits);
         var decodedRequest = ProtocolV2PayloadCodec.ReadHandshakeRequest(
             CreateSegmented(requestPayload.WrittenMemory.ToArray(), 2), Limits);
@@ -110,6 +111,8 @@ public class ProtocolV2Tests
         Ensure(decodedRequest.StreamReceiveWindowBytes == request.StreamReceiveWindowBytes, "handshake stream window");
         Ensure(decodedRequest.ConnectionReceiveWindowBytes == request.ConnectionReceiveWindowBytes, "handshake connection window");
         Ensure(decodedRequest.AuthenticationPayload.Span.SequenceEqual(request.AuthenticationPayload.Span), "handshake auth payload");
+        Ensure(decodedRequest.CompressionAlgorithms.Span.SequenceEqual(request.CompressionAlgorithms.Span),
+            "handshake compression algorithms");
 
         var responsePayload = new PooledByteBufferWriter();
         var response = new ProtocolV2HandshakeResponse(
@@ -117,7 +120,8 @@ public class ProtocolV2Tests
             ProtocolV2Capabilities.FlowControl,
             1024 * 1024,
             512 * 1024,
-            8 * 1024 * 1024);
+            8 * 1024 * 1024,
+            "brotli");
         ProtocolV2PayloadCodec.WriteHandshakeResponse(responsePayload, response);
         var decodedResponse = ProtocolV2PayloadCodec.ReadHandshakeResponse(
             new ReadOnlySequence<byte>(responsePayload.WrittenMemory), Limits);

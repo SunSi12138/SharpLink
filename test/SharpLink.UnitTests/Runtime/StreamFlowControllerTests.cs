@@ -127,6 +127,21 @@ public class StreamFlowControllerTests
     }
 
     [Test]
+    public async Task UnsentFrameShouldReturnCreditAndAdmitTheNextWaiter()
+    {
+        var controller = new StreamFlowController(4, 4, 1024);
+        await controller.AcquireSendCreditAsync(1, 1, 4, CancellationToken.None);
+        var blocked = controller.AcquireSendCreditAsync(2, 1, 4, CancellationToken.None);
+        Ensure(!blocked.IsCompleted, "next stream should wait while the unsent frame owns credit");
+
+        controller.ReturnUnsentCredit(1, 1, 4);
+
+        await blocked;
+        Ensure(controller.SendConnectionCredit == 0,
+            "the next waiter should atomically acquire the returned connection credit");
+    }
+
+    [Test]
     public async Task UnknownWindowUpdateShouldRemainAProtocolViolation()
     {
         var controller = new StreamFlowController(4, 4, 1024);

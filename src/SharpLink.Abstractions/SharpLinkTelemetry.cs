@@ -71,6 +71,18 @@ public static class SharpLinkTelemetry
         Meter.CreateCounter<long>("sharplink.shared_memory.notifications", unit: "{notification}");
     private static readonly Counter<long> SharedMemoryCursorRefreshes =
         Meter.CreateCounter<long>("sharplink.shared_memory.cursor.refreshes", unit: "{refresh}");
+    private static readonly UpDownCounter<long> AdmissionActivePermits =
+        Meter.CreateUpDownCounter<long>("sharplink.admission.permits.active", unit: "{permit}");
+    private static readonly UpDownCounter<long> AdmissionQueuedCalls =
+        Meter.CreateUpDownCounter<long>("sharplink.admission.calls.queued", unit: "{call}");
+    private static readonly Counter<long> AdmissionRejectedCalls =
+        Meter.CreateCounter<long>("sharplink.admission.calls.rejected", unit: "{call}");
+    private static readonly Histogram<double> AdmissionQueueDuration =
+        Meter.CreateHistogram<double>("sharplink.admission.queue.duration", unit: "s");
+    private static readonly Counter<long> AdmissionOneWayDropped =
+        Meter.CreateCounter<long>("sharplink.admission.oneway.dropped", unit: "{call}");
+    private static readonly UpDownCounter<long> AdmissionActivePartitions =
+        Meter.CreateUpDownCounter<long>("sharplink.admission.partitions.active", unit: "{partition}");
 
     internal static CallScope StartClientCall(RpcMethodDescriptor method)
         => StartCall(ClientActivitySource, ActivityKind.Client, "client", method, requestId: 0);
@@ -106,6 +118,35 @@ public static class SharpLinkTelemetry
     internal static void RecordLateResponseDropped(string side)
         => Record(LateDroppedResponses, 1, side);
     internal static void RecordForcedStopCalls(long count) => RecordPositive(ForcedStopCalls, count);
+    internal static void AddAdmissionActivePermits(long count)
+        => RecordDelta(AdmissionActivePermits, count);
+    internal static void AddAdmissionQueuedCalls(long count)
+        => RecordDelta(AdmissionQueuedCalls, count);
+    internal static void AddAdmissionActivePartitions(long count)
+        => RecordDelta(AdmissionActivePartitions, count);
+    internal static void RecordAdmissionQueueDuration(TimeSpan duration)
+    {
+        if (duration >= TimeSpan.Zero && AdmissionQueueDuration.Enabled)
+            AdmissionQueueDuration.Record(duration.TotalSeconds);
+    }
+    internal static void RecordAdmissionRejected(string scope, string reason)
+    {
+        if (!AdmissionRejectedCalls.Enabled)
+            return;
+        AdmissionRejectedCalls.Add(
+            1,
+            new KeyValuePair<string, object?>("sharplink.admission.scope", scope),
+            new KeyValuePair<string, object?>("sharplink.admission.reason", reason));
+    }
+    internal static void RecordAdmissionOneWayDropped(string scope, string reason)
+    {
+        if (!AdmissionOneWayDropped.Enabled)
+            return;
+        AdmissionOneWayDropped.Add(
+            1,
+            new KeyValuePair<string, object?>("sharplink.admission.scope", scope),
+            new KeyValuePair<string, object?>("sharplink.admission.reason", reason));
+    }
     internal static void RecordSharedMemoryConnection(string side, int capacity)
     {
         if (!SharedMemoryConnections.Enabled)

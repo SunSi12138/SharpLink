@@ -13,7 +13,7 @@ public static class ProtocolV2Constants
     public const int RequestPrefixBytes = 16;
 
     /// <summary>Current protocol minor version.</summary>
-    public const ushort MinorVersion = 2;
+    public const ushort MinorVersion = 3;
 }
 
 /// <summary>Protocol v2 frame types.</summary>
@@ -90,7 +90,8 @@ public readonly record struct ProtocolV2HandshakeRequest(
     int MaxFramePayloadBytes,
     int StreamReceiveWindowBytes,
     int ConnectionReceiveWindowBytes,
-    ReadOnlyMemory<byte> AuthenticationPayload);
+    ReadOnlyMemory<byte> AuthenticationPayload,
+    ReadOnlyMemory<string> CompressionAlgorithms = default);
 
 /// <summary>Protocol v2 negotiated handshake response values.</summary>
 public readonly record struct ProtocolV2HandshakeResponse(
@@ -98,7 +99,8 @@ public readonly record struct ProtocolV2HandshakeResponse(
     ProtocolV2Capabilities NegotiatedCapabilities,
     int MaxFramePayloadBytes,
     int StreamReceiveWindowBytes,
-    int ConnectionReceiveWindowBytes);
+    int ConnectionReceiveWindowBytes,
+    string? CompressionAlgorithm = null);
 
 /// <summary>Returns consumed byte credit for one request stream.</summary>
 public readonly record struct ProtocolV2WindowUpdate(

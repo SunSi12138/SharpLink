@@ -43,7 +43,9 @@ public static class Program
         var cts = new CancellationTokenSource();
         var runToken = cts.Token;
 
-        var serverBuilder = SharpLinkServerBuilder.Create();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .UseRuntime(ConfigureCompression)
+            .UseAdmissionControl(ConfigureAdmission);
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
         else
@@ -66,7 +68,8 @@ public static class Program
             }
         }, CancellationToken.None);
 
-        var clientBuilder = SharpClientBuilder.Create();
+        var clientBuilder = SharpClientBuilder.Create()
+            .UseRuntime(ConfigureCompression);
         if (useSharedMemory)
             clientBuilder.UseSharedMemory(sharedMemoryName);
         else
@@ -100,6 +103,8 @@ public static class Program
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await using var server = SharpLinkServerBuilder.Create()
             .UseSharedMemory(name)
+            .UseRuntime(ConfigureCompression)
+            .UseAdmissionControl(ConfigureAdmission)
             .Build();
         VerifyRuntimeAssemblyBoundary(server);
         var runTask = server.RunAsync(timeout.Token).AsTask();
@@ -123,6 +128,7 @@ public static class Program
     {
         await using var client = SharpClientBuilder.Create()
             .UseSharedMemory(name)
+            .UseRuntime(ConfigureCompression)
             .Build();
         try
         {
@@ -151,13 +157,14 @@ public static class Program
         if (result != "pong")
             throw new Exception($"unexpected result: {result}");
 
+        var profileName = new string('a', 4096);
         var profile = new UserProfile
         {
-            Name = "SharpLink",
+            Name = profileName,
             Tags = ["rpc", "aot", "smoke"]
         };
         var profileEcho = await svc.EchoProfileAsync(profile).ConfigureAwait(false);
-        if (profileEcho.Name != "SharpLink" || profileEcho.Tags.Length != 3 || profileEcho.Tags[2] != "smoke")
+        if (profileEcho.Name != profileName || profileEcho.Tags.Length != 3 || profileEcho.Tags[2] != "smoke")
             throw new Exception("unexpected profile echo");
 
         var ints = await svc.ReverseIntsAsync([1, 2, 3, 4]).ConfigureAwait(false);
@@ -194,6 +201,12 @@ public static class Program
         if (result.Succeeded || result.Error?.Code != SharpLinkAssemblyRegistrationErrorCode.PlatformNotSupported)
             throw new Exception($"unexpected NativeAOT server registration result: {result.Error}");
     }
+
+    private static void ConfigureCompression(SharpLinkRuntimeOptions options)
+        => options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli());
+
+    private static void ConfigureAdmission(SharpLinkAdmissionControlOptions options)
+        => options.Global.UseConcurrency(64);
 }
 
 [RpcContract]

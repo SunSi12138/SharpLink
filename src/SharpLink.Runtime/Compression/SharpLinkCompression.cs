@@ -1,0 +1,399 @@
+using System.IO.Compression;
+
+namespace SharpLink.Runtime;
+
+/// <summary>Reports exactly how much input and output a compression provider processed.</summary>
+/// <param name="ConsumedBytes">The number of compressed or uncompressed input bytes consumed.</param>
+/// <param name="WrittenBytes">The number of bytes written to the bounded output.</param>
+public readonly record struct SharpLinkCompressionResult(int ConsumedBytes, int WrittenBytes);
+
+/// <summary>Compresses and decompresses SharpLink business payloads without reflection.</summary>
+/// <remarks>
+/// Implementations must be thread safe. They must not retain input or output buffers after an operation completes,
+/// and must honor the operation's maximum output byte count before writing.
+/// </remarks>
+public interface ISharpLinkCompressionProvider
+{
+    /// <summary>
+    /// Gets the stable, case-sensitive wire-profile token advertised during the handshake.
+    /// Every setting required for successful decoding, such as a dictionary identity, must be represented by this token.
+    /// Encode-only tuning such as compression level may differ between peers using the same token.
+    /// </summary>
+    string Algorithm { get; }
+
+    /// <summary>Compresses one single- or multi-segment business payload into a bounded output.</summary>
+    /// <param name="input">The complete uncompressed business payload.</param>
+    /// <param name="output">The output owned by SharpLink for the duration of this call.</param>
+    /// <param name="maxOutputBytes">The maximum number of bytes the provider may write.</param>
+    /// <param name="cancellationToken">Cancels provider work before the frame is queued.</param>
+    ValueTask<SharpLinkCompressionResult> CompressAsync(
+        ReadOnlySequence<byte> input,
+        IBufferWriter<byte> output,
+        int maxOutputBytes,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Decompresses one single- or multi-segment business payload into a bounded output.</summary>
+    /// <param name="input">The complete compressed business payload.</param>
+    /// <param name="output">The output owned by SharpLink for the duration of this call.</param>
+    /// <param name="maxOutputBytes">The maximum permitted decompressed size.</param>
+    /// <param name="cancellationToken">Cancels decompression.</param>
+    ValueTask<SharpLinkCompressionResult> DecompressAsync(
+        ReadOnlySequence<byte> input,
+        IBufferWriter<byte> output,
+        int maxOutputBytes,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>Configures negotiated payload compression for one runtime context.</summary>
+/// <example>
+/// <code>
+/// builder.UseRuntime(options =&gt;
+/// {
+///     options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli());
+///     options.Compression.MinimumPayloadBytes = 2048;
+/// });
+/// </code>
+/// </example>
+public sealed class SharpLinkCompressionOptions
+{
+    /// <summary>The maximum number of advertised providers.</summary>
+    public const int MaxProviders = 16;
+
+    /// <summary>
+    /// Gets wire-profile providers in local preference order. An empty list completely disables compression.
+    /// Multiple configurations may participate in negotiation when they expose distinct tokens.
+    /// </summary>
+    public IList<ISharpLinkCompressionProvider> Providers { get; } = new List<ISharpLinkCompressionProvider>();
+
+    /// <summary>Gets or sets the smallest business payload considered for compression.</summary>
+    public int MinimumPayloadBytes { get; set; } = 1024;
+
+    /// <summary>Gets or sets the minimum absolute byte saving, including the original-length prefix.</summary>
+    public int MinimumSavingsBytes { get; set; } = 64;
+
+    /// <summary>Gets or sets the minimum fractional saving in the inclusive range 0 through 1.</summary>
+    public double MinimumSavingsRatio { get; set; } = 0.05;
+
+    /// <summary>Validates provider tokens and compression-benefit thresholds.</summary>
+    public void Validate()
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(MinimumPayloadBytes);
+        ArgumentOutOfRangeException.ThrowIfNegative(MinimumSavingsBytes);
+        if (double.IsNaN(MinimumSavingsRatio) || MinimumSavingsRatio is < 0 or > 1)
+            throw new ArgumentOutOfRangeException(nameof(MinimumSavingsRatio));
+        if (Providers.Count > MaxProviders)
+            throw new ArgumentOutOfRangeException(nameof(Providers), $"At most {MaxProviders} providers may be configured.");
+
+        var algorithms = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var provider in Providers)
+        {
+            ArgumentNullException.ThrowIfNull(provider);
+            SharpLinkCompressionToken.Validate(provider.Algorithm, nameof(Providers));
+            if (!algorithms.Add(provider.Algorithm))
+                throw new ArgumentException($"Compression algorithm '{provider.Algorithm}' is registered more than once.", nameof(Providers));
+        }
+    }
+
+    internal SharpLinkCompressionOptions CloneValidated()
+    {
+        Validate();
+        var clone = new SharpLinkCompressionOptions
+        {
+            MinimumPayloadBytes = MinimumPayloadBytes,
+            MinimumSavingsBytes = MinimumSavingsBytes,
+            MinimumSavingsRatio = MinimumSavingsRatio
+        };
+        foreach (var provider in Providers)
+            clone.Providers.Add(provider);
+        return clone;
+    }
+
+    internal bool IsBeneficial(int originalBytes, int compressedBytes)
+    {
+        if (originalBytes < MinimumPayloadBytes || compressedBytes >= originalBytes)
+            return false;
+        var savings = originalBytes - compressedBytes;
+        return savings >= MinimumSavingsBytes && savings >= originalBytes * MinimumSavingsRatio;
+    }
+
+    internal ISharpLinkCompressionProvider? FindProvider(string algorithm)
+    {
+        foreach (var provider in Providers)
+        {
+            if (string.Equals(provider.Algorithm, algorithm, StringComparison.Ordinal))
+                return provider;
+        }
+        return null;
+    }
+}
+
+/// <summary>Creates NativeAOT-safe providers backed only by <see cref="System.IO.Compression"/>.</summary>
+public static class SharpLinkCompressionProviders
+{
+    /// <summary>Creates a provider using <see cref="GZipStream"/>.</summary>
+    /// <param name="level">The local encoding preference. It is not negotiated and does not affect Gzip decoding compatibility.</param>
+    public static ISharpLinkCompressionProvider CreateGzip(CompressionLevel level = CompressionLevel.Fastest)
+        => new SystemCompressionProvider("gzip", SystemCompressionKind.Gzip, ValidateLevel(level));
+
+    /// <summary>Creates a provider using <see cref="DeflateStream"/>.</summary>
+    /// <param name="level">The local encoding preference. It is not negotiated and does not affect Deflate decoding compatibility.</param>
+    public static ISharpLinkCompressionProvider CreateDeflate(CompressionLevel level = CompressionLevel.Fastest)
+        => new SystemCompressionProvider("deflate", SystemCompressionKind.Deflate, ValidateLevel(level));
+
+    /// <summary>Creates a provider using <see cref="BrotliStream"/>.</summary>
+    /// <param name="level">The local encoding preference. It is not negotiated and does not affect Brotli decoding compatibility.</param>
+    public static ISharpLinkCompressionProvider CreateBrotli(CompressionLevel level = CompressionLevel.Fastest)
+        => new SystemCompressionProvider("brotli", SystemCompressionKind.Brotli, ValidateLevel(level));
+
+    private static CompressionLevel ValidateLevel(CompressionLevel level)
+        => Enum.IsDefined(level) ? level : throw new ArgumentOutOfRangeException(nameof(level));
+}
+
+internal static class SharpLinkCompressionToken
+{
+    internal const int MaxUtf8Bytes = 64;
+
+    internal static void Validate(string? algorithm, string parameterName)
+    {
+        if (string.IsNullOrEmpty(algorithm) || algorithm.Length > MaxUtf8Bytes)
+            throw new ArgumentException("Compression algorithm tokens must contain 1 to 64 ASCII bytes.", parameterName);
+        foreach (var character in algorithm)
+        {
+            if (character is < (char)0x21 or > (char)0x7e)
+                throw new ArgumentException("Compression algorithm tokens must use canonical visible ASCII bytes.", parameterName);
+        }
+    }
+}
+
+internal enum SystemCompressionKind
+{
+    Gzip,
+    Deflate,
+    Brotli
+}
+
+internal sealed class SystemCompressionProvider(
+    string algorithm,
+    SystemCompressionKind kind,
+    CompressionLevel level) : ISharpLinkCompressionProvider
+{
+    private const uint IntegrityMagic = 0x31504353; // "SCP1" in little endian.
+    private const int IntegrityTrailerBytes = sizeof(uint) + sizeof(uint);
+
+    public string Algorithm { get; } = algorithm;
+
+    public ValueTask<SharpLinkCompressionResult> CompressAsync(
+        ReadOnlySequence<byte> input,
+        IBufferWriter<byte> output,
+        int maxOutputBytes,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentOutOfRangeException.ThrowIfNegative(maxOutputBytes);
+        if (input.Length > int.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(input));
+
+        var outputStream = new BoundedBufferWriterStream(output, maxOutputBytes);
+        using (var compressor = CreateCompressionStream(outputStream))
+        {
+            foreach (var segment in input)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                compressor.Write(segment.Span);
+            }
+        }
+        outputStream.WriteIntegrityTrailer(IntegrityMagic);
+        return ValueTask.FromResult(new SharpLinkCompressionResult(
+            checked((int)input.Length), outputStream.WrittenBytes));
+    }
+
+    public ValueTask<SharpLinkCompressionResult> DecompressAsync(
+        ReadOnlySequence<byte> input,
+        IBufferWriter<byte> output,
+        int maxOutputBytes,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentOutOfRangeException.ThrowIfNegative(maxOutputBytes);
+        if (input.Length > int.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(input));
+
+        if (input.Length <= IntegrityTrailerBytes)
+            throw new InvalidDataException("Compressed payload integrity trailer is truncated.");
+        Span<byte> trailer = stackalloc byte[IntegrityTrailerBytes];
+        input.Slice(input.Length - IntegrityTrailerBytes).CopyTo(trailer);
+        if (BinaryPrimitives.ReadUInt32LittleEndian(trailer) != IntegrityMagic)
+            throw new InvalidDataException("Compressed payload integrity trailer is missing.");
+        var compressedPayload = input.Slice(0, input.Length - IntegrityTrailerBytes);
+        var expectedChecksum = BinaryPrimitives.ReadUInt32LittleEndian(trailer[sizeof(uint)..]);
+        if (Crc32Accumulator.Compute(compressedPayload) != expectedChecksum)
+            throw new InvalidDataException("Compressed payload integrity checksum does not match.");
+
+        using var inputStream = new ReadOnlySequenceStream(compressedPayload);
+        using var decompressor = CreateDecompressionStream(inputStream);
+        var written = 0;
+        while (written < maxOutputBytes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var span = output.GetSpan(Math.Min(8192, maxOutputBytes - written));
+            var read = decompressor.Read(span[..Math.Min(span.Length, maxOutputBytes - written)]);
+            if (read == 0)
+                break;
+            output.Advance(read);
+            written += read;
+        }
+
+        if (written == maxOutputBytes)
+        {
+            Span<byte> probe = stackalloc byte[1];
+            if (decompressor.Read(probe) != 0)
+                throw new InvalidDataException("Decompressed payload exceeds its declared original length.");
+        }
+
+        if (inputStream.ConsumedBytes != compressedPayload.Length)
+            throw new InvalidDataException("Compressed payload contains trailing data.");
+        return ValueTask.FromResult(new SharpLinkCompressionResult(checked((int)input.Length), written));
+    }
+
+    private Stream CreateCompressionStream(Stream output)
+        => kind switch
+        {
+            SystemCompressionKind.Gzip => new GZipStream(output, level, leaveOpen: true),
+            SystemCompressionKind.Deflate => new DeflateStream(output, level, leaveOpen: true),
+            SystemCompressionKind.Brotli => new BrotliStream(output, level, leaveOpen: true),
+            _ => throw new InvalidOperationException("Unknown compression kind.")
+        };
+
+    private Stream CreateDecompressionStream(Stream input)
+        => kind switch
+        {
+            SystemCompressionKind.Gzip => new GZipStream(input, CompressionMode.Decompress, leaveOpen: true),
+            SystemCompressionKind.Deflate => new DeflateStream(input, CompressionMode.Decompress, leaveOpen: true),
+            SystemCompressionKind.Brotli => new BrotliStream(input, CompressionMode.Decompress, leaveOpen: true),
+            _ => throw new InvalidOperationException("Unknown compression kind.")
+        };
+}
+
+internal sealed class BoundedBufferWriterStream(IBufferWriter<byte> writer, int maxBytes) : Stream
+{
+    private Crc32Accumulator _checksum;
+    internal int WrittenBytes { get; private set; }
+    public override bool CanRead => false;
+    public override bool CanSeek => false;
+    public override bool CanWrite => true;
+    public override long Length => WrittenBytes;
+    public override long Position { get => WrittenBytes; set => throw new NotSupportedException(); }
+    public override void Flush() { }
+
+    public override void Write(ReadOnlySpan<byte> buffer)
+    {
+        if (buffer.Length > maxBytes - WrittenBytes)
+            throw new SharpLinkCompressionOutputLimitException(maxBytes);
+        writer.Write(buffer);
+        _checksum.Append(buffer);
+        WrittenBytes += buffer.Length;
+    }
+
+    internal void WriteIntegrityTrailer(uint magic)
+    {
+        Span<byte> trailer = stackalloc byte[sizeof(uint) + sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(trailer, magic);
+        BinaryPrimitives.WriteUInt32LittleEndian(trailer[sizeof(uint)..], _checksum.Value);
+        if (trailer.Length > maxBytes - WrittenBytes)
+            throw new SharpLinkCompressionOutputLimitException(maxBytes);
+        writer.Write(trailer);
+        WrittenBytes += trailer.Length;
+    }
+
+    public override void Write(byte[] buffer, int offset, int count)
+        => Write(buffer.AsSpan(offset, count));
+
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Write(buffer.Span);
+        return ValueTask.CompletedTask;
+    }
+
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+}
+
+internal sealed class ReadOnlySequenceStream : Stream
+{
+    private readonly long _length;
+    private ReadOnlySequence<byte> _remaining;
+
+    internal ReadOnlySequenceStream(ReadOnlySequence<byte> sequence)
+    {
+        _remaining = sequence;
+        _length = sequence.Length;
+    }
+
+    internal int ConsumedBytes => checked((int)(_length - _remaining.Length));
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => _length;
+    public override long Position { get => ConsumedBytes; set => throw new NotSupportedException(); }
+
+    public override int Read(Span<byte> buffer)
+    {
+        if (buffer.IsEmpty || _remaining.IsEmpty)
+            return 0;
+        var count = (int)Math.Min(buffer.Length, _remaining.Length);
+        _remaining.Slice(0, count).CopyTo(buffer);
+        _remaining = _remaining.Slice(count);
+        return count;
+    }
+
+    public override int Read(byte[] buffer, int offset, int count)
+        => Read(buffer.AsSpan(offset, count));
+    public override void Flush() { }
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+}
+
+internal sealed class SharpLinkCompressionOutputLimitException(int maxBytes)
+    : IOException($"Compressed payload exceeds its {maxBytes}-byte output limit.");
+
+internal struct Crc32Accumulator
+{
+    private static readonly uint[] STable = CreateTable();
+    private uint _state;
+    private bool _initialized;
+
+    internal uint Value => ~(_initialized ? _state : uint.MaxValue);
+
+    internal void Append(ReadOnlySpan<byte> bytes)
+    {
+        var crc = _initialized ? _state : uint.MaxValue;
+        _initialized = true;
+        foreach (var value in bytes)
+            crc = STable[(crc ^ value) & 0xff] ^ (crc >> 8);
+        _state = crc;
+    }
+
+    internal static uint Compute(ReadOnlySequence<byte> sequence)
+    {
+        var accumulator = new Crc32Accumulator();
+        foreach (var segment in sequence)
+            accumulator.Append(segment.Span);
+        return accumulator.Value;
+    }
+
+    private static uint[] CreateTable()
+    {
+        var table = new uint[256];
+        for (uint index = 0; index < table.Length; index++)
+        {
+            var value = index;
+            for (var bit = 0; bit < 8; bit++)
+                value = (value & 1) != 0 ? 0xedb88320U ^ (value >> 1) : value >> 1;
+            table[index] = value;
+        }
+        return table;
+    }
+}

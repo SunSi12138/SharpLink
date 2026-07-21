@@ -73,6 +73,9 @@ public sealed class SharpLinkRuntimeOptions
     /// <summary>Gets flow-control and concurrency limits.</summary>
     public SharpLinkFlowControlOptions FlowControl { get; } = new();
 
+    /// <summary>Gets negotiated payload-compression options. An empty provider list disables compression.</summary>
+    public SharpLinkCompressionOptions Compression { get; } = new();
+
     internal SharpLinkRuntimeOptions CloneValidated()
     {
         if (!Enum.IsDefined(PerformanceProfile))
@@ -81,6 +84,7 @@ public sealed class SharpLinkRuntimeOptions
         var clone = new SharpLinkRuntimeOptions { PerformanceProfile = PerformanceProfile };
         CopyProtocol(Protocol.CloneValidated(), clone.Protocol);
         CopyFlowControl(ApplyProfileDefaults(FlowControl.CloneValidated(), PerformanceProfile), clone.FlowControl);
+        CopyCompression(Compression.CloneValidated(), clone.Compression);
         return clone;
     }
 
@@ -116,5 +120,16 @@ public sealed class SharpLinkRuntimeOptions
         destination.StreamReceiveWindowBytes = source.StreamReceiveWindowBytes;
         destination.ConnectionReceiveWindowBytes = source.ConnectionReceiveWindowBytes;
         destination.MaxConcurrentCallsPerConnection = source.MaxConcurrentCallsPerConnection;
+    }
+
+    private static void CopyCompression(
+        SharpLinkCompressionOptions source,
+        SharpLinkCompressionOptions destination)
+    {
+        destination.MinimumPayloadBytes = source.MinimumPayloadBytes;
+        destination.MinimumSavingsBytes = source.MinimumSavingsBytes;
+        destination.MinimumSavingsRatio = source.MinimumSavingsRatio;
+        foreach (var provider in source.Providers)
+            destination.Providers.Add(provider);
     }
 }

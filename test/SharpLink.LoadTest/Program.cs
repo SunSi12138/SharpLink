@@ -2,6 +2,8 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
+using System.IO.Compression;
 using System.Text.Json.Serialization;
 using System.Linq;
 using System.Net;
@@ -13,6 +15,7 @@ using SharpLink.Client;
 using SharpLink.LoadTestBase;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
+using SharpLink.Server;
 
 namespace SharpLink.LoadTest;
 
@@ -58,7 +61,11 @@ public static class Program
             $"[Config] mode={options.Mode} transport={options.Transport} operation={options.Operation} " +
             $"duration={options.DurationSeconds}s warmup={options.WarmupSeconds}s concurrency=[{string.Join(",", options.ConcurrencyConfig)}] " +
             $"payload={options.PayloadSize}B pool={options.MinConnections}/{options.MaxConnections} " +
-            $"profile={options.PerformanceProfile} requestTimeout={options.RequestTimeoutMode}");
+            $"profile={options.PerformanceProfile} requestTimeout={options.RequestTimeoutMode} " +
+            $"admission={options.AdmissionMode} compression={options.CompressionAlgorithm}/{options.CompressionLevel} " +
+            $"thresholds={options.CompressionMinimumPayloadBytes}B/{options.CompressionMinimumSavingsBytes}B/{options.CompressionMinimumSavingsRatio:P0} " +
+            $"sendQueue={options.MaxSendQueueBytes?.ToString(CultureInfo.InvariantCulture) ?? "profile-default"}B " +
+            $"pattern={options.PayloadPattern}");
 
         if (options.Transport == TransportMode.Tcp)
             Console.WriteLine($"[Config] tcp://{options.Host}:{options.Port} (bind={options.BindIp})");
@@ -81,6 +88,11 @@ public static class Program
         Console.WriteLine("  --min-connections 1 --max-connections 1");
         Console.WriteLine("  --profile balanced|lowlatency|throughput");
         Console.WriteLine("  --request-timeout default|disabled|1ms|10ms|100ms");
+        Console.WriteLine("  --admission disabled|immediate|queue|reject");
+        Console.WriteLine("  --compression none|gzip|deflate|brotli --compression-level fastest|optimal|smallest|nocompression");
+        Console.WriteLine("  --compression-min-payload 1024 --compression-min-savings-bytes 64 --compression-min-savings-ratio 0.05");
+        Console.WriteLine("  --max-send-queue-bytes 33554432 (optional bounded throughput-test override)");
+        Console.WriteLine("  --payload-pattern compressible|random");
         Console.WriteLine("  --shm-name sharplink-loadtest --shm-capacity 8388608 --shm-spin-count 8");
         Console.WriteLine("  --detailed-shm-evidence (diagnostic counters; do not use for formal timing)");
         Console.WriteLine("  --json-output artifacts/perf/load.json");
@@ -109,13 +121,15 @@ public static class Program
             options.HeartbeatTimeoutSeconds,
             options.MinConnections,
             options.MaxConnections,
-            static builder => builder,
+            builder => ConfigureServer(builder, options),
             options.PerformanceProfile,
             options.DisableRequestTimeout,
             options.RequestTimeout,
             options.SharedMemoryName,
             options.SharedMemoryCapacity,
-            options.SharedMemorySpinCount);
+            options.SharedMemorySpinCount,
+            runtime => ConfigureCompression(runtime, options),
+            runtime => ConfigureCompression(runtime, options));
         var serverCts = new CancellationTokenSource();
         var serverToken = serverCts.Token;
         var serverTask = RunServerLoopAsync(harness.Server, serverToken);
@@ -163,11 +177,12 @@ public static class Program
             options.PipeName,
             options.HeartbeatCheckIntervalSeconds,
             options.HeartbeatTimeoutSeconds,
-            static builder => builder,
+            builder => ConfigureServer(builder, options),
             options.PerformanceProfile,
             options.SharedMemoryName,
             options.SharedMemoryCapacity,
-            options.SharedMemorySpinCount);
+            options.SharedMemorySpinCount,
+            runtime => ConfigureCompression(runtime, options));
         Console.WriteLine("[Server] started.");
         await server.RunAsync(cancelScope.Token);
     }
@@ -190,7 +205,8 @@ public static class Program
                 options.RequestTimeout,
                 options.SharedMemoryName,
                 options.SharedMemoryCapacity,
-                options.SharedMemorySpinCount)
+                options.SharedMemorySpinCount,
+                runtime => ConfigureCompression(runtime, options))
             : null;
         var client = clientOverride ?? ownedClient!;
         var results = new List<StageResult>();
@@ -208,6 +224,7 @@ public static class Program
                         rpc,
                         options.Operation,
                         options.PayloadSize,
+                        options.PayloadPattern,
                         options.WarmupSeconds,
                         concurrency,
                         metrics,
@@ -218,6 +235,7 @@ public static class Program
                     rpc,
                     options.Operation,
                     options.PayloadSize,
+                    options.PayloadPattern,
                     options.DurationSeconds,
                     concurrency,
                     metrics,
@@ -226,7 +244,8 @@ public static class Program
                 Console.WriteLine(
                     $"[Result] op={result.Operation} c={result.Concurrency} qps={result.Qps:F2} ok={result.Success} fail={result.Failure} " +
                     $"err={result.ErrorRatePercent:F2}% p50={result.P50Us:F2}us p95={result.P95Us:F2}us p99={result.P99Us:F2}us p999={result.P999Us:F2}us " +
-                    $"avg={result.AvgUs:F2}us min={result.MinUs:F2}us max={result.MaxUs:F2}us dur={result.ElapsedSeconds:F2}s");
+                    $"avg={result.AvgUs:F2}us min={result.MinUs:F2}us max={result.MaxUs:F2}us dur={result.ElapsedSeconds:F2}s " +
+                    $"payload={result.OneWayPayloadMegabytesPerSecond:F2}/{result.RoundTripPayloadMegabytesPerSecond:F2} MiB/s(one-way/round-trip)");
 
                 if (!string.IsNullOrEmpty(result.TopFailures))
                     Console.WriteLine($"[Failures] {result.TopFailures}");
@@ -251,6 +270,7 @@ public static class Program
         ILoadTestService rpc,
         string operation,
         int payloadSize,
+        string payloadPattern,
         int durationSeconds,
         int concurrency,
         MetricsRegistry metrics,
@@ -308,7 +328,7 @@ public static class Program
         {
             // StringCodec writes UTF-16 bytes; keep the requested business payload size exact.
             var echoPayload = operation == "echo"
-                ? new string('x', payloadSize / sizeof(char))
+                ? CreateEchoPayload(payloadSize, payloadPattern, i)
                 : string.Empty;
             workers[i] = Task.Run(async () =>
             {
@@ -372,6 +392,10 @@ public static class Program
 
         var elapsedSeconds = Math.Max(0.001, stageTimer.Elapsed.TotalSeconds);
         var qps = success / elapsedSeconds;
+        var oneWayPayloadMegabytesPerSecond = operation == "echo"
+            ? qps * payloadSize / (1024d * 1024d)
+            : 0;
+        var roundTripPayloadMegabytesPerSecond = oneWayPayloadMegabytesPerSecond * 2;
         var total = success + failure;
         var errorRate = total == 0 ? 0 : failure * 100.0 / total;
         var evidence = PerformanceEvidenceCollector.Delta(
@@ -383,6 +407,8 @@ public static class Program
             success,
             failure,
             qps,
+            oneWayPayloadMegabytesPerSecond,
+            roundTripPayloadMegabytesPerSecond,
             histogram.Percentile(50),
             histogram.Percentile(95),
             histogram.Percentile(99),
@@ -399,6 +425,68 @@ public static class Program
             metrics.UpdateStage(result);
 
         return result;
+    }
+
+    private static SharpLinkServerBuilder ConfigureServer(
+        SharpLinkServerBuilder builder,
+        LoadTestOptions options)
+    {
+        return options.AdmissionMode switch
+        {
+            "disabled" => builder,
+            "immediate" => builder.UseAdmissionControl(admission =>
+                admission.Global.UseConcurrency(4096)),
+            "queue" => builder.UseAdmissionControl(admission =>
+            {
+                admission.Global.UseConcurrency(1);
+                admission.MaxQueuedCalls = 4096;
+                admission.MaxQueuedBytes = 64L * 1024 * 1024;
+                admission.MaxQueueDelay = TimeSpan.FromSeconds(10);
+            }),
+            "reject" => builder.UseAdmissionControl(admission =>
+                admission.Global.UseConcurrency(1)),
+            _ => throw new ArgumentOutOfRangeException(nameof(options.AdmissionMode))
+        };
+    }
+
+    private static void ConfigureCompression(
+        SharpLinkRuntimeOptions runtime,
+        LoadTestOptions options)
+    {
+        if (options.MaxSendQueueBytes is { } maxSendQueueBytes)
+            runtime.FlowControl.MaxSendQueueBytes = maxSendQueueBytes;
+        runtime.Compression.MinimumPayloadBytes = options.CompressionMinimumPayloadBytes;
+        runtime.Compression.MinimumSavingsBytes = options.CompressionMinimumSavingsBytes;
+        runtime.Compression.MinimumSavingsRatio = options.CompressionMinimumSavingsRatio;
+        if (options.CompressionAlgorithm == "none")
+            return;
+        var level = options.CompressionLevel switch
+        {
+            "fastest" => CompressionLevel.Fastest,
+            "optimal" => CompressionLevel.Optimal,
+            "smallest" => CompressionLevel.SmallestSize,
+            "nocompression" => CompressionLevel.NoCompression,
+            _ => throw new ArgumentOutOfRangeException(nameof(options.CompressionLevel))
+        };
+        runtime.Compression.Providers.Add(options.CompressionAlgorithm switch
+        {
+            "gzip" => SharpLinkCompressionProviders.CreateGzip(level),
+            "deflate" => SharpLinkCompressionProviders.CreateDeflate(level),
+            "brotli" => SharpLinkCompressionProviders.CreateBrotli(level),
+            _ => throw new ArgumentOutOfRangeException(nameof(options.CompressionAlgorithm))
+        });
+    }
+
+    private static string CreateEchoPayload(int payloadSize, string pattern, int worker)
+    {
+        var length = payloadSize / sizeof(char);
+        if (pattern == "compressible")
+            return new string('x', length);
+        var chars = new char[length];
+        var random = new Random(42 + worker);
+        for (var index = 0; index < chars.Length; index++)
+            chars[index] = (char)random.Next(0x0100, 0xd7ff);
+        return new string(chars);
     }
 
 }
@@ -429,6 +517,14 @@ public sealed class LoadTestOptions
     public int MaxConnections { get; private init; } = 1;
     public SharpLinkPerformanceProfile PerformanceProfile { get; private init; } = SharpLinkPerformanceProfile.Balanced;
     public string RequestTimeoutMode { get; private init; } = "default";
+    public string AdmissionMode { get; private init; } = "disabled";
+    public string CompressionAlgorithm { get; private init; } = "none";
+    public string CompressionLevel { get; private init; } = "fastest";
+    public int CompressionMinimumPayloadBytes { get; private init; } = 1024;
+    public int CompressionMinimumSavingsBytes { get; private init; } = 64;
+    public double CompressionMinimumSavingsRatio { get; private init; } = 0.05;
+    public int? MaxSendQueueBytes { get; private init; }
+    public string PayloadPattern { get; private init; } = "compressible";
     public string? JsonOutputPath { get; private init; }
     public bool DisableRequestTimeout => RequestTimeoutMode == "disabled";
     public TimeSpan? RequestTimeout => RequestTimeoutMode switch
@@ -485,6 +581,37 @@ public sealed class LoadTestOptions
         var requestTimeoutMode = map.GetValueOrDefault("request-timeout", "default").ToLowerInvariant();
         if (requestTimeoutMode is not ("default" or "disabled" or "1ms" or "10ms" or "100ms"))
             throw new ArgumentException($"Unsupported request timeout mode: {requestTimeoutMode}.");
+        var admissionMode = map.GetValueOrDefault("admission", "disabled").ToLowerInvariant();
+        if (admissionMode is not ("disabled" or "immediate" or "queue" or "reject"))
+            throw new ArgumentException($"Unsupported admission mode: {admissionMode}.");
+        var compressionAlgorithm = map.GetValueOrDefault("compression", "none").ToLowerInvariant();
+        if (compressionAlgorithm is not ("none" or "gzip" or "deflate" or "brotli"))
+            throw new ArgumentException($"Unsupported compression algorithm: {compressionAlgorithm}.");
+        var compressionLevel = map.GetValueOrDefault("compression-level", "fastest").ToLowerInvariant();
+        if (compressionLevel is not ("fastest" or "optimal" or "smallest" or "nocompression"))
+            throw new ArgumentException($"Unsupported compression level: {compressionLevel}.");
+        var compressionMinimumPayloadBytes = int.Parse(
+            map.GetValueOrDefault("compression-min-payload", "1024"),
+            CultureInfo.InvariantCulture);
+        var compressionMinimumSavingsBytes = int.Parse(
+            map.GetValueOrDefault("compression-min-savings-bytes", "64"),
+            CultureInfo.InvariantCulture);
+        var compressionMinimumSavingsRatio = double.Parse(
+            map.GetValueOrDefault("compression-min-savings-ratio", "0.05"),
+            CultureInfo.InvariantCulture);
+        var compressionValidation = new SharpLinkCompressionOptions
+        {
+            MinimumPayloadBytes = compressionMinimumPayloadBytes,
+            MinimumSavingsBytes = compressionMinimumSavingsBytes,
+            MinimumSavingsRatio = compressionMinimumSavingsRatio
+        };
+        compressionValidation.Validate();
+        var maxSendQueueBytes = ParseOptionalInt(map, "max-send-queue-bytes");
+        if (maxSendQueueBytes is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxSendQueueBytes));
+        var payloadPattern = map.GetValueOrDefault("payload-pattern", "compressible").ToLowerInvariant();
+        if (payloadPattern is not ("compressible" or "random"))
+            throw new ArgumentException($"Unsupported payload pattern: {payloadPattern}.");
 
         var minConnections = int.Parse(map.GetValueOrDefault("min-connections", "1"));
         var maxConnections = int.Parse(map.GetValueOrDefault("max-connections", "1"));
@@ -534,6 +661,14 @@ public sealed class LoadTestOptions
             MaxConnections = maxConnections,
             PerformanceProfile = profile,
             RequestTimeoutMode = requestTimeoutMode,
+            AdmissionMode = admissionMode,
+            CompressionAlgorithm = compressionAlgorithm,
+            CompressionLevel = compressionLevel,
+            CompressionMinimumPayloadBytes = compressionMinimumPayloadBytes,
+            CompressionMinimumSavingsBytes = compressionMinimumSavingsBytes,
+            CompressionMinimumSavingsRatio = compressionMinimumSavingsRatio,
+            MaxSendQueueBytes = maxSendQueueBytes,
+            PayloadPattern = payloadPattern,
             JsonOutputPath = map.GetValueOrDefault("json-output")
         };
     }
@@ -549,6 +684,8 @@ public sealed record StageResult(
     long Success,
     long Failure,
     double Qps,
+    double OneWayPayloadMegabytesPerSecond,
+    double RoundTripPayloadMegabytesPerSecond,
     double P50Us,
     double P95Us,
     double P99Us,

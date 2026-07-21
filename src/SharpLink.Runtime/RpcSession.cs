@@ -173,6 +173,9 @@ public sealed partial class RpcSession : IRpcSession
             : controller.AcquireSendCreditAsync(requestId, streamId, encodedBytes, cancellationToken);
     }
 
+    internal void ReturnUnsentStreamCredit(long requestId, ushort streamId, int encodedBytes)
+        => Volatile.Read(ref _streamFlowControl)?.ReturnUnsentCredit(requestId, streamId, encodedBytes);
+
     internal void ApplyWindowUpdate(long requestId, in ProtocolV2WindowUpdate update)
     {
         var controller = Volatile.Read(ref _streamFlowControl) ??
@@ -229,6 +232,15 @@ public sealed partial class RpcSession : IRpcSession
             throw terminal.Exception;
         }
 
+        try
+        {
+            packet = PrepareOutboundPacket(packet, CancellationToken.None);
+        }
+        catch
+        {
+            RuntimeContext.Buffers.Return(packet);
+            throw;
+        }
         ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
 
         var result = GetOrCreatePump().TryEnqueue(new OwnedFrame(packet, forceFlush: false, flushCompletion: null));
@@ -268,6 +280,18 @@ public sealed partial class RpcSession : IRpcSession
             throw terminal.Exception;
         }
 
+        if (!allowEmpty)
+        {
+            try
+            {
+                packet = PrepareOutboundPacket(packet, ct);
+            }
+            catch
+            {
+                RuntimeContext.Buffers.Return(packet);
+                throw;
+            }
+        }
         ValidateOutboundPacketOrReturn(packet, allowEmpty);
 
         var completion = forceFlush
