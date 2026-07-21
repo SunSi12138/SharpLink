@@ -3,42 +3,48 @@ namespace SharpLink.Client;
 internal sealed partial class SharpLinkClient
 {
     /// <summary>
-    /// Owns static multi-endpoint transport state without introducing nested SharpLinkClient instances.
-    /// The enclosing client continues to own the proxy, interceptor, codec, pending-call and session pipeline.
+    /// Owns a resolver-backed endpoint topology. It deliberately has no nested client: proxy, codec,
+    /// interceptor, pending-call, and session processing continue to belong to the enclosing client.
     /// </summary>
-    private sealed class StaticClusterRuntime : IEndpointClusterRuntime
+    private sealed class DynamicClusterRuntime : IEndpointClusterRuntime
     {
         private readonly SharpLinkClient _client;
+        private readonly ISharpLinkEndpointResolver _resolver;
+        private readonly SharpLinkEndpointTransportFactory _transportFactory;
         private readonly SharpLinkClusterOptions _options;
         private readonly SharpLinkLoadBalancingStrategy _strategy;
         private readonly ISharpLinkEndpointSelector? _selector;
-        private readonly EndpointState[] _endpoints;
         private readonly Lock _gate = new();
+        private readonly Dictionary<string, EndpointState> _currentById = new(StringComparer.Ordinal);
+        private readonly List<EndpointState> _allStates = [];
         private readonly HashSet<ClientConnection> _retiringConnections = [];
+        private EndpointState[] _current = [];
         private EndpointState[] _readyEndpoints = [];
         private EndpointSelectionSnapshot _selectionSnapshot = EndpointSelectionSnapshot.Empty;
         private Task? _connectTask;
+        private Task? _resolverTask;
         private Task? _stopTask;
+        private long _lastAcceptedVersion = -1;
+        private long _nextGeneration;
         private int _roundRobinCursor;
         private int _leastPendingCursor;
         private int _stopping;
+        private int _resolverDisposed;
 
-        private int TargetReadyEndpointCount => Math.Min(_options.MinReadyEndpoints, _endpoints.Length);
-
-        public StaticClusterRuntime(
+        public DynamicClusterRuntime(
             SharpLinkClient client,
-            StaticEndpointConfiguration[] configurations,
+            ISharpLinkEndpointResolver resolver,
+            SharpLinkEndpointTransportFactory transportFactory,
             SharpLinkClusterOptions options,
             SharpLinkLoadBalancingStrategy strategy,
             ISharpLinkEndpointSelector? selector)
         {
             _client = client;
+            _resolver = resolver;
+            _transportFactory = transportFactory;
             _options = options;
             _strategy = strategy;
             _selector = selector;
-            _endpoints = new EndpointState[configurations.Length];
-            for (var index = 0; index < configurations.Length; index++)
-                _endpoints[index] = new EndpointState(configurations[index], index);
         }
 
         public int ReadyConnectionCount
@@ -70,7 +76,8 @@ internal sealed partial class SharpLinkClient
                 if (ReadyConnectionCount != 0)
                     return ValueTask.CompletedTask;
                 _client.TransitionTo(SharpLinkConnectionState.Connecting);
-                _connectTask ??= ConnectInitialAsync(cancellationToken);
+                if (_connectTask is null || (_connectTask.IsFaulted && _resolverTask is null))
+                    _connectTask = StartAsync(cancellationToken);
                 task = _connectTask;
             }
             return cancellationToken.CanBeCanceled ? new ValueTask(task.WaitAsync(cancellationToken)) : new ValueTask(task);
@@ -110,8 +117,7 @@ internal sealed partial class SharpLinkClient
         {
             ArgumentNullException.ThrowIfNull(connection);
             EndpointState? endpoint;
-            var retireImmediately = false;
-            var forceClose = false;
+            var disposeNow = false;
             lock (_gate)
             {
                 endpoint = FindEndpointLocked(connection);
@@ -121,37 +127,23 @@ internal sealed partial class SharpLinkClient
                 if (connection.ActiveCallCount == 0)
                 {
                     endpoint.Connections.Remove(connection);
-                    PublishReadySnapshotLocked();
-                    retireImmediately = true;
-                }
-                else if (_retiringConnections.Add(connection) &&
-                         _retiringConnections.Count > _options.MaxRetiringConnections)
-                {
                     _retiringConnections.Remove(connection);
-                    endpoint.Connections.Remove(connection);
-                    PublishReadySnapshotLocked();
-                    forceClose = true;
+                    disposeNow = true;
                 }
                 else
                 {
-                    PublishReadySnapshotLocked();
+                    _retiringConnections.Add(connection);
                 }
+                PublishReadySnapshotLocked();
             }
 
-            if (forceClose)
-            {
-                connection.Fail(CreateConnectionClosedException(
-                    "The static cluster retiring-connection budget was exhausted."));
+            if (disposeNow)
                 _client.TrackBackgroundTask(DisposeConnectionAsync(connection));
-            }
-            else if (retireImmediately)
-            {
-                _client.TrackBackgroundTask(DisposeConnectionAsync(connection));
-            }
-
-            EnsureReconnect(endpoint);
-            if (ReadyConnectionCount == 0)
-                _client.TransitionTo(SharpLinkConnectionState.Reconnecting);
+            if (endpoint.Retiring)
+                ScheduleRetiredStateRelease(endpoint);
+            else
+                EnsureReconnect(endpoint);
+            UpdateClientReadiness();
         }
 
         public void RetireDrainingConnectionIfIdle(ClientConnection connection)
@@ -162,15 +154,17 @@ internal sealed partial class SharpLinkClient
             lock (_gate)
             {
                 endpoint = FindEndpointLocked(connection);
-                if (endpoint is null)
-                    return;
-                if (!endpoint.Connections.Remove(connection))
+                if (endpoint is null || !endpoint.Connections.Remove(connection))
                     return;
                 _retiringConnections.Remove(connection);
                 PublishReadySnapshotLocked();
             }
             _client.TrackBackgroundTask(DisposeConnectionAsync(connection));
-            EnsureReconnect(endpoint);
+            if (endpoint.Retiring)
+                ScheduleRetiredStateRelease(endpoint);
+            else
+                EnsureReconnect(endpoint);
+            UpdateClientReadiness();
         }
 
         public ValueTask StopAsync()
@@ -182,39 +176,268 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        private async Task ConnectInitialAsync(CancellationToken cancellationToken)
+        private async Task StartAsync(CancellationToken cancellationToken)
         {
-            Exception? lastFailure = null;
-            var parallelism = Math.Min(Math.Min(_options.MaxConnections, _endpoints.Length), 4);
-            for (var start = 0; start < _endpoints.Length && ReadyConnectionCount == 0; start += parallelism)
+            try
             {
-                var count = Math.Min(parallelism, _endpoints.Length - start);
-                var attempts = new Task<Exception?>[count];
-                for (var index = 0; index < count; index++)
-                {
-                    var endpoint = _endpoints[start + index];
-                    attempts[index] = TryConnectOneAsync(endpoint, cancellationToken);
-                }
-                var failures = await Task.WhenAll(attempts).ConfigureAwait(false);
-                for (var index = 0; index < failures.Length; index++)
-                    lastFailure ??= failures[index];
+                var snapshot = await _resolver.ResolveAsync(cancellationToken).ConfigureAwait(false);
+                await ApplySnapshotAsync(snapshot).ConfigureAwait(false);
+                StartResolverWorker(resolveBeforeWatch: false);
+                await ConnectCurrentEndpointsAsync(cancellationToken).ConfigureAwait(false);
+                UpdateClientReadiness();
             }
-
-            PublishClientReadiness();
-            EnsureMinimumReadyEndpoints();
-            if (ReadyConnectionCount == 0)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _client._shutdownCts.IsCancellationRequested)
             {
-                _client.TransitionTo(SharpLinkConnectionState.Faulted);
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _client.TransitionTo(SharpLinkConnectionState.Reconnecting);
+                StartResolverWorker(resolveBeforeWatch: true);
                 throw new SharpLinkException(
                     SharpLinkErrorCode.Unavailable,
-                    "No static SharpLink endpoint could connect.",
-                    lastFailure);
+                    "The endpoint resolver could not provide an initial topology.",
+                    exception);
             }
         }
 
-        private async Task<Exception?> TryConnectOneAsync(
+        private void StartResolverWorker(bool resolveBeforeWatch)
+        {
+            lock (_gate)
+            {
+                if (Volatile.Read(ref _stopping) != 0 || _resolverTask is { IsCompleted: false })
+                    return;
+                _resolverTask = RunResolverWorkerAsync(resolveBeforeWatch);
+                _client.TrackBackgroundTask(_resolverTask);
+            }
+        }
+
+        private async Task RunResolverWorkerAsync(bool resolveBeforeWatch)
+        {
+            var delayMilliseconds = 100;
+            var mustResolve = resolveBeforeWatch;
+            while (Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
+            {
+                if (mustResolve)
+                {
+                    try
+                    {
+                        var snapshot = await _resolver.ResolveAsync(_client._shutdownCts.Token).ConfigureAwait(false);
+                        if (await ApplySnapshotAsync(snapshot).ConfigureAwait(false))
+                            delayMilliseconds = 100;
+                        mustResolve = false;
+                        UpdateClientReadiness();
+                    }
+                    catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
+                    {
+                        return;
+                    }
+                    catch (Exception exception)
+                    {
+                        LogClientBackgroundLoopUnhandledException(_client._logger, nameof(RunResolverWorkerAsync), exception);
+                        await DelayResolverRetryAsync(delayMilliseconds).ConfigureAwait(false);
+                        delayMilliseconds = Math.Min(delayMilliseconds * 2, 30_000);
+                        continue;
+                    }
+                }
+
+                try
+                {
+                    await foreach (var snapshot in _resolver.WatchAsync(_client._shutdownCts.Token)
+                                       .WithCancellation(_client._shutdownCts.Token)
+                                       .ConfigureAwait(false))
+                    {
+                        if (Volatile.Read(ref _stopping) != 0)
+                            return;
+                        if (await ApplySnapshotAsync(snapshot).ConfigureAwait(false))
+                            delayMilliseconds = 100;
+                        UpdateClientReadiness();
+                    }
+                    mustResolve = true;
+                }
+                catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception exception)
+                {
+                    LogClientBackgroundLoopUnhandledException(_client._logger, nameof(RunResolverWorkerAsync), exception);
+                    mustResolve = true;
+                }
+
+                await DelayResolverRetryAsync(delayMilliseconds).ConfigureAwait(false);
+                delayMilliseconds = Math.Min(delayMilliseconds * 2, 30_000);
+            }
+        }
+
+        private async Task DelayResolverRetryAsync(int delayMilliseconds)
+        {
+            var jitter = 0.8 + Random.Shared.NextDouble() * 0.4;
+            await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds * jitter), _client._shutdownCts.Token)
+                .ConfigureAwait(false);
+        }
+
+        private async Task<bool> ApplySnapshotAsync(SharpLinkEndpointSnapshot snapshot)
+        {
+            ArgumentNullException.ThrowIfNull(snapshot);
+            SharpLinkEndpoint[] endpoints;
+            try
+            {
+                endpoints = SharpClientBuilder.CreateEndpointSnapshot(snapshot.Endpoints, allowEmpty: true);
+                if (endpoints.Length > _options.MaxEndpoints)
+                    throw new ArgumentException("The endpoint resolver snapshot exceeds MaxEndpoints.", nameof(snapshot));
+            }
+            catch (Exception exception)
+            {
+                LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ApplySnapshotAsync), exception);
+                return false;
+            }
+
+            Dictionary<string, EndpointState> previous;
+            lock (_gate)
+            {
+                if (Volatile.Read(ref _stopping) != 0 || snapshot.Version <= _lastAcceptedVersion)
+                    return false;
+                previous = new Dictionary<string, EndpointState>(_currentById, StringComparer.Ordinal);
+            }
+
+            var created = new Dictionary<string, EndpointState>(StringComparer.Ordinal);
+            try
+            {
+                for (var index = 0; index < endpoints.Length; index++)
+                {
+                    var endpoint = endpoints[index];
+                    if (previous.TryGetValue(endpoint.Id, out var existing) && SameGeneration(existing.Configuration.Endpoint, endpoint))
+                        continue;
+                    var factory = SharpClientBuilder.CreateTransportFactory(endpoint, _transportFactory, _client._runtimeContext);
+                    created.Add(endpoint.Id, new EndpointState(
+                        new StaticEndpointConfiguration(endpoint, factory),
+                        Interlocked.Increment(ref _nextGeneration)));
+                }
+            }
+            catch (Exception exception)
+            {
+                foreach (var state in created.Values)
+                    await DisposeFactoryQuietlyAsync(state.Configuration.TransportFactory).ConfigureAwait(false);
+                LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ApplySnapshotAsync), exception);
+                return false;
+            }
+
+            var abandoned = false;
+            var connectionsToDispose = new List<ClientConnection>();
+            var statesToRelease = new List<EndpointState>();
+            EndpointState[] current;
+            lock (_gate)
+            {
+                if (Volatile.Read(ref _stopping) != 0 || snapshot.Version <= _lastAcceptedVersion)
+                {
+                    abandoned = true;
+                    current = [];
+                }
+                else
+                {
+                    var nextById = new Dictionary<string, EndpointState>(endpoints.Length, StringComparer.Ordinal);
+                    current = new EndpointState[endpoints.Length];
+                    for (var index = 0; index < endpoints.Length; index++)
+                    {
+                        var endpoint = endpoints[index];
+                        EndpointState state;
+                        if (previous.TryGetValue(endpoint.Id, out var existing) && SameGeneration(existing.Configuration.Endpoint, endpoint))
+                        {
+                            existing.Configuration.ReplaceEndpoint(endpoint);
+                            state = existing;
+                        }
+                        else
+                        {
+                            state = created[endpoint.Id];
+                            _allStates.Add(state);
+                        }
+                        nextById.Add(endpoint.Id, state);
+                        current[index] = state;
+                    }
+
+                    foreach (var old in _current)
+                    {
+                        if (!nextById.TryGetValue(old.Configuration.Endpoint.Id, out var replacement) ||
+                            !ReferenceEquals(replacement, old))
+                        {
+                            RetireEndpointLocked(old, connectionsToDispose, statesToRelease);
+                        }
+                    }
+
+                    _currentById.Clear();
+                    foreach (var pair in nextById)
+                        _currentById.Add(pair.Key, pair.Value);
+                    _current = current;
+                    _lastAcceptedVersion = snapshot.Version;
+                    PublishReadySnapshotLocked(force: true);
+                }
+            }
+
+            if (abandoned)
+            {
+                foreach (var state in created.Values)
+                    await DisposeFactoryQuietlyAsync(state.Configuration.TransportFactory).ConfigureAwait(false);
+                return false;
+            }
+
+            for (var index = 0; index < connectionsToDispose.Count; index++)
+                _client.TrackBackgroundTask(DisposeConnectionAsync(connectionsToDispose[index]));
+            for (var index = 0; index < statesToRelease.Count; index++)
+                ScheduleRetiredStateRelease(statesToRelease[index]);
+            for (var index = 0; index < current.Length; index++)
+                EnsureReconnect(current[index]);
+            EnsureMinimumReadyEndpoints();
+            return true;
+        }
+
+        private void RetireEndpointLocked(
             EndpointState endpoint,
-            CancellationToken cancellationToken)
+            List<ClientConnection> connectionsToDispose,
+            List<EndpointState> statesToRelease)
+        {
+            if (endpoint.Retiring)
+                return;
+            endpoint.Retiring = true;
+            var connections = endpoint.Connections.ToArray();
+            for (var index = 0; index < connections.Length; index++)
+            {
+                var connection = connections[index];
+                connection.MarkDraining();
+                if (connection.ActiveCallCount == 0)
+                {
+                    endpoint.Connections.Remove(connection);
+                    _retiringConnections.Remove(connection);
+                    connectionsToDispose.Add(connection);
+                }
+                else
+                {
+                    _retiringConnections.Add(connection);
+                }
+            }
+            if (endpoint.Connections.Count == 0 && endpoint.ConnectingCount == 0)
+                statesToRelease.Add(endpoint);
+        }
+
+        private async Task ConnectCurrentEndpointsAsync(CancellationToken cancellationToken)
+        {
+            EndpointState[] endpoints;
+            lock (_gate)
+                endpoints = [.. _current];
+            var parallelism = Math.Min(Math.Min(_options.MaxConnections, endpoints.Length), 4);
+            for (var start = 0; start < endpoints.Length; start += parallelism)
+            {
+                var count = Math.Min(parallelism, endpoints.Length - start);
+                var tasks = new Task<Exception?>[count];
+                for (var index = 0; index < count; index++)
+                    tasks[index] = TryConnectOneAsync(endpoints[start + index], cancellationToken);
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+                if (ReadyConnectionCount != 0)
+                    return;
+            }
+        }
+
+        private async Task<Exception?> TryConnectOneAsync(EndpointState endpoint, CancellationToken cancellationToken)
         {
             try
             {
@@ -235,9 +458,10 @@ internal sealed partial class SharpLinkClient
         {
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested)
-                    throw CreateConnectionClosedException("Client has stopped.");
-                if (TotalConnectionsLocked() >= _options.MaxConnections ||
+                if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested ||
+                    endpoint.Retiring || !IsCurrentLocked(endpoint) ||
+                    RetiringConnectionsSuppressNewConnectionsLocked() ||
+                    TotalActiveConnectionsLocked() >= _options.MaxConnections ||
                     endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount >= _options.MaxConnectionsPerEndpoint)
                 {
                     return;
@@ -278,8 +502,8 @@ internal sealed partial class SharpLinkClient
 
                 lock (_gate)
                 {
-                    if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested)
-                        throw CreateConnectionClosedException("Client stopped while connecting.");
+                    if (Volatile.Read(ref _stopping) != 0 || endpoint.Retiring || !IsCurrentLocked(endpoint))
+                        throw CreateConnectionClosedException("Endpoint generation retired while connecting.");
                     endpoint.Connections.Add(connection);
                     PublishReadySnapshotLocked();
                 }
@@ -287,13 +511,19 @@ internal sealed partial class SharpLinkClient
                 _client.TrackBackgroundTask(_client.RunHeartbeatSendLoopAsync(connection, sessionCts.Token));
                 _client.TrackBackgroundTask(_client.RunProcessRequestLoopAsync(connection, sessionCts.Token));
                 session = null;
-                PublishClientReadiness();
+                UpdateClientReadiness();
                 EnsureMinimumReadyEndpoints();
             }
             finally
             {
+                var release = false;
                 lock (_gate)
+                {
                     endpoint.ConnectingCount--;
+                    release = endpoint.Retiring && endpoint.Connections.Count == 0 && endpoint.ConnectingCount == 0;
+                }
+                if (release)
+                    ScheduleRetiredStateRelease(endpoint);
                 if (transport is not null)
                     await transport.DisposeAsync().ConfigureAwait(false);
                 if (session is not null)
@@ -303,23 +533,25 @@ internal sealed partial class SharpLinkClient
 
         private void HandleDisconnected(EndpointState endpoint, ClientConnection connection, Exception exception)
         {
+            var retired = false;
             lock (_gate)
             {
                 if (!endpoint.Connections.Remove(connection))
                     return;
                 _retiringConnections.Remove(connection);
+                retired = endpoint.Retiring;
                 PublishReadySnapshotLocked();
             }
             connection.Fail(exception);
             _client.TrackBackgroundTask(DisposeConnectionAsync(connection));
-            if (Volatile.Read(ref _stopping) == 0)
+            if (retired)
+                ScheduleRetiredStateRelease(endpoint);
+            else if (Volatile.Read(ref _stopping) == 0)
             {
-                _client.TransitionTo(ReadyConnectionCount == 0
-                    ? SharpLinkConnectionState.Reconnecting
-                    : SharpLinkConnectionState.Ready);
                 EnsureReconnect(endpoint);
                 EnsureMinimumReadyEndpoints();
             }
+            UpdateClientReadiness();
         }
 
         private void EnsureMinimumReadyEndpoints()
@@ -329,32 +561,28 @@ internal sealed partial class SharpLinkClient
             {
                 if (Volatile.Read(ref _stopping) != 0)
                     return;
-                var readyCount = Volatile.Read(ref _readyEndpoints).Length;
-                var remaining = TargetReadyEndpointCount - readyCount;
-                for (var index = 0; remaining > 0 && index < _endpoints.Length; index++)
+                var remaining = Math.Min(_options.MinReadyEndpoints, _current.Length) - Volatile.Read(ref _readyEndpoints).Length;
+                for (var index = 0; remaining > 0 && index < _current.Length; index++)
                 {
-                    var endpoint = _endpoints[index];
-                    if (endpoint.ReadyConnections.Length != 0 ||
-                        endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount != 0)
-                    {
+                    var endpoint = _current[index];
+                    if (endpoint.ReadyConnections.Length != 0 || endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount != 0)
                         continue;
-                    }
                     (missing ??= []).Add(endpoint);
                     remaining--;
                 }
             }
 
-            if (missing is null)
-                return;
-            for (var index = 0; index < missing.Count; index++)
-                EnsureReconnect(missing[index]);
+            if (missing is not null)
+                for (var index = 0; index < missing.Count; index++)
+                    EnsureReconnect(missing[index]);
         }
 
         private void EnsureReconnect(EndpointState endpoint)
         {
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0 || endpoint.ReconnectTask is { IsCompleted: false } ||
+                if (Volatile.Read(ref _stopping) != 0 || endpoint.Retiring || !IsCurrentLocked(endpoint) ||
+                    RetiringConnectionsSuppressNewConnectionsLocked() || endpoint.ReconnectTask is { IsCompleted: false } ||
                     endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount >= 1)
                 {
                     return;
@@ -368,14 +596,13 @@ internal sealed partial class SharpLinkClient
         {
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0 ||
-                    endpoint.ExpansionTask is { IsCompleted: false } ||
-                    TotalConnectionsLocked() >= _options.MaxConnections ||
+                if (Volatile.Read(ref _stopping) != 0 || endpoint.Retiring || !IsCurrentLocked(endpoint) ||
+                    RetiringConnectionsSuppressNewConnectionsLocked() || endpoint.ExpansionTask is { IsCompleted: false } ||
+                    TotalActiveConnectionsLocked() >= _options.MaxConnections ||
                     endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount >= _options.MaxConnectionsPerEndpoint)
                 {
                     return;
                 }
-
                 endpoint.ExpansionTask = ExpandAsync(endpoint);
                 _client.TrackBackgroundTask(endpoint.ExpansionTask);
             }
@@ -422,28 +649,35 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        private void PublishClientReadiness()
+        private void UpdateClientReadiness()
         {
-            if (ReadyConnectionCount == 0)
+            if (ReadyConnectionCount != 0)
+            {
+                _client._readyTimestamp = Stopwatch.GetTimestamp();
+                _client.TransitionTo(SharpLinkConnectionState.Ready);
+                Volatile.Read(ref _client._readySignal).TrySetResult(true);
                 return;
-            _client._readyTimestamp = Stopwatch.GetTimestamp();
-            _client.TransitionTo(SharpLinkConnectionState.Ready);
-            Volatile.Read(ref _client._readySignal).TrySetResult(true);
+            }
+            if (Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
+            {
+                _client.ResetReadySignal();
+                _client.TransitionTo(SharpLinkConnectionState.Reconnecting);
+            }
         }
 
-        private void PublishReadySnapshotLocked()
+        private void PublishReadySnapshotLocked(bool force = false)
         {
-            var ready = new List<EndpointState>(_endpoints.Length);
-            for (var index = 0; index < _endpoints.Length; index++)
+            var ready = new List<EndpointState>(_current.Length);
+            for (var index = 0; index < _current.Length; index++)
             {
-                var endpoint = _endpoints[index];
+                var endpoint = _current[index];
                 endpoint.PublishReadyConnections();
                 if (endpoint.ReadyConnections.Length != 0)
                     ready.Add(endpoint);
             }
             var endpoints = ready.ToArray();
             var existing = Volatile.Read(ref _readyEndpoints);
-            if (HasSameMembership(existing, endpoints))
+            if (!force && HasSameMembership(existing, endpoints))
             {
                 if (endpoints.Length == 0)
                     _client.ResetReadySignal();
@@ -457,7 +691,7 @@ internal sealed partial class SharpLinkClient
                     endpoint.Configuration.Endpoint,
                     endpoint.ReadyConnectionCountProvider,
                     endpoint.ActiveCallCountProvider,
-                    generation: 1);
+                    endpoint.Generation);
             }
             Volatile.Write(ref _readyEndpoints, endpoints);
             Volatile.Write(ref _selectionSnapshot, new EndpointSelectionSnapshot(endpoints, candidates));
@@ -465,20 +699,7 @@ internal sealed partial class SharpLinkClient
                 _client.ResetReadySignal();
         }
 
-        private static bool HasSameMembership(EndpointState[] left, EndpointState[] right)
-        {
-            if (left.Length != right.Length)
-                return false;
-            for (var index = 0; index < left.Length; index++)
-                if (!ReferenceEquals(left[index], right[index]))
-                    return false;
-            return true;
-        }
-
-        private int SelectEndpoint(
-            EndpointState[] endpoints,
-            SharpLinkEndpointCandidate[] candidates,
-            ulong excluded)
+        private int SelectEndpoint(EndpointState[] endpoints, SharpLinkEndpointCandidate[] candidates, ulong excluded)
         {
             var availableCount = 0;
             for (var index = 0; index < endpoints.Length; index++)
@@ -506,7 +727,7 @@ internal sealed partial class SharpLinkClient
             return _strategy switch
             {
                 SharpLinkLoadBalancingStrategy.Random => SelectRandom(endpoints.Length, excluded, availableCount),
-                SharpLinkLoadBalancingStrategy.RoundRobin => SelectRoundRobin(endpoints.Length, excluded),
+                SharpLinkLoadBalancingStrategy.RoundRobin => StaticEndpointSelection.SelectRoundRobinIndex(ref _roundRobinCursor, endpoints.Length, excluded),
                 SharpLinkLoadBalancingStrategy.LeastPending => SelectLeastPending(endpoints, excluded),
                 _ => SelectPowerOfTwo(endpoints, excluded, availableCount)
             };
@@ -521,29 +742,13 @@ internal sealed partial class SharpLinkClient
             var firstState = endpoints[first];
             var secondState = endpoints[second];
             return StaticEndpointSelection.CompareNormalizedLoad(
-                firstState.ActiveCallCount,
-                firstState.ReadyConnections.Length,
-                secondState.ActiveCallCount,
-                secondState.ReadyConnections.Length) <= 0
-                ? first
-                : second;
+                firstState.ActiveCallCount, firstState.ReadyConnections.Length,
+                secondState.ActiveCallCount, secondState.ReadyConnections.Length) <= 0 ? first : second;
         }
 
         private static int SelectRandom(int length, ulong excluded, int availableCount)
-        {
-            if (availableCount <= 0)
-                return -1;
-            return StaticEndpointSelection.SelectRandomIndex(
-                length,
-                excluded,
-                availableCount,
-                Random.Shared.Next(availableCount));
-        }
-
-        private int SelectRoundRobin(int length, ulong excluded)
-        {
-            return StaticEndpointSelection.SelectRoundRobinIndex(ref _roundRobinCursor, length, excluded);
-        }
+            => availableCount <= 0 ? -1 : StaticEndpointSelection.SelectRandomIndex(
+                length, excluded, availableCount, Random.Shared.Next(availableCount));
 
         private int SelectLeastPending(EndpointState[] endpoints, ulong excluded)
         {
@@ -577,30 +782,51 @@ internal sealed partial class SharpLinkClient
 
         private EndpointState? FindEndpointLocked(ClientConnection connection)
         {
-            for (var index = 0; index < _endpoints.Length; index++)
-                if (_endpoints[index].Connections.Contains(connection))
-                    return _endpoints[index];
+            for (var index = 0; index < _allStates.Count; index++)
+                if (_allStates[index].Connections.Contains(connection))
+                    return _allStates[index];
             return null;
         }
 
-        private int TotalConnectionsLocked()
+        private bool IsCurrentLocked(EndpointState endpoint)
+            => _currentById.TryGetValue(endpoint.Configuration.Endpoint.Id, out var current) && ReferenceEquals(current, endpoint);
+
+        private int TotalActiveConnectionsLocked()
         {
             var count = 0;
-            for (var index = 0; index < _endpoints.Length; index++)
-                count += _endpoints[index].NonRetiringConnectionCount + _endpoints[index].ConnectingCount;
+            for (var index = 0; index < _current.Length; index++)
+                count += _current[index].NonRetiringConnectionCount + _current[index].ConnectingCount;
             return count;
         }
+
+        private bool RetiringConnectionsSuppressNewConnectionsLocked()
+            => _retiringConnections.Count > _options.MaxRetiringConnections;
 
         private int CountConnections(Func<ClientConnection, int> count)
         {
             lock (_gate)
             {
                 var result = 0;
-                for (var index = 0; index < _endpoints.Length; index++)
-                    foreach (var connection in _endpoints[index].Connections)
+                for (var index = 0; index < _allStates.Count; index++)
+                    foreach (var connection in _allStates[index].Connections)
                         result += count(connection);
                 return result;
             }
+        }
+
+        private void ScheduleRetiredStateRelease(EndpointState endpoint)
+            => _client.TrackBackgroundTask(ReleaseRetiredStateAsync(endpoint));
+
+        private async Task ReleaseRetiredStateAsync(EndpointState endpoint)
+        {
+            lock (_gate)
+            {
+                if (!endpoint.Retiring || endpoint.FactoryReleased || endpoint.Connections.Count != 0 || endpoint.ConnectingCount != 0)
+                    return;
+                endpoint.FactoryReleased = true;
+                _allStates.Remove(endpoint);
+            }
+            await DisposeFactoryQuietlyAsync(endpoint.Configuration.TransportFactory).ConfigureAwait(false);
         }
 
         private async Task StopCoreAsync()
@@ -608,18 +834,34 @@ internal sealed partial class SharpLinkClient
             Interlocked.Exchange(ref _stopping, 1);
             ClientConnection[] connections;
             Task[] workers;
+            IClientTransportFactory[] factories;
             lock (_gate)
             {
-                connections = [.. _endpoints.SelectMany(static endpoint => endpoint.Connections)];
-                workers = [.. _endpoints
-                    .SelectMany(static endpoint => new[] { endpoint.ReconnectTask, endpoint.ExpansionTask })
+                connections = [.. _allStates.SelectMany(static state => state.Connections)];
+                workers = [.. _allStates
+                    .SelectMany(static state => new[] { state.ReconnectTask, state.ExpansionTask })
+                    .Append(_resolverTask)
                     .Where(static task => task is not null)!];
-                for (var index = 0; index < _endpoints.Length; index++)
-                    _endpoints[index].Connections.Clear();
+                factories = [.. _allStates
+                    .Where(static state => !state.FactoryReleased)
+                    .Select(static state =>
+                    {
+                        state.FactoryReleased = true;
+                        return state.Configuration.TransportFactory;
+                    })];
+                for (var index = 0; index < _allStates.Count; index++)
+                    _allStates[index].Connections.Clear();
+                _allStates.Clear();
+                _currentById.Clear();
+                _current = [];
                 _retiringConnections.Clear();
                 Volatile.Write(ref _readyEndpoints, []);
                 Volatile.Write(ref _selectionSnapshot, EndpointSelectionSnapshot.Empty);
             }
+
+            if (Interlocked.Exchange(ref _resolverDisposed, 1) == 0)
+                await _resolver.DisposeAsync().ConfigureAwait(false);
+
             var stopping = CreateConnectionClosedException("Client is stopping.");
             for (var index = 0; index < connections.Length; index++)
             {
@@ -628,13 +870,32 @@ internal sealed partial class SharpLinkClient
             }
             try { await Task.WhenAll(workers).ConfigureAwait(false); }
             catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested) { }
-            for (var index = 0; index < _endpoints.Length; index++)
-                await _endpoints[index].Configuration.TransportFactory.DisposeAsync().ConfigureAwait(false);
+            for (var index = 0; index < factories.Length; index++)
+                await DisposeFactoryQuietlyAsync(factories[index]).ConfigureAwait(false);
+        }
+
+        private static bool SameGeneration(SharpLinkEndpoint left, SharpLinkEndpoint right)
+            => Equals(left.Address, right.Address) && StringComparer.Ordinal.Equals(left.Authority, right.Authority);
+
+        private static bool HasSameMembership(EndpointState[] left, EndpointState[] right)
+        {
+            if (left.Length != right.Length)
+                return false;
+            for (var index = 0; index < left.Length; index++)
+                if (!ReferenceEquals(left[index], right[index]))
+                    return false;
+            return true;
         }
 
         private static async Task DisposeConnectionAsync(ClientConnection connection)
         {
             try { await connection.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException) { }
+        }
+
+        private static async Task DisposeFactoryQuietlyAsync(IClientTransportFactory factory)
+        {
+            try { await factory.DisposeAsync().ConfigureAwait(false); }
             catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException) { }
         }
 
@@ -644,21 +905,23 @@ internal sealed partial class SharpLinkClient
             private readonly Func<int> _activeCallCountProvider;
             private ClientConnection[] _readyConnections = [];
 
-            public EndpointState(StaticEndpointConfiguration configuration, int index)
+            public EndpointState(StaticEndpointConfiguration configuration, long generation)
             {
                 Configuration = configuration;
-                Index = index;
+                Generation = generation;
                 _readyConnectionCountProvider = GetReadyConnectionCount;
                 _activeCallCountProvider = GetActiveCallCount;
             }
 
             public StaticEndpointConfiguration Configuration { get; }
-            public int Index { get; }
+            public long Generation { get; }
             public HashSet<ClientConnection> Connections { get; } = [];
             public ClientConnection[] ReadyConnections => Volatile.Read(ref _readyConnections);
             public Func<int> ReadyConnectionCountProvider => _readyConnectionCountProvider;
             public Func<int> ActiveCallCountProvider => _activeCallCountProvider;
             public int ConnectingCount { get; set; }
+            public bool Retiring { get; set; }
+            public bool FactoryReleased { get; set; }
             public Task? ReconnectTask { get; set; }
             public Task? ExpansionTask { get; set; }
             public int NonRetiringConnectionCount

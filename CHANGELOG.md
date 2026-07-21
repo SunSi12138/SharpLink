@@ -4,6 +4,25 @@
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-07-21
+
+### 新增
+
+- `SharpLinkEndpointSnapshot`、`ISharpLinkEndpointResolver` 与 `UseEndpointResolver` 提供版本化的动态 endpoint 拓扑；Client 对 Resolver 拥有明确的 Stop/Dispose 生命周期。
+- `DelegateSharpLinkEndpointResolver` 支持连续 Watch 或单 worker 轮询，可适配 Consul、Nacos、Etcd 等应用已有 SDK，而 SharpLink 核心不引入其依赖。
+- `UseDnsEndpoints` 与 `SharpLinkDnsEndpointResolver` 提供 A/AAAA Discovery、地址族筛选、规范化稳定 ID、hostname Authority、last-good 保留和可配置 refresh/jitter。
+
+### 变更
+
+- 动态快照以单 writer 原子协调：新增 ID 建立 generation；同 ID 的 Address/Authority 变化替换 generation；Attributes-only 更新保留连接；删除 endpoint 立即停止新调用并排空已有 Unary/Streaming。
+- Resolver Watch 结束或异常后以 100 ms–30 s 的指数退避和 ±20% jitter 重启；空拓扑可恢复且继续遵守 WaitForReady、deadline、cancel 与 Stop。
+- retired connection 使用独立预算。预算超出时抑制 replacement 而不强杀用户 stream，归零后 factory 恰好释放一次。
+
+### 兼容性与验证
+
+- Protocol v2 wire format、握手 capability、固定单 endpoint 与静态 cluster 的调用路径未改变；无新 NuGet 或第三方服务发现 SDK。
+- 覆盖 add/remove/replace、属性更新、DNS、watch/retry、流排空、PackageSmoke、NativeAOT 及动态稳态矩阵；固定 TCP 五轮 A/B 的 QPS 中位数为 0.7.5 的 100.44%，P99 中位数保持 72 µs。
+
 ## [0.7.5] - 2026-07-21
 
 ### 新增

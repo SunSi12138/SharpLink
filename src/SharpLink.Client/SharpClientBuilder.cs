@@ -8,6 +8,8 @@ public class SharpClientBuilder
     private IClientTransportFactory? _transport;
     private IEnumerable<SharpLinkEndpoint>? _endpoints;
     private SharpLinkEndpointTransportFactory? _endpointTransportFactory;
+    private ISharpLinkEndpointResolver? _endpointResolver;
+    private SharpLinkEndpointTransportFactory? _resolverTransportFactory;
     private ILoggerFactory? _loggerFactory;
     private ISharpLinkClientAuthenticator? _authenticator;
     private readonly List<ISharpLinkClientInterceptor> _interceptors = [];
@@ -193,6 +195,47 @@ public class SharpClientBuilder
         return this;
     }
 
+    /// <summary>Uses a client-owned resolver to maintain a dynamic endpoint topology.</summary>
+    /// <param name="resolver">The resolver disposed by the built client.</param>
+    /// <param name="transportFactory">Creates one client-owned transport factory for each endpoint generation.</param>
+    /// <remarks>
+    /// This mode is mutually exclusive with <see cref="UseTransport"/> and <see cref="UseEndpoint"/>.
+    /// The resolver supplies complete snapshots; its initial resolution and watch execute only after
+    /// <see cref="ISharpLinkClient.ConnectAsync"/> is called.
+    /// </remarks>
+    public SharpClientBuilder UseEndpointResolver(
+        ISharpLinkEndpointResolver resolver,
+        SharpLinkEndpointTransportFactory transportFactory)
+    {
+        _endpointResolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
+        _resolverTransportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
+        return this;
+    }
+
+    /// <summary>Uses the built-in DNS resolver for a dynamic TCP endpoint topology.</summary>
+    /// <param name="host">The DNS host name used as the default endpoint authority.</param>
+    /// <param name="port">The TCP port from 1 through 65535.</param>
+    /// <param name="transportFactory">Creates a client-owned transport factory for every discovered endpoint generation.</param>
+    /// <param name="configure">Optionally configures refresh and address-family behavior.</param>
+    /// <returns>This builder.</returns>
+    public SharpClientBuilder UseDnsEndpoints(
+        string host,
+        int port,
+        SharpLinkEndpointTransportFactory transportFactory,
+        Action<SharpLinkDnsResolverOptions>? configure = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(host);
+        if (port is < 1 or > 65535)
+            throw new ArgumentOutOfRangeException(nameof(port));
+        ArgumentNullException.ThrowIfNull(transportFactory);
+
+        var options = new SharpLinkDnsResolverOptions();
+        configure?.Invoke(options);
+        return UseEndpointResolver(
+            new SharpLinkDnsEndpointResolver(host, port, options),
+            transportFactory);
+    }
+
     /// <summary>Configures the bounded resources used only by a multi-endpoint static cluster.</summary>
     /// <param name="configure">Mutates builder-owned options frozen by <see cref="Build"/>.</param>
     public SharpClientBuilder UseCluster(Action<SharpLinkClusterOptions> configure)
@@ -231,16 +274,30 @@ public class SharpClientBuilder
     
     public ISharpLinkClient Build()
     {
-        if (_transport is not null && _endpoints is not null)
-            throw new InvalidOperationException("UseTransport and UseEndpoint(s) are mutually exclusive.");
-        if (_transport is null && _endpoints is null)
-            throw new InvalidOperationException("Transport or endpoint(s) must be set before building the client.");
+        var modeCount = (_transport is null ? 0 : 1) + (_endpoints is null ? 0 : 1) + (_endpointResolver is null ? 0 : 1);
+        if (modeCount > 1)
+            throw new InvalidOperationException("UseTransport, UseEndpoint(s), and UseEndpointResolver are mutually exclusive.");
+        if (modeCount == 0)
+            throw new InvalidOperationException("Transport, endpoint(s), or an endpoint resolver must be set before building the client.");
 
         var runtimeContext = _runtimeContextBuilder.Build();
         var protocolOptions = runtimeContext.Protocol;
+        if (_endpointResolver is not null)
+        {
+            if (_connectionPoolConfigured)
+                throw new InvalidOperationException("UseConnectionPool is only available for a fixed single endpoint.");
+            var cluster = _cluster.CloneValidatedForDynamicResolver();
+            return CreateDynamicClusterClient(
+                _endpointResolver,
+                _resolverTransportFactory!,
+                cluster,
+                runtimeContext,
+                protocolOptions);
+        }
+
         if (_endpoints is not null)
         {
-            var endpoints = CreateEndpointSnapshot(_endpoints);
+            var endpoints = CreateEndpointSnapshot(_endpoints, allowEmpty: false);
             if (endpoints.Length == 1)
             {
                 if (_clusterConfigured)
@@ -333,7 +390,31 @@ public class SharpClientBuilder
             _loadBalancingStrategy,
             _endpointSelector);
 
-    private static IClientTransportFactory CreateTransportFactory(
+    private ISharpLinkClient CreateDynamicClusterClient(
+        ISharpLinkEndpointResolver resolver,
+        SharpLinkEndpointTransportFactory transportFactory,
+        SharpLinkClusterOptions cluster,
+        SharpLinkRuntimeContext runtimeContext,
+        SharpLinkProtocolOptions protocolOptions)
+        => new SharpLinkClient(
+            DynamicClusterTransportPlaceholder.Instance,
+            _heartbeatInterval,
+            _heartbeatTimeout,
+            _loggerFactory ?? NullLoggerFactory.Instance,
+            _requestTimeout,
+            _authenticator,
+            protocolOptions,
+            runtimeContext,
+            _rpcSessionFlushOptions,
+            new SharpLinkConnectionPoolOptions(),
+            _interceptors.ToArray(),
+            dynamicResolver: resolver,
+            dynamicTransportFactory: transportFactory,
+            clusterOptions: cluster,
+            loadBalancingStrategy: _loadBalancingStrategy,
+            endpointSelector: _endpointSelector);
+
+    internal static IClientTransportFactory CreateTransportFactory(
         SharpLinkEndpoint endpoint,
         SharpLinkEndpointTransportFactory factory,
         SharpLinkRuntimeContext runtimeContext)
@@ -344,7 +425,9 @@ public class SharpClientBuilder
         return transport;
     }
 
-    private static SharpLinkEndpoint[] CreateEndpointSnapshot(IEnumerable<SharpLinkEndpoint> source)
+    internal static SharpLinkEndpoint[] CreateEndpointSnapshot(
+        IEnumerable<SharpLinkEndpoint> source,
+        bool allowEmpty)
     {
         var endpoints = new List<SharpLinkEndpoint>();
         var ids = new HashSet<string>(StringComparer.Ordinal);
@@ -355,6 +438,8 @@ public class SharpClientBuilder
             if (endpoint.Id.Length > 256 || !StringComparer.Ordinal.Equals(endpoint.Id, endpoint.Id.Trim()))
                 throw new ArgumentException("Endpoint IDs must be trimmed and at most 256 characters.", nameof(source));
             ArgumentNullException.ThrowIfNull(endpoint.Address);
+            if (endpoint.Attributes is null)
+                throw new ArgumentException("Endpoint attributes cannot be null.", nameof(source));
             if (endpoint.Attributes.Count > 32)
                 throw new ArgumentException("An endpoint supports at most 32 attributes.", nameof(source));
             var attributes = new Dictionary<string, string>(endpoint.Attributes.Count, StringComparer.Ordinal);
@@ -378,7 +463,7 @@ public class SharpClientBuilder
             if (endpoints.Count > SharpLinkClusterOptions.MaximumEndpoints)
                 throw new ArgumentException("A static topology supports at most 64 endpoints.", nameof(source));
         }
-        if (endpoints.Count == 0)
+        if (!allowEmpty && endpoints.Count == 0)
             throw new ArgumentException("At least one endpoint is required.", nameof(source));
         return [.. endpoints];
     }

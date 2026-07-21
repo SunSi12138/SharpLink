@@ -185,6 +185,10 @@ StreamLoadTest 专有：
 
 `eng/run-v075-static-performance-matrix.sh` 使用真实本地 TCP 服务实例和 `UseEndpoint(s)` API 覆盖静态 endpoint 路径：一个 endpoint 走 Builder 折叠后的固定路径，多个 endpoint 走 static cluster。`smoke` tier 覆盖 1/2 endpoint、并发 1/8、payload 0/256 B 和 P2C/LeastPending；`full` tier 扩展为 endpoint 1/2/8/32、并发 1/8/32/128、payload 0/32/256/4096/65536 B，以及 P2C、Random、RoundRobin、LeastPending。默认运行 JIT；设置 `SHARPLINK_V075_MATRIX_RUNTIMES=jit,aot` 会同时发布并运行本机 RID 的 NativeAOT 负载程序。所有原始 JSON 写入 `artifacts/performance/v0.7.5/static/`。
 
+## 0.7.6 动态 Resolver 矩阵
+
+`eng/run-v076-dynamic-performance-matrix.sh` 使用 `UseEndpointResolver` 和固定不变的 Delegate snapshot，在真实本地 TCP 服务上测量 resolver 模式的稳态调用。它不把 resolver 更新混入测量窗口，因此可验证动态 cluster 在没有新 snapshot 时不会周期性重建候选数组。`smoke` tier 覆盖 1/2 endpoint、并发 1/8、payload 0/256 B 与 P2C/LeastPending；`full` tier 覆盖 1/2/8/32 endpoint、并发 1/8/32/128、payload 0/32/256/4096/65536 B 和全部内置策略。默认 JIT；设置 `SHARPLINK_V076_MATRIX_RUNTIMES=jit,aot` 同时验证 NativeAOT。原始 JSON 写入 `artifacts/performance/v0.7.6/dynamic/`。
+
 正式性能结论仍须以相同硬件上的 0.7.4 fixed-single 基线交替多轮比较，检查 QPS 中位数、P99 和 alloc/op；短时 smoke 只验证矩阵可运行且无请求错误。
 
 运行矩阵或 trace 前必须确认同机没有其他 LoadTest、StreamLoadTest、Chaos 或诊断采集进程。存在资源竞争时，整批吞吐、延迟、分配和 trace 均标记无效并从头重跑；错误数与资源归零仍可单独作为正确性线索，但不得转化为性能结论。

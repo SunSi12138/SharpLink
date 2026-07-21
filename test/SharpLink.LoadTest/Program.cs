@@ -61,7 +61,7 @@ public static class Program
             $"[Config] mode={options.Mode} transport={options.Transport} operation={options.Operation} " +
             $"duration={options.DurationSeconds}s warmup={options.WarmupSeconds}s concurrency=[{string.Join(",", options.ConcurrencyConfig)}] " +
             $"payload={options.PayloadSize}B pool={options.MinConnections}/{options.MaxConnections} " +
-            $"staticEndpoints={options.StaticEndpointCount} lb={options.StaticLoadBalancingStrategy} " +
+            $"staticEndpoints={options.StaticEndpointCount} dynamicEndpoints={options.DynamicEndpointCount} dynamicResolver={options.UseDynamicResolver} lb={options.StaticLoadBalancingStrategy} " +
             $"profile={options.PerformanceProfile} requestTimeout={options.RequestTimeoutMode} " +
             $"admission={options.AdmissionMode} compression={options.CompressionAlgorithm}/{options.CompressionLevel} " +
             $"thresholds={options.CompressionMinimumPayloadBytes}B/{options.CompressionMinimumSavingsBytes}B/{options.CompressionMinimumSavingsRatio:P0} " +
@@ -87,7 +87,7 @@ public static class Program
         Console.WriteLine("  --duration 20 --warmup 5 --concurrency 1,2,4,8,16,32");
         Console.WriteLine("  --operation empty|add|echo|oneway|yield|delay --payload-size 64");
         Console.WriteLine("  --min-connections 1 --max-connections 1");
-        Console.WriteLine("  --static-endpoints 1 --load-balancing p2c|random|roundrobin|leastpending (local TCP only)");
+        Console.WriteLine("  --static-endpoints 1 | --dynamic-endpoints 1 --load-balancing p2c|random|roundrobin|leastpending (local TCP only)");
         Console.WriteLine("  --profile balanced|lowlatency|throughput");
         Console.WriteLine("  --request-timeout default|disabled|1ms|10ms|100ms");
         Console.WriteLine("  --admission disabled|immediate|queue|reject");
@@ -111,7 +111,7 @@ public static class Program
 
     private static async Task RunLocalAsync(LoadTestOptions options, MetricsRegistry metrics)
     {
-        if (options.UseStaticEndpoints)
+        if (options.UseStaticEndpoints || options.UseDynamicResolver)
         {
             await RunStaticTcpLocalAsync(options, metrics);
             return;
@@ -157,7 +157,7 @@ public static class Program
 
     private static async Task RunStaticTcpLocalAsync(LoadTestOptions options, MetricsRegistry metrics)
     {
-        var servers = new ISharpLinkServer?[options.StaticEndpointCount];
+        var servers = new ISharpLinkServer?[options.EndpointCount];
         var serverTasks = new Task?[servers.Length];
         var endpoints = new SharpLinkEndpoint[servers.Length];
         using var serverCancellation = new CancellationTokenSource();
@@ -197,7 +197,22 @@ public static class Program
                 .UseHeartbeat(
                     TimeSpan.FromSeconds(options.HeartbeatIntervalSeconds),
                     TimeSpan.FromSeconds(options.HeartbeatTimeoutSeconds));
-            if (endpoints.Length == 1)
+            if (options.UseDynamicResolver)
+            {
+                var snapshot = new SharpLinkEndpointSnapshot(1, endpoints);
+                clientBuilder
+                    .UseEndpointResolver(
+                        new DelegateSharpLinkEndpointResolver(_ => ValueTask.FromResult(snapshot)),
+                        SharpLinkTransportFactories.Sockets())
+                    .UseCluster(cluster =>
+                    {
+                        cluster.MinReadyEndpoints = endpoints.Length;
+                        cluster.MaxConnections = endpoints.Length;
+                        cluster.MaxConnectionsPerEndpoint = 1;
+                    })
+                    .UseLoadBalancing(options.StaticLoadBalancingStrategy);
+            }
+            else if (endpoints.Length == 1)
             {
                 clientBuilder.UseEndpoint(endpoints[0], SharpLinkTransportFactories.Sockets());
             }
@@ -597,6 +612,9 @@ public sealed class LoadTestOptions
     public int MaxConnections { get; private init; } = 1;
     public bool UseStaticEndpoints { get; private init; }
     public int StaticEndpointCount { get; private init; } = 1;
+    public bool UseDynamicResolver { get; private init; }
+    public int DynamicEndpointCount { get; private init; } = 1;
+    public int EndpointCount => UseDynamicResolver ? DynamicEndpointCount : StaticEndpointCount;
     public SharpLinkLoadBalancingStrategy StaticLoadBalancingStrategy { get; private init; } = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices;
     public SharpLinkPerformanceProfile PerformanceProfile { get; private init; } = SharpLinkPerformanceProfile.Balanced;
     public string RequestTimeoutMode { get; private init; } = "default";
@@ -642,10 +660,16 @@ public sealed class LoadTestOptions
         if (staticEndpointCount is < 1 or > SharpLinkClusterOptions.MaximumEndpoints)
             throw new ArgumentOutOfRangeException(nameof(staticEndpointCount));
         var useStaticEndpoints = map.ContainsKey("static-endpoints");
-        if (useStaticEndpoints && (mode != RunMode.Local || transport != TransportMode.Tcp))
+        var dynamicEndpointCount = int.Parse(map.GetValueOrDefault("dynamic-endpoints", "1"));
+        if (dynamicEndpointCount is < 1 or > SharpLinkClusterOptions.MaximumEndpoints)
+            throw new ArgumentOutOfRangeException(nameof(dynamicEndpointCount));
+        var useDynamicResolver = map.ContainsKey("dynamic-endpoints");
+        if (useStaticEndpoints && useDynamicResolver)
+            throw new ArgumentException("Static and dynamic endpoint load-test modes are mutually exclusive.");
+        if ((useStaticEndpoints || useDynamicResolver) && (mode != RunMode.Local || transport != TransportMode.Tcp))
         {
             throw new ArgumentException(
-                "Static endpoint load tests currently support only --mode local --transport tcp.");
+                "Endpoint topology load tests currently support only --mode local --transport tcp.");
         }
         var staticLoadBalancingStrategy = map.GetValueOrDefault("load-balancing", "p2c").ToLowerInvariant() switch
         {
@@ -761,6 +785,8 @@ public sealed class LoadTestOptions
             MaxConnections = maxConnections,
             UseStaticEndpoints = useStaticEndpoints,
             StaticEndpointCount = staticEndpointCount,
+            UseDynamicResolver = useDynamicResolver,
+            DynamicEndpointCount = dynamicEndpointCount,
             StaticLoadBalancingStrategy = staticLoadBalancingStrategy,
             PerformanceProfile = profile,
             RequestTimeoutMode = requestTimeoutMode,

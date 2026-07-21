@@ -6,7 +6,7 @@ namespace SharpLink.Client;
 internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
 {
     private readonly IClientTransportFactory transportFactory;
-    private readonly StaticClusterRuntime? _cluster;
+    private readonly IEndpointClusterRuntime? _cluster;
     // Retained for endpoint-aware diagnostics without routing fixed calls through cluster selection.
     private readonly SharpLinkEndpoint? _fixedEndpoint;
     private readonly SharpLinkRuntimeContext _runtimeContext = new SharpLinkRuntimeContextBuilder().Build();
@@ -53,15 +53,29 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
         SharpLinkClusterOptions? clusterOptions = null,
         SharpLinkLoadBalancingStrategy loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
         ISharpLinkEndpointSelector? endpointSelector = null,
-        SharpLinkEndpoint? fixedEndpoint = null)
+        SharpLinkEndpoint? fixedEndpoint = null,
+        ISharpLinkEndpointResolver? dynamicResolver = null,
+        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null)
     {
         this.transportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
         _fixedEndpoint = fixedEndpoint;
+        if (staticEndpoints is not null && dynamicResolver is not null)
+            throw new ArgumentException("Static endpoints and an endpoint resolver cannot both be configured.");
         if (staticEndpoints is not null)
         {
             _cluster = new StaticClusterRuntime(
                 this,
                 staticEndpoints,
+                clusterOptions ?? throw new ArgumentNullException(nameof(clusterOptions)),
+                loadBalancingStrategy,
+                endpointSelector);
+        }
+        else if (dynamicResolver is not null)
+        {
+            _cluster = new DynamicClusterRuntime(
+                this,
+                dynamicResolver,
+                dynamicTransportFactory ?? throw new ArgumentNullException(nameof(dynamicTransportFactory)),
                 clusterOptions ?? throw new ArgumentNullException(nameof(clusterOptions)),
                 loadBalancingStrategy,
                 endpointSelector);
@@ -83,8 +97,11 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
         SharpLinkClusterOptions? clusterOptions = null,
         SharpLinkLoadBalancingStrategy loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
         ISharpLinkEndpointSelector? endpointSelector = null,
-        SharpLinkEndpoint? fixedEndpoint = null)
-        : this(transportFactory, staticEndpoints, clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint)
+        SharpLinkEndpoint? fixedEndpoint = null,
+        ISharpLinkEndpointResolver? dynamicResolver = null,
+        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null)
+        : this(transportFactory, staticEndpoints, clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint,
+            dynamicResolver, dynamicTransportFactory)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatTimeout, TimeSpan.Zero);
@@ -124,10 +141,12 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
         SharpLinkClusterOptions? clusterOptions = null,
         SharpLinkLoadBalancingStrategy loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
         ISharpLinkEndpointSelector? endpointSelector = null,
-        SharpLinkEndpoint? fixedEndpoint = null)
+        SharpLinkEndpoint? fixedEndpoint = null,
+        ISharpLinkEndpointResolver? dynamicResolver = null,
+        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null)
         : this(transportFactory, heartbeatInterval, heartbeatTimeout, requestTimeout, authenticator, protocolOptions,
             runtimeContext, rpcSessionFlushOptions, connectionPoolOptions, clientInterceptors, staticEndpoints,
-            clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint)
+            clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint, dynamicResolver, dynamicTransportFactory)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _logger = loggerFactory.CreateLogger<SharpLinkClient>();
@@ -342,6 +361,8 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
     {
         get
         {
+            if (_cluster is not null)
+                return _cluster.ActiveStreamCount;
             var connections = Volatile.Read(ref _readyConnections);
             var count = 0;
             for (var index = 0; index < connections.Length; index++)

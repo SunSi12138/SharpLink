@@ -114,23 +114,25 @@ public static class Program
         var secondServer = secondBuilder.Build();
         var firstTask = RunServerAsync(firstServer, cancellationToken);
         var secondTask = RunServerAsync(secondServer, cancellationToken);
+        var endpoints = new[]
+        {
+            new SharpLinkEndpoint
+            {
+                Id = "first",
+                Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), firstPort),
+                Attributes = new Dictionary<string, string> { ["zone"] = "a" }
+            },
+            new SharpLinkEndpoint
+            {
+                Id = "second",
+                Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), secondPort),
+                Attributes = new Dictionary<string, string> { ["zone"] = "b" }
+            }
+        };
         var client = SharpClientBuilder.Create()
             .UseRuntime(ConfigureCompression)
             .UseEndpoints(
-                [
-                    new SharpLinkEndpoint
-                    {
-                        Id = "first",
-                        Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), firstPort),
-                        Attributes = new Dictionary<string, string> { ["zone"] = "a" }
-                    },
-                    new SharpLinkEndpoint
-                    {
-                        Id = "second",
-                        Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), secondPort),
-                        Attributes = new Dictionary<string, string> { ["zone"] = "b" }
-                    }
-                ],
+                endpoints,
                 SharpLinkTransportFactories.Sockets())
             .UseCluster(options =>
             {
@@ -146,6 +148,18 @@ public static class Program
             await client.ConnectAsync(cancellationToken);
             if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
                 throw new InvalidOperationException("Static endpoint package smoke returned an unexpected result.");
+
+            await using var dynamicClient = SharpClientBuilder.Create()
+                .UseRuntime(ConfigureCompression)
+                .UseEndpointResolver(
+                    new DelegateSharpLinkEndpointResolver(
+                        _ => ValueTask.FromResult(new SharpLinkEndpointSnapshot(1, endpoints))),
+                    SharpLinkTransportFactories.Sockets())
+                .UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin)
+                .Build();
+            await dynamicClient.ConnectAsync(cancellationToken);
+            if (await dynamicClient.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
+                throw new InvalidOperationException("Dynamic endpoint package smoke returned an unexpected result.");
         }
         finally
         {

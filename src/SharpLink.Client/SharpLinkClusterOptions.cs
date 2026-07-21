@@ -49,6 +49,31 @@ public sealed class SharpLinkClusterOptions
             MaxRetiringConnections = MaxRetiringConnections
         };
     }
+
+    internal SharpLinkClusterOptions CloneValidatedForDynamicResolver()
+    {
+        if (MaxEndpoints is < 1 or > MaximumEndpoints)
+            throw new ArgumentOutOfRangeException(nameof(MaxEndpoints));
+        if (MinReadyEndpoints is < 1 or > MaximumEndpoints)
+            throw new ArgumentOutOfRangeException(nameof(MinReadyEndpoints));
+        if (MaxConnections is < 1 or > SharpLinkConnectionPoolOptions.MaximumConnections)
+            throw new ArgumentOutOfRangeException(nameof(MaxConnections));
+        if (MaxConnectionsPerEndpoint < 1 || MaxConnectionsPerEndpoint > MaxConnections)
+            throw new ArgumentOutOfRangeException(nameof(MaxConnectionsPerEndpoint));
+        if (MinReadyEndpoints > MaxConnections)
+            throw new ArgumentException("MinReadyEndpoints cannot exceed MaxConnections.", nameof(MinReadyEndpoints));
+        if (MaxRetiringConnections is < 0 or > SharpLinkConnectionPoolOptions.MaximumConnections)
+            throw new ArgumentOutOfRangeException(nameof(MaxRetiringConnections));
+
+        return new SharpLinkClusterOptions
+        {
+            MaxEndpoints = MaxEndpoints,
+            MinReadyEndpoints = MinReadyEndpoints,
+            MaxConnections = MaxConnections,
+            MaxConnectionsPerEndpoint = MaxConnectionsPerEndpoint,
+            MaxRetiringConnections = MaxRetiringConnections
+        };
+    }
 }
 
 /// <summary>Chooses the built-in strategy used for static endpoint selection.</summary>
