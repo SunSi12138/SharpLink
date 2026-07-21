@@ -1,0 +1,156 @@
+using System.Collections.Generic;
+using System.Threading;
+using SharpLink.Client;
+
+namespace SharpLink.UnitTests.Client;
+
+public class StaticEndpointBuilderTests
+{
+    [Test]
+    public async Task AddressValidationAndAnonymousPipeRedactionShouldBeStable()
+    {
+        await EnsureThrows<ArgumentOutOfRangeException>(() =>
+        {
+            _ = new SharpLinkTcpAddress("localhost", 0);
+            return Task.CompletedTask;
+        });
+        var address = new SharpLinkAnonymousPipeAddress("in-secret", "out-secret");
+        Ensure(!address.ToString().Contains("secret", StringComparison.Ordinal), "anonymous handles must not be rendered");
+    }
+
+    [Test]
+    public async Task SingleEndpointShouldFreezeAttributesAndDisposeItsFactoryOnce()
+    {
+        var attributes = new Dictionary<string, string> { ["zone"] = "a" };
+        SharpLinkEndpoint? received = null;
+        var factory = new TrackingFactory();
+        var client = SharpClientBuilder.Create()
+            .UseEndpoint(
+                new SharpLinkEndpoint
+                {
+                    Id = "one",
+                    Address = new SharpLinkTcpAddress("127.0.0.1", 5001),
+                    Attributes = attributes
+                },
+                endpoint =>
+                {
+                    received = endpoint;
+                    return factory;
+                })
+            .Build();
+
+        attributes["zone"] = "changed";
+        Ensure(received is not null && received.Attributes["zone"] == "a", "endpoint attributes must be frozen");
+        await client.DisposeAsync();
+        Ensure(factory.DisposeCount == 1, "single endpoint factory disposal count");
+    }
+
+    [Test]
+    public async Task StaticClusterShouldOwnEveryFactoryExactlyOnce()
+    {
+        var first = new TrackingFactory();
+        var second = new TrackingFactory();
+        var client = SharpClientBuilder.Create()
+            .UseEndpoints(
+                [Endpoint("first", 5001), Endpoint("second", 5002)],
+                endpoint => endpoint.Id == "first" ? first : second)
+            .Build();
+
+        await client.DisposeAsync();
+        Ensure(first.DisposeCount == 1, "first cluster factory disposal count");
+        Ensure(second.DisposeCount == 1, "second cluster factory disposal count");
+    }
+
+    [Test]
+    public async Task BuilderShouldRejectConflictingModesAndOptions()
+    {
+        await EnsureThrows<InvalidOperationException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseTransport(new TrackingFactory())
+                .UseEndpoints([Endpoint("first", 5001), Endpoint("second", 5002)], _ => new TrackingFactory())
+                .Build();
+            return Task.CompletedTask;
+        });
+
+        await EnsureThrows<InvalidOperationException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseEndpoints([Endpoint("first", 5001), Endpoint("second", 5002)], _ => new TrackingFactory())
+                .UseConnectionPool(static options => options.MaxConnections = 2)
+                .Build();
+            return Task.CompletedTask;
+        });
+
+        await EnsureThrows<InvalidOperationException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseLoadBalancing(SharpLinkLoadBalancingStrategy.Random)
+                .UseEndpointSelector(new FirstSelector());
+            return Task.CompletedTask;
+        });
+    }
+
+    [Test]
+    public async Task BuilderShouldValidateEndpointIdsAndClusterBounds()
+    {
+        await EnsureThrows<ArgumentException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseEndpoints([Endpoint("duplicate", 5001), Endpoint("duplicate", 5002)], _ => new TrackingFactory())
+                .Build();
+            return Task.CompletedTask;
+        });
+
+        await EnsureThrows<ArgumentException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => new TrackingFactory())
+                .UseCluster(static options => options.MinReadyEndpoints = 5)
+                .Build();
+            return Task.CompletedTask;
+        });
+    }
+
+    private static SharpLinkEndpoint Endpoint(string id, int port) => new()
+    {
+        Id = id,
+        Address = new SharpLinkTcpAddress("127.0.0.1", port)
+    };
+
+    private static async Task EnsureThrows<TException>(Func<Task> action) where TException : Exception
+    {
+        try
+        {
+            await action();
+            throw new Exception($"expected {typeof(TException).Name}");
+        }
+        catch (TException)
+        {
+        }
+    }
+
+    private static void Ensure(bool condition, string message)
+    {
+        if (!condition)
+            throw new Exception(message);
+    }
+
+    private sealed class TrackingFactory : IClientTransportFactory
+    {
+        private int _disposeCount;
+        public int DisposeCount => Volatile.Read(ref _disposeCount);
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
+        public ValueTask DisposeAsync()
+        {
+            Interlocked.Increment(ref _disposeCount);
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class FirstSelector : ISharpLinkEndpointSelector
+    {
+        public int Select(in SharpLinkEndpointSelectionContext context) => 0;
+    }
+}

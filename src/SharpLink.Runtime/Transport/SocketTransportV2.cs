@@ -237,6 +237,14 @@ internal static class SocketTransportSocketFactory
 {
     public static Socket Create(EndPoint endPoint)
     {
+        if (endPoint is DnsEndPoint)
+        {
+            var dualMode = new Socket(AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp)
+            {
+                DualMode = true
+            };
+            return dualMode;
+        }
         var addressFamily = endPoint.AddressFamily == AddressFamily.Unspecified
             ? AddressFamily.InterNetwork
             : endPoint.AddressFamily;

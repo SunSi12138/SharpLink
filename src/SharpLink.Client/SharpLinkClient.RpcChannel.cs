@@ -234,6 +234,9 @@ internal sealed partial class SharpLinkClient
 
     private ClientConnection GetReadyConnection()
     {
+        if (_cluster is not null)
+            return _cluster.GetReadyConnection();
+
         var connections = Volatile.Read(ref _readyConnections);
         if (!_shutdownCts.IsCancellationRequested && connections.Length != 0)
         {
@@ -293,6 +296,12 @@ internal sealed partial class SharpLinkClient
 
     private void MarkConnectionDraining(ClientConnection connection)
     {
+        if (_cluster is not null)
+        {
+            _cluster.MarkConnectionDraining(connection);
+            return;
+        }
+
         connection.MarkDraining();
         lock (_poolGate)
             PublishReadySnapshotLocked();
@@ -311,6 +320,11 @@ internal sealed partial class SharpLinkClient
 
     internal void RetireDrainingConnectionIfIdle(ClientConnection connection)
     {
+        if (_cluster is not null)
+        {
+            _cluster.RetireDrainingConnectionIfIdle(connection);
+            return;
+        }
         if (connection.State != ClientConnectionState.Draining ||
             connection.ActiveCallCount != 0 ||
             !RemoveReadyConnection(connection))
