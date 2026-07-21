@@ -290,6 +290,77 @@ public class StreamManagerTests
     }
 
     [Test]
+    public async Task RejectedStreamDrainerShouldReturnCreditAndRetireOnComplete()
+    {
+        var accepted = 0;
+        var consumed = 0;
+        var completed = 0;
+        var manager = new StreamManager(
+            new RuntimeConcurrencyOptions(),
+            (_, _, bytes) => accepted += bytes,
+            (_, _, bytes) => consumed += bytes,
+            (_, _) => completed++);
+        manager.DrainRejectedRequestStreams(52, 1);
+
+        await manager.DispatchChunkAsync(
+            52,
+            1,
+            new ReadOnlySequence<byte>(new byte[] { 1, 2, 3 }));
+        Ensure(manager.TryDispatchPreAdmissionCompressed(
+            52,
+            1,
+            new ReadOnlySequence<byte>(new byte[] { 9, 9 }),
+            originalByteCount: 11,
+            out var compressedDispatch),
+            "discarding stream should intercept compressed frames before decode");
+        await compressedDispatch;
+        manager.CompleteStream(52, 1, exception: null);
+
+        Ensure(accepted == 14 && consumed == 14,
+            "discarded raw and compressed bytes return exact original credit");
+        Ensure(completed == 1, "discarded stream completion callback");
+        Ensure(manager.ActiveStreamCount == 0, "discarded stream reclaimed");
+    }
+
+    [Test]
+    public async Task RejectedQueuedCompressedStreamShouldNotInvokeDecoder()
+    {
+        var accepted = 0;
+        var consumed = 0;
+        var released = 0;
+        var manager = new StreamManager(
+            new RuntimeConcurrencyOptions(),
+            (_, _, bytes) => accepted += bytes,
+            (_, _, bytes) => consumed += bytes,
+            null);
+        var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
+        manager.ReservePreAdmissionStreams(
+            53,
+            1,
+            buffers,
+            _ => true,
+            bytes => released += bytes,
+            () => throw new InvalidOperationException("Capacity should not be exhausted."),
+            _ => throw new InvalidOperationException("Rejected compressed frames must not be decoded."));
+        Ensure(manager.TryDispatchPreAdmissionCompressed(
+            53,
+            1,
+            new ReadOnlySequence<byte>(new byte[] { 4, 5, 6, 7 }),
+            originalByteCount: 32,
+            out var queuedDispatch),
+            "compressed pre-admission frame intercepted");
+        await queuedDispatch;
+
+        manager.DrainRejectedRequestStreams(53, 1);
+        manager.CompleteStream(53, 1, exception: null);
+
+        Ensure(accepted == 32 && consumed == 32,
+            "queued rejected compressed frame returns original credit");
+        Ensure(released == 4, "queued rejected compressed wire bytes released");
+        Ensure(manager.ActiveStreamCount == 0, "queued rejected compressed stream reclaimed");
+    }
+
+    [Test]
     public async Task LocalCancellationShouldFlushOnlyAfterAcquiredDispatchesDrain()
     {
         var events = new List<string>();

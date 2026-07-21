@@ -1051,6 +1051,75 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task RejectedOneWayClientStreamShouldDrainWithoutServiceExecution()
+    {
+        CompressionService.ResetOneWay();
+        await using var harness = await TestHarness.CreateAsync(
+            runtimeConfigure: options =>
+            {
+                options.FlowControl.StreamReceiveWindowBytes = 64;
+                options.FlowControl.ConnectionReceiveWindowBytes = 64;
+            },
+            serverConfigure: builder => builder.UseAdmissionControl(options =>
+                options.Global.UseConcurrency(1)));
+        var active = harness.Client.Get<ITestService>()
+            .SlowAddWithoutTimeoutAsync(6, 7).AsTask();
+        await Task.Delay(75);
+        var payloads = Enumerable.Range(0, 256)
+            .Select(static index => Enumerable.Repeat((byte)index, 128).ToArray());
+
+        await harness.Client.Get<ICompressionService>()
+            .NotifyStreamBytesAsync(ToAsyncEnumerable(payloads, CancellationToken.None))
+            .AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(await active.WaitAsync(TimeSpan.FromSeconds(2)) == 13,
+            "rejected OneWay stream permit owner");
+        await Task.Delay(100);
+        Ensure(!CompressionService.WaitForOneWayAsync().IsCompleted,
+            "rejected OneWay stream service must not execute");
+        Ensure(await harness.Client.Get<ITestService>().AddAsync(20, 22) == 42,
+            "rejected OneWay stream connection recovery");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task PostAdmissionArgumentDecodeFailureShouldReleaseReservedStreams()
+    {
+        TestService.ResetMalformedUploadInvocations();
+        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
+        {
+            builder.UseCodec(new ThrowingPersonCodec());
+            builder.UseAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.MaxQueuedCalls = 1;
+                options.MaxQueuedBytes = 64 * 1024;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+            });
+        });
+        var service = harness.Client.Get<ITestService>();
+        var active = service.SlowAddWithoutTimeoutAsync(8, 9).AsTask();
+        await Task.Delay(75);
+        var failed = service.UploadWithHeaderAsync(
+            new Person { Name = "malformed", Age = 1 },
+            ToAsyncEnumerable(Enumerable.Range(1, 256), CancellationToken.None)).AsTask();
+
+        await EnsureThrowsSharpLinkFast(
+            failed,
+            "post-admission argument decode failure",
+            SharpLinkErrorCode.Internal);
+
+        Ensure(await active.WaitAsync(TimeSpan.FromSeconds(2)) == 17,
+            "post-admission decode permit owner");
+        Ensure(TestService.MalformedUploadInvocations == 0,
+            "malformed request service must not execute");
+        Ensure(await service.AddAsync(20, 22) == 42,
+            "post-admission decode failure connection recovery");
+    }
+
+    [Test]
     public async Task ServerStreamEarlyBreakShouldReleaseAdmissionPermit()
     {
         await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
@@ -1439,6 +1508,15 @@ public class IntegrationBehaviorTests
                 : inner.DecompressAsync(input, output, maxOutputBytes, cancellationToken);
     }
 
+    private sealed class ThrowingPersonCodec : IRpcCodec<Person>
+    {
+        public void Serialize(in Person value, IBufferWriter<byte> buffer)
+            => throw new NotSupportedException("The server never serializes this request argument.");
+
+        public Person? Deserialize(in ReadOnlySequence<byte> buffer)
+            => throw new InvalidDataException("Injected request argument decode failure.");
+    }
+
     private sealed class MarkerPersonCodec(byte marker) : IRpcCodec<Person>
     {
         private readonly byte _marker = marker;
@@ -1495,6 +1573,8 @@ public interface ITestService : IService
     [NonCancellable]
     ValueTask<int> UploadAsync(IAsyncEnumerable<int> values);
     [NonCancellable]
+    ValueTask<int> UploadWithHeaderAsync(Person header, IAsyncEnumerable<int> values);
+    [NonCancellable]
     IAsyncEnumerable<string> DownloadAsync(int count);
     IAsyncEnumerable<int> SlowDownloadAsync(int count, int delayMs, CancellationToken cancellationToken);
     [Oneway]
@@ -1509,10 +1589,12 @@ public class TestService : ITestService
     private static TaskCompletionSource s_nonCancellableFailure = CreateCompletionSource();
     private static TaskCompletionSource s_downloadDisposed = CreateCompletionSource();
     private static int s_activeUploads;
+    private static int s_malformedUploadInvocations;
     private static int s_notifyCount;
     private static TaskCompletionSource s_notify = CreateCompletionSource();
 
     internal static int ActiveUploads => Volatile.Read(ref s_activeUploads);
+    internal static int MalformedUploadInvocations => Volatile.Read(ref s_malformedUploadInvocations);
     internal static int NotifyCount => Volatile.Read(ref s_notifyCount);
 
     internal static void ResetNotify()
@@ -1524,6 +1606,8 @@ public class TestService : ITestService
     internal static Task WaitForNotifyAsync() => Volatile.Read(ref s_notify).Task;
 
     internal static void ResetActiveUploads() => Volatile.Write(ref s_activeUploads, 0);
+    internal static void ResetMalformedUploadInvocations()
+        => Volatile.Write(ref s_malformedUploadInvocations, 0);
 
     internal static void ResetNonCancellableCompletion()
         => Interlocked.Exchange(ref s_nonCancellableCompletion, CreateCompletionSource());
@@ -1614,6 +1698,18 @@ public class TestService : ITestService
         {
             Interlocked.Decrement(ref s_activeUploads);
         }
+    }
+
+    public async ValueTask<int> UploadWithHeaderAsync(
+        Person header,
+        IAsyncEnumerable<int> values)
+    {
+        _ = header;
+        Interlocked.Increment(ref s_malformedUploadInvocations);
+        var sum = 0;
+        await foreach (var value in values)
+            sum += value;
+        return sum;
     }
 
     public async IAsyncEnumerable<string> DownloadAsync(int count)

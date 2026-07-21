@@ -93,7 +93,11 @@ internal sealed class PreAdmissionStreamDispatcher(
         lock (_gate)
             attached = _dispatcher;
         if (attached is not null)
-            return DecodeAndDispatch(attached, wirePayload, originalByteCount, decoder);
+        {
+            return attached is DiscardingStreamDispatcher
+                ? DispatchAttached(attached, wirePayload, originalByteCount)
+                : DecodeAndDispatch(attached, wirePayload, originalByteCount, decoder);
+        }
 
         var retainedBytes = checked((int)wirePayload.Length);
         if (!reserveBytes(retainedBytes))
@@ -165,7 +169,7 @@ internal sealed class PreAdmissionStreamDispatcher(
                 try
                 {
                     var bufferedPayload = new ReadOnlySequence<byte>(item.Owner.WrittenMemory);
-                    var dispatch = item.IsCompressed
+                    var dispatch = item.IsCompressed && dispatcher is not DiscardingStreamDispatcher
                         ? DecodeAndDispatch(
                             dispatcher,
                             bufferedPayload,

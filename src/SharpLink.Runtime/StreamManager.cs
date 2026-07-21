@@ -335,6 +335,18 @@ public class StreamManager : IStreamManager
         }
     }
 
+    internal void DrainRejectedRequestStreams(long requestId, int streamCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(streamCount);
+        for (var index = 1; index <= streamCount; index++)
+        {
+            Register(
+                requestId,
+                checked((ushort)index),
+                new DiscardingStreamDispatcher());
+        }
+    }
+
     internal bool TryDispatchPreAdmissionCompressed(
         long requestId,
         ushort streamId,
@@ -347,6 +359,13 @@ public class StreamManager : IStreamManager
         {
             _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
             dispatch = preAdmission.DispatchCompressedAsync(wirePayload, originalByteCount);
+            return true;
+        }
+        if (_dispatchersByRequestId.TryGetValue(requestId, out requestDispatchers) &&
+            requestDispatchers.TryGetDiscarding(streamId, out var discarding))
+        {
+            _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
+            dispatch = discarding.DispatchAsync(wirePayload, originalByteCount);
             return true;
         }
         dispatch = default;
@@ -490,6 +509,27 @@ public class StreamManager : IStreamManager
             {
                 var found = _byStreamId.TryGetValue(streamId, out var entry)
                     ? entry.Dispatcher as PreAdmissionStreamDispatcher
+                    : null;
+                dispatcher = found!;
+                return found is not null;
+            }
+        }
+
+        public bool TryGetDiscarding(
+            ushort streamId,
+            out DiscardingStreamDispatcher dispatcher)
+        {
+            if (streamId == 0)
+            {
+                var found = Volatile.Read(ref _defaultDispatcher)?.Dispatcher as
+                    DiscardingStreamDispatcher;
+                dispatcher = found!;
+                return found is not null;
+            }
+            lock (_gate)
+            {
+                var found = _byStreamId.TryGetValue(streamId, out var entry)
+                    ? entry.Dispatcher as DiscardingStreamDispatcher
                     : null;
                 dispatcher = found!;
                 return found is not null;
@@ -688,5 +728,40 @@ public class StreamManager : IStreamManager
             if (!HasActiveDispatches && Dispatcher is IStreamDispatchLease lease)
                 lease.OnDispatchesDrained();
         }
+    }
+}
+
+internal sealed class DiscardingStreamDispatcher : IStreamConsumptionAwareDispatcher
+{
+    private Action<long, ushort, int>? _bytesConsumed;
+    private long _requestId;
+    private ushort _streamId;
+
+    public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+        => DispatchAsync(payload, Math.Max(1, checked((int)payload.Length)));
+
+    public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
+    {
+        _ = payload;
+        _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
+        return ValueTask.CompletedTask;
+    }
+
+    public void Complete(bool isError, string? errorMessage)
+    {
+        _ = isError;
+        _ = errorMessage;
+    }
+
+    public void Complete(Exception? exception) => _ = exception;
+
+    public void SetBytesConsumedCallback(
+        Action<long, ushort, int>? callback,
+        long requestId,
+        ushort streamId)
+    {
+        _bytesConsumed = callback;
+        _requestId = requestId;
+        _streamId = streamId;
     }
 }
