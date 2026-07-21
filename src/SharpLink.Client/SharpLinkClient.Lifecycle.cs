@@ -419,10 +419,20 @@ internal sealed partial class SharpLinkClient
                         if (header.Type == ProtocolV2FrameType.Response)
                             connection.PendingCalls.DispatchError(requestId, exception);
                         else if (header.Type == ProtocolV2FrameType.StreamData)
-                            session.StreamManager.CompleteStream(
-                                requestId,
-                                RpcSession.ReadCompressedStreamId(payload),
-                                exception);
+                        {
+                            var streamId = RpcSession.ReadCompressedStreamId(payload);
+                            if (streamId == 0)
+                            {
+                                connection.PendingCalls.TryComplete(
+                                    requestId,
+                                    PendingCallCompletionReason.ConsumerAbandoned,
+                                    exception);
+                            }
+                            else
+                            {
+                                session.StreamManager.CompleteStream(requestId, streamId, exception);
+                            }
+                        }
                         continue;
                     }
 

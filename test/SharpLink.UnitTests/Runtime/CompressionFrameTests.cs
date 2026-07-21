@@ -131,6 +131,29 @@ public class CompressionFrameTests
         Ensure(exception.Code == SharpLinkErrorCode.ProtocolViolation, "unnegotiated compressed frame");
     }
 
+    [Test]
+    public async Task OversizedOriginalPayloadShouldBeRejectedBeforeCompression()
+    {
+        var provider = new ThrowIfCompressedProvider();
+        await using var session = CreateSession(provider);
+        session.SetNegotiatedMaxFramePayloadBytes(SharpLinkProtocolOptions.MinMaxFramePayloadBytes);
+        var writer = session.RuntimeContext.Buffers.Rent(
+            ProtocolV2Constants.HeaderBytes + SharpLinkProtocolOptions.MinMaxFramePayloadBytes + 1);
+        using (writer.BeginPacketScope(
+                   ProtocolV2FrameType.Response,
+                   ProtocolV2FrameFlags.None,
+                   requestId: 1))
+        {
+            writer.Write(new byte[SharpLinkProtocolOptions.MinMaxFramePayloadBytes + 1]);
+        }
+
+        var exception = CaptureSharpLinkException(() => session.SendPacket(writer));
+
+        Ensure(exception.Code == SharpLinkErrorCode.ResourceExhausted,
+            "oversized original payload should fail locally");
+        Ensure(provider.CompressCount == 0, "provider must not receive oversized original payload");
+    }
+
     private static RpcSession CreateSession(
         ISharpLinkCompressionProvider provider,
         bool enableCompression = true)
@@ -214,5 +237,28 @@ public class CompressionFrameTests
             next.RunningIndex = RunningIndex + Memory.Length;
             Next = next;
         }
+    }
+
+    private sealed class ThrowIfCompressedProvider : ISharpLinkCompressionProvider
+    {
+        internal int CompressCount { get; private set; }
+        public string Algorithm => "test-oversized";
+
+        public ValueTask<SharpLinkCompressionResult> CompressAsync(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            CompressCount++;
+            throw new InvalidOperationException("Oversized payload reached the provider.");
+        }
+
+        public ValueTask<SharpLinkCompressionResult> DecompressAsync(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
     }
 }

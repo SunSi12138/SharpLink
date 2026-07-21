@@ -787,6 +787,11 @@ internal sealed partial class SharpLinkServer
             }
             if (!admissionTask.IsCompletedSuccessfully)
             {
+                ReservePreAdmissionRequestStreams(
+                    session,
+                    requestId,
+                    descriptor.ClientStreamCount,
+                    admittedCallState);
                 var retainedPayload = CopyAdmissionPayload(payload);
                 ObserveUserCall(
                     new ValueTask(AwaitOneWayAdmissionAsync(
@@ -1506,6 +1511,19 @@ internal sealed partial class SharpLinkServer
         {
             if (!ownsWriter)
             {
+                if (e is SharpLinkCompressionProviderException)
+                {
+                    try
+                    {
+                        session.SendRpcErrorAsync(requestId, e);
+                    }
+                    finally
+                    {
+                        ReleaseDispatchResources(
+                            callState, requestId, requestCancellationMap, connection);
+                    }
+                    return ValueTask.CompletedTask;
+                }
                 ReleaseDispatchResources(callState, requestId, requestCancellationMap, connection);
                 throw;
             }
@@ -1657,7 +1675,14 @@ internal sealed partial class SharpLinkServer
         catch (Exception e)
         {
             if (!ownsWriter)
+            {
+                if (e is SharpLinkCompressionProviderException)
+                {
+                    session.SendRpcErrorAsync(requestId, e);
+                    return;
+                }
                 throw;
+            }
 
             _runtimeContext.Buffers.Return(writer);
             if (TryClaimCallCompletion(callState))

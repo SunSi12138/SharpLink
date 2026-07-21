@@ -37,6 +37,12 @@ public sealed partial class RpcSession
         if (prefixLength < 0)
             return packet;
         var originalLength = checked((int)payload.Length - prefixLength);
+        if ((long)prefixLength + originalLength > NegotiatedMaxFramePayloadBytes)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.ResourceExhausted,
+                $"Outbound frame payload exceeds the negotiated {NegotiatedMaxFramePayloadBytes}-byte limit.");
+        }
         if (originalLength == 0 || originalLength < RuntimeContext.Compression.MinimumPayloadBytes)
             return packet;
 
@@ -66,13 +72,13 @@ public sealed partial class RpcSession
                 RuntimeContext.Buffers.Return(candidate);
                 return packet;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
             }
             catch (Exception exception)
             {
-                throw new SharpLinkException(
+                throw new SharpLinkCompressionProviderException(
                     SharpLinkErrorCode.Internal,
                     $"Compression provider '{provider.Algorithm}' failed before the frame was queued.",
                     exception);
@@ -81,7 +87,7 @@ public sealed partial class RpcSession
             var actualWritten = candidate.WrittenCount - compressedStart;
             if (result.ConsumedBytes != originalLength || result.WrittenBytes != actualWritten)
             {
-                throw new SharpLinkException(
+                throw new SharpLinkCompressionProviderException(
                     SharpLinkErrorCode.Internal,
                     $"Compression provider '{provider.Algorithm}' reported inconsistent consumed or written bytes.");
             }
@@ -152,7 +158,7 @@ public sealed partial class RpcSession
                     originalLength,
                     cancellationToken));
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
             }
@@ -291,5 +297,16 @@ public sealed partial class RpcSession
             reader.Advance(metadataLength);
         }
         return checked((int)(payload.Length - reader.Remaining));
+    }
+}
+
+internal sealed class SharpLinkCompressionProviderException : SharpLinkException
+{
+    internal SharpLinkCompressionProviderException(
+        SharpLinkErrorCode code,
+        string message,
+        Exception? innerException = null)
+        : base(code, message, innerException)
+    {
     }
 }

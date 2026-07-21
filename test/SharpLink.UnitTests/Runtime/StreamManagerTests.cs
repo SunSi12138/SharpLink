@@ -224,6 +224,72 @@ public class StreamManagerTests
     }
 
     [Test]
+    public async Task PreAdmissionCapacityDropShouldReturnAcceptedReceiveCredit()
+    {
+        var accepted = 0;
+        var consumed = 0;
+        var capacityExceeded = 0;
+        var manager = new StreamManager(
+            new RuntimeConcurrencyOptions(),
+            (_, _, bytes) => accepted += bytes,
+            (_, _, bytes) => consumed += bytes,
+            null);
+        var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
+        manager.ReservePreAdmissionStreams(
+            50,
+            1,
+            buffers,
+            _ => false,
+            _ => throw new InvalidOperationException("No bytes were reserved."),
+            () => capacityExceeded++);
+
+        await manager.DispatchChunkAsync(
+            50,
+            1,
+            new ReadOnlySequence<byte>(new byte[] { 1, 2, 3, 4 }));
+
+        Ensure(accepted == 4, "pre-admission bytes accepted");
+        Ensure(consumed == 4, "dropped pre-admission bytes returned as receive credit");
+        Ensure(capacityExceeded == 1, "pre-admission capacity callback");
+        manager.CompleteRequestStreams(50, exception: null);
+        Ensure(manager.ActiveStreamCount == 0, "capacity-dropped stream reclaimed");
+    }
+
+    [Test]
+    public async Task CompletedPreAdmissionStreamShouldRetireAfterDispatcherAttach()
+    {
+        var released = 0;
+        var completed = 0;
+        var manager = new StreamManager(
+            new RuntimeConcurrencyOptions(),
+            acceptBytes: null,
+            bytesConsumed: null,
+            (_, _) => completed++);
+        var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
+        manager.ReservePreAdmissionStreams(
+            51,
+            1,
+            buffers,
+            _ => true,
+            bytes => released += bytes,
+            () => throw new InvalidOperationException("Capacity should not be exhausted."));
+        await manager.DispatchChunkAsync(
+            51,
+            1,
+            new ReadOnlySequence<byte>(new byte[] { 7, 8, 9 }));
+        manager.CompleteStream(51, 1, exception: null);
+        var dispatcher = new RecordingDispatcher();
+
+        manager.Register(51, 1, dispatcher);
+
+        Ensure(dispatcher.DispatchCount == 1, "buffered pre-admission item dispatched");
+        Ensure(dispatcher.CompleteCount == 1, "early completion forwarded on attach");
+        Ensure(released == 3, "buffered pre-admission bytes released");
+        Ensure(completed == 1, "stream completion callback invoked once");
+        Ensure(manager.ActiveStreamCount == 0, "completed pre-admission stream reclaimed");
+    }
+
+    [Test]
     public async Task LocalCancellationShouldFlushOnlyAfterAcquiredDispatchesDrain()
     {
         var events = new List<string>();

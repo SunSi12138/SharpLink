@@ -252,6 +252,44 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    public async Task ServerCompressionProviderFailureShouldFailUnaryAndKeepConnectionHealthy()
+    {
+        var serverProvider = new ThrowingCompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli(), throwOnCompress: true, throwOnDecompress: false);
+        await using var harness = await TestHarness.CreateAsync(
+            clientRuntimeConfigure: options => options.Compression.Providers.Add(
+                SharpLinkCompressionProviders.CreateBrotli()),
+            serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
+        var service = harness.Client.Get<ICompressionService>();
+
+        await EnsureThrowsSharpLinkFast(
+            service.EchoBytesAsync(Enumerable.Repeat((byte)7, 4096).ToArray()).AsTask(),
+            "server compression failure",
+            SharpLinkErrorCode.Internal);
+        Ensure((await service.EchoBytesAsync(new byte[] { 7, 8, 9 })).SequenceEqual(new byte[] { 7, 8, 9 }),
+            "connection should remain healthy after response compression failure");
+    }
+
+    [Test]
+    public async Task CompressedServerStreamDecodeFailureShouldReleasePendingCall()
+    {
+        var clientProvider = new ThrowingCompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli(), throwOnCompress: false, throwOnDecompress: true);
+        await using var harness = await TestHarness.CreateAsync(
+            clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
+            serverRuntimeConfigure: options => options.Compression.Providers.Add(
+                SharpLinkCompressionProviders.CreateBrotli()));
+        var service = harness.Client.Get<ICompressionService>();
+
+        await EnsureThrowsSharpLinkFast(
+            CollectAsync(service.DownloadBytesAsync(100, 4096), CancellationToken.None),
+            "compressed server stream decode failure",
+            SharpLinkErrorCode.Internal);
+        Ensure((await service.EchoBytesAsync(new byte[] { 3, 2, 1 })).SequenceEqual(new byte[] { 3, 2, 1 }),
+            "connection should remain healthy after stream decompression failure");
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task OneByteFlowWindowsShouldResumeBothStreamDirections(bool useSharedMemory)
@@ -979,6 +1017,40 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task QueuedOneWayClientStreamShouldSpoolUntilAdmission()
+    {
+        CompressionService.ResetOneWay();
+        await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
+            builder.UseAdmissionControl(options =>
+            {
+                options.Global.UseConcurrency(1);
+                options.MaxQueuedCalls = 1;
+                options.MaxQueuedBytes = 64 * 1024;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+                options.QueueOneWayCalls = true;
+            }));
+        var active = harness.Client.Get<ITestService>()
+            .SlowAddWithoutTimeoutAsync(4, 5).AsTask();
+        await Task.Delay(75);
+        var payloads = new[]
+        {
+            Enumerable.Repeat((byte)0x31, 128).ToArray(),
+            Enumerable.Repeat((byte)0x32, 256).ToArray()
+        };
+
+        await harness.Client.Get<ICompressionService>().NotifyStreamBytesAsync(
+            ToAsyncEnumerable(payloads, CancellationToken.None));
+
+        Ensure(await active.WaitAsync(TimeSpan.FromSeconds(2)) == 9,
+            "queued OneWay client-stream permit owner");
+        Ensure(await CompressionService.WaitForOneWayAsync().WaitAsync(TimeSpan.FromSeconds(2)) == 384,
+            "queued OneWay client-stream items preserved");
+        Ensure(await harness.Client.Get<ITestService>().AddAsync(20, 22) == 42,
+            "queued OneWay client-stream connection recovery");
+    }
+
+    [Test]
     public async Task ServerStreamEarlyBreakShouldReleaseAdmissionPermit()
     {
         await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
@@ -1592,6 +1664,10 @@ public interface ICompressionService : IService
     [NonCancellable]
     ValueTask NotifyBytesAsync(byte[] value);
 
+    [Oneway]
+    [NonCancellable]
+    ValueTask NotifyStreamBytesAsync(IAsyncEnumerable<byte[]> values);
+
     [NonCancellable]
     ValueTask<int> UploadBytesAsync(IAsyncEnumerable<byte[]> values);
 
@@ -1618,6 +1694,14 @@ public sealed class CompressionService : ICompressionService
     {
         Volatile.Read(ref s_oneWay).TrySetResult(value.Length);
         return ValueTask.CompletedTask;
+    }
+
+    public async ValueTask NotifyStreamBytesAsync(IAsyncEnumerable<byte[]> values)
+    {
+        var total = 0;
+        await foreach (var value in values)
+            total += value.Length;
+        Volatile.Read(ref s_oneWay).TrySetResult(total);
     }
 
     public async ValueTask<int> UploadBytesAsync(IAsyncEnumerable<byte[]> values)

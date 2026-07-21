@@ -46,8 +46,12 @@ public class StreamManager : IStreamManager
         var requestDispatchers = _dispatchersByRequestId.GetOrAdd(
             requestId,
             static _ => new RequestDispatchers());
-        if (requestDispatchers.TryAttachPreAdmission(streamId, dispatcher))
+        if (requestDispatchers.TryAttachPreAdmission(streamId, dispatcher, out var alreadyCompleted))
+        {
+            if (alreadyCompleted)
+                Unregister(requestId, streamId);
             return;
+        }
         SharpLinkTelemetry.AddActiveStreams(1);
         Interlocked.Increment(ref _activeStreamCount);
         if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
@@ -415,8 +419,12 @@ public class StreamManager : IStreamManager
                 _byStreamId.Add(streamId, new DispatcherEntry(dispatcher));
         }
 
-        public bool TryAttachPreAdmission(ushort streamId, IStreamDispatcher dispatcher)
+        public bool TryAttachPreAdmission(
+            ushort streamId,
+            IStreamDispatcher dispatcher,
+            out bool alreadyCompleted)
         {
+            alreadyCompleted = false;
             if (streamId == 0)
             {
                 if (Volatile.Read(ref _defaultDispatcher)?.Dispatcher is not
@@ -424,7 +432,7 @@ public class StreamManager : IStreamManager
                 {
                     return false;
                 }
-                preAdmission.Attach(dispatcher);
+                alreadyCompleted = preAdmission.Attach(dispatcher);
                 return true;
             }
 
@@ -436,7 +444,7 @@ public class StreamManager : IStreamManager
                 {
                     return false;
                 }
-                preAdmission.Attach(dispatcher);
+                alreadyCompleted = preAdmission.Attach(dispatcher);
                 return true;
             }
         }

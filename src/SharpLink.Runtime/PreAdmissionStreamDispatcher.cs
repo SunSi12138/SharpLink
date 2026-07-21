@@ -48,6 +48,7 @@ internal sealed class PreAdmissionStreamDispatcher(
             retainedBytes = 1;
         if (!reserveBytes(retainedBytes))
         {
+            _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
             capacityExceeded();
             return ValueTask.CompletedTask;
         }
@@ -97,8 +98,8 @@ internal sealed class PreAdmissionStreamDispatcher(
         var retainedBytes = checked((int)wirePayload.Length);
         if (!reserveBytes(retainedBytes))
         {
-            capacityExceeded();
             _bytesConsumed?.Invoke(_requestId, _streamId, originalByteCount);
+            capacityExceeded();
             return ValueTask.CompletedTask;
         }
 
@@ -146,7 +147,7 @@ internal sealed class PreAdmissionStreamDispatcher(
         }
     }
 
-    internal void Attach(IStreamDispatcher dispatcher)
+    internal bool Attach(IStreamDispatcher dispatcher)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
         lock (_gate)
@@ -183,6 +184,7 @@ internal sealed class PreAdmissionStreamDispatcher(
             }
             if (_completed)
                 dispatcher.Complete(_completion);
+            return _completed;
         }
     }
 
