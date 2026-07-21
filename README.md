@@ -517,6 +517,7 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 0.7.1 迁移：`doc/migration-0.7.1.md`
 - 0.7.2 性能与迁移：`doc/performance-0.7.2.md`、`doc/migration-0.7.2.md`
 - 0.7.4 压缩、接入控制与性能：`doc/migration-0.7.4.md`、`doc/performance-0.7.4.md`
+- 0.7.5 静态多 endpoint：`doc/architecture-0.7.5.md`、`doc/performance-0.7.5.md`
 - 0.6.10 性能与 Chaos：`doc/performance-0.6.10.md`、`doc/chaos-0.6.10.md`
 - 贡献指南：`CONTRIBUTING.md`
 - 更新日志：`CHANGELOG.md`
