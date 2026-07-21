@@ -49,6 +49,14 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
     public void Retire(in SharpLinkEndpointCandidate endpoint)
         => _states.TryRemove(new CircuitKey(endpoint.Endpoint.Id, endpoint.Generation), out _);
 
+    /// <summary>Records an endpoint-level infrastructure failure that has no call admission token.</summary>
+    internal void ReportInfrastructureFailure(in SharpLinkEndpointCandidate endpoint)
+    {
+        var key = new CircuitKey(endpoint.Endpoint.Id, endpoint.Generation);
+        var state = _states.GetOrAdd(key, static (_, options) => new CircuitState(options), _options);
+        state.ReportInfrastructureFailure(Stopwatch.GetTimestamp());
+    }
+
     private static CircuitSample Classify(in SharpLinkEndpointOutcome outcome)
     {
         if (outcome.Kind is SharpLinkEndpointOutcomeKind.Cancelled or SharpLinkEndpointOutcomeKind.DeadlineExceeded)
@@ -175,6 +183,29 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
                     return;
                 Prune(now);
                 Add(now, sample == CircuitSample.Failure);
+                if (_count >= _options.MinimumThroughput &&
+                    (double)_failureCount / _count >= _options.FailureRatio)
+                {
+                    OpenCircuitLocked(now);
+                }
+            }
+        }
+
+        public void ReportInfrastructureFailure(long now)
+        {
+            lock (_samplesGate)
+            {
+                var state = Volatile.Read(ref _state);
+                if (state == Open)
+                    return;
+                if (state == HalfOpen)
+                {
+                    OpenCircuitLocked(now);
+                    return;
+                }
+
+                Prune(now);
+                Add(now, failure: true);
                 if (_count >= _options.MinimumThroughput &&
                     (double)_failureCount / _count >= _options.FailureRatio)
                 {

@@ -168,6 +168,26 @@ internal sealed partial class SharpLinkClient
             UpdateClientReadiness();
         }
 
+        public bool TryGetEndpointCandidate(ClientConnection connection, out SharpLinkEndpointCandidate candidate)
+        {
+            lock (_gate)
+            {
+                var endpoint = FindEndpointLocked(connection);
+                if (endpoint is null)
+                {
+                    candidate = default;
+                    return false;
+                }
+
+                candidate = new SharpLinkEndpointCandidate(
+                    endpoint.Configuration.Endpoint,
+                    endpoint.ReadyConnectionCountProvider,
+                    endpoint.ActiveCallCountProvider,
+                    endpoint.Generation);
+                return true;
+            }
+        }
+
         public void RetireDrainingConnectionIfIdle(ClientConnection connection)
         {
             if (connection.State != ClientConnectionState.Draining || connection.ActiveCallCount != 0)

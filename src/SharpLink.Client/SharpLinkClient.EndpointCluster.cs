@@ -14,6 +14,7 @@ internal sealed partial class SharpLinkClient
             RpcMethodDescriptor? method,
             EndpointRetrySelectionState? retrySelection,
             AttemptOutcomeState? attemptOutcome);
+        bool TryGetEndpointCandidate(ClientConnection connection, out SharpLinkEndpointCandidate candidate);
         void MarkConnectionDraining(ClientConnection connection);
         void RetireDrainingConnectionIfIdle(ClientConnection connection);
         ValueTask StopAsync();

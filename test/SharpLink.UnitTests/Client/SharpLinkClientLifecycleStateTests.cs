@@ -198,6 +198,48 @@ public class SharpLinkClientLifecycleStateTests
             });
         await client.ConnectAsync();
         var drainingConnection = await transport.WaitForConnectionAsync(0);
+        await InjectGoAwayAsync(drainingConnection);
+        await WaitUntilAsync(() => transport.ConnectCount >= 3 && client.ReadyConnectionCount == 2);
+
+        Ensure(client.State == SharpLinkConnectionState.Ready, "another ready connection should keep the client ready");
+    }
+
+    [Test]
+    public async Task GoAwayShouldCountAsBreakerFailureWithoutAnActiveCall()
+    {
+        var transport = new TestClientTransportFactory();
+        var endpoint = new SharpLinkEndpoint
+        {
+            Id = "breaker",
+            Address = new SharpLinkTcpAddress("127.0.0.1", 5001)
+        };
+        var breaker = new SharpLinkCircuitBreaker(new SharpLinkCircuitBreakerOptions
+        {
+            MinimumThroughput = 1,
+            FailureRatio = 1,
+            SamplingDuration = TimeSpan.FromSeconds(10),
+            BreakDuration = TimeSpan.FromSeconds(5),
+            HalfOpenMaxCalls = 1
+        }.CloneValidated());
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            fixedEndpoint: endpoint,
+            endpointAdmissionPolicy: breaker);
+        await client.ConnectAsync();
+
+        await InjectGoAwayAsync(transport.Connection);
+
+        var candidate = new SharpLinkEndpointCandidate(endpoint, 0, 0, generation: 0);
+        var method = new RpcMethodDescriptor(1, 2, RpcMethodKind.Unary, true, false, false, null);
+        await WaitUntilAsync(
+            () => !breaker.TryAcquire(candidate, method).IsAllowed,
+            () => "GoAway was not recorded as an endpoint infrastructure failure");
+    }
+
+    private static async Task InjectGoAwayAsync(TestTransportConnection connection)
+    {
         var payload = new PooledByteBufferWriter();
         var lastAccepted = payload.GetSpan(sizeof(ulong));
         BinaryPrimitives.WriteUInt64LittleEndian(lastAccepted, 0);
@@ -209,14 +251,11 @@ public class SharpLinkClientLifecycleStateTests
             1024,
             out _);
 
-        await drainingConnection.InjectFrameAsync(
+        await connection.InjectFrameAsync(
             ProtocolV2FrameType.GoAway,
             ProtocolV2FrameFlags.Error,
             0,
             payload.WrittenMemory);
-        await WaitUntilAsync(() => transport.ConnectCount >= 3 && client.ReadyConnectionCount == 2);
-
-        Ensure(client.State == SharpLinkConnectionState.Ready, "another ready connection should keep the client ready");
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition, Func<string>? timeoutMessage = null)

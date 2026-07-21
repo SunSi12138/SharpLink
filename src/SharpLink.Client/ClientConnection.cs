@@ -66,7 +66,7 @@ internal sealed class ClientConnection :
     internal bool ShouldLogLateResponse(out int suppressedCount)
         => _lateResponseLogLimiter.ShouldLog(Stopwatch.GetTimestamp(), out suppressedCount);
 
-    public void MarkDraining()
+    public bool MarkDraining()
     {
         if (Interlocked.CompareExchange(
                 ref _state,
@@ -74,7 +74,10 @@ internal sealed class ClientConnection :
                 (int)ClientConnectionState.Ready) == (int)ClientConnectionState.Ready)
         {
             Session.MarkDraining();
+            return true;
         }
+
+        return false;
     }
 
     public void Fail(Exception exception)

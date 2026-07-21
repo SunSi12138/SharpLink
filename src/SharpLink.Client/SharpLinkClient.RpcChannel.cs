@@ -330,13 +330,14 @@ internal sealed partial class SharpLinkClient
 
     private void MarkConnectionDraining(ClientConnection connection)
     {
+        if (!connection.MarkDraining())
+            return;
+        ReportGoAwayToCircuitBreaker(connection);
         if (_cluster is not null)
         {
             _cluster.MarkConnectionDraining(connection);
             return;
         }
-
-        connection.MarkDraining();
         lock (_poolGate)
             PublishReadySnapshotLocked();
 
@@ -350,6 +351,28 @@ internal sealed partial class SharpLinkClient
         ResetReadySignal();
         TransitionTo(SharpLinkConnectionState.Draining);
         EnsureReconnectLoop();
+    }
+
+    private void ReportGoAwayToCircuitBreaker(ClientConnection connection)
+    {
+        if (_endpointAdmissionPolicy is not SharpLinkCircuitBreaker breaker)
+            return;
+
+        if (_cluster?.TryGetEndpointCandidate(connection, out var clusterEndpoint) == true)
+        {
+            breaker.ReportInfrastructureFailure(clusterEndpoint);
+            return;
+        }
+
+        if (_fixedEndpoint is { } fixedEndpoint)
+        {
+            var endpoint = new SharpLinkEndpointCandidate(
+                fixedEndpoint,
+                ReadyConnectionCount,
+                ActiveClientCallCount,
+                generation: 0);
+            breaker.ReportInfrastructureFailure(endpoint);
+        }
     }
 
     internal void RetireDrainingConnectionIfIdle(ClientConnection connection)
