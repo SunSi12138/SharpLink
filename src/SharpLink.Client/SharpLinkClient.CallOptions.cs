@@ -62,13 +62,21 @@ internal sealed partial class SharpLinkClient
             catch (SharpLinkException exception) when (
                 waitForReady && exception.Code == SharpLinkErrorCode.Unavailable)
             {
-                if (attemptOutcome?.HasAdmissionRejection != true || attemptOutcome.RetryAfter is not { } retryAfter)
+                if (attemptOutcome?.ShouldHonorAdmissionRetryAfter == true)
+                {
+                    if (attemptOutcome.RetryAfter is not { } retryAfter)
+                        throw;
+                    var delay = retryAfter > TimeSpan.Zero ? retryAfter : TimeSpan.FromMilliseconds(1);
+                    if (deadline is { } retryDeadline && DateTimeOffset.UtcNow + delay >= retryDeadline)
+                        throw CreateDeadlineExceededException();
+                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                // If selection admitted an endpoint which then lost its connection, the old rejection
+                // delay no longer applies. Wait for the next readiness transition instead of sleeping.
+                if (attemptOutcome?.HasAdmissionRejection == true && !attemptOutcome.HasAdmissionGrant)
                     throw;
-                var delay = retryAfter > TimeSpan.Zero ? retryAfter : TimeSpan.FromMilliseconds(1);
-                if (deadline is { } retryDeadline && DateTimeOffset.UtcNow + delay >= retryDeadline)
-                    throw CreateDeadlineExceededException();
-                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-                continue;
             }
 
             if (State == SharpLinkConnectionState.Stopped || _shutdownCts.IsCancellationRequested)

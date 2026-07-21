@@ -242,7 +242,7 @@ internal sealed partial class SharpLinkClient
                 if (State == SharpLinkConnectionState.Stopped || _shutdownCts.IsCancellationRequested)
                     throw CreateConnectionClosedException("Client has stopped.");
 
-                if (outcome.HasAdmissionRejection)
+                if (outcome.ShouldHonorAdmissionRetryAfter)
                 {
                     if (outcome.RetryAfter is not { } retryAfter)
                         throw;

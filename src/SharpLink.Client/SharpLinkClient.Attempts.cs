@@ -39,6 +39,8 @@ internal sealed partial class SharpLinkClient
 
         public bool HasAdmissionRejection => Volatile.Read(ref _admissionRejected) != 0;
 
+        public bool HasAdmissionGrant => Volatile.Read(ref _admissionGranted) != 0;
+
         public bool ShouldHonorAdmissionRetryAfter
             => HasAdmissionRejection && Volatile.Read(ref _admissionGranted) == 0;
 

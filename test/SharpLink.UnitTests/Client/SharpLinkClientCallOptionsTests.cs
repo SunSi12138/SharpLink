@@ -1,6 +1,7 @@
 using System.Threading;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Buffers.Binary;
 using SharpLink.Client;
 using SharpLink.Sdk;
 
@@ -94,6 +95,47 @@ public class SharpLinkClientCallOptionsTests
         Ensure(await invocation == 0, "zero-delay admission rejection should retry");
         Ensure(policy.AcquireCount >= 2, "admission should be retried after the bounded yield");
         Ensure(policy.ReportCount == 1, "only the granted admission lease should report");
+    }
+
+    [Test]
+    public async Task WaitForReadyShouldDiscardAStaleAdmissionDelayAfterAnAdmittedEndpointDisconnects()
+    {
+        var first = new TestClientTransportFactory();
+        var second = new TestClientTransportFactory();
+        var blockingSecond = new ReconnectBlockingFactory(second);
+        var policy = new RejectFirstThenBlockSecondAdmissionPolicy();
+        var endpoints = new[]
+        {
+            new StaticEndpointConfiguration(Endpoint("first", 5001), first),
+            new StaticEndpointConfiguration(Endpoint("second", 5002), blockingSecond)
+        };
+        await using var client = new SharpLinkClient(
+            first,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            staticEndpoints: endpoints,
+            clusterOptions: new SharpLinkClusterOptions { MinReadyEndpoints = 2, MaxConnections = 2 },
+            endpointSelector: new FirstUnexcludedSelector(),
+            endpointAdmissionPolicy: policy);
+        await client.ConnectAsync();
+        await WaitForReadyConnectionCountAsync(client, 2);
+
+        var invocation = Task.Run(async () => await ClientInvokerTestHelper.InvokeUnaryAsync(
+            client, new SharpLinkCallOptions { WaitForReady = true }));
+        await policy.SecondAdmissionEntered.WaitAsync(TimeSpan.FromSeconds(2));
+        await InjectGoAwayAsync(second.Connection);
+        await blockingSecond.ReconnectStarted.WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitForReadyConnectionCountAsync(client, 1);
+        policy.ReleaseSecondAdmission();
+
+        var request = await first.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        await first.Connection.InjectPacketAsync(
+            ProtocolV2FrameType.Response,
+            ProtocolV2FrameFlags.None,
+            unchecked((long)request.RequestId));
+
+        Ensure(await invocation == 0, "a granted endpoint disconnect must not retain a previous rejection delay");
     }
 
     [Test]
@@ -201,6 +243,39 @@ public class SharpLinkClientCallOptionsTests
         Address = new SharpLinkTcpAddress("127.0.0.1", 5001)
     };
 
+    private static SharpLinkEndpoint Endpoint(string id, int port) => new()
+    {
+        Id = id,
+        Address = new SharpLinkTcpAddress("127.0.0.1", port)
+    };
+
+    private static async Task WaitForReadyConnectionCountAsync(SharpLinkClient client, int expected)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (client.ReadyConnectionCount != expected && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Ensure(client.ReadyConnectionCount == expected, $"expected {expected} ready connections");
+    }
+
+    private static async Task InjectGoAwayAsync(TestTransportConnection connection)
+    {
+        var payload = new PooledByteBufferWriter();
+        var lastAccepted = payload.GetSpan(sizeof(ulong));
+        BinaryPrimitives.WriteUInt64LittleEndian(lastAccepted, 0);
+        payload.Advance(sizeof(ulong));
+        ProtocolV2PayloadCodec.WriteError(
+            payload,
+            SharpLinkErrorCode.Unavailable,
+            "test endpoint disconnect",
+            1024,
+            out _);
+        await connection.InjectFrameAsync(
+            ProtocolV2FrameType.GoAway,
+            ProtocolV2FrameFlags.Error,
+            0,
+            payload.WrittenMemory);
+    }
+
     private static async Task<SharpLinkException> CaptureSharpLinkException(ValueTask<int> invocation)
     {
         try
@@ -253,6 +328,68 @@ public class SharpLinkClientCallOptionsTests
             ReportCount++;
             Ensure(token == 1, "zero-delay retry admission token");
         }
+    }
+
+    private sealed class FirstUnexcludedSelector : ISharpLinkEndpointSelector
+    {
+        public int Select(in SharpLinkEndpointSelectionContext context)
+        {
+            for (var index = 0; index < context.Count; index++)
+                if ((context.ExcludedMask & (1UL << index)) == 0)
+                    return index;
+            return -1;
+        }
+    }
+
+    private sealed class RejectFirstThenBlockSecondAdmissionPolicy : ISharpLinkEndpointAdmissionPolicy
+    {
+        private readonly TaskCompletionSource _secondAdmissionEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _secondAdmissionRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _firstAdmissions;
+
+        public Task SecondAdmissionEntered => _secondAdmissionEntered.Task;
+
+        public SharpLinkEndpointAdmissionDecision TryAcquire(
+            in SharpLinkEndpointCandidate endpoint,
+            in RpcMethodDescriptor method)
+        {
+            if (endpoint.Endpoint.Id == "first")
+            {
+                return Interlocked.Increment(ref _firstAdmissions) == 1
+                    ? new SharpLinkEndpointAdmissionDecision(false, Token: 0, RetryAfter: TimeSpan.FromSeconds(30))
+                    : new SharpLinkEndpointAdmissionDecision(true, Token: 1, RetryAfter: null);
+            }
+
+            _secondAdmissionEntered.TrySetResult();
+            _secondAdmissionRelease.Task.GetAwaiter().GetResult();
+            return new SharpLinkEndpointAdmissionDecision(true, Token: 2, RetryAfter: null);
+        }
+
+        public void ReleaseSecondAdmission() => _secondAdmissionRelease.TrySetResult();
+
+        public void Report(in SharpLinkEndpointOutcome outcome, long token)
+        {
+        }
+    }
+
+    private sealed class ReconnectBlockingFactory(TestClientTransportFactory inner) : IClientTransportFactory
+    {
+        private readonly TaskCompletionSource _reconnectStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _connectCount;
+
+        public Task ReconnectStarted => _reconnectStarted.Task;
+
+        public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _connectCount) == 1)
+                return await inner.ConnectAsync(cancellationToken).ConfigureAwait(false);
+
+            _reconnectStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+            throw new UnreachableException();
+        }
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
     }
 
     private sealed class RecordingAdmissionPolicy : ISharpLinkEndpointAdmissionPolicy
