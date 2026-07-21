@@ -120,6 +120,40 @@ public class TlsTransportIntegrationTests
         }
     }
 
+    [Test]
+    public async Task StaticTlsEndpointsShouldUseEndpointAuthorityAndIsolateFailure()
+    {
+        using var certificate = CreateCertificate("localhost", serverAuthentication: true);
+        await using var first = await StartServerAsync(0, CreateServerOptions(certificate));
+        await using var second = await StartServerAsync(0, CreateServerOptions(certificate));
+        var tlsOptions = CreateClientOptions(string.Empty);
+        await using var client = SharpClientBuilder.Create()
+            .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
+            .UseEndpoints(
+                [
+                    new SharpLinkEndpoint
+                    {
+                        Id = "first",
+                        Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), first.Port),
+                        Authority = "localhost"
+                    },
+                    new SharpLinkEndpoint
+                    {
+                        Id = "second",
+                        Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), second.Port),
+                        Authority = "localhost"
+                    }
+                ],
+                SharpLinkTransportFactories.Sockets(tlsOptions, tlsHandshakeTimeout: TimeSpan.FromSeconds(2)))
+            .Build();
+
+        await client.ConnectAsync();
+        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(5, 6) == 11, "static TLS RPC");
+        await first.StopAsync();
+        await Task.Delay(150);
+        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(7, 8) == 15, "remaining static TLS endpoint");
+    }
+
     private static ISharpLinkClient CreateClient(int port, SslClientAuthenticationOptions options)
         => SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port, options, TimeSpan.FromSeconds(2))
