@@ -224,6 +224,29 @@ public sealed class StaticEndpointIntegrationTests
         Ensure(await custom.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "west", "custom selector attributes");
     }
 
+    [Test]
+    public async Task LeastPendingShouldAvoidEndpointWithAnActiveCall()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var second = await TcpServerScope.StartAsync("second");
+        await using var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpoints(
+                [Endpoint("first", first.Port), Endpoint("second", second.Port)],
+                SharpLinkTransportFactories.Sockets())
+            .UseLoadBalancing(SharpLinkLoadBalancingStrategy.LeastPending)
+            .Build();
+
+        await client.ConnectAsync();
+        var service = client.Get<IConnectionBehaviorService>();
+        var slow = service.SlowAsync(200, CancellationToken.None).AsTask();
+        var completed = await Task.WhenAny(first.Service.SlowCallStarted!.Task, second.Service.SlowCallStarted!.Task);
+        var busyId = await ((Task<string>)completed);
+        var selectedId = await service.GetEndpointIdAsync();
+        Ensure(selectedId != busyId, "least pending should select the non-busy endpoint");
+        await slow;
+    }
+
     private static SharpLinkEndpoint Endpoint(string id, int port, string? zone = null) => new()
     {
         Id = id,
@@ -263,24 +286,31 @@ public sealed class StaticEndpointIntegrationTests
         private readonly Task _runTask;
         private int _stopped;
 
-        private TcpServerScope(ISharpLinkServer server, int port)
+        private TcpServerScope(ISharpLinkServer server, int port, ConnectionBehaviorService service)
         {
             _server = server;
             Port = port;
+            Service = service;
             _runTask = Task.Run(() => _server.RunAsync(_cancellation.Token).AsTask(), CancellationToken.None);
         }
 
         public int Port { get; }
+        public ConnectionBehaviorService Service { get; }
 
         public static Task<TcpServerScope> StartAsync(string endpointId = "default")
         {
             var builder = SharpLinkServerBuilder.Create()
                 .UseTcp(0, IPAddress.Loopback.ToString())
                 .UseSerializer(MemoryPackCodec.Resolver)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
-                .ReplaceService<IConnectionBehaviorService>(new ConnectionBehaviorService { EndpointId = endpointId });
+                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
+            var service = new ConnectionBehaviorService
+            {
+                EndpointId = endpointId,
+                SlowCallStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously)
+            };
+            builder.ReplaceService<IConnectionBehaviorService>(service);
             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
-            return Task.FromResult(new TcpServerScope(builder.Build(), port));
+            return Task.FromResult(new TcpServerScope(builder.Build(), port, service));
         }
 
         public static Task<TcpServerScope> StartNamedPipeAsync(string name)
@@ -289,7 +319,7 @@ public sealed class StaticEndpointIntegrationTests
                 .UseNamedPipe(name)
                 .UseSerializer(MemoryPackCodec.Resolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
-            return Task.FromResult(new TcpServerScope(builder.Build(), 0));
+            return Task.FromResult(new TcpServerScope(builder.Build(), 0, new ConnectionBehaviorService()));
         }
 
         public static Task<TcpServerScope> StartSharedMemoryAsync(string name)
@@ -298,7 +328,7 @@ public sealed class StaticEndpointIntegrationTests
                 .UseSharedMemory(name)
                 .UseSerializer(MemoryPackCodec.Resolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
-            return Task.FromResult(new TcpServerScope(builder.Build(), 0));
+            return Task.FromResult(new TcpServerScope(builder.Build(), 0, new ConnectionBehaviorService()));
         }
 
         public static Task<TcpServerScope> StartUdsAsync(string path)
@@ -307,7 +337,7 @@ public sealed class StaticEndpointIntegrationTests
                 .UseUds(path)
                 .UseSerializer(MemoryPackCodec.Resolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
-            return Task.FromResult(new TcpServerScope(builder.Build(), 0));
+            return Task.FromResult(new TcpServerScope(builder.Build(), 0, new ConnectionBehaviorService()));
         }
 
         public async ValueTask StopAsync()
