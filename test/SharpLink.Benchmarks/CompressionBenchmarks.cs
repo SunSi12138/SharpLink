@@ -39,10 +39,10 @@ public class CompressionProviderBenchmarks
         else
             new Random(42).NextBytes(_payload);
         var output = new ArrayBufferWriter<byte>(PayloadSize * 2 + 1024);
-        _provider.CompressAsync(
+        _provider.Compress(
             new ReadOnlySequence<byte>(_payload),
             output,
-            PayloadSize * 2 + 1024).GetAwaiter().GetResult();
+            PayloadSize * 2 + 1024);
         _compressed = output.WrittenSpan.ToArray();
     }
 
@@ -50,20 +50,20 @@ public class CompressionProviderBenchmarks
     public int Compress()
     {
         var output = new ArrayBufferWriter<byte>(PayloadSize * 2 + 1024);
-        return _provider.CompressAsync(
+        return _provider.Compress(
             new ReadOnlySequence<byte>(_payload),
             output,
-            PayloadSize * 2 + 1024).Result.WrittenBytes;
+            PayloadSize * 2 + 1024).WrittenBytes;
     }
 
     [Benchmark]
     public int Decompress()
     {
         var output = new ArrayBufferWriter<byte>(PayloadSize);
-        return _provider.DecompressAsync(
+        return _provider.Decompress(
             new ReadOnlySequence<byte>(_compressed),
             output,
-            PayloadSize).Result.WrittenBytes;
+            PayloadSize).WrittenBytes;
     }
 
     internal static ISharpLinkCompressionProvider CreateProvider(

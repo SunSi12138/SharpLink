@@ -86,10 +86,10 @@ internal static class CompressionEvidenceRunner
     private static byte[] Compress(ISharpLinkCompressionProvider provider, byte[] payload)
     {
         var output = new ArrayBufferWriter<byte>(payload.Length * 2 + 1024);
-        var result = provider.CompressAsync(
+        var result = provider.Compress(
             new ReadOnlySequence<byte>(payload),
             output,
-            payload.Length * 2 + 1024).GetAwaiter().GetResult();
+            payload.Length * 2 + 1024);
         if (result.ConsumedBytes != payload.Length || result.WrittenBytes != output.WrittenCount)
             throw new InvalidOperationException("Compression provider returned inconsistent evidence counts.");
         return output.WrittenSpan.ToArray();
@@ -101,10 +101,10 @@ internal static class CompressionEvidenceRunner
         int originalLength)
     {
         var output = new ArrayBufferWriter<byte>(originalLength);
-        var result = provider.DecompressAsync(
+        var result = provider.Decompress(
             new ReadOnlySequence<byte>(compressed),
             output,
-            originalLength).GetAwaiter().GetResult();
+            originalLength);
         if (result.ConsumedBytes != compressed.Length || result.WrittenBytes != originalLength)
             throw new InvalidOperationException("Compression provider returned inconsistent decompression counts.");
         return result.WrittenBytes;

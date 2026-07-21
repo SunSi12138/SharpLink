@@ -61,11 +61,11 @@ public sealed partial class RpcSession
             SharpLinkCompressionResult result;
             try
             {
-                result = CompleteProviderOperation(provider.CompressAsync(
+                result = provider.Compress(
                     payload.Slice(prefixLength),
                     candidate,
                     maxCompressedBytes,
-                    cancellationToken));
+                    cancellationToken);
             }
             catch (SharpLinkCompressionOutputLimitException)
             {
@@ -152,11 +152,11 @@ public sealed partial class RpcSession
             SharpLinkCompressionResult result;
             try
             {
-                result = CompleteProviderOperation(provider.DecompressAsync(
+                result = provider.Decompress(
                     compressedBody,
                     owner,
                     originalLength,
-                    cancellationToken));
+                    cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -254,12 +254,6 @@ public sealed partial class RpcSession
             throw ProtocolV2FrameParser.Violation("Compressed payload original length is truncated.");
         return checked((int)unchecked((uint)originalLengthBits));
     }
-
-    private static SharpLinkCompressionResult CompleteProviderOperation(
-        ValueTask<SharpLinkCompressionResult> operation)
-        => operation.IsCompletedSuccessfully
-            ? operation.Result
-            : operation.AsTask().GetAwaiter().GetResult();
 
     private static int GetBusinessPrefixLength(
         ProtocolV2FrameType type,

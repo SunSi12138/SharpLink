@@ -7,7 +7,7 @@ namespace SharpLink.Runtime;
 /// <param name="WrittenBytes">The number of bytes written to the bounded output.</param>
 public readonly record struct SharpLinkCompressionResult(int ConsumedBytes, int WrittenBytes);
 
-/// <summary>Compresses and decompresses SharpLink business payloads without reflection.</summary>
+/// <summary>Synchronously compresses and decompresses SharpLink business payloads without reflection.</summary>
 /// <remarks>
 /// Implementations must be thread safe. They must not retain input or output buffers after an operation completes,
 /// and must honor the operation's maximum output byte count before writing.
@@ -26,7 +26,7 @@ public interface ISharpLinkCompressionProvider
     /// <param name="output">The output owned by SharpLink for the duration of this call.</param>
     /// <param name="maxOutputBytes">The maximum number of bytes the provider may write.</param>
     /// <param name="cancellationToken">Cancels provider work before the frame is queued.</param>
-    ValueTask<SharpLinkCompressionResult> CompressAsync(
+    SharpLinkCompressionResult Compress(
         ReadOnlySequence<byte> input,
         IBufferWriter<byte> output,
         int maxOutputBytes,
@@ -37,7 +37,7 @@ public interface ISharpLinkCompressionProvider
     /// <param name="output">The output owned by SharpLink for the duration of this call.</param>
     /// <param name="maxOutputBytes">The maximum permitted decompressed size.</param>
     /// <param name="cancellationToken">Cancels decompression.</param>
-    ValueTask<SharpLinkCompressionResult> DecompressAsync(
+    SharpLinkCompressionResult Decompress(
         ReadOnlySequence<byte> input,
         IBufferWriter<byte> output,
         int maxOutputBytes,
@@ -182,7 +182,7 @@ internal sealed class SystemCompressionProvider(
 
     public string Algorithm { get; } = algorithm;
 
-    public ValueTask<SharpLinkCompressionResult> CompressAsync(
+    public SharpLinkCompressionResult Compress(
         ReadOnlySequence<byte> input,
         IBufferWriter<byte> output,
         int maxOutputBytes,
@@ -203,11 +203,11 @@ internal sealed class SystemCompressionProvider(
             }
         }
         outputStream.WriteIntegrityTrailer(IntegrityMagic);
-        return ValueTask.FromResult(new SharpLinkCompressionResult(
-            checked((int)input.Length), outputStream.WrittenBytes));
+        return new SharpLinkCompressionResult(
+            checked((int)input.Length), outputStream.WrittenBytes);
     }
 
-    public ValueTask<SharpLinkCompressionResult> DecompressAsync(
+    public SharpLinkCompressionResult Decompress(
         ReadOnlySequence<byte> input,
         IBufferWriter<byte> output,
         int maxOutputBytes,
@@ -228,6 +228,22 @@ internal sealed class SystemCompressionProvider(
         var expectedChecksum = BinaryPrimitives.ReadUInt32LittleEndian(trailer[sizeof(uint)..]);
         if (Crc32Accumulator.Compute(compressedPayload) != expectedChecksum)
             throw new InvalidDataException("Compressed payload integrity checksum does not match.");
+
+        if (kind == SystemCompressionKind.Brotli)
+        {
+            var brotliWritten = DecompressBrotli(
+                compressedPayload,
+                output,
+                maxOutputBytes,
+                cancellationToken);
+            return new SharpLinkCompressionResult(checked((int)input.Length), brotliWritten);
+        }
+
+        var boundaryWritten = SystemCompressionBoundaryValidator.Validate(
+            kind,
+            compressedPayload,
+            maxOutputBytes,
+            cancellationToken);
 
         using var inputStream = new ReadOnlySequenceStream(compressedPayload);
         using var decompressor = CreateDecompressionStream(inputStream);
@@ -250,9 +266,77 @@ internal sealed class SystemCompressionProvider(
                 throw new InvalidDataException("Decompressed payload exceeds its declared original length.");
         }
 
-        if (inputStream.ConsumedBytes != compressedPayload.Length)
-            throw new InvalidDataException("Compressed payload contains trailing data.");
-        return ValueTask.FromResult(new SharpLinkCompressionResult(checked((int)input.Length), written));
+        if (written != boundaryWritten)
+            throw new InvalidDataException("Compressed payload decoded length is inconsistent with its format boundary.");
+        return new SharpLinkCompressionResult(checked((int)input.Length), written);
+    }
+
+    private static int DecompressBrotli(
+        ReadOnlySequence<byte> input,
+        IBufferWriter<byte> output,
+        int maxOutputBytes,
+        CancellationToken cancellationToken)
+    {
+        byte[]? contiguous = null;
+        ReadOnlySpan<byte> source;
+        if (input.IsSingleSegment)
+        {
+            source = input.FirstSpan;
+        }
+        else
+        {
+            contiguous = input.ToArray();
+            source = contiguous;
+        }
+
+        using var decoder = new BrotliDecoder();
+        var consumed = 0;
+        var written = 0;
+        Span<byte> outputLimitProbe = stackalloc byte[1];
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            OperationStatus status;
+            int consumedNow;
+            int writtenNow;
+            if (written < maxOutputBytes)
+            {
+                var capacity = Math.Min(8192, maxOutputBytes - written);
+                var destination = output.GetSpan(capacity)[..capacity];
+                status = decoder.Decompress(
+                    source[consumed..],
+                    destination,
+                    out consumedNow,
+                    out writtenNow);
+                output.Advance(writtenNow);
+                written += writtenNow;
+            }
+            else
+            {
+                status = decoder.Decompress(
+                    source[consumed..],
+                    outputLimitProbe,
+                    out consumedNow,
+                    out writtenNow);
+                if (writtenNow != 0)
+                    throw new SharpLinkCompressionOutputLimitException(maxOutputBytes);
+            }
+            consumed += consumedNow;
+
+            switch (status)
+            {
+                case OperationStatus.Done:
+                    if (consumed != source.Length)
+                        throw new InvalidDataException("Compressed payload contains trailing data.");
+                    return written;
+                case OperationStatus.InvalidData:
+                    throw new InvalidDataException("Brotli payload is invalid.");
+                case OperationStatus.NeedMoreData when consumed == source.Length:
+                    throw new InvalidDataException("Brotli payload is truncated.");
+            }
+            if (consumedNow == 0 && writtenNow == 0)
+                throw new InvalidDataException("Brotli decoder made no progress.");
+        }
     }
 
     private Stream CreateCompressionStream(Stream output)

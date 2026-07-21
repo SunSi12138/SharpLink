@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Buffers.Binary;
 using System.Linq;
 using System.Threading;
 
@@ -10,14 +11,14 @@ public class CompressionProviderTests
     [Arguments("gzip")]
     [Arguments("deflate")]
     [Arguments("brotli")]
-    public async Task BuiltInProviderShouldRoundTripSingleAndMultiSegmentInput(string algorithm)
+    public void BuiltInProviderShouldRoundTripSingleAndMultiSegmentInput(string algorithm)
     {
         var provider = CreateProvider(algorithm);
         var source = Enumerable.Repeat((byte)0x5a, 16 * 1024).ToArray();
         var segmented = CreateSegmented(source, 137);
         using var compressed = new PooledByteBufferWriter(source.Length);
 
-        var compressedResult = await provider.CompressAsync(
+        var compressedResult = provider.Compress(
             segmented, compressed, source.Length, CancellationToken.None);
         Ensure(compressedResult.ConsumedBytes == source.Length, "compress consumed bytes");
         Ensure(compressedResult.WrittenBytes == compressed.WrittenCount, "compress written bytes");
@@ -25,7 +26,7 @@ public class CompressionProviderTests
 
         using var decompressed = new PooledByteBufferWriter(source.Length);
         var compressedSegments = CreateSegmented(compressed.WrittenMemory.ToArray(), 17);
-        var decompressedResult = await provider.DecompressAsync(
+        var decompressedResult = provider.Decompress(
             compressedSegments, decompressed, source.Length, CancellationToken.None);
         Ensure(decompressedResult.ConsumedBytes == compressed.WrittenCount, "decompress consumed bytes");
         Ensure(decompressedResult.WrittenBytes == source.Length, "decompress written bytes");
@@ -36,29 +37,99 @@ public class CompressionProviderTests
     [Arguments("gzip")]
     [Arguments("deflate")]
     [Arguments("brotli")]
-    public async Task BuiltInProviderShouldRejectTruncatedOrTooSmallOutput(string algorithm)
+    public void BuiltInProviderShouldRejectTruncatedOrTooSmallOutput(string algorithm)
     {
         var provider = CreateProvider(algorithm);
         var source = Enumerable.Repeat((byte)0x41, 4096).ToArray();
         using var compressed = new PooledByteBufferWriter(source.Length);
-        await provider.CompressAsync(new ReadOnlySequence<byte>(source), compressed, source.Length);
+        provider.Compress(new ReadOnlySequence<byte>(source), compressed, source.Length);
 
         var truncatedBytes = compressed.WrittenMemory[..^1].ToArray();
         using var truncatedOutput = new PooledByteBufferWriter(source.Length);
-        await EnsureThrowsAnyAsync(
-            () => provider.DecompressAsync(
+        EnsureThrowsAny(
+            () => provider.Decompress(
                 new ReadOnlySequence<byte>(truncatedBytes),
                 truncatedOutput,
-                source.Length).AsTask(),
+                source.Length),
             "truncated compressed payload");
 
         using var boundedOutput = new PooledByteBufferWriter(source.Length);
-        await EnsureThrowsAnyAsync(
-            () => provider.DecompressAsync(
+        EnsureThrowsAny(
+            () => provider.Decompress(
                 new ReadOnlySequence<byte>(compressed.WrittenMemory),
                 boundedOutput,
-                source.Length - 1).AsTask(),
+                source.Length - 1),
             "decompressed output limit");
+    }
+
+    [Test]
+    [Arguments("gzip")]
+    [Arguments("deflate")]
+    [Arguments("brotli")]
+    public void BuiltInProviderShouldRejectTrailingDataWithARecomputedChecksum(string algorithm)
+    {
+        const int integrityTrailerBytes = sizeof(uint) + sizeof(uint);
+        var provider = CreateProvider(algorithm);
+        var source = Enumerable.Repeat((byte)0x52, 4096).ToArray();
+        using var compressed = new PooledByteBufferWriter(source.Length);
+        provider.Compress(new ReadOnlySequence<byte>(source), compressed, source.Length);
+        var valid = compressed.WrittenMemory.ToArray();
+        var compressedLength = valid.Length - integrityTrailerBytes;
+        var mutated = new byte[valid.Length + 1];
+        valid.AsSpan(0, compressedLength).CopyTo(mutated);
+        mutated[compressedLength] = 0xff;
+        valid.AsSpan(compressedLength).CopyTo(mutated.AsSpan(compressedLength + 1));
+        var checksum = Crc32Accumulator.Compute(
+            new ReadOnlySequence<byte>(mutated.AsMemory(0, mutated.Length - integrityTrailerBytes)));
+        BinaryPrimitives.WriteUInt32LittleEndian(mutated.AsSpan(mutated.Length - sizeof(uint)), checksum);
+        using var output = new PooledByteBufferWriter(source.Length);
+
+        EnsureThrows<InvalidDataException>(
+            () => provider.Decompress(
+                new ReadOnlySequence<byte>(mutated),
+                output,
+                source.Length),
+            $"{algorithm} valid stream followed by trailing data");
+    }
+
+    [Test]
+    public void BuiltInProvidersShouldRoundTripVariedPayloadsAndCompressionLevels()
+    {
+        string[] algorithms = ["gzip", "deflate", "brotli"];
+        CompressionLevel[] levels =
+        [
+            CompressionLevel.NoCompression,
+            CompressionLevel.Fastest,
+            CompressionLevel.Optimal,
+            CompressionLevel.SmallestSize
+        ];
+        int[] lengths = [1, 2, 31, 256, 4096];
+        foreach (var algorithm in algorithms)
+        {
+            foreach (var level in levels)
+            {
+                foreach (var length in lengths)
+                {
+                    var source = new byte[length];
+                    new Random(length + 17).NextBytes(source);
+                    RoundTrip(CreateProvider(algorithm, level), source, $"{algorithm}/{level}/random/{length}");
+                    Array.Fill(source, (byte)0x3c);
+                    RoundTrip(CreateProvider(algorithm, level), source, $"{algorithm}/{level}/repeat/{length}");
+                }
+            }
+        }
+    }
+
+    [Test]
+    public void CompressionProviderContractShouldBeExplicitlySynchronous()
+    {
+        var providerType = typeof(ISharpLinkCompressionProvider);
+        Ensure(providerType.GetMethod(nameof(ISharpLinkCompressionProvider.Compress))?.ReturnType ==
+            typeof(SharpLinkCompressionResult), "synchronous compression contract");
+        Ensure(providerType.GetMethod(nameof(ISharpLinkCompressionProvider.Decompress))?.ReturnType ==
+            typeof(SharpLinkCompressionResult), "synchronous decompression contract");
+        Ensure(!providerType.GetMethods().Any(method => method.Name.EndsWith("Async", StringComparison.Ordinal)),
+            "provider contract contains no asynchronous operation");
     }
 
     [Test]
@@ -77,14 +148,43 @@ public class CompressionProviderTests
         EnsureThrows<ArgumentOutOfRangeException>(ratio.Validate, "invalid savings ratio");
     }
 
-    private static ISharpLinkCompressionProvider CreateProvider(string algorithm)
+    private static ISharpLinkCompressionProvider CreateProvider(
+        string algorithm,
+        CompressionLevel level = CompressionLevel.Fastest)
         => algorithm switch
         {
-            "gzip" => SharpLinkCompressionProviders.CreateGzip(),
-            "deflate" => SharpLinkCompressionProviders.CreateDeflate(),
-            "brotli" => SharpLinkCompressionProviders.CreateBrotli(),
+            "gzip" => SharpLinkCompressionProviders.CreateGzip(level),
+            "deflate" => SharpLinkCompressionProviders.CreateDeflate(level),
+            "brotli" => SharpLinkCompressionProviders.CreateBrotli(level),
             _ => throw new ArgumentOutOfRangeException(nameof(algorithm))
         };
+
+    private static void RoundTrip(
+        ISharpLinkCompressionProvider provider,
+        byte[] source,
+        string scenario)
+    {
+        using var compressed = new PooledByteBufferWriter(Math.Max(1, source.Length * 2 + 1024));
+        provider.Compress(
+            new ReadOnlySequence<byte>(source),
+            compressed,
+            source.Length * 2 + 1024);
+        using var decompressed = new PooledByteBufferWriter(Math.Max(1, source.Length));
+        SharpLinkCompressionResult result;
+        try
+        {
+            result = provider.Decompress(
+                new ReadOnlySequence<byte>(compressed.WrittenMemory),
+                decompressed,
+                source.Length);
+        }
+        catch (Exception exception)
+        {
+            throw new InvalidDataException($"Round-trip failed for {scenario}.", exception);
+        }
+        Ensure(result.WrittenBytes == source.Length, $"{scenario} decoded length");
+        Ensure(decompressed.WrittenMemory.Span.SequenceEqual(source), $"{scenario} payload");
+    }
 
     private static ReadOnlySequence<byte> CreateSegmented(byte[] bytes, int segmentSize)
     {
@@ -124,11 +224,11 @@ public class CompressionProviderTests
         throw new InvalidOperationException($"Expected {typeof(TException).Name}: {scenario}.");
     }
 
-    private static async Task EnsureThrowsAnyAsync(Func<Task> action, string scenario)
+    private static void EnsureThrowsAny(Action action, string scenario)
     {
         try
         {
-            await action();
+            action();
         }
         catch (Exception) when (scenario.Length != 0)
         {
@@ -140,10 +240,10 @@ public class CompressionProviderTests
     private sealed class InvalidTokenProvider(string algorithm) : ISharpLinkCompressionProvider
     {
         public string Algorithm { get; } = algorithm;
-        public ValueTask<SharpLinkCompressionResult> CompressAsync(
+        public SharpLinkCompressionResult Compress(
             ReadOnlySequence<byte> input, IBufferWriter<byte> output, int maxOutputBytes,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public ValueTask<SharpLinkCompressionResult> DecompressAsync(
+        public SharpLinkCompressionResult Decompress(
             ReadOnlySequence<byte> input, IBufferWriter<byte> output, int maxOutputBytes,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }

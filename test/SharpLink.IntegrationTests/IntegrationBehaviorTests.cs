@@ -1555,24 +1555,24 @@ public class IntegrationBehaviorTests
         public int CompressCount => Volatile.Read(ref _compressCount);
         public int DecompressCount => Volatile.Read(ref _decompressCount);
 
-        public async ValueTask<SharpLinkCompressionResult> CompressAsync(
+        public SharpLinkCompressionResult Compress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _compressCount);
-            return await inner.CompressAsync(input, output, maxOutputBytes, cancellationToken);
+            return inner.Compress(input, output, maxOutputBytes, cancellationToken);
         }
 
-        public async ValueTask<SharpLinkCompressionResult> DecompressAsync(
+        public SharpLinkCompressionResult Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _decompressCount);
-            return await inner.DecompressAsync(input, output, maxOutputBytes, cancellationToken);
+            return inner.Decompress(input, output, maxOutputBytes, cancellationToken);
         }
     }
 
@@ -1580,7 +1580,7 @@ public class IntegrationBehaviorTests
     {
         public string Algorithm => "test.identity/v1";
 
-        public ValueTask<SharpLinkCompressionResult> CompressAsync(
+        public SharpLinkCompressionResult Compress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -1588,11 +1588,11 @@ public class IntegrationBehaviorTests
         {
             foreach (var segment in input)
                 output.Write(segment.Span);
-            return ValueTask.FromResult(new SharpLinkCompressionResult(
-                checked((int)input.Length), checked((int)input.Length)));
+            return new SharpLinkCompressionResult(
+                checked((int)input.Length), checked((int)input.Length));
         }
 
-        public ValueTask<SharpLinkCompressionResult> DecompressAsync(
+        public SharpLinkCompressionResult Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -1607,23 +1607,23 @@ public class IntegrationBehaviorTests
     {
         public string Algorithm => inner.Algorithm;
 
-        public ValueTask<SharpLinkCompressionResult> CompressAsync(
+        public SharpLinkCompressionResult Compress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
             => throwOnCompress
                 ? throw new InvalidOperationException("Injected compression failure.")
-                : inner.CompressAsync(input, output, maxOutputBytes, cancellationToken);
+                : inner.Compress(input, output, maxOutputBytes, cancellationToken);
 
-        public ValueTask<SharpLinkCompressionResult> DecompressAsync(
+        public SharpLinkCompressionResult Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
             => throwOnDecompress
                 ? throw new InvalidOperationException("Injected decompression failure.")
-                : inner.DecompressAsync(input, output, maxOutputBytes, cancellationToken);
+                : inner.Decompress(input, output, maxOutputBytes, cancellationToken);
     }
 
     private sealed class ThrowingPersonCodec : IRpcCodec<Person>

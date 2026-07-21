@@ -79,9 +79,12 @@ internal sealed class PreAdmissionStreamDispatcher(
 
         buffers.Return(owner);
         releaseBytes(retainedBytes);
-        return attached is null
-            ? ValueTask.CompletedTask
-            : DispatchAttached(attached, payload, encodedByteCount);
+        if (attached is null)
+        {
+            _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
+            return ValueTask.CompletedTask;
+        }
+        return DispatchAttached(attached, payload, encodedByteCount);
     }
 
     internal ValueTask DispatchCompressedAsync(
@@ -137,13 +140,16 @@ internal sealed class PreAdmissionStreamDispatcher(
 
         try
         {
-            return attached is null
-                ? ValueTask.CompletedTask
-                : DecodeAndDispatch(
-                    attached,
-                    new ReadOnlySequence<byte>(owner.WrittenMemory),
-                    originalByteCount,
-                    decoder);
+            if (attached is null)
+            {
+                _bytesConsumed?.Invoke(_requestId, _streamId, originalByteCount);
+                return ValueTask.CompletedTask;
+            }
+            return DecodeAndDispatch(
+                attached,
+                new ReadOnlySequence<byte>(owner.WrittenMemory),
+                originalByteCount,
+                decoder);
         }
         finally
         {

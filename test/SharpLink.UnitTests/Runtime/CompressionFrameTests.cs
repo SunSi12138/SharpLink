@@ -13,7 +13,7 @@ public class CompressionFrameTests
         var provider = SharpLinkCompressionProviders.CreateBrotli();
         await using var session = CreateSession(provider);
         var source = Enumerable.Repeat((byte)0x4c, 4096).ToArray();
-        var compressed = await CompressAsync(provider, source);
+        var compressed = Compress(provider, source);
 
         var requestWire = new PooledByteBufferWriter();
         requestWire.Write(new byte[ProtocolV2Constants.RequestPrefixBytes]);
@@ -71,7 +71,7 @@ public class CompressionFrameTests
         var provider = SharpLinkCompressionProviders.CreateGzip();
         await using var session = CreateSession(provider);
         var source = Enumerable.Repeat((byte)0x6d, 4096).ToArray();
-        var compressed = (await CompressAsync(provider, source)).ToList();
+        var compressed = Compress(provider, source).ToList();
         switch (mutation)
         {
             case "truncated":
@@ -198,12 +198,12 @@ public class CompressionFrameTests
         return session;
     }
 
-    private static async Task<byte[]> CompressAsync(
+    private static byte[] Compress(
         ISharpLinkCompressionProvider provider,
         byte[] source)
     {
         using var writer = new PooledByteBufferWriter(source.Length);
-        await provider.CompressAsync(new ReadOnlySequence<byte>(source), writer, source.Length);
+        provider.Compress(new ReadOnlySequence<byte>(source), writer, source.Length);
         return writer.WrittenMemory.ToArray();
     }
 
@@ -277,7 +277,7 @@ public class CompressionFrameTests
         internal int CompressCount { get; private set; }
         public string Algorithm => "test-oversized";
 
-        public ValueTask<SharpLinkCompressionResult> CompressAsync(
+        public SharpLinkCompressionResult Compress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -287,7 +287,7 @@ public class CompressionFrameTests
             throw new InvalidOperationException("Oversized payload reached the provider.");
         }
 
-        public ValueTask<SharpLinkCompressionResult> DecompressAsync(
+        public SharpLinkCompressionResult Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
