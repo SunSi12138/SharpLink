@@ -66,27 +66,5 @@ public static class SharpLinkTransportFactories
     private static SslClientAuthenticationOptions CreateTlsOptions(
         SslClientAuthenticationOptions source,
         string? defaultTargetHost)
-    {
-        var targetHost = string.IsNullOrWhiteSpace(source.TargetHost) ? defaultTargetHost : source.TargetHost;
-        ArgumentException.ThrowIfNullOrWhiteSpace(targetHost);
-        return new SslClientAuthenticationOptions
-        {
-            TargetHost = targetHost,
-            ClientCertificates = source.ClientCertificates is null
-                ? null
-                : new System.Security.Cryptography.X509Certificates.X509CertificateCollection(source.ClientCertificates),
-            EnabledSslProtocols = source.EnabledSslProtocols,
-            CertificateRevocationCheckMode = source.CertificateRevocationCheckMode,
-            EncryptionPolicy = source.EncryptionPolicy,
-            RemoteCertificateValidationCallback = source.RemoteCertificateValidationCallback,
-            LocalCertificateSelectionCallback = source.LocalCertificateSelectionCallback,
-            ApplicationProtocols = source.ApplicationProtocols is null
-                ? null
-                : new List<SslApplicationProtocol>(source.ApplicationProtocols),
-            AllowRenegotiation = source.AllowRenegotiation,
-            AllowTlsResume = source.AllowTlsResume,
-            CipherSuitesPolicy = source.CipherSuitesPolicy,
-            CertificateChainPolicy = source.CertificateChainPolicy
-        };
-    }
+        => TlsAuthenticationOptionsSnapshot.Clone(source, defaultTargetHost)!;
 }

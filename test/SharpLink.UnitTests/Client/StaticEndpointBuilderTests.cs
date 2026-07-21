@@ -50,6 +50,21 @@ public class StaticEndpointBuilderTests
     }
 
     [Test]
+    public async Task SingleEndpointFactoryShouldBeReleasedWhenLaterBuildValidationFails()
+    {
+        var factory = new TrackingFactory();
+        await EnsureThrows<ArgumentOutOfRangeException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseEndpoint(Endpoint("one", 5001), _ => factory)
+                .UseConnectionPool(static options => options.MaxConnections = 0)
+                .Build();
+            return Task.CompletedTask;
+        });
+        Ensure(factory.DisposeCount == 1, "factory disposal after a fixed-client build failure");
+    }
+
+    [Test]
     public async Task StaticClusterShouldOwnEveryFactoryExactlyOnce()
     {
         var first = new TrackingFactory();

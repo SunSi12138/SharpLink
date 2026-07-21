@@ -363,7 +363,16 @@ public class SharpClientBuilder
                 if (_clusterConfigured)
                     throw new InvalidOperationException("UseCluster requires two or more endpoints.");
                 var transport = CreateTransportFactory(endpoints[0], _endpointTransportFactory!, runtimeContext);
-                return CreateFixedClient(transport, runtimeContext, protocolOptions, fixedEndpoint: endpoints[0]);
+                try
+                {
+                    return CreateFixedClient(transport, runtimeContext, protocolOptions, fixedEndpoint: endpoints[0]);
+                }
+                catch
+                {
+                    try { transport.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+                    catch { }
+                    throw;
+                }
             }
 
             if (_connectionPoolConfigured)

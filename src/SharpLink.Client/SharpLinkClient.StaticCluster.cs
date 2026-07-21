@@ -70,7 +70,9 @@ internal sealed partial class SharpLinkClient
                 if (ReadyConnectionCount != 0)
                     return ValueTask.CompletedTask;
                 _client.TransitionTo(SharpLinkConnectionState.Connecting);
-                _connectTask ??= ConnectInitialAsync(cancellationToken);
+                // A cluster initialization attempt belongs to the client, not to the first caller.
+                // Individual callers still observe their own cancellation through WaitAsync below.
+                _connectTask ??= ConnectInitialAsync(_client._shutdownCts.Token);
                 task = _connectTask;
             }
             return cancellationToken.CanBeCanceled ? new ValueTask(task.WaitAsync(cancellationToken)) : new ValueTask(task);
@@ -214,9 +216,15 @@ internal sealed partial class SharpLinkClient
                     var endpoint = _endpoints[start + index];
                     attempts[index] = TryConnectOneAsync(endpoint, cancellationToken);
                 }
-                var failures = await Task.WhenAll(attempts).ConfigureAwait(false);
-                for (var index = 0; index < failures.Length; index++)
-                    lastFailure ??= failures[index];
+                var remaining = new List<Task<Exception?>>(attempts);
+                while (remaining.Count != 0)
+                {
+                    var completed = await Task.WhenAny(remaining).ConfigureAwait(false);
+                    remaining.Remove(completed);
+                    lastFailure ??= await completed.ConfigureAwait(false);
+                    if (ReadyConnectionCount != 0)
+                        return;
+                }
             }
 
             PublishClientReadiness();
@@ -626,6 +634,7 @@ internal sealed partial class SharpLinkClient
         private async Task StopCoreAsync()
         {
             Interlocked.Exchange(ref _stopping, 1);
+            var cleanupFailures = new List<Exception>();
             ClientConnection[] connections;
             Task[] workers;
             lock (_gate)
@@ -644,12 +653,27 @@ internal sealed partial class SharpLinkClient
             for (var index = 0; index < connections.Length; index++)
             {
                 connections[index].Fail(stopping);
-                await DisposeConnectionAsync(connections[index]).ConfigureAwait(false);
+                try { await DisposeConnectionAsync(connections[index]).ConfigureAwait(false); }
+                catch (Exception exception) { cleanupFailures.Add(exception); }
             }
             try { await Task.WhenAll(workers).ConfigureAwait(false); }
             catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested) { }
+            catch (Exception exception) { cleanupFailures.Add(exception); }
             for (var index = 0; index < _endpoints.Length; index++)
-                await _endpoints[index].Configuration.TransportFactory.DisposeAsync().ConfigureAwait(false);
+            {
+                try { await _endpoints[index].Configuration.TransportFactory.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception exception) { cleanupFailures.Add(exception); }
+            }
+            ThrowCleanupFailures(cleanupFailures);
+        }
+
+        private static void ThrowCleanupFailures(List<Exception> failures)
+        {
+            if (failures.Count == 0)
+                return;
+            if (failures.Count == 1)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            throw new AggregateException(failures);
         }
 
         private static async Task DisposeConnectionAsync(ClientConnection connection)

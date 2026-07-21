@@ -386,10 +386,18 @@ internal sealed partial class SharpLinkClient
         if (method.HasClientStreams && !connection.PendingCalls.Contains(requestId))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            throw CreateDeadlineExceededException();
+            var exception = CreateDeadlineExceededException();
+            outcome?.CompleteLocalFailure(exception);
+            throw exception;
         }
         if (!method.HasClientStreams && !connection.TryBeginUntrackedCall())
-            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The selected connection is draining.");
+        {
+            var exception = new SharpLinkException(
+                SharpLinkErrorCode.Unavailable,
+                "The selected connection is draining.");
+            outcome?.CompleteWithoutPending(PendingCallCompletionReason.ConnectionClosed, exception);
+            throw exception;
+        }
         try
         {
             try
@@ -458,33 +466,43 @@ internal sealed partial class SharpLinkClient
         ClientConnection connection;
         long requestId;
         RpcRequestOperation<TResponse> operation;
-        if (!control.WaitForReady)
+        try
         {
-            connection = GetReadyConnection(method, retrySelection: null, outcome);
-            operation = connection.PendingCalls.Rent(
-                responseCodec,
-                PendingCallKind.ClientStreaming,
-                control.DeadlineTimestamp,
-                cancellationToken,
-                out requestId,
-                outcome);
+            if (!control.WaitForReady)
+            {
+                connection = GetReadyConnection(method, retrySelection: null, outcome);
+                operation = connection.PendingCalls.Rent(
+                    responseCodec,
+                    PendingCallKind.ClientStreaming,
+                    control.DeadlineTimestamp,
+                    cancellationToken,
+                    out requestId,
+                    outcome);
+            }
+            else
+            {
+                connection = await GetReadyConnectionAsync(
+                    waitForReady: true,
+                    control.Deadline,
+                    cancellationToken,
+                    method,
+                    outcome).ConfigureAwait(false);
+                var lease = await connection.PendingCalls.RentAsync(
+                    responseCodec,
+                    PendingCallKind.ClientStreaming,
+                    control.DeadlineTimestamp,
+                    waitForSlot: true,
+                    control.Deadline,
+                    cancellationToken,
+                    outcome).ConfigureAwait(false);
+                requestId = lease.Id;
+                operation = lease.Operation;
+            }
         }
-        else
+        catch (Exception exception)
         {
-            connection = await GetReadyConnectionAsync(
-                waitForReady: true,
-                control.Deadline,
-                cancellationToken).ConfigureAwait(false);
-            var lease = await connection.PendingCalls.RentAsync(
-                responseCodec,
-                PendingCallKind.ClientStreaming,
-                control.DeadlineTimestamp,
-                waitForSlot: true,
-                control.Deadline,
-                cancellationToken,
-                outcome).ConfigureAwait(false);
-            requestId = lease.Id;
-            operation = lease.Operation;
+            outcome?.CompleteLocalFailure(exception);
+            throw;
         }
         var flags = method.HasResponsePayload
             ? ProtocolV2FrameFlags.HasReturn | ProtocolV2FrameFlags.Cancellable

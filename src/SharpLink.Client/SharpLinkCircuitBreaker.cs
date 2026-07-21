@@ -43,7 +43,7 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
         var key = new CircuitKey(outcome.Endpoint.Endpoint.Id, outcome.Endpoint.Generation);
         if (!_states.TryGetValue(key, out var state))
             return;
-        state.Report(Stopwatch.GetTimestamp(), Classify(outcome), token != 0);
+        state.Report(Stopwatch.GetTimestamp(), Classify(outcome), token);
     }
 
     public void Retire(in SharpLinkEndpointCandidate endpoint)
@@ -101,6 +101,7 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
         private int _state;
         private long _openUntil;
         private int _halfOpenInFlight;
+        private long _halfOpenEpoch;
         private int _head;
         private int _count;
         private int _failureCount;
@@ -125,45 +126,43 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
 
                 if (state == Open)
                 {
-                    var openUntil = Volatile.Read(ref _openUntil);
-                    if (now < openUntil)
+                    TimeSpan? retryAfter = null;
+                    lock (_samplesGate)
                     {
-                        var remaining = TimeSpan.FromSeconds((double)(openUntil - now) / Stopwatch.Frequency);
-                        return new SharpLinkEndpointAdmissionDecision(false, Token: 0, remaining);
+                        if (Volatile.Read(ref _state) != Open)
+                            continue;
+                        var openUntil = _openUntil;
+                        if (now < openUntil)
+                        {
+                            retryAfter = TimeSpan.FromSeconds((double)(openUntil - now) / Stopwatch.Frequency);
+                        }
+                        else
+                        {
+                            BeginHalfOpenLocked();
+                        }
                     }
-                    if (Interlocked.CompareExchange(ref _state, HalfOpen, Open) == Open)
-                        Interlocked.Exchange(ref _halfOpenInFlight, 0);
+                    if (retryAfter is { } remaining)
+                        return new SharpLinkEndpointAdmissionDecision(false, Token: 0, remaining);
                     continue;
                 }
 
-                var inFlight = Interlocked.Increment(ref _halfOpenInFlight);
-                if (inFlight <= _options.HalfOpenMaxCalls)
-                    return new SharpLinkEndpointAdmissionDecision(true, Token: 1, RetryAfter: null);
-                Interlocked.Decrement(ref _halfOpenInFlight);
-                return new SharpLinkEndpointAdmissionDecision(false, Token: 0, TimeSpan.Zero);
+                lock (_samplesGate)
+                {
+                    if (Volatile.Read(ref _state) != HalfOpen)
+                        continue;
+                    if (_halfOpenInFlight >= _options.HalfOpenMaxCalls)
+                        return new SharpLinkEndpointAdmissionDecision(false, Token: 0, TimeSpan.Zero);
+                    _halfOpenInFlight++;
+                    return new SharpLinkEndpointAdmissionDecision(true, _halfOpenEpoch, RetryAfter: null);
+                }
             }
         }
 
-        public void Report(long now, CircuitSample sample, bool halfOpenProbe)
+        public void Report(long now, CircuitSample sample, long token)
         {
-            if (halfOpenProbe)
+            if (token != 0)
             {
-                Interlocked.Decrement(ref _halfOpenInFlight);
-                if (sample == CircuitSample.Failure)
-                {
-                    OpenCircuit(now);
-                    return;
-                }
-                if (sample == CircuitSample.Success)
-                {
-                    lock (_samplesGate)
-                    {
-                        _head = 0;
-                        _count = 0;
-                        _failureCount = 0;
-                    }
-                    Volatile.Write(ref _state, Closed);
-                }
+                ReportHalfOpen(now, sample, token);
                 return;
             }
 
@@ -179,17 +178,52 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
                 if (_count >= _options.MinimumThroughput &&
                     (double)_failureCount / _count >= _options.FailureRatio)
                 {
-                    _openUntil = SaturatingAdd(now, _breakTicks);
-                    Volatile.Write(ref _state, Open);
+                    OpenCircuitLocked(now);
                 }
             }
         }
 
-        private void OpenCircuit(long now)
+        private void ReportHalfOpen(long now, CircuitSample sample, long token)
         {
-            Volatile.Write(ref _openUntil, SaturatingAdd(now, _breakTicks));
+            lock (_samplesGate)
+            {
+                if (Volatile.Read(ref _state) != HalfOpen || token != _halfOpenEpoch || _halfOpenInFlight == 0)
+                    return;
+
+                _halfOpenInFlight--;
+                if (sample == CircuitSample.Failure)
+                {
+                    OpenCircuitLocked(now);
+                    return;
+                }
+
+                if (sample == CircuitSample.Success && _halfOpenInFlight == 0)
+                {
+                    _head = 0;
+                    _count = 0;
+                    _failureCount = 0;
+                    Volatile.Write(ref _state, Closed);
+                }
+            }
+        }
+
+        private void BeginHalfOpenLocked()
+        {
+            _halfOpenEpoch = NextHalfOpenEpoch();
+            _halfOpenInFlight = 0;
+            Volatile.Write(ref _state, HalfOpen);
+        }
+
+        private void OpenCircuitLocked(long now)
+        {
+            _openUntil = SaturatingAdd(now, _breakTicks);
+            _halfOpenInFlight = 0;
+            _halfOpenEpoch = NextHalfOpenEpoch();
             Volatile.Write(ref _state, Open);
         }
+
+        private long NextHalfOpenEpoch()
+            => _halfOpenEpoch == long.MaxValue ? 1 : _halfOpenEpoch + 1;
 
         private void Prune(long now)
         {

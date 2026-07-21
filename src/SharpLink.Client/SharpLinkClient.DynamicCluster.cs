@@ -76,8 +76,8 @@ internal sealed partial class SharpLinkClient
                 if (ReadyConnectionCount != 0)
                     return ValueTask.CompletedTask;
                 _client.TransitionTo(SharpLinkConnectionState.Connecting);
-                if (_connectTask is null || (_connectTask.IsFaulted && _resolverTask is null))
-                    _connectTask = StartAsync(cancellationToken);
+                if (_connectTask is null || ((_connectTask.IsFaulted || _connectTask.IsCanceled) && _resolverTask is null))
+                    _connectTask = StartAsync(_client._shutdownCts.Token);
                 task = _connectTask;
             }
             return cancellationToken.CanBeCanceled ? new ValueTask(task.WaitAsync(cancellationToken)) : new ValueTask(task);
@@ -200,7 +200,11 @@ internal sealed partial class SharpLinkClient
             try
             {
                 var snapshot = await _resolver.ResolveAsync(cancellationToken).ConfigureAwait(false);
-                await ApplySnapshotAsync(snapshot).ConfigureAwait(false);
+                if (!await ApplySnapshotAsync(snapshot).ConfigureAwait(false))
+                {
+                    throw new InvalidOperationException(
+                        "The endpoint resolver returned an invalid initial topology.");
+                }
                 StartResolverWorker(resolveBeforeWatch: false);
                 await ConnectCurrentEndpointsAsync(cancellationToken).ConfigureAwait(false);
                 UpdateClientReadiness();
@@ -336,13 +340,13 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
-                foreach (var state in created.Values)
-                    await DisposeFactoryQuietlyAsync(state.Configuration.TransportFactory).ConfigureAwait(false);
+                await DisposeCreatedFactoriesAsync(created.Values).ConfigureAwait(false);
                 LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ApplySnapshotAsync), exception);
                 return false;
             }
 
             var abandoned = false;
+            var rejectedForFactoryOwnership = false;
             var connectionsToDispose = new List<ClientConnection>();
             var statesToRelease = new List<EndpointState>();
             EndpointState[] current;
@@ -351,6 +355,11 @@ internal sealed partial class SharpLinkClient
                 if (Volatile.Read(ref _stopping) != 0 || snapshot.Version <= _lastAcceptedVersion)
                 {
                     abandoned = true;
+                    current = [];
+                }
+                else if (!HasUniqueFactoryOwnershipLocked(created.Values))
+                {
+                    rejectedForFactoryOwnership = true;
                     current = [];
                 }
                 else
@@ -393,10 +402,17 @@ internal sealed partial class SharpLinkClient
                 }
             }
 
-            if (abandoned)
+            if (abandoned || rejectedForFactoryOwnership)
             {
-                foreach (var state in created.Values)
-                    await DisposeFactoryQuietlyAsync(state.Configuration.TransportFactory).ConfigureAwait(false);
+                await DisposeCreatedFactoriesAsync(created.Values).ConfigureAwait(false);
+                if (rejectedForFactoryOwnership)
+                {
+                    LogClientBackgroundLoopUnhandledException(
+                        _client._logger,
+                        nameof(ApplySnapshotAsync),
+                        new InvalidOperationException(
+                            "A resolver snapshot reused a transport factory owned by another endpoint generation."));
+                }
                 return false;
             }
 
@@ -862,6 +878,7 @@ internal sealed partial class SharpLinkClient
         private async Task StopCoreAsync()
         {
             Interlocked.Exchange(ref _stopping, 1);
+            var cleanupFailures = new List<Exception>();
             ClientConnection[] connections;
             Task[] workers;
             IClientTransportFactory[] factories;
@@ -890,22 +907,53 @@ internal sealed partial class SharpLinkClient
             }
 
             if (Interlocked.Exchange(ref _resolverDisposed, 1) == 0)
-                await _resolver.DisposeAsync().ConfigureAwait(false);
+            {
+                try { await _resolver.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception exception) { cleanupFailures.Add(exception); }
+            }
 
             var stopping = CreateConnectionClosedException("Client is stopping.");
             for (var index = 0; index < connections.Length; index++)
             {
                 connections[index].Fail(stopping);
-                await DisposeConnectionAsync(connections[index]).ConfigureAwait(false);
+                try { await DisposeConnectionAsync(connections[index]).ConfigureAwait(false); }
+                catch (Exception exception) { cleanupFailures.Add(exception); }
             }
             try { await Task.WhenAll(workers).ConfigureAwait(false); }
             catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested) { }
+            catch (Exception exception) { cleanupFailures.Add(exception); }
             for (var index = 0; index < factories.Length; index++)
-                await DisposeFactoryQuietlyAsync(factories[index]).ConfigureAwait(false);
+            {
+                try { await DisposeFactoryQuietlyAsync(factories[index]).ConfigureAwait(false); }
+                catch (Exception exception) { cleanupFailures.Add(exception); }
+            }
+            ThrowCleanupFailures(cleanupFailures);
+        }
+
+        private static void ThrowCleanupFailures(List<Exception> failures)
+        {
+            if (failures.Count == 0)
+                return;
+            if (failures.Count == 1)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            throw new AggregateException(failures);
         }
 
         private static bool SameGeneration(SharpLinkEndpoint left, SharpLinkEndpoint right)
             => Equals(left.Address, right.Address) && StringComparer.Ordinal.Equals(left.Authority, right.Authority);
+
+        private bool HasUniqueFactoryOwnershipLocked(IEnumerable<EndpointState> created)
+        {
+            var factories = new HashSet<IClientTransportFactory>(ReferenceEqualityComparer.Instance);
+            for (var index = 0; index < _allStates.Count; index++)
+                factories.Add(_allStates[index].Configuration.TransportFactory);
+            foreach (var state in created)
+            {
+                if (!factories.Add(state.Configuration.TransportFactory))
+                    return false;
+            }
+            return true;
+        }
 
         private static bool HasSameMembership(EndpointState[] left, EndpointState[] right)
         {
@@ -927,6 +975,16 @@ internal sealed partial class SharpLinkClient
         {
             try { await factory.DisposeAsync().ConfigureAwait(false); }
             catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException) { }
+        }
+
+        private static async Task DisposeCreatedFactoriesAsync(IEnumerable<EndpointState> states)
+        {
+            var factories = new HashSet<IClientTransportFactory>(ReferenceEqualityComparer.Instance);
+            foreach (var state in states)
+            {
+                if (factories.Add(state.Configuration.TransportFactory))
+                    await DisposeFactoryQuietlyAsync(state.Configuration.TransportFactory).ConfigureAwait(false);
+            }
         }
 
         private sealed class EndpointState

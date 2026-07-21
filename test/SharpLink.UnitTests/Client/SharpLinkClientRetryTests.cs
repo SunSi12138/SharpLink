@@ -128,6 +128,7 @@ public class SharpLinkClientRetryTests
             endpointSelector: new FirstAvailableSelector(),
             retryOptions: RetryOptions(3, TimeSpan.Zero));
         await client.ConnectAsync();
+        await WaitForReadyConnectionCountAsync(client, 2);
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var firstAttempt = await first.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -161,6 +162,7 @@ public class SharpLinkClientRetryTests
             endpointSelector: new FirstAvailableSelector(),
             endpointAdmissionPolicy: policy);
         await client.ConnectAsync();
+        await WaitForReadyConnectionCountAsync(client, 2);
 
         var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var request = await second.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -208,6 +210,43 @@ public class SharpLinkClientRetryTests
         Ensure(!open.IsAllowed && open.RetryAfter > TimeSpan.Zero, "breaker opens after failure ratio threshold");
         var replacementGeneration = new SharpLinkEndpointCandidate(Endpoint("breaker", 5002), 1, 0, generation: 2);
         Ensure(breaker.TryAcquire(replacementGeneration, method).IsAllowed, "replacement generation starts closed");
+    }
+
+    [Test]
+    public void CircuitBreakerShouldIgnoreReportsFromAnExpiredHalfOpenEpoch()
+    {
+        var breaker = new SharpLinkCircuitBreaker(new SharpLinkCircuitBreakerOptions
+        {
+            MinimumThroughput = 1,
+            FailureRatio = 1,
+            SamplingDuration = TimeSpan.FromSeconds(10),
+            BreakDuration = TimeSpan.FromMilliseconds(1),
+            HalfOpenMaxCalls = 2
+        }.CloneValidated());
+        var method = new RpcMethodDescriptor(1, 2, RpcMethodKind.Unary, true, false, false, null);
+        var endpoint = new SharpLinkEndpointCandidate(Endpoint("breaker", 5001), 1, 0, generation: 1);
+        var failure = new SharpLinkEndpointOutcome(
+            endpoint, method, SharpLinkEndpointOutcomeKind.RemoteError, SharpLinkErrorCode.Unavailable, true, TimeSpan.Zero);
+        var success = new SharpLinkEndpointOutcome(
+            endpoint, method, SharpLinkEndpointOutcomeKind.Success, null, true, TimeSpan.Zero);
+
+        breaker.Report(failure, breaker.TryAcquire(endpoint, method).Token);
+        Thread.Sleep(20);
+        var firstEpochFirstProbe = breaker.TryAcquire(endpoint, method);
+        var firstEpochSecondProbe = breaker.TryAcquire(endpoint, method);
+        Ensure(firstEpochFirstProbe.IsAllowed && firstEpochFirstProbe.Token != 0, "first half-open probe token");
+        Ensure(firstEpochSecondProbe.IsAllowed && firstEpochSecondProbe.Token == firstEpochFirstProbe.Token,
+            "same half-open epoch token");
+
+        breaker.Report(failure, firstEpochFirstProbe.Token);
+        Thread.Sleep(20);
+        var currentEpochProbe = breaker.TryAcquire(endpoint, method);
+        Ensure(currentEpochProbe.IsAllowed && currentEpochProbe.Token != 0, "current half-open probe token");
+
+        breaker.Report(success, firstEpochSecondProbe.Token);
+        var stillHalfOpen = breaker.TryAcquire(endpoint, method);
+        Ensure(stillHalfOpen.IsAllowed && stillHalfOpen.Token != 0,
+            "stale success must not close a newer half-open epoch");
     }
 
     private static SharpLinkClient CreateRetryClient(
@@ -264,6 +303,14 @@ public class SharpLinkClientRetryTests
         {
             return exception;
         }
+    }
+
+    private static async Task WaitForReadyConnectionCountAsync(SharpLinkClient client, int expected)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (client.ReadyConnectionCount < expected && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Ensure(client.ReadyConnectionCount >= expected, $"expected {expected} ready connections");
     }
 
     private static void Ensure(bool condition, string message)

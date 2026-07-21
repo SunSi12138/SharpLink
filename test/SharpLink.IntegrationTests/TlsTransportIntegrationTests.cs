@@ -90,6 +90,29 @@ public class TlsTransportIntegrationTests
     }
 
     [Test]
+    public async Task MutualTlsShouldPreserveClientCertificateContext()
+    {
+        using var serverCertificate = CreateCertificate("localhost", serverAuthentication: true);
+        using var clientCertificate = CreateCertificate("sharplink-client", serverAuthentication: false);
+        var serverOptions = CreateServerOptions(serverCertificate);
+        serverOptions.ClientCertificateRequired = true;
+        serverOptions.EnabledSslProtocols = SslProtocols.Tls12;
+        serverOptions.RemoteCertificateValidationCallback = ValidateTestCertificate;
+        await using var server = await StartServerAsync(0, serverOptions);
+
+        var clientOptions = CreateClientOptions("localhost");
+        clientOptions.EnabledSslProtocols = SslProtocols.Tls12;
+        clientOptions.ClientCertificateContext = SslStreamCertificateContext.Create(
+            clientCertificate,
+            additionalCertificates: null,
+            offline: true);
+        await using var client = CreateClient(server.Port, clientOptions);
+        await client.ConnectAsync();
+        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(3, 4) == 7,
+            "client certificate context mutual TLS RPC");
+    }
+
+    [Test]
     public async Task TlsHandshakeShouldHonorIndependentTimeout()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);

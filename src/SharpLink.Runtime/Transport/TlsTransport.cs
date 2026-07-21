@@ -111,17 +111,21 @@ internal static class TlsAuthenticationOptionsSnapshot
         return value;
     }
 
-    public static SslClientAuthenticationOptions? Clone(SslClientAuthenticationOptions? source)
+    public static SslClientAuthenticationOptions? Clone(
+        SslClientAuthenticationOptions? source,
+        string? defaultTargetHost = null)
     {
         if (source is null)
             return null;
-        ArgumentException.ThrowIfNullOrWhiteSpace(source.TargetHost);
-        return new SslClientAuthenticationOptions
+        var targetHost = string.IsNullOrWhiteSpace(source.TargetHost) ? defaultTargetHost : source.TargetHost;
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetHost);
+        var clone = new SslClientAuthenticationOptions
         {
-            TargetHost = source.TargetHost,
+            TargetHost = targetHost,
             ClientCertificates = source.ClientCertificates is null
                 ? null
                 : new X509CertificateCollection(source.ClientCertificates),
+            ClientCertificateContext = source.ClientCertificateContext,
             EnabledSslProtocols = source.EnabledSslProtocols,
             CertificateRevocationCheckMode = source.CertificateRevocationCheckMode,
             EncryptionPolicy = source.EncryptionPolicy,
@@ -135,6 +139,12 @@ internal static class TlsAuthenticationOptionsSnapshot
             CipherSuitesPolicy = source.CipherSuitesPolicy,
             CertificateChainPolicy = source.CertificateChainPolicy
         };
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsWindows())
+        {
+            clone.AllowRsaPkcs1Padding = source.AllowRsaPkcs1Padding;
+            clone.AllowRsaPssPadding = source.AllowRsaPssPadding;
+        }
+        return clone;
     }
 
     public static SslServerAuthenticationOptions? Clone(SslServerAuthenticationOptions? source)

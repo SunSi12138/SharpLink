@@ -18,6 +18,7 @@ internal sealed partial class SharpLinkClient
         private long _admissionToken;
         private int _hasAdmissionLease;
         private int _reported;
+        private int _admissionRejected;
         private TimeSpan? _retryAfter;
 
         public AttemptOutcomeState(SharpLinkClient client, RpcMethodDescriptor method)
@@ -33,6 +34,8 @@ internal sealed partial class SharpLinkClient
         public string? ConnectionId { get; private set; }
 
         public TimeSpan? RetryAfter => _retryAfter;
+
+        public bool HasAdmissionRejection => Volatile.Read(ref _admissionRejected) != 0;
 
         public bool TryAcquire(in SharpLinkEndpointCandidate endpoint)
         {
@@ -61,6 +64,7 @@ internal sealed partial class SharpLinkClient
             }
             if (!decision.IsAllowed)
             {
+                Volatile.Write(ref _admissionRejected, 1);
                 if (decision.RetryAfter is { } delay && (_retryAfter is null || delay < _retryAfter.Value))
                     _retryAfter = delay;
                 if (policy is not SharpLinkCircuitBreaker)
@@ -135,7 +139,7 @@ internal sealed partial class SharpLinkClient
             var outcome = new SharpLinkEndpointOutcome(
                 _admissionEndpoint,
                 _method,
-                ToOutcomeKind(reason),
+                ToOutcomeKind(reason, exception),
                 _localErrorCode ?? (exception is null ? null : GetErrorCode(exception)),
                 _responseObserved,
                 Stopwatch.GetElapsedTime(_started));
@@ -169,11 +173,15 @@ internal sealed partial class SharpLinkClient
         SharpLinkErrorCode? ErrorCode,
         TimeSpan Elapsed);
 
-    private static SharpLinkEndpointOutcomeKind ToOutcomeKind(PendingCallCompletionReason reason)
+    private static SharpLinkEndpointOutcomeKind ToOutcomeKind(
+        PendingCallCompletionReason reason,
+        Exception? exception)
         => reason switch
         {
             PendingCallCompletionReason.Response or PendingCallCompletionReason.LocalStreamComplete => SharpLinkEndpointOutcomeKind.Success,
-            PendingCallCompletionReason.RemoteError or PendingCallCompletionReason.RemoteStreamComplete => SharpLinkEndpointOutcomeKind.RemoteError,
+            PendingCallCompletionReason.RemoteError => SharpLinkEndpointOutcomeKind.RemoteError,
+            PendingCallCompletionReason.RemoteStreamComplete when exception is null => SharpLinkEndpointOutcomeKind.Success,
+            PendingCallCompletionReason.RemoteStreamComplete => SharpLinkEndpointOutcomeKind.RemoteError,
             PendingCallCompletionReason.SendFailure => SharpLinkEndpointOutcomeKind.SendFailure,
             PendingCallCompletionReason.ConnectionClosed => SharpLinkEndpointOutcomeKind.ConnectionClosed,
             PendingCallCompletionReason.GoAway => SharpLinkEndpointOutcomeKind.GoAway,
