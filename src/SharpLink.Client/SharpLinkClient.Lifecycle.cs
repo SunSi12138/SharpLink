@@ -258,17 +258,17 @@ internal sealed partial class SharpLinkClient
                 SharpLinkErrorCode.ResourceExhausted,
                 $"Authentication payload exceeds {_protocolOptions.MaxMetadataBytes} bytes.");
         }
-        var compressionAlgorithms = _runtimeContext.Compression.Providers.Count == 0
+        var compressionProfiles = _runtimeContext.Compression.Providers.Count == 0
             ? ReadOnlyMemory<string>.Empty
             : _runtimeContext.Compression.Providers
-                .Select(static provider => provider.Algorithm)
+                .Select(static provider => provider.WireProfile)
                 .ToArray();
         var supportedCapabilities =
             ProtocolV2Capabilities.Metadata |
             ProtocolV2Capabilities.FlowControl |
             ProtocolV2Capabilities.HealthCheck |
             ProtocolV2Capabilities.CancellationReason;
-        if (!compressionAlgorithms.IsEmpty)
+        if (!compressionProfiles.IsEmpty)
             supportedCapabilities |= ProtocolV2Capabilities.Compression;
         var handshakeRequest = new ProtocolV2HandshakeRequest(
             ProtocolV2Constants.MinorVersion,
@@ -278,7 +278,7 @@ internal sealed partial class SharpLinkClient
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
             authPayload,
-            compressionAlgorithms);
+            compressionProfiles);
         await session.SendHandshakeRequestAndFlushAsync(handshakeRequest, _protocolOptions, ct).ConfigureAwait(false);
 
         var reader = session.Input;
@@ -308,7 +308,7 @@ internal sealed partial class SharpLinkClient
                         runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
                         var compressionProvider = ValidateNegotiatedCompression(
                             response,
-                            compressionAlgorithms.Span);
+                            compressionProfiles.Span);
                         if (compressionProvider is not null)
                             runtimeSession.EnableCompression(compressionProvider);
                         if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
@@ -360,34 +360,34 @@ internal sealed partial class SharpLinkClient
 
     private ISharpLinkCompressionProvider? ValidateNegotiatedCompression(
         in ProtocolV2HandshakeResponse response,
-        ReadOnlySpan<string> offeredAlgorithms)
+        ReadOnlySpan<string> offeredProfiles)
     {
         var negotiated =
             (response.NegotiatedCapabilities & ProtocolV2Capabilities.Compression) != 0;
         if (!negotiated)
         {
-            if (response.CompressionAlgorithm is not null)
+            if (response.CompressionProfile is not null)
             {
                 throw CreateProtocolViolationException(
-                    "The server selected a compression algorithm without negotiating compression.");
+                    "The server selected a compression profile without negotiating compression.");
             }
             return null;
         }
-        if (response.CompressionAlgorithm is not { } algorithm)
-            throw CreateProtocolViolationException("Negotiated compression is missing its selected algorithm.");
+        if (response.CompressionProfile is not { } profile)
+            throw CreateProtocolViolationException("Negotiated compression is missing its selected profile.");
 
         var offered = false;
-        foreach (var candidate in offeredAlgorithms)
+        foreach (var candidate in offeredProfiles)
         {
-            if (string.Equals(candidate, algorithm, StringComparison.Ordinal))
+            if (string.Equals(candidate, profile, StringComparison.Ordinal))
             {
                 offered = true;
                 break;
             }
         }
-        var provider = offered ? _runtimeContext.Compression.FindProvider(algorithm) : null;
+        var provider = offered ? _runtimeContext.Compression.FindProvider(profile) : null;
         return provider ?? throw CreateProtocolViolationException(
-            $"The server selected compression algorithm '{algorithm}' that the client did not offer.");
+            $"The server selected compression profile '{profile}' that the client did not offer.");
     }
 
     private async Task ProcessRequestLoop(ClientConnection connection, CancellationToken ct)

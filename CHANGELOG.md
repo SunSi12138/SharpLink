@@ -8,8 +8,8 @@
 
 ### 新增
 
-- Protocol v2 minor 3 增加有界、确定性的压缩算法协商；Request/Response/StreamData 只压缩业务 payload，保持路由、deadline、metadata 和 stream ID 可在分配前验证。
-- `SharpLinkRuntimeOptions.Compression` 支持 Gzip、Deflate、Brotli 以及线程安全的自定义 `ISharpLinkCompressionProvider`，默认按 1024 B、64 B 与 5% 三重收益门槛选择候选帧。
+- Protocol v2 minor 3 增加有界、确定性的压缩 wire-profile 协商；Request/Response/StreamData 只压缩业务 payload，保持路由、deadline、metadata 和 stream ID 可在分配前验证。
+- `SharpLinkRuntimeOptions.Compression` 内置 Brotli，并支持线程安全的自定义 `ISharpLinkCompressionProvider` 扩展其他格式；默认按 1024 B、64 B 与 5% 三重收益门槛选择候选帧。
 - `SharpLinkServerBuilder.UseAdmissionControl` 增加 Global、Contract、Method 与有界 Partition 的累计并发/速率限制，支持 TokenBucket、FixedWindow、SlidingWindow、总队列 call/byte 边界和 deadline/cancellation/Draining 联动。
 - Generator 的 `RpcMethodDescriptor.ClientStreamCount` 为排队中的客户端流预留稳定 stream ID；permit 到达前按序 spool，压缩 item 按 wire bytes 记账并延迟解压。
 - Generated Manifest API 升为 2；0.7.3 及更早版本的预编译生成程序集会在注册阶段明确拒绝，升级时需要重新运行 Source Generator 并编译。
@@ -19,7 +19,7 @@
 - 解压在精确有界 owner 中核验 consumed/written、原始长度和内置 Provider 完整性尾部；截断、损坏与尾部垃圾只终止当前调用/流，健康连接继续使用。
 - 压缩默认关闭；普通 RPC 仅增加 Session 级空 Provider 分支，SendPump 不感知压缩且不新增锁、后台任务或每调用状态。
 - Admission 默认关闭；普通调用只增加 Server 级空 controller 分支。拒绝调用保持连接健康，OneWay 不伪造执行成功，分区池机会式回收且不会永久增长。
-- 压缩 token 明确定义为完整 wire profile：内置 `CompressionLevel` 可按方向独立配置，dictionary 等影响解码的设置必须使用不同 token；五轮吞吐矩阵覆盖关闭、三算法、Fastest/Optimal/Smallest、收益阈值和可压缩/随机数据。
+- Provider 的 `WireProfile` 明确定义为完整 wire profile：内置 `CompressionLevel` 可按方向独立配置，dictionary 等影响解码的设置必须使用不同 profile；五轮吞吐矩阵覆盖关闭、Brotli 的 Fastest/Optimal/Smallest、收益阈值和可压缩/随机数据。
 
 ## [0.7.3] - 2026-07-20
 

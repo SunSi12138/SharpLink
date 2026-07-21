@@ -4,7 +4,7 @@ public sealed partial class RpcSession
 {
     private ISharpLinkCompressionProvider? _compressionProvider;
 
-    internal string? CompressionAlgorithm => Volatile.Read(ref _compressionProvider)?.Algorithm;
+    internal string? CompressionProfile => Volatile.Read(ref _compressionProvider)?.WireProfile;
 
     internal void EnableCompression(ISharpLinkCompressionProvider provider)
     {
@@ -61,11 +61,11 @@ public sealed partial class RpcSession
             SharpLinkCompressionResult result;
             try
             {
-                result = CompleteProviderOperation(provider.CompressAsync(
+                result = provider.Compress(
                     payload.Slice(prefixLength),
                     candidate,
                     maxCompressedBytes,
-                    cancellationToken));
+                    cancellationToken);
             }
             catch (SharpLinkCompressionOutputLimitException)
             {
@@ -80,7 +80,7 @@ public sealed partial class RpcSession
             {
                 throw new SharpLinkCompressionProviderException(
                     SharpLinkErrorCode.Internal,
-                    $"Compression provider '{provider.Algorithm}' failed before the frame was queued.",
+                    $"Compression provider '{provider.WireProfile}' failed before the frame was queued.",
                     exception);
             }
 
@@ -89,7 +89,7 @@ public sealed partial class RpcSession
             {
                 throw new SharpLinkCompressionProviderException(
                     SharpLinkErrorCode.Internal,
-                    $"Compression provider '{provider.Algorithm}' reported inconsistent consumed or written bytes.");
+                    $"Compression provider '{provider.WireProfile}' reported inconsistent consumed or written bytes.");
             }
             if (!RuntimeContext.Compression.IsBeneficial(
                     originalLength,
@@ -152,11 +152,11 @@ public sealed partial class RpcSession
             SharpLinkCompressionResult result;
             try
             {
-                result = CompleteProviderOperation(provider.DecompressAsync(
+                result = provider.Decompress(
                     compressedBody,
                     owner,
                     originalLength,
-                    cancellationToken));
+                    cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -167,14 +167,14 @@ public sealed partial class RpcSession
             {
                 throw new SharpLinkException(
                     SharpLinkErrorCode.DataLoss,
-                    $"Compressed payload for '{provider.Algorithm}' is truncated, corrupt, or exceeds its declared length.",
+                    $"Compressed payload for '{provider.WireProfile}' is truncated, corrupt, or exceeds its declared length.",
                     exception);
             }
             catch (Exception exception)
             {
                 throw new SharpLinkException(
                     SharpLinkErrorCode.Internal,
-                    $"Compression provider '{provider.Algorithm}' failed while decoding a frame.",
+                    $"Compression provider '{provider.WireProfile}' failed while decoding a frame.",
                     exception);
             }
 
@@ -254,12 +254,6 @@ public sealed partial class RpcSession
             throw ProtocolV2FrameParser.Violation("Compressed payload original length is truncated.");
         return checked((int)unchecked((uint)originalLengthBits));
     }
-
-    private static SharpLinkCompressionResult CompleteProviderOperation(
-        ValueTask<SharpLinkCompressionResult> operation)
-        => operation.IsCompletedSuccessfully
-            ? operation.Result
-            : operation.AsTask().GetAwaiter().GetResult();
 
     private static int GetBusinessPrefixLength(
         ProtocolV2FrameType type,

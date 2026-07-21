@@ -27,7 +27,7 @@ public static class ProtocolV2PayloadCodec
                 $"Authentication payload exceeds the {limits.MaxMetadataBytes}-byte handshake limit.");
         }
 
-        ValidateCompressionAlgorithms(request.CompressionAlgorithms.Span);
+        ValidateCompressionProfiles(request.CompressionProfiles.Span);
 
         WriteUInt16(writer, request.MinorVersion);
         WriteUInt64(writer, (ulong)request.SupportedCapabilities);
@@ -35,7 +35,7 @@ public static class ProtocolV2PayloadCodec
         WriteInt32(writer, request.MaxFramePayloadBytes);
         WriteInt32(writer, request.StreamReceiveWindowBytes);
         WriteInt32(writer, request.ConnectionReceiveWindowBytes);
-        WriteCompressionAlgorithms(writer, request.CompressionAlgorithms.Span);
+        WriteCompressionProfiles(writer, request.CompressionProfiles.Span);
         WriteVarUInt32(writer, checked((uint)request.AuthenticationPayload.Length));
         writer.Write(request.AuthenticationPayload.Span);
     }
@@ -58,7 +58,7 @@ public static class ProtocolV2PayloadCodec
         {
             throw ProtocolV2FrameParser.Violation("HandshakeRequest payload is truncated.");
         }
-        var compressionAlgorithms = ReadCompressionAlgorithms(ref reader);
+        var compressionProfiles = ReadCompressionProfiles(ref reader);
         if (!TryReadVarUInt32(ref reader, out var authLength))
             throw ProtocolV2FrameParser.Violation("Handshake authentication payload length is truncated.");
         ValidatePeerLimits(maxFrame, streamWindow, connectionWindow);
@@ -78,7 +78,7 @@ public static class ProtocolV2PayloadCodec
             streamWindow,
             connectionWindow,
             auth,
-            compressionAlgorithms);
+            compressionProfiles);
     }
 
     /// <summary>Writes a negotiated handshake response payload.</summary>
@@ -94,15 +94,15 @@ public static class ProtocolV2PayloadCodec
         WriteInt32(writer, response.MaxFramePayloadBytes);
         WriteInt32(writer, response.StreamReceiveWindowBytes);
         WriteInt32(writer, response.ConnectionReceiveWindowBytes);
-        if (response.CompressionAlgorithm is null)
+        if (response.CompressionProfile is null)
         {
             WriteByte(writer, 0);
         }
         else
         {
-            SharpLinkCompressionToken.Validate(response.CompressionAlgorithm, nameof(response));
-            WriteByte(writer, checked((byte)response.CompressionAlgorithm.Length));
-            WriteAscii(writer, response.CompressionAlgorithm);
+            SharpLinkCompressionProfile.Validate(response.CompressionProfile, nameof(response));
+            WriteByte(writer, checked((byte)response.CompressionProfile.Length));
+            WriteAscii(writer, response.CompressionProfile);
         }
     }
 
@@ -113,7 +113,7 @@ public static class ProtocolV2PayloadCodec
     {
         ArgumentNullException.ThrowIfNull(limits);
         if (payload.Length < HandshakeResponseBytes + 1 ||
-            payload.Length > HandshakeResponseBytes + 1 + SharpLinkCompressionToken.MaxUtf8Bytes)
+            payload.Length > HandshakeResponseBytes + 1 + SharpLinkCompressionProfile.MaxAsciiBytes)
             throw ProtocolV2FrameParser.Violation("HandshakeResponse payload has an invalid length.");
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out short minorBits) ||
@@ -121,13 +121,13 @@ public static class ProtocolV2PayloadCodec
             !reader.TryReadLittleEndian(out int maxFrame) ||
             !reader.TryReadLittleEndian(out int streamWindow) ||
             !reader.TryReadLittleEndian(out int connectionWindow) ||
-            !reader.TryRead(out var algorithmLength))
+            !reader.TryRead(out var profileLength))
         {
             throw ProtocolV2FrameParser.Violation("HandshakeResponse payload is truncated.");
         }
-        if (reader.Remaining != algorithmLength)
+        if (reader.Remaining != profileLength)
             throw ProtocolV2FrameParser.Violation("HandshakeResponse compression token length does not match the frame.");
-        var algorithm = algorithmLength == 0 ? null : ReadCompressionAlgorithm(ref reader, algorithmLength);
+        var profile = profileLength == 0 ? null : ReadCompressionProfile(ref reader, profileLength);
         ValidatePeerLimits(maxFrame, streamWindow, connectionWindow);
         return new ProtocolV2HandshakeResponse(
             unchecked((ushort)minorBits),
@@ -135,65 +135,65 @@ public static class ProtocolV2PayloadCodec
             maxFrame,
             streamWindow,
             connectionWindow,
-            algorithm);
+            profile);
     }
 
-    private static void ValidateCompressionAlgorithms(ReadOnlySpan<string> algorithms)
+    private static void ValidateCompressionProfiles(ReadOnlySpan<string> profiles)
     {
-        if (algorithms.Length > SharpLinkCompressionOptions.MaxProviders)
-            throw new ArgumentOutOfRangeException(nameof(algorithms));
+        if (profiles.Length > SharpLinkCompressionOptions.MaxProviders)
+            throw new ArgumentOutOfRangeException(nameof(profiles));
         var unique = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var algorithm in algorithms)
+        foreach (var profile in profiles)
         {
-            SharpLinkCompressionToken.Validate(algorithm, nameof(algorithms));
-            if (!unique.Add(algorithm))
-                throw new ArgumentException($"Compression algorithm '{algorithm}' is advertised more than once.", nameof(algorithms));
+            SharpLinkCompressionProfile.Validate(profile, nameof(profiles));
+            if (!unique.Add(profile))
+                throw new ArgumentException($"Compression wire profile '{profile}' is advertised more than once.", nameof(profiles));
         }
     }
 
-    private static void WriteCompressionAlgorithms(IBufferWriter<byte> writer, ReadOnlySpan<string> algorithms)
+    private static void WriteCompressionProfiles(IBufferWriter<byte> writer, ReadOnlySpan<string> profiles)
     {
-        WriteByte(writer, checked((byte)algorithms.Length));
-        foreach (var algorithm in algorithms)
+        WriteByte(writer, checked((byte)profiles.Length));
+        foreach (var profile in profiles)
         {
-            WriteByte(writer, checked((byte)algorithm.Length));
-            WriteAscii(writer, algorithm);
+            WriteByte(writer, checked((byte)profile.Length));
+            WriteAscii(writer, profile);
         }
     }
 
-    private static ReadOnlyMemory<string> ReadCompressionAlgorithms(ref SequenceReader<byte> reader)
+    private static ReadOnlyMemory<string> ReadCompressionProfiles(ref SequenceReader<byte> reader)
     {
         if (!reader.TryRead(out var count) || count > SharpLinkCompressionOptions.MaxProviders)
-            throw ProtocolV2FrameParser.Violation("Handshake compression algorithm count is invalid.");
+            throw ProtocolV2FrameParser.Violation("Handshake compression profile count is invalid.");
         if (count == 0)
             return ReadOnlyMemory<string>.Empty;
 
-        var algorithms = new string[count];
+        var profiles = new string[count];
         var unique = new HashSet<string>(StringComparer.Ordinal);
         for (var index = 0; index < count; index++)
         {
             if (!reader.TryRead(out var length) || length == 0 ||
-                length > SharpLinkCompressionToken.MaxUtf8Bytes || reader.Remaining < length)
+                length > SharpLinkCompressionProfile.MaxAsciiBytes || reader.Remaining < length)
             {
-                throw ProtocolV2FrameParser.Violation("Handshake compression algorithm token is truncated or invalid.");
+                throw ProtocolV2FrameParser.Violation("Handshake compression profile is truncated or invalid.");
             }
-            var algorithm = ReadCompressionAlgorithm(ref reader, length);
-            if (!unique.Add(algorithm))
-                throw ProtocolV2FrameParser.Violation($"Compression algorithm '{algorithm}' is advertised more than once.");
-            algorithms[index] = algorithm;
+            var profile = ReadCompressionProfile(ref reader, length);
+            if (!unique.Add(profile))
+                throw ProtocolV2FrameParser.Violation($"Compression wire profile '{profile}' is advertised more than once.");
+            profiles[index] = profile;
         }
-        return algorithms;
+        return profiles;
     }
 
-    private static string ReadCompressionAlgorithm(ref SequenceReader<byte> reader, int length)
+    private static string ReadCompressionProfile(ref SequenceReader<byte> reader, int length)
     {
         Span<byte> bytes = stackalloc byte[length];
         if (!reader.TryCopyTo(bytes))
-            throw ProtocolV2FrameParser.Violation("Handshake compression algorithm token is truncated.");
+            throw ProtocolV2FrameParser.Violation("Handshake compression profile is truncated.");
         foreach (var value in bytes)
         {
             if (value is < 0x21 or > 0x7e)
-                throw ProtocolV2FrameParser.Violation("Handshake compression algorithm token is not canonical ASCII.");
+                throw ProtocolV2FrameParser.Violation("Handshake compression profile is not canonical ASCII.");
         }
         reader.Advance(length);
         return Encoding.ASCII.GetString(bytes);

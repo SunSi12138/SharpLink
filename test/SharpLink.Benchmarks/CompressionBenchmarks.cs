@@ -17,9 +17,6 @@ public class CompressionProviderBenchmarks
     private byte[] _payload = [];
     private byte[] _compressed = [];
 
-    [Params("gzip", "deflate", "brotli")]
-    public string Algorithm { get; set; } = "gzip";
-
     [Params("fastest", "optimal", "smallest")]
     public string CompressionLevelName { get; set; } = "fastest";
 
@@ -32,17 +29,17 @@ public class CompressionProviderBenchmarks
     [GlobalSetup]
     public void Setup()
     {
-        _provider = CreateProvider(Algorithm, CompressionLevelName);
+        _provider = CreateProvider(CompressionLevelName);
         _payload = new byte[PayloadSize];
         if (Compressible)
             Array.Fill(_payload, (byte)0x2a);
         else
             new Random(42).NextBytes(_payload);
         var output = new ArrayBufferWriter<byte>(PayloadSize * 2 + 1024);
-        _provider.CompressAsync(
+        _provider.Compress(
             new ReadOnlySequence<byte>(_payload),
             output,
-            PayloadSize * 2 + 1024).GetAwaiter().GetResult();
+            PayloadSize * 2 + 1024);
         _compressed = output.WrittenSpan.ToArray();
     }
 
@@ -50,24 +47,23 @@ public class CompressionProviderBenchmarks
     public int Compress()
     {
         var output = new ArrayBufferWriter<byte>(PayloadSize * 2 + 1024);
-        return _provider.CompressAsync(
+        return _provider.Compress(
             new ReadOnlySequence<byte>(_payload),
             output,
-            PayloadSize * 2 + 1024).Result.WrittenBytes;
+            PayloadSize * 2 + 1024).WrittenBytes;
     }
 
     [Benchmark]
     public int Decompress()
     {
         var output = new ArrayBufferWriter<byte>(PayloadSize);
-        return _provider.DecompressAsync(
+        return _provider.Decompress(
             new ReadOnlySequence<byte>(_compressed),
             output,
-            PayloadSize).Result.WrittenBytes;
+            PayloadSize).WrittenBytes;
     }
 
     internal static ISharpLinkCompressionProvider CreateProvider(
-        string algorithm,
         string levelName = "fastest")
     {
         var level = levelName switch
@@ -78,13 +74,7 @@ public class CompressionProviderBenchmarks
             "nocompression" => CompressionLevel.NoCompression,
             _ => throw new ArgumentOutOfRangeException(nameof(levelName))
         };
-        return algorithm switch
-        {
-            "gzip" => SharpLinkCompressionProviders.CreateGzip(level),
-            "deflate" => SharpLinkCompressionProviders.CreateDeflate(level),
-            "brotli" => SharpLinkCompressionProviders.CreateBrotli(level),
-            _ => throw new ArgumentOutOfRangeException(nameof(algorithm))
-        };
+        return SharpLinkCompressionProviders.CreateBrotli(level);
     }
 }
 
@@ -95,9 +85,6 @@ public class CompressionRpcBenchmarks
     private BenchmarkEnvironment _raw = null!;
     private BenchmarkEnvironment _compressed = null!;
     private string _payload = string.Empty;
-
-    [Params("gzip", "deflate", "brotli")]
-    public string Algorithm { get; set; } = "gzip";
 
     [Params("fastest", "optimal", "smallest")]
     public string CompressionLevelName { get; set; } = "fastest";
@@ -134,6 +121,6 @@ public class CompressionRpcBenchmarks
             options.Protocol.MaxFramePayloadBytes,
             PayloadSize * 2 + 1024);
         options.Compression.Providers.Add(
-            CompressionProviderBenchmarks.CreateProvider(Algorithm, CompressionLevelName));
+            CompressionProviderBenchmarks.CreateProvider(CompressionLevelName));
     }
 }

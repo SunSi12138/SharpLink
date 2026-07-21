@@ -97,22 +97,24 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
-    public async Task ServerProviderOrderShouldSelectFirstMutualAlgorithm()
+    public async Task ServerProviderOrderShouldSelectFirstMutualWireProfile()
     {
-        var clientGzip = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateGzip());
+        var clientAlternate = new CountingCompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli(), "test.brotli/alternate");
         var clientBrotli = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
         var serverBrotli = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
-        var serverGzip = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateGzip());
+        var serverAlternate = new CountingCompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli(), "test.brotli/alternate");
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options =>
             {
-                options.Compression.Providers.Add(clientGzip);
+                options.Compression.Providers.Add(clientAlternate);
                 options.Compression.Providers.Add(clientBrotli);
             },
             serverRuntimeConfigure: options =>
             {
                 options.Compression.Providers.Add(serverBrotli);
-                options.Compression.Providers.Add(serverGzip);
+                options.Compression.Providers.Add(serverAlternate);
             });
 
         var result = await harness.Client.Get<ICompressionService>()
@@ -120,7 +122,7 @@ public class IntegrationBehaviorTests
         Ensure(result.Length == 4096, "provider preference call");
         Ensure(clientBrotli.CompressCount > 0 && serverBrotli.DecompressCount > 0,
             "server-first mutual provider should be selected");
-        Ensure(clientGzip.CompressCount == 0 && serverGzip.DecompressCount == 0,
+        Ensure(clientAlternate.CompressCount == 0 && serverAlternate.DecompressCount == 0,
             "lower-priority provider should remain idle");
     }
 
@@ -129,7 +131,8 @@ public class IntegrationBehaviorTests
     [Arguments(false)]
     public async Task OneSidedOrDisjointCompressionShouldFallBackToRawFrames(bool oneSided)
     {
-        var clientProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateGzip());
+        var clientProvider = new CountingCompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli(), "test.brotli/client-only");
         var serverProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
@@ -155,8 +158,8 @@ public class IntegrationBehaviorTests
     public async Task NegotiatedCompressionShouldCoverOneWayAndEveryStreamingShape()
     {
         CompressionService.ResetOneWay();
-        var clientProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateGzip());
-        var serverProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateGzip());
+        var clientProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
+        var serverProvider = new CountingCompressionProvider(SharpLinkCompressionProviders.CreateBrotli());
         await using var harness = await TestHarness.CreateAsync(
             clientRuntimeConfigure: options => options.Compression.Providers.Add(clientProvider),
             serverRuntimeConfigure: options => options.Compression.Providers.Add(serverProvider));
@@ -1546,41 +1549,43 @@ public class IntegrationBehaviorTests
         }
     }
 
-    private sealed class CountingCompressionProvider(ISharpLinkCompressionProvider inner)
+    private sealed class CountingCompressionProvider(
+        ISharpLinkCompressionProvider inner,
+        string? wireProfile = null)
         : ISharpLinkCompressionProvider
     {
         private int _compressCount;
         private int _decompressCount;
-        public string Algorithm => inner.Algorithm;
+        public string WireProfile => wireProfile ?? inner.WireProfile;
         public int CompressCount => Volatile.Read(ref _compressCount);
         public int DecompressCount => Volatile.Read(ref _decompressCount);
 
-        public async ValueTask<SharpLinkCompressionResult> CompressAsync(
+        public SharpLinkCompressionResult Compress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _compressCount);
-            return await inner.CompressAsync(input, output, maxOutputBytes, cancellationToken);
+            return inner.Compress(input, output, maxOutputBytes, cancellationToken);
         }
 
-        public async ValueTask<SharpLinkCompressionResult> DecompressAsync(
+        public SharpLinkCompressionResult Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _decompressCount);
-            return await inner.DecompressAsync(input, output, maxOutputBytes, cancellationToken);
+            return inner.Decompress(input, output, maxOutputBytes, cancellationToken);
         }
     }
 
     private sealed class NoBenefitCompressionProvider : ISharpLinkCompressionProvider
     {
-        public string Algorithm => "test.identity/v1";
+        public string WireProfile => "test.identity/v1";
 
-        public ValueTask<SharpLinkCompressionResult> CompressAsync(
+        public SharpLinkCompressionResult Compress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -1588,11 +1593,11 @@ public class IntegrationBehaviorTests
         {
             foreach (var segment in input)
                 output.Write(segment.Span);
-            return ValueTask.FromResult(new SharpLinkCompressionResult(
-                checked((int)input.Length), checked((int)input.Length)));
+            return new SharpLinkCompressionResult(
+                checked((int)input.Length), checked((int)input.Length));
         }
 
-        public ValueTask<SharpLinkCompressionResult> DecompressAsync(
+        public SharpLinkCompressionResult Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
@@ -1605,25 +1610,25 @@ public class IntegrationBehaviorTests
         bool throwOnCompress,
         bool throwOnDecompress) : ISharpLinkCompressionProvider
     {
-        public string Algorithm => inner.Algorithm;
+        public string WireProfile => inner.WireProfile;
 
-        public ValueTask<SharpLinkCompressionResult> CompressAsync(
+        public SharpLinkCompressionResult Compress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
             => throwOnCompress
                 ? throw new InvalidOperationException("Injected compression failure.")
-                : inner.CompressAsync(input, output, maxOutputBytes, cancellationToken);
+                : inner.Compress(input, output, maxOutputBytes, cancellationToken);
 
-        public ValueTask<SharpLinkCompressionResult> DecompressAsync(
+        public SharpLinkCompressionResult Decompress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
             => throwOnDecompress
                 ? throw new InvalidOperationException("Injected decompression failure.")
-                : inner.DecompressAsync(input, output, maxOutputBytes, cancellationToken);
+                : inner.Decompress(input, output, maxOutputBytes, cancellationToken);
     }
 
     private sealed class ThrowingPersonCodec : IRpcCodec<Person>

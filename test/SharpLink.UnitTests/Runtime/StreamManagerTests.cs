@@ -290,6 +290,68 @@ public class StreamManagerTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PreAdmissionCompletionDuringRetentionShouldReturnReceiveCredit(bool compressed)
+    {
+        const long requestId = 56;
+        const ushort streamId = 1;
+        var accepted = 0;
+        var consumed = 0;
+        var released = 0;
+        var decoded = 0;
+        var manager = new StreamManager(
+            new RuntimeConcurrencyOptions(),
+            (_, _, bytes) => accepted += bytes,
+            (_, _, bytes) => consumed += bytes,
+            null);
+        var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
+        manager.ReservePreAdmissionStreams(
+            requestId,
+            1,
+            buffers,
+            _ =>
+            {
+                manager.CompleteStream(requestId, streamId, exception: null);
+                return true;
+            },
+            bytes => released += bytes,
+            () => throw new InvalidOperationException("Capacity should not be exhausted."),
+            _ =>
+            {
+                decoded++;
+                throw new InvalidOperationException("A completed pre-admission stream must not decode its frame.");
+            });
+
+        if (compressed)
+        {
+            Ensure(manager.TryDispatchPreAdmissionCompressed(
+                requestId,
+                streamId,
+                new ReadOnlySequence<byte>(new byte[] { 4, 5, 6 }),
+                originalByteCount: 17,
+                out var dispatch),
+                "compressed pre-admission frame intercepted");
+            await dispatch;
+        }
+        else
+        {
+            await manager.DispatchChunkAsync(
+                requestId,
+                streamId,
+                new ReadOnlySequence<byte>(new byte[] { 1, 2, 3, 4 }));
+        }
+
+        var expectedCredit = compressed ? 17 : 4;
+        Ensure(accepted == expectedCredit && consumed == expectedCredit,
+            "completion race returns the exact accepted receive credit");
+        Ensure(released == (compressed ? 3 : 4), "completion race releases retained wire bytes");
+        Ensure(decoded == 0, "completed compressed frame is discarded before decode");
+        manager.Register(requestId, streamId, new RecordingDispatcher());
+        Ensure(manager.ActiveStreamCount == 0, "completed pre-admission stream reclaimed after attach");
+    }
+
+    [Test]
     public async Task RejectedStreamDrainerShouldReturnCreditAndRetireOnComplete()
     {
         var accepted = 0;

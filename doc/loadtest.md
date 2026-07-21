@@ -140,10 +140,10 @@ LoadTest 专有：
 
 - `--operation`: `add | echo`（默认 `add`）
 - `--payload-size`: `echo` 字符串长度（默认 `64`）
-- `--compression`: `none | gzip | deflate | brotli`（默认 `none`）
+- `--compression`: `none | brotli`（默认 `none`）
 - `--compression-level`: `fastest | optimal | smallest | nocompression`（默认 `fastest`，仅影响本地编码）
 - `--compression-min-payload`、`--compression-min-savings-bytes`、`--compression-min-savings-ratio`: 压缩收益策略（默认 `1024 / 64 / 0.05`）
-- `--max-send-queue-bytes`: 可选的有界 SendPump 容量覆盖；大 payload 吞吐对比应让所有算法使用相同值
+- `--max-send-queue-bytes`: 可选的有界 SendPump 容量覆盖；大 payload 吞吐对比应让所有配置使用相同值
 - `--payload-pattern`: `compressible | random`，随机输入使用固定 seed
 - `--metrics-port`: Prometheus 端口（`<=0` 关闭，默认 `9464`）
 

@@ -115,5 +115,5 @@ public static class Program
     }
 
     private static void ConfigureCompression(SharpLinkRuntimeOptions options)
-        => options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateGzip());
+        => options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli());
 }

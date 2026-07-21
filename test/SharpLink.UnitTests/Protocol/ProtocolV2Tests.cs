@@ -100,7 +100,7 @@ public class ProtocolV2Tests
             1024 * 1024,
             16 * 1024 * 1024,
             new byte[] { 1, 2, 3, 4 },
-            new[] { "brotli", "gzip" });
+            new[] { "brotli", "zstd-dict/0123abcd" });
         ProtocolV2PayloadCodec.WriteHandshakeRequest(requestPayload, request, Limits);
         var decodedRequest = ProtocolV2PayloadCodec.ReadHandshakeRequest(
             CreateSegmented(requestPayload.WrittenMemory.ToArray(), 2), Limits);
@@ -111,8 +111,8 @@ public class ProtocolV2Tests
         Ensure(decodedRequest.StreamReceiveWindowBytes == request.StreamReceiveWindowBytes, "handshake stream window");
         Ensure(decodedRequest.ConnectionReceiveWindowBytes == request.ConnectionReceiveWindowBytes, "handshake connection window");
         Ensure(decodedRequest.AuthenticationPayload.Span.SequenceEqual(request.AuthenticationPayload.Span), "handshake auth payload");
-        Ensure(decodedRequest.CompressionAlgorithms.Span.SequenceEqual(request.CompressionAlgorithms.Span),
-            "handshake compression algorithms");
+        Ensure(decodedRequest.CompressionProfiles.Span.SequenceEqual(request.CompressionProfiles.Span),
+            "handshake compression profiles");
 
         var responsePayload = new PooledByteBufferWriter();
         var response = new ProtocolV2HandshakeResponse(

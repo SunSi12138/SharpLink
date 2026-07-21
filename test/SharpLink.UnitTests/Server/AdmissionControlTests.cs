@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.Threading;
+using System.Threading.RateLimiting;
 using SharpLink.Server;
 
 namespace SharpLink.UnitTests.Server;
@@ -185,6 +187,111 @@ public sealed class AdmissionControlTests
     }
 
     [Test]
+    [Arguments("token")]
+    [Arguments("fixed")]
+    [Arguments("sliding")]
+    public async Task CompositeQueueRetryShouldNotConsumeAnUpstreamRatePermitTwice(string policy)
+    {
+        var options = new SharpLinkAdmissionControlOptions
+        {
+            MaxQueuedCalls = 1,
+            MaxQueuedBytes = 1024,
+            MaxQueueDelay = TimeSpan.FromSeconds(1)
+        };
+        switch (policy)
+        {
+            case "token":
+                options.Global.UseTokenBucket(rate =>
+                {
+                    rate.TokenLimit = 2;
+                    rate.TokensPerPeriod = 1;
+                    rate.ReplenishmentPeriod = TimeSpan.FromMinutes(1);
+                });
+                break;
+            case "fixed":
+                options.Global.UseFixedWindow(rate =>
+                {
+                    rate.PermitLimit = 2;
+                    rate.Window = TimeSpan.FromMinutes(1);
+                });
+                break;
+            case "sliding":
+                options.Global.UseSlidingWindow(rate =>
+                {
+                    rate.PermitLimit = 2;
+                    rate.Window = TimeSpan.FromMinutes(1);
+                    rate.SegmentsPerWindow = 2;
+                });
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(policy));
+        }
+        options.AddContract(1, rule => rule.UseConcurrency(1));
+        await using var controller = SharpLinkAdmissionController.Create(options, []);
+        var context = CreateContext();
+
+        var first = await controller.AcquireAsync(context, 1, allowQueue: true, CancellationToken.None);
+        var pending = controller.AcquireAsync(context, 1, allowQueue: true, CancellationToken.None);
+        Ensure(!pending.IsCompleted, "downstream concurrency should queue the second request");
+
+        first.Lease!.Dispose();
+        var second = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(second.IsAcquired, "queued request should reuse its previously consumed rate permit");
+        second.Lease!.Dispose();
+        var exhausted = await controller.AcquireAsync(
+            context,
+            1,
+            allowQueue: false,
+            CancellationToken.None);
+        Ensure(!exhausted.IsAcquired && exhausted.Reason == "rate",
+            "two logical requests should consume exactly two rate permits");
+    }
+
+    [Test]
+    public async Task QueuedRateLeaseShouldSurviveAnEarlierLimiterFailure()
+    {
+        var ownerOptions = new SharpLinkAdmissionControlOptions();
+        ownerOptions.Global.UseConcurrency(1);
+        await using var owner = SharpLinkAdmissionController.Create(ownerOptions, []);
+        using var concurrency = new ScriptedRateLimiter(true, false);
+        using var rate = new ScriptedRateLimiter(false);
+        using var request = new AdmissionRequest(
+            [
+                new AdmissionLimiterSlot(concurrency, "global", "concurrency", RetainOnFailure: false),
+                new AdmissionLimiterSlot(rate, "contract", "rate", RetainOnFailure: true)
+            ],
+            slotCount: 2,
+            partition: null);
+
+        Ensure(!request.TryAcquire(owner, out _, out var failedRate) &&
+            ReferenceEquals(failedRate.Limiter, rate),
+            "initial attempt should fail at the downstream rate limiter");
+        var queuedRateLease = new ScriptedRateLimitLease(isAcquired: true);
+        Ensure(!request.TryAcquireUsing(
+                owner,
+                rate,
+                queuedRateLease,
+                out _,
+                out var failedConcurrency) &&
+            ReferenceEquals(failedConcurrency.Limiter, concurrency),
+            "retry should retain its queued rate lease when an earlier limiter fails");
+
+        var queuedConcurrencyLease = new ScriptedRateLimitLease(isAcquired: true);
+        Ensure(request.TryAcquireUsing(
+                owner,
+                concurrency,
+                queuedConcurrencyLease,
+                out var admissionLease,
+                out _),
+            "later retry should reuse the retained downstream rate lease");
+        Ensure(rate.AttemptCount == 1, "logical request should attempt the rate limiter only once");
+
+        admissionLease!.Dispose();
+        Ensure(queuedRateLease.DisposeCount == 1, "retained rate lease transferred and disposed once");
+    }
+
+    [Test]
     public async Task PermitCancellationRacesShouldLeaveAllAccountingAtZero()
     {
         var options = new SharpLinkAdmissionControlOptions
@@ -274,6 +381,51 @@ public sealed class AdmissionControlTests
         }
         catch (TException)
         {
+        }
+    }
+
+    private sealed class ScriptedRateLimiter(params bool[] acquisitionResults) : RateLimiter
+    {
+        private readonly Queue<bool> _acquisitionResults = new(acquisitionResults);
+
+        internal int AttemptCount { get; private set; }
+        public override TimeSpan? IdleDuration => null;
+        public override RateLimiterStatistics? GetStatistics() => null;
+
+        protected override RateLimitLease AttemptAcquireCore(int permitCount)
+        {
+            _ = permitCount;
+            AttemptCount++;
+            return new ScriptedRateLimitLease(
+                _acquisitionResults.Count != 0 && _acquisitionResults.Dequeue());
+        }
+
+        protected override ValueTask<RateLimitLease> AcquireAsyncCore(
+            int permitCount,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(AttemptAcquireCore(permitCount));
+        }
+    }
+
+    private sealed class ScriptedRateLimitLease(bool isAcquired) : RateLimitLease
+    {
+        internal int DisposeCount { get; private set; }
+        public override bool IsAcquired { get; } = isAcquired;
+        public override IEnumerable<string> MetadataNames => [];
+
+        public override bool TryGetMetadata(string metadataName, out object? metadata)
+        {
+            _ = metadataName;
+            metadata = null;
+            return false;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            _ = disposing;
+            DisposeCount++;
         }
     }
 }
