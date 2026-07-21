@@ -16,6 +16,16 @@ internal static class ClientInvokerTestHelper
         HasMethodTimeout: false,
         MethodTimeout: null);
 
+    private static readonly RpcMethodDescriptor SIdempotentUnaryMethod = new(
+        1,
+        4,
+        RpcMethodKind.Unary,
+        HasResponsePayload: true,
+        HasClientStreams: false,
+        HasMethodTimeout: false,
+        MethodTimeout: null,
+        IsIdempotent: true);
+
     private static readonly RpcMethodDescriptor SOneWayMethod = new(
         1,
         2,
@@ -43,6 +53,22 @@ internal static class ClientInvokerTestHelper
         var request = default(RpcEmptyRequest);
         return channel.InvokeUnaryAsync(
             SUnaryMethod,
+            in request,
+            RpcEmptyRequestCodec.Instance,
+            channel.RuntimeContext.Codecs.GetCodec<int>(),
+            options,
+            cancellationToken);
+    }
+
+    public static ValueTask<int> InvokeIdempotentUnaryAsync(
+        SharpLinkClient client,
+        SharpLinkCallOptions options = default,
+        CancellationToken cancellationToken = default)
+    {
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+        return channel.InvokeUnaryAsync(
+            SIdempotentUnaryMethod,
             in request,
             RpcEmptyRequestCodec.Instance,
             channel.RuntimeContext.Codecs.GetCodec<int>(),

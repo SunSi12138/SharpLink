@@ -10,9 +10,42 @@ internal sealed partial class SharpLinkClient
         int ActiveCallCount { get; }
         int ActiveStreamCount { get; }
         ValueTask ConnectAsync(CancellationToken cancellationToken);
-        ClientConnection GetReadyConnection();
+        ClientConnection GetReadyConnection(
+            RpcMethodDescriptor? method,
+            EndpointRetrySelectionState? retrySelection,
+            AttemptOutcomeState? attemptOutcome);
         void MarkConnectionDraining(ClientConnection connection);
         void RetireDrainingConnectionIfIdle(ClientConnection connection);
         ValueTask StopAsync();
+    }
+
+    /// <summary>Keeps the zero-allocation per-logical-call endpoint exclusion mask for retry attempts.</summary>
+    private sealed class EndpointRetrySelectionState
+    {
+        private object? _snapshot;
+        private ulong _excludedMask;
+
+        public ulong GetExcludedMask(object snapshot, int count)
+        {
+            if (!ReferenceEquals(_snapshot, snapshot))
+            {
+                _snapshot = snapshot;
+                _excludedMask = 0;
+            }
+            var availableMask = count == 64 ? ulong.MaxValue : (1UL << count) - 1;
+            if ((_excludedMask & availableMask) == availableMask)
+                _excludedMask = 0;
+            return _excludedMask;
+        }
+
+        public void Exclude(object snapshot, int index)
+        {
+            if (!ReferenceEquals(_snapshot, snapshot))
+            {
+                _snapshot = snapshot;
+                _excludedMask = 0;
+            }
+            _excludedMask |= 1UL << index;
+        }
     }
 }

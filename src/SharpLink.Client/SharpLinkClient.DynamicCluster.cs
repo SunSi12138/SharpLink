@@ -83,14 +83,20 @@ internal sealed partial class SharpLinkClient
             return cancellationToken.CanBeCanceled ? new ValueTask(task.WaitAsync(cancellationToken)) : new ValueTask(task);
         }
 
-        public ClientConnection GetReadyConnection()
+        public ClientConnection GetReadyConnection(
+            RpcMethodDescriptor? method,
+            EndpointRetrySelectionState? retrySelection,
+            AttemptOutcomeState? attemptOutcome)
         {
             var snapshot = Volatile.Read(ref _selectionSnapshot);
             var endpoints = snapshot.Endpoints;
             if (endpoints.Length == 0)
+            {
+                SharpLinkTelemetry.RecordSelectionFailure("no_ready_endpoint");
                 throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink endpoint is ready.");
+            }
 
-            var excluded = 0UL;
+            var excluded = retrySelection?.GetExcludedMask(snapshot, endpoints.Length) ?? 0UL;
             for (var attempt = 0; attempt < endpoints.Length; attempt++)
             {
                 var selectedIndex = SelectEndpoint(endpoints, snapshot.Candidates, excluded);
@@ -100,16 +106,29 @@ internal sealed partial class SharpLinkClient
                         SharpLinkErrorCode.FailedPrecondition,
                         "The endpoint selector returned an unavailable candidate index.");
                 }
+                var candidate = snapshot.Candidates[selectedIndex];
+                if (method is not null && attemptOutcome is not null && !attemptOutcome.TryAcquire(candidate))
+                {
+                    retrySelection?.Exclude(snapshot, selectedIndex);
+                    excluded |= 1UL << selectedIndex;
+                    continue;
+                }
                 var connection = SelectConnection(endpoints[selectedIndex]);
+                retrySelection?.Exclude(snapshot, selectedIndex);
                 if (connection is not null)
                 {
+                    attemptOutcome?.SetConnection(connection);
                     if (connection.ActiveCallCount != 0)
                         EnsureExpansion(endpoints[selectedIndex]);
                     return connection;
                 }
+                attemptOutcome?.CompleteWithoutPending(
+                    PendingCallCompletionReason.ConnectionClosed,
+                    CreateConnectionClosedException("The selected dynamic endpoint connection is no longer ready."));
                 excluded |= 1UL << selectedIndex;
             }
 
+            SharpLinkTelemetry.RecordSelectionFailure("no_admitted_connection");
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink endpoint connection is ready.");
         }
 
@@ -494,7 +513,9 @@ internal sealed partial class SharpLinkClient
                     session,
                     sessionCts,
                     _client._protocolOptions.MaxPendingRequestsPerConnection,
-                    _client._runtimeContext.Codecs);
+                    _client._runtimeContext.Codecs,
+                    endpoint.Configuration.Endpoint.Id,
+                    endpoint.Generation);
                 connection.Session.OnDisconnected += exception => HandleDisconnected(
                     endpoint,
                     connection,
@@ -825,6 +846,15 @@ internal sealed partial class SharpLinkClient
                     return;
                 endpoint.FactoryReleased = true;
                 _allStates.Remove(endpoint);
+            }
+            if (_client._endpointAdmissionPolicy is ISharpLinkEndpointAdmissionLifecycle lifecycle)
+            {
+                var candidate = new SharpLinkEndpointCandidate(
+                    endpoint.Configuration.Endpoint,
+                    endpoint.ReadyConnectionCountProvider,
+                    endpoint.ActiveCallCountProvider,
+                    endpoint.Generation);
+                lifecycle.Retire(candidate);
             }
             await DisposeFactoryQuietlyAsync(endpoint.Configuration.TransportFactory).ConfigureAwait(false);
         }

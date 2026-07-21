@@ -46,6 +46,9 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
     private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions;
     private readonly SharpLinkConnectionPoolOptions _connectionPoolOptions = new();
     private readonly ISharpLinkClientInterceptor[] _clientInterceptors = [];
+    private readonly SharpLinkRetryOptions? _retryOptions;
+    private readonly ISharpLinkRetryPolicy? _retryPolicy;
+    private readonly ISharpLinkEndpointAdmissionPolicy? _endpointAdmissionPolicy;
 
     private SharpLinkClient(
         IClientTransportFactory transportFactory,
@@ -55,10 +58,16 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
         ISharpLinkEndpointSelector? endpointSelector = null,
         SharpLinkEndpoint? fixedEndpoint = null,
         ISharpLinkEndpointResolver? dynamicResolver = null,
-        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null)
+        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null,
+        SharpLinkRetryOptions? retryOptions = null,
+        ISharpLinkRetryPolicy? retryPolicy = null,
+        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null)
     {
         this.transportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
         _fixedEndpoint = fixedEndpoint;
+        _retryOptions = retryOptions;
+        _retryPolicy = retryPolicy;
+        _endpointAdmissionPolicy = endpointAdmissionPolicy;
         if (staticEndpoints is not null && dynamicResolver is not null)
             throw new ArgumentException("Static endpoints and an endpoint resolver cannot both be configured.");
         if (staticEndpoints is not null)
@@ -99,9 +108,12 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
         ISharpLinkEndpointSelector? endpointSelector = null,
         SharpLinkEndpoint? fixedEndpoint = null,
         ISharpLinkEndpointResolver? dynamicResolver = null,
-        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null)
+        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null,
+        SharpLinkRetryOptions? retryOptions = null,
+        ISharpLinkRetryPolicy? retryPolicy = null,
+        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null)
         : this(transportFactory, staticEndpoints, clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint,
-            dynamicResolver, dynamicTransportFactory)
+            dynamicResolver, dynamicTransportFactory, retryOptions, retryPolicy, endpointAdmissionPolicy)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatTimeout, TimeSpan.Zero);
@@ -143,10 +155,14 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
         ISharpLinkEndpointSelector? endpointSelector = null,
         SharpLinkEndpoint? fixedEndpoint = null,
         ISharpLinkEndpointResolver? dynamicResolver = null,
-        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null)
+        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null,
+        SharpLinkRetryOptions? retryOptions = null,
+        ISharpLinkRetryPolicy? retryPolicy = null,
+        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null)
         : this(transportFactory, heartbeatInterval, heartbeatTimeout, requestTimeout, authenticator, protocolOptions,
             runtimeContext, rpcSessionFlushOptions, connectionPoolOptions, clientInterceptors, staticEndpoints,
-            clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint, dynamicResolver, dynamicTransportFactory)
+            clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint, dynamicResolver, dynamicTransportFactory,
+            retryOptions, retryPolicy, endpointAdmissionPolicy)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _logger = loggerFactory.CreateLogger<SharpLinkClient>();

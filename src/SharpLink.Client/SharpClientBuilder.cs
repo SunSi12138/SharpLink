@@ -48,6 +48,12 @@ public class SharpClientBuilder
     private SharpLinkLoadBalancingStrategy _loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices;
     private bool _loadBalancingConfigured;
     private ISharpLinkEndpointSelector? _endpointSelector;
+    private readonly SharpLinkRetryOptions _retry = new();
+    private bool _retryConfigured;
+    private ISharpLinkRetryPolicy? _retryPolicy;
+    private ISharpLinkEndpointAdmissionPolicy? _endpointAdmissionPolicy;
+    private readonly SharpLinkCircuitBreakerOptions _circuitBreaker = new();
+    private bool _circuitBreakerConfigured;
 
     /// <summary>Configures instance-scoped runtime behavior.</summary>
     public SharpClientBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)
@@ -271,6 +277,60 @@ public class SharpClientBuilder
         _endpointSelector = selector;
         return this;
     }
+
+    /// <summary>Enables the built-in retry policy for explicitly idempotent unary calls.</summary>
+    /// <remarks>Retry is disabled by default. Streaming, one-way, and non-idempotent unary calls never retry.</remarks>
+    public SharpClientBuilder UseRetry()
+    {
+        _retryConfigured = true;
+        _retryPolicy = null;
+        return this;
+    }
+
+    /// <summary>Enables and configures the built-in retry policy for explicitly idempotent unary calls.</summary>
+    /// <param name="configure">Mutates builder-owned options frozen during <see cref="Build"/>.</param>
+    public SharpClientBuilder UseRetry(Action<SharpLinkRetryOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        configure(_retry);
+        _retryConfigured = true;
+        _retryPolicy = null;
+        return this;
+    }
+
+    /// <summary>Enables a custom retry policy for explicitly idempotent unary calls.</summary>
+    /// <param name="policy">A synchronous policy that returns only a decision and delay.</param>
+    public SharpClientBuilder UseRetry(ISharpLinkRetryPolicy policy)
+    {
+        _retryPolicy = policy ?? throw new ArgumentNullException(nameof(policy));
+        _retryConfigured = true;
+        return this;
+    }
+
+    /// <summary>Uses a synchronous custom endpoint admission policy for cluster attempts.</summary>
+    /// <remarks>
+    /// Endpoint admission and the built-in circuit breaker are alternative policies. Neither affects
+    /// fixed <see cref="UseTransport(IClientTransportFactory)"/> mode because it has no endpoint topology.
+    /// </remarks>
+    public SharpClientBuilder UseEndpointAdmission(ISharpLinkEndpointAdmissionPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        if (_circuitBreakerConfigured)
+            throw new InvalidOperationException("UseEndpointAdmission and UseCircuitBreaker are mutually exclusive.");
+        _endpointAdmissionPolicy = policy;
+        return this;
+    }
+
+    /// <summary>Enables the built-in endpoint-generation circuit breaker for cluster attempts.</summary>
+    public SharpClientBuilder UseCircuitBreaker(Action<SharpLinkCircuitBreakerOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        if (_endpointAdmissionPolicy is not null)
+            throw new InvalidOperationException("UseEndpointAdmission and UseCircuitBreaker are mutually exclusive.");
+        configure(_circuitBreaker);
+        _circuitBreakerConfigured = true;
+        return this;
+    }
     
     public ISharpLinkClient Build()
     {
@@ -364,7 +424,10 @@ public class SharpClientBuilder
             _rpcSessionFlushOptions,
             connectionPool ?? CreateConnectionPoolSnapshot(runtimeContext),
             _interceptors.ToArray(),
-            fixedEndpoint: fixedEndpoint
+            fixedEndpoint: fixedEndpoint,
+            retryOptions: CreateRetryOptions(),
+            retryPolicy: _retryPolicy,
+            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy()
         );
     }
 
@@ -388,7 +451,10 @@ public class SharpClientBuilder
             configurations,
             cluster,
             _loadBalancingStrategy,
-            _endpointSelector);
+            _endpointSelector,
+            retryOptions: CreateRetryOptions(),
+            retryPolicy: _retryPolicy,
+            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy());
 
     private ISharpLinkClient CreateDynamicClusterClient(
         ISharpLinkEndpointResolver resolver,
@@ -412,7 +478,18 @@ public class SharpClientBuilder
             dynamicTransportFactory: transportFactory,
             clusterOptions: cluster,
             loadBalancingStrategy: _loadBalancingStrategy,
-            endpointSelector: _endpointSelector);
+            endpointSelector: _endpointSelector,
+            retryOptions: CreateRetryOptions(),
+            retryPolicy: _retryPolicy,
+            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy());
+
+    private SharpLinkRetryOptions? CreateRetryOptions()
+        => _retryConfigured ? _retry.CloneValidated() : null;
+
+    private ISharpLinkEndpointAdmissionPolicy? CreateEndpointAdmissionPolicy()
+        => _circuitBreakerConfigured
+            ? new SharpLinkCircuitBreaker(_circuitBreaker.CloneValidated())
+            : _endpointAdmissionPolicy;
 
     internal static IClientTransportFactory CreateTransportFactory(
         SharpLinkEndpoint endpoint,

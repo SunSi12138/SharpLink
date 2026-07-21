@@ -41,15 +41,35 @@ internal sealed partial class SharpLinkClient
     private async ValueTask<ClientConnection> GetReadyConnectionAsync(
         bool waitForReady,
         DateTimeOffset? deadline,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RpcMethodDescriptor? method = null,
+        AttemptOutcomeState? attemptOutcome = null)
     {
         while (true)
         {
-            if (!_shutdownCts.IsCancellationRequested && ReadyConnectionCount != 0)
-                return GetReadyConnection();
+            try
+            {
+                if (!_shutdownCts.IsCancellationRequested && ReadyConnectionCount != 0)
+                    return method is { } descriptor
+                        ? GetReadyConnection(descriptor, retrySelection: null, attemptOutcome)
+                        : GetReadyConnection();
 
-            if (!waitForReady)
-                return GetReadyConnection();
+                if (!waitForReady)
+                    return method is { } descriptor
+                        ? GetReadyConnection(descriptor, retrySelection: null, attemptOutcome)
+                        : GetReadyConnection();
+            }
+            catch (SharpLinkException exception) when (
+                waitForReady && exception.Code == SharpLinkErrorCode.Unavailable)
+            {
+                if (attemptOutcome?.RetryAfter is not { } retryAfter || retryAfter <= TimeSpan.Zero)
+                    throw;
+                if (deadline is { } retryDeadline && DateTimeOffset.UtcNow + retryAfter >= retryDeadline)
+                    throw CreateDeadlineExceededException();
+                await Task.Delay(retryAfter, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+
             if (State == SharpLinkConnectionState.Stopped || _shutdownCts.IsCancellationRequested)
                 throw CreateConnectionClosedException("Client has stopped.");
 

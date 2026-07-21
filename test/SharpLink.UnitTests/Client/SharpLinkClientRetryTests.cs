@@ -1,0 +1,341 @@
+using System.Threading;
+using SharpLink.Client;
+using SharpLink.Sdk;
+
+namespace SharpLink.UnitTests.Client;
+
+public class SharpLinkClientRetryTests
+{
+    [Test]
+    public async Task IdempotentUnaryShouldRetryRemoteUnavailableAndExposeResponseObservation()
+    {
+        var transport = new TestClientTransportFactory();
+        var policy = new RecordingRetryPolicy();
+        await using var client = CreateRetryClient(transport, policy, maxAttempts: 2);
+        await client.ConnectAsync();
+
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await InjectErrorAsync(transport, first, SharpLinkErrorCode.Unavailable);
+        var second = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await transport.Connection.InjectPacketAsync(
+            ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((long)second.RequestId));
+
+        Ensure(await invocation == 0, "second attempt result");
+        Ensure(policy.Count == 1, "policy invocation count");
+        Ensure(policy.LastContext.Attempt == 1, "first completed attempt");
+        Ensure(policy.LastContext.ErrorCode == SharpLinkErrorCode.Unavailable, "remote unavailable code");
+        Ensure(policy.LastContext.ResponseObserved, "remote error is an observed response");
+    }
+
+    [Test]
+    public async Task NonIdempotentUnaryAndResourceExhaustedShouldNotRetry()
+    {
+        var transport = new TestClientTransportFactory();
+        await using var client = CreateRetryClient(transport, policy: null, maxAttempts: 3);
+        await client.ConnectAsync();
+
+        var nonIdempotent = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await InjectErrorAsync(transport, first, SharpLinkErrorCode.Unavailable);
+        var nonIdempotentError = await EnsureThrows<SharpLinkException>(nonIdempotent);
+        Ensure(nonIdempotentError.Code == SharpLinkErrorCode.Unavailable, "non-idempotent result");
+        Ensure(!await transport.Connection.TryWaitForSentPacket(
+            ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(100)), "non-idempotent no second request");
+
+        var idempotent = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var resourceExhausted = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await InjectErrorAsync(transport, resourceExhausted, SharpLinkErrorCode.ResourceExhausted);
+        var resourceError = await EnsureThrows<SharpLinkException>(idempotent);
+        Ensure(resourceError.Code == SharpLinkErrorCode.ResourceExhausted, "resource exhausted result");
+        Ensure(!await transport.Connection.TryWaitForSentPacket(
+            ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(100)), "resource exhausted no second request");
+    }
+
+    [Test]
+    public async Task RetryShouldHonorAbsoluteDeadlineAndCancellationDuringDelay()
+    {
+        var deadlineTransport = new TestClientTransportFactory();
+        await using var deadlineClient = CreateRetryClient(
+            deadlineTransport, policy: null, maxAttempts: 2, initialBackoff: TimeSpan.FromMilliseconds(50));
+        await deadlineClient.ConnectAsync();
+
+        var deadlineInvocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
+            deadlineClient, new SharpLinkCallOptions { Timeout = TimeSpan.FromMilliseconds(20) }).AsTask();
+        var deadlineRequest = await deadlineTransport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await InjectErrorAsync(deadlineTransport, deadlineRequest, SharpLinkErrorCode.Unavailable);
+        var deadlineError = await EnsureThrows<SharpLinkException>(deadlineInvocation);
+        Ensure(deadlineError.Code == SharpLinkErrorCode.DeadlineExceeded, "retry delay deadline result");
+        Ensure(!await deadlineTransport.Connection.TryWaitForSentPacket(
+            ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(100)), "deadline no second request");
+
+        var cancellationTransport = new TestClientTransportFactory();
+        await using var cancellationClient = CreateRetryClient(
+            cancellationTransport, policy: null, maxAttempts: 2, initialBackoff: TimeSpan.FromSeconds(1));
+        await cancellationClient.ConnectAsync();
+        using var cancellation = new CancellationTokenSource();
+        var cancellationInvocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
+            cancellationClient, cancellationToken: cancellation.Token).AsTask();
+        var cancellationRequest = await cancellationTransport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await InjectErrorAsync(cancellationTransport, cancellationRequest, SharpLinkErrorCode.Unavailable);
+        cancellation.Cancel();
+        await EnsureThrows<OperationCanceledException>(cancellationInvocation);
+        Ensure(!await cancellationTransport.Connection.TryWaitForSentPacket(
+            ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(100)), "cancel no second request");
+    }
+
+    [Test]
+    public async Task RetryShouldRunInterceptorOnceAndRejectInvalidCustomPolicyDelay()
+    {
+        var transport = new TestClientTransportFactory();
+        var interceptor = new CountingInterceptor();
+        var invalidPolicy = new NegativeDelayPolicy();
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            clientInterceptors: [interceptor],
+            retryOptions: RetryOptions(2, TimeSpan.Zero),
+            retryPolicy: invalidPolicy);
+        await client.ConnectAsync();
+
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
+        var error = await EnsureThrows<SharpLinkException>(invocation);
+
+        Ensure(error.Code == SharpLinkErrorCode.FailedPrecondition, "negative delay rejected");
+        Ensure(interceptor.Count == 1, "interceptor runs once for logical call");
+        Ensure(invalidPolicy.Count == 1, "custom policy receives failed attempt");
+    }
+
+    [Test]
+    public async Task RetryShouldExcludeTriedEndpointsThenResetAfterAllCandidates()
+    {
+        var first = new TestClientTransportFactory();
+        var second = new TestClientTransportFactory();
+        var endpoints = new[]
+        {
+            new StaticEndpointConfiguration(Endpoint("first", 5001), first),
+            new StaticEndpointConfiguration(Endpoint("second", 5002), second)
+        };
+        await using var client = new SharpLinkClient(
+            first,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            staticEndpoints: endpoints,
+            clusterOptions: new SharpLinkClusterOptions(),
+            endpointSelector: new FirstAvailableSelector(),
+            retryOptions: RetryOptions(3, TimeSpan.Zero));
+        await client.ConnectAsync();
+
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var firstAttempt = await first.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await InjectErrorAsync(first, firstAttempt, SharpLinkErrorCode.Unavailable);
+        var secondAttempt = await second.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await InjectErrorAsync(second, secondAttempt, SharpLinkErrorCode.Unavailable);
+        var thirdAttempt = await first.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await first.Connection.InjectPacketAsync(
+            ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((long)thirdAttempt.RequestId));
+
+        Ensure(await invocation == 0, "candidate reset third attempt result");
+    }
+
+    [Test]
+    public async Task EndpointAdmissionShouldRejectOneCandidateAndReportTheSelectedAttemptOnce()
+    {
+        var first = new TestClientTransportFactory();
+        var second = new TestClientTransportFactory();
+        var policy = new RejectFirstEndpointPolicy();
+        var endpoints = new[]
+        {
+            new StaticEndpointConfiguration(Endpoint("first", 5001), first),
+            new StaticEndpointConfiguration(Endpoint("second", 5002), second)
+        };
+        await using var client = new SharpLinkClient(
+            first,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            staticEndpoints: endpoints,
+            clusterOptions: new SharpLinkClusterOptions(),
+            endpointSelector: new FirstAvailableSelector(),
+            endpointAdmissionPolicy: policy);
+        await client.ConnectAsync();
+
+        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var request = await second.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await second.Connection.InjectPacketAsync(
+            ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((long)request.RequestId));
+
+        Ensure(await invocation == 0, "admitted endpoint response");
+        Ensure(policy.AcquireCount == 2, "both candidates evaluated");
+        Ensure(policy.ReportCount == 1, $"only selected endpoint reported: {policy.ReportCount}");
+        Ensure(policy.LastOutcome.Endpoint.Endpoint.Id == "second", "selected endpoint report identity");
+        Ensure(policy.LastOutcome.Kind == SharpLinkEndpointOutcomeKind.Success, "selected endpoint report outcome");
+        Ensure(!await first.Connection.TryWaitForSentPacket(
+            ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(100)), "rejected endpoint has no request");
+    }
+
+    [Test]
+    public void CircuitBreakerShouldOpenPerGenerationForInfrastructureFailures()
+    {
+        var breaker = new SharpLinkCircuitBreaker(new SharpLinkCircuitBreakerOptions
+        {
+            MinimumThroughput = 2,
+            FailureRatio = 0.5,
+            SamplingDuration = TimeSpan.FromSeconds(10),
+            BreakDuration = TimeSpan.FromSeconds(10),
+            HalfOpenMaxCalls = 1
+        }.CloneValidated());
+        var method = new RpcMethodDescriptor(1, 2, RpcMethodKind.Unary, true, false, false, null);
+        var generationOne = new SharpLinkEndpointCandidate(Endpoint("breaker", 5001), 1, 0, generation: 1);
+        var failure = new SharpLinkEndpointOutcome(
+            generationOne,
+            method,
+            SharpLinkEndpointOutcomeKind.RemoteError,
+            SharpLinkErrorCode.Unavailable,
+            ResponseObserved: true,
+            TimeSpan.Zero);
+
+        var first = breaker.TryAcquire(generationOne, method);
+        Ensure(first.IsAllowed, "closed breaker first acquisition");
+        breaker.Report(failure, first.Token);
+        var second = breaker.TryAcquire(generationOne, method);
+        Ensure(second.IsAllowed, "closed breaker second acquisition");
+        breaker.Report(failure, second.Token);
+
+        var open = breaker.TryAcquire(generationOne, method);
+        Ensure(!open.IsAllowed && open.RetryAfter > TimeSpan.Zero, "breaker opens after failure ratio threshold");
+        var replacementGeneration = new SharpLinkEndpointCandidate(Endpoint("breaker", 5002), 1, 0, generation: 2);
+        Ensure(breaker.TryAcquire(replacementGeneration, method).IsAllowed, "replacement generation starts closed");
+    }
+
+    private static SharpLinkClient CreateRetryClient(
+        TestClientTransportFactory transport,
+        ISharpLinkRetryPolicy? policy,
+        int maxAttempts,
+        TimeSpan? initialBackoff = null)
+        => new(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            retryOptions: RetryOptions(maxAttempts, initialBackoff ?? TimeSpan.Zero),
+            retryPolicy: policy);
+
+    private static SharpLinkRetryOptions RetryOptions(int maxAttempts, TimeSpan initialBackoff)
+        => new()
+        {
+            MaxAttempts = maxAttempts,
+            InitialBackoff = initialBackoff,
+            MaxBackoff = initialBackoff,
+            JitterRatio = 0
+        };
+
+    private static SharpLinkEndpoint Endpoint(string id, int port)
+        => new()
+        {
+            Id = id,
+            Address = new SharpLinkTcpAddress("127.0.0.1", port)
+        };
+
+    private static Task InjectErrorAsync(
+        TestClientTransportFactory transport,
+        ProtocolV2FrameHeader request,
+        SharpLinkErrorCode code)
+    {
+        var payload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteError(payload, code, code.ToString(), 1024, out _);
+        return transport.Connection.InjectFrameAsync(
+            ProtocolV2FrameType.Response,
+            ProtocolV2FrameFlags.Error,
+            request.RequestId,
+            payload.WrittenMemory);
+    }
+
+    private static async Task<TException> EnsureThrows<TException>(Task invocation)
+        where TException : Exception
+    {
+        try
+        {
+            await invocation;
+            throw new Exception($"expected {typeof(TException).Name}");
+        }
+        catch (TException exception)
+        {
+            return exception;
+        }
+    }
+
+    private static void Ensure(bool condition, string message)
+    {
+        if (!condition)
+            throw new Exception(message);
+    }
+
+    private sealed class RecordingRetryPolicy : ISharpLinkRetryPolicy
+    {
+        public int Count { get; private set; }
+        public SharpLinkRetryContext LastContext { get; private set; }
+
+        public SharpLinkRetryDecision Evaluate(in SharpLinkRetryContext context)
+        {
+            Count++;
+            LastContext = context;
+            return new SharpLinkRetryDecision(true, TimeSpan.Zero);
+        }
+    }
+
+    private sealed class NegativeDelayPolicy : ISharpLinkRetryPolicy
+    {
+        public int Count { get; private set; }
+
+        public SharpLinkRetryDecision Evaluate(in SharpLinkRetryContext context)
+        {
+            Count++;
+            return new SharpLinkRetryDecision(true, TimeSpan.FromMilliseconds(-1));
+        }
+    }
+
+    private sealed class CountingInterceptor : ISharpLinkClientInterceptor
+    {
+        public int Count { get; private set; }
+
+        public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+        {
+            Count++;
+            return await next(context);
+        }
+    }
+
+    private sealed class FirstAvailableSelector : ISharpLinkEndpointSelector
+    {
+        public int Select(in SharpLinkEndpointSelectionContext context)
+            => (context.ExcludedMask & 1UL) == 0 ? 0 : 1;
+    }
+
+    private sealed class RejectFirstEndpointPolicy : ISharpLinkEndpointAdmissionPolicy
+    {
+        public int AcquireCount { get; private set; }
+        public int ReportCount { get; private set; }
+        public SharpLinkEndpointOutcome LastOutcome { get; private set; }
+
+        public SharpLinkEndpointAdmissionDecision TryAcquire(
+            in SharpLinkEndpointCandidate endpoint,
+            in RpcMethodDescriptor method)
+        {
+            AcquireCount++;
+            return endpoint.Endpoint.Id == "first"
+                ? new SharpLinkEndpointAdmissionDecision(false, Token: 0, RetryAfter: null)
+                : new SharpLinkEndpointAdmissionDecision(true, Token: 7, RetryAfter: null);
+        }
+
+        public void Report(in SharpLinkEndpointOutcome outcome, long token)
+        {
+            ReportCount++;
+            LastOutcome = outcome;
+            Ensure(token == 7, "admission token preserved");
+        }
+    }
+}

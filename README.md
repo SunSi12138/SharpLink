@@ -520,6 +520,10 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 0.7.5 静态多 endpoint：`doc/architecture-0.7.5.md`、`doc/performance-0.7.5.md`
 - 0.7.6 动态 endpoint、Resolver 与 DNS Discovery：`doc/architecture-0.7.6.md`
 - 0.7.6 本地性能证据：`doc/performance-0.7.6.md`
+- 0.7.7 logical call、attempt 与 retry：`doc/architecture-0.7.7.md`
+- 0.7.8 endpoint admission 与 circuit breaker：`doc/architecture-0.7.8.md`
+- 0.7.9 迁移、组合验证与 API freeze：`doc/migration-0.7.9.md`
+- 0.7.9 本地性能与组合 smoke：`doc/performance-0.7.9.md`
 - 0.6.10 性能与 Chaos：`doc/performance-0.6.10.md`、`doc/chaos-0.6.10.md`
 - 贡献指南：`CONTRIBUTING.md`
 - 更新日志：`CHANGELOG.md`

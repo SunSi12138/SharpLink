@@ -83,9 +83,40 @@ public static class SharpLinkTelemetry
         Meter.CreateCounter<long>("sharplink.admission.oneway.dropped", unit: "{call}");
     private static readonly UpDownCounter<long> AdmissionActivePartitions =
         Meter.CreateUpDownCounter<long>("sharplink.admission.partitions.active", unit: "{partition}");
+    private static readonly Counter<long> ClientAttempts =
+        Meter.CreateCounter<long>("sharplink.client.attempts", unit: "{attempt}");
+    private static readonly Counter<long> ClientRetries =
+        Meter.CreateCounter<long>("sharplink.client.retries", unit: "{retry}");
+    private static readonly Counter<long> EndpointAdmissionRejected =
+        Meter.CreateCounter<long>("sharplink.client.endpoint_admission.rejected", unit: "{attempt}");
+    private static readonly Counter<long> SelectionFailures =
+        Meter.CreateCounter<long>("sharplink.client.selection.failures", unit: "{failure}");
+    private static readonly Counter<long> BreakerOpen =
+        Meter.CreateCounter<long>("sharplink.client.breaker.open", unit: "{rejection}");
 
     internal static CallScope StartClientCall(RpcMethodDescriptor method)
         => StartCall(ClientActivitySource, ActivityKind.Client, "client", method, requestId: 0);
+
+    /// <summary>Starts telemetry for one physical attempt within a logical client call.</summary>
+    /// <remarks>
+    /// Attempt activities deliberately do not affect the logical call counters. This lets retry
+    /// diagnostics show every network attempt while the normal call metrics remain one-per-call.
+    /// </remarks>
+    internal static AttemptScope StartClientAttempt(RpcMethodDescriptor method, int attempt)
+    {
+        if (!ClientActivitySource.HasListeners())
+            return default;
+
+        var activity = ClientActivitySource.StartActivity("sharplink.rpc.attempt", ActivityKind.Client);
+        if (activity is null)
+            return default;
+        activity.SetTag("rpc.system", "sharplink");
+        activity.SetTag("rpc.sharplink.contract_id", method.ContractId);
+        activity.SetTag("rpc.sharplink.method_id", method.MethodId);
+        activity.SetTag("rpc.sharplink.method_kind", method.Kind.ToString());
+        activity.SetTag("rpc.sharplink.attempt", attempt);
+        return new AttemptScope(activity);
+    }
 
     internal static CallScope StartServerCall(RpcMethodDescriptor method, long requestId)
         => StartCall(ServerActivitySource, ActivityKind.Server, "server", method, requestId);
@@ -146,6 +177,31 @@ public static class SharpLinkTelemetry
             1,
             new KeyValuePair<string, object?>("sharplink.admission.scope", scope),
             new KeyValuePair<string, object?>("sharplink.admission.reason", reason));
+    }
+    internal static void RecordClientAttempt()
+    {
+        if (ClientAttempts.Enabled)
+            ClientAttempts.Add(1);
+    }
+    internal static void RecordClientRetry()
+    {
+        if (ClientRetries.Enabled)
+            ClientRetries.Add(1);
+    }
+    internal static void RecordEndpointAdmissionRejected(string reason)
+    {
+        if (EndpointAdmissionRejected.Enabled)
+            EndpointAdmissionRejected.Add(1, new KeyValuePair<string, object?>("sharplink.admission.reason", reason));
+    }
+    internal static void RecordSelectionFailure(string reason)
+    {
+        if (SelectionFailures.Enabled)
+            SelectionFailures.Add(1, new KeyValuePair<string, object?>("sharplink.selection.reason", reason));
+    }
+    internal static void RecordBreakerOpen()
+    {
+        if (BreakerOpen.Enabled)
+            BreakerOpen.Add(1);
     }
     internal static void RecordSharedMemoryConnection(string side, int capacity)
     {
@@ -355,6 +411,40 @@ public static class SharpLinkTelemetry
                     { "rpc.sharplink.status", status?.ToString() ?? "Ok" }
                 };
                 RequestDuration.Record(Stopwatch.GetElapsedTime(_started).TotalMilliseconds, tags);
+            }
+            _activity?.Dispose();
+        }
+    }
+
+    internal struct AttemptScope
+    {
+        private readonly Activity? _activity;
+        private bool _completed;
+
+        internal AttemptScope(Activity activity)
+        {
+            _activity = activity;
+        }
+
+        internal void Complete(Exception? exception = null)
+        {
+            if (_completed)
+                return;
+            _completed = true;
+            if (exception is null)
+            {
+                _activity?.SetStatus(ActivityStatusCode.Ok);
+            }
+            else
+            {
+                var status = exception switch
+                {
+                    SharpLinkException sharpLinkException => sharpLinkException.Code.ToString(),
+                    OperationCanceledException => SharpLinkErrorCode.Cancelled.ToString(),
+                    _ => SharpLinkErrorCode.Internal.ToString()
+                };
+                _activity?.SetStatus(ActivityStatusCode.Error, status);
+                _activity?.SetTag("error.type", exception.GetType().FullName);
             }
             _activity?.Dispose();
         }
