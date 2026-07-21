@@ -63,6 +63,7 @@ internal sealed partial class SharpLinkClient
                     return ValueTask.FromException(CreateConnectionClosedException("Client has stopped."));
                 if (ReadyConnectionCount != 0)
                     return ValueTask.CompletedTask;
+                _client.TransitionTo(SharpLinkConnectionState.Connecting);
                 _connectTask ??= ConnectInitialAsync(cancellationToken);
                 task = _connectTask;
             }
@@ -87,7 +88,11 @@ internal sealed partial class SharpLinkClient
                 }
                 var connection = SelectConnection(endpoints[selectedIndex]);
                 if (connection is not null)
+                {
+                    if (connection.ActiveCallCount != 0)
+                        EnsureExpansion(endpoints[selectedIndex]);
                     return connection;
+                }
                 excluded |= 1UL << selectedIndex;
             }
 
@@ -105,6 +110,8 @@ internal sealed partial class SharpLinkClient
                 PublishReadySnapshotLocked();
             RetireDrainingConnectionIfIdle(connection);
             EnsureReconnect(endpoint);
+            if (ReadyConnectionCount == 0)
+                _client.TransitionTo(SharpLinkConnectionState.Reconnecting);
         }
 
         public void RetireDrainingConnectionIfIdle(ClientConnection connection)
@@ -261,6 +268,40 @@ internal sealed partial class SharpLinkClient
             }
         }
 
+        private void EnsureExpansion(EndpointState endpoint)
+        {
+            lock (_gate)
+            {
+                if (Volatile.Read(ref _stopping) != 0 ||
+                    endpoint.ExpansionTask is { IsCompleted: false } ||
+                    TotalConnectionsLocked() >= _options.MaxConnections ||
+                    endpoint.Connections.Count + endpoint.ConnectingCount >= _options.MaxConnectionsPerEndpoint)
+                {
+                    return;
+                }
+
+                endpoint.ExpansionTask = ExpandAsync(endpoint);
+                _client.TrackBackgroundTask(endpoint.ExpansionTask);
+            }
+        }
+
+        private async Task ExpandAsync(EndpointState endpoint)
+        {
+            try
+            {
+                await ConnectOneAsync(endpoint, _client._shutdownCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
+            {
+            }
+            catch (Exception exception)
+            {
+                LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ExpandAsync), exception);
+                if (endpoint.ReadyConnections.Length == 0)
+                    EnsureReconnect(endpoint);
+            }
+        }
+
         private async Task ReconnectAsync(EndpointState endpoint)
         {
             var delayMilliseconds = 100;
@@ -343,6 +384,7 @@ internal sealed partial class SharpLinkClient
                 }
                 catch (Exception exception)
                 {
+                    _client._logger.LogError(exception, "SharpLink endpoint selector failed.");
                     throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "The endpoint selector failed.", exception);
                 }
             }
@@ -497,6 +539,7 @@ internal sealed partial class SharpLinkClient
             public ClientConnection[] ReadyConnections => Volatile.Read(ref _readyConnections);
             public int ConnectingCount { get; set; }
             public Task? ReconnectTask { get; set; }
+            public Task? ExpansionTask { get; set; }
             public int ActiveCallCount
             {
                 get
