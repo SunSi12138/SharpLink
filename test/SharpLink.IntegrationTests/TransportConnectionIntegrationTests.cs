@@ -1542,6 +1542,8 @@ public interface IConnectionBehaviorService : IService
     [NonCancellable]
     ValueTask<string> EchoAsync(string value);
     [NonCancellable]
+    ValueTask<string> GetEndpointIdAsync();
+    [NonCancellable]
     ValueTask<string> CreatePayloadAsync(int length);
     ValueTask<int> SlowAsync(int delayMs, CancellationToken cancellationToken = default);
     [NonCancellable]
@@ -1559,9 +1561,13 @@ public interface IConnectionBehaviorService : IService
 [RpcService]
 public sealed class ConnectionBehaviorService : IConnectionBehaviorService
 {
+    public string EndpointId { get; set; } = "default";
+
     public ValueTask<int> PingAsync(int value) => ValueTask.FromResult(value + 1);
 
     public ValueTask<string> EchoAsync(string value) => ValueTask.FromResult(value);
+
+    public ValueTask<string> GetEndpointIdAsync() => ValueTask.FromResult(EndpointId);
 
     public ValueTask<string> CreatePayloadAsync(int length)
         => ValueTask.FromResult(new string('x', length));

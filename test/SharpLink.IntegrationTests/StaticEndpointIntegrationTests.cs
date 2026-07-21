@@ -186,10 +186,49 @@ public sealed class StaticEndpointIntegrationTests
         }
     }
 
-    private static SharpLinkEndpoint Endpoint(string id, int port) => new()
+    [Test]
+    public async Task RoundRobinAndCustomAttributeSelectorsShouldChooseExpectedEndpoints()
+    {
+        await using var first = await TcpServerScope.StartAsync("east");
+        await using var second = await TcpServerScope.StartAsync("west");
+        var endpoints = new[]
+        {
+            Endpoint("first", first.Port, "east"),
+            Endpoint("second", second.Port, "west")
+        };
+
+        await using (var roundRobin = SharpClientBuilder.Create()
+                         .UseSerializer(MemoryPackCodec.Resolver)
+                         .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
+                         .UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin)
+                         .Build())
+        {
+            await roundRobin.ConnectAsync();
+            var service = roundRobin.Get<IConnectionBehaviorService>();
+            var ids = new[]
+            {
+                await service.GetEndpointIdAsync(),
+                await service.GetEndpointIdAsync(),
+                await service.GetEndpointIdAsync(),
+                await service.GetEndpointIdAsync()
+            };
+            Ensure(ids[0] != ids[1] && ids[0] == ids[2] && ids[1] == ids[3], "round robin endpoint order");
+        }
+
+        await using var custom = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
+            .UseEndpointSelector(new AttributeSelector("west"))
+            .Build();
+        await custom.ConnectAsync();
+        Ensure(await custom.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "west", "custom selector attributes");
+    }
+
+    private static SharpLinkEndpoint Endpoint(string id, int port, string? zone = null) => new()
     {
         Id = id,
-        Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), port)
+        Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), port),
+        Attributes = zone is null ? new Dictionary<string, string>() : new Dictionary<string, string> { ["zone"] = zone }
     };
 
     private static void Ensure(bool condition, string message)
@@ -233,12 +272,13 @@ public sealed class StaticEndpointIntegrationTests
 
         public int Port { get; }
 
-        public static Task<TcpServerScope> StartAsync()
+        public static Task<TcpServerScope> StartAsync(string endpointId = "default")
         {
             var builder = SharpLinkServerBuilder.Create()
                 .UseTcp(0, IPAddress.Loopback.ToString())
                 .UseSerializer(MemoryPackCodec.Resolver)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
+                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
+                .ReplaceService<IConnectionBehaviorService>(new ConnectionBehaviorService { EndpointId = endpointId });
             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
             return Task.FromResult(new TcpServerScope(builder.Build(), port));
         }
@@ -290,5 +330,21 @@ public sealed class StaticEndpointIntegrationTests
     private sealed class InvalidSelector : ISharpLinkEndpointSelector
     {
         public int Select(in SharpLinkEndpointSelectionContext context) => context.Count;
+    }
+
+    private sealed class AttributeSelector(string zone) : ISharpLinkEndpointSelector
+    {
+        public int Select(in SharpLinkEndpointSelectionContext context)
+        {
+            for (var index = 0; index < context.Count; index++)
+            {
+                if ((context.ExcludedMask & (1UL << index)) == 0 &&
+                    context[index].Endpoint.Attributes.TryGetValue("zone", out var value) && value == zone)
+                {
+                    return index;
+                }
+            }
+            return -1;
+        }
     }
 }
