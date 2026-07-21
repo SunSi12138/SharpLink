@@ -334,6 +334,42 @@ public sealed class StaticEndpointIntegrationTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task StopShouldWaitForInitialSiblingDialsBeforeDisposingFactories()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        var blocking = new BlockingConnectFactory();
+        var sockets = SharpLinkTransportFactories.Sockets();
+        var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpoints(
+                [Endpoint("first", first.Port), Endpoint("blocked", GetUnusedTcpPort())],
+                endpoint => endpoint.Id == "first" ? sockets(endpoint) : blocking)
+            .Build();
+
+        try
+        {
+            var connect = client.ConnectAsync().AsTask();
+            await blocking.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+            await connect.WaitAsync(TimeSpan.FromSeconds(2));
+
+            var stop = client.StopAsync().AsTask();
+            await Task.Delay(100);
+            Ensure(!stop.IsCompleted, "StopAsync must wait for an in-flight initial sibling dial");
+
+            blocking.Release();
+            await stop.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(((SharpLinkClient)client).State == SharpLinkConnectionState.Stopped,
+                "cluster must stop after the sibling dial finishes");
+        }
+        finally
+        {
+            blocking.Release();
+            await client.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task RoundRobinAndCustomAttributeSelectorsShouldChooseExpectedEndpoints()
     {
         await using var first = await TcpServerScope.StartAsync("east");
@@ -596,6 +632,30 @@ public sealed class StaticEndpointIntegrationTests
     private sealed class InvalidSelector : ISharpLinkEndpointSelector
     {
         public int Select(in SharpLinkEndpointSelectionContext context) => context.Count;
+    }
+
+    private sealed class BlockingConnectFactory : IClientTransportFactory
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Entered => _entered.Task;
+
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            _entered.TrySetResult();
+            return AwaitReleaseAsync();
+        }
+
+        public void Release() => _release.TrySetResult();
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        private async ValueTask<ITransportConnection> AwaitReleaseAsync()
+        {
+            await _release.Task.ConfigureAwait(false);
+            throw new InvalidOperationException("test initial dial completed after release");
+        }
     }
 
     private sealed class AttributeSelector(string zone) : ISharpLinkEndpointSelector

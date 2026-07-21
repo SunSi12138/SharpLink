@@ -15,6 +15,7 @@ internal sealed partial class SharpLinkClient
         private readonly EndpointState[] _endpoints;
         private readonly Lock _gate = new();
         private readonly HashSet<ClientConnection> _retiringConnections = [];
+        private readonly HashSet<Task> _initialDialTasks = [];
         private EndpointState[] _readyEndpoints = [];
         private EndpointSelectionSnapshot _selectionSnapshot = EndpointSelectionSnapshot.Empty;
         private Task? _connectTask;
@@ -223,7 +224,10 @@ internal sealed partial class SharpLinkClient
                     remaining.Remove(completed);
                     lastFailure ??= await completed.ConfigureAwait(false);
                     if (ReadyConnectionCount != 0)
+                    {
+                        TrackInitialDials(remaining);
                         return;
+                    }
                 }
             }
 
@@ -236,6 +240,15 @@ internal sealed partial class SharpLinkClient
                     SharpLinkErrorCode.Unavailable,
                     "No static SharpLink endpoint could connect.",
                     lastFailure);
+            }
+        }
+
+        private void TrackInitialDials(IEnumerable<Task<Exception?>> attempts)
+        {
+            lock (_gate)
+            {
+                foreach (var attempt in attempts)
+                    _initialDialTasks.Add(attempt);
             }
         }
 
@@ -636,13 +649,9 @@ internal sealed partial class SharpLinkClient
             Interlocked.Exchange(ref _stopping, 1);
             var cleanupFailures = new List<Exception>();
             ClientConnection[] connections;
-            Task[] workers;
             lock (_gate)
             {
                 connections = [.. _endpoints.SelectMany(static endpoint => endpoint.Connections)];
-                workers = [.. _endpoints
-                    .SelectMany(static endpoint => new[] { endpoint.ReconnectTask, endpoint.ExpansionTask })
-                    .Where(static task => task is not null)!];
                 for (var index = 0; index < _endpoints.Length; index++)
                     _endpoints[index].Connections.Clear();
                 _retiringConnections.Clear();
@@ -656,15 +665,45 @@ internal sealed partial class SharpLinkClient
                 try { await DisposeConnectionAsync(connections[index]).ConfigureAwait(false); }
                 catch (Exception exception) { cleanupFailures.Add(exception); }
             }
-            try { await Task.WhenAll(workers).ConfigureAwait(false); }
-            catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested) { }
-            catch (Exception exception) { cleanupFailures.Add(exception); }
+            await WaitForWorkersAsync(cleanupFailures).ConfigureAwait(false);
             for (var index = 0; index < _endpoints.Length; index++)
             {
                 try { await _endpoints[index].Configuration.TransportFactory.DisposeAsync().ConfigureAwait(false); }
                 catch (Exception exception) { cleanupFailures.Add(exception); }
             }
             ThrowCleanupFailures(cleanupFailures);
+        }
+
+        private async Task WaitForWorkersAsync(List<Exception> cleanupFailures)
+        {
+            while (true)
+            {
+                Task[] workers;
+                lock (_gate)
+                {
+                    var pending = new HashSet<Task>();
+                    if (_connectTask is { IsCompleted: false })
+                        pending.Add(_connectTask);
+                    foreach (var endpoint in _endpoints)
+                    {
+                        if (endpoint.ReconnectTask is { IsCompleted: false })
+                            pending.Add(endpoint.ReconnectTask);
+                        if (endpoint.ExpansionTask is { IsCompleted: false })
+                            pending.Add(endpoint.ExpansionTask);
+                    }
+                    foreach (var attempt in _initialDialTasks)
+                        if (!attempt.IsCompleted)
+                            pending.Add(attempt);
+                    workers = [.. pending];
+                }
+
+                if (workers.Length == 0)
+                    return;
+
+                try { await Task.WhenAll(workers).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested) { }
+                catch (Exception exception) { cleanupFailures.Add(exception); }
+            }
         }
 
         private static void ThrowCleanupFailures(List<Exception> failures)

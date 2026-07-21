@@ -81,6 +81,48 @@ public class StaticEndpointBuilderTests
     }
 
     [Test]
+    public async Task ClusterBuildCleanupShouldReleaseEveryFactoryWhenOneDisposalFails()
+    {
+        var throwing = new TrackingFactory(throwOnDispose: true);
+        var remaining = new TrackingFactory();
+        await EnsureThrows<AggregateException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseEndpoints(
+                    [Endpoint("first", 5001), Endpoint("second", 5002), Endpoint("duplicate", 5003)],
+                    endpoint => endpoint.Id switch
+                    {
+                        "first" => throwing,
+                        "second" => remaining,
+                        _ => remaining
+                    })
+                .Build();
+            return Task.CompletedTask;
+        });
+
+        Ensure(throwing.DisposeCount == 1, "throwing factory must be attempted once");
+        Ensure(remaining.DisposeCount == 1, "later factory cleanup must run after an earlier disposal failure");
+    }
+
+    [Test]
+    public async Task ClusterStopShouldReachStoppedWhenFactoryCleanupFails()
+    {
+        var throwing = new TrackingFactory(throwOnDispose: true);
+        var remaining = new TrackingFactory();
+        var client = SharpClientBuilder.Create()
+            .UseEndpoints(
+                [Endpoint("first", 5001), Endpoint("second", 5002)],
+                endpoint => endpoint.Id == "first" ? throwing : remaining)
+            .Build();
+
+        await EnsureThrows<InvalidOperationException>(() => client.StopAsync().AsTask());
+
+        Ensure(((SharpLinkClient)client).State == SharpLinkConnectionState.Stopped,
+            "outer client cleanup must reach Stopped after cluster cleanup fails");
+        Ensure(remaining.DisposeCount == 1, "cluster cleanup must still dispose later factories");
+    }
+
+    [Test]
     public async Task BuilderShouldRejectConflictingModesAndOptions()
     {
         await EnsureThrows<InvalidOperationException>(() =>
@@ -232,7 +274,7 @@ public class StaticEndpointBuilderTests
             throw new Exception(message);
     }
 
-    private sealed class TrackingFactory : IClientTransportFactory
+    private sealed class TrackingFactory(bool throwOnDispose = false) : IClientTransportFactory
     {
         private int _disposeCount;
         public int DisposeCount => Volatile.Read(ref _disposeCount);
@@ -241,6 +283,8 @@ public class StaticEndpointBuilderTests
         public ValueTask DisposeAsync()
         {
             Interlocked.Increment(ref _disposeCount);
+            if (throwOnDispose)
+                return ValueTask.FromException(new InvalidOperationException("test disposal failure"));
             return ValueTask.CompletedTask;
         }
     }

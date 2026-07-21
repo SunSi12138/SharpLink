@@ -317,11 +317,13 @@ internal sealed partial class SharpLinkClient
             }
 
             Dictionary<string, EndpointState> previous;
+            HashSet<IClientTransportFactory> ownedFactories;
             lock (_gate)
             {
                 if (Volatile.Read(ref _stopping) != 0 || snapshot.Version <= _lastAcceptedVersion)
                     return false;
                 previous = new Dictionary<string, EndpointState>(_currentById, StringComparer.Ordinal);
+                ownedFactories = GetOwnedFactoriesLocked();
             }
 
             var created = new Dictionary<string, EndpointState>(StringComparer.Ordinal);
@@ -340,7 +342,9 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
-                await DisposeCreatedFactoriesAsync(created.Values).ConfigureAwait(false);
+                lock (_gate)
+                    ownedFactories.UnionWith(GetOwnedFactoriesLocked());
+                await DisposeCreatedFactoriesAsync(created.Values, ownedFactories).ConfigureAwait(false);
                 LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ApplySnapshotAsync), exception);
                 return false;
             }
@@ -355,11 +359,13 @@ internal sealed partial class SharpLinkClient
                 if (Volatile.Read(ref _stopping) != 0 || snapshot.Version <= _lastAcceptedVersion)
                 {
                     abandoned = true;
+                    ownedFactories.UnionWith(GetOwnedFactoriesLocked());
                     current = [];
                 }
                 else if (!HasUniqueFactoryOwnershipLocked(created.Values))
                 {
                     rejectedForFactoryOwnership = true;
+                    ownedFactories.UnionWith(GetOwnedFactoriesLocked());
                     current = [];
                 }
                 else
@@ -404,7 +410,7 @@ internal sealed partial class SharpLinkClient
 
             if (abandoned || rejectedForFactoryOwnership)
             {
-                await DisposeCreatedFactoriesAsync(created.Values).ConfigureAwait(false);
+                await DisposeCreatedFactoriesAsync(created.Values, ownedFactories).ConfigureAwait(false);
                 if (rejectedForFactoryOwnership)
                 {
                     LogClientBackgroundLoopUnhandledException(
@@ -944,15 +950,21 @@ internal sealed partial class SharpLinkClient
 
         private bool HasUniqueFactoryOwnershipLocked(IEnumerable<EndpointState> created)
         {
-            var factories = new HashSet<IClientTransportFactory>(ReferenceEqualityComparer.Instance);
-            for (var index = 0; index < _allStates.Count; index++)
-                factories.Add(_allStates[index].Configuration.TransportFactory);
+            var factories = GetOwnedFactoriesLocked();
             foreach (var state in created)
             {
                 if (!factories.Add(state.Configuration.TransportFactory))
                     return false;
             }
             return true;
+        }
+
+        private HashSet<IClientTransportFactory> GetOwnedFactoriesLocked()
+        {
+            var factories = new HashSet<IClientTransportFactory>(ReferenceEqualityComparer.Instance);
+            for (var index = 0; index < _allStates.Count; index++)
+                factories.Add(_allStates[index].Configuration.TransportFactory);
+            return factories;
         }
 
         private static bool HasSameMembership(EndpointState[] left, EndpointState[] right)
@@ -977,13 +989,16 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException) { }
         }
 
-        private static async Task DisposeCreatedFactoriesAsync(IEnumerable<EndpointState> states)
+        private static async Task DisposeCreatedFactoriesAsync(
+            IEnumerable<EndpointState> states,
+            ISet<IClientTransportFactory>? preservedFactories = null)
         {
             var factories = new HashSet<IClientTransportFactory>(ReferenceEqualityComparer.Instance);
             foreach (var state in states)
             {
-                if (factories.Add(state.Configuration.TransportFactory))
-                    await DisposeFactoryQuietlyAsync(state.Configuration.TransportFactory).ConfigureAwait(false);
+                var factory = state.Configuration.TransportFactory;
+                if (factories.Add(factory) && (preservedFactories is null || !preservedFactories.Contains(factory)))
+                    await DisposeFactoryQuietlyAsync(factory).ConfigureAwait(false);
             }
         }
 

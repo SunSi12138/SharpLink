@@ -396,11 +396,18 @@ public class SharpClientBuilder
                 }
                 return CreateClusterClient(configurations, cluster, runtimeContext, protocolOptions);
             }
-            catch
+            catch (Exception buildException)
             {
+                List<Exception>? cleanupFailures = null;
                 foreach (var factory in ownedFactories)
-                    factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-                throw;
+                {
+                    try { factory.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+                    catch (Exception exception) { (cleanupFailures ??= []).Add(exception); }
+                }
+                if (cleanupFailures is null)
+                    throw;
+                cleanupFailures.Insert(0, buildException);
+                throw new AggregateException(cleanupFailures);
             }
         }
 

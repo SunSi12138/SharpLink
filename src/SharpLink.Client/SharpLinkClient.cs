@@ -246,22 +246,40 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
 
     private async Task StopStaticClusterCoreAsync()
     {
+        var cleanupFailures = new List<Exception>();
         lock (_registryGate)
             TransitionTo(SharpLinkConnectionState.Draining);
         _shutdownCts.Cancel();
         Volatile.Read(ref _readySignal).TrySetResult(true);
-        await _cluster!.StopAsync().ConfigureAwait(false);
-        await WaitForBackgroundTasksAsync().ConfigureAwait(false);
+        try { await _cluster!.StopAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
+        try { await WaitForBackgroundTasksAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
 
         Assembly[] dynamicAssemblies;
         lock (_registryGate)
             dynamicAssemblies = [.. _dynamicModules.Keys];
         for (var index = 0; index < dynamicAssemblies.Length; index++)
-            await UnregisterAssemblyAsync(dynamicAssemblies[index], TimeSpan.Zero).ConfigureAwait(false);
+        {
+            try { await UnregisterAssemblyAsync(dynamicAssemblies[index], TimeSpan.Zero).ConfigureAwait(false); }
+            catch (Exception exception) { cleanupFailures.Add(exception); }
+        }
 
-        _reconnectSignal.Dispose();
-        _shutdownCts.Dispose();
+        try { _reconnectSignal.Dispose(); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
+        try { _shutdownCts.Dispose(); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
         TransitionTo(SharpLinkConnectionState.Stopped);
+        ThrowStopCleanupFailures(cleanupFailures);
+    }
+
+    private static void ThrowStopCleanupFailures(List<Exception> failures)
+    {
+        if (failures.Count == 0)
+            return;
+        if (failures.Count == 1)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        throw new AggregateException(failures);
     }
 
     private async Task IgnoreExpectedStopExceptionAsync(Task? task)

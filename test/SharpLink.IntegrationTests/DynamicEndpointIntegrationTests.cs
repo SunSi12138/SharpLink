@@ -126,6 +126,50 @@ public sealed class DynamicEndpointIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task RejectedDynamicFactoryReuseMustKeepTheLastGoodFactoryAlive()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var replacement = await TcpServerScope.StartAsync("replacement");
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("first", first.Port, "blue")]));
+        var sockets = SharpLinkTransportFactories.Sockets();
+        TrackingTransportFactory? factory = null;
+        var factoryCreates = 0;
+        var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpointResolver(
+                resolver,
+                endpoint =>
+                {
+                    Interlocked.Increment(ref factoryCreates);
+                    return factory ??= new TrackingTransportFactory(sockets(endpoint));
+                })
+            .Build();
+
+        try
+        {
+            await client.ConnectAsync();
+            var service = client.Get<IConnectionBehaviorService>();
+            Ensure(await service.GetEndpointIdAsync() == "first", "initial dynamic endpoint");
+
+            resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("replacement", replacement.Port, "green")]));
+            await WaitUntilAsync(() => Volatile.Read(ref factoryCreates) == 2, TimeSpan.FromSeconds(3));
+
+            Ensure(factory is not null && factory.DisposeCount == 0,
+                "rejected snapshot must not dispose the last-good factory reference");
+            Ensure(await service.GetEndpointIdAsync() == "first",
+                "rejected snapshot must retain the last-good endpoint");
+        }
+        finally
+        {
+            await client.DisposeAsync();
+        }
+
+        Ensure(factory is not null && factory.DisposeCount == 1,
+            "last-good factory must be released exactly once during client stop");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task ResolverWatchEndAndFailureShouldRetryAndRetainTheLastGoodTopology()
     {
         await using var first = await TcpServerScope.StartAsync("first");
@@ -234,6 +278,22 @@ public sealed class DynamicEndpointIntegrationTests
             if (Interlocked.Increment(ref _disposeCount) == 1)
                 _snapshots.Writer.TryComplete();
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class TrackingTransportFactory(IClientTransportFactory inner) : IClientTransportFactory
+    {
+        private int _disposeCount;
+
+        public int DisposeCount => Volatile.Read(ref _disposeCount);
+
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => inner.ConnectAsync(cancellationToken);
+
+        public async ValueTask DisposeAsync()
+        {
+            Interlocked.Increment(ref _disposeCount);
+            await inner.DisposeAsync().ConfigureAwait(false);
         }
     }
 
