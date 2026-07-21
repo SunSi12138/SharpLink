@@ -370,6 +370,41 @@ public sealed class StaticEndpointIntegrationTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task FailedInitialSiblingDialShouldContinueFillingMinReadyEndpoints()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var recovered = await TcpServerScope.StartAsync("recovered");
+        var sockets = SharpLinkTransportFactories.Sockets();
+        var delayedFailure = new DeferredFailOnceFactory(sockets(Endpoint("recovered", recovered.Port)));
+        await using var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpoints(
+                [Endpoint("first", first.Port), Endpoint("recovered", recovered.Port)],
+                endpoint => endpoint.Id == "recovered" ? delayedFailure : sockets(endpoint))
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        var connect = client.ConnectAsync().AsTask();
+        await delayedFailure.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+        await connect.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 1,
+            "first endpoint should make initial connect available before the sibling finishes");
+
+        delayedFailure.FailInitialConnect();
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
+        Ensure(delayedFailure.ConnectCount >= 2,
+            "failed initial sibling must be retried to restore the configured minimum ready count");
+        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() is "first" or "recovered",
+            "recovered static endpoint topology should remain usable");
+    }
+
+    [Test]
     public async Task RoundRobinAndCustomAttributeSelectorsShouldChooseExpectedEndpoints()
     {
         await using var first = await TcpServerScope.StartAsync("east");
@@ -659,6 +694,34 @@ public sealed class StaticEndpointIntegrationTests
         {
             await _release.Task.ConfigureAwait(false);
             throw new InvalidOperationException("test initial dial completed after release");
+        }
+    }
+
+    private sealed class DeferredFailOnceFactory(IClientTransportFactory inner) : IClientTransportFactory
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _connectCount;
+
+        public Task Entered => _entered.Task;
+        public int ConnectCount => Volatile.Read(ref _connectCount);
+
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _connectCount) != 1)
+                return inner.ConnectAsync(cancellationToken);
+            _entered.TrySetResult();
+            return FailAfterReleaseAsync();
+        }
+
+        public void FailInitialConnect() => _release.TrySetResult();
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+
+        private async ValueTask<ITransportConnection> FailAfterReleaseAsync()
+        {
+            await _release.Task.ConfigureAwait(false);
+            throw new InvalidOperationException("test initial sibling failure");
         }
     }
 

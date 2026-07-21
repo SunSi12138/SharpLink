@@ -282,6 +282,43 @@ public sealed class DynamicEndpointIntegrationTests
         await WaitUntilAsync(async () => await service.GetEndpointIdAsync() == "second", TimeSpan.FromSeconds(3));
         Ensure(((SharpLinkClient)client).ReadyConnectionCount == 1,
             "replacement must become ready even when retired streams exceed their budget");
+        Ensure(await stream.MoveNextAsync() && stream.Current == 1,
+            "budget pressure must not abort the already accepted stream");
+        Ensure(await stream.MoveNextAsync() && stream.Current == 2,
+            "retired stream must remain bound through its final item");
+        Ensure(!await stream.MoveNextAsync(), "retired stream completion after replacement");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task DynamicStopShouldWaitForAnInitialConnectThatIgnoresCancellation()
+    {
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("blocked", 1, "red")]));
+        var blocking = new BlockingConnectFactory();
+        var client = SharpClientBuilder.Create()
+            .UseEndpointResolver(resolver, _ => blocking)
+            .Build();
+
+        try
+        {
+            var connect = client.ConnectAsync().AsTask();
+            await blocking.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+
+            var stop = client.StopAsync().AsTask();
+            await Task.Delay(100);
+            Ensure(!stop.IsCompleted, "dynamic stop must wait for the initial connect worker");
+
+            blocking.Release();
+            await CaptureCancellation(connect);
+            await stop.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(((SharpLinkClient)client).State == SharpLinkConnectionState.Stopped,
+                "dynamic cluster must stop after the initial connect worker exits");
+        }
+        finally
+        {
+            blocking.Release();
+            await client.DisposeAsync();
+        }
     }
 
     [Test]
@@ -382,6 +419,18 @@ public sealed class DynamicEndpointIntegrationTests
         }
     }
 
+    private static async Task CaptureCancellation(Task task)
+    {
+        try
+        {
+            await task;
+            throw new Exception("expected cancellation");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
     private sealed class ControllableResolver(SharpLinkEndpointSnapshot initial) : ISharpLinkEndpointResolver
     {
         private readonly Channel<SharpLinkEndpointSnapshot> _snapshots = Channel.CreateUnbounded<SharpLinkEndpointSnapshot>();
@@ -444,6 +493,30 @@ public sealed class DynamicEndpointIntegrationTests
         {
             Interlocked.Increment(ref _disposeCount);
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class BlockingConnectFactory : IClientTransportFactory
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Entered => _entered.Task;
+
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            _entered.TrySetResult();
+            return AwaitReleaseAsync();
+        }
+
+        public void Release() => _release.TrySetResult();
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        private async ValueTask<ITransportConnection> AwaitReleaseAsync()
+        {
+            await _release.Task.ConfigureAwait(false);
+            throw new OperationCanceledException();
         }
     }
 

@@ -245,10 +245,30 @@ internal sealed partial class SharpLinkClient
 
         private void TrackInitialDials(IEnumerable<Task<Exception?>> attempts)
         {
+            var tracked = attempts.ToArray();
             lock (_gate)
             {
-                foreach (var attempt in attempts)
+                foreach (var attempt in tracked)
                     _initialDialTasks.Add(attempt);
+            }
+            foreach (var attempt in tracked)
+                _client.TrackBackgroundTask(ObserveInitialDialAsync(attempt));
+        }
+
+        private async Task ObserveInitialDialAsync(Task<Exception?> attempt)
+        {
+            try
+            {
+                if (await attempt.ConfigureAwait(false) is not null && Volatile.Read(ref _stopping) == 0)
+                    EnsureMinimumReadyEndpoints();
+            }
+            catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested)
+            {
+            }
+            finally
+            {
+                lock (_gate)
+                    _initialDialTasks.Remove(attempt);
             }
         }
 

@@ -50,6 +50,25 @@ public sealed class DynamicEndpointResolverTests
     }
 
     [Test]
+    public async Task DnsResolverShouldBoundGeneratedIdsForAValidLongHostname()
+    {
+        var label = new string('a', 63);
+        var host = $"{label}.{label}.{label}.{new string('a', 61)}";
+        var query = new TestDnsQuery { Addresses = [IPAddress.Loopback] };
+        await using var resolver = new SharpLinkDnsEndpointResolver(
+            host,
+            5001,
+            new SharpLinkDnsResolverOptions(),
+            query);
+
+        var snapshot = await resolver.ResolveAsync(CancellationToken.None);
+
+        Ensure(snapshot.Endpoints.Count == 1, "long-host DNS endpoint count");
+        Ensure(snapshot.Endpoints[0].Id.Length <= 256, "long-host DNS endpoint ID limit");
+        Ensure(snapshot.Endpoints[0].Authority == host, "long-host DNS authority preservation");
+    }
+
+    [Test]
     public async Task DynamicBuilderShouldOwnResolverAndRejectFixedTransportConflict()
     {
         var resolver = new TrackingResolver();

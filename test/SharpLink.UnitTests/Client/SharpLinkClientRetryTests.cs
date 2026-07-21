@@ -1,4 +1,5 @@
 using System.Threading;
+using System.Diagnostics;
 using SharpLink.Client;
 using SharpLink.Sdk;
 
@@ -176,6 +177,33 @@ public class SharpLinkClientRetryTests
         Ensure(policy.LastOutcome.Kind == SharpLinkEndpointOutcomeKind.Success, "selected endpoint report outcome");
         Ensure(!await first.Connection.TryWaitForSentPacket(
             ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(100)), "rejected endpoint has no request");
+    }
+
+    [Test]
+    public async Task RetryShouldHonorAdmissionRetryAfterBeforeTheNextAttempt()
+    {
+        var transport = new TestClientTransportFactory();
+        var admission = new RejectOnceWithRetryAfterPolicy(TimeSpan.FromMilliseconds(100));
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            fixedEndpoint: Endpoint("retry", 5001),
+            retryOptions: RetryOptions(2, TimeSpan.Zero),
+            endpointAdmissionPolicy: admission);
+        await client.ConnectAsync();
+
+        var started = Stopwatch.GetTimestamp();
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        Ensure(Stopwatch.GetElapsedTime(started) >= TimeSpan.FromMilliseconds(75),
+            "retry must wait for the admission retry delay rather than consume the next attempt immediately");
+        await transport.Connection.InjectPacketAsync(
+            ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((long)request.RequestId));
+
+        Ensure(await invocation == 0, "admitted retry result");
+        Ensure(admission.AcquireCount == 2, "admission should be retried once after its requested delay");
+        Ensure(admission.ReportCount == 1, "only the admitted retry should report");
     }
 
     [Test]
@@ -383,6 +411,28 @@ public class SharpLinkClientRetryTests
             ReportCount++;
             LastOutcome = outcome;
             Ensure(token == 7, "admission token preserved");
+        }
+    }
+
+    private sealed class RejectOnceWithRetryAfterPolicy(TimeSpan retryAfter) : ISharpLinkEndpointAdmissionPolicy
+    {
+        public int AcquireCount { get; private set; }
+        public int ReportCount { get; private set; }
+
+        public SharpLinkEndpointAdmissionDecision TryAcquire(
+            in SharpLinkEndpointCandidate endpoint,
+            in RpcMethodDescriptor method)
+        {
+            AcquireCount++;
+            return AcquireCount == 1
+                ? new SharpLinkEndpointAdmissionDecision(false, Token: 0, RetryAfter: retryAfter)
+                : new SharpLinkEndpointAdmissionDecision(true, Token: 1, RetryAfter: null);
+        }
+
+        public void Report(in SharpLinkEndpointOutcome outcome, long token)
+        {
+            ReportCount++;
+            Ensure(token == 1, "admitted retry token");
         }
     }
 }

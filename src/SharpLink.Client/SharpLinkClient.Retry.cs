@@ -76,12 +76,15 @@ internal sealed partial class SharpLinkClient
                         SharpLinkErrorCode.FailedPrecondition,
                         "The retry policy returned a negative delay.");
                 }
-                if (decision.Delay == TimeSpan.Zero)
+                var delay = decision.Delay;
+                if (outcome.RetryAfter is { } admissionDelay && admissionDelay > delay)
+                    delay = admissionDelay;
+                if (delay == TimeSpan.Zero)
                     continue;
 
-                if (control.Deadline is { } deadline && DateTimeOffset.UtcNow + decision.Delay >= deadline)
+                if (control.Deadline is { } deadline && DateTimeOffset.UtcNow + delay >= deadline)
                     throw CreateDeadlineExceededException();
-                await Task.Delay(decision.Delay, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
         }
 

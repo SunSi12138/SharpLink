@@ -283,7 +283,7 @@ public sealed class SharpLinkDnsEndpointResolver : ISharpLinkEndpointResolver
                 var value = values[index];
                 endpoints[index] = new SharpLinkEndpoint
                 {
-                    Id = $"dns:{_host}:{_port}:{value.Key}",
+                    Id = $"dns:{GetHostHash(_host)}:{_port}:{value.Key}",
                     Address = new SharpLinkTcpAddress(value.Address.ToString(), _port),
                     Authority = _host
                 };
@@ -294,6 +294,10 @@ public sealed class SharpLinkDnsEndpointResolver : ISharpLinkEndpointResolver
             return (snapshot, true);
         }
     }
+
+    private static string GetHostHash(string host)
+        => Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(host)).AsSpan(0, 16));
 
     private TimeSpan GetRefreshDelay()
     {
