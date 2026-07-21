@@ -406,6 +406,35 @@ public sealed class StaticEndpointIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task StaticReconnectShouldProbeHealthyEndpointsAfterAFailingEndpoint()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        await using var second = await TcpServerScope.StartAsync("second");
+        var failing = new FailingConnectFactory();
+        var sockets = SharpLinkTransportFactories.Sockets();
+        await using var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpoints(
+                [Endpoint("bad", 1), Endpoint("first", first.Port), Endpoint("second", second.Port)],
+                endpoint => endpoint.Id == "bad" ? failing : sockets(endpoint))
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        await client.ConnectAsync();
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
+
+        Ensure(failing.ConnectCount != 0, "the failing endpoint should have been probed");
+        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 2,
+            "a persistently failing endpoint must not monopolize the static ready target");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task InitialStaticConnectShouldContinueFillingTargetsBeyondTheFirstBatch()
     {
         await using var first = await TcpServerScope.StartAsync("first");
@@ -758,6 +787,21 @@ public sealed class StaticEndpointIntegrationTests
             await _release.Task.ConfigureAwait(false);
             throw new InvalidOperationException("test initial sibling failure");
         }
+    }
+
+    private sealed class FailingConnectFactory : IClientTransportFactory
+    {
+        private int _connectCount;
+
+        public int ConnectCount => Volatile.Read(ref _connectCount);
+
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _connectCount);
+            return ValueTask.FromException<ITransportConnection>(new InvalidOperationException("test transport failure"));
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class AttributeSelector(string zone) : ISharpLinkEndpointSelector

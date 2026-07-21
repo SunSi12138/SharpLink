@@ -715,6 +715,9 @@ internal sealed partial class SharpLinkClient
                 catch (Exception exception)
                 {
                     LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ReconnectAsync), exception);
+                    // This worker remains responsible for eventually retrying its endpoint, but it must not
+                    // monopolize a missing ready slot while another endpoint could satisfy the target.
+                    EnsureMinimumReadyEndpoints();
                     delayMilliseconds = Math.Min(delayMilliseconds * 2, 5000);
                 }
             }

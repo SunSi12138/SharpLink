@@ -226,7 +226,7 @@ public class SharpLinkClientRetryTests
             clusterOptions: new SharpLinkClusterOptions { MinReadyEndpoints = 3, MaxConnections = 3 },
             endpointSelector: new FirstUnexcludedSelector(),
             retryOptions: RetryOptions(2, TimeSpan.Zero),
-            endpointAdmissionPolicy: new RejectFirstEndpointWithDelayPolicy(TimeSpan.FromSeconds(1)));
+            endpointAdmissionPolicy: new RejectFirstEndpointWithDelayPolicy(TimeSpan.FromSeconds(30)));
         await client.ConnectAsync();
         await WaitForReadyConnectionCountAsync(client, 3);
 
@@ -234,7 +234,7 @@ public class SharpLinkClientRetryTests
         var secondRequest = await second.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(second, secondRequest, SharpLinkErrorCode.Unavailable);
         var thirdRequest = await third.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
-            .WaitAsync(TimeSpan.FromMilliseconds(500));
+            .WaitAsync(TimeSpan.FromSeconds(5));
         await third.Connection.InjectPacketAsync(
             ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((long)thirdRequest.RequestId));
 

@@ -22,6 +22,7 @@ internal sealed partial class SharpLinkClient
         private Task? _stopTask;
         private int _roundRobinCursor;
         private int _leastPendingCursor;
+        private int _reconnectCursor;
         private int _stopping;
 
         private int TargetReadyEndpointCount => Math.Min(_options.MinReadyEndpoints, _endpoints.Length);
@@ -395,8 +396,10 @@ internal sealed partial class SharpLinkClient
                 var readyCount = Volatile.Read(ref _readyEndpoints).Length;
                 var availableCapacity = _options.MaxConnections - TotalConnectionsLocked();
                 var remaining = Math.Min(TargetReadyEndpointCount - readyCount, availableCapacity);
-                for (var index = 0; remaining > 0 && index < _endpoints.Length; index++)
+                var start = unchecked((uint)Interlocked.Increment(ref _reconnectCursor));
+                for (var offset = 0; remaining > 0 && offset < _endpoints.Length; offset++)
                 {
+                    var index = (int)((start + (uint)offset) % (uint)_endpoints.Length);
                     var endpoint = _endpoints[index];
                     if (endpoint.ReadyConnections.Length != 0 ||
                         endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount != 0 ||
@@ -486,6 +489,9 @@ internal sealed partial class SharpLinkClient
                 catch (Exception exception)
                 {
                     LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ReconnectAsync), exception);
+                    // A failing endpoint keeps its own backoff, while the coordinator probes another
+                    // candidate that can still satisfy MinReadyEndpoints.
+                    EnsureMinimumReadyEndpoints();
                     delayMilliseconds = Math.Min(delayMilliseconds * 2, 5000);
                 }
             }
