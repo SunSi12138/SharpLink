@@ -7,7 +7,7 @@
     </PropertyGroup>
     <!-- Nuget包信息 -->
     <PropertyGroup>
-        <Version>0.7.4</Version>
+        <Version>0.7.5</Version>
         <Authors>sunsi</Authors>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>

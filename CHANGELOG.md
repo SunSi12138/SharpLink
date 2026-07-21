@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-07-21
+
+### 新增
+
+- Client 新增不可变的 `SharpLinkEndpoint`、显式传输地址和 transport factory 注册模型；`UseEndpoint`、`UseEndpoints`、`UseCluster` 及四种内置负载均衡策略可在不影响旧单端点用法的前提下构建静态端点集群。
+- 静态集群支持 TCP（hostname/IPv4/IPv6）、Unix Domain Socket、Named Pipe、Shared Memory 和既有 Anonymous Pipe；端点属性可传给自定义选择器。
+- 集群按端点独立维护连接、重连和健康状态，初始连接受 `MaxConnections` 与并行度上限约束；支持最少就绪端点、LeastPending、P2C、Random、RoundRobin 与自定义选择器。
+
+### 变更
+
+- `GoAway`、Stop 和 Dispose 进入排空流程后，新调用立即选择仍健康的端点；长 Unary 和流式调用在预算内继续完成，超出独立 retiring budget 时才被定点终止。
+- 单个静态端点继续折叠为既有固定连接快速路径；多端点的成员快照仅在就绪成员增减时重建，调用路径仅读取原子快照和实时计数。
+- Protocol v2 wire format、默认传输语义和现有公共配置保持兼容，未引入新的 NuGet 依赖。
+
+### 测试与性能
+
+- 覆盖多传输、地址族、故障/重连、GoAway 排空、所有选择策略、TLS、包使用与 NativeAOT；固定 TCP Unary 的五轮本地 A/B 中，吞吐中位数为基线的 100.27%，P99 为 104.48%，BenchmarkDotNet 分配保持 352 B/op。
+
 ## [0.7.4] - 2026-07-20
 
 ### 新增
