@@ -91,7 +91,7 @@ public readonly record struct ProtocolV2HandshakeRequest(
     int StreamReceiveWindowBytes,
     int ConnectionReceiveWindowBytes,
     ReadOnlyMemory<byte> AuthenticationPayload,
-    ReadOnlyMemory<string> CompressionAlgorithms = default);
+    ReadOnlyMemory<string> CompressionProfiles = default);
 
 /// <summary>Protocol v2 negotiated handshake response values.</summary>
 public readonly record struct ProtocolV2HandshakeResponse(
@@ -100,7 +100,7 @@ public readonly record struct ProtocolV2HandshakeResponse(
     int MaxFramePayloadBytes,
     int StreamReceiveWindowBytes,
     int ConnectionReceiveWindowBytes,
-    string? CompressionAlgorithm = null);
+    string? CompressionProfile = null);
 
 /// <summary>Returns consumed byte credit for one request stream.</summary>
 public readonly record struct ProtocolV2WindowUpdate(

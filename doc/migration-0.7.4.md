@@ -4,15 +4,15 @@
 
 ## 协议兼容性
 
-Protocol v2 minor 升为 3，HandshakeRequest/Response 增加压缩算法 token。0.7.4 不承诺与 0.7.3 及更早版本互操作，滚动升级应先确保连接两端都使用 0.7.4。两个 0.7.4 对端在双方关闭、只有一方启用或算法无交集时会正常退回未压缩连接。
+Protocol v2 minor 升为 3，HandshakeRequest/Response 增加压缩 wire profile。0.7.4 不承诺与 0.7.3 及更早版本互操作，滚动升级应先确保连接两端都使用 0.7.4。两个 0.7.4 对端在双方关闭、只有一方启用或 profile 无交集时会正常退回未压缩连接。
 
 Generated Manifest API 升为 2，因为 admission control 需要生成期的 `ClientStreamCount`。0.7.3 及更早版本预编译的生成程序集会在注册时以明确的 Manifest 不兼容错误被拒绝；升级到 0.7.4 时必须重新运行 Source Generator 并重新编译这些程序集。
 
 ## 启用压缩
 
-在 Client 与 Server 的 `UseRuntime` 中按偏好添加 Provider。内置 Gzip、Deflate、Brotli 只依赖 `System.IO.Compression`；自定义 Provider 必须线程安全、NativeAOT 安全，完整消费输入并准确报告 written bytes。框架仅在达到 payload、最小字节收益和最小比例三个阈值时发送压缩候选。
+在 Client 与 Server 的 `UseRuntime` 中按偏好添加 Provider。内置只提供依赖 `System.IO.Compression` 的 Brotli；Gzip、Deflate、Zstandard 等格式可由自定义 Provider 提供。自定义 Provider 必须线程安全、NativeAOT 安全，完整消费输入并准确报告 consumed/written bytes。框架仅在达到 payload、最小字节收益和最小比例三个阈值时发送压缩候选。
 
-协商 token 表示 wire profile，不是算法参数字典。内置 `CompressionLevel` 只影响本地方向的编码成本和压缩比，因此两端可以不同且不进入握手；dictionary identity、window/profile 限制等影响解码的设置必须编码到不同 token，并注册为不同 Provider。不要让两个不兼容配置复用同一 token。
+Provider 的 `WireProfile` 表示完整 wire profile，不是算法参数字典。内置 `CompressionLevel` 只影响本地方向的编码成本和压缩比，因此两端可以不同且不进入握手；dictionary identity、window/profile 限制等影响解码的设置必须编码到不同 profile，并注册为不同 Provider。不要让两个不兼容配置复用同一 profile。
 
 ## 启用 admission control
 

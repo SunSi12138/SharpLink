@@ -12,7 +12,6 @@ namespace SharpLink.Benchmarks;
 
 internal static class CompressionEvidenceRunner
 {
-    private static readonly string[] s_algorithms = ["gzip", "deflate", "brotli"];
     private static readonly string[] s_levels = ["fastest", "optimal", "smallest"];
     private static readonly int[] s_payloadSizes = [1024, 4096, 65_536, 1_048_576];
 
@@ -20,45 +19,42 @@ internal static class CompressionEvidenceRunner
     {
         var outputPath = GetOption(args, "--output") ??
             Path.Combine("artifacts", "performance", "v0.7.4", "compression-provider.json");
-        var results = new List<CompressionEvidenceResult>(360);
-        foreach (var algorithm in s_algorithms)
+        var results = new List<CompressionEvidenceResult>(120);
+        foreach (var level in s_levels)
         {
-            foreach (var level in s_levels)
+            foreach (var payloadSize in s_payloadSizes)
             {
-                foreach (var payloadSize in s_payloadSizes)
+                foreach (var compressible in new[] { true, false })
                 {
-                    foreach (var compressible in new[] { true, false })
-                    {
-                        var provider = CompressionProviderBenchmarks.CreateProvider(algorithm, level);
-                        var payload = CreatePayload(payloadSize, compressible);
-                        var compressed = Compress(provider, payload);
-                        _ = Decompress(provider, compressed, payloadSize);
-                        var iterations = Math.Clamp((16 * 1024 * 1024) / payloadSize, 4, 4096);
+                    var provider = CompressionProviderBenchmarks.CreateProvider(level);
+                    var payload = CreatePayload(payloadSize, compressible);
+                    var compressed = Compress(provider, payload);
+                    _ = Decompress(provider, compressed, payloadSize);
+                    var iterations = Math.Clamp((16 * 1024 * 1024) / payloadSize, 4, 4096);
 
-                        for (var round = 1; round <= 5; round++)
-                        {
-                            WarmUp(provider, payload, compressed);
-                            var compression = Measure(
-                                iterations,
-                                payloadSize,
-                                () => Compress(provider, payload).Length);
-                            var decompression = Measure(
-                                iterations,
-                                payloadSize,
-                                () => Decompress(provider, compressed, payloadSize));
-                            results.Add(new CompressionEvidenceResult(
-                                algorithm,
-                                level,
-                                payloadSize,
-                                compressible,
-                                round,
-                                compressed.Length,
-                                compressed.Length / (double)payloadSize,
-                                compression.ThroughputMegabytesPerSecond,
-                                decompression.ThroughputMegabytesPerSecond,
-                                compression.AllocatedBytesPerOperation,
-                                decompression.AllocatedBytesPerOperation));
-                        }
+                    for (var round = 1; round <= 5; round++)
+                    {
+                        WarmUp(provider, payload, compressed);
+                        var compression = Measure(
+                            iterations,
+                            payloadSize,
+                            () => Compress(provider, payload).Length);
+                        var decompression = Measure(
+                            iterations,
+                            payloadSize,
+                            () => Decompress(provider, compressed, payloadSize));
+                        results.Add(new CompressionEvidenceResult(
+                            "brotli",
+                            level,
+                            payloadSize,
+                            compressible,
+                            round,
+                            compressed.Length,
+                            compressed.Length / (double)payloadSize,
+                            compression.ThroughputMegabytesPerSecond,
+                            decompression.ThroughputMegabytesPerSecond,
+                            compression.AllocatedBytesPerOperation,
+                            decompression.AllocatedBytesPerOperation));
                     }
                 }
             }

@@ -153,7 +153,7 @@ public static class ProtocolV2FrameParser
             case ProtocolV2FrameType.HandshakeRequest:
                 if (payload.Length < 32 || payload.Length >
                     36L + limits.MaxMetadataBytes +
-                    SharpLinkCompressionOptions.MaxProviders * (1 + SharpLinkCompressionToken.MaxUtf8Bytes))
+                    SharpLinkCompressionOptions.MaxProviders * (1 + SharpLinkCompressionProfile.MaxAsciiBytes))
                     throw Violation("HandshakeRequest payload has an invalid bounded length.");
                 break;
             case ProtocolV2FrameType.HandshakeResponse:

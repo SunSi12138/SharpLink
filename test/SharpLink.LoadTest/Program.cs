@@ -89,7 +89,7 @@ public static class Program
         Console.WriteLine("  --profile balanced|lowlatency|throughput");
         Console.WriteLine("  --request-timeout default|disabled|1ms|10ms|100ms");
         Console.WriteLine("  --admission disabled|immediate|queue|reject");
-        Console.WriteLine("  --compression none|gzip|deflate|brotli --compression-level fastest|optimal|smallest|nocompression");
+        Console.WriteLine("  --compression none|brotli --compression-level fastest|optimal|smallest|nocompression");
         Console.WriteLine("  --compression-min-payload 1024 --compression-min-savings-bytes 64 --compression-min-savings-ratio 0.05");
         Console.WriteLine("  --max-send-queue-bytes 33554432 (optional bounded throughput-test override)");
         Console.WriteLine("  --payload-pattern compressible|random");
@@ -468,13 +468,7 @@ public static class Program
             "nocompression" => CompressionLevel.NoCompression,
             _ => throw new ArgumentOutOfRangeException(nameof(options.CompressionLevel))
         };
-        runtime.Compression.Providers.Add(options.CompressionAlgorithm switch
-        {
-            "gzip" => SharpLinkCompressionProviders.CreateGzip(level),
-            "deflate" => SharpLinkCompressionProviders.CreateDeflate(level),
-            "brotli" => SharpLinkCompressionProviders.CreateBrotli(level),
-            _ => throw new ArgumentOutOfRangeException(nameof(options.CompressionAlgorithm))
-        });
+        runtime.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli(level));
     }
 
     private static string CreateEchoPayload(int payloadSize, string pattern, int worker)
@@ -585,7 +579,7 @@ public sealed class LoadTestOptions
         if (admissionMode is not ("disabled" or "immediate" or "queue" or "reject"))
             throw new ArgumentException($"Unsupported admission mode: {admissionMode}.");
         var compressionAlgorithm = map.GetValueOrDefault("compression", "none").ToLowerInvariant();
-        if (compressionAlgorithm is not ("none" or "gzip" or "deflate" or "brotli"))
+        if (compressionAlgorithm is not ("none" or "brotli"))
             throw new ArgumentException($"Unsupported compression algorithm: {compressionAlgorithm}.");
         var compressionLevel = map.GetValueOrDefault("compression-level", "fastest").ToLowerInvariant();
         if (compressionLevel is not ("fastest" or "optimal" or "smallest" or "nocompression"))

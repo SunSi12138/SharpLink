@@ -68,7 +68,7 @@ public class CompressionFrameTests
     [Arguments("trailing")]
     public async Task InvalidCompressedBodyShouldMapToDataLoss(string mutation)
     {
-        var provider = SharpLinkCompressionProviders.CreateGzip();
+        var provider = SharpLinkCompressionProviders.CreateBrotli();
         await using var session = CreateSession(provider);
         var source = Enumerable.Repeat((byte)0x6d, 4096).ToArray();
         var compressed = Compress(provider, source).ToList();
@@ -100,7 +100,7 @@ public class CompressionFrameTests
     [Test]
     public async Task OriginalLengthShouldBeValidatedBeforeRentingOutput()
     {
-        var provider = SharpLinkCompressionProviders.CreateDeflate();
+        var provider = SharpLinkCompressionProviders.CreateBrotli();
         await using var session = CreateSession(provider);
         using var wire = new PooledByteBufferWriter();
         var length = wire.GetSpan(sizeof(uint));
@@ -120,7 +120,7 @@ public class CompressionFrameTests
     [Test]
     public async Task UnnegotiatedCompressedFrameShouldBeProtocolViolation()
     {
-        var provider = SharpLinkCompressionProviders.CreateGzip();
+        var provider = SharpLinkCompressionProviders.CreateBrotli();
         await using var session = CreateSession(provider, enableCompression: false);
         var exception = CaptureSharpLinkException(() => session.DecodeInboundPayload(
             ProtocolV2FrameType.Response,
@@ -275,7 +275,7 @@ public class CompressionFrameTests
     private sealed class ThrowIfCompressedProvider : ISharpLinkCompressionProvider
     {
         internal int CompressCount { get; private set; }
-        public string Algorithm => "test-oversized";
+        public string WireProfile => "test-oversized";
 
         public SharpLinkCompressionResult Compress(
             ReadOnlySequence<byte> input,

@@ -13,7 +13,7 @@
 - 候选运行时代码：`40da6aeeefb114c8b1a2485eeabb0c846d89fd05`。
 - 传输：本机 TCP；负载测试进程和 BenchmarkDotNet 进程均使用 Release 构建。
 
-基线和候选分别从独立 worktree 构建并保存二进制。同机交替运行五轮；表中的中位数是五个原始值排序后的第三个值。完整 JSON、BDN 日志和报告位于 Actions 的 `sharplink-v0.7.4-performance-<sha>` artifact，本地默认位于 `artifacts/performance/v0.7.4/`。
+基线和候选分别从独立 worktree 构建并保存二进制。同机交替运行五轮；表中的中位数是五个原始值排序后的第三个值。完整 JSON、BDN 日志和报告位于 Actions 的 `sharplink-v0.7.4-performance-<sha>` artifact，本地默认位于 `artifacts/performance/v0.7.4/`。本报告中的 Gzip/Deflate 行来自最终收窄公共内置能力之前的候选实现，仅保留为历史算法对比；发布 API 只内置 Brotli，当前复现脚本也只运行 `none` 与 `brotli`。
 
 复现入口：
 
@@ -110,9 +110,9 @@ BDN `Rpc_Add` Mean（μs）与分配：
 
 未压缩 1 MiB 可压缩数据第 5 轮出现 2 次既有 SendPump 有界背压拒绝（0.11%）；按高噪声样本复跑规则，复跑为 0 failure、2061.33 QPS、7178 μs P99，表中使用复跑值，原始失败 JSON 与复跑 JSON 均保留。
 
-不可压缩数据虽然最终按收益策略发送原始 payload，但发送前仍必须尝试候选压缩，因此大 payload 的 CPU/QPS 成本明显。特别是 1 MiB 随机数据，Gzip/Deflate 约 103 QPS，Brotli 约 354 QPS，而完全关闭压缩约 1983 QPS。生产配置应只为可压缩业务启用算法，或提高 `MinimumPayloadBytes`；回退策略避免带宽膨胀，不承诺避免压缩尝试的 CPU 成本。
+不可压缩数据虽然最终按收益策略发送原始 payload，但发送前仍必须尝试候选压缩，因此大 payload 的 CPU/QPS 成本明显。特别是 1 MiB 随机数据，Brotli 约 354 QPS，而完全关闭压缩约 1983 QPS。生产配置应只为可压缩业务启用 Provider，或提高 `MinimumPayloadBytes`；回退策略避免带宽膨胀，不承诺避免压缩尝试的 CPU 成本。
 
-代表性持久 BDN：4 KiB 可压缩 Gzip/Fastest Provider 为 2.496 μs、9.33 KiB/op；端到端 Raw 为 52.59 μs、16.39 KiB/op，Compressed 为 54.17 μs、17.53 KiB/op（时间 1.03×，分配 1.07×）。
+Gzip/Deflate 的历史候选数据不再代表公开内置 API；发布性能决策应以 Brotli 行和当前复现脚本为准。
 
 ## 不同算法与配置的业务数据吞吐
 
@@ -163,7 +163,7 @@ BDN `Rpc_Add` Mean（μs）与分配：
 | brotli | fastest + strict threshold | compressible | 4096 | 466.59, 479.27, 469.35, 470.88, 474.00 | 470.88 | 941.76 | 287 |
 | brotli | fastest + strict threshold | compressible | 65536 | 736.31, 757.79, 761.70, 762.18, 768.76 | 761.70 | 1523.39 | 896 |
 
-结论：对这台机器上的高度可压缩 1 MiB echo，Deflate/Optimal 的单向业务吞吐中位数为 2387.62 MiB/s，高于未压缩 2012.82 MiB/s；Gzip/Optimal 为 1668.92 MiB/s，Brotli/Fastest 为 1788.30 MiB/s。对随机 1 MiB，收益判断最终回退原始帧，但尝试成本使 Gzip/Deflate Fastest 仅约 103 MiB/s，Brotli/Fastest 约 357 MiB/s。`SmallestSize` 不适合作为普遍默认，Brotli/Smallest 随机 1 MiB 仅 4.47 MiB/s。默认继续使用 `Fastest`；已知可压缩数据可按真实业务矩阵评估 Deflate/Optimal，未知或已压缩数据应禁用 Provider或提高最小 payload/收益门槛。
+结论：对这台机器上的高度可压缩 1 MiB echo，Brotli/Fastest 的单向业务吞吐中位数为 1788.30 MiB/s，未压缩为 2012.82 MiB/s。对随机 1 MiB，收益判断最终回退原始帧，但 Brotli/Fastest 的尝试成本使吞吐降至约 357 MiB/s。`SmallestSize` 不适合作为普遍默认，Brotli/Smallest 随机 1 MiB 仅 4.47 MiB/s。内置默认继续使用 `Fastest`；未知或已压缩数据应禁用 Provider 或提高最小 payload/收益门槛。
 
 严格阈值将 4 KiB payload 保持为原始帧，同时 64 KiB 可压缩 payload 仍进入 Brotli。阈值是本地发送决策，不参与握手；两端可以独立配置。
 

@@ -354,7 +354,7 @@ internal sealed partial class SharpLinkServer
                     {
                         authResult = SharpLinkAuthenticationResult.Reject(
                             SharpLinkErrorCode.Unimplemented,
-                            "Required compression has no mutually supported algorithm.");
+                            "Required compression has no mutually supported profile.");
                     }
                     else
                     {
@@ -375,7 +375,7 @@ internal sealed partial class SharpLinkServer
                         Math.Min(request.MaxFramePayloadBytes, _protocolOptions.MaxFramePayloadBytes),
                         Math.Min(request.StreamReceiveWindowBytes, _runtimeContext.FlowControl.StreamReceiveWindowBytes),
                         Math.Min(request.ConnectionReceiveWindowBytes, _runtimeContext.FlowControl.ConnectionReceiveWindowBytes),
-                        compressionProvider?.Algorithm);
+                        compressionProvider?.WireProfile);
                     var runtimeSession = (RpcSession)session;
                     runtimeSession.NegotiatedCapabilities = response.NegotiatedCapabilities;
                     runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
@@ -428,16 +428,16 @@ internal sealed partial class SharpLinkServer
         in ProtocolV2HandshakeRequest request)
     {
         if ((request.SupportedCapabilities & ProtocolV2Capabilities.Compression) == 0 ||
-            request.CompressionAlgorithms.IsEmpty)
+            request.CompressionProfiles.IsEmpty)
         {
             return null;
         }
 
         foreach (var provider in _runtimeContext.Compression.Providers)
         {
-            foreach (var algorithm in request.CompressionAlgorithms.Span)
+            foreach (var profile in request.CompressionProfiles.Span)
             {
-                if (string.Equals(provider.Algorithm, algorithm, StringComparison.Ordinal))
+                if (string.Equals(provider.WireProfile, profile, StringComparison.Ordinal))
                     return provider;
             }
         }

@@ -78,7 +78,7 @@ for admission in immediate queue reject; do
   done
 done
 
-for algorithm in none gzip deflate brotli; do
+for algorithm in none brotli; do
   for pattern in compressible random; do
     for payload_size in 1024 4096 65536 1048576; do
       for round in $(seq 1 "$ROUNDS"); do
@@ -95,10 +95,10 @@ for algorithm in none gzip deflate brotli; do
   done
 done
 
-# CompressionLevel is encode-only tuning for the built-in wire profiles. Cover
+# CompressionLevel is encode-only tuning for the built-in Brotli wire profile. Cover
 # the larger payloads where its CPU/ratio tradeoff is measurable; the fastest
 # rows above are the corresponding baseline for this configuration matrix.
-for algorithm in gzip deflate brotli; do
+for algorithm in brotli; do
   for compression_level in optimal smallest; do
     for pattern in compressible random; do
       for payload_size in 65536 1048576; do

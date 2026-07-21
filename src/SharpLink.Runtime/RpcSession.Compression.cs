@@ -4,7 +4,7 @@ public sealed partial class RpcSession
 {
     private ISharpLinkCompressionProvider? _compressionProvider;
 
-    internal string? CompressionAlgorithm => Volatile.Read(ref _compressionProvider)?.Algorithm;
+    internal string? CompressionProfile => Volatile.Read(ref _compressionProvider)?.WireProfile;
 
     internal void EnableCompression(ISharpLinkCompressionProvider provider)
     {
@@ -80,7 +80,7 @@ public sealed partial class RpcSession
             {
                 throw new SharpLinkCompressionProviderException(
                     SharpLinkErrorCode.Internal,
-                    $"Compression provider '{provider.Algorithm}' failed before the frame was queued.",
+                    $"Compression provider '{provider.WireProfile}' failed before the frame was queued.",
                     exception);
             }
 
@@ -89,7 +89,7 @@ public sealed partial class RpcSession
             {
                 throw new SharpLinkCompressionProviderException(
                     SharpLinkErrorCode.Internal,
-                    $"Compression provider '{provider.Algorithm}' reported inconsistent consumed or written bytes.");
+                    $"Compression provider '{provider.WireProfile}' reported inconsistent consumed or written bytes.");
             }
             if (!RuntimeContext.Compression.IsBeneficial(
                     originalLength,
@@ -167,14 +167,14 @@ public sealed partial class RpcSession
             {
                 throw new SharpLinkException(
                     SharpLinkErrorCode.DataLoss,
-                    $"Compressed payload for '{provider.Algorithm}' is truncated, corrupt, or exceeds its declared length.",
+                    $"Compressed payload for '{provider.WireProfile}' is truncated, corrupt, or exceeds its declared length.",
                     exception);
             }
             catch (Exception exception)
             {
                 throw new SharpLinkException(
                     SharpLinkErrorCode.Internal,
-                    $"Compression provider '{provider.Algorithm}' failed while decoding a frame.",
+                    $"Compression provider '{provider.WireProfile}' failed while decoding a frame.",
                     exception);
             }
 

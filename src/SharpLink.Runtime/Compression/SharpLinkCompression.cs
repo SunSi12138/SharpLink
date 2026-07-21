@@ -19,7 +19,7 @@ public interface ISharpLinkCompressionProvider
     /// Every setting required for successful decoding, such as a dictionary identity, must be represented by this token.
     /// Encode-only tuning such as compression level may differ between peers using the same token.
     /// </summary>
-    string Algorithm { get; }
+    string WireProfile { get; }
 
     /// <summary>Compresses one single- or multi-segment business payload into a bounded output.</summary>
     /// <param name="input">The complete uncompressed business payload.</param>
@@ -84,13 +84,13 @@ public sealed class SharpLinkCompressionOptions
         if (Providers.Count > MaxProviders)
             throw new ArgumentOutOfRangeException(nameof(Providers), $"At most {MaxProviders} providers may be configured.");
 
-        var algorithms = new HashSet<string>(StringComparer.Ordinal);
+        var profiles = new HashSet<string>(StringComparer.Ordinal);
         foreach (var provider in Providers)
         {
             ArgumentNullException.ThrowIfNull(provider);
-            SharpLinkCompressionToken.Validate(provider.Algorithm, nameof(Providers));
-            if (!algorithms.Add(provider.Algorithm))
-                throw new ArgumentException($"Compression algorithm '{provider.Algorithm}' is registered more than once.", nameof(Providers));
+            SharpLinkCompressionProfile.Validate(provider.WireProfile, nameof(Providers));
+            if (!profiles.Add(provider.WireProfile))
+                throw new ArgumentException($"Compression wire profile '{provider.WireProfile}' is registered more than once.", nameof(Providers));
         }
     }
 
@@ -116,71 +116,51 @@ public sealed class SharpLinkCompressionOptions
         return savings >= MinimumSavingsBytes && savings >= originalBytes * MinimumSavingsRatio;
     }
 
-    internal ISharpLinkCompressionProvider? FindProvider(string algorithm)
+    internal ISharpLinkCompressionProvider? FindProvider(string wireProfile)
     {
         foreach (var provider in Providers)
         {
-            if (string.Equals(provider.Algorithm, algorithm, StringComparison.Ordinal))
+            if (string.Equals(provider.WireProfile, wireProfile, StringComparison.Ordinal))
                 return provider;
         }
         return null;
     }
 }
 
-/// <summary>Creates NativeAOT-safe providers backed only by <see cref="System.IO.Compression"/>.</summary>
+/// <summary>Creates the NativeAOT-safe Brotli provider backed only by <see cref="System.IO.Compression"/>.</summary>
 public static class SharpLinkCompressionProviders
 {
-    /// <summary>Creates a provider using <see cref="GZipStream"/>.</summary>
-    /// <param name="level">The local encoding preference. It is not negotiated and does not affect Gzip decoding compatibility.</param>
-    public static ISharpLinkCompressionProvider CreateGzip(CompressionLevel level = CompressionLevel.Fastest)
-        => new SystemCompressionProvider("gzip", SystemCompressionKind.Gzip, ValidateLevel(level));
-
-    /// <summary>Creates a provider using <see cref="DeflateStream"/>.</summary>
-    /// <param name="level">The local encoding preference. It is not negotiated and does not affect Deflate decoding compatibility.</param>
-    public static ISharpLinkCompressionProvider CreateDeflate(CompressionLevel level = CompressionLevel.Fastest)
-        => new SystemCompressionProvider("deflate", SystemCompressionKind.Deflate, ValidateLevel(level));
-
     /// <summary>Creates a provider using <see cref="BrotliStream"/>.</summary>
     /// <param name="level">The local encoding preference. It is not negotiated and does not affect Brotli decoding compatibility.</param>
     public static ISharpLinkCompressionProvider CreateBrotli(CompressionLevel level = CompressionLevel.Fastest)
-        => new SystemCompressionProvider("brotli", SystemCompressionKind.Brotli, ValidateLevel(level));
+        => new BrotliCompressionProvider(ValidateLevel(level));
 
     private static CompressionLevel ValidateLevel(CompressionLevel level)
         => Enum.IsDefined(level) ? level : throw new ArgumentOutOfRangeException(nameof(level));
 }
 
-internal static class SharpLinkCompressionToken
+internal static class SharpLinkCompressionProfile
 {
-    internal const int MaxUtf8Bytes = 64;
+    internal const int MaxAsciiBytes = 64;
 
-    internal static void Validate(string? algorithm, string parameterName)
+    internal static void Validate(string? wireProfile, string parameterName)
     {
-        if (string.IsNullOrEmpty(algorithm) || algorithm.Length > MaxUtf8Bytes)
-            throw new ArgumentException("Compression algorithm tokens must contain 1 to 64 ASCII bytes.", parameterName);
-        foreach (var character in algorithm)
+        if (string.IsNullOrEmpty(wireProfile) || wireProfile.Length > MaxAsciiBytes)
+            throw new ArgumentException("Compression wire profiles must contain 1 to 64 ASCII bytes.", parameterName);
+        foreach (var character in wireProfile)
         {
             if (character is < (char)0x21 or > (char)0x7e)
-                throw new ArgumentException("Compression algorithm tokens must use canonical visible ASCII bytes.", parameterName);
+                throw new ArgumentException("Compression wire profiles must use canonical visible ASCII bytes.", parameterName);
         }
     }
 }
 
-internal enum SystemCompressionKind
-{
-    Gzip,
-    Deflate,
-    Brotli
-}
-
-internal sealed class SystemCompressionProvider(
-    string algorithm,
-    SystemCompressionKind kind,
-    CompressionLevel level) : ISharpLinkCompressionProvider
+internal sealed class BrotliCompressionProvider(CompressionLevel level) : ISharpLinkCompressionProvider
 {
     private const uint IntegrityMagic = 0x31504353; // "SCP1" in little endian.
     private const int IntegrityTrailerBytes = sizeof(uint) + sizeof(uint);
 
-    public string Algorithm { get; } = algorithm;
+    public string WireProfile => "brotli";
 
     public SharpLinkCompressionResult Compress(
         ReadOnlySequence<byte> input,
@@ -194,7 +174,7 @@ internal sealed class SystemCompressionProvider(
             throw new ArgumentOutOfRangeException(nameof(input));
 
         var outputStream = new BoundedBufferWriterStream(output, maxOutputBytes);
-        using (var compressor = CreateCompressionStream(outputStream))
+        using (var compressor = new BrotliStream(outputStream, level, leaveOpen: true))
         {
             foreach (var segment in input)
             {
@@ -229,45 +209,11 @@ internal sealed class SystemCompressionProvider(
         if (Crc32Accumulator.Compute(compressedPayload) != expectedChecksum)
             throw new InvalidDataException("Compressed payload integrity checksum does not match.");
 
-        if (kind == SystemCompressionKind.Brotli)
-        {
-            var brotliWritten = DecompressBrotli(
-                compressedPayload,
-                output,
-                maxOutputBytes,
-                cancellationToken);
-            return new SharpLinkCompressionResult(checked((int)input.Length), brotliWritten);
-        }
-
-        var boundaryWritten = SystemCompressionBoundaryValidator.Validate(
-            kind,
+        var written = DecompressBrotli(
             compressedPayload,
+            output,
             maxOutputBytes,
             cancellationToken);
-
-        using var inputStream = new ReadOnlySequenceStream(compressedPayload);
-        using var decompressor = CreateDecompressionStream(inputStream);
-        var written = 0;
-        while (written < maxOutputBytes)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var span = output.GetSpan(Math.Min(8192, maxOutputBytes - written));
-            var read = decompressor.Read(span[..Math.Min(span.Length, maxOutputBytes - written)]);
-            if (read == 0)
-                break;
-            output.Advance(read);
-            written += read;
-        }
-
-        if (written == maxOutputBytes)
-        {
-            Span<byte> probe = stackalloc byte[1];
-            if (decompressor.Read(probe) != 0)
-                throw new InvalidDataException("Decompressed payload exceeds its declared original length.");
-        }
-
-        if (written != boundaryWritten)
-            throw new InvalidDataException("Compressed payload decoded length is inconsistent with its format boundary.");
         return new SharpLinkCompressionResult(checked((int)input.Length), written);
     }
 
@@ -339,23 +285,6 @@ internal sealed class SystemCompressionProvider(
         }
     }
 
-    private Stream CreateCompressionStream(Stream output)
-        => kind switch
-        {
-            SystemCompressionKind.Gzip => new GZipStream(output, level, leaveOpen: true),
-            SystemCompressionKind.Deflate => new DeflateStream(output, level, leaveOpen: true),
-            SystemCompressionKind.Brotli => new BrotliStream(output, level, leaveOpen: true),
-            _ => throw new InvalidOperationException("Unknown compression kind.")
-        };
-
-    private Stream CreateDecompressionStream(Stream input)
-        => kind switch
-        {
-            SystemCompressionKind.Gzip => new GZipStream(input, CompressionMode.Decompress, leaveOpen: true),
-            SystemCompressionKind.Deflate => new DeflateStream(input, CompressionMode.Decompress, leaveOpen: true),
-            SystemCompressionKind.Brotli => new BrotliStream(input, CompressionMode.Decompress, leaveOpen: true),
-            _ => throw new InvalidOperationException("Unknown compression kind.")
-        };
 }
 
 internal sealed class BoundedBufferWriterStream(IBufferWriter<byte> writer, int maxBytes) : Stream
@@ -402,42 +331,6 @@ internal sealed class BoundedBufferWriterStream(IBufferWriter<byte> writer, int 
     public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
-}
-
-internal sealed class ReadOnlySequenceStream : Stream
-{
-    private readonly long _length;
-    private ReadOnlySequence<byte> _remaining;
-
-    internal ReadOnlySequenceStream(ReadOnlySequence<byte> sequence)
-    {
-        _remaining = sequence;
-        _length = sequence.Length;
-    }
-
-    internal int ConsumedBytes => checked((int)(_length - _remaining.Length));
-    public override bool CanRead => true;
-    public override bool CanSeek => false;
-    public override bool CanWrite => false;
-    public override long Length => _length;
-    public override long Position { get => ConsumedBytes; set => throw new NotSupportedException(); }
-
-    public override int Read(Span<byte> buffer)
-    {
-        if (buffer.IsEmpty || _remaining.IsEmpty)
-            return 0;
-        var count = (int)Math.Min(buffer.Length, _remaining.Length);
-        _remaining.Slice(0, count).CopyTo(buffer);
-        _remaining = _remaining.Slice(count);
-        return count;
-    }
-
-    public override int Read(byte[] buffer, int offset, int count)
-        => Read(buffer.AsSpan(offset, count));
-    public override void Flush() { }
-    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-    public override void SetLength(long value) => throw new NotSupportedException();
-    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 }
 
 internal sealed class SharpLinkCompressionOutputLimitException(int maxBytes)

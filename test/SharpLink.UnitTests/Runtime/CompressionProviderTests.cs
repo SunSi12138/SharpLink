@@ -8,12 +8,10 @@ namespace SharpLink.UnitTests.Runtime;
 public class CompressionProviderTests
 {
     [Test]
-    [Arguments("gzip")]
-    [Arguments("deflate")]
-    [Arguments("brotli")]
-    public void BuiltInProviderShouldRoundTripSingleAndMultiSegmentInput(string algorithm)
+    public void BuiltInBrotliProviderShouldRoundTripSingleAndMultiSegmentInput()
     {
-        var provider = CreateProvider(algorithm);
+        var provider = SharpLinkCompressionProviders.CreateBrotli();
+        Ensure(provider.WireProfile == "brotli", "built-in Brotli wire profile");
         var source = Enumerable.Repeat((byte)0x5a, 16 * 1024).ToArray();
         var segmented = CreateSegmented(source, 137);
         using var compressed = new PooledByteBufferWriter(source.Length);
@@ -34,12 +32,9 @@ public class CompressionProviderTests
     }
 
     [Test]
-    [Arguments("gzip")]
-    [Arguments("deflate")]
-    [Arguments("brotli")]
-    public void BuiltInProviderShouldRejectTruncatedOrTooSmallOutput(string algorithm)
+    public void BuiltInBrotliProviderShouldRejectTruncatedOrTooSmallOutput()
     {
-        var provider = CreateProvider(algorithm);
+        var provider = SharpLinkCompressionProviders.CreateBrotli();
         var source = Enumerable.Repeat((byte)0x41, 4096).ToArray();
         using var compressed = new PooledByteBufferWriter(source.Length);
         provider.Compress(new ReadOnlySequence<byte>(source), compressed, source.Length);
@@ -63,13 +58,10 @@ public class CompressionProviderTests
     }
 
     [Test]
-    [Arguments("gzip")]
-    [Arguments("deflate")]
-    [Arguments("brotli")]
-    public void BuiltInProviderShouldRejectTrailingDataWithARecomputedChecksum(string algorithm)
+    public void BuiltInBrotliProviderShouldRejectTrailingDataWithARecomputedChecksum()
     {
         const int integrityTrailerBytes = sizeof(uint) + sizeof(uint);
-        var provider = CreateProvider(algorithm);
+        var provider = SharpLinkCompressionProviders.CreateBrotli();
         var source = Enumerable.Repeat((byte)0x52, 4096).ToArray();
         using var compressed = new PooledByteBufferWriter(source.Length);
         provider.Compress(new ReadOnlySequence<byte>(source), compressed, source.Length);
@@ -89,13 +81,12 @@ public class CompressionProviderTests
                 new ReadOnlySequence<byte>(mutated),
                 output,
                 source.Length),
-            $"{algorithm} valid stream followed by trailing data");
+            "Brotli valid stream followed by trailing data");
     }
 
     [Test]
-    public void BuiltInProvidersShouldRoundTripVariedPayloadsAndCompressionLevels()
+    public void BuiltInBrotliProviderShouldRoundTripVariedPayloadsAndCompressionLevels()
     {
-        string[] algorithms = ["gzip", "deflate", "brotli"];
         CompressionLevel[] levels =
         [
             CompressionLevel.NoCompression,
@@ -104,18 +95,15 @@ public class CompressionProviderTests
             CompressionLevel.SmallestSize
         ];
         int[] lengths = [1, 2, 31, 256, 4096];
-        foreach (var algorithm in algorithms)
+        foreach (var level in levels)
         {
-            foreach (var level in levels)
+            foreach (var length in lengths)
             {
-                foreach (var length in lengths)
-                {
-                    var source = new byte[length];
-                    new Random(length + 17).NextBytes(source);
-                    RoundTrip(CreateProvider(algorithm, level), source, $"{algorithm}/{level}/random/{length}");
-                    Array.Fill(source, (byte)0x3c);
-                    RoundTrip(CreateProvider(algorithm, level), source, $"{algorithm}/{level}/repeat/{length}");
-                }
+                var source = new byte[length];
+                new Random(length + 17).NextBytes(source);
+                RoundTrip(SharpLinkCompressionProviders.CreateBrotli(level), source, $"brotli/{level}/random/{length}");
+                Array.Fill(source, (byte)0x3c);
+                RoundTrip(SharpLinkCompressionProviders.CreateBrotli(level), source, $"brotli/{level}/repeat/{length}");
             }
         }
     }
@@ -128,16 +116,32 @@ public class CompressionProviderTests
             typeof(SharpLinkCompressionResult), "synchronous compression contract");
         Ensure(providerType.GetMethod(nameof(ISharpLinkCompressionProvider.Decompress))?.ReturnType ==
             typeof(SharpLinkCompressionResult), "synchronous decompression contract");
+        Ensure(providerType.GetProperty(nameof(ISharpLinkCompressionProvider.WireProfile))?.PropertyType ==
+            typeof(string), "wire-profile negotiation contract");
+        Ensure(providerType.GetProperty("Algorithm") is null, "provider contract should not expose an ambiguous algorithm name");
         Ensure(!providerType.GetMethods().Any(method => method.Name.EndsWith("Async", StringComparison.Ordinal)),
             "provider contract contains no asynchronous operation");
+    }
+
+    [Test]
+    public void BuiltInFactoryShouldOnlyExposeBrotli()
+    {
+        var factories = typeof(SharpLinkCompressionProviders)
+            .GetMethods()
+            .Where(method => method.IsPublic && method.IsStatic &&
+                method.ReturnType == typeof(ISharpLinkCompressionProvider))
+            .Select(method => method.Name)
+            .ToArray();
+        Ensure(factories.SequenceEqual([nameof(SharpLinkCompressionProviders.CreateBrotli)]),
+            "only Brotli should be exposed as a built-in provider");
     }
 
     [Test]
     public void CompressionOptionsShouldValidateTokensUniquenessAndBenefitThresholds()
     {
         var options = new SharpLinkCompressionOptions();
-        options.Providers.Add(SharpLinkCompressionProviders.CreateGzip());
-        options.Providers.Add(SharpLinkCompressionProviders.CreateGzip(CompressionLevel.Optimal));
+        options.Providers.Add(SharpLinkCompressionProviders.CreateBrotli());
+        options.Providers.Add(SharpLinkCompressionProviders.CreateBrotli(CompressionLevel.Optimal));
         EnsureThrows<ArgumentException>(options.Validate, "duplicate provider token");
 
         var invalid = new SharpLinkCompressionOptions();
@@ -147,17 +151,6 @@ public class CompressionProviderTests
         var ratio = new SharpLinkCompressionOptions { MinimumSavingsRatio = 1.01 };
         EnsureThrows<ArgumentOutOfRangeException>(ratio.Validate, "invalid savings ratio");
     }
-
-    private static ISharpLinkCompressionProvider CreateProvider(
-        string algorithm,
-        CompressionLevel level = CompressionLevel.Fastest)
-        => algorithm switch
-        {
-            "gzip" => SharpLinkCompressionProviders.CreateGzip(level),
-            "deflate" => SharpLinkCompressionProviders.CreateDeflate(level),
-            "brotli" => SharpLinkCompressionProviders.CreateBrotli(level),
-            _ => throw new ArgumentOutOfRangeException(nameof(algorithm))
-        };
 
     private static void RoundTrip(
         ISharpLinkCompressionProvider provider,
@@ -237,9 +230,9 @@ public class CompressionProviderTests
         throw new InvalidOperationException($"Expected provider failure: {scenario}.");
     }
 
-    private sealed class InvalidTokenProvider(string algorithm) : ISharpLinkCompressionProvider
+    private sealed class InvalidTokenProvider(string wireProfile) : ISharpLinkCompressionProvider
     {
-        public string Algorithm { get; } = algorithm;
+        public string WireProfile { get; } = wireProfile;
         public SharpLinkCompressionResult Compress(
             ReadOnlySequence<byte> input, IBufferWriter<byte> output, int maxOutputBytes,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();

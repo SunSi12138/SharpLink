@@ -63,14 +63,14 @@ Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `H
 minor 3 的 `HandshakeRequest` 在三个固定限制字段后编码：
 
 ```text
-algorithmCount:uint8
-repeat algorithmCount { tokenLength:uint8 + canonical ASCII token }
+profileCount:uint8
+repeat profileCount { profileLength:uint8 + canonical ASCII profile }
 authenticationLength:varuint32 + authentication bytes
 ```
 
-算法最多 16 个；token 为 1–64 字节、大小写敏感的可见规范 ASCII，且列表内唯一。`HandshakeResponse` 在固定字段后编码 `selectedTokenLength:uint8 + selectedToken`。Server 按自身 Provider 注册顺序选择 Client 列表中的第一个匹配项；无交集时清除 compression capability 并发送零长度 token。协商 capability 与 token 缺失/多余或选择未被 Client 提供的 token 都是连接级 `ProtocolViolation`。
+wire profile 最多 16 个；每个 profile 为 1–64 字节、大小写敏感的可见规范 ASCII，且列表内唯一。`HandshakeResponse` 在固定字段后编码 `selectedProfileLength:uint8 + selectedProfile`。Server 按自身 Provider 注册顺序选择 Client 列表中的第一个匹配项；无交集时清除 compression capability 并发送零长度 profile。协商 capability 与 profile 缺失/多余或选择未被 Client 提供的 profile 都是连接级 `ProtocolViolation`。
 
-token 表示完整的 **wire profile**，不是结构化参数协商。只影响发送端 CPU/压缩比而不影响解码的配置（内置 Provider 的 `CompressionLevel`）可以在两端不同；dictionary identity、必须支持的 window/profile 或其他会影响解码兼容性的配置必须编码进唯一 token，例如 `zstd/v1` 与 `zstd-dict/0123abcd`，并作为不同 Provider 参与现有优先级协商。对同一 token 配置出不兼容的解码参数属于 Provider 配置错误。这样后续可接入 [.NET 11 的 Zstandard 支持](https://learn.microsoft.com/dotnet/core/whats-new/dotnet-11/overview)及 [`ZstandardCompressionOptions`](https://learn.microsoft.com/dotnet/api/system.io.compression.zstandardcompressionoptions?view=net-11.0)，而无需让 v0.7.4 协议理解算法专属参数；.NET 11 API 在正式发布前仍可能变化。
+`ISharpLinkCompressionProvider.WireProfile` 表示完整的 wire profile，不是结构化参数协商。只影响发送端 CPU/压缩比而不影响解码的配置（内置 Provider 的 `CompressionLevel`）可以在两端不同；dictionary identity、必须支持的 window/profile 或其他会影响解码兼容性的配置必须编码进唯一 profile，例如 `zstd/v1` 与 `zstd-dict/0123abcd`，并作为不同 Provider 参与现有优先级协商。对同一 profile 配置出不兼容的解码参数属于 Provider 配置错误。这样后续可接入 [.NET 11 的 Zstandard 支持](https://learn.microsoft.com/dotnet/core/whats-new/dotnet-11/overview)及 [`ZstandardCompressionOptions`](https://learn.microsoft.com/dotnet/api/system.io.compression.zstandardcompressionoptions?view=net-11.0)，而无需让 v0.7.4 协议理解算法专属参数；.NET 11 API 在正式发布前仍可能变化。
 
 对端缺少任一 required capability 时，Server 返回 `Unimplemented` 错误并关闭连接。认证载荷不得超过握手/metadata 上限。
 
@@ -88,7 +88,7 @@ StreamData = streamId:uint16 + originalItemLength:uint32 + compressedBody
 
 发送端仅在业务 payload 至少 1024 B、至少节省 64 B 且节省比例不低于 5% 时选用候选压缩帧；三个阈值均可配置。候选无收益时立即归还候选 owner，原始 owner 原样交给现有 SendPump。SendPump 不识别压缩，也不会同时持有两个候选。
 
-内置 `gzip`、`deflate`、`brotli` Provider 分别使用 `GZipStream`、`DeflateStream`、`BrotliStream`，默认 `CompressionLevel.Fastest`，也可在工厂方法中选择其他 level。level 是本地编码策略，不进入握手；请求和响应方向可以使用不同 level。其不透明 `compressedBody` 在标准压缩流后附加 8 字节 `SCP1 magic:uint32 + compressedBytesCrc32:uint32` 完整性尾部，用于确定性拒绝截断、损坏和尾部垃圾；自定义 Provider 可定义自己的不透明格式，但必须遵守 consumed/written 契约。
+唯一内置的 `brotli` Provider 使用 `BrotliStream` 编码、`BrotliDecoder` 解码，默认 `CompressionLevel.Fastest`，也可在工厂方法中选择其他 level。level 是本地编码策略，不进入握手；请求和响应方向可以使用不同 level。其不透明 `compressedBody` 在标准 Brotli 流后附加 8 字节 `SCP1 magic:uint32 + compressedBytesCrc32:uint32` 完整性尾部；解码器自身提供精确消费位置，用于确定性拒绝截断、损坏和尾部垃圾，无需维护压缩格式解析器。自定义 Provider 可定义自己的不透明格式，但必须遵守 consumed/written 契约。
 
 未协商却设置 `Compressed`、非法固定前缀或原始长度属于连接级 `ProtocolViolation`。已协商载荷的截断、损坏、尾部数据或输出长度不符映射为当前调用/流的 `DataLoss`；自定义 Provider 的未预期异常映射为该调用/流的安全 `Internal`。这两类调用级错误不关闭健康连接。
 
