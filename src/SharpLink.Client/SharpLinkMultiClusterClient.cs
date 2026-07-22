@@ -192,8 +192,9 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
             Volatile.Write(ref _routes, nextRoutes);
         }
 
-        return new ValueTask<SharpLinkAssemblyUnregisterResult>(CompleteUnregisterAsync(
-            slot, registration!, gracefulTimeout, cancellationToken));
+        var operation = CompleteUnregisterAsync(slot, registration!, gracefulTimeout);
+        ObserveBackgroundFailure(operation);
+        return WaitForOperationAsync(operation, cancellationToken);
     }
 
     public ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
@@ -233,8 +234,10 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
             }
         }
 
-        return new ValueTask<SharpLinkAssemblyReplacementResult>(CompleteReplacementAsync(
-            slot, registration!, newAssembly, newManifest!, gracefulTimeout, cancellationToken));
+        var operation = CompleteReplacementAsync(
+            slot, registration!, newAssembly, newManifest!, gracefulTimeout);
+        ObserveBackgroundFailure(operation);
+        return WaitForOperationAsync(operation, cancellationToken);
     }
 
     private async Task ConnectCoreAsync(CancellationToken cancellationToken)
@@ -299,11 +302,10 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
     private async Task<SharpLinkAssemblyUnregisterResult> CompleteUnregisterAsync(
         SharpLinkClusterSlot slot,
         DynamicAssemblyRegistration registration,
-        TimeSpan gracefulTimeout,
-        CancellationToken cancellationToken)
+        TimeSpan gracefulTimeout)
     {
         var result = await slot.Client.UnregisterAssemblyAsync(
-            registration.Assembly, gracefulTimeout, cancellationToken).ConfigureAwait(false);
+            registration.Assembly, gracefulTimeout).ConfigureAwait(false);
         if (result.ReferencesReleased)
         {
             lock (_gate)
@@ -311,7 +313,7 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
         }
         else
         {
-            _ = CompleteDeferredUnregisterAsync(slot, registration);
+            ObserveBackgroundFailure(CompleteDeferredUnregisterAsync(slot, registration));
         }
         return result;
     }
@@ -327,7 +329,7 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
             {
                 var result = await slot.Client.UnregisterAssemblyAsync(
                     registration.Assembly, TimeSpan.Zero).ConfigureAwait(false);
-                if (!result.ReferencesReleased)
+                if (!result.ReferencesReleased && IsDynamicAssemblyStillRegistered(slot, registration.Assembly))
                     continue;
                 lock (_gate)
                     _dynamicRegistrations.Remove(registration);
@@ -346,11 +348,10 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
         DynamicAssemblyRegistration registration,
         Assembly newAssembly,
         ISharpLinkGeneratedAssemblyManifest newManifest,
-        TimeSpan gracefulTimeout,
-        CancellationToken cancellationToken)
+        TimeSpan gracefulTimeout)
     {
         var result = await slot.Client.ReplaceAssemblyAsync(
-            registration.Assembly, newAssembly, gracefulTimeout, cancellationToken).ConfigureAwait(false);
+            registration.Assembly, newAssembly, gracefulTimeout).ConfigureAwait(false);
         if (!result.Succeeded)
             return result;
 
@@ -375,6 +376,24 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
             Volatile.Write(ref _routes, nextRoutes.ToFrozenDictionary());
         }
         return result;
+    }
+
+    private static bool IsDynamicAssemblyStillRegistered(SharpLinkClusterSlot slot, Assembly assembly)
+        => slot.Client is not IDynamicAssemblyRegistrationInspector client ||
+           client.IsDynamicAssemblyRegistered(assembly);
+
+    private static ValueTask<T> WaitForOperationAsync<T>(Task<T> operation, CancellationToken cancellationToken)
+        => cancellationToken.CanBeCanceled
+            ? new ValueTask<T>(operation.WaitAsync(cancellationToken))
+            : new ValueTask<T>(operation);
+
+    private static void ObserveBackgroundFailure(Task task)
+    {
+        _ = task.ContinueWith(
+            static completedTask => _ = completedTask.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private SharpLinkClusterSlot GetSlot(SharpLinkClusterKey cluster)
@@ -415,3 +434,8 @@ internal sealed record DynamicAssemblyRegistration(
     SharpLinkClusterSlot Slot,
     Assembly Assembly,
     ISharpLinkGeneratedAssemblyManifest Manifest);
+
+internal interface IDynamicAssemblyRegistrationInspector
+{
+    bool IsDynamicAssemblyRegistered(Assembly assembly);
+}

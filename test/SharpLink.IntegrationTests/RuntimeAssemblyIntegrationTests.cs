@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Collections.Frozen;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace SharpLink.IntegrationTests;
@@ -32,6 +33,108 @@ public sealed class RuntimeAssemblyIntegrationTests
         var drained = await client.UnregisterAssemblyAsync(
             "plugins", plugin.ContractAssembly, TimeSpan.FromSeconds(2));
         Ensure(drained.ReferencesReleased, "multi-cluster plugin unregister should release the child module");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task MultiClusterCancelledUnregisterShouldStillReleaseCoordinatorRegistration()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        await using var client = await CreateDynamicMultiClusterClientAsync(harness.Port);
+        using var plugin = PluginBundle.Load("multi-cluster-cancelled-unregister");
+        plugin.ResetServiceState();
+        RegisterMultiClusterPlugin(harness, client, plugin);
+
+        var proxy = GetMultiClusterProxy(client, plugin.ContractType)
+            ?? throw new InvalidOperationException("Multi-cluster proxy factory returned null.");
+        var activeCall = InvokeValueTaskAsync<int>(
+            proxy, plugin.ContractType, "BlockAsync", CancellationToken.None).AsTask();
+        await plugin.GetStaticTask("BlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
+
+        using var cancellation = new CancellationTokenSource();
+        var unregister = client.UnregisterAssemblyAsync(
+            "plugins", plugin.ContractAssembly, TimeSpan.FromSeconds(2), cancellation.Token).AsTask();
+        cancellation.Cancel();
+        await EnsureCancelledAsync(unregister, "multi-cluster unregister wait");
+
+        plugin.ReleaseBlock();
+        Ensure(await activeCall.WaitAsync(TimeSpan.FromSeconds(2)) == 42,
+            "the admitted call should complete before the child unregister releases its module");
+        await WaitUntilAsync(() => client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded);
+
+        Ensure((await client.UnregisterAssemblyAsync(
+            "plugins", plugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "the re-registered coordinator module should release");
+        await UnregisterMultiClusterPluginAsync(harness, plugin);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task MultiClusterDeferredUnregisterShouldRemoveARegistrationReleasedByItsChild()
+    {
+        using var plugin = PluginBundle.Load("multi-cluster-deferred-unregister", loadService: false);
+        await using var registrationSource = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), 1)
+            .Build();
+        var registrationResult = registrationSource.RegisterAssembly(plugin.ContractAssembly);
+        Ensure(registrationResult.Succeeded, "controlled child registration result");
+
+        var child = new ControlledDynamicAssemblyClient(registrationResult);
+        var slot = new SharpLinkClusterSlot("plugins", child, AllowDynamicContracts: true);
+        await using var client = new SharpLinkMultiClusterClient(
+            new SharpLinkMultiClusterOptions(),
+            new[] { slot }.ToFrozenDictionary(static candidate => candidate.Key),
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
+            []);
+        Ensure(client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded,
+            "multi-cluster controlled registration");
+
+        var unregister = client.UnregisterAssemblyAsync(
+            "plugins", plugin.ContractAssembly, TimeSpan.Zero).AsTask();
+        await child.FirstUnregisterStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        child.CompleteTimedOutUnregister();
+        Ensure(!(await unregister).ReferencesReleased,
+            "the child unregister should defer coordinator cleanup");
+
+        child.ReleaseAssembly(plugin.ContractAssembly);
+        await WaitUntilAsync(() => client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task MultiClusterCancelledReplacementShouldPublishCoordinatorRoutesAfterDrain()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        await using var client = await CreateDynamicMultiClusterClientAsync(harness.Port);
+        using var oldPlugin = PluginBundle.Load("multi-cluster-cancelled-replacement-old");
+        using var newPlugin = PluginBundle.Load("multi-cluster-cancelled-replacement-new");
+        oldPlugin.ResetServiceState();
+        RegisterMultiClusterPlugin(harness, client, oldPlugin);
+
+        var proxy = GetMultiClusterProxy(client, oldPlugin.ContractType)
+            ?? throw new InvalidOperationException("Multi-cluster proxy factory returned null.");
+        var activeCall = InvokeValueTaskAsync<int>(
+            proxy, oldPlugin.ContractType, "BlockAsync", CancellationToken.None).AsTask();
+        await oldPlugin.GetStaticTask("BlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
+
+        using var cancellation = new CancellationTokenSource();
+        var replacement = client.ReplaceAssemblyAsync(
+            "plugins",
+            oldPlugin.ContractAssembly,
+            newPlugin.ContractAssembly,
+            TimeSpan.FromSeconds(2),
+            cancellation.Token).AsTask();
+        cancellation.Cancel();
+        await EnsureCancelledAsync(replacement, "multi-cluster replacement wait");
+
+        oldPlugin.ReleaseBlock();
+        Ensure(await activeCall.WaitAsync(TimeSpan.FromSeconds(2)) == 42,
+            "the admitted old call should complete before replacement cleanup");
+        var released = await UnregisterWhenReplacementPublishesAsync(client, newPlugin.ContractAssembly);
+        Ensure(released.ReferencesReleased,
+            "the replacement assembly should become the coordinator registration after caller cancellation");
+
+        await UnregisterMultiClusterPluginAsync(harness, oldPlugin);
     }
 
     [Test]
@@ -1060,6 +1163,70 @@ public sealed class RuntimeAssemblyIntegrationTests
         }
     }
 
+    private static async Task<ISharpLinkMultiClusterClient> CreateDynamicMultiClusterClientAsync(int port)
+    {
+        var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster("plugins", child => child.UseTcp(IPAddress.Loopback.ToString(), port),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+        await client.ConnectAsync();
+        return client;
+    }
+
+    private static void RegisterMultiClusterPlugin(
+        DynamicHarness harness,
+        ISharpLinkMultiClusterClient client,
+        PluginBundle plugin)
+    {
+        Ensure(harness.Server.RegisterAssembly(plugin.ContractAssembly).Succeeded,
+            "multi-cluster server contract registration");
+        Ensure(harness.Server.RegisterAssembly(plugin.ServiceAssembly).Succeeded,
+            "multi-cluster server service registration");
+        Ensure(client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded,
+            "multi-cluster client contract registration");
+    }
+
+    private static async Task UnregisterMultiClusterPluginAsync(DynamicHarness harness, PluginBundle plugin)
+    {
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ServiceAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "multi-cluster server service release");
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ContractAssembly, TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "multi-cluster server contract release");
+    }
+
+    private static async Task EnsureCancelledAsync(Task task, string name)
+    {
+        try
+        {
+            await task;
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        throw new Exception($"assert failed: {name} should observe caller cancellation");
+    }
+
+    private static async Task<SharpLinkAssemblyUnregisterResult> UnregisterWhenReplacementPublishesAsync(
+        ISharpLinkMultiClusterClient client,
+        Assembly assembly)
+    {
+        var deadline = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * 3d);
+        while (true)
+        {
+            try
+            {
+                return await client.UnregisterAssemblyAsync("plugins", assembly, TimeSpan.FromSeconds(2));
+            }
+            catch (InvalidOperationException) when (Stopwatch.GetTimestamp() < deadline)
+            {
+                await Task.Delay(10);
+            }
+        }
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
@@ -1199,6 +1366,88 @@ public sealed class RuntimeAssemblyIntegrationTests
         }
     }
 
+    private sealed class ControlledDynamicAssemblyClient : ISharpLinkClient, IDynamicAssemblyRegistrationInspector
+    {
+        private readonly Lock _gate = new();
+        private readonly HashSet<Assembly> _registeredAssemblies = new(ReferenceEqualityComparer.Instance);
+        private readonly SharpLinkAssemblyRegistrationResult _registrationResult;
+        private int _unregisterCalls;
+
+        internal ControlledDynamicAssemblyClient(SharpLinkAssemblyRegistrationResult registrationResult)
+        {
+            _registrationResult = registrationResult;
+        }
+
+        internal TaskCompletionSource<bool> FirstUnregisterStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private TaskCompletionSource<SharpLinkAssemblyUnregisterResult> FirstUnregisterCompletion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public SharpLinkConnectionState State => SharpLinkConnectionState.Ready;
+
+        public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
+        {
+            lock (_gate)
+                _registeredAssemblies.Add(assembly);
+            return _registrationResult;
+        }
+
+        public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
+            Assembly assembly,
+            TimeSpan gracefulTimeout,
+            CancellationToken cancellationToken = default)
+        {
+            _ = assembly;
+            _ = gracefulTimeout;
+            _ = cancellationToken;
+            if (Interlocked.Increment(ref _unregisterCalls) == 1)
+            {
+                FirstUnregisterStarted.TrySetResult(true);
+                return new ValueTask<SharpLinkAssemblyUnregisterResult>(FirstUnregisterCompletion.Task);
+            }
+            return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
+        }
+
+        public ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
+            Assembly oldAssembly,
+            Assembly newAssembly,
+            TimeSpan gracefulTimeout,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+        public ValueTask StopAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+        public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Ready));
+
+        public TContract Get<TContract>() where TContract : IService
+            => throw new NotSupportedException();
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        public bool IsDynamicAssemblyRegistered(Assembly assembly)
+        {
+            lock (_gate)
+                return _registeredAssemblies.Contains(assembly);
+        }
+
+        internal void CompleteTimedOutUnregister()
+            => FirstUnregisterCompletion.TrySetResult(new SharpLinkAssemblyUnregisterResult
+            {
+                ReferencesReleased = false,
+                RemainingCalls = 1
+            });
+
+        internal void ReleaseAssembly(Assembly assembly)
+        {
+            lock (_gate)
+                _registeredAssemblies.Remove(assembly);
+        }
+    }
+
     private sealed class DynamicHarness : IAsyncDisposable
     {
         private readonly CancellationTokenSource _serverCancellation;
@@ -1208,12 +1457,14 @@ public sealed class RuntimeAssemblyIntegrationTests
         private DynamicHarness(
             ISharpLinkServer server,
             ISharpLinkClient client,
+            int port,
             CancellationTokenSource serverCancellation,
             Task serverTask,
             ServiceProvider serviceProvider)
         {
             Server = server;
             Client = client;
+            Port = port;
             _serverCancellation = serverCancellation;
             _serverTask = serverTask;
             _serviceProvider = serviceProvider;
@@ -1221,6 +1472,7 @@ public sealed class RuntimeAssemblyIntegrationTests
 
         internal ISharpLinkServer Server { get; }
         internal ISharpLinkClient Client { get; }
+        internal int Port { get; }
 
         internal static async Task<DynamicHarness> CreateAsync(
             bool registerDynamicServiceDependencies = true)
@@ -1242,7 +1494,7 @@ public sealed class RuntimeAssemblyIntegrationTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .Build();
             await client.ConnectAsync();
-            return new DynamicHarness(server, client, serverCancellation, serverTask, serviceProvider);
+            return new DynamicHarness(server, client, port, serverCancellation, serverTask, serviceProvider);
         }
 
         public async ValueTask DisposeAsync()

@@ -483,6 +483,15 @@ internal sealed partial class SharpLinkClient
             ? new ValueTask<SharpLinkAssemblyUnregisterResult>(operation.WaitAsync(cancellationToken))
             : new ValueTask<SharpLinkAssemblyUnregisterResult>(operation);
 
+    internal bool IsDynamicAssemblyRegistered(Assembly assembly)
+    {
+        lock (_registryGate)
+            return _dynamicModules.ContainsKey(assembly);
+    }
+
+    bool IDynamicAssemblyRegistrationInspector.IsDynamicAssemblyRegistered(Assembly assembly)
+        => IsDynamicAssemblyRegistered(assembly);
+
     private IEnumerable<ISharpLinkGeneratedAssemblyManifest> EnumerateRegisteredManifests(SharpLinkDynamicModule[] modules)
     {
         for (var index = 0; index < _staticManifests.Count; index++)

@@ -3,7 +3,7 @@ using System.Reflection;
 
 namespace SharpLink.Client;
 
-internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
+internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, IDynamicAssemblyRegistrationInspector
 {
     private readonly IClientTransportFactory transportFactory;
     private readonly IEndpointClusterRuntime? _cluster;
