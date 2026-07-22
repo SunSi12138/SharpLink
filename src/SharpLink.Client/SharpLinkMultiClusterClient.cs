@@ -136,7 +136,9 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
             foreach (var contract in manifest.Contracts)
             {
                 if (currentRoutes.ContainsKey(contract.ContractType) ||
-                    currentRoutes.Values.Any(route => route.ContractId == contract.ContractId))
+                    currentRoutes.Values.Any(route => route.ContractId == contract.ContractId) ||
+                    _dynamicRegistrations.Any(registration => registration.Manifest.Contracts.Any(
+                        existingContract => existingContract.ContractId == contract.ContractId)))
                 {
                     return Failure(SharpLinkAssemblyRegistrationErrorCode.ContractConflict,
                         $"Contract '{contract.ContractName}' ({contract.ContractId}) is already routed to another assembly or cluster.", assembly);
@@ -347,9 +349,17 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
 
             var nextRoutes = Volatile.Read(ref _routes)
                 .ToDictionary(static pair => pair.Key, static pair => pair.Value);
+            var routeIds = nextRoutes.Values
+                .Select(static route => route.ContractId)
+                .ToHashSet();
             foreach (var contract in registration.Manifest.Contracts)
             {
-                nextRoutes.TryAdd(contract.ContractType, new SharpLinkClusterRouteRegistration(
+                if (nextRoutes.ContainsKey(contract.ContractType) || !routeIds.Add(contract.ContractId))
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot restore contract '{contract.ContractName}' ({contract.ContractId}) because its route is already owned by another assembly or cluster.");
+                }
+                nextRoutes.Add(contract.ContractType, new SharpLinkClusterRouteRegistration(
                     contract.ContractType,
                     contract.ContractId,
                     contract.Fingerprint,

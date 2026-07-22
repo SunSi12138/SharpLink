@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Collections.Generic;
 using System.Threading;
 using SharpLink.Client;
@@ -8,6 +9,8 @@ namespace SharpLink.UnitTests.Client;
 
 public sealed class SharpLinkMultiClusterClientTests
 {
+    private static readonly Assembly TestManifestAssembly = CreateTestManifestAssembly();
+
     [Test]
     public async Task StaticRouteShouldCreateTheTargetChildProxyAndConnectEverySlot()
     {
@@ -30,6 +33,54 @@ public sealed class SharpLinkMultiClusterClientTests
         Ensure(ordersTransport.ConnectCount == 1, "orders child should connect once");
         Ensure(paymentsTransport.ConnectCount == 1, "payments child should connect once");
         Ensure(client.GetClusterState("orders") == SharpLinkConnectionState.Ready, "orders slot state");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task FilteredStaticRoutesShouldIgnoreUnrelatedGlobalManifests()
+    {
+        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
+        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
+        ISharpLinkGeneratedAssemblyManifest? unrelatedManifest = new ThrowingCodecManifest();
+        SharpLinkGeneratedAssemblyCatalog.Register(unrelatedManifest);
+        try
+        {
+            await using var client = SharpLinkMultiClusterClientBuilder.Create()
+                .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
+                .Build();
+
+            Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+                "a filtered child should build without reading an unrelated global manifest");
+        }
+        finally
+        {
+            unrelatedManifest = null;
+            CollectWeakCatalogEntries();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task BuildShouldIgnoreRoutesForUnconfiguredClusters()
+    {
+        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
+        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
+        ISharpLinkGeneratedClusterRouteManifest? unrelatedRoute = new UnconfiguredRouteManifest();
+        SharpLinkGeneratedClusterRouteCatalog.Register(unrelatedRoute);
+        try
+        {
+            await using var client = SharpLinkMultiClusterClientBuilder.Create()
+                .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
+                .Build();
+
+            Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+                "unconfigured route manifests must not block a coordinator's configured routes");
+        }
+        finally
+        {
+            unrelatedRoute = null;
+            CollectWeakCatalogEntries();
+        }
     }
 
     [Test]
@@ -143,12 +194,26 @@ public sealed class SharpLinkMultiClusterClientTests
             throw new Exception(message);
     }
 
+    private static void CollectWeakCatalogEntries()
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        _ = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
+        _ = SharpLinkGeneratedClusterRouteCatalog.CreateSnapshot();
+    }
+
     private static SharpLinkEndpoint Endpoint(string id, int port)
         => new()
         {
             Id = id,
             Address = new SharpLinkTcpAddress("127.0.0.1", port)
         };
+
+    private static Assembly CreateTestManifestAssembly()
+        => AssemblyBuilder.DefineDynamicAssembly(
+            new AssemblyName("SharpLink.MultiClusterClientTests.Manifest"),
+            AssemblyBuilderAccess.Run);
 
     private interface IOrdersContract : IService;
     private interface IUnroutedContract : IService;
@@ -160,7 +225,7 @@ public sealed class SharpLinkMultiClusterClientTests
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
-        public Assembly OwnerAssembly => typeof(SharpLinkMultiClusterClientTests).Assembly;
+        public Assembly OwnerAssembly => TestManifestAssembly;
         public string CompileTimeDescriptor => "multi-cluster-test";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; } =
         [
@@ -181,13 +246,39 @@ public sealed class SharpLinkMultiClusterClientTests
     private sealed class RouteManifest : ISharpLinkGeneratedClusterRouteManifest
     {
         public static readonly RouteManifest Instance = new();
-        public Assembly OwnerAssembly => typeof(SharpLinkMultiClusterClientTests).Assembly;
+        public Assembly OwnerAssembly => TestManifestAssembly;
         public IReadOnlyList<SharpLinkGeneratedClusterAssemblyRoute> Routes { get; } =
         [
             new SharpLinkGeneratedClusterAssemblyRoute(
                 "orders",
-                typeof(SharpLinkMultiClusterClientTests).Assembly,
-                typeof(SharpLinkMultiClusterClientTests).Assembly.FullName!)
+                TestManifestAssembly,
+                TestManifestAssembly.FullName!)
+        ];
+    }
+
+    private sealed class ThrowingCodecManifest : ISharpLinkGeneratedAssemblyManifest
+    {
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "test";
+        public Assembly OwnerAssembly => typeof(string).Assembly;
+        public string CompileTimeDescriptor => "unrelated-manifest";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs
+            => throw new InvalidOperationException("Unrelated manifests must not be read by a filtered child.");
+        public IReadOnlyList<string> Dependencies => [];
+    }
+
+    private sealed class UnconfiguredRouteManifest : ISharpLinkGeneratedClusterRouteManifest
+    {
+        public Assembly OwnerAssembly => typeof(SharpLinkMultiClusterClientTests).Assembly;
+        public IReadOnlyList<SharpLinkGeneratedClusterAssemblyRoute> Routes { get; } =
+        [
+            new SharpLinkGeneratedClusterAssemblyRoute(
+                "unconfigured",
+                typeof(string).Assembly,
+                typeof(string).Assembly.FullName!)
         ];
     }
 

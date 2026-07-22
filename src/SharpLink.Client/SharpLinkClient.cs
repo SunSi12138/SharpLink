@@ -9,7 +9,9 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
     private readonly IEndpointClusterRuntime? _cluster;
     // Retained for endpoint-aware diagnostics without routing fixed calls through cluster selection.
     private readonly SharpLinkEndpoint? _fixedEndpoint;
-    private readonly SharpLinkRuntimeContext _runtimeContext = new SharpLinkRuntimeContextBuilder().Build();
+    // A filtered multi-cluster child supplies its own context after construction. Do not snapshot
+    // the process-wide manifest catalog before that context is applied.
+    private readonly SharpLinkRuntimeContext _runtimeContext = SharpLinkRuntimeContext.Default;
     private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests;
     private FrozenDictionary<Type, ClientProxyRegistration> _proxies =
         FrozenDictionary<Type, ClientProxyRegistration>.Empty;
@@ -131,7 +133,7 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
         _heartbeatInterval = heartbeatInterval;
         _heartbeatTimeout = heartbeatTimeout;
         _authenticator = authenticator;
-        _runtimeContext = runtimeContext ?? new SharpLinkRuntimeContextBuilder().Build();
+        _runtimeContext = runtimeContext ?? new SharpLinkRuntimeContextBuilder().Build(_staticManifests);
         _protocolOptions = (protocolOptions ?? _runtimeContext.Protocol).CloneValidated();
         _rpcSessionFlushOptions = rpcSessionFlushOptions;
         _connectionPoolOptions = (connectionPoolOptions ?? new SharpLinkConnectionPoolOptions()).CloneValidated();

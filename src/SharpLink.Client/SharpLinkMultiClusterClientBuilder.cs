@@ -67,48 +67,43 @@ public sealed class SharpLinkMultiClusterClientBuilder
         }
 
         var routeManifestSnapshot = SharpLinkGeneratedClusterRouteCatalog.CreateSnapshot();
+        var configuredRoutes = routeManifestSnapshot
+            .SelectMany(static manifest => manifest.Routes)
+            .Where(route => _clusters.ContainsKey(route.Cluster))
+            .ToArray();
         var routedAssemblies = new HashSet<Assembly>(ReferenceEqualityComparer.Instance);
-        foreach (var routeManifest in routeManifestSnapshot)
-        {
-            foreach (var route in routeManifest.Routes)
-                routedAssemblies.Add(route.ContractAssembly);
-        }
+        foreach (var route in configuredRoutes)
+            routedAssemblies.Add(route.ContractAssembly);
         var manifestByAssembly = LoadRoutedManifestGraph(routedAssemblies);
 
         var manifestsByCluster = _clusters.Keys.ToDictionary(
             static key => key,
             static _ => new Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest>(ReferenceEqualityComparer.Instance));
         var assemblyOwners = new Dictionary<Assembly, SharpLinkClusterKey>(ReferenceEqualityComparer.Instance);
-        foreach (var routeManifest in routeManifestSnapshot)
+        foreach (var route in configuredRoutes)
         {
-            foreach (var route in routeManifest.Routes)
+            if (!manifestByAssembly.TryGetValue(route.ContractAssembly, out var contractManifest))
             {
-                ValidateCluster(route.Cluster);
-                if (!_clusters.ContainsKey(route.Cluster))
-                    throw new InvalidOperationException($"Static route '{route.ContractAssemblyIdentity}' targets unknown cluster '{route.Cluster}'.");
-                if (!manifestByAssembly.TryGetValue(route.ContractAssembly, out var contractManifest))
-                {
-                    throw new InvalidOperationException(
-                        $"Static route '{route.ContractAssemblyIdentity}' does not reference a compatible generated contract manifest.");
-                }
-                if (contractManifest.Contracts.Count == 0)
-                {
-                    throw new InvalidOperationException(
-                        $"Static route '{route.ContractAssemblyIdentity}' must reference an assembly that owns at least one generated contract.");
-                }
-                if (assemblyOwners.TryGetValue(route.ContractAssembly, out var existingCluster))
-                {
-                    if (existingCluster != route.Cluster)
-                    {
-                        throw new InvalidOperationException(
-                            $"Contract assembly '{route.ContractAssemblyIdentity}' is routed to both '{existingCluster}' and '{route.Cluster}'.");
-                    }
-                    continue;
-                }
-
-                assemblyOwners.Add(route.ContractAssembly, route.Cluster);
-                AddManifestClosure(contractManifest, route.Cluster, manifestsByCluster, manifestByAssembly);
+                throw new InvalidOperationException(
+                    $"Static route '{route.ContractAssemblyIdentity}' does not reference a compatible generated contract manifest.");
             }
+            if (contractManifest.Contracts.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Static route '{route.ContractAssemblyIdentity}' must reference an assembly that owns at least one generated contract.");
+            }
+            if (assemblyOwners.TryGetValue(route.ContractAssembly, out var existingCluster))
+            {
+                if (existingCluster != route.Cluster)
+                {
+                    throw new InvalidOperationException(
+                        $"Contract assembly '{route.ContractAssemblyIdentity}' is routed to both '{existingCluster}' and '{route.Cluster}'.");
+                }
+                continue;
+            }
+
+            assemblyOwners.Add(route.ContractAssembly, route.Cluster);
+            AddManifestClosure(contractManifest, route.Cluster, manifestsByCluster, manifestByAssembly);
         }
 
         foreach (var configuration in _clusters.Values)

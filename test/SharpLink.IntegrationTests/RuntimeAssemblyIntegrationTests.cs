@@ -171,6 +171,55 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task MultiClusterRejectedUnregisterShouldReserveContractIdsUntilRoutesAreRestored()
+    {
+        using var originalPlugin = PluginBundle.Load("multi-cluster-rejected-unregister-original", loadService: false);
+        using var reloadedPlugin = PluginBundle.Load("multi-cluster-rejected-unregister-reloaded", loadService: false);
+        await using var registrationSource = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), 1)
+            .Build();
+        var registrationResult = registrationSource.RegisterAssembly(originalPlugin.ContractAssembly);
+        Ensure(registrationResult.Succeeded, "controlled child registration result");
+
+        var originalChild = new ControlledDynamicAssemblyClient(registrationResult);
+        var reloadedChild = new ControlledDynamicAssemblyClient(registrationResult);
+        var originalSlot = new SharpLinkClusterSlot("original", originalChild, AllowDynamicContracts: true);
+        var reloadedSlot = new SharpLinkClusterSlot("reloaded", reloadedChild, AllowDynamicContracts: true);
+        await using var client = new SharpLinkMultiClusterClient(
+            new SharpLinkMultiClusterOptions(),
+            new[] { originalSlot, reloadedSlot }.ToFrozenDictionary(static candidate => candidate.Key),
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
+            []);
+        Ensure(client.RegisterAssembly("original", originalPlugin.ContractAssembly).Succeeded,
+            "initial contract registration");
+
+        originalChild.BlockAndRejectNextUnregister();
+        var unregister = client.UnregisterAssemblyAsync(
+            "original", originalPlugin.ContractAssembly, TimeSpan.Zero).AsTask();
+        await originalChild.RejectedUnregisterStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var conflictingRegistration = client.RegisterAssembly("reloaded", reloadedPlugin.ContractAssembly);
+        Ensure(!conflictingRegistration.Succeeded,
+            "an active unregister must continue reserving its ContractIds");
+        Ensure(conflictingRegistration.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.ContractConflict,
+            "the ContractId reservation should return a structured conflict");
+
+        originalChild.CompleteRejectedUnregister();
+        try
+        {
+            await unregister;
+            throw new Exception("assert failed: the controlled child rejection must reach the caller");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message.Contains("rejected", StringComparison.Ordinal),
+                "the controlled child rejection is preserved");
+        }
+        _ = GetMultiClusterProxy(client, originalPlugin.ContractType);
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task MultiClusterReplacementShouldPublishCoordinatorRoutesBeforeOldDrainAndAfterCallerCancellation()
     {
         await using var harness = await DynamicHarness.CreateAsync();
@@ -1455,6 +1504,7 @@ public sealed class RuntimeAssemblyIntegrationTests
         private readonly SharpLinkAssemblyRegistrationResult _registrationResult;
         private int _unregisterCalls;
         private int _rejectNextUnregister;
+        private int _blockNextUnregisterRejection;
 
         internal ControlledDynamicAssemblyClient(SharpLinkAssemblyRegistrationResult registrationResult)
         {
@@ -1464,7 +1514,13 @@ public sealed class RuntimeAssemblyIntegrationTests
         internal TaskCompletionSource<bool> FirstUnregisterStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        internal TaskCompletionSource<bool> RejectedUnregisterStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         private TaskCompletionSource<SharpLinkAssemblyUnregisterResult> FirstUnregisterCompletion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private TaskCompletionSource<SharpLinkAssemblyUnregisterResult> RejectedUnregisterCompletion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public SharpLinkConnectionState State => SharpLinkConnectionState.Ready;
@@ -1488,6 +1544,11 @@ public sealed class RuntimeAssemblyIntegrationTests
             {
                 return ValueTask.FromException<SharpLinkAssemblyUnregisterResult>(
                     new InvalidOperationException("controlled child unregister rejected"));
+            }
+            if (Interlocked.Exchange(ref _blockNextUnregisterRejection, 0) != 0)
+            {
+                RejectedUnregisterStarted.TrySetResult(true);
+                return new ValueTask<SharpLinkAssemblyUnregisterResult>(RejectedUnregisterCompletion.Task);
             }
             if (Interlocked.Increment(ref _unregisterCalls) == 1)
             {
@@ -1536,6 +1597,12 @@ public sealed class RuntimeAssemblyIntegrationTests
         }
 
         internal void RejectNextUnregister() => Volatile.Write(ref _rejectNextUnregister, 1);
+
+        internal void BlockAndRejectNextUnregister() => Volatile.Write(ref _blockNextUnregisterRejection, 1);
+
+        internal void CompleteRejectedUnregister()
+            => RejectedUnregisterCompletion.TrySetException(
+                new InvalidOperationException("controlled child unregister rejected"));
 
         internal int UnregisterCalls => Volatile.Read(ref _unregisterCalls);
     }
