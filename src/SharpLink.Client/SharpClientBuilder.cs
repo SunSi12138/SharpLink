@@ -349,7 +349,9 @@ public class SharpClientBuilder
             if (endpoints.Length == 1)
                 return GetFixedConnectionBudget();
 
-            return _cluster.MaxConnections;
+            var cluster = _cluster.CloneValidated(endpoints.Length);
+            return Math.Min(cluster.MaxConnections,
+                checked(endpoints.Length * cluster.MaxConnectionsPerEndpoint));
         }
         return GetFixedConnectionBudget();
     }

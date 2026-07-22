@@ -190,10 +190,15 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
     {
         ArgumentNullException.ThrowIfNull(assembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
-        var slot = GetSlot(cluster);
+        SharpLinkClusterSlot slot;
         DynamicAssemblyRegistration? registration;
         lock (_gate)
         {
+            var state = (SharpLinkMultiClusterState)_state;
+            if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
+                return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
+
+            slot = GetSlot(cluster);
             registration = _dynamicRegistrations.FirstOrDefault(candidate =>
                 ReferenceEquals(candidate.Slot, slot) && ReferenceEquals(candidate.Assembly, assembly));
             if (registration is null)

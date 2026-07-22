@@ -17,7 +17,7 @@ No migration is needed for `SharpClientBuilder`, `ISharpLinkClient`, endpoint cl
 3. Configure matching slots with `SharpLinkMultiClusterClientBuilder`.
 4. Call `Get<TContract>()` without a cluster parameter.
 
-The generator rejects a malformed key or one contract assembly assigned to two clusters. Build rejects a route whose slot is absent, duplicate ContractType/ContractId ownership, missing generated dependencies, an empty slot without explicit dynamic opt-in, or a connection budget overrun.
+The generator rejects a malformed key or one contract assembly assigned to two clusters. Routes whose slots are not configured on a coordinator are ignored. For configured slots, Build rejects duplicate ContractType/ContractId ownership, missing generated dependencies, an empty slot without explicit dynamic opt-in, or a connection budget overrun.
 
 ## Runtime plugins
 

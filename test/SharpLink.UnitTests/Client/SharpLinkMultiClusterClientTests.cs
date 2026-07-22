@@ -156,6 +156,21 @@ public sealed class SharpLinkMultiClusterClientTests
     }
 
     [Test]
+    public async Task DynamicUnregisterShouldReturnFalseAfterStop()
+    {
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+
+        await client.StopAsync();
+        var unregister = await client.UnregisterAssemblyAsync(
+            "plugins", typeof(string).Assembly, TimeSpan.Zero);
+        Ensure(!unregister.ReferencesReleased,
+            "unregistration after shutdown must return the child-compatible false result before cluster lookup");
+    }
+
+    [Test]
     public Task EmptySlotShouldRequireExplicitDynamicOptIn()
     {
         var builder = SharpLinkMultiClusterClientBuilder.Create()
@@ -245,6 +260,28 @@ public sealed class SharpLinkMultiClusterClientTests
 
         Ensure(client.GetClusterState("orders") == SharpLinkConnectionState.Created,
             "one-endpoint collections must use their fixed-client budget without a second enumeration");
+    }
+
+    [Test]
+    public async Task StaticEndpointClustersShouldUseTheirEffectiveConnectionBudget()
+    {
+        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
+        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .Configure(options => options.MaxTotalConfiguredConnections = 2)
+            .AddCluster("orders", child => child
+                .UseEndpoints(
+                    [Endpoint("orders-a", 5001), Endpoint("orders-b", 5002)],
+                    static _ => new TestClientTransportFactory())
+                .UseCluster(static options =>
+                {
+                    options.MaxConnections = 4;
+                    options.MaxConnectionsPerEndpoint = 1;
+                }))
+            .Build();
+
+        Ensure(client.GetClusterState("orders") == SharpLinkConnectionState.Created,
+            "a static cluster must count its endpoint-capped connection capacity during coordinator preflight");
     }
 
     [Test]
