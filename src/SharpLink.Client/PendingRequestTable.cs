@@ -543,6 +543,13 @@ internal sealed class PendingRequestTable : IDisposable
     {
         call.DisposeCancellationRegistration();
         call.CancelProducer(reason);
+        var isResponse = reason is PendingCallCompletionReason.Response or PendingCallCompletionReason.LocalStreamComplete;
+        if (isResponse && call.Operation is { } responseOperation)
+        {
+            exception = responseOperation.TryDeserializeResponse(ref payload);
+            if (exception is not null)
+                reason = PendingCallCompletionReason.RemoteError;
+        }
         exception ??= CreateCompletionException(call, reason);
 
         var completion = new PendingCallCompletion(
@@ -551,14 +558,14 @@ internal sealed class PendingRequestTable : IDisposable
             reason,
             call.Dispatcher,
             exception);
-        // Report endpoint admission before publishing the operation result. The consumer therefore
-        // observes a completed call only after its policy token has reached its one terminal report.
+        // Decode response payloads before reporting the terminal admission outcome so malformed
+        // endpoint responses are not published as successful attempts.
         call.CompletionObserver?.OnPendingCallCompleted(in completion);
 
         if (call.Operation is { } operation)
         {
-            if (reason is PendingCallCompletionReason.Response or PendingCallCompletionReason.LocalStreamComplete)
-                operation.SetResult(ref payload);
+            if (isResponse)
+                operation.CompleteResponse(exception);
             else
                 operation.SetError(exception ?? new SharpLinkException(
                     SharpLinkErrorCode.Internal,

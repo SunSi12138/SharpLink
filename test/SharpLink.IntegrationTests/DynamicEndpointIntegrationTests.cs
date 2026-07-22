@@ -88,6 +88,10 @@ public sealed class DynamicEndpointIntegrationTests
 
         await client.ConnectAsync();
         Ensure(((SharpLinkClient)client).ReadyConnectionCount == 0, "empty topology has no ready connection");
+        var repeatedConnect = client.ConnectAsync();
+        Ensure(repeatedConnect.IsCompletedSuccessfully,
+            "repeated ConnectAsync on an accepted empty topology must complete without waiting for recovery");
+        await repeatedConnect;
         resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("recovered", server.Port, "blue")]));
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(3));
         Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "recovered", "topology recovery RPC");

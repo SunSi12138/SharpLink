@@ -87,7 +87,7 @@ internal sealed partial class SharpLinkClient
                     continue;
                 }
 
-                if (control.Deadline is { } deadline && DateTimeOffset.UtcNow + delay >= deadline)
+                if (control.Deadline is { } deadline && WouldReachDeadline(deadline, delay))
                     throw CreateDeadlineExceededException();
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
@@ -255,7 +255,7 @@ internal sealed partial class SharpLinkClient
                     var delay = retryAfter > TimeSpan.Zero
                         ? retryAfter
                         : TimeSpan.FromMilliseconds(1);
-                    if (deadline is { } retryDeadline && DateTimeOffset.UtcNow + delay >= retryDeadline)
+                    if (deadline is { } retryDeadline && WouldReachDeadline(retryDeadline, delay))
                         throw CreateDeadlineExceededException();
                     await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                     continue;

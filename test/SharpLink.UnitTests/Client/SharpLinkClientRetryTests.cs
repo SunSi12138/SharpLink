@@ -86,6 +86,26 @@ public class SharpLinkClientRetryTests
     }
 
     [Test]
+    public async Task RetryDelayBeyondDeadlineShouldNotOverflow()
+    {
+        var transport = new TestClientTransportFactory();
+        var policy = new HugeDelayPolicy();
+        await using var client = CreateRetryClient(transport, policy, maxAttempts: 2);
+        await client.ConnectAsync();
+
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
+            client,
+            new SharpLinkCallOptions { Timeout = TimeSpan.FromSeconds(1) }).AsTask();
+        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
+
+        var exception = await EnsureThrows<SharpLinkException>(invocation);
+        Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded,
+            "oversized retry delay must map to deadline exceeded instead of overflowing");
+        Ensure(policy.Count == 1, "custom retry policy should be evaluated once");
+    }
+
+    [Test]
     public async Task RetryShouldRunInterceptorOnceAndRejectInvalidCustomPolicyDelay()
     {
         var transport = new TestClientTransportFactory();
@@ -458,6 +478,17 @@ public class SharpLinkClientRetryTests
         {
             Count++;
             return await next(context);
+        }
+    }
+
+    private sealed class HugeDelayPolicy : ISharpLinkRetryPolicy
+    {
+        public int Count { get; private set; }
+
+        public SharpLinkRetryDecision Evaluate(in SharpLinkRetryContext context)
+        {
+            Count++;
+            return new SharpLinkRetryDecision(true, TimeSpan.MaxValue);
         }
     }
 

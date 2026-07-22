@@ -179,6 +179,59 @@ public class SharpLinkClientCallOptionsTests
     }
 
     [Test]
+    public async Task EndpointAdmissionShouldReportMalformedResponsesAsRemoteErrors()
+    {
+        var transport = new TestClientTransportFactory();
+        var policy = new RecordingAdmissionPolicy();
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            fixedEndpoint: FixedEndpoint,
+            endpointAdmissionPolicy: policy);
+        await client.ConnectAsync();
+
+        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await transport.Connection.InjectFrameAsync(
+            ProtocolV2FrameType.Response,
+            ProtocolV2FrameFlags.None,
+            request.RequestId,
+            new byte[] { 0 });
+
+        var exception = await CaptureSharpLinkException(invocation);
+        Ensure(exception.Code == SharpLinkErrorCode.DataLoss, "malformed response error code");
+        Ensure(policy.ReportCount == 1, "malformed response admission report count");
+        Ensure(policy.LastOutcome.Kind == SharpLinkEndpointOutcomeKind.RemoteError,
+            "malformed response must report a remote error rather than success");
+        Ensure(policy.LastOutcome.ErrorCode == SharpLinkErrorCode.DataLoss,
+            "malformed response outcome error code");
+        Ensure(policy.LastOutcome.ResponseObserved,
+            "malformed response must still record that the endpoint sent a response");
+    }
+
+    [Test]
+    public async Task WaitForReadyAdmissionDelayBeyondDeadlineShouldNotOverflow()
+    {
+        var transport = new TestClientTransportFactory();
+        var policy = new RejectWithDelayPolicy(TimeSpan.MaxValue);
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            fixedEndpoint: FixedEndpoint,
+            endpointAdmissionPolicy: policy);
+        await client.ConnectAsync();
+
+        var exception = await CaptureSharpLinkException(ClientInvokerTestHelper.InvokeUnaryAsync(
+            client,
+            new SharpLinkCallOptions { WaitForReady = true, Timeout = TimeSpan.FromSeconds(1) }));
+        Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded,
+            "oversized admission retry delay must map to deadline exceeded");
+        Ensure(policy.AcquireCount == 1, "oversized delay should not loop or issue a request");
+    }
+
+    [Test]
     public async Task StreamRegistrationFailuresShouldReportAcquiredAdmissionLeases()
     {
         var transport = new TestClientTransportFactory();
@@ -333,6 +386,23 @@ public class SharpLinkClientCallOptionsTests
         {
             ReportCount++;
             Ensure(token == 1, "zero-delay retry admission token");
+        }
+    }
+
+    private sealed class RejectWithDelayPolicy(TimeSpan retryAfter) : ISharpLinkEndpointAdmissionPolicy
+    {
+        public int AcquireCount { get; private set; }
+
+        public SharpLinkEndpointAdmissionDecision TryAcquire(
+            in SharpLinkEndpointCandidate endpoint,
+            in RpcMethodDescriptor method)
+        {
+            AcquireCount++;
+            return new SharpLinkEndpointAdmissionDecision(false, Token: 0, RetryAfter: retryAfter);
+        }
+
+        public void Report(in SharpLinkEndpointOutcome outcome, long token)
+        {
         }
     }
 
