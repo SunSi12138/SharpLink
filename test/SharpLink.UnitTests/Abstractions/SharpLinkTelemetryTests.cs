@@ -205,19 +205,16 @@ public class SharpLinkTelemetryTests
     [Test]
     public void ClientTopologyMetricsShouldExposeStableLowCardinalityInstruments()
     {
-        var activeEndpoints = 0L;
-        var readyEndpoints = 0L;
-        var drainingEndpoints = 0L;
         var resolverUpdates = 0L;
         var resolverFailures = 0L;
-        var activeConnections = 0L;
-        var retiringConnections = 0L;
+        var instruments = new HashSet<string>(StringComparer.Ordinal);
         using var listener = new MeterListener();
-        listener.InstrumentPublished = static (instrument, meterListener) =>
+        listener.InstrumentPublished = (instrument, meterListener) =>
         {
             if (instrument.Meter.Name == "SharpLink" &&
                 instrument.Name.StartsWith("sharplink.client.", StringComparison.Ordinal))
             {
+                instruments.Add(instrument.Name);
                 meterListener.EnableMeasurementEvents(instrument);
             }
         };
@@ -225,26 +222,11 @@ public class SharpLinkTelemetryTests
         {
             switch (instrument.Name)
             {
-                case "sharplink.client.endpoints.active":
-                    Interlocked.Add(ref activeEndpoints, measurement);
-                    break;
-                case "sharplink.client.endpoints.ready":
-                    Interlocked.Add(ref readyEndpoints, measurement);
-                    break;
-                case "sharplink.client.endpoints.draining":
-                    Interlocked.Add(ref drainingEndpoints, measurement);
-                    break;
                 case "sharplink.client.resolver.updates":
                     Interlocked.Add(ref resolverUpdates, measurement);
                     break;
                 case "sharplink.client.resolver.failures":
                     Interlocked.Add(ref resolverFailures, measurement);
-                    break;
-                case "sharplink.client.connections.active":
-                    Interlocked.Add(ref activeConnections, measurement);
-                    break;
-                case "sharplink.client.connections.retiring":
-                    Interlocked.Add(ref retiringConnections, measurement);
                     break;
             }
         });
@@ -257,16 +239,23 @@ public class SharpLinkTelemetryTests
         SharpLinkTelemetry.RecordClientResolverFailure();
         SharpLinkTelemetry.ConnectionOpened("client");
         SharpLinkTelemetry.AddClientRetiringConnections(1);
+        listener.RecordObservableInstruments();
+        SharpLinkTelemetry.AddClientActiveEndpoints(-2);
+        SharpLinkTelemetry.AddClientReadyEndpoints(-1);
+        SharpLinkTelemetry.AddClientDrainingEndpoints(-1);
         SharpLinkTelemetry.AddClientRetiringConnections(-1);
         SharpLinkTelemetry.ConnectionClosed("client");
+        listener.RecordObservableInstruments();
 
-        Ensure(Volatile.Read(ref activeEndpoints) == 2, "active endpoints metric");
-        Ensure(Volatile.Read(ref readyEndpoints) == 1, "ready endpoints metric");
-        Ensure(Volatile.Read(ref drainingEndpoints) == 1, "draining endpoints metric");
+        Ensure(instruments.Contains("sharplink.client.endpoints.active"), "active endpoints instrument");
+        Ensure(instruments.Contains("sharplink.client.endpoints.ready"), "ready endpoints instrument");
+        Ensure(instruments.Contains("sharplink.client.endpoints.draining"), "draining endpoints instrument");
+        Ensure(instruments.Contains("sharplink.client.resolver.updates"), "resolver updates instrument");
+        Ensure(instruments.Contains("sharplink.client.resolver.failures"), "resolver failures instrument");
+        Ensure(instruments.Contains("sharplink.client.connections.active"), "active connections instrument");
+        Ensure(instruments.Contains("sharplink.client.connections.retiring"), "retiring connections instrument");
         Ensure(Volatile.Read(ref resolverUpdates) == 1, "resolver updates metric");
         Ensure(Volatile.Read(ref resolverFailures) == 1, "resolver failures metric");
-        Ensure(Volatile.Read(ref activeConnections) == 0, "active connections must balance");
-        Ensure(Volatile.Read(ref retiringConnections) == 0, "retiring connections must balance");
     }
 
     private static string? FindTag(

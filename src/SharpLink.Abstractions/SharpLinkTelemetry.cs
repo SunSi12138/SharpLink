@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Threading;
 
 namespace SharpLink.Abstractions;
 
@@ -13,22 +14,43 @@ public static class SharpLinkTelemetry
     /// <summary>Gets the process-wide immutable meter named <c>SharpLink</c>.</summary>
     public static Meter Meter { get; } = new("SharpLink");
 
+    private static long _clientActiveEndpointCount;
+    private static long _clientReadyEndpointCount;
+    private static long _clientDrainingEndpointCount;
+    private static long _clientActiveConnectionCount;
+    private static long _clientRetiringConnectionCount;
+
     private static readonly UpDownCounter<long> ActiveConnections =
         Meter.CreateUpDownCounter<long>("sharplink.connections.active", unit: "{connection}");
-    private static readonly UpDownCounter<long> ClientActiveEndpoints =
-        Meter.CreateUpDownCounter<long>("sharplink.client.endpoints.active", unit: "{endpoint}");
-    private static readonly UpDownCounter<long> ClientReadyEndpoints =
-        Meter.CreateUpDownCounter<long>("sharplink.client.endpoints.ready", unit: "{endpoint}");
-    private static readonly UpDownCounter<long> ClientDrainingEndpoints =
-        Meter.CreateUpDownCounter<long>("sharplink.client.endpoints.draining", unit: "{endpoint}");
+    private static readonly ObservableUpDownCounter<long> ClientActiveEndpoints =
+        Meter.CreateObservableUpDownCounter(
+            "sharplink.client.endpoints.active",
+            static () => Volatile.Read(ref _clientActiveEndpointCount),
+            unit: "{endpoint}");
+    private static readonly ObservableUpDownCounter<long> ClientReadyEndpoints =
+        Meter.CreateObservableUpDownCounter(
+            "sharplink.client.endpoints.ready",
+            static () => Volatile.Read(ref _clientReadyEndpointCount),
+            unit: "{endpoint}");
+    private static readonly ObservableUpDownCounter<long> ClientDrainingEndpoints =
+        Meter.CreateObservableUpDownCounter(
+            "sharplink.client.endpoints.draining",
+            static () => Volatile.Read(ref _clientDrainingEndpointCount),
+            unit: "{endpoint}");
     private static readonly Counter<long> ClientResolverUpdates =
         Meter.CreateCounter<long>("sharplink.client.resolver.updates", unit: "{update}");
     private static readonly Counter<long> ClientResolverFailures =
         Meter.CreateCounter<long>("sharplink.client.resolver.failures", unit: "{failure}");
-    private static readonly UpDownCounter<long> ClientActiveConnections =
-        Meter.CreateUpDownCounter<long>("sharplink.client.connections.active", unit: "{connection}");
-    private static readonly UpDownCounter<long> ClientRetiringConnections =
-        Meter.CreateUpDownCounter<long>("sharplink.client.connections.retiring", unit: "{connection}");
+    private static readonly ObservableUpDownCounter<long> ClientActiveConnections =
+        Meter.CreateObservableUpDownCounter(
+            "sharplink.client.connections.active",
+            static () => Volatile.Read(ref _clientActiveConnectionCount),
+            unit: "{connection}");
+    private static readonly ObservableUpDownCounter<long> ClientRetiringConnections =
+        Meter.CreateObservableUpDownCounter(
+            "sharplink.client.connections.retiring",
+            static () => Volatile.Read(ref _clientRetiringConnectionCount),
+            unit: "{connection}");
     private static readonly Counter<long> Reconnects =
         Meter.CreateCounter<long>("sharplink.connections.reconnects", unit: "{attempt}");
     private static readonly Counter<long> StartedCalls =
@@ -142,20 +164,29 @@ public static class SharpLinkTelemetry
     {
         RecordDelta(ActiveConnections, 1, side);
         if (side == "client")
-            RecordDelta(ClientActiveConnections, 1);
+            Interlocked.Increment(ref _clientActiveConnectionCount);
     }
     internal static void ConnectionClosed(string side)
     {
         RecordDelta(ActiveConnections, -1, side);
         if (side == "client")
-            RecordDelta(ClientActiveConnections, -1);
+            Interlocked.Decrement(ref _clientActiveConnectionCount);
     }
     internal static void AddClientActiveEndpoints(long count)
-        => RecordDelta(ClientActiveEndpoints, count);
+    {
+        if (count != 0)
+            Interlocked.Add(ref _clientActiveEndpointCount, count);
+    }
     internal static void AddClientReadyEndpoints(long count)
-        => RecordDelta(ClientReadyEndpoints, count);
+    {
+        if (count != 0)
+            Interlocked.Add(ref _clientReadyEndpointCount, count);
+    }
     internal static void AddClientDrainingEndpoints(long count)
-        => RecordDelta(ClientDrainingEndpoints, count);
+    {
+        if (count != 0)
+            Interlocked.Add(ref _clientDrainingEndpointCount, count);
+    }
     internal static void RecordClientResolverUpdate()
     {
         if (ClientResolverUpdates.Enabled)
@@ -167,7 +198,10 @@ public static class SharpLinkTelemetry
             ClientResolverFailures.Add(1);
     }
     internal static void AddClientRetiringConnections(long count)
-        => RecordDelta(ClientRetiringConnections, count);
+    {
+        if (count != 0)
+            Interlocked.Add(ref _clientRetiringConnectionCount, count);
+    }
     internal static void ReconnectAttempt() => Record(Reconnects, 1, "client");
     internal static void RecordSentBytes(long bytes) => RecordPositive(SentBytes, bytes);
     internal static void RecordReceivedBytes(long bytes) => RecordPositive(ReceivedBytes, bytes);

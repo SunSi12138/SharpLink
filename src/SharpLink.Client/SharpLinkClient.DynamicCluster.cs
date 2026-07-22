@@ -227,9 +227,11 @@ internal sealed partial class SharpLinkClient
 
         private async Task StartAsync(CancellationToken cancellationToken)
         {
+            var resolverSucceeded = false;
             try
             {
                 var snapshot = await _resolver.ResolveAsync(cancellationToken).ConfigureAwait(false);
+                resolverSucceeded = true;
                 if (!await ApplySnapshotAsync(snapshot, deferInitialReconciliation: true).ConfigureAwait(false))
                 {
                     throw new InvalidOperationException(
@@ -245,7 +247,8 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
-                SharpLinkTelemetry.RecordClientResolverFailure();
+                if (!resolverSucceeded)
+                    SharpLinkTelemetry.RecordClientResolverFailure();
                 _client.TransitionTo(SharpLinkConnectionState.Reconnecting);
                 StartResolverWorker(resolveBeforeWatch: true);
                 throw new SharpLinkException(
