@@ -129,6 +129,35 @@ public sealed class DynamicEndpointResolverTests
             .Build();
     }
 
+    [Test]
+    public async Task DynamicClusterShouldRejectAnonymousPipeFactories()
+    {
+        var resolver = new SingleSnapshotResolver(new SharpLinkEndpointSnapshot(0,
+        [
+            new SharpLinkEndpoint
+            {
+                Id = "pipe",
+                Address = new SharpLinkAnonymousPipeAddress("in-handle", "out-handle")
+            }
+        ]));
+        await using var client = SharpClientBuilder.Create()
+            .UseEndpointResolver(resolver, _ => new AnonymousPipeClientTransportFactory("in-handle", "out-handle"))
+            .Build();
+
+        try
+        {
+            await client.ConnectAsync();
+            throw new Exception("expected anonymous-pipe dynamic cluster rejection");
+        }
+        catch (SharpLinkException exception)
+        {
+            Ensure(exception.Code == SharpLinkErrorCode.Unavailable, "dynamic cluster rejection code");
+            Ensure(exception.InnerException is InvalidOperationException {
+                Message: "The endpoint resolver returned an invalid initial topology."
+            }, "dynamic cluster must reject the anonymous-pipe factory before attempting a connection");
+        }
+    }
+
     private static async Task EnsureThrows<TException>(Func<Task> action) where TException : Exception
     {
         try
@@ -180,6 +209,21 @@ public sealed class DynamicEndpointResolverTests
             Interlocked.Increment(ref _disposeCount);
             return ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class SingleSnapshotResolver(SharpLinkEndpointSnapshot snapshot) : ISharpLinkEndpointResolver
+    {
+        public ValueTask<SharpLinkEndpointSnapshot> ResolveAsync(CancellationToken cancellationToken)
+            => ValueTask.FromResult(snapshot);
+
+        public async IAsyncEnumerable<SharpLinkEndpointSnapshot> WatchAsync(
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class TrackingFactory : IClientTransportFactory

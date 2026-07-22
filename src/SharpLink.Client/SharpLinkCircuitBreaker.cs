@@ -68,9 +68,12 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
         }
         if (outcome.Kind == SharpLinkEndpointOutcomeKind.SendFailure)
         {
-            return outcome.ErrorCode == SharpLinkErrorCode.ResourceExhausted
-                ? CircuitSample.Ignore
-                : CircuitSample.Failure;
+            return outcome.ErrorCode is SharpLinkErrorCode.Unavailable or
+                SharpLinkErrorCode.ConnectionClosed or
+                SharpLinkErrorCode.DataLoss or
+                SharpLinkErrorCode.Internal
+                ? CircuitSample.Failure
+                : CircuitSample.Ignore;
         }
         if (outcome.Kind == SharpLinkEndpointOutcomeKind.RemoteError)
         {

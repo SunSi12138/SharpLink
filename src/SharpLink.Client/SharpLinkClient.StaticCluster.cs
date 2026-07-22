@@ -389,6 +389,7 @@ internal sealed partial class SharpLinkClient
 
             RpcSession? session = null;
             ITransportConnection? transport = null;
+            ClientConnection? connection = null;
             try
             {
                 using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _client._shutdownCts.Token);
@@ -407,29 +408,31 @@ internal sealed partial class SharpLinkClient
                     throw handshakeException;
 
                 var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(_client._shutdownCts.Token);
-                var connection = new ClientConnection(
+                var createdConnection = new ClientConnection(
                     _client,
                     session,
                     sessionCts,
                     _client._protocolOptions.MaxPendingRequestsPerConnection,
                     _client._runtimeContext.Codecs,
                     endpoint.Configuration.Endpoint.Id);
-                connection.Session.OnDisconnected += exception => HandleDisconnected(
+                connection = createdConnection;
+                createdConnection.Session.OnDisconnected += exception => HandleDisconnected(
                     endpoint,
-                    connection,
+                    createdConnection,
                     exception ?? CreateConnectionClosedException("Transport closed."));
 
                 lock (_gate)
                 {
                     if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested)
                         throw CreateConnectionClosedException("Client stopped while connecting.");
-                    endpoint.Connections.Add(connection);
+                    endpoint.Connections.Add(createdConnection);
                     PublishReadySnapshotLocked();
                 }
                 session.NotifyConnected();
-                _client.TrackBackgroundTask(_client.RunHeartbeatSendLoopAsync(connection, sessionCts.Token));
-                _client.TrackBackgroundTask(_client.RunProcessRequestLoopAsync(connection, sessionCts.Token));
+                _client.TrackBackgroundTask(_client.RunHeartbeatSendLoopAsync(createdConnection, sessionCts.Token));
+                _client.TrackBackgroundTask(_client.RunProcessRequestLoopAsync(createdConnection, sessionCts.Token));
                 session = null;
+                connection = null;
                 PublishClientReadiness();
                 EnsureMinimumReadyEndpoints();
             }
@@ -439,7 +442,9 @@ internal sealed partial class SharpLinkClient
                     endpoint.ConnectingCount--;
                 if (transport is not null)
                     await transport.DisposeAsync().ConfigureAwait(false);
-                if (session is not null)
+                if (connection is not null)
+                    await connection.DisposeAsync().ConfigureAwait(false);
+                else if (session is not null)
                     await session.DisposeAsync().ConfigureAwait(false);
             }
         }

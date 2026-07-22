@@ -402,6 +402,11 @@ internal sealed partial class SharpLinkClient
                     created.Add(endpoint.Id, new EndpointState(
                         new StaticEndpointConfiguration(endpoint, factory),
                         Interlocked.Increment(ref _nextGeneration)));
+                    if (factory is AnonymousPipeClientTransportFactory)
+                    {
+                        throw new InvalidOperationException(
+                            "Anonymous-pipe handle offers cannot be used by endpoint clusters.");
+                    }
                 }
             }
             catch (Exception exception)
@@ -686,6 +691,7 @@ internal sealed partial class SharpLinkClient
 
             RpcSession? session = null;
             ITransportConnection? transport = null;
+            ClientConnection? connection = null;
             try
             {
                 using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _client._shutdownCts.Token);
@@ -704,7 +710,7 @@ internal sealed partial class SharpLinkClient
                     throw handshakeException;
 
                 var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(_client._shutdownCts.Token);
-                var connection = new ClientConnection(
+                var createdConnection = new ClientConnection(
                     _client,
                     session,
                     sessionCts,
@@ -712,9 +718,10 @@ internal sealed partial class SharpLinkClient
                     _client._runtimeContext.Codecs,
                     endpoint.Configuration.Endpoint.Id,
                     endpoint.Generation);
-                connection.Session.OnDisconnected += exception => HandleDisconnected(
+                connection = createdConnection;
+                createdConnection.Session.OnDisconnected += exception => HandleDisconnected(
                     endpoint,
-                    connection,
+                    createdConnection,
                     exception ?? CreateConnectionClosedException("Transport closed."));
 
                 lock (_gate)
@@ -722,13 +729,14 @@ internal sealed partial class SharpLinkClient
                     if (Volatile.Read(ref _stopping) != 0 || endpoint.Retiring || !IsCurrentLocked(endpoint) ||
                         IsRetiringBudgetExceededLocked())
                         throw CreateConnectionClosedException("Endpoint generation retired while connecting.");
-                    endpoint.Connections.Add(connection);
+                    endpoint.Connections.Add(createdConnection);
                     PublishReadySnapshotLocked();
                 }
                 session.NotifyConnected();
-                _client.TrackBackgroundTask(_client.RunHeartbeatSendLoopAsync(connection, sessionCts.Token));
-                _client.TrackBackgroundTask(_client.RunProcessRequestLoopAsync(connection, sessionCts.Token));
+                _client.TrackBackgroundTask(_client.RunHeartbeatSendLoopAsync(createdConnection, sessionCts.Token));
+                _client.TrackBackgroundTask(_client.RunProcessRequestLoopAsync(createdConnection, sessionCts.Token));
                 session = null;
+                connection = null;
                 UpdateClientReadiness();
                 EnsureMinimumReadyEndpoints();
             }
@@ -744,7 +752,9 @@ internal sealed partial class SharpLinkClient
                     ScheduleRetiredStateRelease(endpoint);
                 if (transport is not null)
                     await transport.DisposeAsync().ConfigureAwait(false);
-                if (session is not null)
+                if (connection is not null)
+                    await connection.DisposeAsync().ConfigureAwait(false);
+                else if (session is not null)
                     await session.DisposeAsync().ConfigureAwait(false);
             }
         }

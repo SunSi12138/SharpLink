@@ -84,6 +84,20 @@ public class StaticEndpointBuilderTests
     }
 
     [Test]
+    public async Task StaticClusterShouldRejectAnonymousPipeFactories()
+    {
+        await EnsureThrows<InvalidOperationException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseEndpoints(
+                    [Endpoint("first", 5001), Endpoint("second", 5002)],
+                    _ => new AnonymousPipeClientTransportFactory("in-handle", "out-handle"))
+                .Build();
+            return Task.CompletedTask;
+        });
+    }
+
+    [Test]
     public async Task StaticClusterShouldOwnEveryFactoryExactlyOnce()
     {
         var first = new TrackingFactory();

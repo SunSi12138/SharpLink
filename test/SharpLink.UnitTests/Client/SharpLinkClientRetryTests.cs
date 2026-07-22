@@ -424,6 +424,31 @@ public class SharpLinkClientRetryTests
     }
 
     [Test]
+    public void CircuitBreakerShouldIgnoreLocalSendFailures()
+    {
+        var breaker = new SharpLinkCircuitBreaker(new SharpLinkCircuitBreakerOptions
+        {
+            MinimumThroughput = 1,
+            FailureRatio = 1,
+            SamplingDuration = TimeSpan.FromSeconds(10),
+            BreakDuration = TimeSpan.FromSeconds(10),
+            HalfOpenMaxCalls = 1
+        }.CloneValidated());
+        var method = new RpcMethodDescriptor(1, 2, RpcMethodKind.Unary, true, false, false, null);
+        var endpoint = new SharpLinkEndpointCandidate(Endpoint("breaker", 5001), 1, 0, generation: 1);
+        var codecFailure = new SharpLinkEndpointOutcome(
+            endpoint, method, SharpLinkEndpointOutcomeKind.SendFailure, null, false, TimeSpan.Zero);
+        var validationFailure = new SharpLinkEndpointOutcome(
+            endpoint, method, SharpLinkEndpointOutcomeKind.SendFailure, SharpLinkErrorCode.InvalidArgument, false, TimeSpan.Zero);
+
+        breaker.Report(codecFailure, breaker.TryAcquire(endpoint, method).Token);
+        breaker.Report(validationFailure, breaker.TryAcquire(endpoint, method).Token);
+
+        Ensure(breaker.TryAcquire(endpoint, method).IsAllowed,
+            "local serialization and validation failures must not open the endpoint breaker");
+    }
+
+    [Test]
     public void CircuitBreakerShouldIgnoreReportsFromAnExpiredHalfOpenEpoch()
     {
         var breaker = new SharpLinkCircuitBreaker(new SharpLinkCircuitBreakerOptions

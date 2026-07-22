@@ -401,6 +401,11 @@ public class SharpClientBuilder
                         throw new InvalidOperationException(
                             "Each static endpoint must receive an independently owned transport factory.");
                     }
+                    if (factory is AnonymousPipeClientTransportFactory)
+                    {
+                        throw new InvalidOperationException(
+                            "Anonymous-pipe handle offers cannot be used by endpoint clusters.");
+                    }
                     configurations[index] = new StaticEndpointConfiguration(
                         endpoints[index],
                         factory);
