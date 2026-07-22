@@ -140,6 +140,22 @@ public sealed class SharpLinkMultiClusterClientTests
     }
 
     [Test]
+    public async Task DynamicReplacementShouldReturnStructuredFailureAfterStop()
+    {
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+
+        await client.StopAsync();
+        var replacement = await client.ReplaceAssemblyAsync(
+            "plugins", typeof(string).Assembly, typeof(int).Assembly, TimeSpan.Zero);
+        Ensure(!replacement.Succeeded &&
+               replacement.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+            "replacement after shutdown must return the structured terminal-state failure before cluster lookup");
+    }
+
+    [Test]
     public Task EmptySlotShouldRequireExplicitDynamicOptIn()
     {
         var builder = SharpLinkMultiClusterClientBuilder.Create()

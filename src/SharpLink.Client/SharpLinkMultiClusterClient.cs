@@ -221,7 +221,19 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
         ArgumentNullException.ThrowIfNull(oldAssembly);
         ArgumentNullException.ThrowIfNull(newAssembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
-        var slot = GetSlot(cluster);
+        SharpLinkClusterSlot slot;
+        lock (_gate)
+        {
+            var state = (SharpLinkMultiClusterState)_state;
+            if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
+            {
+                return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(Error(
+                    SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                    $"Multi-cluster client state '{state}' does not accept runtime assembly replacement.", newAssembly)));
+            }
+
+            slot = GetSlot(cluster);
+        }
         var loaded = SharpLinkAssemblyManifestLoader.TryLoad(newAssembly, out var newManifest);
         if (!loaded.Succeeded)
             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(loaded.Error!));
@@ -229,6 +241,14 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
         DynamicAssemblyRegistration? registration;
         lock (_gate)
         {
+            var state = (SharpLinkMultiClusterState)_state;
+            if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
+            {
+                return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(Error(
+                    SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                    $"Multi-cluster client state '{state}' does not accept runtime assembly replacement.", newAssembly)));
+            }
+
             registration = _dynamicRegistrations.FirstOrDefault(candidate =>
                 ReferenceEquals(candidate.Slot, slot) && ReferenceEquals(candidate.Assembly, oldAssembly));
             if (registration is null)

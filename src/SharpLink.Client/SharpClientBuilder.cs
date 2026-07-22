@@ -7,7 +7,7 @@ public class SharpClientBuilder
     
     private IClientTransportFactory? _transport;
     private IEnumerable<SharpLinkEndpoint>? _endpoints;
-    private SharpLinkEndpoint[]? _endpointSnapshot;
+    private SharpLinkEndpoint[]? _preflightEndpointSnapshot;
     private SharpLinkEndpointTransportFactory? _endpointTransportFactory;
     private ISharpLinkEndpointResolver? _endpointResolver;
     private SharpLinkEndpointTransportFactory? _resolverTransportFactory;
@@ -186,7 +186,7 @@ public class SharpClientBuilder
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(transportFactory);
         _endpoints = [endpoint];
-        _endpointSnapshot = null;
+        _preflightEndpointSnapshot = null;
         _endpointTransportFactory = transportFactory;
         return this;
     }
@@ -199,7 +199,7 @@ public class SharpClientBuilder
         SharpLinkEndpointTransportFactory transportFactory)
     {
         _endpoints = endpoints ?? throw new ArgumentNullException(nameof(endpoints));
-        _endpointSnapshot = null;
+        _preflightEndpointSnapshot = null;
         _endpointTransportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
         return this;
     }
@@ -344,7 +344,8 @@ public class SharpClientBuilder
             return _cluster.MaxConnections;
         if (_endpoints is not null)
         {
-            var endpoints = _endpointSnapshot ??= CreateEndpointSnapshot(_endpoints, allowEmpty: false);
+            var endpoints = CreateEndpointSnapshot(_endpoints, allowEmpty: false);
+            _preflightEndpointSnapshot = endpoints;
             if (endpoints.Length == 1)
                 return GetFixedConnectionBudget();
 
@@ -357,6 +358,11 @@ public class SharpClientBuilder
     // decision at construction time preserves the ordinary client's hot path unchanged.
     internal ISharpLinkClient BuildCore(IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests)
     {
+        // Multi-cluster preflight enumerates a static endpoint source to calculate its exact
+        // connection budget. Consume that one build-local snapshot, then clear it so later builds
+        // retain the normal builder behavior of taking a fresh topology snapshot.
+        var preflightEndpoints = staticManifests is null ? null : _preflightEndpointSnapshot;
+        _preflightEndpointSnapshot = null;
         var modeCount = (_transport is null ? 0 : 1) + (_endpoints is null ? 0 : 1) + (_endpointResolver is null ? 0 : 1);
         if (modeCount > 1)
             throw new InvalidOperationException("UseTransport, UseEndpoint(s), and UseEndpointResolver are mutually exclusive.");
@@ -383,7 +389,7 @@ public class SharpClientBuilder
 
         if (_endpoints is not null)
         {
-            var endpoints = _endpointSnapshot ??= CreateEndpointSnapshot(_endpoints, allowEmpty: false);
+            var endpoints = preflightEndpoints ?? CreateEndpointSnapshot(_endpoints, allowEmpty: false);
             if (endpoints.Length == 1)
             {
                 if (_clusterConfigured)
