@@ -234,6 +234,9 @@ internal sealed partial class SharpLinkClient
 
     private ClientConnection GetReadyConnection()
     {
+        if (_cluster is not null)
+            return _cluster.GetReadyConnection(method: null, retrySelection: null, attemptOutcome: null);
+
         var connections = Volatile.Read(ref _readyConnections);
         if (!_shutdownCts.IsCancellationRequested && connections.Length != 0)
         {
@@ -261,6 +264,40 @@ internal sealed partial class SharpLinkClient
         if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
             throw CreateConnectionClosedException("Client is not accepting new calls.");
         throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink connection is ready.");
+    }
+
+    private ClientConnection GetReadyConnection(
+        RpcMethodDescriptor method,
+        EndpointRetrySelectionState? retrySelection,
+        AttemptOutcomeState? attemptOutcome)
+    {
+        if (_cluster is not null)
+            return _cluster.GetReadyConnection(method, retrySelection, attemptOutcome);
+
+        if (attemptOutcome is null || _fixedEndpoint is null)
+            return GetReadyConnection();
+
+        if (ReadyConnectionCount == 0)
+            return GetReadyConnection();
+
+        var candidate = new SharpLinkEndpointCandidate(
+            _fixedEndpoint,
+            ReadyConnectionCount,
+            ActiveClientCallCount,
+            generation: 0);
+        if (!attemptOutcome.TryAcquire(candidate))
+            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The configured endpoint admission policy rejected the endpoint.");
+        try
+        {
+            var connection = GetReadyConnection();
+            attemptOutcome.SetConnection(connection);
+            return connection;
+        }
+        catch (Exception exception)
+        {
+            attemptOutcome.CompleteLocalFailure(exception);
+            throw;
+        }
     }
 
     internal static ClientConnection SelectLeastLoaded(
@@ -293,7 +330,14 @@ internal sealed partial class SharpLinkClient
 
     private void MarkConnectionDraining(ClientConnection connection)
     {
-        connection.MarkDraining();
+        if (!connection.MarkDraining())
+            return;
+        ReportGoAwayToCircuitBreaker(connection);
+        if (_cluster is not null)
+        {
+            _cluster.MarkConnectionDraining(connection);
+            return;
+        }
         lock (_poolGate)
             PublishReadySnapshotLocked();
 
@@ -309,8 +353,35 @@ internal sealed partial class SharpLinkClient
         EnsureReconnectLoop();
     }
 
+    private void ReportGoAwayToCircuitBreaker(ClientConnection connection)
+    {
+        if (_endpointAdmissionPolicy is not SharpLinkCircuitBreaker breaker)
+            return;
+
+        if (_cluster?.TryGetEndpointCandidate(connection, out var clusterEndpoint) == true)
+        {
+            breaker.ReportInfrastructureFailure(clusterEndpoint);
+            return;
+        }
+
+        if (_fixedEndpoint is { } fixedEndpoint)
+        {
+            var endpoint = new SharpLinkEndpointCandidate(
+                fixedEndpoint,
+                ReadyConnectionCount,
+                ActiveClientCallCount,
+                generation: 0);
+            breaker.ReportInfrastructureFailure(endpoint);
+        }
+    }
+
     internal void RetireDrainingConnectionIfIdle(ClientConnection connection)
     {
+        if (_cluster is not null)
+        {
+            _cluster.RetireDrainingConnectionIfIdle(connection);
+            return;
+        }
         if (connection.State != ClientConnectionState.Draining ||
             connection.ActiveCallCount != 0 ||
             !RemoveReadyConnection(connection))

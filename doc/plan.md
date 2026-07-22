@@ -9,7 +9,7 @@
 - 默认单连接复用，可配置连接池；默认 `Balanced`，提供 `LowLatency` 与 `Throughput`。
 - SDK 内置无反射 DTO Source Generator Codec；MemoryPack 保持可选插件。
 - 核心提供 TLS、认证、Interceptor、deadline、背压、健康检查、遥测与优雅停机。
-- Discovery、Load Balancing、Retry 与 Circuit Breaker 位于官方扩展包。
+- Discovery、Load Balancing、Retry 与 Circuit Breaker 内置于现有程序集；第三方注册中心仅通过显式 Resolver SPI 接入。
 
 ## 0.4.0：Runtime 与 Protocol v2 基线（已发布）
 
@@ -49,7 +49,11 @@
 1. `0.7.0`（已完成）：实验性 SharedMemory 传输。
 2. `0.7.1`（已完成）：Generator Manifest 自动服务注册、`Singleton/Connection/Call` 生命周期与运行时程序集安全注册/注销。
 3. `0.7.2`（已完成）：静态 Singleton Unary 性能恢复、稳态分配削减与完整回归归因。
-4. 后续版本：Discovery、Load Balancing 与只针对 `[Idempotent]` Unary 的 Resilience 扩展。
+4. `0.7.5`（已完成）：静态 endpoint topology、内置负载均衡与 selector SPI。
+5. `0.7.6`（已完成）：动态 Resolver topology、DNS Discovery 与 generation 排空。
+6. `0.7.7`（已完成）：Logical Call/Attempt、仅 `[Idempotent]` Unary 的 Retry。
+7. `0.7.8`（已完成）：endpoint admission SPI 与 generation-scoped Circuit Breaker。
+8. `0.7.9`（已完成）：组合验证、低基数 telemetry、迁移文档与 API freeze。
 
 ## 0.8.0-rc：发布门禁
 

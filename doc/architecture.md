@@ -95,6 +95,15 @@ SharpLink.Serializer.MemoryPack
 - `GoAway` 将单条 session 标为 draining 并立即从选择快照移除；已有请求完成后释放该连接，池在后台恢复最小连接数。
 - Client Stop 取消并等待 connect、reconnect、expand、heartbeat 与 read-loop worker，再释放所有 session 和 transport factory。
 
+## 0.7.x endpoint 拓扑与韧性
+
+- 固定单 endpoint 仍是默认快路径；只有显式 `UseEndpoints` 或 `UseEndpointResolver` 才会创建 endpoint candidate、selector 和后台 topology worker。单个 static endpoint 在 Build 时折叠回固定快路径。
+- static 和 dynamic cluster 都以不可变 Ready candidate snapshot 供调用路径读取；端点增减或 Ready 边界变化由单 writer 发布，选择路径不获取 topology writer lock。多 endpoint 默认 P2C，可显式选择 Random、RoundRobin、LeastPending 或同步自定义 selector。
+- Resolver snapshot 按版本验证并原子 reconcile：新 ID 创建 generation，Address/Authority 变化替换 generation 并排空旧连接，仅 Attributes 更新保留连接。空 snapshot 合法；resolver 故障或 Watch 结束保留 last-good topology 并退避恢复。
+- Retry 默认关闭，只对显式 `[Idempotent]` Unary 生效；拦截器按 logical call 执行一次，每次 attempt 重新选择 endpoint 并共享入口冻结的绝对 deadline。任何 Streaming 或 OneWay 不会被自动重试。
+- Endpoint admission 和 Circuit Breaker 只决定是否发起新 attempt，不会修改物理 connection 的 Ready 语义。Breaker 状态按 endpoint generation 隔离，以 monotonic time 惰性推进，HalfOpen 使用原子 probe permit。
+- `SharpLinkTelemetry` 无 listener 时不创建 TagList、Activity 或动态字符串。endpoint 路径提供 active/ready/draining endpoint、resolver update/failure、active/retiring connection、attempt、retry、admission rejection、breaker open 的低基数指标；endpoint ID、address 和 authority 只出现在 Activity 或结构化日志中。
+
 ## 取消与超时
 
 1. 调用侧 `CancellationToken`、monotonic deadline 或 stream consumer early-break 通过客户端 PendingCall 的单一 CAS 终态仲裁。

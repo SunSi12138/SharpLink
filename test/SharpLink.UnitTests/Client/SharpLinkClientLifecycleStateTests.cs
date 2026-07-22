@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Threading;
 using SharpLink.Client;
 
@@ -184,6 +185,88 @@ public class SharpLinkClientLifecycleStateTests
     }
 
     [Test]
+    public async Task ClusterSelectionShouldFallBackFromAStalePooledConnection()
+    {
+        await using var owner = new SharpLinkClient(
+            new TestClientTransportFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        var context = new SharpLinkRuntimeContextBuilder().Build();
+        await using var stale = new ClientConnection(
+            owner,
+            new RpcSession(new TestTransportConnection()),
+            new CancellationTokenSource(),
+            8,
+            context.Codecs);
+        await using var ready = new ClientConnection(
+            owner,
+            new RpcSession(new TestTransportConnection()),
+            new CancellationTokenSource(),
+            8,
+            context.Codecs);
+        stale.Session.NotifyConnected();
+        ready.Session.NotifyConnected();
+        Ensure(ready.TryBeginUntrackedCall(), "ready connection active-call setup");
+        stale.MarkDraining();
+
+        try
+        {
+            Ensure(ReferenceEquals(
+                    SelectClusterConnection("StaticClusterRuntime", 0, stale, ready),
+                    ready),
+                "static cluster should fall back to an accepting pooled connection");
+            Ensure(ReferenceEquals(
+                    SelectClusterConnection("DynamicClusterRuntime", 0L, stale, ready),
+                    ready),
+                "dynamic cluster should fall back to an accepting pooled connection");
+        }
+        finally
+        {
+            ready.EndUntrackedCall();
+        }
+    }
+
+    [Test]
+    public async Task AdmissionRetryAfterShouldSurviveAStaleGrantedConnection()
+    {
+        var policy = new AdmitFirstRejectSecondPolicy(TimeSpan.FromMilliseconds(100));
+        await using var client = new SharpLinkClient(
+            new TestClientTransportFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            endpointAdmissionPolicy: policy);
+        var stateType = typeof(SharpLinkClient).GetNestedType("AttemptOutcomeState", BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find attempt outcome state");
+        var method = new RpcMethodDescriptor(1, 2, RpcMethodKind.Unary, true, false, false, null);
+        var state = Activator.CreateInstance(
+            stateType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [client, method],
+            culture: null)
+            ?? throw new Exception("cannot create attempt outcome state");
+        var tryAcquire = stateType.GetMethod("TryAcquire", BindingFlags.Instance | BindingFlags.Public)
+            ?? throw new Exception("cannot find attempt acquisition");
+        var complete = stateType.GetMethod("CompleteWithoutPending", BindingFlags.Instance | BindingFlags.Public)
+            ?? throw new Exception("cannot find attempt completion");
+        var shouldHonor = stateType.GetProperty("ShouldHonorAdmissionRetryAfter", BindingFlags.Instance | BindingFlags.Public)
+            ?? throw new Exception("cannot find retry-after predicate");
+        var first = new SharpLinkEndpointCandidate(CreateEndpoint("first", 5001), 1, 0, generation: 1);
+        var second = new SharpLinkEndpointCandidate(CreateEndpoint("second", 5002), 1, 0, generation: 1);
+
+        Ensure((bool)(tryAcquire.Invoke(state, [first]) ?? false), "first endpoint should be admitted");
+        complete.Invoke(
+            state,
+            [
+                PendingCallCompletionReason.ConnectionClosed,
+                new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "selected connection became stale")
+            ]);
+        Ensure(!(bool)(tryAcquire.Invoke(state, [second]) ?? true), "second endpoint should be rejected");
+        Ensure((bool)(shouldHonor.GetValue(state) ?? false),
+            "a stale admitted endpoint must not suppress the current selection retry-after");
+    }
+
+    [Test]
     public async Task GoAwayShouldDrainOnlyItsConnectionAndRefillMinimumPool()
     {
         var transport = new SequenceClientTransportFactory();
@@ -198,6 +281,48 @@ public class SharpLinkClientLifecycleStateTests
             });
         await client.ConnectAsync();
         var drainingConnection = await transport.WaitForConnectionAsync(0);
+        await InjectGoAwayAsync(drainingConnection);
+        await WaitUntilAsync(() => transport.ConnectCount >= 3 && client.ReadyConnectionCount == 2);
+
+        Ensure(client.State == SharpLinkConnectionState.Ready, "another ready connection should keep the client ready");
+    }
+
+    [Test]
+    public async Task GoAwayShouldCountAsBreakerFailureWithoutAnActiveCall()
+    {
+        var transport = new TestClientTransportFactory();
+        var endpoint = new SharpLinkEndpoint
+        {
+            Id = "breaker",
+            Address = new SharpLinkTcpAddress("127.0.0.1", 5001)
+        };
+        var breaker = new SharpLinkCircuitBreaker(new SharpLinkCircuitBreakerOptions
+        {
+            MinimumThroughput = 1,
+            FailureRatio = 1,
+            SamplingDuration = TimeSpan.FromSeconds(10),
+            BreakDuration = TimeSpan.FromSeconds(5),
+            HalfOpenMaxCalls = 1
+        }.CloneValidated());
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            fixedEndpoint: endpoint,
+            endpointAdmissionPolicy: breaker);
+        await client.ConnectAsync();
+
+        await InjectGoAwayAsync(transport.Connection);
+
+        var candidate = new SharpLinkEndpointCandidate(endpoint, 0, 0, generation: 0);
+        var method = new RpcMethodDescriptor(1, 2, RpcMethodKind.Unary, true, false, false, null);
+        await WaitUntilAsync(
+            () => !breaker.TryAcquire(candidate, method).IsAllowed,
+            () => "GoAway was not recorded as an endpoint infrastructure failure");
+    }
+
+    private static async Task InjectGoAwayAsync(TestTransportConnection connection)
+    {
         var payload = new PooledByteBufferWriter();
         var lastAccepted = payload.GetSpan(sizeof(ulong));
         BinaryPrimitives.WriteUInt64LittleEndian(lastAccepted, 0);
@@ -209,14 +334,11 @@ public class SharpLinkClientLifecycleStateTests
             1024,
             out _);
 
-        await drainingConnection.InjectFrameAsync(
+        await connection.InjectFrameAsync(
             ProtocolV2FrameType.GoAway,
             ProtocolV2FrameFlags.Error,
             0,
             payload.WrittenMemory);
-        await WaitUntilAsync(() => transport.ConnectCount >= 3 && client.ReadyConnectionCount == 2);
-
-        Ensure(client.State == SharpLinkConnectionState.Ready, "another ready connection should keep the client ready");
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition, Func<string>? timeoutMessage = null)
@@ -348,6 +470,69 @@ public class SharpLinkClientLifecycleStateTests
                 connections = [.. _connections];
             for (var index = 0; index < connections.Length; index++)
                 await connections[index].DisposeAsync();
+        }
+    }
+
+    private static ClientConnection? SelectClusterConnection(
+        string runtimeName,
+        object stateIndex,
+        ClientConnection stale,
+        ClientConnection ready)
+    {
+        var flags = BindingFlags.NonPublic | BindingFlags.Public;
+        var runtimeType = typeof(SharpLinkClient).GetNestedType(runtimeName, BindingFlags.NonPublic)
+            ?? throw new Exception($"cannot find {runtimeName}");
+        var endpointType = runtimeType.GetNestedType("EndpointState", flags)
+            ?? throw new Exception($"cannot find {runtimeName}.EndpointState");
+        var configuration = new StaticEndpointConfiguration(
+            new SharpLinkEndpoint
+            {
+                Id = "selection",
+                Address = new SharpLinkTcpAddress("127.0.0.1", 5001)
+            },
+            new NonConnectingFactory());
+        var endpoint = Activator.CreateInstance(
+            endpointType,
+            BindingFlags.Instance | flags,
+            binder: null,
+            args: [configuration, stateIndex],
+            culture: null)
+            ?? throw new Exception($"cannot create {runtimeName}.EndpointState");
+        var readyConnections = endpointType.GetField("_readyConnections", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception($"cannot find {runtimeName} ready connection field");
+        readyConnections.SetValue(endpoint, new[] { stale, ready });
+        var selectConnection = runtimeType.GetMethod(
+            "SelectConnection",
+            BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new Exception($"cannot find {runtimeName} selection method");
+        return (ClientConnection?)selectConnection.Invoke(null, [endpoint]);
+    }
+
+    private static SharpLinkEndpoint CreateEndpoint(string id, int port) => new()
+    {
+        Id = id,
+        Address = new SharpLinkTcpAddress("127.0.0.1", port)
+    };
+
+    private sealed class NonConnectingFactory : IClientTransportFactory
+    {
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class AdmitFirstRejectSecondPolicy(TimeSpan retryAfter) : ISharpLinkEndpointAdmissionPolicy
+    {
+        public SharpLinkEndpointAdmissionDecision TryAcquire(
+            in SharpLinkEndpointCandidate endpoint,
+            in RpcMethodDescriptor method)
+            => endpoint.Endpoint.Id == "first"
+                ? new SharpLinkEndpointAdmissionDecision(true, Token: 1, RetryAfter: null)
+                : new SharpLinkEndpointAdmissionDecision(false, Token: 0, RetryAfter: retryAfter);
+
+        public void Report(in SharpLinkEndpointOutcome outcome, long token)
+        {
         }
     }
 }

@@ -23,9 +23,8 @@ internal sealed partial class SharpLinkClient
             {
                 var control = ResolveCallControl(
                     options, true, method.HasMethodTimeout, method.MethodTimeout);
-                invocation = InvokeUnaryCoreAsync(
-                    method.ContractId, method.MethodId, method.HasResponsePayload,
-                    request, requestCodec, responseCodec, control, cancellationToken);
+                invocation = InvokeUnaryWithOptionalRetryAsync(
+                    method, request, requestCodec, responseCodec, control, cancellationToken);
             }
             return ObserveCallAsync(invocation, scope);
         }
@@ -59,7 +58,7 @@ internal sealed partial class SharpLinkClient
                 var control = ResolveCallControl(
                     options, false, method.HasMethodTimeout, method.MethodTimeout);
                 invocation = InvokeOneWayCoreAsync(
-                    method.ContractId, method.MethodId, method.HasClientStreams,
+                    method,
                     request, requestCodec, streams, control, cancellationToken);
             }
             return ObserveCallAsync(invocation, scope);
@@ -95,7 +94,7 @@ internal sealed partial class SharpLinkClient
                 var control = ResolveCallControl(
                     options, false, method.HasMethodTimeout, method.MethodTimeout);
                 invocation = InvokeClientStreamingCoreAsync(
-                    method.ContractId, method.MethodId, method.HasResponsePayload,
+                    method,
                     request, requestCodec, responseCodec, streams, control, cancellationToken);
             }
             return ObserveCallAsync(invocation, scope);

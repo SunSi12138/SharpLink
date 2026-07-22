@@ -3,8 +3,12 @@ using System.Reflection;
 
 namespace SharpLink.Client;
 
-internal sealed partial class SharpLinkClient(IClientTransportFactory transportFactory) : IRpcChannel, ISharpLinkClient
+internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
 {
+    private readonly IClientTransportFactory transportFactory;
+    private readonly IEndpointClusterRuntime? _cluster;
+    // Retained for endpoint-aware diagnostics without routing fixed calls through cluster selection.
+    private readonly SharpLinkEndpoint? _fixedEndpoint;
     private readonly SharpLinkRuntimeContext _runtimeContext = new SharpLinkRuntimeContextBuilder().Build();
     private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests =
         SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
@@ -42,6 +46,50 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
     private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions;
     private readonly SharpLinkConnectionPoolOptions _connectionPoolOptions = new();
     private readonly ISharpLinkClientInterceptor[] _clientInterceptors = [];
+    private readonly SharpLinkRetryOptions? _retryOptions;
+    private readonly ISharpLinkRetryPolicy? _retryPolicy;
+    private readonly ISharpLinkEndpointAdmissionPolicy? _endpointAdmissionPolicy;
+
+    private SharpLinkClient(
+        IClientTransportFactory transportFactory,
+        StaticEndpointConfiguration[]? staticEndpoints = null,
+        SharpLinkClusterOptions? clusterOptions = null,
+        SharpLinkLoadBalancingStrategy loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
+        ISharpLinkEndpointSelector? endpointSelector = null,
+        SharpLinkEndpoint? fixedEndpoint = null,
+        ISharpLinkEndpointResolver? dynamicResolver = null,
+        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null,
+        SharpLinkRetryOptions? retryOptions = null,
+        ISharpLinkRetryPolicy? retryPolicy = null,
+        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null)
+    {
+        this.transportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
+        _fixedEndpoint = fixedEndpoint;
+        _retryOptions = retryOptions;
+        _retryPolicy = retryPolicy;
+        _endpointAdmissionPolicy = endpointAdmissionPolicy;
+        if (staticEndpoints is not null && dynamicResolver is not null)
+            throw new ArgumentException("Static endpoints and an endpoint resolver cannot both be configured.");
+        if (staticEndpoints is not null)
+        {
+            _cluster = new StaticClusterRuntime(
+                this,
+                staticEndpoints,
+                clusterOptions ?? throw new ArgumentNullException(nameof(clusterOptions)),
+                loadBalancingStrategy,
+                endpointSelector);
+        }
+        else if (dynamicResolver is not null)
+        {
+            _cluster = new DynamicClusterRuntime(
+                this,
+                dynamicResolver,
+                dynamicTransportFactory ?? throw new ArgumentNullException(nameof(dynamicTransportFactory)),
+                clusterOptions ?? throw new ArgumentNullException(nameof(clusterOptions)),
+                loadBalancingStrategy,
+                endpointSelector);
+        }
+    }
 
     public SharpLinkClient(
         IClientTransportFactory transportFactory,
@@ -53,8 +101,19 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         SharpLinkRuntimeContext? runtimeContext = null,
         RpcSessionFlushOptions? rpcSessionFlushOptions = null,
         SharpLinkConnectionPoolOptions? connectionPoolOptions = null,
-        ISharpLinkClientInterceptor[]? clientInterceptors = null)
-        : this(transportFactory)
+        ISharpLinkClientInterceptor[]? clientInterceptors = null,
+        StaticEndpointConfiguration[]? staticEndpoints = null,
+        SharpLinkClusterOptions? clusterOptions = null,
+        SharpLinkLoadBalancingStrategy loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
+        ISharpLinkEndpointSelector? endpointSelector = null,
+        SharpLinkEndpoint? fixedEndpoint = null,
+        ISharpLinkEndpointResolver? dynamicResolver = null,
+        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null,
+        SharpLinkRetryOptions? retryOptions = null,
+        ISharpLinkRetryPolicy? retryPolicy = null,
+        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null)
+        : this(transportFactory, staticEndpoints, clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint,
+            dynamicResolver, dynamicTransportFactory, retryOptions, retryPolicy, endpointAdmissionPolicy)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatTimeout, TimeSpan.Zero);
@@ -89,9 +148,21 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         SharpLinkRuntimeContext? runtimeContext = null,
         RpcSessionFlushOptions? rpcSessionFlushOptions = null,
         SharpLinkConnectionPoolOptions? connectionPoolOptions = null,
-        ISharpLinkClientInterceptor[]? clientInterceptors = null)
+        ISharpLinkClientInterceptor[]? clientInterceptors = null,
+        StaticEndpointConfiguration[]? staticEndpoints = null,
+        SharpLinkClusterOptions? clusterOptions = null,
+        SharpLinkLoadBalancingStrategy loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
+        ISharpLinkEndpointSelector? endpointSelector = null,
+        SharpLinkEndpoint? fixedEndpoint = null,
+        ISharpLinkEndpointResolver? dynamicResolver = null,
+        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null,
+        SharpLinkRetryOptions? retryOptions = null,
+        ISharpLinkRetryPolicy? retryPolicy = null,
+        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null)
         : this(transportFactory, heartbeatInterval, heartbeatTimeout, requestTimeout, authenticator, protocolOptions,
-            runtimeContext, rpcSessionFlushOptions, connectionPoolOptions, clientInterceptors)
+            runtimeContext, rpcSessionFlushOptions, connectionPoolOptions, clientInterceptors, staticEndpoints,
+            clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint, dynamicResolver, dynamicTransportFactory,
+            retryOptions, retryPolicy, endpointAdmissionPolicy)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _logger = loggerFactory.CreateLogger<SharpLinkClient>();
@@ -120,6 +191,12 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
 
     private async Task StopCoreAsync()
     {
+        if (_cluster is not null)
+        {
+            await StopStaticClusterCoreAsync().ConfigureAwait(false);
+            return;
+        }
+
         lock (_registryGate)
             TransitionTo(SharpLinkConnectionState.Draining);
         _shutdownCts.Cancel();
@@ -165,6 +242,44 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         _reconnectSignal.Dispose();
         _shutdownCts.Dispose();
         TransitionTo(SharpLinkConnectionState.Stopped);
+    }
+
+    private async Task StopStaticClusterCoreAsync()
+    {
+        var cleanupFailures = new List<Exception>();
+        lock (_registryGate)
+            TransitionTo(SharpLinkConnectionState.Draining);
+        _shutdownCts.Cancel();
+        Volatile.Read(ref _readySignal).TrySetResult(true);
+        try { await _cluster!.StopAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
+        try { await WaitForBackgroundTasksAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
+
+        Assembly[] dynamicAssemblies;
+        lock (_registryGate)
+            dynamicAssemblies = [.. _dynamicModules.Keys];
+        for (var index = 0; index < dynamicAssemblies.Length; index++)
+        {
+            try { await UnregisterAssemblyAsync(dynamicAssemblies[index], TimeSpan.Zero).ConfigureAwait(false); }
+            catch (Exception exception) { cleanupFailures.Add(exception); }
+        }
+
+        try { _reconnectSignal.Dispose(); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
+        try { _shutdownCts.Dispose(); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
+        TransitionTo(SharpLinkConnectionState.Stopped);
+        ThrowStopCleanupFailures(cleanupFailures);
+    }
+
+    private static void ThrowStopCleanupFailures(List<Exception> failures)
+    {
+        if (failures.Count == 0)
+            return;
+        if (failures.Count == 1)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        throw new AggregateException(failures);
     }
 
     private async Task IgnoreExpectedStopExceptionAsync(Task? task)
@@ -246,12 +361,14 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
         }
     }
 
-    internal int ReadyConnectionCount => Volatile.Read(ref _readyConnections).Length;
+    internal int ReadyConnectionCount => _cluster?.ReadyConnectionCount ?? Volatile.Read(ref _readyConnections).Length;
 
     internal int PendingCallCount
     {
         get
         {
+            if (_cluster is not null)
+                return _cluster.PendingCallCount;
             var connections = Volatile.Read(ref _readyConnections);
             var count = 0;
             for (var index = 0; index < connections.Length; index++)
@@ -264,6 +381,8 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
     {
         get
         {
+            if (_cluster is not null)
+                return _cluster.ActiveCallCount;
             var connections = Volatile.Read(ref _readyConnections);
             var count = 0;
             for (var index = 0; index < connections.Length; index++)
@@ -276,6 +395,8 @@ internal sealed partial class SharpLinkClient(IClientTransportFactory transportF
     {
         get
         {
+            if (_cluster is not null)
+                return _cluster.ActiveStreamCount;
             var connections = Volatile.Read(ref _readyConnections);
             var count = 0;
             for (var index = 0; index < connections.Length; index++)

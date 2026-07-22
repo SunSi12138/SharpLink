@@ -61,6 +61,7 @@ public static class Program
             $"[Config] mode={options.Mode} transport={options.Transport} operation={options.Operation} " +
             $"duration={options.DurationSeconds}s warmup={options.WarmupSeconds}s concurrency=[{string.Join(",", options.ConcurrencyConfig)}] " +
             $"payload={options.PayloadSize}B pool={options.MinConnections}/{options.MaxConnections} " +
+            $"staticEndpoints={options.StaticEndpointCount} dynamicEndpoints={options.DynamicEndpointCount} dynamicResolver={options.UseDynamicResolver} lb={options.StaticLoadBalancingStrategy} " +
             $"profile={options.PerformanceProfile} requestTimeout={options.RequestTimeoutMode} " +
             $"admission={options.AdmissionMode} compression={options.CompressionAlgorithm}/{options.CompressionLevel} " +
             $"thresholds={options.CompressionMinimumPayloadBytes}B/{options.CompressionMinimumSavingsBytes}B/{options.CompressionMinimumSavingsRatio:P0} " +
@@ -86,6 +87,7 @@ public static class Program
         Console.WriteLine("  --duration 20 --warmup 5 --concurrency 1,2,4,8,16,32");
         Console.WriteLine("  --operation empty|add|echo|oneway|yield|delay --payload-size 64");
         Console.WriteLine("  --min-connections 1 --max-connections 1");
+        Console.WriteLine("  --static-endpoints 1 | --dynamic-endpoints 1 --load-balancing p2c|random|roundrobin|leastpending (local TCP only)");
         Console.WriteLine("  --profile balanced|lowlatency|throughput");
         Console.WriteLine("  --request-timeout default|disabled|1ms|10ms|100ms");
         Console.WriteLine("  --admission disabled|immediate|queue|reject");
@@ -109,6 +111,12 @@ public static class Program
 
     private static async Task RunLocalAsync(LoadTestOptions options, MetricsRegistry metrics)
     {
+        if (options.UseStaticEndpoints || options.UseDynamicResolver)
+        {
+            await RunStaticTcpLocalAsync(options, metrics);
+            return;
+        }
+
         await using var harness = await LoadTestTransportFactory.CreateLocalHarness(
             options.Transport,
             options.Host,
@@ -144,6 +152,99 @@ public static class Program
             await serverCts.CancelAsync();
             await harness.DisposeServerAsync();
             await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
+        }
+    }
+
+    private static async Task RunStaticTcpLocalAsync(LoadTestOptions options, MetricsRegistry metrics)
+    {
+        var servers = new ISharpLinkServer?[options.EndpointCount];
+        var serverTasks = new Task?[servers.Length];
+        var endpoints = new SharpLinkEndpoint[servers.Length];
+        using var serverCancellation = new CancellationTokenSource();
+        try
+        {
+            for (var index = 0; index < servers.Length; index++)
+            {
+                var builder = ConfigureServer(SharpLinkServerBuilder.Create(), options)
+                    .UseSerializer(MemoryPackCodec.Resolver)
+                    .UseRuntime(runtime =>
+                    {
+                        runtime.PerformanceProfile = options.PerformanceProfile;
+                        ConfigureCompression(runtime, options);
+                    })
+                    .UseHeartbeat(
+                        TimeSpan.FromSeconds(options.HeartbeatCheckIntervalSeconds),
+                        TimeSpan.FromSeconds(options.HeartbeatTimeoutSeconds))
+                    .UseTcp(0, options.BindIp);
+                var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
+                servers[index] = builder.Build();
+                endpoints[index] = new SharpLinkEndpoint
+                {
+                    Id = $"local-{index}",
+                    Address = new SharpLinkTcpAddress(options.Host, port)
+                };
+                serverTasks[index] = RunServerLoopAsync(servers[index]!, serverCancellation.Token);
+            }
+
+            await Task.Delay(200, serverCancellation.Token);
+            var clientBuilder = SharpClientBuilder.Create()
+                .UseSerializer(MemoryPackCodec.Resolver)
+                .UseRuntime(runtime =>
+                {
+                    runtime.PerformanceProfile = options.PerformanceProfile;
+                    ConfigureCompression(runtime, options);
+                })
+                .UseHeartbeat(
+                    TimeSpan.FromSeconds(options.HeartbeatIntervalSeconds),
+                    TimeSpan.FromSeconds(options.HeartbeatTimeoutSeconds));
+            if (options.UseDynamicResolver)
+            {
+                var snapshot = new SharpLinkEndpointSnapshot(1, endpoints);
+                clientBuilder
+                    .UseEndpointResolver(
+                        new DelegateSharpLinkEndpointResolver(_ => ValueTask.FromResult(snapshot)),
+                        SharpLinkTransportFactories.Sockets())
+                    .UseCluster(cluster =>
+                    {
+                        cluster.MinReadyEndpoints = endpoints.Length;
+                        cluster.MaxConnections = endpoints.Length;
+                        cluster.MaxConnectionsPerEndpoint = 1;
+                    })
+                    .UseLoadBalancing(options.StaticLoadBalancingStrategy);
+            }
+            else if (endpoints.Length == 1)
+            {
+                clientBuilder.UseEndpoint(endpoints[0], SharpLinkTransportFactories.Sockets());
+            }
+            else
+            {
+                clientBuilder
+                    .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
+                    .UseCluster(cluster =>
+                    {
+                        cluster.MinReadyEndpoints = endpoints.Length;
+                        cluster.MaxConnections = endpoints.Length;
+                        cluster.MaxConnectionsPerEndpoint = 1;
+                    })
+                    .UseLoadBalancing(options.StaticLoadBalancingStrategy);
+            }
+            if (options.DisableRequestTimeout)
+                clientBuilder.DisableRequestTimeout();
+            else if (options.RequestTimeout is { } requestTimeout)
+                clientBuilder.UseRequestTimeout(requestTimeout);
+            await using var client = clientBuilder.Build();
+            await RunClientOnlyAsync(options, metrics, client);
+        }
+        finally
+        {
+            await serverCancellation.CancelAsync();
+            for (var index = 0; index < servers.Length; index++)
+            {
+                var server = servers[index];
+                if (server is not null)
+                    await server.DisposeAsync();
+            }
+            await Task.WhenAll(serverTasks.Select(static task => task ?? Task.CompletedTask));
         }
     }
 
@@ -509,6 +610,12 @@ public sealed class LoadTestOptions
     public int HeartbeatTimeoutSeconds { get; private init; } = 120;
     public int MinConnections { get; private init; } = 1;
     public int MaxConnections { get; private init; } = 1;
+    public bool UseStaticEndpoints { get; private init; }
+    public int StaticEndpointCount { get; private init; } = 1;
+    public bool UseDynamicResolver { get; private init; }
+    public int DynamicEndpointCount { get; private init; } = 1;
+    public int EndpointCount => UseDynamicResolver ? DynamicEndpointCount : StaticEndpointCount;
+    public SharpLinkLoadBalancingStrategy StaticLoadBalancingStrategy { get; private init; } = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices;
     public SharpLinkPerformanceProfile PerformanceProfile { get; private init; } = SharpLinkPerformanceProfile.Balanced;
     public string RequestTimeoutMode { get; private init; } = "default";
     public string AdmissionMode { get; private init; } = "disabled";
@@ -549,6 +656,29 @@ public sealed class LoadTestOptions
         var transport = map.TryGetValue("transport", out var transportStr) && TransportDefaults.TryParseTransport(transportStr, out var parsedTransport)
             ? parsedTransport
             : TransportMode.Tcp;
+        var staticEndpointCount = int.Parse(map.GetValueOrDefault("static-endpoints", "1"));
+        if (staticEndpointCount is < 1 or > SharpLinkClusterOptions.MaximumEndpoints)
+            throw new ArgumentOutOfRangeException(nameof(staticEndpointCount));
+        var useStaticEndpoints = map.ContainsKey("static-endpoints");
+        var dynamicEndpointCount = int.Parse(map.GetValueOrDefault("dynamic-endpoints", "1"));
+        if (dynamicEndpointCount is < 1 or > SharpLinkClusterOptions.MaximumEndpoints)
+            throw new ArgumentOutOfRangeException(nameof(dynamicEndpointCount));
+        var useDynamicResolver = map.ContainsKey("dynamic-endpoints");
+        if (useStaticEndpoints && useDynamicResolver)
+            throw new ArgumentException("Static and dynamic endpoint load-test modes are mutually exclusive.");
+        if ((useStaticEndpoints || useDynamicResolver) && (mode != RunMode.Local || transport != TransportMode.Tcp))
+        {
+            throw new ArgumentException(
+                "Endpoint topology load tests currently support only --mode local --transport tcp.");
+        }
+        var staticLoadBalancingStrategy = map.GetValueOrDefault("load-balancing", "p2c").ToLowerInvariant() switch
+        {
+            "p2c" => SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
+            "random" => SharpLinkLoadBalancingStrategy.Random,
+            "roundrobin" => SharpLinkLoadBalancingStrategy.RoundRobin,
+            "leastpending" => SharpLinkLoadBalancingStrategy.LeastPending,
+            _ => throw new ArgumentException("Unsupported static load-balancing strategy.")
+        };
 
         var concurrencyNum = map.TryGetValue("concurrency", out var concurrencyStr)
             ? concurrencyStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -653,6 +783,11 @@ public sealed class LoadTestOptions
             HeartbeatTimeoutSeconds = int.Parse(map.GetValueOrDefault("heartbeat-timeout", "120")),
             MinConnections = minConnections,
             MaxConnections = maxConnections,
+            UseStaticEndpoints = useStaticEndpoints,
+            StaticEndpointCount = staticEndpointCount,
+            UseDynamicResolver = useDynamicResolver,
+            DynamicEndpointCount = dynamicEndpointCount,
+            StaticLoadBalancingStrategy = staticLoadBalancingStrategy,
             PerformanceProfile = profile,
             RequestTimeoutMode = requestTimeoutMode,
             AdmissionMode = admissionMode,

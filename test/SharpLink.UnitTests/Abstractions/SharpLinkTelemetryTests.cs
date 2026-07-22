@@ -202,6 +202,62 @@ public class SharpLinkTelemetryTests
             "admission rejection low-cardinality tags");
     }
 
+    [Test]
+    public void ClientTopologyMetricsShouldExposeStableLowCardinalityInstruments()
+    {
+        var resolverUpdates = 0L;
+        var resolverFailures = 0L;
+        var instruments = new HashSet<string>(StringComparer.Ordinal);
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meterListener) =>
+        {
+            if (instrument.Meter.Name == "SharpLink" &&
+                instrument.Name.StartsWith("sharplink.client.", StringComparison.Ordinal))
+            {
+                instruments.Add(instrument.Name);
+                meterListener.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
+        {
+            switch (instrument.Name)
+            {
+                case "sharplink.client.resolver.updates":
+                    Interlocked.Add(ref resolverUpdates, measurement);
+                    break;
+                case "sharplink.client.resolver.failures":
+                    Interlocked.Add(ref resolverFailures, measurement);
+                    break;
+            }
+        });
+        listener.Start();
+
+        SharpLinkTelemetry.AddClientActiveEndpoints(2);
+        SharpLinkTelemetry.AddClientReadyEndpoints(1);
+        SharpLinkTelemetry.AddClientDrainingEndpoints(1);
+        SharpLinkTelemetry.RecordClientResolverUpdate();
+        SharpLinkTelemetry.RecordClientResolverFailure();
+        SharpLinkTelemetry.ConnectionOpened("client");
+        SharpLinkTelemetry.AddClientRetiringConnections(1);
+        listener.RecordObservableInstruments();
+        SharpLinkTelemetry.AddClientActiveEndpoints(-2);
+        SharpLinkTelemetry.AddClientReadyEndpoints(-1);
+        SharpLinkTelemetry.AddClientDrainingEndpoints(-1);
+        SharpLinkTelemetry.AddClientRetiringConnections(-1);
+        SharpLinkTelemetry.ConnectionClosed("client");
+        listener.RecordObservableInstruments();
+
+        Ensure(instruments.Contains("sharplink.client.endpoints.active"), "active endpoints instrument");
+        Ensure(instruments.Contains("sharplink.client.endpoints.ready"), "ready endpoints instrument");
+        Ensure(instruments.Contains("sharplink.client.endpoints.draining"), "draining endpoints instrument");
+        Ensure(instruments.Contains("sharplink.client.resolver.updates"), "resolver updates instrument");
+        Ensure(instruments.Contains("sharplink.client.resolver.failures"), "resolver failures instrument");
+        Ensure(instruments.Contains("sharplink.client.connections.active"), "active connections instrument");
+        Ensure(instruments.Contains("sharplink.client.connections.retiring"), "retiring connections instrument");
+        Ensure(Volatile.Read(ref resolverUpdates) == 1, "resolver updates metric");
+        Ensure(Volatile.Read(ref resolverFailures) == 1, "resolver failures metric");
+    }
+
     private static string? FindTag(
         ReadOnlySpan<KeyValuePair<string, object?>> tags,
         string key)

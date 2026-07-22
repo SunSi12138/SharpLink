@@ -38,7 +38,11 @@
 - `0.7.0`（已完成）：实验性 SharedMemory 传输。
 - `0.7.1`（已完成）：自动服务注册、三种根服务生命周期、运行时程序集原子注册、安全排空与 collectible ALC 验证。
 - `0.7.2`（已完成）：静态 Singleton Unary 快路径、请求池分配削减、历史性能二分与五传输回归矩阵。
-- 后续 `0.7.x`：Discovery、Load Balancing 与 Resilience 官方扩展包。
+- `0.7.5`（已完成）：静态 endpoint topology、P2C/Random/RoundRobin/LeastPending 与 custom selector。
+- `0.7.6`（已完成）：动态 Resolver/DNS Discovery、snapshot generation 与 draining。
+- `0.7.7`（已完成）：Logical Call/Attempt、仅 `[Idempotent]` Unary 的 Retry。
+- `0.7.8`（已完成）：endpoint admission SPI、Circuit Breaker、HalfOpen probe 与 generation isolation。
+- `0.7.9`（已完成）：组合验证、低基数 telemetry、迁移文档与 API freeze。
 - `0.8.0-rc`：Chaos、长稳、跨平台/AOT/Package/性能 Release Gate，只修复正确性、稳定性、性能回退和文档问题。
 - `1.0.0`：通过 RC 接受标准后发布稳定 API 与 Protocol v2。
 

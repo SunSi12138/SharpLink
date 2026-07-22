@@ -28,18 +28,28 @@ internal sealed class ClientConnection :
         RpcSession session,
         CancellationTokenSource cancellation,
         int maxPendingCalls,
-        IRpcCodecProvider codecs)
+        IRpcCodecProvider codecs,
+        string? endpointId = null,
+        long endpointGeneration = 0)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         Session = session ?? throw new ArgumentNullException(nameof(session));
         _cancellation = cancellation ?? throw new ArgumentNullException(nameof(cancellation));
         _consumerAbandonedCallback = OnConsumerAbandoned;
         PendingCalls = new PendingRequestTable(maxPendingCalls, codecs, this);
+        EndpointId = endpointId;
+        EndpointGeneration = endpointGeneration;
     }
 
     public RpcSession Session { get; }
 
     public PendingRequestTable PendingCalls { get; }
+
+    /// <summary>Gets the owning endpoint identity when this connection belongs to a cluster.</summary>
+    public string? EndpointId { get; }
+
+    /// <summary>Gets the owning endpoint generation when this connection belongs to a dynamic cluster.</summary>
+    public long EndpointGeneration { get; }
 
     public ClientConnectionState State
         => (ClientConnectionState)Volatile.Read(ref _state);
@@ -56,7 +66,7 @@ internal sealed class ClientConnection :
     internal bool ShouldLogLateResponse(out int suppressedCount)
         => _lateResponseLogLimiter.ShouldLog(Stopwatch.GetTimestamp(), out suppressedCount);
 
-    public void MarkDraining()
+    public bool MarkDraining()
     {
         if (Interlocked.CompareExchange(
                 ref _state,
@@ -64,17 +74,23 @@ internal sealed class ClientConnection :
                 (int)ClientConnectionState.Ready) == (int)ClientConnectionState.Ready)
         {
             Session.MarkDraining();
+            SharpLinkTelemetry.AddClientRetiringConnections(1);
+            return true;
         }
+
+        return false;
     }
 
     public void Fail(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
-        if (Interlocked.Exchange(ref _state, (int)ClientConnectionState.Closed) ==
-            (int)ClientConnectionState.Closed)
+        var previousState = Interlocked.Exchange(ref _state, (int)ClientConnectionState.Closed);
+        if (previousState == (int)ClientConnectionState.Closed)
         {
             return;
         }
+        if (previousState == (int)ClientConnectionState.Draining)
+            SharpLinkTelemetry.AddClientRetiringConnections(-1);
 
         try
         {

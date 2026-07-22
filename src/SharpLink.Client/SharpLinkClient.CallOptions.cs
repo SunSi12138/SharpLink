@@ -2,6 +2,10 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
+    // This duration is accepted by Task.Delay on every supported runtime. Longer public retry
+    // and admission delays are awaited in cancellable slices rather than rejected by the timer.
+    private static readonly TimeSpan MaximumRetryOrAdmissionDelay = TimeSpan.FromMilliseconds(int.MaxValue);
+
     private ResolvedCallControl ResolveCallControl(
         SharpLinkCallOptions options,
         bool includeClientDefault,
@@ -41,15 +45,45 @@ internal sealed partial class SharpLinkClient
     private async ValueTask<ClientConnection> GetReadyConnectionAsync(
         bool waitForReady,
         DateTimeOffset? deadline,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RpcMethodDescriptor? method = null,
+        AttemptOutcomeState? attemptOutcome = null)
     {
         while (true)
         {
-            if (!_shutdownCts.IsCancellationRequested && ReadyConnectionCount != 0)
-                return GetReadyConnection();
+            attemptOutcome?.BeginAdmissionSelection();
+            try
+            {
+                if (!_shutdownCts.IsCancellationRequested && ReadyConnectionCount != 0)
+                    return method is { } descriptor
+                        ? GetReadyConnection(descriptor, retrySelection: null, attemptOutcome)
+                        : GetReadyConnection();
 
-            if (!waitForReady)
-                return GetReadyConnection();
+                if (!waitForReady)
+                    return method is { } descriptor
+                        ? GetReadyConnection(descriptor, retrySelection: null, attemptOutcome)
+                        : GetReadyConnection();
+            }
+            catch (SharpLinkException exception) when (
+                waitForReady && exception.Code == SharpLinkErrorCode.Unavailable)
+            {
+                if (attemptOutcome?.ShouldHonorAdmissionRetryAfter == true)
+                {
+                    if (attemptOutcome.RetryAfter is not { } retryAfter)
+                        throw;
+                    var delay = retryAfter > TimeSpan.Zero ? retryAfter : TimeSpan.FromMilliseconds(1);
+                    if (deadline is { } retryDeadline && WouldReachDeadline(retryDeadline, delay))
+                        throw CreateDeadlineExceededException();
+                    await DelayForRetryOrAdmissionAsync(delay, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                // A grant after the rejection supersedes that earlier delay, but a stale grant must
+                // not suppress a retry-after returned by a later rejected endpoint.
+                if (attemptOutcome?.HasAdmissionRejection == true && !attemptOutcome.HasAdmissionGrant)
+                    throw;
+            }
+
             if (State == SharpLinkConnectionState.Stopped || _shutdownCts.IsCancellationRequested)
                 throw CreateConnectionClosedException("Client has stopped.");
 
@@ -74,6 +108,29 @@ internal sealed partial class SharpLinkClient
         }
     }
 
+    private async ValueTask DelayForRetryOrAdmissionAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        if (_shutdownCts.IsCancellationRequested)
+            throw CreateConnectionClosedException("Client has stopped.");
+
+        using var linkedCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
+        try
+        {
+            while (delay > MaximumRetryOrAdmissionDelay)
+            {
+                await Task.Delay(MaximumRetryOrAdmissionDelay, linkedCancellation.Token).ConfigureAwait(false);
+                delay -= MaximumRetryOrAdmissionDelay;
+            }
+            await Task.Delay(delay, linkedCancellation.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (
+            _shutdownCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw CreateConnectionClosedException("Client has stopped.");
+        }
+    }
+
     private static void AddDeadlineCandidate(
         ref DateTimeOffset? deadline,
         DateTimeOffset? candidate)
@@ -81,6 +138,9 @@ internal sealed partial class SharpLinkClient
         if (candidate is { } value && (deadline is null || value < deadline.Value))
             deadline = value;
     }
+
+    private static bool WouldReachDeadline(DateTimeOffset deadline, TimeSpan delay)
+        => delay >= deadline - DateTimeOffset.UtcNow;
 
     private static DateTimeOffset AddTimeout(DateTimeOffset now, TimeSpan timeout)
     {

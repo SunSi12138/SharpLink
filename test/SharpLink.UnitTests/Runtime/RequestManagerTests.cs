@@ -215,6 +215,41 @@ public class PendingRequestTableTests
     }
 
     [Test]
+    public async Task StreamingResponseObservationShouldPrecedeTerminalCompletion()
+    {
+        using var manager = new PendingRequestTable(8);
+        using var observer = new BlockingStreamingCompletionObserver();
+        var requestId = manager.RegisterStream(
+            PendingCallKind.ServerStreaming,
+            new NoopStreamDispatcher(),
+            deadlineTimestamp: 0,
+            CancellationToken.None,
+            observer);
+
+        var response = Task.Run(() =>
+        {
+            var payload = ReadOnlySequence<byte>.Empty;
+            return manager.Dispatch(requestId, ref payload);
+        });
+        await observer.ResponseObservationEntered.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var terminal = Task.Run(() => manager.TryComplete(
+            requestId,
+            PendingCallCompletionReason.ConnectionClosed,
+            new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "test disconnect")));
+        await Task.Delay(50);
+        Ensure(!observer.TerminalCompletionObserved.IsCompleted,
+            "terminal completion must wait until the matched streaming response is observed");
+
+        observer.ReleaseResponseObservation();
+        Ensure(await response, "streaming response acknowledgement");
+        Ensure(await terminal, "terminal completion");
+        await observer.TerminalCompletionObserved.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(observer.TerminalSawResponseObservation,
+            "terminal observer must see the prior response acknowledgement");
+    }
+
+    [Test]
     public async Task MonotonicDeadlineScanShouldCompleteWithoutCompletionPathRemoval()
     {
         using var manager = new PendingRequestTable(8);
@@ -396,5 +431,51 @@ public class PendingRequestTableTests
             RegistrationEntered.Dispose();
             AllowRegistration.Dispose();
         }
+    }
+
+    private sealed class NoopStreamDispatcher : IStreamDispatcher
+    {
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload) => ValueTask.CompletedTask;
+
+        public void Complete(bool isError, string? errorMessage)
+        {
+        }
+
+        public void Complete(Exception? exception)
+        {
+        }
+    }
+
+    private sealed class BlockingStreamingCompletionObserver : IPendingCallCompletionObserver, IDisposable
+    {
+        private readonly TaskCompletionSource _responseObservationEntered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _responseObservationRelease =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _terminalCompletionObserved =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _responseObserved;
+        private int _terminalSawResponse;
+
+        public Task ResponseObservationEntered => _responseObservationEntered.Task;
+        public Task TerminalCompletionObserved => _terminalCompletionObserved.Task;
+        public bool TerminalSawResponseObservation => Volatile.Read(ref _terminalSawResponse) != 0;
+
+        public void OnResponseObserved()
+        {
+            Volatile.Write(ref _responseObserved, 1);
+            _responseObservationEntered.TrySetResult();
+            _responseObservationRelease.Task.GetAwaiter().GetResult();
+        }
+
+        public void OnPendingCallCompleted(in PendingCallCompletion completion)
+        {
+            Volatile.Write(ref _terminalSawResponse, Volatile.Read(ref _responseObserved));
+            _terminalCompletionObserved.TrySetResult();
+        }
+
+        public void ReleaseResponseObservation() => _responseObservationRelease.TrySetResult();
+
+        public void Dispose() => _responseObservationRelease.TrySetResult();
     }
 }

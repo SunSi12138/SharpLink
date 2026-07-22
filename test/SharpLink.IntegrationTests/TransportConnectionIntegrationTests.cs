@@ -1542,8 +1542,11 @@ public interface IConnectionBehaviorService : IService
     [NonCancellable]
     ValueTask<string> EchoAsync(string value);
     [NonCancellable]
+    ValueTask<string> GetEndpointIdAsync();
+    [NonCancellable]
     ValueTask<string> CreatePayloadAsync(int length);
     ValueTask<int> SlowAsync(int delayMs, CancellationToken cancellationToken = default);
+    IAsyncEnumerable<int> SlowRangeAsync(int count, int delayMs, CancellationToken cancellationToken = default);
     [NonCancellable]
     ValueTask<string> GetAuthenticationSummaryAsync();
     [NonCancellable]
@@ -1559,17 +1562,38 @@ public interface IConnectionBehaviorService : IService
 [RpcService]
 public sealed class ConnectionBehaviorService : IConnectionBehaviorService
 {
+    public string EndpointId { get; set; } = "default";
+    public TaskCompletionSource<string>? SlowCallStarted { get; set; }
+    public TaskCompletionSource<string>? SlowUnaryStarted { get; set; }
+
     public ValueTask<int> PingAsync(int value) => ValueTask.FromResult(value + 1);
 
     public ValueTask<string> EchoAsync(string value) => ValueTask.FromResult(value);
+
+    public ValueTask<string> GetEndpointIdAsync() => ValueTask.FromResult(EndpointId);
 
     public ValueTask<string> CreatePayloadAsync(int length)
         => ValueTask.FromResult(new string('x', length));
 
     public async ValueTask<int> SlowAsync(int delayMs, CancellationToken cancellationToken = default)
     {
+        SlowCallStarted?.TrySetResult(EndpointId);
+        SlowUnaryStarted?.TrySetResult(EndpointId);
         await Task.Delay(delayMs, cancellationToken);
         return delayMs;
+    }
+
+    public async IAsyncEnumerable<int> SlowRangeAsync(
+        int count,
+        int delayMs,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        SlowCallStarted?.TrySetResult(EndpointId);
+        for (var value = 0; value < count; value++)
+        {
+            yield return value;
+            await Task.Delay(delayMs, cancellationToken);
+        }
     }
 
     public ValueTask<string> GetAuthenticationSummaryAsync()

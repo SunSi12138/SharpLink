@@ -28,15 +28,8 @@ internal sealed partial class SharpLinkClient
             includeClientDefault: true,
             method.HasMethodTimeout,
             method.MethodTimeout);
-        return InvokeUnaryCoreAsync(
-            method.ContractId,
-            method.MethodId,
-            method.HasResponsePayload,
-            request,
-            requestCodec,
-            responseCodec,
-            control,
-            cancellationToken);
+        return InvokeUnaryWithOptionalRetryAsync(
+            method, request, requestCodec, responseCodec, control, cancellationToken);
     }
 
     public ValueTask InvokeOneWayAsync<TRequest, TStreams>(
@@ -66,9 +59,7 @@ internal sealed partial class SharpLinkClient
             method.HasMethodTimeout,
             method.MethodTimeout);
         return InvokeOneWayCoreAsync(
-            method.ContractId,
-            method.MethodId,
-            method.HasClientStreams,
+            method,
             request,
             requestCodec,
             streams,
@@ -105,9 +96,7 @@ internal sealed partial class SharpLinkClient
             method.HasMethodTimeout,
             method.MethodTimeout);
         return InvokeClientStreamingCoreAsync(
-            method.ContractId,
-            method.MethodId,
-            method.HasResponsePayload,
+            method,
             request,
             requestCodec,
             responseCodec,
@@ -155,8 +144,7 @@ internal sealed partial class SharpLinkClient
         var dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(cancellationToken, responseCodec);
         TrackBackgroundTask(StartServerStreamingInvokerAsync(
             dispatcher,
-            method.ContractId,
-            method.MethodId,
+            method,
             request,
             requestCodec,
             control,
@@ -208,8 +196,7 @@ internal sealed partial class SharpLinkClient
         var dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(cancellationToken, responseCodec);
         TrackBackgroundTask(StartDuplexStreamingInvokerAsync(
             dispatcher,
-            method.ContractId,
-            method.MethodId,
+            method,
             request,
             requestCodec,
             streams,
@@ -219,9 +206,7 @@ internal sealed partial class SharpLinkClient
     }
 
     private ValueTask<TResponse> InvokeUnaryCoreAsync<TRequest, TResponse>(
-        long contractId,
-        long methodId,
-        bool hasResponsePayload,
+        RpcMethodDescriptor method,
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
@@ -231,9 +216,7 @@ internal sealed partial class SharpLinkClient
         if (control.WaitForReady)
         {
             return InvokeUnaryWaitForReadyAsync(
-                contractId,
-                methodId,
-                hasResponsePayload,
+                method,
                 request,
                 requestCodec,
                 responseCodec,
@@ -241,21 +224,25 @@ internal sealed partial class SharpLinkClient
                 cancellationToken);
         }
 
+        var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
+        if (outcome is null)
+            SharpLinkTelemetry.RecordClientAttempt();
         try
         {
-            var connection = GetReadyConnection();
+            var connection = GetReadyConnection(method, retrySelection: null, outcome);
             var operation = connection.PendingCalls.Rent(
                 responseCodec,
                 PendingCallKind.Unary,
                 control.DeadlineTimestamp,
                 cancellationToken,
-                out var requestId);
+                out var requestId,
+                outcome);
             return StartUnaryCall(
                 connection,
-                contractId,
-                methodId,
+                method.ContractId,
+                method.MethodId,
                 requestId,
-                hasResponsePayload,
+                method.HasResponsePayload,
                 request,
                 requestCodec,
                 operation,
@@ -264,42 +251,55 @@ internal sealed partial class SharpLinkClient
         }
         catch (Exception exception)
         {
+            outcome?.CompleteLocalFailure(exception);
             return ValueTask.FromException<TResponse>(exception);
         }
     }
 
     private async ValueTask<TResponse> InvokeUnaryWaitForReadyAsync<TRequest, TResponse>(
-        long contractId,
-        long methodId,
-        bool hasResponsePayload,
+        RpcMethodDescriptor method,
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
-        var connection = await GetReadyConnectionAsync(
-            waitForReady: true,
-            control.Deadline,
-            cancellationToken).ConfigureAwait(false);
-        var lease = await connection.PendingCalls.RentAsync(
-            responseCodec,
-            PendingCallKind.Unary,
-            control.DeadlineTimestamp,
-            waitForSlot: true,
-            control.Deadline,
-            cancellationToken).ConfigureAwait(false);
-        return await StartUnaryCall(
-            connection,
-            contractId,
-            methodId,
-            lease.Id,
-            hasResponsePayload,
-            request,
-            requestCodec,
-            lease.Operation,
-            control,
-            cancellationToken).ConfigureAwait(false);
+        var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
+        if (outcome is null)
+            SharpLinkTelemetry.RecordClientAttempt();
+        try
+        {
+            var connection = await GetReadyConnectionAsync(
+                waitForReady: true,
+                control.Deadline,
+                cancellationToken,
+                method,
+                outcome).ConfigureAwait(false);
+            var lease = await connection.PendingCalls.RentAsync(
+                responseCodec,
+                PendingCallKind.Unary,
+                control.DeadlineTimestamp,
+                waitForSlot: true,
+                control.Deadline,
+                cancellationToken,
+                outcome).ConfigureAwait(false);
+            return await StartUnaryCall(
+                connection,
+                method.ContractId,
+                method.MethodId,
+                lease.Id,
+                method.HasResponsePayload,
+                request,
+                requestCodec,
+                lease.Operation,
+                control,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            outcome?.CompleteLocalFailure(exception);
+            throw;
+        }
     }
 
     private ValueTask<TResponse> StartUnaryCall<TRequest, TResponse>(
@@ -348,9 +348,7 @@ internal sealed partial class SharpLinkClient
     }
 
     private async ValueTask InvokeOneWayCoreAsync<TRequest, TStreams>(
-        long contractId,
-        long methodId,
-        bool hasClientStreams,
+        RpcMethodDescriptor method,
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         TStreams streams,
@@ -358,49 +356,76 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
+        var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
+        if (outcome is null)
+            SharpLinkTelemetry.RecordClientAttempt();
         var connection = control.WaitForReady
             ? await GetReadyConnectionAsync(
                 waitForReady: true,
                 control.Deadline,
-                cancellationToken).ConfigureAwait(false)
-            : GetReadyConnection();
+                cancellationToken,
+                method,
+                outcome).ConfigureAwait(false)
+            : GetReadyConnection(method, retrySelection: null, outcome);
         var flags = ProtocolV2FrameFlags.OneWay;
-        if (hasClientStreams && (cancellationToken.CanBeCanceled || control.Deadline is not null))
+        if (method.HasClientStreams && (cancellationToken.CanBeCanceled || control.Deadline is not null))
             flags |= ProtocolV2FrameFlags.Cancellable;
 
-        var oneWayStreamLease = hasClientStreams
-            ? connection.PendingCalls.RegisterOneWayClientStream(
-                control.DeadlineTimestamp,
-                cancellationToken)
-            : default;
-        var requestId = hasClientStreams
-            ? oneWayStreamLease.Id
-            : connection.PendingCalls.AllocateRequestId();
-        var streamCancellationToken = hasClientStreams
+        PendingRequestLease<RpcEmptyRequest> oneWayStreamLease = default;
+        long requestId;
+        try
+        {
+            if (method.HasClientStreams)
+            {
+                oneWayStreamLease = connection.PendingCalls.RegisterOneWayClientStream(
+                    control.DeadlineTimestamp,
+                    cancellationToken,
+                    outcome);
+                requestId = oneWayStreamLease.Id;
+            }
+            else
+            {
+                requestId = connection.PendingCalls.AllocateRequestId();
+            }
+        }
+        catch (Exception exception)
+        {
+            outcome?.CompleteLocalFailure(exception);
+            throw;
+        }
+        var streamCancellationToken = method.HasClientStreams
             ? connection.PendingCalls.GetProducerCancellationToken(requestId)
             : CancellationToken.None;
-        if (hasClientStreams && !connection.PendingCalls.Contains(requestId))
+        if (method.HasClientStreams && !connection.PendingCalls.Contains(requestId))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            throw CreateDeadlineExceededException();
+            var exception = CreateDeadlineExceededException();
+            outcome?.CompleteLocalFailure(exception);
+            throw exception;
         }
-        if (!hasClientStreams && !connection.TryBeginUntrackedCall())
-            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The selected connection is draining.");
+        if (!method.HasClientStreams && !connection.TryBeginUntrackedCall())
+        {
+            var exception = new SharpLinkException(
+                SharpLinkErrorCode.Unavailable,
+                "The selected connection is draining.");
+            outcome?.CompleteWithoutPending(PendingCallCompletionReason.ConnectionClosed, exception);
+            throw exception;
+        }
         try
         {
             try
             {
                 SendRpcCall(
                     connection.Session,
-                    contractId,
-                    methodId,
+                    method.ContractId,
+                    method.MethodId,
                     requestId,
                     flags,
                     request,
                     requestCodec,
                     control.Deadline,
                     control.Metadata);
-                if (hasClientStreams)
+                if (method.HasClientStreams)
                 {
                     await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
                     connection.PendingCalls.TryComplete(
@@ -408,10 +433,14 @@ internal sealed partial class SharpLinkClient
                         PendingCallCompletionReason.LocalStreamComplete);
                     _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
                 }
+                else
+                {
+                    outcome?.CompleteWithoutPending(PendingCallCompletionReason.LocalStreamComplete);
+                }
             }
             catch (Exception exception)
             {
-                if (hasClientStreams)
+                if (method.HasClientStreams)
                 {
                     connection.PendingCalls.TryComplete(
                         requestId,
@@ -419,20 +448,22 @@ internal sealed partial class SharpLinkClient
                         exception);
                     _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
                 }
+                else
+                {
+                    outcome?.CompleteWithoutPending(PendingCallCompletionReason.SendFailure, exception);
+                }
                 throw;
             }
         }
         finally
         {
-            if (!hasClientStreams)
+            if (!method.HasClientStreams)
                 connection.EndUntrackedCall();
         }
     }
 
     private async ValueTask<TResponse> InvokeClientStreamingCoreAsync<TRequest, TResponse, TStreams>(
-        long contractId,
-        long methodId,
-        bool hasResponsePayload,
+        RpcMethodDescriptor method,
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
@@ -442,36 +473,51 @@ internal sealed partial class SharpLinkClient
         where TStreams : struct, IRpcClientStreamWriter
     {
         var moduleProducerLifetime = SharpLinkClientStreamModuleLeaseContext.Current;
+        var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
+        if (outcome is null)
+            SharpLinkTelemetry.RecordClientAttempt();
         ClientConnection connection;
         long requestId;
         RpcRequestOperation<TResponse> operation;
-        if (!control.WaitForReady)
+        try
         {
-            connection = GetReadyConnection();
-            operation = connection.PendingCalls.Rent(
-                responseCodec,
-                PendingCallKind.ClientStreaming,
-                control.DeadlineTimestamp,
-                cancellationToken,
-                out requestId);
+            if (!control.WaitForReady)
+            {
+                connection = GetReadyConnection(method, retrySelection: null, outcome);
+                operation = connection.PendingCalls.Rent(
+                    responseCodec,
+                    PendingCallKind.ClientStreaming,
+                    control.DeadlineTimestamp,
+                    cancellationToken,
+                    out requestId,
+                    outcome);
+            }
+            else
+            {
+                connection = await GetReadyConnectionAsync(
+                    waitForReady: true,
+                    control.Deadline,
+                    cancellationToken,
+                    method,
+                    outcome).ConfigureAwait(false);
+                var lease = await connection.PendingCalls.RentAsync(
+                    responseCodec,
+                    PendingCallKind.ClientStreaming,
+                    control.DeadlineTimestamp,
+                    waitForSlot: true,
+                    control.Deadline,
+                    cancellationToken,
+                    outcome).ConfigureAwait(false);
+                requestId = lease.Id;
+                operation = lease.Operation;
+            }
         }
-        else
+        catch (Exception exception)
         {
-            connection = await GetReadyConnectionAsync(
-                waitForReady: true,
-                control.Deadline,
-                cancellationToken).ConfigureAwait(false);
-            var lease = await connection.PendingCalls.RentAsync(
-                responseCodec,
-                PendingCallKind.ClientStreaming,
-                control.DeadlineTimestamp,
-                waitForSlot: true,
-                control.Deadline,
-                cancellationToken).ConfigureAwait(false);
-            requestId = lease.Id;
-            operation = lease.Operation;
+            outcome?.CompleteLocalFailure(exception);
+            throw;
         }
-        var flags = hasResponsePayload
+        var flags = method.HasResponsePayload
             ? ProtocolV2FrameFlags.HasReturn | ProtocolV2FrameFlags.Cancellable
             : ProtocolV2FrameFlags.Cancellable;
         var streamCancellationToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
@@ -483,8 +529,8 @@ internal sealed partial class SharpLinkClient
                 producerLease = moduleProducerLifetime?.TakeLease() ?? default;
                 SendRpcCall(
                     connection.Session,
-                    contractId,
-                    methodId,
+                    method.ContractId,
+                    method.MethodId,
                     requestId,
                     flags,
                     request,
@@ -543,8 +589,7 @@ internal sealed partial class SharpLinkClient
 
     private async Task StartServerStreamingInvokerAsync<TRequest, TResponse>(
         PooledAsyncStreamDispatcher<TResponse> dispatcher,
-        long contractId,
-        long methodId,
+        RpcMethodDescriptor method,
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         ResolvedCallControl control,
@@ -558,14 +603,15 @@ internal sealed partial class SharpLinkClient
             var registration = await PrepareGeneratedServerStreamAsync(
                 dispatcher,
                 PendingCallKind.ServerStreaming,
+                method,
                 control,
                 cancellationToken).ConfigureAwait(false);
             connection = registration.Connection;
             requestId = registration.RequestId;
             SendRpcCall(
                 connection.Session,
-                contractId,
-                methodId,
+                method.ContractId,
+                method.MethodId,
                 requestId,
                 cancellationToken.CanBeCanceled || control.Deadline is not null
                     ? ProtocolV2FrameFlags.Cancellable
@@ -587,8 +633,7 @@ internal sealed partial class SharpLinkClient
 
     private async Task StartDuplexStreamingInvokerAsync<TRequest, TResponse, TStreams>(
         PooledAsyncStreamDispatcher<TResponse> dispatcher,
-        long contractId,
-        long methodId,
+        RpcMethodDescriptor method,
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         TStreams streams,
@@ -606,6 +651,7 @@ internal sealed partial class SharpLinkClient
             var registration = await PrepareGeneratedServerStreamAsync(
                 dispatcher,
                 PendingCallKind.DuplexStreaming,
+                method,
                 control,
                 cancellationToken).ConfigureAwait(false);
             connection = registration.Connection;
@@ -614,8 +660,8 @@ internal sealed partial class SharpLinkClient
             producerLease = moduleProducerLifetime?.TakeLease() ?? default;
             SendRpcCall(
                 connection.Session,
-                contractId,
-                methodId,
+                method.ContractId,
+                method.MethodId,
                 requestId,
                 ProtocolV2FrameFlags.Cancellable,
                 request,
@@ -638,26 +684,53 @@ internal sealed partial class SharpLinkClient
     private async ValueTask<StreamCallRegistration> PrepareGeneratedServerStreamAsync<TResponse>(
         PooledAsyncStreamDispatcher<TResponse> dispatcher,
         PendingCallKind kind,
+        RpcMethodDescriptor method,
         ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
-        var connection = await GetReadyConnectionAsync(
-            control.WaitForReady,
-            control.Deadline,
-            cancellationToken).ConfigureAwait(false);
-        var requestId = connection.PendingCalls.RegisterStream(
-            kind,
-            dispatcher,
-            control.DeadlineTimestamp,
-            cancellationToken);
-        if (!connection.PendingCalls.Contains(requestId))
+        var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
+        if (outcome is null)
+            SharpLinkTelemetry.RecordClientAttempt();
+        ClientConnection? connection = null;
+        var requestId = 0L;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            throw CreateDeadlineExceededException();
+            connection = await GetReadyConnectionAsync(
+                control.WaitForReady,
+                control.Deadline,
+                cancellationToken,
+                method,
+                outcome).ConfigureAwait(false);
+            requestId = connection.PendingCalls.RegisterStream(
+                kind,
+                dispatcher,
+                control.DeadlineTimestamp,
+                cancellationToken,
+                outcome);
+            if (!connection.PendingCalls.Contains(requestId))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                throw CreateDeadlineExceededException();
+            }
+            dispatcher.SetConsumerAbandonedCallback(connection.ConsumerAbandonedCallback, requestId);
+            connection.Session.StreamManager.Register(requestId, 0, dispatcher);
+            return new StreamCallRegistration(connection, requestId);
         }
-        dispatcher.SetConsumerAbandonedCallback(connection.ConsumerAbandonedCallback, requestId);
-        connection.Session.StreamManager.Register(requestId, 0, dispatcher);
-        return new StreamCallRegistration(connection, requestId);
+        catch (Exception exception)
+        {
+            if (connection is not null && requestId != 0)
+            {
+                connection.PendingCalls.TryComplete(
+                    requestId,
+                    PendingCallCompletionReason.SendFailure,
+                    exception);
+            }
+            else
+            {
+                outcome?.CompleteLocalFailure(exception);
+            }
+            throw;
+        }
     }
 
     private void CompleteFailedGeneratedStream<TResponse>(

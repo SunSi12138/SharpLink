@@ -68,13 +68,31 @@ public static class Program
             }
         }, CancellationToken.None);
 
-        var clientBuilder = SharpClientBuilder.Create()
-            .UseRuntime(ConfigureCompression);
+        ISharpLinkClient client;
         if (useSharedMemory)
-            clientBuilder.UseSharedMemory(sharedMemoryName);
+        {
+            client = SharpClientBuilder.Create()
+                .UseRuntime(ConfigureCompression)
+                .UseSharedMemory(sharedMemoryName)
+                .Build();
+        }
         else
-            clientBuilder.UseTcp(IPAddress.Loopback.ToString(), port);
-        var client = clientBuilder.Build();
+        {
+            client = SharpClientBuilder.Create()
+                .UseRuntime(ConfigureCompression)
+                .UseEndpointResolver(
+                    new DelegateSharpLinkEndpointResolver(
+                        _ => ValueTask.FromResult(new SharpLinkEndpointSnapshot(1,
+                        [
+                            new SharpLinkEndpoint
+                            {
+                                Id = "aot-local",
+                                Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), port)
+                            }
+                        ]))),
+                    SharpLinkTransportFactories.Sockets())
+                .Build();
+        }
 
         try
         {

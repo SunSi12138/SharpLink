@@ -41,6 +41,7 @@ public static class Program
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await RunTransportSmokeAsync(useSharedMemory: false, timeout.Token);
         await RunTransportSmokeAsync(useSharedMemory: true, timeout.Token);
+        await RunStaticEndpointSmokeAsync(timeout.Token);
     }
 
     private static async Task RunTransportSmokeAsync(
@@ -94,6 +95,79 @@ public static class Program
             await client.DisposeAsync();
             await server.DisposeAsync();
             await Task.WhenAny(serverTask, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
+        }
+    }
+
+    private static async Task RunStaticEndpointSmokeAsync(CancellationToken cancellationToken)
+    {
+        var firstBuilder = SharpLinkServerBuilder.Create()
+            .UseRuntime(ConfigureCompression)
+            .UseAdmissionControl(options => options.Global.UseConcurrency(64))
+            .UseTcp(0, IPAddress.Loopback.ToString());
+        var secondBuilder = SharpLinkServerBuilder.Create()
+            .UseRuntime(ConfigureCompression)
+            .UseAdmissionControl(options => options.Global.UseConcurrency(64))
+            .UseTcp(0, IPAddress.Loopback.ToString());
+        var firstPort = ((IPEndPoint)firstBuilder.Transport!.LocalEndPoint!).Port;
+        var secondPort = ((IPEndPoint)secondBuilder.Transport!.LocalEndPoint!).Port;
+        var firstServer = firstBuilder.Build();
+        var secondServer = secondBuilder.Build();
+        var firstTask = RunServerAsync(firstServer, cancellationToken);
+        var secondTask = RunServerAsync(secondServer, cancellationToken);
+        var endpoints = new[]
+        {
+            new SharpLinkEndpoint
+            {
+                Id = "first",
+                Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), firstPort),
+                Attributes = new Dictionary<string, string> { ["zone"] = "a" }
+            },
+            new SharpLinkEndpoint
+            {
+                Id = "second",
+                Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), secondPort),
+                Attributes = new Dictionary<string, string> { ["zone"] = "b" }
+            }
+        };
+        var client = SharpClientBuilder.Create()
+            .UseRuntime(ConfigureCompression)
+            .UseEndpoints(
+                endpoints,
+                SharpLinkTransportFactories.Sockets())
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin)
+            .Build();
+
+        try
+        {
+            await client.ConnectAsync(cancellationToken);
+            if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
+                throw new InvalidOperationException("Static endpoint package smoke returned an unexpected result.");
+
+            await using var dynamicClient = SharpClientBuilder.Create()
+                .UseRuntime(ConfigureCompression)
+                .UseEndpointResolver(
+                    new DelegateSharpLinkEndpointResolver(
+                        _ => ValueTask.FromResult(new SharpLinkEndpointSnapshot(1, endpoints))),
+                    SharpLinkTransportFactories.Sockets())
+                .UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin)
+                .Build();
+            await dynamicClient.ConnectAsync(cancellationToken);
+            if (await dynamicClient.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
+                throw new InvalidOperationException("Dynamic endpoint package smoke returned an unexpected result.");
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await firstServer.DisposeAsync();
+            await secondServer.DisposeAsync();
+            await Task.WhenAny(firstTask, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
+            await Task.WhenAny(secondTask, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
         }
     }
 

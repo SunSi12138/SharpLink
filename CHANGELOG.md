@@ -4,6 +4,83 @@
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-07-21
+
+### 收敛
+
+- endpoint 路径补充低基数 `sharplink.client.attempts`、`retries`、`endpoint_admission.rejected`、`breaker.open` 与 `selection.failures` metrics；默认标签不含 endpoint ID、地址、authority 或 transport 名称。
+- 完成 static/dynamic topology、selector、Retry、custom admission 与 generation-scoped circuit breaker 的本地组合验证；物理 Ready/Draining 状态不因 admission 拒绝或 breaker Open 被伪装成断线。
+- 文档补全迁移路径、传输限制、Retry/Breaker 语义与 0.7.x API freeze 审核说明。
+
+## [0.7.8] - 2026-07-21
+
+### 新增
+
+- `ISharpLinkEndpointAdmissionPolicy`、`SharpLinkEndpointAdmissionDecision` 和 `SharpLinkEndpointOutcome` 提供 endpoint 级 TryAcquire/Report SPI；`UseEndpointAdmission` 显式启用自定义策略。
+- `UseCircuitBreaker` 和 `SharpLinkCircuitBreakerOptions` 提供按 endpoint generation 隔离的 Closed/Open/HalfOpen breaker，默认关闭。
+
+### 变更
+
+- endpoint selection 在连接选择之前执行 admission；拒绝候选会继续选择其他 Ready endpoint，实际获得许可的 attempt 沿用 PendingCall 单一终结路径恰好 Report 一次。
+- breaker 使用 monotonic time、惰性状态推进、有限采样 ring 和 HalfOpen 原子 permit，不创建每 endpoint timer；连接、拓扑与 `CheckHealthAsync` 的物理语义保持不变。
+
+## [0.7.7] - 2026-07-21
+
+### 新增
+
+- `UseRetry()`、`UseRetry(Action<SharpLinkRetryOptions>)` 和 `UseRetry(ISharpLinkRetryPolicy)` 为显式标记 `[Idempotent]` 的 Unary 提供可选重试；默认最多三次、50/100/200 ms 指数退避和 ±20% jitter。
+- `ISharpLinkRetryPolicy`、`SharpLinkRetryContext` 与 `SharpLinkRetryDecision` 提供同步、无 I/O 的自定义决策 SPI；非法 delay 或 policy 异常只失败当前 logical call，不影响 Client 健康。
+- Retry attempt 复用既有 PendingCall 的单一完成仲裁，记录 endpoint/generation、connection、完成原因、响应是否已观测和耗时；无第二套 pending-request 表。
+
+### 变更
+
+- Client interceptor 仍只对一次 logical call 执行；Retry 位于其 terminal 内，每次 attempt 重新选择 endpoint，并共享入口冻结的绝对 deadline。
+- 默认策略仅对 `[Idempotent]` Unary 的 endpoint 不可用、连接关闭/切换、发送失败与远端 `Unavailable` 重试；业务错误和 `ResourceExhausted`、OneWay 及所有 Streaming 不自动重试。
+- 多 endpoint retry 使用调用内 `ulong` exclusion mask，优先尝试不同 Ready endpoint；尝试完当前 snapshot 后才复用候选，动态 generation 更新自动形成新候选集。
+- telemetry 保持 logical call 指标一调用一次，并在 listener 存在时额外产生 `sharplink.rpc.attempt` Activity。
+
+### 兼容性与验证
+
+- Retry 默认关闭，因此固定单 endpoint 的既有 Unary 继续直接走原有路径；Protocol v2 wire format 和握手 capability 未改变。
+- 覆盖远端 `Unavailable`、`ResponseObserved`、非幂等与 `ResourceExhausted` 拒绝重试、绝对 deadline、delay 中取消、custom policy、interceptor 一次性和 endpoint exclusion/reset。
+
+## [0.7.6] - 2026-07-21
+
+### 新增
+
+- `SharpLinkEndpointSnapshot`、`ISharpLinkEndpointResolver` 与 `UseEndpointResolver` 提供版本化的动态 endpoint 拓扑；Client 对 Resolver 拥有明确的 Stop/Dispose 生命周期。
+- `DelegateSharpLinkEndpointResolver` 支持连续 Watch 或单 worker 轮询，可适配 Consul、Nacos、Etcd 等应用已有 SDK，而 SharpLink 核心不引入其依赖。
+- `UseDnsEndpoints` 与 `SharpLinkDnsEndpointResolver` 提供 A/AAAA Discovery、地址族筛选、规范化稳定 ID、hostname Authority、last-good 保留和可配置 refresh/jitter。
+
+### 变更
+
+- 动态快照以单 writer 原子协调：新增 ID 建立 generation；同 ID 的 Address/Authority 变化替换 generation；Attributes-only 更新保留连接；删除 endpoint 立即停止新调用并排空已有 Unary/Streaming。
+- Resolver Watch 结束或异常后以 100 ms–30 s 的指数退避和 ±20% jitter 重启；空拓扑可恢复且继续遵守 WaitForReady、deadline、cancel 与 Stop。
+- retired connection 使用独立预算。预算超出时抑制 replacement 而不强杀用户 stream，归零后 factory 恰好释放一次。
+
+### 兼容性与验证
+
+- Protocol v2 wire format、握手 capability、固定单 endpoint 与静态 cluster 的调用路径未改变；无新 NuGet 或第三方服务发现 SDK。
+- 覆盖 add/remove/replace、属性更新、DNS、watch/retry、流排空、PackageSmoke、NativeAOT 及动态稳态矩阵；固定 TCP 五轮 A/B 的 QPS 中位数为 0.7.5 的 100.44%，P99 中位数保持 72 µs。
+
+## [0.7.5] - 2026-07-21
+
+### 新增
+
+- Client 新增不可变的 `SharpLinkEndpoint`、显式传输地址和 transport factory 注册模型；`UseEndpoint`、`UseEndpoints`、`UseCluster` 及四种内置负载均衡策略可在不影响旧单端点用法的前提下构建静态端点集群。
+- 静态集群支持 TCP（hostname/IPv4/IPv6）、Unix Domain Socket、Named Pipe、Shared Memory 和既有 Anonymous Pipe；端点属性可传给自定义选择器。
+- 集群按端点独立维护连接、重连和健康状态，初始连接受 `MaxConnections` 与并行度上限约束；支持最少就绪端点、LeastPending、P2C、Random、RoundRobin 与自定义选择器。
+
+### 变更
+
+- `GoAway`、Stop 和 Dispose 进入排空流程后，新调用立即选择仍健康的端点；长 Unary 和流式调用在预算内继续完成，超出独立 retiring budget 时才被定点终止。
+- 单个静态端点继续折叠为既有固定连接快速路径；多端点的成员快照仅在就绪成员增减时重建，调用路径仅读取原子快照和实时计数。
+- Protocol v2 wire format、默认传输语义和现有公共配置保持兼容，未引入新的 NuGet 依赖。
+
+### 测试与性能
+
+- 覆盖多传输、地址族、故障/重连、GoAway 排空、所有选择策略、TLS、包使用与 NativeAOT；固定 TCP Unary 的五轮本地 A/B 中，吞吐中位数为基线的 100.27%，P99 为 104.48%，BenchmarkDotNet 分配保持 352 B/op。
+
 ## [0.7.4] - 2026-07-20
 
 ### 新增

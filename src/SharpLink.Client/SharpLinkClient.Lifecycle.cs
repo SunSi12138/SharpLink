@@ -4,6 +4,9 @@ internal sealed partial class SharpLinkClient
 {
     public ValueTask ConnectAsync(CancellationToken cancellationToken = default)
     {
+        if (_cluster is not null)
+            return _cluster.ConnectAsync(cancellationToken);
+
         Task connectTask;
         lock (_stateGate)
         {

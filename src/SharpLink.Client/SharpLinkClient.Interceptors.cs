@@ -193,9 +193,8 @@ internal sealed partial class SharpLinkClient
         {
             var control = Client.ResolveCallControl(
                 context.Options, true, _method.HasMethodTimeout, _method.MethodTimeout);
-            var response = await Client.InvokeUnaryCoreAsync(
-                _method.ContractId, _method.MethodId, _method.HasResponsePayload,
-                _request, _requestCodec, _responseCodec, control, context.CancellationToken).ConfigureAwait(false);
+            var response = await Client.InvokeUnaryWithOptionalRetryAsync(
+                _method, _request, _requestCodec, _responseCodec, control, context.CancellationToken).ConfigureAwait(false);
             return new SharpLinkClientInvocationResult(response);
         }
     }
@@ -233,7 +232,7 @@ internal sealed partial class SharpLinkClient
             var control = Client.ResolveCallControl(
                 context.Options, false, _method.HasMethodTimeout, _method.MethodTimeout);
             await Client.InvokeOneWayCoreAsync(
-                _method.ContractId, _method.MethodId, _method.HasClientStreams,
+                _method,
                 _request, _requestCodec, _streams, control, context.CancellationToken).ConfigureAwait(false);
             return default;
         }
@@ -275,7 +274,7 @@ internal sealed partial class SharpLinkClient
             var control = Client.ResolveCallControl(
                 context.Options, false, _method.HasMethodTimeout, _method.MethodTimeout);
             var response = await Client.InvokeClientStreamingCoreAsync(
-                _method.ContractId, _method.MethodId, _method.HasResponsePayload,
+                _method,
                 _request, _requestCodec, _responseCodec, _streams, control,
                 context.CancellationToken).ConfigureAwait(false);
             return new SharpLinkClientInvocationResult(response);

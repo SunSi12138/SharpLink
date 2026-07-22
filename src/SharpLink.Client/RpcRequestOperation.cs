@@ -7,7 +7,8 @@ internal interface IRpcOperation
 {
     // 在 IO 线程被调用
     public long Id { get; }
-    void SetResult(ref ReadOnlySequence<byte> payload);
+    Exception? TryDeserializeResponse(ref ReadOnlySequence<byte> payload);
+    void CompleteResponse(Exception? exception);
     void SetError(Exception ex);
 }
 
@@ -16,6 +17,7 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
 {
     private ManualResetValueTaskSourceCore<T> _core;
     private IRpcCodec<T>? _codec;
+    private T? _response;
     
     private readonly Action<RpcRequestOperation<T>> _returnAction;
 
@@ -56,26 +58,35 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
     
-    public void SetResult(ref ReadOnlySequence<byte> payload)
+    public Exception? TryDeserializeResponse(ref ReadOnlySequence<byte> payload)
     {
         try
         {
             if (payload.Length == 0)
             {
-                _core.SetResult(default!);
-                return;
+                _response = default;
+                return null;
             }
             // 【IO线程反序列化】
             // 此时 payload 有效，直接转为 T 对象，不拷贝 bytes
-            var result = (_codec ?? throw new InvalidOperationException("Request operation has no response codec."))
+            _response = (_codec ?? throw new InvalidOperationException("Request operation has no response codec."))
                 .Deserialize(payload);
-            _core.SetResult(result!);
+            return null;
         }
         catch (Exception ex)
         {
-            _core.SetException(ex);
+            return ex;
         }
     }
+
+    public void CompleteResponse(Exception? exception)
+    {
+        if (exception is null)
+            _core.SetResult(_response!);
+        else
+            _core.SetException(exception);
+    }
+
     public void SetError(Exception ex)
     {
         _core.SetException(ex);
@@ -85,6 +96,7 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     private void ReturnToPool()
     {
         _codec = null;
+        _response = default;
         // Clear the continuation and its state before this operation enters the
         // process-wide generic pool. A continuation can close over request types
         // from a collectible AssemblyLoadContext even when T itself is static.
