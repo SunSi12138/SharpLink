@@ -7,7 +7,7 @@ public class SharpClientBuilder
     
     private IClientTransportFactory? _transport;
     private IEnumerable<SharpLinkEndpoint>? _endpoints;
-    private bool _singleStaticEndpointConfigured;
+    private SharpLinkEndpoint[]? _endpointSnapshot;
     private SharpLinkEndpointTransportFactory? _endpointTransportFactory;
     private ISharpLinkEndpointResolver? _endpointResolver;
     private SharpLinkEndpointTransportFactory? _resolverTransportFactory;
@@ -186,7 +186,7 @@ public class SharpClientBuilder
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(transportFactory);
         _endpoints = [endpoint];
-        _singleStaticEndpointConfigured = true;
+        _endpointSnapshot = null;
         _endpointTransportFactory = transportFactory;
         return this;
     }
@@ -199,7 +199,7 @@ public class SharpClientBuilder
         SharpLinkEndpointTransportFactory transportFactory)
     {
         _endpoints = endpoints ?? throw new ArgumentNullException(nameof(endpoints));
-        _singleStaticEndpointConfigured = false;
+        _endpointSnapshot = null;
         _endpointTransportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
         return this;
     }
@@ -344,12 +344,11 @@ public class SharpClientBuilder
             return _cluster.MaxConnections;
         if (_endpoints is not null)
         {
-            if (_singleStaticEndpointConfigured)
+            var endpoints = _endpointSnapshot ??= CreateEndpointSnapshot(_endpoints, allowEmpty: false);
+            if (endpoints.Length == 1)
                 return GetFixedConnectionBudget();
 
-            // A static collection can be either a fixed endpoint or a cluster. Reserve the larger
-            // valid budget before building so a one-shot endpoint enumerable is never consumed twice.
-            return Math.Max(_cluster.MaxConnections, GetFixedConnectionBudget());
+            return _cluster.MaxConnections;
         }
         return GetFixedConnectionBudget();
     }
@@ -384,7 +383,7 @@ public class SharpClientBuilder
 
         if (_endpoints is not null)
         {
-            var endpoints = CreateEndpointSnapshot(_endpoints, allowEmpty: false);
+            var endpoints = _endpointSnapshot ??= CreateEndpointSnapshot(_endpoints, allowEmpty: false);
             if (endpoints.Length == 1)
             {
                 if (_clusterConfigured)

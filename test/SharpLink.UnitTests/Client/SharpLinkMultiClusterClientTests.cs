@@ -125,6 +125,21 @@ public sealed class SharpLinkMultiClusterClientTests
     }
 
     [Test]
+    public async Task DynamicRegistrationShouldReturnStructuredFailureAfterStop()
+    {
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+
+        await client.StopAsync();
+        var registration = client.RegisterAssembly("plugins", typeof(string).Assembly);
+        Ensure(!registration.Succeeded &&
+               registration.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+            "registration after shutdown must return the structured terminal-state failure before cluster lookup");
+    }
+
+    [Test]
     public Task EmptySlotShouldRequireExplicitDynamicOptIn()
     {
         var builder = SharpLinkMultiClusterClientBuilder.Create()
@@ -194,6 +209,26 @@ public sealed class SharpLinkMultiClusterClientTests
 
         Ensure(client.GetClusterState("orders") == SharpLinkConnectionState.Created,
             "single-endpoint slots fit their configured fixed-client budget");
+    }
+
+    [Test]
+    public async Task SingleEndpointCollectionsShouldUseTheirFixedConnectionBudget()
+    {
+        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
+        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .Configure(options => options.MaxTotalConfiguredConnections = 2)
+            .AddCluster("orders", child => child.UseEndpoints(
+                new OneShotEndpointEnumerable(Endpoint("orders", 5001)),
+                static _ => new TestClientTransportFactory()))
+            .AddCluster("plugins", child => child.UseEndpoints(
+                new OneShotEndpointEnumerable(Endpoint("plugins", 5002)),
+                static _ => new TestClientTransportFactory()),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+
+        Ensure(client.GetClusterState("orders") == SharpLinkConnectionState.Created,
+            "one-endpoint collections must use their fixed-client budget without a second enumeration");
     }
 
     [Test]
@@ -344,5 +379,23 @@ public sealed class SharpLinkMultiClusterClientTests
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class OneShotEndpointEnumerable : IEnumerable<SharpLinkEndpoint>
+    {
+        private readonly SharpLinkEndpoint _endpoint;
+        private int _enumerationCount;
+
+        public OneShotEndpointEnumerable(SharpLinkEndpoint endpoint) => _endpoint = endpoint;
+
+        public IEnumerator<SharpLinkEndpoint> GetEnumerator()
+        {
+            if (Interlocked.Increment(ref _enumerationCount) != 1)
+                throw new InvalidOperationException("Endpoint source must be enumerated only once.");
+
+            yield return _endpoint;
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 }

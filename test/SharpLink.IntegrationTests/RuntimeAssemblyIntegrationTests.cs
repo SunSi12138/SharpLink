@@ -65,6 +65,38 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task MultiClusterStopShouldWinWhenChildConnectCompletesAfterShutdown()
+    {
+        var child = new BlockingConnectClient(releaseWhenStopped: false, ignoreCancellation: true);
+        var slot = new SharpLinkClusterSlot("plugins", child, AllowDynamicContracts: true);
+        await using var client = new SharpLinkMultiClusterClient(
+            new SharpLinkMultiClusterOptions(),
+            new[] { slot }.ToFrozenDictionary(static candidate => candidate.Key),
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
+            []);
+
+        var connecting = client.ConnectAsync().AsTask();
+        await child.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await client.StopAsync();
+
+        child.ReleaseConnect();
+        await EnsureCancelledAsync(connecting.WaitAsync(TimeSpan.FromSeconds(2)),
+            "connect that was cancelled by coordinator shutdown");
+        Ensure(client.State == SharpLinkMultiClusterState.Stopped,
+            "a post-stop child connect completion must not overwrite the coordinator terminal state");
+
+        try
+        {
+            await client.ConnectAsync();
+            throw new Exception("assert failed: stopped coordinator must reject later connect attempts");
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task MultiClusterCancelledUnregisterShouldStillReleaseCoordinatorRegistration()
     {
         await using var harness = await DynamicHarness.CreateAsync();
@@ -1609,9 +1641,17 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     private sealed class BlockingConnectClient : ISharpLinkClient
     {
+        private readonly bool _releaseWhenStopped;
+        private readonly bool _ignoreCancellation;
         private readonly TaskCompletionSource _connectRelease =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _state = (int)SharpLinkConnectionState.Created;
+
+        internal BlockingConnectClient(bool releaseWhenStopped = true, bool ignoreCancellation = false)
+        {
+            _releaseWhenStopped = releaseWhenStopped;
+            _ignoreCancellation = ignoreCancellation;
+        }
 
         internal TaskCompletionSource ConnectStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1621,14 +1661,18 @@ public sealed class RuntimeAssemblyIntegrationTests
         public async ValueTask ConnectAsync(CancellationToken cancellationToken = default)
         {
             ConnectStarted.TrySetResult();
-            await _connectRelease.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (_ignoreCancellation)
+                await _connectRelease.Task.ConfigureAwait(false);
+            else
+                await _connectRelease.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             Volatile.Write(ref _state, (int)SharpLinkConnectionState.Ready);
         }
 
         public ValueTask StopAsync(CancellationToken cancellationToken = default)
         {
             _ = cancellationToken;
-            _connectRelease.TrySetResult();
+            if (_releaseWhenStopped)
+                _connectRelease.TrySetResult();
             Volatile.Write(ref _state, (int)SharpLinkConnectionState.Stopped);
             return ValueTask.CompletedTask;
         }

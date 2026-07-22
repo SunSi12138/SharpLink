@@ -103,7 +103,18 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
         if (assembly is null)
             return SharpLinkAssemblyManifestLoader.TryLoad(null, out _);
 
-        var slot = GetSlot(cluster);
+        SharpLinkClusterSlot slot;
+        lock (_gate)
+        {
+            var state = (SharpLinkMultiClusterState)_state;
+            if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
+            {
+                return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                    $"Multi-cluster client state '{state}' does not accept runtime assembly registration.", assembly);
+            }
+
+            slot = GetSlot(cluster);
+        }
         if (!slot.AllowDynamicContracts)
             return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                 $"Cluster '{cluster}' does not allow dynamic contract registration.", assembly);
@@ -254,18 +265,22 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
                 Volatile.Read(ref _clusters).Values,
                 new ParallelOptions { CancellationToken = attempts.Token, MaxDegreeOfParallelism = _options.MaxConcurrentClusterConnects },
                 static async (slot, token) => await slot.Client.ConnectAsync(token).ConfigureAwait(false)).ConfigureAwait(false);
-            Volatile.Write(ref _state, (int)SharpLinkMultiClusterState.Ready);
+            _ = Interlocked.CompareExchange(
+                ref _state,
+                (int)SharpLinkMultiClusterState.Ready,
+                (int)SharpLinkMultiClusterState.Connecting);
         }
         catch (Exception connectException)
         {
             attempts.Cancel();
             var failures = new List<Exception> { connectException };
             await StopSlotsAsync(Volatile.Read(ref _clusters).Values, failures).ConfigureAwait(false);
-            // StopAsync can race the first shared connect. It owns the final Stopped transition,
-            // so a cancelled connect must never overwrite it with Faulted after cleanup completes.
-            var state = (SharpLinkMultiClusterState)Volatile.Read(ref _state);
-            if (state is not SharpLinkMultiClusterState.Draining and not SharpLinkMultiClusterState.Stopped)
-                Volatile.Write(ref _state, (int)SharpLinkMultiClusterState.Faulted);
+            // StopAsync owns the terminal transition. A connect completion may only replace the
+            // original Connecting state, never Draining or Stopped.
+            _ = Interlocked.CompareExchange(
+                ref _state,
+                (int)SharpLinkMultiClusterState.Faulted,
+                (int)SharpLinkMultiClusterState.Connecting);
             if (failures.Count == 1)
                 ExceptionDispatchInfo.Capture(connectException).Throw();
             throw new AggregateException(failures);
