@@ -37,6 +37,34 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task MultiClusterSharedConnectShouldSurviveFirstWaiterCancellation()
+    {
+        var child = new BlockingConnectClient();
+        var slot = new SharpLinkClusterSlot("plugins", child, AllowDynamicContracts: true);
+        await using var client = new SharpLinkMultiClusterClient(
+            new SharpLinkMultiClusterOptions(),
+            new[] { slot }.ToFrozenDictionary(static candidate => candidate.Key),
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
+            []);
+
+        using var cancellation = new CancellationTokenSource();
+        var cancelledWaiter = client.ConnectAsync(cancellation.Token).AsTask();
+        await child.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var survivingWaiter = client.ConnectAsync().AsTask();
+
+        cancellation.Cancel();
+        await EnsureCancelledAsync(cancelledWaiter, "first shared connect waiter");
+        Ensure(!survivingWaiter.IsCompleted,
+            "another connect waiter remains attached to the shared operation");
+
+        child.ReleaseConnect();
+        await survivingWaiter.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(client.State == SharpLinkMultiClusterState.Ready,
+            "shared connect reaches ready after the first caller cancels its wait");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task MultiClusterCancelledUnregisterShouldStillReleaseCoordinatorRegistration()
     {
         await using var harness = await DynamicHarness.CreateAsync();
@@ -98,6 +126,45 @@ public sealed class RuntimeAssemblyIntegrationTests
 
         child.ReleaseAssembly(plugin.ContractAssembly);
         await WaitUntilAsync(() => client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task MultiClusterRejectedUnregisterShouldRestoreCoordinatorRoute()
+    {
+        using var plugin = PluginBundle.Load("multi-cluster-rejected-unregister", loadService: false);
+        await using var registrationSource = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), 1)
+            .Build();
+        var registrationResult = registrationSource.RegisterAssembly(plugin.ContractAssembly);
+        Ensure(registrationResult.Succeeded, "controlled child registration result");
+
+        var child = new ControlledDynamicAssemblyClient(registrationResult);
+        var slot = new SharpLinkClusterSlot("plugins", child, AllowDynamicContracts: true);
+        await using var client = new SharpLinkMultiClusterClient(
+            new SharpLinkMultiClusterOptions(),
+            new[] { slot }.ToFrozenDictionary(static candidate => candidate.Key),
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
+            []);
+        Ensure(client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded,
+            "multi-cluster controlled registration");
+
+        child.RejectNextUnregister();
+        try
+        {
+            _ = await client.UnregisterAssemblyAsync(
+                "plugins", plugin.ContractAssembly, TimeSpan.Zero);
+            throw new Exception("assert failed: child unregister rejection must reach the caller");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message.Contains("rejected", StringComparison.Ordinal),
+                "child unregister rejection is preserved");
+        }
+
+        _ = GetMultiClusterProxy(client, plugin.ContractType);
+        Ensure(child.IsDynamicAssemblyRegistered(plugin.ContractAssembly),
+            "child retains the rejected dynamic assembly");
     }
 
     [Test]
@@ -1378,6 +1445,7 @@ public sealed class RuntimeAssemblyIntegrationTests
         private readonly HashSet<Assembly> _registeredAssemblies = new(ReferenceEqualityComparer.Instance);
         private readonly SharpLinkAssemblyRegistrationResult _registrationResult;
         private int _unregisterCalls;
+        private int _rejectNextUnregister;
 
         internal ControlledDynamicAssemblyClient(SharpLinkAssemblyRegistrationResult registrationResult)
         {
@@ -1407,6 +1475,11 @@ public sealed class RuntimeAssemblyIntegrationTests
             _ = assembly;
             _ = gracefulTimeout;
             _ = cancellationToken;
+            if (Interlocked.Exchange(ref _rejectNextUnregister, 0) != 0)
+            {
+                return ValueTask.FromException<SharpLinkAssemblyUnregisterResult>(
+                    new InvalidOperationException("controlled child unregister rejected"));
+            }
             if (Interlocked.Increment(ref _unregisterCalls) == 1)
             {
                 FirstUnregisterStarted.TrySetResult(true);
@@ -1430,7 +1503,7 @@ public sealed class RuntimeAssemblyIntegrationTests
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Ready));
 
         public TContract Get<TContract>() where TContract : IService
-            => throw new NotSupportedException();
+            => default!;
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
@@ -1452,6 +1525,60 @@ public sealed class RuntimeAssemblyIntegrationTests
             lock (_gate)
                 _registeredAssemblies.Remove(assembly);
         }
+
+        internal void RejectNextUnregister() => Volatile.Write(ref _rejectNextUnregister, 1);
+    }
+
+    private sealed class BlockingConnectClient : ISharpLinkClient
+    {
+        private readonly TaskCompletionSource _connectRelease =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _state = (int)SharpLinkConnectionState.Created;
+
+        internal TaskCompletionSource ConnectStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public SharpLinkConnectionState State => (SharpLinkConnectionState)Volatile.Read(ref _state);
+
+        public async ValueTask ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            ConnectStarted.TrySetResult();
+            await _connectRelease.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            Volatile.Write(ref _state, (int)SharpLinkConnectionState.Ready);
+        }
+
+        public ValueTask StopAsync(CancellationToken cancellationToken = default)
+        {
+            _ = cancellationToken;
+            _connectRelease.TrySetResult();
+            Volatile.Write(ref _state, (int)SharpLinkConnectionState.Stopped);
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Ready));
+
+        public TContract Get<TContract>() where TContract : IService => throw new NotSupportedException();
+
+        public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
+            => throw new NotSupportedException();
+
+        public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
+            Assembly assembly,
+            TimeSpan gracefulTimeout,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
+            Assembly oldAssembly,
+            Assembly newAssembly,
+            TimeSpan gracefulTimeout,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask DisposeAsync() => StopAsync();
+
+        internal void ReleaseConnect() => _connectRelease.TrySetResult();
     }
 
     private sealed class DynamicHarness : IAsyncDisposable

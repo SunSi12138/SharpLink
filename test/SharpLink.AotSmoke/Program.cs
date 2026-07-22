@@ -44,7 +44,6 @@ public static class Program
         if (role != "local")
             throw new ArgumentException($"Unsupported AOT smoke role '{role}'.");
 
-        RuntimeHelpers.RunModuleConstructor(typeof(ISecondAotService).Module.ModuleHandle);
         var cts = new CancellationTokenSource();
         var runToken = cts.Token;
 

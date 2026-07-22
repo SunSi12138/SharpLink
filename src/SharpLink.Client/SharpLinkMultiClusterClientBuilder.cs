@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 
 namespace SharpLink.Client;
 
@@ -65,6 +66,15 @@ public sealed class SharpLinkMultiClusterClientBuilder
         }
 
         var routeManifestSnapshot = SharpLinkGeneratedClusterRouteCatalog.CreateSnapshot();
+        var routedAssemblies = new HashSet<Assembly>(ReferenceEqualityComparer.Instance);
+        foreach (var routeManifest in routeManifestSnapshot)
+        {
+            foreach (var route in routeManifest.Routes)
+            {
+                if (routedAssemblies.Add(route.ContractAssembly))
+                    RuntimeHelpers.RunModuleConstructor(route.ContractAssembly.ManifestModule.ModuleHandle);
+            }
+        }
         var allManifests = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
         var manifestByAssembly = new Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest>(ReferenceEqualityComparer.Instance);
         var manifestByIdentity = new Dictionary<string, ISharpLinkGeneratedAssemblyManifest>(StringComparer.Ordinal);
