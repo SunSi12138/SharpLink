@@ -367,6 +367,17 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
         while ((SharpLinkMultiClusterState)Volatile.Read(ref _state) is not SharpLinkMultiClusterState.Stopped)
         {
             await Task.Delay(TimeSpan.FromMilliseconds(100)).ConfigureAwait(false);
+            if (slot.Client is IDynamicAssemblyRegistrationInspector inspector)
+            {
+                if (!inspector.IsDynamicAssemblyRegistered(registration.Assembly))
+                {
+                    lock (_gate)
+                        _dynamicRegistrations.Remove(registration);
+                    return;
+                }
+                continue;
+            }
+
             try
             {
                 var result = await slot.Client.UnregisterAssemblyAsync(

@@ -126,6 +126,8 @@ public sealed class RuntimeAssemblyIntegrationTests
 
         child.ReleaseAssembly(plugin.ContractAssembly);
         await WaitUntilAsync(() => client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded);
+        Ensure(child.UnregisterCalls == 1,
+            "deferred coordinator cleanup should poll child registration without starting another unregister");
     }
 
     [Test]
@@ -1534,6 +1536,8 @@ public sealed class RuntimeAssemblyIntegrationTests
         }
 
         internal void RejectNextUnregister() => Volatile.Write(ref _rejectNextUnregister, 1);
+
+        internal int UnregisterCalls => Volatile.Read(ref _unregisterCalls);
     }
 
     private sealed class BlockingConnectClient : ISharpLinkClient

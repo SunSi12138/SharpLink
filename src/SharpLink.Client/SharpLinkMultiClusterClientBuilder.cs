@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.Loader;
 
 namespace SharpLink.Client;
 
@@ -70,20 +71,9 @@ public sealed class SharpLinkMultiClusterClientBuilder
         foreach (var routeManifest in routeManifestSnapshot)
         {
             foreach (var route in routeManifest.Routes)
-            {
-                if (routedAssemblies.Add(route.ContractAssembly))
-                    RuntimeHelpers.RunModuleConstructor(route.ContractAssembly.ManifestModule.ModuleHandle);
-            }
+                routedAssemblies.Add(route.ContractAssembly);
         }
-        var allManifests = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
-        var manifestByAssembly = new Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest>(ReferenceEqualityComparer.Instance);
-        var manifestByIdentity = new Dictionary<string, ISharpLinkGeneratedAssemblyManifest>(StringComparer.Ordinal);
-        foreach (var manifest in allManifests)
-        {
-            SharpLinkClient.ValidateStaticManifestCompatibility(manifest);
-            manifestByAssembly.TryAdd(manifest.OwnerAssembly, manifest);
-            manifestByIdentity.TryAdd(manifest.OwnerAssembly.FullName ?? string.Empty, manifest);
-        }
+        var manifestByAssembly = LoadRoutedManifestGraph(routedAssemblies);
 
         var manifestsByCluster = _clusters.Keys.ToDictionary(
             static key => key,
@@ -117,7 +107,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
                 }
 
                 assemblyOwners.Add(route.ContractAssembly, route.Cluster);
-                AddManifestClosure(contractManifest, route.Cluster, manifestsByCluster, manifestByIdentity);
+                AddManifestClosure(contractManifest, route.Cluster, manifestsByCluster, manifestByAssembly);
             }
         }
 
@@ -204,11 +194,73 @@ public sealed class SharpLinkMultiClusterClientBuilder
         return routes.ToFrozenDictionary();
     }
 
+    private static Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest> LoadRoutedManifestGraph(
+        IEnumerable<Assembly> routedAssemblies)
+    {
+        var manifestsByAssembly = new Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest>(ReferenceEqualityComparer.Instance);
+        var pendingAssemblies = new Queue<Assembly>(routedAssemblies);
+        while (pendingAssemblies.TryDequeue(out var assembly))
+        {
+            if (manifestsByAssembly.ContainsKey(assembly))
+                continue;
+
+            RuntimeHelpers.RunModuleConstructor(assembly.ManifestModule.ModuleHandle);
+            if (!TryGetRegisteredManifest(assembly, out var manifest))
+                continue;
+
+            SharpLinkClient.ValidateStaticManifestCompatibility(manifest);
+            manifestsByAssembly.Add(assembly, manifest);
+            foreach (var dependencyIdentity in manifest.Dependencies)
+            {
+                var dependencyAssembly = ResolveDependencyAssembly(assembly, dependencyIdentity);
+                if (dependencyAssembly is not null)
+                    pendingAssemblies.Enqueue(dependencyAssembly);
+            }
+        }
+
+        return manifestsByAssembly;
+    }
+
+    private static bool TryGetRegisteredManifest(
+        Assembly assembly,
+        out ISharpLinkGeneratedAssemblyManifest manifest)
+    {
+        foreach (var candidate in SharpLinkGeneratedAssemblyCatalog.CreateSnapshot())
+        {
+            if (ReferenceEquals(candidate.OwnerAssembly, assembly))
+            {
+                manifest = candidate;
+                return true;
+            }
+        }
+
+        manifest = null!;
+        return false;
+    }
+
+    private static Assembly? ResolveDependencyAssembly(Assembly ownerAssembly, string dependencyIdentity)
+    {
+        var loadContext = AssemblyLoadContext.GetLoadContext(ownerAssembly) ?? AssemblyLoadContext.Default;
+        var loaded = loadContext.Assemblies.FirstOrDefault(assembly =>
+            string.Equals(assembly.FullName, dependencyIdentity, StringComparison.Ordinal));
+        if (loaded is not null)
+            return loaded;
+
+        try
+        {
+            return loadContext.LoadFromAssemblyName(new AssemblyName(dependencyIdentity));
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            return null;
+        }
+    }
+
     private static void AddManifestClosure(
         ISharpLinkGeneratedAssemblyManifest manifest,
         SharpLinkClusterKey cluster,
         IReadOnlyDictionary<SharpLinkClusterKey, Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest>> manifestsByCluster,
-        IReadOnlyDictionary<string, ISharpLinkGeneratedAssemblyManifest> manifestsByIdentity)
+        IReadOnlyDictionary<Assembly, ISharpLinkGeneratedAssemblyManifest> manifestsByAssembly)
     {
         var destination = manifestsByCluster[cluster];
         if (!destination.TryAdd(manifest.OwnerAssembly, manifest))
@@ -216,12 +268,13 @@ public sealed class SharpLinkMultiClusterClientBuilder
 
         foreach (var dependencyIdentity in manifest.Dependencies)
         {
-            if (!manifestsByIdentity.TryGetValue(dependencyIdentity, out var dependency))
+            var dependencyAssembly = ResolveDependencyAssembly(manifest.OwnerAssembly, dependencyIdentity);
+            if (dependencyAssembly is null || !manifestsByAssembly.TryGetValue(dependencyAssembly, out var dependency))
             {
                 throw new InvalidOperationException(
                     $"Static route for '{manifest.OwnerAssembly.FullName}' is missing generated dependency '{dependencyIdentity}' in cluster '{cluster}'.");
             }
-            AddManifestClosure(dependency, cluster, manifestsByCluster, manifestsByIdentity);
+            AddManifestClosure(dependency, cluster, manifestsByCluster, manifestsByAssembly);
         }
     }
 
