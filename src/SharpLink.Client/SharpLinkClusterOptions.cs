@@ -60,7 +60,7 @@ public sealed class SharpLinkClusterOptions
             throw new ArgumentOutOfRangeException(nameof(MaxConnections));
         if (MaxConnectionsPerEndpoint < 1 || MaxConnectionsPerEndpoint > MaxConnections)
             throw new ArgumentOutOfRangeException(nameof(MaxConnectionsPerEndpoint));
-        if (MinReadyEndpoints > MaxConnections)
+        if (Math.Min(MinReadyEndpoints, MaxEndpoints) > MaxConnections)
             throw new ArgumentException("MinReadyEndpoints cannot exceed MaxConnections.", nameof(MinReadyEndpoints));
         if (MaxRetiringConnections is < 0 or > SharpLinkConnectionPoolOptions.MaximumConnections)
             throw new ArgumentOutOfRangeException(nameof(MaxRetiringConnections));

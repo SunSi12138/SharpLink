@@ -237,6 +237,29 @@ public sealed class DynamicEndpointIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task DynamicRecoveryToAnEmptyTopologyShouldReleaseConnectWaiters()
+    {
+        var resolver = new FailingThenEmptyResolver();
+        await using var client = SharpClientBuilder.Create()
+            .UseEndpointResolver(resolver, _ => new FailingConnectFactory())
+            .Build();
+
+        var initial = await CaptureSharpLinkException(client.ConnectAsync().AsTask());
+        Ensure(initial.Code == SharpLinkErrorCode.Unavailable, "initial resolver failure error code");
+        await resolver.EmptyResolveStarted.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var recovery = client.ConnectAsync().AsTask();
+        await Task.Delay(20);
+        Ensure(!recovery.IsCompleted, "ConnectAsync must wait for the resolver recovery result");
+
+        resolver.ReleaseEmptyTopology();
+        await recovery.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 0,
+            "an accepted empty topology completes recovery without fabricating a ready connection");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task FailedInitialDynamicDialShouldReconnectWithoutANewerResolverVersion()
     {
         await using var server = await TcpServerScope.StartAsync("recovered");
@@ -821,6 +844,42 @@ public sealed class DynamicEndpointIntegrationTests
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class FailingThenEmptyResolver : ISharpLinkEndpointResolver
+    {
+        private readonly TaskCompletionSource _emptyResolveStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseEmptyTopology =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _resolveCount;
+
+        public Task EmptyResolveStarted => _emptyResolveStarted.Task;
+
+        public async ValueTask<SharpLinkEndpointSnapshot> ResolveAsync(CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _resolveCount) == 1)
+                throw new InvalidOperationException("initial resolver failure");
+
+            _emptyResolveStarted.TrySetResult();
+            await _releaseEmptyTopology.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return new SharpLinkEndpointSnapshot(1, []);
+        }
+
+        public async IAsyncEnumerable<SharpLinkEndpointSnapshot> WatchAsync(
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+            yield break;
+        }
+
+        public void ReleaseEmptyTopology() => _releaseEmptyTopology.TrySetResult();
+
+        public ValueTask DisposeAsync()
+        {
+            _releaseEmptyTopology.TrySetResult();
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class TcpServerScope : IAsyncDisposable

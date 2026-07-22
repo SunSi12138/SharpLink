@@ -266,15 +266,21 @@ internal sealed partial class SharpLinkClient
             {
                 if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested)
                     throw new OperationCanceledException(_client._shutdownCts.Token);
-                if (ReadyConnectionCount != 0)
+                if (ReadyConnectionCount != 0 || HasAcceptedEmptyTopology())
                     return;
 
                 EnsureMinimumReadyEndpoints();
                 var signal = Volatile.Read(ref _client._readySignal).Task;
-                if (ReadyConnectionCount != 0)
+                if (ReadyConnectionCount != 0 || HasAcceptedEmptyTopology())
                     return;
                 await signal.ConfigureAwait(false);
             }
+        }
+
+        private bool HasAcceptedEmptyTopology()
+        {
+            lock (_gate)
+                return _lastAcceptedVersion >= 0 && _current.Length == 0;
         }
 
         private void StartResolverWorker(bool resolveBeforeWatch)
@@ -484,6 +490,8 @@ internal sealed partial class SharpLinkClient
                 return false;
             }
 
+            if (current.Length == 0)
+                Volatile.Read(ref _client._readySignal).TrySetResult(true);
             for (var index = 0; index < connectionsToDispose.Count; index++)
                 _client.TrackBackgroundTask(DisposeConnectionAsync(connectionsToDispose[index]));
             for (var index = 0; index < statesToRelease.Count; index++)

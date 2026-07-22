@@ -113,6 +113,22 @@ public sealed class DynamicEndpointResolverTests
         });
     }
 
+    [Test]
+    public async Task DynamicBuilderShouldCapMinReadyByMaxEndpoints()
+    {
+        var resolver = new TrackingResolver();
+        await using var client = SharpClientBuilder.Create()
+            .UseEndpointResolver(resolver, _ => new TrackingFactory())
+            .UseCluster(options =>
+            {
+                options.MaxEndpoints = 1;
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 1;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+    }
+
     private static async Task EnsureThrows<TException>(Func<Task> action) where TException : Exception
     {
         try

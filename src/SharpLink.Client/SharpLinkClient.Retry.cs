@@ -130,7 +130,11 @@ internal sealed partial class SharpLinkClient
             return TimeSpan.FromTicks(ticks);
 
         var multiplier = 1 - options.JitterRatio + Random.Shared.NextDouble() * options.JitterRatio * 2;
-        return TimeSpan.FromTicks(Math.Min(options.MaxBackoff.Ticks, (long)(ticks * multiplier)));
+        var jitteredTicks = ticks * multiplier;
+        var clampedTicks = jitteredTicks >= options.MaxBackoff.Ticks
+            ? options.MaxBackoff.Ticks
+            : (long)jitteredTicks;
+        return TimeSpan.FromTicks(clampedTicks);
     }
 
     private ValueTask<TResponse> InvokeUnaryRetryAttemptAsync<TRequest, TResponse>(

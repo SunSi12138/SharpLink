@@ -110,6 +110,39 @@ public class SharpLinkClientRetryTests
     }
 
     [Test]
+    public async Task HugeBuiltInJitteredRetryDelayShouldRemainCancellable()
+    {
+        for (var iteration = 0; iteration < 32; iteration++)
+        {
+            var transport = new TestClientTransportFactory();
+            await using var client = new SharpLinkClient(
+                transport,
+                TimeSpan.FromSeconds(10),
+                TimeSpan.FromSeconds(30),
+                retryOptions: new SharpLinkRetryOptions
+                {
+                    MaxAttempts = 2,
+                    InitialBackoff = TimeSpan.MaxValue,
+                    MaxBackoff = TimeSpan.MaxValue,
+                    JitterRatio = 1
+                });
+            await client.ConnectAsync();
+
+            var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+            var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+            await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
+            await Task.Delay(20);
+
+            var stop = client.StopAsync().AsTask();
+            var exception = await EnsureThrows<SharpLinkException>(
+                invocation.WaitAsync(TimeSpan.FromSeconds(2)));
+            await stop.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(exception.Code == SharpLinkErrorCode.ConnectionClosed,
+                $"huge jittered retry delay cancellation iteration {iteration}");
+        }
+    }
+
+    [Test]
     public async Task RetryDelayBeyondDeadlineShouldNotOverflow()
     {
         var transport = new TestClientTransportFactory();
