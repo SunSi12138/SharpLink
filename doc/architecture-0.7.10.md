@@ -15,7 +15,7 @@ The coordinator stores immutable `FrozenDictionary` snapshots. `Get<T>` does one
 
 ## Static routes
 
-The generator emits `ISharpLinkGeneratedClusterRouteManifest` from assembly-level `SharpLinkClusterContractAssembly` attributes. Its catalog keeps weak references and unregisters collectible AssemblyLoadContexts while unloading. At build time the coordinator validates limits, snapshots only declared routes, validates unique contract ownership, expands generated dependency closures inside the same slot, and passes the immutable manifest list to the child builder's internal build context.
+The generator emits `ISharpLinkGeneratedClusterRouteManifest` from assembly-level `SharpLinkClusterContractAssembly` attributes. Its catalog keeps weak references and unregisters collectible AssemblyLoadContexts while unloading. At build time the coordinator validates limits, snapshots only declared routes, validates unique contract ownership, expands generated dependency closures inside the same slot, and passes the immutable manifest list to the child builder's internal build context. A dependency closure contributes its generated codecs and assembly identity, but its proxy descriptors are hidden unless that contract-owning assembly is explicitly routed to the slot.
 
 An ordinary `SharpClientBuilder.Build()` remains unchanged and still snapshots the complete generated assembly catalog. A multi-cluster child never implicitly exposes unrelated process-wide manifests.
 
