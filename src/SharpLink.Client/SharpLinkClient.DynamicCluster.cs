@@ -550,51 +550,56 @@ internal sealed partial class SharpLinkClient
             {
                 Exception? lastFailure = null;
                 var parallelism = Math.Min(Math.Min(_options.MinReadyEndpoints, endpoints.Length), 4);
-                for (var start = 0; start < endpoints.Length; start += parallelism)
+                var nextEndpoint = 0;
+                var remaining = new List<Task<Exception?>>(parallelism);
+                while (nextEndpoint < parallelism)
                 {
-                    var count = Math.Min(parallelism, endpoints.Length - start);
-                    var tasks = new Task<Exception?>[count];
-                    var batchEndpoints = new EndpointState[count];
                     var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    for (var index = 0; index < count; index++)
-                    {
-                        var endpoint = endpoints[start + index];
-                        batchEndpoints[index] = endpoint;
-                        tasks[index] = TryConnectOneAfterInitialReservationAsync(
-                            endpoint, cancellationToken, startGate.Task);
-                    }
-                    TrackInitialDials(batchEndpoints, tasks);
+                    var endpoint = endpoints[nextEndpoint++];
+                    var attempt = TryConnectOneAfterInitialReservationAsync(endpoint, cancellationToken, startGate.Task);
+                    TrackInitialDials([endpoint], [attempt]);
+                    remaining.Add(attempt);
                     startGate.TrySetResult();
 
-                    var remaining = new List<Task<Exception?>>(tasks);
-                    while (remaining.Count != 0)
+                }
+
+                while (remaining.Count != 0)
+                {
+                    if (cancellationToken.IsCancellationRequested || _client._shutdownCts.IsCancellationRequested)
                     {
-                        if (cancellationToken.IsCancellationRequested || _client._shutdownCts.IsCancellationRequested)
-                        {
-                            throw new OperationCanceledException(
-                                cancellationToken.IsCancellationRequested ? cancellationToken : _client._shutdownCts.Token);
-                        }
-                        if (ReadyConnectionCount != 0 || HasAcceptedEmptyTopology())
-                        {
-                            EnsureMinimumReadyEndpoints();
-                            return;
-                        }
-
-                        var readySignal = Volatile.Read(ref _client._readySignal).Task;
-                        var nextDial = Task.WhenAny(remaining);
-                        var completed = await Task.WhenAny(nextDial, readySignal).ConfigureAwait(false);
-                        if (ReferenceEquals(completed, readySignal))
-                            continue;
-
-                        var dial = await nextDial.ConfigureAwait(false);
-                        remaining.Remove(dial);
-                        lastFailure ??= await dial.ConfigureAwait(false);
-                        if (ReadyConnectionCount != 0 || HasAcceptedEmptyTopology())
-                        {
-                            EnsureMinimumReadyEndpoints();
-                            return;
-                        }
+                        throw new OperationCanceledException(
+                            cancellationToken.IsCancellationRequested ? cancellationToken : _client._shutdownCts.Token);
                     }
+                    if (ReadyConnectionCount != 0 || HasAcceptedEmptyTopology())
+                    {
+                        EnsureMinimumReadyEndpoints();
+                        return;
+                    }
+
+                    var readySignal = Volatile.Read(ref _client._readySignal).Task;
+                    var nextDial = Task.WhenAny(remaining);
+                    var completed = await Task.WhenAny(nextDial, readySignal).ConfigureAwait(false);
+                    if (ReferenceEquals(completed, readySignal))
+                        continue;
+
+                    var dial = await nextDial.ConfigureAwait(false);
+                    remaining.Remove(dial);
+                    lastFailure ??= await dial.ConfigureAwait(false);
+                    if (ReadyConnectionCount != 0 || HasAcceptedEmptyTopology())
+                    {
+                        EnsureMinimumReadyEndpoints();
+                        return;
+                    }
+
+                    if (nextEndpoint >= endpoints.Length)
+                        continue;
+
+                    var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var endpoint = endpoints[nextEndpoint++];
+                    var attempt = TryConnectOneAfterInitialReservationAsync(endpoint, cancellationToken, startGate.Task);
+                    TrackInitialDials([endpoint], [attempt]);
+                    remaining.Add(attempt);
+                    startGate.TrySetResult();
                 }
 
                 EnsureMinimumReadyEndpoints();

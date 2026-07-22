@@ -237,6 +237,49 @@ public sealed class DynamicEndpointIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task FailedInitialDynamicDialShouldProbeLaterEndpointsWithoutWaitingForASlowSibling()
+    {
+        await using var healthy = await TcpServerScope.StartAsync("healthy");
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(
+            1,
+            [Endpoint("failed", 1, "red"), Endpoint("blocked", 2, "red"), Endpoint("healthy", healthy.Port, "green")]));
+        var blocking = new BlockingConnectFactory();
+        var failing = new FailingConnectFactory();
+        var sockets = SharpLinkTransportFactories.Sockets();
+        var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpointResolver(resolver, endpoint => endpoint.Id switch
+            {
+                "failed" => failing,
+                "blocked" => blocking,
+                _ => sockets(endpoint)
+            })
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 4;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        try
+        {
+            var connect = client.ConnectAsync().AsTask();
+            await blocking.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+
+            await connect.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(((SharpLinkClient)client).ReadyConnectionCount == 1,
+                "a failed resolver-backed initial dial must immediately probe a later healthy endpoint");
+        }
+        finally
+        {
+            blocking.Release();
+            await client.DisposeAsync();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task DynamicRecoveryToAnEmptyTopologyShouldReleaseConnectWaiters()
     {
         var resolver = new FailingThenEmptyResolver();

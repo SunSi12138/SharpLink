@@ -61,6 +61,52 @@ public sealed class StaticEndpointIntegrationTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task FailedInitialStaticDialShouldProbeLaterEndpointsWithoutWaitingForASlowSibling()
+    {
+        await using var healthy = await TcpServerScope.StartAsync("healthy");
+        var blocking = new BlockingConnectFactory();
+        var failing = new FailingConnectFactory();
+        var sockets = SharpLinkTransportFactories.Sockets();
+        var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpoints(
+                [
+                    Endpoint("failed", 1),
+                    Endpoint("blocked", 2),
+                    Endpoint("healthy", healthy.Port)
+                ],
+                endpoint => endpoint.Id switch
+                {
+                    "failed" => failing,
+                    "blocked" => blocking,
+                    _ => sockets(endpoint)
+                })
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 4;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        try
+        {
+            var connect = client.ConnectAsync().AsTask();
+            await blocking.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+
+            await connect.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(((SharpLinkClient)client).ReadyConnectionCount == 1,
+                "a failed initial dial must immediately free a probe for a later healthy endpoint");
+        }
+        finally
+        {
+            blocking.Release();
+            await client.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task AllUnavailableEndpointsShouldReportUnavailable()
     {
         var firstPort = GetUnusedTcpPort();

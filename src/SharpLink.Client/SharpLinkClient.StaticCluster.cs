@@ -239,32 +239,38 @@ internal sealed partial class SharpLinkClient
             {
                 Exception? lastFailure = null;
                 var parallelism = Math.Min(Math.Min(TargetReadyEndpointCount, _endpoints.Length), 4);
-                for (var start = 0; start < _endpoints.Length && ReadyConnectionCount == 0; start += parallelism)
+                var nextEndpoint = 0;
+                var remaining = new List<Task<Exception?>>(parallelism);
+                while (nextEndpoint < parallelism)
                 {
-                    var count = Math.Min(parallelism, _endpoints.Length - start);
-                    var attempts = new Task<Exception?>[count];
+                    var endpoint = _endpoints[nextEndpoint++];
                     var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    for (var index = 0; index < count; index++)
-                    {
-                        var endpoint = _endpoints[start + index];
-                        attempts[index] = TryConnectOneAfterInitialReservationAsync(
-                            endpoint, cancellationToken, startGate.Task);
-                    }
-                    TrackInitialDials(attempts);
+                    var attempt = TryConnectOneAfterInitialReservationAsync(endpoint, cancellationToken, startGate.Task);
+                    TrackInitialDials([attempt]);
+                    remaining.Add(attempt);
                     startGate.TrySetResult();
+                }
 
-                    var remaining = new List<Task<Exception?>>(attempts);
-                    while (remaining.Count != 0)
+                while (remaining.Count != 0)
+                {
+                    var completed = await Task.WhenAny(remaining).ConfigureAwait(false);
+                    remaining.Remove(completed);
+                    lastFailure ??= await completed.ConfigureAwait(false);
+                    if (ReadyConnectionCount != 0)
                     {
-                        var completed = await Task.WhenAny(remaining).ConfigureAwait(false);
-                        remaining.Remove(completed);
-                        lastFailure ??= await completed.ConfigureAwait(false);
-                        if (ReadyConnectionCount != 0)
-                        {
-                            EnsureMinimumReadyEndpoints();
-                            return;
-                        }
+                        EnsureMinimumReadyEndpoints();
+                        return;
                     }
+
+                    if (nextEndpoint >= _endpoints.Length)
+                        continue;
+
+                    var endpoint = _endpoints[nextEndpoint++];
+                    var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var attempt = TryConnectOneAfterInitialReservationAsync(endpoint, cancellationToken, startGate.Task);
+                    TrackInitialDials([attempt]);
+                    remaining.Add(attempt);
+                    startGate.TrySetResult();
                 }
 
                 PublishClientReadiness();

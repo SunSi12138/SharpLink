@@ -78,8 +78,8 @@ internal sealed partial class SharpLinkClient
                     continue;
                 }
 
-                // If selection admitted an endpoint which then lost its connection, the old rejection
-                // delay no longer applies. Wait for the next readiness transition instead of sleeping.
+                // A grant after the rejection supersedes that earlier delay, but a stale grant must
+                // not suppress a retry-after returned by a later rejected endpoint.
                 if (attemptOutcome?.HasAdmissionRejection == true && !attemptOutcome.HasAdmissionGrant)
                     throw;
             }

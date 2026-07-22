@@ -32,15 +32,6 @@ mkdir -p "$OUTPUT_ROOT"
 cd "$ROOT"
 dotnet build test/SharpLink.LoadTest/SharpLink.LoadTest.csproj -c Release -v minimal
 
-RID=""
-case "$(uname -s)-$(uname -m)" in
-  Darwin-arm64) RID=osx-arm64 ;;
-  Darwin-x86_64) RID=osx-x64 ;;
-  Linux-x86_64) RID=linux-x64 ;;
-  Linux-aarch64|Linux-arm64) RID=linux-arm64 ;;
-  *) echo "Unsupported host for NativeAOT: $(uname -s)-$(uname -m)" >&2; exit 2 ;;
-esac
-
 run_case() {
   local runtime="$1"
   local endpoint_count="$2"
@@ -66,6 +57,14 @@ for runtime in "${RUNTIME_LIST[@]}"; do
   case "$runtime" in
     jit) ;;
     aot)
+      RID=""
+      case "$(uname -s)-$(uname -m)" in
+        Darwin-arm64) RID=osx-arm64 ;;
+        Darwin-x86_64) RID=osx-x64 ;;
+        Linux-x86_64) RID=linux-x64 ;;
+        Linux-aarch64|Linux-arm64) RID=linux-arm64 ;;
+        *) echo "Unsupported host for NativeAOT: $(uname -s)-$(uname -m)" >&2; exit 2 ;;
+      esac
       dotnet publish test/SharpLink.LoadTest/SharpLink.LoadTest.csproj -c Release -r "$RID" \
         -p:PublishAot=true -o "$OUTPUT_ROOT/aot"
       ;;

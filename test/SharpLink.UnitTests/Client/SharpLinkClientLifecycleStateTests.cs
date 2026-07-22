@@ -227,6 +227,46 @@ public class SharpLinkClientLifecycleStateTests
     }
 
     [Test]
+    public async Task AdmissionRetryAfterShouldSurviveAStaleGrantedConnection()
+    {
+        var policy = new AdmitFirstRejectSecondPolicy(TimeSpan.FromMilliseconds(100));
+        await using var client = new SharpLinkClient(
+            new TestClientTransportFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            endpointAdmissionPolicy: policy);
+        var stateType = typeof(SharpLinkClient).GetNestedType("AttemptOutcomeState", BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find attempt outcome state");
+        var method = new RpcMethodDescriptor(1, 2, RpcMethodKind.Unary, true, false, false, null);
+        var state = Activator.CreateInstance(
+            stateType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: [client, method],
+            culture: null)
+            ?? throw new Exception("cannot create attempt outcome state");
+        var tryAcquire = stateType.GetMethod("TryAcquire", BindingFlags.Instance | BindingFlags.Public)
+            ?? throw new Exception("cannot find attempt acquisition");
+        var complete = stateType.GetMethod("CompleteWithoutPending", BindingFlags.Instance | BindingFlags.Public)
+            ?? throw new Exception("cannot find attempt completion");
+        var shouldHonor = stateType.GetProperty("ShouldHonorAdmissionRetryAfter", BindingFlags.Instance | BindingFlags.Public)
+            ?? throw new Exception("cannot find retry-after predicate");
+        var first = new SharpLinkEndpointCandidate(CreateEndpoint("first", 5001), 1, 0, generation: 1);
+        var second = new SharpLinkEndpointCandidate(CreateEndpoint("second", 5002), 1, 0, generation: 1);
+
+        Ensure((bool)(tryAcquire.Invoke(state, [first]) ?? false), "first endpoint should be admitted");
+        complete.Invoke(
+            state,
+            [
+                PendingCallCompletionReason.ConnectionClosed,
+                new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "selected connection became stale")
+            ]);
+        Ensure(!(bool)(tryAcquire.Invoke(state, [second]) ?? true), "second endpoint should be rejected");
+        Ensure((bool)(shouldHonor.GetValue(state) ?? false),
+            "a stale admitted endpoint must not suppress the current selection retry-after");
+    }
+
+    [Test]
     public async Task GoAwayShouldDrainOnlyItsConnectionAndRefillMinimumPool()
     {
         var transport = new SequenceClientTransportFactory();
@@ -468,11 +508,31 @@ public class SharpLinkClientLifecycleStateTests
         return (ClientConnection?)selectConnection.Invoke(null, [endpoint]);
     }
 
+    private static SharpLinkEndpoint CreateEndpoint(string id, int port) => new()
+    {
+        Id = id,
+        Address = new SharpLinkTcpAddress("127.0.0.1", port)
+    };
+
     private sealed class NonConnectingFactory : IClientTransportFactory
     {
         public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
             => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class AdmitFirstRejectSecondPolicy(TimeSpan retryAfter) : ISharpLinkEndpointAdmissionPolicy
+    {
+        public SharpLinkEndpointAdmissionDecision TryAcquire(
+            in SharpLinkEndpointCandidate endpoint,
+            in RpcMethodDescriptor method)
+            => endpoint.Endpoint.Id == "first"
+                ? new SharpLinkEndpointAdmissionDecision(true, Token: 1, RetryAfter: null)
+                : new SharpLinkEndpointAdmissionDecision(false, Token: 0, RetryAfter: retryAfter);
+
+        public void Report(in SharpLinkEndpointOutcome outcome, long token)
+        {
+        }
     }
 }

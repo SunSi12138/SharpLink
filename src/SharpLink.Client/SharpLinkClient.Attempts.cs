@@ -23,6 +23,9 @@ internal sealed partial class SharpLinkClient
         private int _admissionLeaseVersion;
         private int _completionLeaseVersion;
         private int _admissionRejected;
+        private int _admissionDecisionSequence;
+        private int _lastAdmissionGrantSequence;
+        private int _lastAdmissionRejectionSequence;
         private TimeSpan? _retryAfter;
 
         public AttemptOutcomeState(SharpLinkClient client, RpcMethodDescriptor method)
@@ -47,12 +50,16 @@ internal sealed partial class SharpLinkClient
                                      Volatile.Read(ref _completionLeaseVersion) == Volatile.Read(ref _admissionLeaseVersion);
 
         public bool ShouldHonorAdmissionRetryAfter
-            => HasAdmissionRejection && Volatile.Read(ref _admissionGranted) == 0;
+            => Volatile.Read(ref _lastAdmissionRejectionSequence) >
+               Volatile.Read(ref _lastAdmissionGrantSequence);
 
         public void BeginAdmissionSelection()
         {
             Volatile.Write(ref _admissionRejected, 0);
             Volatile.Write(ref _admissionGranted, 0);
+            Volatile.Write(ref _admissionDecisionSequence, 0);
+            Volatile.Write(ref _lastAdmissionGrantSequence, 0);
+            Volatile.Write(ref _lastAdmissionRejectionSequence, 0);
             _retryAfter = null;
         }
 
@@ -84,6 +91,7 @@ internal sealed partial class SharpLinkClient
             if (!decision.IsAllowed)
             {
                 Volatile.Write(ref _admissionRejected, 1);
+                Volatile.Write(ref _lastAdmissionRejectionSequence, Interlocked.Increment(ref _admissionDecisionSequence));
                 if (decision.RetryAfter is { } delay && (_retryAfter is null || delay < _retryAfter.Value))
                     _retryAfter = delay;
                 if (policy is not SharpLinkCircuitBreaker)
@@ -93,6 +101,8 @@ internal sealed partial class SharpLinkClient
 
             _admissionEndpoint = endpoint;
             _admissionToken = decision.Token;
+            Volatile.Write(ref _lastAdmissionGrantSequence, Interlocked.Increment(ref _admissionDecisionSequence));
+            _retryAfter = null;
             Interlocked.Increment(ref _admissionLeaseVersion);
             Volatile.Write(ref _completionLeaseVersion, 0);
             _completionReason = null;
