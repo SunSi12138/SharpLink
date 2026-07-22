@@ -417,6 +417,38 @@ public sealed class StaticEndpointIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task ConnectAfterStaticClusterDisconnectShouldAwaitRecovery()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        var sockets = SharpLinkTransportFactories.Sockets();
+        var blocking = new BlockAfterFirstConnectFactory(sockets(Endpoint("first", first.Port)));
+        var unavailable = new FailingConnectFactory();
+        await using var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpoints(
+                [Endpoint("first", first.Port), Endpoint("unavailable", 1)],
+                endpoint => endpoint.Id == "first" ? blocking : unavailable)
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 1;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        await client.ConnectAsync();
+        await first.StopAsync();
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 0, TimeSpan.FromSeconds(2));
+        await blocking.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var reconnect = client.ConnectAsync().AsTask();
+        var completed = await Task.WhenAny(reconnect, Task.Delay(100));
+        Ensure(!ReferenceEquals(completed, reconnect),
+            "ConnectAsync must wait for a new ready connection instead of returning stale initialization success");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task FailedInitialSiblingDialShouldContinueFillingMinReadyEndpoints()
     {
         await using var first = await TcpServerScope.StartAsync("first");
@@ -850,6 +882,26 @@ public sealed class StaticEndpointIntegrationTests
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class BlockAfterFirstConnectFactory(IClientTransportFactory inner) : IClientTransportFactory
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _connectCount;
+
+        public Task Entered => _entered.Task;
+
+        public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _connectCount) == 1)
+                return await inner.ConnectAsync(cancellationToken).ConfigureAwait(false);
+
+            _entered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+            throw new UnreachableException();
+        }
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
     }
 
     private sealed class AttributeSelector(string zone) : ISharpLinkEndpointSelector

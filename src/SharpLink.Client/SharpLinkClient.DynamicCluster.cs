@@ -537,7 +537,13 @@ internal sealed partial class SharpLinkClient
             }
             finally
             {
-                Interlocked.Decrement(ref _initialConnectCoordinatorCount);
+                if (Interlocked.Decrement(ref _initialConnectCoordinatorCount) == 0 &&
+                    Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
+                {
+                    // A sibling can release its current-generation initial reservation while this
+                    // coordinator is active. Reconcile once the coordinator hand-off is complete.
+                    EnsureMinimumReadyEndpoints();
+                }
             }
         }
 

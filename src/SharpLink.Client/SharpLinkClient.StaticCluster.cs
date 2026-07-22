@@ -76,7 +76,10 @@ internal sealed partial class SharpLinkClient
                 _client.TransitionTo(SharpLinkConnectionState.Connecting);
                 // A cluster initialization attempt belongs to the client, not to the first caller.
                 // Individual callers still observe their own cancellation through WaitAsync below.
-                _connectTask ??= ConnectInitialAsync(_client._shutdownCts.Token);
+                if (_connectTask is null || _connectTask.IsFaulted || _connectTask.IsCanceled)
+                    _connectTask = ConnectInitialAsync(_client._shutdownCts.Token);
+                else if (_connectTask.IsCompleted)
+                    _connectTask = WaitForRecoveryAsync();
                 task = _connectTask;
             }
             return cancellationToken.CanBeCanceled ? new ValueTask(task.WaitAsync(cancellationToken)) : new ValueTask(task);
@@ -275,7 +278,31 @@ internal sealed partial class SharpLinkClient
             }
             finally
             {
-                Interlocked.Decrement(ref _initialConnectCoordinatorCount);
+                if (Interlocked.Decrement(ref _initialConnectCoordinatorCount) == 0 &&
+                    Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
+                {
+                    // A sibling can release its initial reservation while this coordinator is still
+                    // active. Its observer intentionally defers reconciliation, so perform the
+                    // hand-off reconciliation once the final coordinator exits.
+                    EnsureMinimumReadyEndpoints();
+                }
+            }
+        }
+
+        private async Task WaitForRecoveryAsync()
+        {
+            while (true)
+            {
+                if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested)
+                    throw new OperationCanceledException(_client._shutdownCts.Token);
+                if (ReadyConnectionCount != 0)
+                    return;
+
+                EnsureMinimumReadyEndpoints();
+                var signal = Volatile.Read(ref _client._readySignal).Task;
+                if (ReadyConnectionCount != 0)
+                    return;
+                await signal.ConfigureAwait(false);
             }
         }
 
