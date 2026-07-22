@@ -315,6 +315,7 @@ public sealed class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-early-client-stream-response");
         RegisterAll(harness, plugin);
+        plugin.ResetServiceState();
 
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
         var producerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -328,6 +329,8 @@ public sealed class RuntimeAssemblyIntegrationTests
                 BlockingValues(producerStarted, producerRelease.Task),
                 CancellationToken.None);
             await producerStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await plugin.GetStaticTask("RejectResponseStarted").WaitAsync(TimeSpan.FromSeconds(2));
+            plugin.ReleaseRejectResponse();
             Ensure(await response == -1, "server may return without consuming the request stream");
 
             var serverService = await harness.Server.UnregisterAssemblyAsync(
@@ -348,6 +351,7 @@ public sealed class RuntimeAssemblyIntegrationTests
         }
         finally
         {
+            plugin.ReleaseRejectResponse();
             producerRelease.TrySetResult();
         }
 
@@ -1288,6 +1292,8 @@ public sealed class RuntimeAssemblyIntegrationTests
         internal void ReleaseBlock() => InvokeStatic("ReleaseBlock");
 
         internal void ReleaseSynchronousBlock() => InvokeStatic("ReleaseSynchronousBlock");
+
+        internal void ReleaseRejectResponse() => InvokeStatic("ReleaseRejectResponse");
 
         internal int GetStaticInt(string propertyName)
             => (int)(ServiceType!.GetProperty(propertyName)!.GetValue(null) ?? -1);
