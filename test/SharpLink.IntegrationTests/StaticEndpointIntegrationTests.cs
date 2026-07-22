@@ -175,6 +175,7 @@ public sealed class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
         var service = client.Get<IConnectionBehaviorService>();
         var calls = new Task<int>[32];
         for (var index = 0; index < calls.Length; index++)
@@ -184,6 +185,38 @@ public sealed class StaticEndpointIntegrationTests
         var implementation = (SharpLinkClient)client;
         await WaitUntilAsync(() => implementation.ReadyConnectionCount == 4, TimeSpan.FromSeconds(2));
         Ensure(implementation.ReadyConnectionCount == 4, "cluster should fill only the configured global budget");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task CustomStaticSelectorShouldRejectTheOnlyNonMatchingReadyEndpoint()
+    {
+        await using var east = await TcpServerScope.StartAsync("east");
+        await using var west = await TcpServerScope.StartAsync("west");
+        await using var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpoints(
+                [Endpoint("east", east.Port, "east"), Endpoint("west", west.Port, "west")],
+                SharpLinkTransportFactories.Sockets())
+            .UseEndpointSelector(new AttributeSelector("west"))
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        await client.ConnectAsync();
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
+        await west.StopAsync();
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(2));
+
+        var exception = await EnsureThrowsSharpLink(
+            client.Get<IConnectionBehaviorService>().PingAsync(1).AsTask(),
+            "selector must reject the only non-matching static endpoint");
+        Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
+            "a strict static selector must not be bypassed for one candidate");
     }
 
     [Test]

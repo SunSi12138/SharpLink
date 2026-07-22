@@ -650,7 +650,7 @@ internal sealed partial class SharpLinkClient
                 availableCount += (excluded & (1UL << index)) == 0 ? 1 : 0;
             if (availableCount == 0)
                 return -1;
-            if (availableCount == 1)
+            if (availableCount == 1 && _selector is null)
             {
                 for (var index = 0; index < endpoints.Length; index++)
                     if ((excluded & (1UL << index)) == 0)

@@ -81,6 +81,8 @@ internal sealed partial class SharpLinkClient
                 _client.TransitionTo(SharpLinkConnectionState.Connecting);
                 if (_connectTask is null || ((_connectTask.IsFaulted || _connectTask.IsCanceled) && _resolverTask is null))
                     _connectTask = StartAsync(_client._shutdownCts.Token);
+                else if (_connectTask.IsCompletedSuccessfully)
+                    _connectTask = WaitForRecoveryAsync();
                 task = _connectTask;
             }
             return cancellationToken.CanBeCanceled ? new ValueTask(task.WaitAsync(cancellationToken)) : new ValueTask(task);
@@ -246,6 +248,23 @@ internal sealed partial class SharpLinkClient
                     SharpLinkErrorCode.Unavailable,
                     "The endpoint resolver could not provide an initial topology.",
                     exception);
+            }
+        }
+
+        private async Task WaitForRecoveryAsync()
+        {
+            while (true)
+            {
+                if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested)
+                    throw new OperationCanceledException(_client._shutdownCts.Token);
+                if (ReadyConnectionCount != 0)
+                    return;
+
+                EnsureMinimumReadyEndpoints();
+                var signal = Volatile.Read(ref _client._readySignal).Task;
+                if (ReadyConnectionCount != 0)
+                    return;
+                await signal.ConfigureAwait(false);
             }
         }
 
@@ -914,7 +933,7 @@ internal sealed partial class SharpLinkClient
                 availableCount += (excluded & (1UL << index)) == 0 ? 1 : 0;
             if (availableCount == 0)
                 return -1;
-            if (availableCount == 1)
+            if (availableCount == 1 && _selector is null)
             {
                 for (var index = 0; index < endpoints.Length; index++)
                     if ((excluded & (1UL << index)) == 0)

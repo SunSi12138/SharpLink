@@ -126,6 +126,40 @@ public sealed class DynamicEndpointIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task CustomDynamicSelectorShouldRejectTheOnlyNonMatchingReadyEndpoint()
+    {
+        await using var east = await TcpServerScope.StartAsync("east");
+        await using var west = await TcpServerScope.StartAsync("west");
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1,
+        [
+            Endpoint("east", east.Port, "east"),
+            Endpoint("west", west.Port, "west")
+        ]));
+        await using var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
+            .UseEndpointSelector(new ZoneSelector("west"))
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        await client.ConnectAsync();
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
+        resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("east", east.Port, "east")]));
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(3));
+
+        var exception = await CaptureSharpLinkException(
+            client.Get<IConnectionBehaviorService>().GetEndpointIdAsync().AsTask());
+        Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
+            "a strict dynamic selector must not be bypassed for one candidate");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task RejectedDynamicFactoryReuseMustKeepTheLastGoodFactoryAlive()
     {
         await using var first = await TcpServerScope.StartAsync("first");
@@ -376,6 +410,41 @@ public sealed class DynamicEndpointIntegrationTests
             blocking.Release();
             await client.DisposeAsync();
         }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ConnectAfterDynamicClusterDisconnectShouldAwaitRecovery()
+    {
+        await using var first = await TcpServerScope.StartAsync("first");
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1,
+        [
+            Endpoint("first", first.Port, "blue"),
+            Endpoint("unavailable", 1, "red")
+        ]));
+        var sockets = SharpLinkTransportFactories.Sockets();
+        var blocking = new BlockAfterFirstConnectFactory(sockets(Endpoint("first", first.Port, "blue")));
+        var unavailable = new FailingConnectFactory();
+        await using var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpointResolver(resolver, endpoint => endpoint.Id == "first" ? blocking : unavailable)
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 1;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        await client.ConnectAsync();
+        await first.StopAsync();
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 0, TimeSpan.FromSeconds(3));
+        await blocking.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var reconnect = client.ConnectAsync().AsTask();
+        var completed = await Task.WhenAny(reconnect, Task.Delay(100));
+        Ensure(!ReferenceEquals(completed, reconnect),
+            "dynamic ConnectAsync must wait for a new ready connection instead of returning startup success");
     }
 
     [Test]
@@ -638,6 +707,26 @@ public sealed class DynamicEndpointIntegrationTests
         }
     }
 
+    private sealed class BlockAfterFirstConnectFactory(IClientTransportFactory inner) : IClientTransportFactory
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _connectCount;
+
+        public Task Entered => _entered.Task;
+
+        public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _connectCount) == 1)
+                return await inner.ConnectAsync(cancellationToken).ConfigureAwait(false);
+
+            _entered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+            throw new UnreachableException();
+        }
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
     private sealed class ThrowingDisposeFactory : IClientTransportFactory
     {
         private int _disposeCount;
@@ -689,6 +778,9 @@ public sealed class DynamicEndpointIntegrationTests
                 if ((context.ExcludedMask & (1UL << index)) == 0 && context[index].Endpoint.Id == id)
                     return index;
             }
+            for (var index = 0; index < context.Count; index++)
+                if ((context.ExcludedMask & (1UL << index)) == 0)
+                    return index;
             return -1;
         }
     }
@@ -735,6 +827,15 @@ public sealed class DynamicEndpointIntegrationTests
 
         public int Port { get; }
 
+        public async ValueTask StopAsync()
+        {
+            if (Interlocked.Exchange(ref _stopped, 1) != 0)
+                return;
+            await _server.StopAsync(TimeSpan.Zero);
+            await _cancellation.CancelAsync();
+            await Task.WhenAny(_runTask, Task.Delay(1000));
+        }
+
         public static Task<TcpServerScope> StartAsync(string endpointId)
         {
             var builder = SharpLinkServerBuilder.Create()
@@ -748,12 +849,7 @@ public sealed class DynamicEndpointIntegrationTests
 
         public async ValueTask DisposeAsync()
         {
-            if (Interlocked.Exchange(ref _stopped, 1) == 0)
-            {
-                await _server.StopAsync(TimeSpan.Zero);
-                await _cancellation.CancelAsync();
-                await Task.WhenAny(_runTask, Task.Delay(1000));
-            }
+            await StopAsync();
             await _server.DisposeAsync();
             _cancellation.Dispose();
         }
