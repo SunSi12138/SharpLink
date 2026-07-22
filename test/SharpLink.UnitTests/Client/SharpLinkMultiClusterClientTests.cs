@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using SharpLink.Client;
 using SharpLink.Sdk;
@@ -81,6 +82,46 @@ public sealed class SharpLinkMultiClusterClientTests
             unrelatedRoute = null;
             CollectWeakCatalogEntries();
         }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task FilteredStaticRoutesShouldNotRetainUnconfiguredRouteManifests()
+    {
+        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
+        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
+        var unrelatedRoute = RegisterUnconfiguredRouteManifest();
+
+        await using (var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
+            .Build())
+        {
+            Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+                "the configured route must build without retaining unrelated route manifests");
+        }
+
+        CollectWeakCatalogEntries();
+        Ensure(!unrelatedRoute.IsAlive,
+            "a coordinator must not retain a collectible route manifest that contributes no configured route");
+    }
+
+    [Test]
+    public async Task DynamicRegistrationShouldPreserveStructuredNullAndMissingUnregisterResults()
+    {
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+
+        var nullRegistration = client.RegisterAssembly("plugins", null!);
+        Ensure(!nullRegistration.Succeeded &&
+               nullRegistration.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.InvalidArgument,
+            "null dynamic registration must return the shared structured invalid-argument result");
+
+        var missingUnregister = await client.UnregisterAssemblyAsync(
+            "plugins", typeof(string).Assembly, TimeSpan.Zero);
+        Ensure(!missingUnregister.ReferencesReleased,
+            "unregistering an assembly that is not registered must match child false-result semantics");
     }
 
     [Test]
@@ -201,6 +242,14 @@ public sealed class SharpLinkMultiClusterClientTests
         GC.Collect();
         _ = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
         _ = SharpLinkGeneratedClusterRouteCatalog.CreateSnapshot();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference RegisterUnconfiguredRouteManifest()
+    {
+        ISharpLinkGeneratedClusterRouteManifest manifest = new UnconfiguredRouteManifest();
+        SharpLinkGeneratedClusterRouteCatalog.Register(manifest);
+        return new WeakReference(manifest);
     }
 
     private static SharpLinkEndpoint Endpoint(string id, int port)

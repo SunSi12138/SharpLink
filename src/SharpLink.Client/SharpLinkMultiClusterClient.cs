@@ -10,7 +10,6 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
     private readonly CancellationTokenSource _shutdown = new();
     private FrozenDictionary<SharpLinkClusterKey, SharpLinkClusterSlot> _clusters;
     private FrozenDictionary<Type, SharpLinkClusterRouteRegistration> _routes;
-    private IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest> _routeManifestSnapshot;
     private readonly List<DynamicAssemblyRegistration> _dynamicRegistrations = [];
     private Task? _connectTask;
     private Task? _stopTask;
@@ -22,10 +21,10 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
         FrozenDictionary<Type, SharpLinkClusterRouteRegistration> routes,
         IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest> routeManifestSnapshot)
     {
+        _ = routeManifestSnapshot;
         _options = options;
         _clusters = clusters;
         _routes = routes;
-        _routeManifestSnapshot = routeManifestSnapshot;
     }
 
     public SharpLinkMultiClusterState State
@@ -101,7 +100,9 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
 
     public SharpLinkAssemblyRegistrationResult RegisterAssembly(SharpLinkClusterKey cluster, Assembly assembly)
     {
-        ArgumentNullException.ThrowIfNull(assembly);
+        if (assembly is null)
+            return SharpLinkAssemblyManifestLoader.TryLoad(null, out _);
+
         var slot = GetSlot(cluster);
         if (!slot.AllowDynamicContracts)
             return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
@@ -185,7 +186,7 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
             registration = _dynamicRegistrations.FirstOrDefault(candidate =>
                 ReferenceEquals(candidate.Slot, slot) && ReferenceEquals(candidate.Assembly, assembly));
             if (registration is null)
-                throw new InvalidOperationException($"Assembly '{assembly.FullName}' is not registered in cluster '{cluster}'.");
+                return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
 
             var nextRoutes = Volatile.Read(ref _routes)
                 .Where(pair => !ReferenceEquals(pair.Value.OwnerAssembly, assembly))
@@ -283,7 +284,6 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
             Volatile.Write(ref _routes, FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty);
             Volatile.Write(ref _clusters, FrozenDictionary<SharpLinkClusterKey, SharpLinkClusterSlot>.Empty);
             _dynamicRegistrations.Clear();
-            _routeManifestSnapshot = [];
         }
         _shutdown.Dispose();
         Volatile.Write(ref _state, (int)SharpLinkMultiClusterState.Stopped);
