@@ -332,7 +332,25 @@ public class SharpClientBuilder
         return this;
     }
     
-    public ISharpLinkClient Build()
+    /// <summary>Builds a normal client using the complete generated-manifest catalog.</summary>
+    public ISharpLinkClient Build() => BuildCore(staticManifests: null);
+
+    internal int GetConfiguredMaximumConnections()
+    {
+        if (_endpointResolver is not null)
+            return _cluster.MaxConnections;
+        if (_endpoints is not null)
+        {
+            // A static topology can be either a fixed endpoint or a cluster. Reserve the larger
+            // valid budget before building so a one-shot endpoint enumerable is never consumed twice.
+            return Math.Max(_cluster.MaxConnections, GetFixedConnectionBudget());
+        }
+        return GetFixedConnectionBudget();
+    }
+
+    // Multi-cluster construction supplies a filtered immutable manifest snapshot here. Keeping this
+    // decision at construction time preserves the ordinary client's hot path unchanged.
+    internal ISharpLinkClient BuildCore(IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests)
     {
         var modeCount = (_transport is null ? 0 : 1) + (_endpoints is null ? 0 : 1) + (_endpointResolver is null ? 0 : 1);
         if (modeCount > 1)
@@ -340,7 +358,9 @@ public class SharpClientBuilder
         if (modeCount == 0)
             throw new InvalidOperationException("Transport, endpoint(s), or an endpoint resolver must be set before building the client.");
 
-        var runtimeContext = _runtimeContextBuilder.Build();
+        var runtimeContext = staticManifests is null
+            ? _runtimeContextBuilder.Build()
+            : _runtimeContextBuilder.Build(staticManifests);
         var protocolOptions = runtimeContext.Protocol;
         if (_endpointResolver is not null)
         {
@@ -352,7 +372,8 @@ public class SharpClientBuilder
                 _resolverTransportFactory!,
                 cluster,
                 runtimeContext,
-                protocolOptions);
+                protocolOptions,
+                staticManifests);
         }
 
         if (_endpoints is not null)
@@ -376,7 +397,8 @@ public class SharpClientBuilder
                         runtimeContext,
                         protocolOptions,
                         singleEndpointPool,
-                        fixedEndpoint: endpoints[0]);
+                        fixedEndpoint: endpoints[0],
+                        staticManifests: staticManifests);
                 }
                 catch
                 {
@@ -410,7 +432,7 @@ public class SharpClientBuilder
                         endpoints[index],
                         factory);
                 }
-                return CreateClusterClient(configurations, cluster, runtimeContext, protocolOptions);
+                return CreateClusterClient(configurations, cluster, runtimeContext, protocolOptions, staticManifests);
             }
             catch (Exception buildException)
             {
@@ -434,7 +456,8 @@ public class SharpClientBuilder
         if (fixedTransport is AnonymousPipeClientTransportFactory && connectionPool.MaxConnections != 1)
             throw new InvalidOperationException("Anonymous-pipe handle offers support exactly one client connection.");
 
-        return CreateFixedClient(fixedTransport, runtimeContext, protocolOptions, connectionPool);
+        return CreateFixedClient(fixedTransport, runtimeContext, protocolOptions, connectionPool,
+            staticManifests: staticManifests);
     }
 
     private ISharpLinkClient CreateFixedClient(
@@ -442,7 +465,8 @@ public class SharpClientBuilder
         SharpLinkRuntimeContext runtimeContext,
         SharpLinkProtocolOptions protocolOptions,
         SharpLinkConnectionPoolOptions? connectionPool = null,
-        SharpLinkEndpoint? fixedEndpoint = null)
+        SharpLinkEndpoint? fixedEndpoint = null,
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null)
     {
         return new SharpLinkClient(
             transport,
@@ -459,7 +483,8 @@ public class SharpClientBuilder
             fixedEndpoint: fixedEndpoint,
             retryOptions: CreateRetryOptions(),
             retryPolicy: _retryPolicy,
-            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy()
+            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(),
+            staticManifests: staticManifests
         );
     }
 
@@ -467,7 +492,8 @@ public class SharpClientBuilder
         StaticEndpointConfiguration[] configurations,
         SharpLinkClusterOptions cluster,
         SharpLinkRuntimeContext runtimeContext,
-        SharpLinkProtocolOptions protocolOptions)
+        SharpLinkProtocolOptions protocolOptions,
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests)
         => new SharpLinkClient(
             configurations[0].TransportFactory,
             _heartbeatInterval,
@@ -486,14 +512,16 @@ public class SharpClientBuilder
             _endpointSelector,
             retryOptions: CreateRetryOptions(),
             retryPolicy: _retryPolicy,
-            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy());
+            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(),
+            staticManifests: staticManifests);
 
     private ISharpLinkClient CreateDynamicClusterClient(
         ISharpLinkEndpointResolver resolver,
         SharpLinkEndpointTransportFactory transportFactory,
         SharpLinkClusterOptions cluster,
         SharpLinkRuntimeContext runtimeContext,
-        SharpLinkProtocolOptions protocolOptions)
+        SharpLinkProtocolOptions protocolOptions,
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests)
         => new SharpLinkClient(
             DynamicClusterTransportPlaceholder.Instance,
             _heartbeatInterval,
@@ -513,7 +541,8 @@ public class SharpClientBuilder
             endpointSelector: _endpointSelector,
             retryOptions: CreateRetryOptions(),
             retryPolicy: _retryPolicy,
-            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy());
+            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(),
+            staticManifests: staticManifests);
 
     private SharpLinkRetryOptions? CreateRetryOptions()
         => _retryConfigured ? _retry.CloneValidated() : null;
@@ -601,5 +630,16 @@ public class SharpClientBuilder
             MinConnections = 1,
             MaxConnections = Math.Max(1, maxConnections)
         }.CloneValidated();
+    }
+
+    private int GetFixedConnectionBudget()
+    {
+        if (_connectionPoolConfigured)
+            return _connectionPool.CloneValidated().MaxConnections;
+
+        var runtimeContext = _runtimeContextBuilder.Build(includeGeneratedAssemblyCatalog: false);
+        return runtimeContext.Options.PerformanceProfile == SharpLinkPerformanceProfile.Throughput
+            ? Math.Max(1, Math.Min(Environment.ProcessorCount, 4))
+            : 1;
     }
 }

@@ -4,6 +4,7 @@ using SharpLink.Runtime;
 using SharpLink.Sdk;
 
 [assembly: SharpLinkRpcContracts(typeof(IGreetingService))]
+[assembly: SharpLinkClusterContractAssembly("greetings", typeof(IGreetingService))]
 
 const int port = 19110;
 

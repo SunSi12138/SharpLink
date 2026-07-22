@@ -11,16 +11,13 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext
         BufferWriterPoolOptions bufferPool,
         Func<Type, IRpcCodec?>? resolver,
         IReadOnlyDictionary<Type, IRpcCodec> codecs,
-        bool includeGeneratedAssemblyCatalog)
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> generatedManifests)
     {
         _options = options.CloneValidated();
         Concurrency = concurrency.CloneValidated();
         var generatedFactories = new Dictionary<Type, IRpcGeneratedCodecFactory>(
             RpcGeneratedCodecRegistry.CreateSnapshot());
-        var manifests = includeGeneratedAssemblyCatalog
-            ? SharpLinkGeneratedAssemblyCatalog.CreateSnapshot()
-            : [];
-        foreach (var manifest in manifests)
+        foreach (var manifest in generatedManifests)
         {
             foreach (var factory in manifest.Codecs)
             {
@@ -130,14 +127,20 @@ public sealed class SharpLinkRuntimeContextBuilder
 
     /// <summary>Validates and freezes a new context.</summary>
     public SharpLinkRuntimeContext Build()
-        => Build(includeGeneratedAssemblyCatalog: true);
+        => Build(SharpLinkGeneratedAssemblyCatalog.CreateSnapshot());
 
     internal SharpLinkRuntimeContext Build(bool includeGeneratedAssemblyCatalog)
+        => Build(includeGeneratedAssemblyCatalog
+            ? SharpLinkGeneratedAssemblyCatalog.CreateSnapshot()
+            : []);
+
+    internal SharpLinkRuntimeContext Build(IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> generatedManifests)
     {
+        ArgumentNullException.ThrowIfNull(generatedManifests);
         var options = _options.CloneValidated();
         var concurrency = _concurrency.CloneValidated();
         var bufferPool = _bufferPool.CloneValidated();
         return new SharpLinkRuntimeContext(options, concurrency, bufferPool, _resolver,
-            new Dictionary<Type, IRpcCodec>(_codecs), includeGeneratedAssemblyCatalog);
+            new Dictionary<Type, IRpcCodec>(_codecs), generatedManifests);
     }
 }

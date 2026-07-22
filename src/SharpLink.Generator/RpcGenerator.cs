@@ -6,6 +6,8 @@ public partial class RpcGenerator : IIncrementalGenerator
     private static readonly CultureInfo InvariantCulture = CultureInfo.InvariantCulture;
     private const string RpcContractAttributeMetadataName = "SharpLink.Sdk.RpcContractAttribute";
     private const string RpcServiceAttributeMetadataName = "SharpLink.Sdk.RpcServiceAttribute";
+    private const string ClusterContractAssemblyAttributeMetadataName =
+        "SharpLink.Sdk.SharpLinkClusterContractAssemblyAttribute";
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -36,6 +38,8 @@ public partial class RpcGenerator : IIncrementalGenerator
             .Where(static diagnostic => diagnostic is not null);
         var staticRouteConflicts = context.CompilationProvider.Select(static (compilation, ct) =>
             AnalyzeStaticRouteConflicts(compilation, ct));
+        var clusterRoutes = context.CompilationProvider.Select(static (compilation, ct) =>
+            AnalyzeClusterRoutes(compilation, ct));
 
         var invalidMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcContractAttributeMetadataName,
@@ -210,6 +214,19 @@ public partial class RpcGenerator : IIncrementalGenerator
                     conflict.Id,
                     conflict.ExistingFingerprint,
                     conflict.IncomingFingerprint));
+            }
+        });
+
+        context.RegisterSourceOutput(clusterRoutes, static (spc, analysis) =>
+        {
+            foreach (var diagnostic in analysis.Diagnostics)
+                spc.ReportDiagnostic(Diagnostic.Create(diagnostic.Rule, diagnostic.Location, diagnostic.Arguments));
+
+            if (!analysis.Routes.IsDefaultOrEmpty)
+            {
+                spc.AddSource(
+                    "SharpLink.GeneratedClusterRouteManifest.g.cs",
+                    SourceText.From(GenerateClusterRouteManifest(analysis.Routes), Encoding.UTF8));
             }
         });
 

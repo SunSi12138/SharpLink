@@ -4,6 +4,25 @@
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-07-22
+
+### Added
+
+- `SharpLinkMultiClusterClientBuilder`, `ISharpLinkMultiClusterClient`, and `SharpLinkClusterKey` coordinate multiple isolated child clients while routing each generated contract to exactly one cluster slot.
+- `[assembly: SharpLinkClusterContractAssembly(cluster, typeof(Marker))]` generates a deterministic, weak-catalogued static route manifest. The generator rejects invalid cluster keys, missing generated manifests, and contradictory contract-assembly routes.
+- Dynamic registration, unregister, and replacement now have explicit multi-cluster overloads. Contract-owning assemblies remain exclusive to one slot; dependency-only assemblies can remain independently owned by more than one slot.
+- `AddSharpLinkMultiClusterClient` adds hosted startup, shutdown, and `ISharpLinkMultiClusterClientAccessor` without exposing child `ISharpLinkClient` instances through DI.
+
+### Changed
+
+- `SharpClientBuilder.Build()` keeps its existing complete generated-manifest snapshot behavior. The multi-cluster builder uses an internal filtered build context, so ordinary clients and the fixed-endpoint RPC hot path do not perform coordinator lookups or acquire new locks.
+- Cluster selection is performed only by `Get<TContract>()`; generated proxies call their selected child channel directly and Protocol v2 frames, handshake capabilities, headers, and metadata do not carry a cluster key.
+
+### Compatibility
+
+- Ordinary single-client applications require no migration. Endpoint-cluster retry, admission, circuit-breaker, resolver, transport, authentication, and connection-pool behavior stays owned by each child client.
+- Static NativeAOT routing remains manifest based. Runtime assembly registration continues to return the existing structured platform-not-supported result when unavailable.
+
 ## [0.7.9] - 2026-07-21
 
 ### 收敛

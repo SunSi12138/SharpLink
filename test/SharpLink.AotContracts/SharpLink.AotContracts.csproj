@@ -1,20 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
-    <PublishAot>true</PublishAot>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Runtime\SharpLink.Runtime.csproj" />
-    <ProjectReference Include="..\..\src\SharpLink.Client\SharpLink.Client.csproj" />
-    <ProjectReference Include="..\..\src\SharpLink.Server\SharpLink.Server.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Sdk\SharpLink.Sdk.csproj" />
-    <ProjectReference Include="..\SharpLink.AotContracts\SharpLink.AotContracts.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Generator\SharpLink.Generator.csproj"
                       OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="false"
-                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile" />
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

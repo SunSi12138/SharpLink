@@ -35,5 +35,19 @@ public static class HostExtensions
             services.AddHostedService<SharpLinkClientHostedService>();
             return builder;
         }
+
+        /// <summary>Adds one hosted multi-cluster coordinator without exposing individual child clients to DI.</summary>
+        public SharpLinkMultiClusterClientBuilder AddSharpLinkMultiClusterClient(
+            Action<SharpLinkMultiClusterClientBuilder>? configure = null)
+        {
+            var builder = SharpLinkMultiClusterClientBuilder.Create();
+            configure?.Invoke(builder);
+            services.TryAddSingleton(builder);
+            services.TryAddSingleton<SharpLinkMultiClusterClientAccessor>();
+            services.TryAddSingleton<ISharpLinkMultiClusterClientAccessor>(static provider =>
+                provider.GetRequiredService<SharpLinkMultiClusterClientAccessor>());
+            services.AddHostedService<SharpLinkMultiClusterClientHostedService>();
+            return builder;
+        }
     }
 }

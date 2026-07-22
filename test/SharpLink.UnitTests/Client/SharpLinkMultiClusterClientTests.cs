@@ -1,0 +1,181 @@
+using System.Reflection;
+using System.Collections.Generic;
+using System.Threading;
+using SharpLink.Client;
+using SharpLink.Sdk;
+
+namespace SharpLink.UnitTests.Client;
+
+public sealed class SharpLinkMultiClusterClientTests
+{
+    [Test]
+    public async Task StaticRouteShouldCreateTheTargetChildProxyAndConnectEverySlot()
+    {
+        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
+        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
+        var ordersTransport = new TestClientTransportFactory();
+        var paymentsTransport = new TestClientTransportFactory();
+
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster("orders", child => child.UseTransport(ordersTransport))
+            .AddCluster("payments", child => child.UseTransport(paymentsTransport),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+
+        var proxy = client.Get<IOrdersContract>();
+        Ensure(proxy is OrdersProxy, "Get should create the proxy directly from the routed child client");
+        await client.ConnectAsync();
+
+        Ensure(client.State == SharpLinkMultiClusterState.Ready, "all slots should be ready after shared connect");
+        Ensure(ordersTransport.ConnectCount == 1, "orders child should connect once");
+        Ensure(paymentsTransport.ConnectCount == 1, "payments child should connect once");
+        Ensure(client.GetClusterState("orders") == SharpLinkConnectionState.Ready, "orders slot state");
+    }
+
+    [Test]
+    public Task EmptySlotShouldRequireExplicitDynamicOptIn()
+    {
+        var builder = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster("dynamic", child => child.UseTransport(new TestClientTransportFactory()));
+
+        return EnsureThrows<InvalidOperationException>(() =>
+        {
+            _ = builder.Build();
+            return Task.CompletedTask;
+        });
+    }
+
+    [Test]
+    public async Task UnknownContractShouldFailWithoutSelectingAnotherCluster()
+    {
+        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
+        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
+            .Build();
+
+        await EnsureThrows<InvalidOperationException>(() =>
+        {
+            _ = client.Get<IUnroutedContract>();
+            return Task.CompletedTask;
+        });
+    }
+
+    [Test]
+    public async Task BuildShouldRejectZeroClustersAndConnectionBudgetOverflow()
+    {
+        await EnsureThrows<InvalidOperationException>(() =>
+        {
+            _ = SharpLinkMultiClusterClientBuilder.Create().Build();
+            return Task.CompletedTask;
+        });
+
+        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
+        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
+        await EnsureThrows<InvalidOperationException>(() =>
+        {
+            _ = SharpLinkMultiClusterClientBuilder.Create()
+                .Configure(options => options.MaxTotalConfiguredConnections = 1)
+                .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
+                .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
+                    slot => slot.AllowDynamicContracts = true)
+                .Build();
+            return Task.CompletedTask;
+        });
+    }
+
+    [Test]
+    public async Task StopDuringInitialConnectShouldRemainStoppedAfterSharedConnectFaults()
+    {
+        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
+        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
+        var blocked = new BlockingTransportFactory();
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster("orders", child => child.UseTransport(blocked))
+            .Build();
+
+        var connecting = client.ConnectAsync().AsTask();
+        await blocked.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await client.StopAsync();
+        await EnsureThrows<OperationCanceledException>(async () => await connecting);
+
+        Ensure(client.State == SharpLinkMultiClusterState.Stopped,
+            "shutdown must own the terminal state when it races the initial shared connect");
+        await client.StopAsync();
+    }
+
+    private static async Task EnsureThrows<TException>(Func<Task> action) where TException : Exception
+    {
+        try
+        {
+            await action();
+        }
+        catch (TException)
+        {
+            return;
+        }
+        throw new Exception($"Expected {typeof(TException).Name}.");
+    }
+
+    private static void Ensure(bool condition, string message)
+    {
+        if (!condition)
+            throw new Exception(message);
+    }
+
+    private interface IOrdersContract : IService;
+    private interface IUnroutedContract : IService;
+    private sealed class OrdersProxy : IOrdersContract;
+
+    private sealed class Manifest : ISharpLinkGeneratedAssemblyManifest
+    {
+        public static readonly Manifest Instance = new();
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "test";
+        public Assembly OwnerAssembly => typeof(SharpLinkMultiClusterClientTests).Assembly;
+        public string CompileTimeDescriptor => "multi-cluster-test";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; } =
+        [
+            new SharpLinkGeneratedContractDescriptor(
+                typeof(IOrdersContract),
+                typeof(IOrdersContract).FullName!,
+                8_101,
+                "orders-v1",
+                [],
+                static _ => new OrdersProxy(),
+                static () => throw new NotSupportedException())
+        ];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services { get; } = [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } = [];
+        public IReadOnlyList<string> Dependencies { get; } = [];
+    }
+
+    private sealed class RouteManifest : ISharpLinkGeneratedClusterRouteManifest
+    {
+        public static readonly RouteManifest Instance = new();
+        public Assembly OwnerAssembly => typeof(SharpLinkMultiClusterClientTests).Assembly;
+        public IReadOnlyList<SharpLinkGeneratedClusterAssemblyRoute> Routes { get; } =
+        [
+            new SharpLinkGeneratedClusterAssemblyRoute(
+                "orders",
+                typeof(SharpLinkMultiClusterClientTests).Assembly,
+                typeof(SharpLinkMultiClusterClientTests).Assembly.FullName!)
+        ];
+    }
+
+    private sealed class BlockingTransportFactory : IClientTransportFactory
+    {
+        internal TaskCompletionSource<bool> ConnectStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            ConnectStarted.TrySetResult(true);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("The cancelled connect should not continue.");
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+}

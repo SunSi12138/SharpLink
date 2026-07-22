@@ -235,6 +235,38 @@ public partial class RpcGenerator
     private static readonly DiagnosticDescriptor ServiceRouteRemovedCompatibilityRule = CompatibilityRule(
         "SHARPLINK037", "Existing Service Route Was Removed");
 
+    private static readonly DiagnosticDescriptor InvalidClusterKeyRule = new(
+        id: "SHARPLINK038",
+        title: "Multi-Cluster Key Is Invalid",
+        messageFormat: "Cluster key '{0}' must contain 1 to 64 ASCII characters, start with a letter or digit, and then contain only letters, digits, '.', '_', or '-'",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor ConflictingClusterRouteRule = new(
+        id: "SHARPLINK039",
+        title: "Contract Assembly Has Conflicting Cluster Routes",
+        messageFormat: "Contract assembly '{0}' is routed to both cluster '{1}' and cluster '{2}'",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor MissingClusterRouteManifestRule = new(
+        id: "SHARPLINK040",
+        title: "Cluster Route Marker Lacks Generated Manifest",
+        messageFormat: "Cluster route marker assembly '{0}' does not expose a compatible generated SharpLink manifest",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor InvalidClusterRouteAttributeRule = new(
+        id: "SHARPLINK041",
+        title: "Multi-Cluster Route Attribute Is Invalid",
+        messageFormat: "SharpLinkClusterContractAssembly requires a literal cluster key and a concrete marker type",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     private static DiagnosticDescriptor CompatibilityRule(string id, string title)
         => new(
             id: id,

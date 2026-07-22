@@ -731,6 +731,102 @@ public sealed class SecondMarkedService : IMarkedContract
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task ClusterRouteShouldGenerateDeterministicSeparateManifest()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IOrdersService : SharpLink.Sdk.IService
+{
+    ValueTask<int> GetAsync(int value, CancellationToken cancellationToken);
+}
+""");
+        source = AddAssemblyAttribute(
+            source,
+            "[assembly: SharpLink.Sdk.SharpLinkClusterContractAssembly(\"orders\", typeof(IOrdersService))]");
+
+        var generated = RunGeneratorAndGetSources(source);
+        var route = generated.Single(text => text.Contains("GeneratedClusterRouteManifest", StringComparison.Ordinal));
+        Ensure(route.Contains("new SharpLinkClusterKey(\"orders\")", StringComparison.Ordinal),
+            "cluster route should preserve the declared key");
+        Ensure(route.Contains("SharpLinkGeneratedClusterRouteCatalog.Register", StringComparison.Ordinal),
+            "cluster route manifest should register from a module initializer");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task InvalidClusterRouteKeyShouldReportSharplink038()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IOrdersService : SharpLink.Sdk.IService
+{
+    ValueTask<int> GetAsync(int value, CancellationToken cancellationToken);
+}
+""");
+        source = AddAssemblyAttribute(
+            source,
+            "[assembly: SharpLink.Sdk.SharpLinkClusterContractAssembly(\"bad key\", typeof(IOrdersService))]");
+
+        EnsureHasRule(source, "SHARPLINK038");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ConflictingClusterRouteShouldReportSharplink039()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IOrdersService : SharpLink.Sdk.IService
+{
+    ValueTask<int> GetAsync(int value, CancellationToken cancellationToken);
+}
+""");
+        source = AddAssemblyAttribute(
+            source,
+            "[assembly: SharpLink.Sdk.SharpLinkClusterContractAssembly(\"orders\", typeof(IOrdersService))]\n" +
+            "[assembly: SharpLink.Sdk.SharpLinkClusterContractAssembly(\"payments\", typeof(IOrdersService))]");
+
+        EnsureHasRule(source, "SHARPLINK039");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task RouteMarkerWithoutGeneratedManifestShouldReportSharplink040()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IOrdersService : SharpLink.Sdk.IService
+{
+    ValueTask<int> GetAsync(int value, CancellationToken cancellationToken);
+}
+""");
+        source = AddAssemblyAttribute(
+            source,
+            "[assembly: SharpLink.Sdk.SharpLinkClusterContractAssembly(\"orders\", typeof(string))]");
+
+        EnsureHasRule(source, "SHARPLINK040");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task NullRouteMarkerShouldReportSharplink041()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IOrdersService : SharpLink.Sdk.IService
+{
+    ValueTask<int> GetAsync(int value, CancellationToken cancellationToken);
+}
+""");
+        source = AddAssemblyAttribute(
+            source,
+            "[assembly: SharpLink.Sdk.SharpLinkClusterContractAssembly(\"orders\", null)]");
+
+        EnsureHasRule(source, "SHARPLINK041");
+        return Task.CompletedTask;
+    }
+
     private static string BuildSource(string contract)
     {
         return $$"""
@@ -748,6 +844,14 @@ namespace SharpLink.Sdk
     [AttributeUsage(AttributeTargets.Interface)]
     public sealed class RpcContractAttribute : Attribute
     {
+    }
+
+    [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
+    public sealed class SharpLinkClusterContractAssemblyAttribute : Attribute
+    {
+        public SharpLinkClusterContractAssemblyAttribute(string cluster, Type assemblyMarker)
+        {
+        }
     }
 
     [AttributeUsage(AttributeTargets.Method)]
@@ -816,6 +920,9 @@ namespace SharpLink.Sdk
 {{contract}}
 """;
     }
+
+    private static string AddAssemblyAttribute(string source, string attribute)
+        => source.Replace("namespace SharpLink.Sdk", attribute + "\n\nnamespace SharpLink.Sdk", StringComparison.Ordinal);
 
     private static void EnsureHasRule(string source, string ruleId)
     {

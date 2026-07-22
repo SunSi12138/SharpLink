@@ -8,6 +8,34 @@ public sealed class RuntimeAssemblyIntegrationTests
 {
     [Test]
     [NotInParallel]
+    public async Task MultiClusterDynamicRegistrationShouldRouteToOneExplicitSlot()
+    {
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster("plugins", child => child.UseTcp(IPAddress.Loopback.ToString(), 1),
+                slot => slot.AllowDynamicContracts = true)
+            .AddCluster("other", child => child.UseTcp(IPAddress.Loopback.ToString(), 2),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+        using var plugin = PluginBundle.Load("multi-cluster-dynamic-registration", loadService: false);
+
+        var first = client.RegisterAssembly("plugins", plugin.ContractAssembly);
+        Ensure(first.Succeeded, $"multi-cluster plugin registration: {first.Error}");
+
+        var proxy = GetMultiClusterProxy(client, plugin.ContractType);
+        Ensure(proxy is not null, "multi-cluster Get should create the dynamically routed proxy");
+
+        var second = client.RegisterAssembly("other", plugin.ContractAssembly);
+        Ensure(!second.Succeeded, "contract-owning assembly must not register in a second cluster");
+        Ensure(second.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.ContractConflict,
+            "second cluster should return a structured contract conflict");
+
+        var drained = await client.UnregisterAssemblyAsync(
+            "plugins", plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+        Ensure(drained.ReferencesReleased, "multi-cluster plugin unregister should release the child module");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task DynamicServiceRegistrationShouldRejectMissingProviderDependenciesTransactionally()
     {
         await using var harness = await DynamicHarness.CreateAsync(registerDynamicServiceDependencies: false);
@@ -1037,6 +1065,11 @@ public sealed class RuntimeAssemblyIntegrationTests
         if (!condition)
             throw new Exception($"assert failed: {message}");
     }
+
+    private static object? GetMultiClusterProxy(ISharpLinkMultiClusterClient client, Type contractType)
+        => typeof(ISharpLinkMultiClusterClient).GetMethod(nameof(ISharpLinkMultiClusterClient.Get))!
+            .MakeGenericMethod(contractType)
+            .Invoke(client, null);
 
     private sealed class PluginBundle : IDisposable
     {
