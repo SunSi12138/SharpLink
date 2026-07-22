@@ -70,7 +70,7 @@ internal sealed partial class SharpLinkClient
                     var delay = retryAfter > TimeSpan.Zero ? retryAfter : TimeSpan.FromMilliseconds(1);
                     if (deadline is { } retryDeadline && WouldReachDeadline(retryDeadline, delay))
                         throw CreateDeadlineExceededException();
-                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                    await DelayForRetryOrAdmissionAsync(delay, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -101,6 +101,24 @@ internal sealed partial class SharpLinkClient
             {
                 throw CreateDeadlineExceededException();
             }
+        }
+    }
+
+    private async ValueTask DelayForRetryOrAdmissionAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        if (_shutdownCts.IsCancellationRequested)
+            throw CreateConnectionClosedException("Client has stopped.");
+
+        using var linkedCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
+        try
+        {
+            await Task.Delay(delay, linkedCancellation.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (
+            _shutdownCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw CreateConnectionClosedException("Client has stopped.");
         }
     }
 

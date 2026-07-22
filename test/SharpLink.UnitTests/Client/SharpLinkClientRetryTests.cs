@@ -86,6 +86,30 @@ public class SharpLinkClientRetryTests
     }
 
     [Test]
+    public async Task ClientStopShouldCancelCustomRetryBackoffPromptly()
+    {
+        var transport = new TestClientTransportFactory();
+        var policy = new DelayingRetryPolicy(TimeSpan.FromSeconds(30));
+        await using var client = CreateRetryClient(transport, policy, maxAttempts: 2);
+        await client.ConnectAsync();
+
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
+        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
+        await policy.EvaluationStarted.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var stoppedAt = Stopwatch.GetTimestamp();
+        var stop = client.StopAsync().AsTask();
+        var exception = await EnsureThrows<SharpLinkException>(
+            invocation.WaitAsync(TimeSpan.FromSeconds(2)));
+        await stop.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(exception.Code == SharpLinkErrorCode.ConnectionClosed, "stopped retry backoff error code");
+        Ensure(Stopwatch.GetElapsedTime(stoppedAt) < TimeSpan.FromSeconds(1),
+            "client stop must cancel the custom retry backoff promptly");
+    }
+
+    [Test]
     public async Task RetryDelayBeyondDeadlineShouldNotOverflow()
     {
         var transport = new TestClientTransportFactory();
@@ -224,6 +248,35 @@ public class SharpLinkClientRetryTests
         Ensure(await invocation == 0, "admitted retry result");
         Ensure(admission.AcquireCount == 2, "admission should be retried once after its requested delay");
         Ensure(admission.ReportCount == 1, "only the admitted retry should report");
+    }
+
+    [Test]
+    public async Task ClientStopShouldCancelRetryAdmissionDelayPromptly()
+    {
+        var transport = new TestClientTransportFactory();
+        var admission = new SignaledRejectWithRetryAfterPolicy(TimeSpan.FromSeconds(30));
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            fixedEndpoint: Endpoint("retry-admission", 5001),
+            retryOptions: RetryOptions(2, TimeSpan.Zero),
+            endpointAdmissionPolicy: admission);
+        await client.ConnectAsync();
+
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
+            client, new SharpLinkCallOptions { WaitForReady = true }).AsTask();
+        await admission.RejectionStarted.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var stoppedAt = Stopwatch.GetTimestamp();
+        var stop = client.StopAsync().AsTask();
+        var exception = await EnsureThrows<SharpLinkException>(
+            invocation.WaitAsync(TimeSpan.FromSeconds(2)));
+        await stop.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(exception.Code == SharpLinkErrorCode.ConnectionClosed, "stopped retry admission error code");
+        Ensure(Stopwatch.GetElapsedTime(stoppedAt) < TimeSpan.FromSeconds(1),
+            "client stop must cancel the retry admission delay promptly");
     }
 
     [Test]
@@ -457,6 +510,20 @@ public class SharpLinkClientRetryTests
         }
     }
 
+    private sealed class DelayingRetryPolicy(TimeSpan delay) : ISharpLinkRetryPolicy
+    {
+        private readonly TaskCompletionSource _evaluationStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task EvaluationStarted => _evaluationStarted.Task;
+
+        public SharpLinkRetryDecision Evaluate(in SharpLinkRetryContext context)
+        {
+            _evaluationStarted.TrySetResult();
+            return new SharpLinkRetryDecision(true, delay);
+        }
+    }
+
     private sealed class NegativeDelayPolicy : ISharpLinkRetryPolicy
     {
         public int Count { get; private set; }
@@ -552,6 +619,26 @@ public class SharpLinkClientRetryTests
         {
             ReportCount++;
             Ensure(token == 1, "admitted retry token");
+        }
+    }
+
+    private sealed class SignaledRejectWithRetryAfterPolicy(TimeSpan retryAfter) : ISharpLinkEndpointAdmissionPolicy
+    {
+        private readonly TaskCompletionSource _rejectionStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task RejectionStarted => _rejectionStarted.Task;
+
+        public SharpLinkEndpointAdmissionDecision TryAcquire(
+            in SharpLinkEndpointCandidate endpoint,
+            in RpcMethodDescriptor method)
+        {
+            _rejectionStarted.TrySetResult();
+            return new SharpLinkEndpointAdmissionDecision(false, Token: 0, RetryAfter: retryAfter);
+        }
+
+        public void Report(in SharpLinkEndpointOutcome outcome, long token)
+        {
         }
     }
 

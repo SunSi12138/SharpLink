@@ -98,6 +98,33 @@ public class SharpLinkClientCallOptionsTests
     }
 
     [Test]
+    public async Task ClientStopShouldCancelWaitForReadyAdmissionDelayPromptly()
+    {
+        var transport = new TestClientTransportFactory();
+        var policy = new SignaledRejectWithDelayPolicy(TimeSpan.FromSeconds(30));
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            fixedEndpoint: FixedEndpoint,
+            endpointAdmissionPolicy: policy);
+        await client.ConnectAsync();
+
+        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(
+            client, new SharpLinkCallOptions { WaitForReady = true }).AsTask();
+        await policy.RejectionStarted.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var stoppedAt = Stopwatch.GetTimestamp();
+        var stop = client.StopAsync().AsTask();
+        var exception = await CaptureSharpLinkException(invocation.WaitAsync(TimeSpan.FromSeconds(2)));
+        await stop.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(exception.Code == SharpLinkErrorCode.ConnectionClosed, "stopped admission delay error code");
+        Ensure(Stopwatch.GetElapsedTime(stoppedAt) < TimeSpan.FromSeconds(1),
+            "client stop must cancel the wait-for-ready admission delay promptly");
+    }
+
+    [Test]
     public async Task WaitForReadyShouldDiscardAStaleAdmissionDelayAfterAnAdmittedEndpointDisconnects()
     {
         var first = new TestClientTransportFactory();
@@ -398,6 +425,26 @@ public class SharpLinkClientCallOptionsTests
             in RpcMethodDescriptor method)
         {
             AcquireCount++;
+            return new SharpLinkEndpointAdmissionDecision(false, Token: 0, RetryAfter: retryAfter);
+        }
+
+        public void Report(in SharpLinkEndpointOutcome outcome, long token)
+        {
+        }
+    }
+
+    private sealed class SignaledRejectWithDelayPolicy(TimeSpan retryAfter) : ISharpLinkEndpointAdmissionPolicy
+    {
+        private readonly TaskCompletionSource _rejectionStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task RejectionStarted => _rejectionStarted.Task;
+
+        public SharpLinkEndpointAdmissionDecision TryAcquire(
+            in SharpLinkEndpointCandidate endpoint,
+            in RpcMethodDescriptor method)
+        {
+            _rejectionStarted.TrySetResult();
             return new SharpLinkEndpointAdmissionDecision(false, Token: 0, RetryAfter: retryAfter);
         }
 
