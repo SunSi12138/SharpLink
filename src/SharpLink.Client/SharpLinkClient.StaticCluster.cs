@@ -25,6 +25,7 @@ internal sealed partial class SharpLinkClient
         private int _reconnectCursor;
         private int _initialDialReservations;
         private int _initialConnectCoordinatorCount;
+        private int _telemetryReadyEndpointCount;
         private int _stopping;
 
         private int TargetReadyEndpointCount => Math.Min(_options.MinReadyEndpoints, _endpoints.Length);
@@ -43,6 +44,7 @@ internal sealed partial class SharpLinkClient
             _endpoints = new EndpointState[configurations.Length];
             for (var index = 0; index < configurations.Length; index++)
                 _endpoints[index] = new EndpointState(configurations[index], index);
+            SharpLinkTelemetry.AddClientActiveEndpoints(_endpoints.Length);
         }
 
         public int ReadyConnectionCount
@@ -626,6 +628,8 @@ internal sealed partial class SharpLinkClient
             }
             Volatile.Write(ref _readyEndpoints, endpoints);
             Volatile.Write(ref _selectionSnapshot, new EndpointSelectionSnapshot(endpoints, candidates));
+            SharpLinkTelemetry.AddClientReadyEndpoints(endpoints.Length - _telemetryReadyEndpointCount);
+            _telemetryReadyEndpointCount = endpoints.Length;
             if (endpoints.Length == 0)
                 _client.ResetReadySignal();
         }
@@ -787,7 +791,10 @@ internal sealed partial class SharpLinkClient
                 _retiringConnections.Clear();
                 Volatile.Write(ref _readyEndpoints, []);
                 Volatile.Write(ref _selectionSnapshot, EndpointSelectionSnapshot.Empty);
+                SharpLinkTelemetry.AddClientReadyEndpoints(-_telemetryReadyEndpointCount);
+                _telemetryReadyEndpointCount = 0;
             }
+            SharpLinkTelemetry.AddClientActiveEndpoints(-_endpoints.Length);
             var stopping = CreateConnectionClosedException("Client is stopping.");
             for (var index = 0; index < connections.Length; index++)
             {

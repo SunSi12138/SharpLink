@@ -202,6 +202,73 @@ public class SharpLinkTelemetryTests
             "admission rejection low-cardinality tags");
     }
 
+    [Test]
+    public void ClientTopologyMetricsShouldExposeStableLowCardinalityInstruments()
+    {
+        var activeEndpoints = 0L;
+        var readyEndpoints = 0L;
+        var drainingEndpoints = 0L;
+        var resolverUpdates = 0L;
+        var resolverFailures = 0L;
+        var activeConnections = 0L;
+        var retiringConnections = 0L;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = static (instrument, meterListener) =>
+        {
+            if (instrument.Meter.Name == "SharpLink" &&
+                instrument.Name.StartsWith("sharplink.client.", StringComparison.Ordinal))
+            {
+                meterListener.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
+        {
+            switch (instrument.Name)
+            {
+                case "sharplink.client.endpoints.active":
+                    Interlocked.Add(ref activeEndpoints, measurement);
+                    break;
+                case "sharplink.client.endpoints.ready":
+                    Interlocked.Add(ref readyEndpoints, measurement);
+                    break;
+                case "sharplink.client.endpoints.draining":
+                    Interlocked.Add(ref drainingEndpoints, measurement);
+                    break;
+                case "sharplink.client.resolver.updates":
+                    Interlocked.Add(ref resolverUpdates, measurement);
+                    break;
+                case "sharplink.client.resolver.failures":
+                    Interlocked.Add(ref resolverFailures, measurement);
+                    break;
+                case "sharplink.client.connections.active":
+                    Interlocked.Add(ref activeConnections, measurement);
+                    break;
+                case "sharplink.client.connections.retiring":
+                    Interlocked.Add(ref retiringConnections, measurement);
+                    break;
+            }
+        });
+        listener.Start();
+
+        SharpLinkTelemetry.AddClientActiveEndpoints(2);
+        SharpLinkTelemetry.AddClientReadyEndpoints(1);
+        SharpLinkTelemetry.AddClientDrainingEndpoints(1);
+        SharpLinkTelemetry.RecordClientResolverUpdate();
+        SharpLinkTelemetry.RecordClientResolverFailure();
+        SharpLinkTelemetry.ConnectionOpened("client");
+        SharpLinkTelemetry.AddClientRetiringConnections(1);
+        SharpLinkTelemetry.AddClientRetiringConnections(-1);
+        SharpLinkTelemetry.ConnectionClosed("client");
+
+        Ensure(Volatile.Read(ref activeEndpoints) == 2, "active endpoints metric");
+        Ensure(Volatile.Read(ref readyEndpoints) == 1, "ready endpoints metric");
+        Ensure(Volatile.Read(ref drainingEndpoints) == 1, "draining endpoints metric");
+        Ensure(Volatile.Read(ref resolverUpdates) == 1, "resolver updates metric");
+        Ensure(Volatile.Read(ref resolverFailures) == 1, "resolver failures metric");
+        Ensure(Volatile.Read(ref activeConnections) == 0, "active connections must balance");
+        Ensure(Volatile.Read(ref retiringConnections) == 0, "retiring connections must balance");
+    }
+
     private static string? FindTag(
         ReadOnlySpan<KeyValuePair<string, object?>> tags,
         string key)

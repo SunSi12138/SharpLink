@@ -74,6 +74,7 @@ internal sealed class ClientConnection :
                 (int)ClientConnectionState.Ready) == (int)ClientConnectionState.Ready)
         {
             Session.MarkDraining();
+            SharpLinkTelemetry.AddClientRetiringConnections(1);
             return true;
         }
 
@@ -83,11 +84,13 @@ internal sealed class ClientConnection :
     public void Fail(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
-        if (Interlocked.Exchange(ref _state, (int)ClientConnectionState.Closed) ==
-            (int)ClientConnectionState.Closed)
+        var previousState = Interlocked.Exchange(ref _state, (int)ClientConnectionState.Closed);
+        if (previousState == (int)ClientConnectionState.Closed)
         {
             return;
         }
+        if (previousState == (int)ClientConnectionState.Draining)
+            SharpLinkTelemetry.AddClientRetiringConnections(-1);
 
         try
         {

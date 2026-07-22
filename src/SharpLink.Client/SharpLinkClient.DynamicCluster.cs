@@ -31,6 +31,9 @@ internal sealed partial class SharpLinkClient
         private int _leastPendingCursor;
         private int _reconnectCursor;
         private int _initialConnectCoordinatorCount;
+        private int _telemetryActiveEndpointCount;
+        private int _telemetryReadyEndpointCount;
+        private int _telemetryDrainingEndpointCount;
         private int _stopping;
         private int _resolverDisposed;
 
@@ -242,6 +245,7 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
+                SharpLinkTelemetry.RecordClientResolverFailure();
                 _client.TransitionTo(SharpLinkConnectionState.Reconnecting);
                 StartResolverWorker(resolveBeforeWatch: true);
                 throw new SharpLinkException(
@@ -301,6 +305,7 @@ internal sealed partial class SharpLinkClient
                     }
                     catch (Exception exception)
                     {
+                        SharpLinkTelemetry.RecordClientResolverFailure();
                         LogClientBackgroundLoopUnhandledException(_client._logger, nameof(RunResolverWorkerAsync), exception);
                         await DelayResolverRetryAsync(delayMilliseconds).ConfigureAwait(false);
                         delayMilliseconds = Math.Min(delayMilliseconds * 2, 30_000);
@@ -328,6 +333,7 @@ internal sealed partial class SharpLinkClient
                 }
                 catch (Exception exception)
                 {
+                    SharpLinkTelemetry.RecordClientResolverFailure();
                     LogClientBackgroundLoopUnhandledException(_client._logger, nameof(RunResolverWorkerAsync), exception);
                     mustResolve = true;
                 }
@@ -358,6 +364,7 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
+                SharpLinkTelemetry.RecordClientResolverFailure();
                 LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ApplySnapshotAsync), exception);
                 return false;
             }
@@ -391,6 +398,7 @@ internal sealed partial class SharpLinkClient
                 lock (_gate)
                     ownedFactories.UnionWith(GetOwnedFactoriesLocked());
                 await DisposeCreatedFactoriesAsync(created.Values, ownedFactories).ConfigureAwait(false);
+                SharpLinkTelemetry.RecordClientResolverFailure();
                 LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ApplySnapshotAsync), exception);
                 return false;
             }
@@ -450,6 +458,8 @@ internal sealed partial class SharpLinkClient
                         _currentById.Add(pair.Key, pair.Value);
                     _current = current;
                     _lastAcceptedVersion = snapshot.Version;
+                    SharpLinkTelemetry.AddClientActiveEndpoints(current.Length - _telemetryActiveEndpointCount);
+                    _telemetryActiveEndpointCount = current.Length;
                     PublishReadySnapshotLocked(force: true);
                 }
             }
@@ -459,6 +469,7 @@ internal sealed partial class SharpLinkClient
                 await DisposeCreatedFactoriesAsync(created.Values, ownedFactories).ConfigureAwait(false);
                 if (rejectedForFactoryOwnership)
                 {
+                    SharpLinkTelemetry.RecordClientResolverFailure();
                     LogClientBackgroundLoopUnhandledException(
                         _client._logger,
                         nameof(ApplySnapshotAsync),
@@ -474,6 +485,7 @@ internal sealed partial class SharpLinkClient
                 ScheduleRetiredStateRelease(statesToRelease[index]);
             if (!deferInitialReconciliation)
                 EnsureMinimumReadyEndpoints();
+            SharpLinkTelemetry.RecordClientResolverUpdate();
             return true;
         }
 
@@ -485,6 +497,8 @@ internal sealed partial class SharpLinkClient
             if (endpoint.Retiring)
                 return;
             endpoint.Retiring = true;
+            SharpLinkTelemetry.AddClientDrainingEndpoints(1);
+            _telemetryDrainingEndpointCount++;
             var connections = endpoint.Connections.ToArray();
             for (var index = 0; index < connections.Length; index++)
             {
@@ -922,6 +936,8 @@ internal sealed partial class SharpLinkClient
             }
             Volatile.Write(ref _readyEndpoints, endpoints);
             Volatile.Write(ref _selectionSnapshot, new EndpointSelectionSnapshot(endpoints, candidates));
+            SharpLinkTelemetry.AddClientReadyEndpoints(endpoints.Length - _telemetryReadyEndpointCount);
+            _telemetryReadyEndpointCount = endpoints.Length;
             if (endpoints.Length == 0)
                 _client.ResetReadySignal();
         }
@@ -1060,6 +1076,8 @@ internal sealed partial class SharpLinkClient
                     return;
                 endpoint.FactoryReleased = true;
                 _allStates.Remove(endpoint);
+                SharpLinkTelemetry.AddClientDrainingEndpoints(-1);
+                _telemetryDrainingEndpointCount--;
             }
             if (_client._endpointAdmissionPolicy is ISharpLinkEndpointAdmissionLifecycle lifecycle)
             {
@@ -1106,6 +1124,12 @@ internal sealed partial class SharpLinkClient
                 _retiringConnections.Clear();
                 Volatile.Write(ref _readyEndpoints, []);
                 Volatile.Write(ref _selectionSnapshot, EndpointSelectionSnapshot.Empty);
+                SharpLinkTelemetry.AddClientActiveEndpoints(-_telemetryActiveEndpointCount);
+                SharpLinkTelemetry.AddClientReadyEndpoints(-_telemetryReadyEndpointCount);
+                SharpLinkTelemetry.AddClientDrainingEndpoints(-_telemetryDrainingEndpointCount);
+                _telemetryActiveEndpointCount = 0;
+                _telemetryReadyEndpointCount = 0;
+                _telemetryDrainingEndpointCount = 0;
             }
 
             if (Interlocked.Exchange(ref _resolverDisposed, 1) == 0)
