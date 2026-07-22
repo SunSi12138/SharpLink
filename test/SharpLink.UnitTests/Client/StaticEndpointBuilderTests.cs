@@ -186,7 +186,12 @@ public class StaticEndpointBuilderTests
         {
             _ = SharpClientBuilder.Create()
                 .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => new TrackingFactory())
-                .UseCluster(static options => options.MinReadyEndpoints = 5)
+                .UseCluster(static options =>
+                {
+                    options.MinReadyEndpoints = 5;
+                    options.MaxConnections = 1;
+                    options.MaxConnectionsPerEndpoint = 1;
+                })
                 .Build();
             return Task.CompletedTask;
         });
@@ -247,7 +252,7 @@ public class StaticEndpointBuilderTests
             .UseCluster(options =>
             {
                 options.MinReadyEndpoints = 5;
-                options.MaxConnections = 5;
+                options.MaxConnections = 4;
                 options.MaxConnectionsPerEndpoint = 2;
             })
             .Build();

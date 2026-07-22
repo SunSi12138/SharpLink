@@ -2,6 +2,10 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
+    // This duration is accepted by Task.Delay on every supported runtime. Longer public retry
+    // and admission delays are awaited in cancellable slices rather than rejected by the timer.
+    private static readonly TimeSpan MaximumRetryOrAdmissionDelay = TimeSpan.FromMilliseconds(int.MaxValue);
+
     private ResolvedCallControl ResolveCallControl(
         SharpLinkCallOptions options,
         bool includeClientDefault,
@@ -113,6 +117,11 @@ internal sealed partial class SharpLinkClient
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
         try
         {
+            while (delay > MaximumRetryOrAdmissionDelay)
+            {
+                await Task.Delay(MaximumRetryOrAdmissionDelay, linkedCancellation.Token).ConfigureAwait(false);
+                delay -= MaximumRetryOrAdmissionDelay;
+            }
             await Task.Delay(delay, linkedCancellation.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (

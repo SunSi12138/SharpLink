@@ -208,7 +208,7 @@ public sealed class DynamicEndpointIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task DynamicInitialConnectShouldFailWhenEveryResolvedEndpointFails()
+    public async Task FailedInitialDynamicTopologyShouldAllowConnectToWaitForRecovery()
     {
         var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("failed", 1, "red")]));
         var factory = new FailingConnectFactory();
@@ -219,10 +219,14 @@ public sealed class DynamicEndpointIntegrationTests
         try
         {
             var first = await CaptureSharpLinkException(client.ConnectAsync().AsTask());
-            var second = await CaptureSharpLinkException(client.ConnectAsync().AsTask());
+            using var recoveryCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+            var recovery = client.ConnectAsync(recoveryCancellation.Token).AsTask();
+            await Task.Delay(20);
 
             Ensure(first.Code == SharpLinkErrorCode.Unavailable, "initial failed dynamic topology error");
-            Ensure(second.Code == SharpLinkErrorCode.Unavailable, "failed initial dynamic topology must not cache success");
+            Ensure(!recovery.IsCompleted,
+                "failed initial dynamic topology must wait for recovery instead of replaying the stale failure");
+            await CaptureCancellation(recovery);
             Ensure(factory.ConnectCount != 0, "resolved endpoint connection must have been attempted");
         }
         finally
@@ -246,7 +250,11 @@ public sealed class DynamicEndpointIntegrationTests
         var initial = await CaptureSharpLinkException(client.ConnectAsync().AsTask());
         Ensure(initial.Code == SharpLinkErrorCode.Unavailable, "initial failed dial reports unavailable");
 
-        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(3));
+        var recovery = client.ConnectAsync().AsTask();
+        var completed = await Task.WhenAny(recovery, Task.Delay(20));
+        Ensure(!ReferenceEquals(completed, recovery),
+            "repeated ConnectAsync must wait for recovery instead of replaying the initial dial failure");
+        await recovery.WaitAsync(TimeSpan.FromSeconds(3));
         Ensure(factory.ConnectCount >= 2, "same accepted topology must reconnect after the first dial fails");
         Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "recovered",
             "same-version dynamic topology recovers after its reconnect worker succeeds");

@@ -89,7 +89,7 @@ public class SharpLinkClientRetryTests
     public async Task ClientStopShouldCancelCustomRetryBackoffPromptly()
     {
         var transport = new TestClientTransportFactory();
-        var policy = new DelayingRetryPolicy(TimeSpan.FromSeconds(30));
+        var policy = new DelayingRetryPolicy(TimeSpan.MaxValue);
         await using var client = CreateRetryClient(transport, policy, maxAttempts: 2);
         await client.ConnectAsync();
 
@@ -254,7 +254,7 @@ public class SharpLinkClientRetryTests
     public async Task ClientStopShouldCancelRetryAdmissionDelayPromptly()
     {
         var transport = new TestClientTransportFactory();
-        var admission = new SignaledRejectWithRetryAfterPolicy(TimeSpan.FromSeconds(30));
+        var admission = new SignaledRejectWithRetryAfterPolicy(TimeSpan.MaxValue);
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),

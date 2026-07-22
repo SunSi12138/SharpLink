@@ -82,9 +82,11 @@ internal sealed partial class SharpLinkClient
                 if (ReadyConnectionCount != 0)
                     return ValueTask.CompletedTask;
                 _client.TransitionTo(SharpLinkConnectionState.Connecting);
-                if (_connectTask is null || ((_connectTask.IsFaulted || _connectTask.IsCanceled) && _resolverTask is null))
+                if (_connectTask is null ||
+                    ((_connectTask.IsFaulted || _connectTask.IsCanceled) && _resolverTask is null))
                     _connectTask = StartAsync(_client._shutdownCts.Token);
-                else if (_connectTask.IsCompletedSuccessfully && _current.Length != 0)
+                else if (_connectTask.IsFaulted || _connectTask.IsCanceled ||
+                         (_connectTask.IsCompletedSuccessfully && _current.Length != 0))
                     _connectTask = WaitForRecoveryAsync();
                 task = _connectTask;
             }

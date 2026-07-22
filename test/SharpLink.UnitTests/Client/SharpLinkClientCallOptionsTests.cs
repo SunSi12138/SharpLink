@@ -101,7 +101,7 @@ public class SharpLinkClientCallOptionsTests
     public async Task ClientStopShouldCancelWaitForReadyAdmissionDelayPromptly()
     {
         var transport = new TestClientTransportFactory();
-        var policy = new SignaledRejectWithDelayPolicy(TimeSpan.FromSeconds(30));
+        var policy = new SignaledRejectWithDelayPolicy(TimeSpan.MaxValue);
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
