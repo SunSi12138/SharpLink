@@ -232,6 +232,7 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
                     SharpLinkAssemblyRegistrationErrorCode.ContractConflict,
                     "Replacement assemblies must preserve the exact ContractId set within the same cluster.", newAssembly)));
             }
+
         }
 
         var operation = CompleteReplacementAsync(
@@ -391,32 +392,48 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
         ISharpLinkGeneratedAssemblyManifest newManifest,
         TimeSpan gracefulTimeout)
     {
-        var result = await slot.Client.ReplaceAssemblyAsync(
-            registration.Assembly, newAssembly, gracefulTimeout).ConfigureAwait(false);
-        if (!result.Succeeded)
-            return result;
+        var childOperation = slot.Client.ReplaceAssemblyAsync(
+            registration.Assembly, newAssembly, gracefulTimeout);
 
+        if (childOperation.IsCompleted)
+        {
+            var completedResult = await childOperation.ConfigureAwait(false);
+            if (completedResult.Succeeded)
+                PublishReplacement(registration, newAssembly, newManifest);
+            return completedResult;
+        }
+
+        // SharpLinkClient publishes the replacement before returning its pending drain operation.
+        // Keep the coordinator route in the same state while old calls drain.
+        PublishReplacement(registration, newAssembly, newManifest);
+        return await childOperation.ConfigureAwait(false);
+    }
+
+    private void PublishReplacement(
+        DynamicAssemblyRegistration registration,
+        Assembly newAssembly,
+        ISharpLinkGeneratedAssemblyManifest newManifest)
+    {
         lock (_gate)
         {
             // A successful child replacement may race coordinator shutdown. StopAsync owns the
             // child cleanup in that case; do not republish routes or retain the new assembly.
             var state = (SharpLinkMultiClusterState)_state;
             if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped)
-                return result;
+                return;
 
             _dynamicRegistrations.Remove(registration);
-            _dynamicRegistrations.Add(new DynamicAssemblyRegistration(slot, newAssembly, newManifest));
+            _dynamicRegistrations.Add(new DynamicAssemblyRegistration(registration.Slot, newAssembly, newManifest));
             var nextRoutes = Volatile.Read(ref _routes).ToDictionary(static pair => pair.Key, static pair => pair.Value);
             foreach (var contract in registration.Manifest.Contracts)
                 nextRoutes.Remove(contract.ContractType);
             foreach (var contract in newManifest.Contracts)
             {
                 nextRoutes[contract.ContractType] = new SharpLinkClusterRouteRegistration(
-                    contract.ContractType, contract.ContractId, contract.Fingerprint, slot, newAssembly);
+                    contract.ContractType, contract.ContractId, contract.Fingerprint, registration.Slot, newAssembly);
             }
             Volatile.Write(ref _routes, nextRoutes.ToFrozenDictionary());
         }
-        return result;
     }
 
     private static bool IsDynamicAssemblyStillRegistered(SharpLinkClusterSlot slot, Assembly assembly)

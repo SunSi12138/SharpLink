@@ -7,6 +7,7 @@ public class SharpClientBuilder
     
     private IClientTransportFactory? _transport;
     private IEnumerable<SharpLinkEndpoint>? _endpoints;
+    private bool _singleStaticEndpointConfigured;
     private SharpLinkEndpointTransportFactory? _endpointTransportFactory;
     private ISharpLinkEndpointResolver? _endpointResolver;
     private SharpLinkEndpointTransportFactory? _resolverTransportFactory;
@@ -185,6 +186,7 @@ public class SharpClientBuilder
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(transportFactory);
         _endpoints = [endpoint];
+        _singleStaticEndpointConfigured = true;
         _endpointTransportFactory = transportFactory;
         return this;
     }
@@ -197,6 +199,7 @@ public class SharpClientBuilder
         SharpLinkEndpointTransportFactory transportFactory)
     {
         _endpoints = endpoints ?? throw new ArgumentNullException(nameof(endpoints));
+        _singleStaticEndpointConfigured = false;
         _endpointTransportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
         return this;
     }
@@ -341,7 +344,10 @@ public class SharpClientBuilder
             return _cluster.MaxConnections;
         if (_endpoints is not null)
         {
-            // A static topology can be either a fixed endpoint or a cluster. Reserve the larger
+            if (_singleStaticEndpointConfigured)
+                return GetFixedConnectionBudget();
+
+            // A static collection can be either a fixed endpoint or a cluster. Reserve the larger
             // valid budget before building so a one-shot endpoint enumerable is never consumed twice.
             return Math.Max(_cluster.MaxConnections, GetFixedConnectionBudget());
         }

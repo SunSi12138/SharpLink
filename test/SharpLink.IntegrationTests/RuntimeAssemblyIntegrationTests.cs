@@ -169,7 +169,7 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task MultiClusterCancelledReplacementShouldPublishCoordinatorRoutesAfterDrain()
+    public async Task MultiClusterReplacementShouldPublishCoordinatorRoutesBeforeOldDrainAndAfterCallerCancellation()
     {
         await using var harness = await DynamicHarness.CreateAsync();
         await using var client = await CreateDynamicMultiClusterClientAsync(harness.Port);
@@ -191,6 +191,13 @@ public sealed class RuntimeAssemblyIntegrationTests
             newPlugin.ContractAssembly,
             TimeSpan.FromSeconds(2),
             cancellation.Token).AsTask();
+
+        var newProxy = GetMultiClusterProxy(client, newPlugin.ContractType)
+            ?? throw new InvalidOperationException("Multi-cluster replacement proxy factory returned null.");
+        Ensure(await InvokeValueTaskAsync<int>(
+                newProxy, newPlugin.ContractType, "UnaryAsync", 1, CancellationToken.None) == 2,
+            "replacement routes should publish while the old call is draining");
+
         cancellation.Cancel();
         await EnsureCancelledAsync(replacement, "multi-cluster replacement wait");
 

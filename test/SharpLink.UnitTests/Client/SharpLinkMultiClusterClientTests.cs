@@ -85,6 +85,26 @@ public sealed class SharpLinkMultiClusterClientTests
     }
 
     [Test]
+    public async Task SingleEndpointSlotsShouldUseTheirFixedConnectionBudget()
+    {
+        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
+        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .Configure(options => options.MaxTotalConfiguredConnections = 2)
+            .AddCluster("orders", child => child.UseEndpoint(
+                Endpoint("orders", 5001),
+                static _ => new TestClientTransportFactory()))
+            .AddCluster("plugins", child => child.UseEndpoint(
+                Endpoint("plugins", 5002),
+                static _ => new TestClientTransportFactory()),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+
+        Ensure(client.GetClusterState("orders") == SharpLinkConnectionState.Created,
+            "single-endpoint slots fit their configured fixed-client budget");
+    }
+
+    [Test]
     public async Task StopDuringInitialConnectShouldRemainStoppedAfterSharedConnectFaults()
     {
         SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
@@ -122,6 +142,13 @@ public sealed class SharpLinkMultiClusterClientTests
         if (!condition)
             throw new Exception(message);
     }
+
+    private static SharpLinkEndpoint Endpoint(string id, int port)
+        => new()
+        {
+            Id = id,
+            Address = new SharpLinkTcpAddress("127.0.0.1", port)
+        };
 
     private interface IOrdersContract : IService;
     private interface IUnroutedContract : IService;
