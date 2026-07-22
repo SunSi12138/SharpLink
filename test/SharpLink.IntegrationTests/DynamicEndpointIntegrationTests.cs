@@ -449,6 +449,86 @@ public sealed class DynamicEndpointIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task InitialDynamicConnectShouldCompleteWhenAReplacementTopologyBecomesReady()
+    {
+        await using var replacement = await TcpServerScope.StartAsync("replacement");
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("blocked", 1, "red")]));
+        var blocking = new BlockingConnectFactory();
+        var sockets = SharpLinkTransportFactories.Sockets();
+        var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpointResolver(resolver, endpoint => endpoint.Id == "blocked" ? blocking : sockets(endpoint))
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 1;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        try
+        {
+            var initial = client.ConnectAsync().AsTask();
+            await blocking.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+            resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("replacement", replacement.Port, "green")]));
+
+            await initial.WaitAsync(TimeSpan.FromSeconds(3));
+            Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "replacement",
+                "initial ConnectAsync must observe a ready replacement instead of waiting for a retired dial");
+        }
+        finally
+        {
+            blocking.Release();
+            await client.DisposeAsync();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RetiredDynamicDialsShouldContinueToConsumeTheConnectionBudget()
+    {
+        await using var replacement = await TcpServerScope.StartAsync("replacement");
+        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(1, [Endpoint("blocked", 1, "red")]));
+        var blocking = new BlockingConnectFactory();
+        var sockets = SharpLinkTransportFactories.Sockets();
+        var replacementFactory = new CountingConnectFactory(sockets(Endpoint("replacement", replacement.Port, "green")));
+        var client = SharpClientBuilder.Create()
+            .UseSerializer(MemoryPackCodec.Resolver)
+            .UseEndpointResolver(resolver, endpoint => endpoint.Id == "blocked" ? blocking : replacementFactory)
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 1;
+                options.MaxConnections = 1;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        try
+        {
+            var initial = client.ConnectAsync().AsTask();
+            await blocking.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+            resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("replacement", replacement.Port, "green")]));
+            await Task.Delay(100);
+
+            Ensure(replacementFactory.ConnectCount == 0,
+                "a retired in-flight dial must keep the sole connection budget reserved");
+
+            blocking.Release();
+            var initialFailure = await CaptureSharpLinkException(initial);
+            Ensure(initialFailure.Code == SharpLinkErrorCode.Unavailable, "retired initial dial failure result");
+            await WaitUntilAsync(
+                () => replacementFactory.ConnectCount == 1 && ((SharpLinkClient)client).ReadyConnectionCount == 1,
+                TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            blocking.Release();
+            await client.DisposeAsync();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task ConnectAfterDynamicClusterDisconnectShouldAwaitRecovery()
     {
         await using var first = await TcpServerScope.StartAsync("first");
@@ -757,6 +837,21 @@ public sealed class DynamicEndpointIntegrationTests
             _entered.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
             throw new UnreachableException();
+        }
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
+    private sealed class CountingConnectFactory(IClientTransportFactory inner) : IClientTransportFactory
+    {
+        private int _connectCount;
+
+        public int ConnectCount => Volatile.Read(ref _connectCount);
+
+        public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _connectCount);
+            return await inner.ConnectAsync(cancellationToken).ConfigureAwait(false);
         }
 
         public ValueTask DisposeAsync() => inner.DisposeAsync();

@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Threading;
 using SharpLink.Client;
 
@@ -181,6 +182,48 @@ public class SharpLinkClientLifecycleStateTests
         await ObserveFailureAsync(firstCall1.AsValueTask());
         await ObserveFailureAsync(firstCall2.AsValueTask());
         await ObserveFailureAsync(secondCall.AsValueTask());
+    }
+
+    [Test]
+    public async Task ClusterSelectionShouldFallBackFromAStalePooledConnection()
+    {
+        await using var owner = new SharpLinkClient(
+            new TestClientTransportFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        var context = new SharpLinkRuntimeContextBuilder().Build();
+        await using var stale = new ClientConnection(
+            owner,
+            new RpcSession(new TestTransportConnection()),
+            new CancellationTokenSource(),
+            8,
+            context.Codecs);
+        await using var ready = new ClientConnection(
+            owner,
+            new RpcSession(new TestTransportConnection()),
+            new CancellationTokenSource(),
+            8,
+            context.Codecs);
+        stale.Session.NotifyConnected();
+        ready.Session.NotifyConnected();
+        Ensure(ready.TryBeginUntrackedCall(), "ready connection active-call setup");
+        stale.MarkDraining();
+
+        try
+        {
+            Ensure(ReferenceEquals(
+                    SelectClusterConnection("StaticClusterRuntime", 0, stale, ready),
+                    ready),
+                "static cluster should fall back to an accepting pooled connection");
+            Ensure(ReferenceEquals(
+                    SelectClusterConnection("DynamicClusterRuntime", 0L, stale, ready),
+                    ready),
+                "dynamic cluster should fall back to an accepting pooled connection");
+        }
+        finally
+        {
+            ready.EndUntrackedCall();
+        }
     }
 
     [Test]
@@ -388,5 +431,48 @@ public class SharpLinkClientLifecycleStateTests
             for (var index = 0; index < connections.Length; index++)
                 await connections[index].DisposeAsync();
         }
+    }
+
+    private static ClientConnection? SelectClusterConnection(
+        string runtimeName,
+        object stateIndex,
+        ClientConnection stale,
+        ClientConnection ready)
+    {
+        var flags = BindingFlags.NonPublic | BindingFlags.Public;
+        var runtimeType = typeof(SharpLinkClient).GetNestedType(runtimeName, BindingFlags.NonPublic)
+            ?? throw new Exception($"cannot find {runtimeName}");
+        var endpointType = runtimeType.GetNestedType("EndpointState", flags)
+            ?? throw new Exception($"cannot find {runtimeName}.EndpointState");
+        var configuration = new StaticEndpointConfiguration(
+            new SharpLinkEndpoint
+            {
+                Id = "selection",
+                Address = new SharpLinkTcpAddress("127.0.0.1", 5001)
+            },
+            new NonConnectingFactory());
+        var endpoint = Activator.CreateInstance(
+            endpointType,
+            BindingFlags.Instance | flags,
+            binder: null,
+            args: [configuration, stateIndex],
+            culture: null)
+            ?? throw new Exception($"cannot create {runtimeName}.EndpointState");
+        var readyConnections = endpointType.GetField("_readyConnections", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception($"cannot find {runtimeName} ready connection field");
+        readyConnections.SetValue(endpoint, new[] { stale, ready });
+        var selectConnection = runtimeType.GetMethod(
+            "SelectConnection",
+            BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new Exception($"cannot find {runtimeName} selection method");
+        return (ClientConnection?)selectConnection.Invoke(null, [endpoint]);
+    }
+
+    private sealed class NonConnectingFactory : IClientTransportFactory
+    {
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

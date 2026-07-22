@@ -530,7 +530,18 @@ public class SharpClientBuilder
     {
         var transport = factory(endpoint) ?? throw new InvalidOperationException("Endpoint transport factory returned null.");
         if (transport is IPerformanceProfileAwareTransport profileAware)
-            profileAware.BindPerformanceProfile(runtimeContext.Options.PerformanceProfile);
+        {
+            try
+            {
+                profileAware.BindPerformanceProfile(runtimeContext.Options.PerformanceProfile);
+            }
+            catch
+            {
+                try { transport.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+                catch { }
+                throw;
+            }
+        }
         return transport;
     }
 

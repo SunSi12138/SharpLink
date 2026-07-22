@@ -746,7 +746,12 @@ internal sealed partial class SharpLinkClient
             if (second >= first)
                 second++;
             var selected = SelectLeastLoaded(connections, first, second);
-            return selected.CanAcceptCalls ? selected : null;
+            if (selected.CanAcceptCalls)
+                return selected;
+            for (var index = 0; index < connections.Length; index++)
+                if (connections[index].CanAcceptCalls)
+                    return connections[index];
+            return null;
         }
 
         private EndpointState? FindEndpointLocked(ClientConnection connection)

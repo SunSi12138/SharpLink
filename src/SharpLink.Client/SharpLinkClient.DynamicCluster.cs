@@ -569,10 +569,27 @@ internal sealed partial class SharpLinkClient
                     var remaining = new List<Task<Exception?>>(tasks);
                     while (remaining.Count != 0)
                     {
-                        var completed = await Task.WhenAny(remaining).ConfigureAwait(false);
-                        remaining.Remove(completed);
-                        lastFailure ??= await completed.ConfigureAwait(false);
-                        if (ReadyConnectionCount != 0)
+                        if (cancellationToken.IsCancellationRequested || _client._shutdownCts.IsCancellationRequested)
+                        {
+                            throw new OperationCanceledException(
+                                cancellationToken.IsCancellationRequested ? cancellationToken : _client._shutdownCts.Token);
+                        }
+                        if (ReadyConnectionCount != 0 || HasAcceptedEmptyTopology())
+                        {
+                            EnsureMinimumReadyEndpoints();
+                            return;
+                        }
+
+                        var readySignal = Volatile.Read(ref _client._readySignal).Task;
+                        var nextDial = Task.WhenAny(remaining);
+                        var completed = await Task.WhenAny(nextDial, readySignal).ConfigureAwait(false);
+                        if (ReferenceEquals(completed, readySignal))
+                            continue;
+
+                        var dial = await nextDial.ConfigureAwait(false);
+                        remaining.Remove(dial);
+                        lastFailure ??= await dial.ConfigureAwait(false);
+                        if (ReadyConnectionCount != 0 || HasAcceptedEmptyTopology())
                         {
                             EnsureMinimumReadyEndpoints();
                             return;
@@ -1043,7 +1060,12 @@ internal sealed partial class SharpLinkClient
             if (second >= first)
                 second++;
             var selected = SelectLeastLoaded(connections, first, second);
-            return selected.CanAcceptCalls ? selected : null;
+            if (selected.CanAcceptCalls)
+                return selected;
+            for (var index = 0; index < connections.Length; index++)
+                if (connections[index].CanAcceptCalls)
+                    return connections[index];
+            return null;
         }
 
         private EndpointState? FindEndpointLocked(ClientConnection connection)
@@ -1071,8 +1093,8 @@ internal sealed partial class SharpLinkClient
         private int TotalActiveConnectionsLocked()
         {
             var count = 0;
-            for (var index = 0; index < _current.Length; index++)
-                count += _current[index].NonRetiringConnectionCount + _current[index].ConnectingCount;
+            for (var index = 0; index < _allStates.Count; index++)
+                count += _allStates[index].NonRetiringConnectionCount + _allStates[index].ConnectingCount;
             return count;
         }
 

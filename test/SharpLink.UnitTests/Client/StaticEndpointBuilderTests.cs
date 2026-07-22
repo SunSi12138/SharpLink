@@ -98,6 +98,20 @@ public class StaticEndpointBuilderTests
     }
 
     [Test]
+    public async Task EndpointFactoryShouldBeDisposedWhenProfileBindingFails()
+    {
+        var factory = new ProfileBindingFailureFactory();
+        await EnsureThrows<InvalidOperationException>(() =>
+        {
+            _ = SharpClientBuilder.Create()
+                .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => factory)
+                .Build();
+            return Task.CompletedTask;
+        });
+        Ensure(factory.DisposeCount == 1, "profile binding failure must release the newly created factory");
+    }
+
+    [Test]
     public async Task StaticClusterShouldOwnEveryFactoryExactlyOnce()
     {
         var first = new TrackingFactory();
@@ -323,6 +337,25 @@ public class StaticEndpointBuilderTests
             Interlocked.Increment(ref _disposeCount);
             if (throwOnDispose)
                 return ValueTask.FromException(new InvalidOperationException("test disposal failure"));
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class ProfileBindingFailureFactory : IClientTransportFactory, IPerformanceProfileAwareTransport
+    {
+        private int _disposeCount;
+
+        public int DisposeCount => Volatile.Read(ref _disposeCount);
+
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
+
+        public void BindPerformanceProfile(SharpLinkPerformanceProfile profile)
+            => throw new InvalidOperationException("test profile binding failure");
+
+        public ValueTask DisposeAsync()
+        {
+            Interlocked.Increment(ref _disposeCount);
             return ValueTask.CompletedTask;
         }
     }
