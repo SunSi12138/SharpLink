@@ -6,10 +6,14 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Abstractions;
+using SharpLink.AotContracts;
 using SharpLink.Client;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
 using SharpLink.Server;
+
+[assembly: SharpLinkClusterContractAssembly("orders", typeof(SharpLink.AotSmoke.IAotService))]
+[assembly: SharpLinkClusterContractAssembly("payments", typeof(ISecondAotService))]
 
 namespace SharpLink.AotSmoke;
 
@@ -97,6 +101,8 @@ public static class Program
         try
         {
             await VerifyClientAsync(client, runToken).ConfigureAwait(false);
+            await using var multiClusterClient = CreateMultiClusterClient(useSharedMemory, sharedMemoryName, port);
+            await VerifyMultiClusterClientAsync(multiClusterClient, runToken).ConfigureAwait(false);
 
             Console.WriteLine($"AOT_SMOKE_PASS transport={(useSharedMemory ? "sharedmemory" : "tcp")}");
             return 0;
@@ -202,6 +208,52 @@ public static class Program
             throw new Exception("unexpected pair result");
     }
 
+    private static ISharpLinkMultiClusterClient CreateMultiClusterClient(
+        bool useSharedMemory,
+        string sharedMemoryName,
+        int port)
+        => SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster(
+                "orders",
+                child => ConfigureClientTransport(child, useSharedMemory, sharedMemoryName, port),
+                slot => slot.AllowDynamicContracts = true)
+            .AddCluster("payments", child => ConfigureClientTransport(child, useSharedMemory, sharedMemoryName, port))
+            .Build();
+
+    private static void ConfigureClientTransport(
+        SharpClientBuilder builder,
+        bool useSharedMemory,
+        string sharedMemoryName,
+        int port)
+    {
+        builder.UseRuntime(ConfigureCompression);
+        if (useSharedMemory)
+            builder.UseSharedMemory(sharedMemoryName);
+        else
+            builder.UseTcp(IPAddress.Loopback.ToString(), port);
+    }
+
+    private static async Task VerifyMultiClusterClientAsync(
+        ISharpLinkMultiClusterClient client,
+        CancellationToken cancellationToken)
+    {
+        VerifyRuntimeAssemblyBoundary(client);
+        await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
+
+        var ordersHealth = await client.CheckHealthAsync("orders", cancellationToken).ConfigureAwait(false);
+        var paymentsHealth = await client.CheckHealthAsync("payments", cancellationToken).ConfigureAwait(false);
+        if (ordersHealth.Status != SharpLinkHealthStatus.Ready || paymentsHealth.Status != SharpLinkHealthStatus.Ready)
+            throw new Exception("static multi-cluster health did not reach Ready");
+
+        var orders = client.Get<IAotService>();
+        if (await orders.PingAsync().ConfigureAwait(false) != "pong")
+            throw new Exception("unexpected orders multi-cluster result");
+
+        var payments = client.Get<ISecondAotService>();
+        if (await payments.MultiplyAsync(21).ConfigureAwait(false) != 42)
+            throw new Exception("unexpected payments multi-cluster result");
+    }
+
     private static void VerifyRuntimeAssemblyBoundary(ISharpLinkClient client)
     {
         if (RuntimeFeature.IsDynamicCodeSupported)
@@ -209,6 +261,15 @@ public static class Program
         var result = client.RegisterAssembly(typeof(Program).Assembly);
         if (result.Succeeded || result.Error?.Code != SharpLinkAssemblyRegistrationErrorCode.PlatformNotSupported)
             throw new Exception($"unexpected NativeAOT client registration result: {result.Error}");
+    }
+
+    private static void VerifyRuntimeAssemblyBoundary(ISharpLinkMultiClusterClient client)
+    {
+        if (RuntimeFeature.IsDynamicCodeSupported)
+            return;
+        var result = client.RegisterAssembly("orders", typeof(Program).Assembly);
+        if (result.Succeeded || result.Error?.Code != SharpLinkAssemblyRegistrationErrorCode.PlatformNotSupported)
+            throw new Exception($"unexpected NativeAOT multi-cluster registration result: {result.Error}");
     }
 
     private static void VerifyRuntimeAssemblyBoundary(ISharpLinkServer server)
@@ -270,6 +331,12 @@ public class AotService : IAotService
         FinalCall.TrySetResult(true);
         return ValueTask.FromResult(value with { Number = value.Number * 2, Text = value.Text + "-ok" });
     }
+}
+
+[RpcService]
+public sealed class SecondAotService : ISecondAotService
+{
+    public ValueTask<int> MultiplyAsync(int value) => ValueTask.FromResult(value * 2);
 }
 
 public sealed class UserProfile

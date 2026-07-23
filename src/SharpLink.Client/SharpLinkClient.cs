@@ -3,15 +3,16 @@ using System.Reflection;
 
 namespace SharpLink.Client;
 
-internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
+internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, IDynamicAssemblyRegistrationInspector
 {
     private readonly IClientTransportFactory transportFactory;
     private readonly IEndpointClusterRuntime? _cluster;
     // Retained for endpoint-aware diagnostics without routing fixed calls through cluster selection.
     private readonly SharpLinkEndpoint? _fixedEndpoint;
-    private readonly SharpLinkRuntimeContext _runtimeContext = new SharpLinkRuntimeContextBuilder().Build();
-    private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests =
-        SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
+    // A filtered multi-cluster child supplies its own context after construction. Do not snapshot
+    // the process-wide manifest catalog before that context is applied.
+    private readonly SharpLinkRuntimeContext _runtimeContext = SharpLinkRuntimeContext.Default;
+    private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests;
     private FrozenDictionary<Type, ClientProxyRegistration> _proxies =
         FrozenDictionary<Type, ClientProxyRegistration>.Empty;
     private readonly Lock _registryGate = new();
@@ -61,9 +62,11 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
         SharpLinkEndpointTransportFactory? dynamicTransportFactory = null,
         SharpLinkRetryOptions? retryOptions = null,
         ISharpLinkRetryPolicy? retryPolicy = null,
-        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null)
+        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null,
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null)
     {
         this.transportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
+        _staticManifests = staticManifests ?? SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
         _fixedEndpoint = fixedEndpoint;
         _retryOptions = retryOptions;
         _retryPolicy = retryPolicy;
@@ -111,9 +114,10 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
         SharpLinkEndpointTransportFactory? dynamicTransportFactory = null,
         SharpLinkRetryOptions? retryOptions = null,
         ISharpLinkRetryPolicy? retryPolicy = null,
-        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null)
+        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null,
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null)
         : this(transportFactory, staticEndpoints, clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint,
-            dynamicResolver, dynamicTransportFactory, retryOptions, retryPolicy, endpointAdmissionPolicy)
+            dynamicResolver, dynamicTransportFactory, retryOptions, retryPolicy, endpointAdmissionPolicy, staticManifests)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatTimeout, TimeSpan.Zero);
@@ -129,7 +133,7 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
         _heartbeatInterval = heartbeatInterval;
         _heartbeatTimeout = heartbeatTimeout;
         _authenticator = authenticator;
-        _runtimeContext = runtimeContext ?? new SharpLinkRuntimeContextBuilder().Build();
+        _runtimeContext = runtimeContext ?? new SharpLinkRuntimeContextBuilder().Build(_staticManifests);
         _protocolOptions = (protocolOptions ?? _runtimeContext.Protocol).CloneValidated();
         _rpcSessionFlushOptions = rpcSessionFlushOptions;
         _connectionPoolOptions = (connectionPoolOptions ?? new SharpLinkConnectionPoolOptions()).CloneValidated();
@@ -158,11 +162,12 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient
         SharpLinkEndpointTransportFactory? dynamicTransportFactory = null,
         SharpLinkRetryOptions? retryOptions = null,
         ISharpLinkRetryPolicy? retryPolicy = null,
-        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null)
+        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null,
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null)
         : this(transportFactory, heartbeatInterval, heartbeatTimeout, requestTimeout, authenticator, protocolOptions,
             runtimeContext, rpcSessionFlushOptions, connectionPoolOptions, clientInterceptors, staticEndpoints,
             clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint, dynamicResolver, dynamicTransportFactory,
-            retryOptions, retryPolicy, endpointAdmissionPolicy)
+            retryOptions, retryPolicy, endpointAdmissionPolicy, staticManifests)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _logger = loggerFactory.CreateLogger<SharpLinkClient>();

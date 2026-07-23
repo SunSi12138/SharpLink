@@ -10,6 +10,8 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     private static TaskCompletionSource _blockRelease = NewSignal();
     private static TaskCompletionSource _synchronousBlockStarted = NewSignal();
     private static TaskCompletionSource _synchronousBlockRelease = NewSignal();
+    private static TaskCompletionSource _rejectResponseStarted = NewSignal();
+    private static TaskCompletionSource _rejectResponseRelease = NewSignal();
     private static int _created;
     private static int _disposed;
     private static int _notifications;
@@ -30,12 +32,16 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
 
     public static Task SynchronousBlockStarted => Volatile.Read(ref _synchronousBlockStarted).Task;
 
+    public static Task RejectResponseStarted => Volatile.Read(ref _rejectResponseStarted).Task;
+
     public static void Reset()
     {
         Volatile.Write(ref _blockStarted, NewSignal());
         Volatile.Write(ref _blockRelease, NewSignal());
         Volatile.Write(ref _synchronousBlockStarted, NewSignal());
         Volatile.Write(ref _synchronousBlockRelease, NewSignal());
+        Volatile.Write(ref _rejectResponseStarted, NewSignal());
+        Volatile.Write(ref _rejectResponseRelease, NewSignal());
         Volatile.Write(ref _created, 0);
         Volatile.Write(ref _disposed, 0);
         Volatile.Write(ref _notifications, 0);
@@ -45,6 +51,9 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
 
     public static void ReleaseSynchronousBlock()
         => Volatile.Read(ref _synchronousBlockRelease).TrySetResult();
+
+    public static void ReleaseRejectResponse()
+        => Volatile.Read(ref _rejectResponseRelease).TrySetResult();
 
     public ValueTask<int> UnaryAsync(int value, CancellationToken cancellationToken)
         => ValueTask.FromResult(value + 1);
@@ -65,13 +74,15 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         return sum;
     }
 
-    public ValueTask<int> RejectClientStreamAsync(
+    public async ValueTask<int> RejectClientStreamAsync(
         IAsyncEnumerable<int> values,
         CancellationToken cancellationToken)
     {
         _ = values;
         _ = cancellationToken;
-        return ValueTask.FromResult(-1);
+        Volatile.Read(ref _rejectResponseStarted).TrySetResult();
+        await Volatile.Read(ref _rejectResponseRelease).Task.ConfigureAwait(false);
+        return -1;
     }
 
     public async IAsyncEnumerable<int> ServerStreamAsync(

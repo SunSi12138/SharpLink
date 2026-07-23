@@ -128,6 +128,33 @@ public class StaticEndpointBuilderTests
     }
 
     [Test]
+    public async Task BuilderShouldTakeFreshEndpointSnapshotsAfterPreflightBuilds()
+    {
+        var endpoints = new List<SharpLinkEndpoint> { Endpoint("first", 5001) };
+        var createdEndpointIds = new List<string>();
+        var builder = SharpClientBuilder.Create()
+            .UseEndpoints(endpoints, endpoint =>
+            {
+                createdEndpointIds.Add(endpoint.Id);
+                return new TrackingFactory();
+            });
+
+        Ensure(builder.GetConfiguredMaximumConnections() == 1,
+            "one endpoint should reserve the fixed-client connection budget");
+        await using (var first = builder.Build())
+        {
+        }
+
+        endpoints[0] = Endpoint("second", 5002);
+        await using (var second = builder.Build())
+        {
+        }
+
+        Ensure(createdEndpointIds.SequenceEqual(["first", "second"]),
+            "a reused builder must take a fresh endpoint snapshot for each build");
+    }
+
+    [Test]
     public async Task ClusterBuildCleanupShouldReleaseEveryFactoryWhenOneDisposalFails()
     {
         var throwing = new TrackingFactory(throwOnDispose: true);

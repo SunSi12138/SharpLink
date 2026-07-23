@@ -39,3 +39,7 @@
  SHARPLINK035 | SharpLink.Compatibility | Error | Existing RPC contract was removed
  SHARPLINK036 | SharpLink.Generator | Error    | Contract Manifest output could not be written
  SHARPLINK037 | SharpLink.Compatibility | Error | Existing service route was removed
+ SHARPLINK038 | SharpLink.Generator | Error | Multi-cluster key is invalid
+ SHARPLINK039 | SharpLink.Generator | Error | Contract assembly has conflicting cluster routes
+ SHARPLINK040 | SharpLink.Generator | Error | Cluster route marker lacks generated manifest
+ SHARPLINK041 | SharpLink.Generator | Error | Multi-cluster route attribute is invalid

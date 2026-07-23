@@ -86,6 +86,47 @@ dotnet run --project demo/SeparatedClient/SeparatedClient.csproj
 [assembly: SharpLinkRpcContracts(typeof(MyContract1), typeof(MyContract2))]
 ```
 
+## Multi-cluster clients
+
+`SharpLinkMultiClusterClientBuilder` owns several isolated child clients. A contract is mapped to a
+single child while its proxy is created; RPC calls made through that proxy do not consult a
+coordinator, cluster name, or per-call routing context.
+
+Declare static contract-assembly routes in the application or host assembly, not in a reusable
+contract package:
+
+```csharp
+[assembly: SharpLinkClusterContractAssembly("orders", typeof(OrderContractsMarker))]
+[assembly: SharpLinkClusterContractAssembly("payments", typeof(PaymentContractsMarker))]
+```
+
+Configure each slot with the existing child builder API. The `UseCluster` method inside the delegate
+still configures endpoint topology for that one slot; it is not the multi-cluster coordinator API.
+
+```csharp
+var client = SharpLinkMultiClusterClientBuilder.Create()
+    .AddCluster("orders", child => child.UseTcp("127.0.0.1", 5101))
+    .AddCluster("payments", child => child.UseTcp("127.0.0.1", 5102))
+    .Build();
+
+await client.ConnectAsync();
+var orders = client.Get<IOrderService>();
+var payments = client.Get<IPaymentService>();
+```
+
+Every slot is required by default. A slot intentionally reserved for plugins must explicitly opt in:
+
+```csharp
+.AddCluster("plugins", child => child.UseTcp("127.0.0.1", 5103),
+    slot => slot.AllowDynamicContracts = true)
+```
+
+Dynamic contracts are registered against an explicit slot with
+`RegisterAssembly(cluster, assembly)`, `UnregisterAssemblyAsync(cluster, assembly, timeout)`, and
+`ReplaceAssemblyAsync(cluster, oldAssembly, newAssembly, timeout)`. There is no default cluster,
+per-call cluster override, cross-cluster retry, or cluster identifier on the wire. See
+`doc/architecture-0.7.10.md` and `doc/migration-0.7.10.md` for lifecycle and migration details.
+
 ## 契约 Manifest 与兼容性基线
 
 `SharpLink.Sdk` 包会把当前契约写到 `obj/<configuration>/<tfm>/SharpLink.Contracts.sharplink.json`。JSON 按 Contract、Method、DTO member、enum、union 与 Service route 的稳定 ID 排序，不包含时间戳或源码路径；`schemaFingerprint` 覆盖规范化后的完整内容，可直接作为 CI 构建产物保存。
