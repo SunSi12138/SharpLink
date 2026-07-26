@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.19] - 2026-07-27
+
+### Fixed
+
+- Server authentication now rejects contradictory provider results that claim success while carrying a concrete rejection or failure code.
+- Client and Server interceptors now receive single-use continuations, preventing duplicate or concurrent `next` calls from executing a non-idempotent RPC or service method more than once.
+- Faulted Client background tasks are now observed and logged after leaving the tracking set instead of silently disappearing before Stop can inspect them.
+- Generic Host Server Stop now preserves caller cancellation or Stop failure together with later readiness, token-owner, and Server disposal failures.
+- Endpoint polling and Client/Server heartbeat delays now slice timer-range-exceeding intervals; Server admission rejects queue delays beyond the portable timer range during configuration.
+
+### Compatibility and validation
+
+- Protocol v2 wire formats and generated Manifest versions are unchanged. Interceptor `next` delegates are now single-use and throw `InvalidOperationException` on a second call. Contradictory authenticated provider results are rejected, `MaxQueueDelay` above 2,147,483,647 ms is invalid, and Hosted Server Stop may return `AggregateException` when primary and cleanup failures differ.
+- Non-incremental Release build, Generator 83/83, Unit 436/436, Integration 230/230, seven-package pack, and fresh-cache package smoke passed.
+- The no-interceptor RPC path retained 320 B/op with overlapping latency ranges. One Client plus one Server interceptor intentionally adds 32 B per end-to-end call for two single-use continuation guards, while median latency remained in the same roughly 40–41 µs band.
+
 ## [0.8.18] - 2026-07-27
 
 ### Fixed

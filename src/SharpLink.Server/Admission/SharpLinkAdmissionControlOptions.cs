@@ -257,7 +257,10 @@ public sealed class SharpLinkAdmissionControlOptions
     public int MaxQueuedCalls { get; set; }
     /// <summary>Gets or sets the maximum total bytes retained by queued calls. Zero disables waiting.</summary>
     public long MaxQueuedBytes { get; set; }
-    /// <summary>Gets or sets the maximum time one call may remain queued. Zero disables waiting.</summary>
+    /// <summary>
+    /// Gets or sets the maximum time one call may remain queued, up to 2,147,483,647 milliseconds.
+    /// Zero disables waiting.
+    /// </summary>
     public TimeSpan MaxQueueDelay { get; set; }
     /// <summary>Gets or sets whether OneWay calls may wait instead of being dropped immediately.</summary>
     public bool QueueOneWayCalls { get; set; }
@@ -337,6 +340,7 @@ public sealed class SharpLinkAdmissionControlOptions
         ArgumentOutOfRangeException.ThrowIfNegative(MaxQueuedCalls);
         ArgumentOutOfRangeException.ThrowIfNegative(MaxQueuedBytes);
         ArgumentOutOfRangeException.ThrowIfLessThan(MaxQueueDelay, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(MaxQueueDelay, SharpLinkTimer.MaximumDelay);
         Global.Validate();
         foreach (var registration in _rules)
             registration.Rule.Validate();

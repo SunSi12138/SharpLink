@@ -67,8 +67,6 @@ internal sealed partial class SharpLinkClient
     {
         private readonly SharpLinkClient _client;
         private readonly SharpLinkClientInvocationContext _context;
-        private readonly SharpLinkClientInvocationDelegate _next;
-        private int _index;
         private long _started;
 
         protected ClientInterceptorState(
@@ -80,7 +78,6 @@ internal sealed partial class SharpLinkClient
         {
             _client = client;
             _context = new SharpLinkClientInvocationContext(method, request, options, cancellationToken);
-            _next = InvokeNextAsync;
         }
 
         protected SharpLinkClient Client => _client;
@@ -91,7 +88,7 @@ internal sealed partial class SharpLinkClient
             _started = Stopwatch.GetTimestamp();
             try
             {
-                var result = await InvokeNextAsync(_context).ConfigureAwait(false);
+                var result = await InvokeNextAsync(0, _context).ConfigureAwait(false);
                 if (_context.Status == SharpLinkInvocationStatus.Pending)
                     _context.Status = SharpLinkInvocationStatus.Succeeded;
                 return result;
@@ -119,12 +116,30 @@ internal sealed partial class SharpLinkClient
         }
 
         private ValueTask<SharpLinkClientInvocationResult> InvokeNextAsync(
+            int index,
             SharpLinkClientInvocationContext context)
         {
-            var index = _index++;
-            return index < _client._clientInterceptors.Length
-                ? _client._clientInterceptors[index].InvokeAsync(context, _next)
-                : InvokeTerminalTrackedAsync(context);
+            if (index >= _client._clientInterceptors.Length)
+                return InvokeTerminalTrackedAsync(context);
+
+            var continuation = new ClientInterceptorContinuation(this, index + 1);
+            return _client._clientInterceptors[index].InvokeAsync(context, continuation.InvokeAsync);
+        }
+
+        private sealed class ClientInterceptorContinuation(ClientInterceptorState owner, int nextIndex)
+        {
+            private int _invoked;
+
+            public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+                SharpLinkClientInvocationContext context)
+            {
+                if (Interlocked.Exchange(ref _invoked, 1) != 0)
+                {
+                    return ValueTask.FromException<SharpLinkClientInvocationResult>(
+                        new InvalidOperationException("An interceptor continuation can only be invoked once."));
+                }
+                return owner.InvokeNextAsync(nextIndex, context);
+            }
         }
 
         private async ValueTask<SharpLinkClientInvocationResult> InvokeTerminalTrackedAsync(

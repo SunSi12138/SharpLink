@@ -335,6 +335,14 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
                 var client = (SharpLinkClient)state!;
                 lock (client._backgroundTasksGate)
                     client._backgroundTasks.Remove(completedTask);
+
+                if (completedTask.Exception is { } exception)
+                {
+                    LogClientBackgroundLoopUnhandledException(
+                        client._logger,
+                        "BackgroundTask",
+                        exception.GetBaseException());
+                }
             },
             this,
             CancellationToken.None,

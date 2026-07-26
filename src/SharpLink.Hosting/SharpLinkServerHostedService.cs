@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace SharpLink.Hosting;
 
 internal sealed class SharpLinkServerHostedService(
@@ -83,7 +85,7 @@ internal sealed class SharpLinkServerHostedService(
         if (runCts is null)
             return;
 
-        OperationCanceledException? cancellationException = null;
+        List<Exception>? failures = null;
         try
         {
             if (_server is not null)
@@ -92,26 +94,44 @@ internal sealed class SharpLinkServerHostedService(
             if (_runTask is not null)
                 await _runTask.WaitAsync(cancellationToken);
         }
-        catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
+        catch (Exception exception)
         {
-            cancellationException = exception;
-            if (_server is SharpLinkServer sharpLinkServer)
-                sharpLinkServer.ForceStop();
-        }
-        finally
-        {
-            runCts.Dispose();
-            var server = Interlocked.Exchange(ref _server, null);
-            if (server is not null)
+            AddFailure(ref failures, exception);
+            if (exception is OperationCanceledException &&
+                cancellationToken.IsCancellationRequested &&
+                _server is SharpLinkServer sharpLinkServer)
             {
-                readiness.Clear(server);
-                await server.DisposeAsync().ConfigureAwait(false);
+                sharpLinkServer.ForceStop();
             }
-            _server = null;
-            _runTask = null;
         }
 
-        if (cancellationException is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cancellationException).Throw();
+        try { runCts.Dispose(); }
+        catch (Exception exception) { AddFailure(ref failures, exception); }
+        var server = Interlocked.Exchange(ref _server, null);
+        if (server is not null)
+        {
+            try { readiness.Clear(server); }
+            catch (Exception exception) { AddFailure(ref failures, exception); }
+            try { await server.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception exception) { AddFailure(ref failures, exception); }
+        }
+        _server = null;
+        _runTask = null;
+
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is { Count: > 1 })
+            throw new AggregateException(failures);
+    }
+
+    private static void AddFailure(ref List<Exception>? failures, Exception exception)
+    {
+        failures ??= [];
+        for (var index = 0; index < failures.Count; index++)
+        {
+            if (ReferenceEquals(failures[index], exception))
+                return;
+        }
+        failures.Add(exception);
     }
 }

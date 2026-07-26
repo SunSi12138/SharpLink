@@ -76,6 +76,37 @@ public class InterceptorIntegrationTests
     }
 
     [Test]
+    public async Task InterceptorContinuationShouldExecuteEachTerminalAtMostOnce()
+    {
+        InterceptorTestService.ResetInvocationCount();
+        Exception? clientFailure;
+        await using (var clientHarness = await InterceptorHarness.CreateAsync(
+                         clientInterceptor: new DoubleNextClientInterceptor()))
+        {
+            var service = clientHarness.Client.Get<IInterceptorTestService>();
+            clientFailure = await CaptureException(service.CountInvocationAsync().AsTask());
+        }
+        var clientInvocationCount = InterceptorTestService.InvocationCount;
+
+        InterceptorTestService.ResetInvocationCount();
+        Exception? serverFailure;
+        await using (var serverHarness = await InterceptorHarness.CreateAsync(
+                         serverInterceptor: new DoubleNextServerInterceptor()))
+        {
+            var service = serverHarness.Client.Get<IInterceptorTestService>();
+            serverFailure = await CaptureException(service.CountInvocationAsync().AsTask());
+        }
+        var serverInvocationCount = InterceptorTestService.InvocationCount;
+
+        Ensure(clientInvocationCount == 1 && serverInvocationCount == 1,
+            $"continuations must execute one terminal each; client={clientInvocationCount}, server={serverInvocationCount}");
+        Ensure(clientFailure is InvalidOperationException,
+            "duplicate client continuation should fail locally");
+        Ensure(serverFailure is SharpLinkException { Code: SharpLinkErrorCode.Internal },
+            "duplicate server continuation should return a structured internal failure");
+    }
+
+    [Test]
     public async Task DefaultExceptionMapperShouldHideServiceDetails()
     {
         await using var harness = await InterceptorHarness.CreateAsync();
@@ -135,6 +166,19 @@ public class InterceptorIntegrationTests
         }
     }
 
+    private static async Task<Exception?> CaptureException(Task task)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(3));
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
     private static int GetFreePort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -179,6 +223,18 @@ public class InterceptorIntegrationTests
             => ValueTask.FromResult(new SharpLinkClientInvocationResult(value));
     }
 
+    private sealed class DoubleNextClientInterceptor : ISharpLinkClientInterceptor
+    {
+        public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+        {
+            var result = await next(context).ConfigureAwait(false);
+            _ = await next(context).ConfigureAwait(false);
+            return result;
+        }
+    }
+
     private sealed class RecordingServerInterceptor : ISharpLinkServerInterceptor
     {
         public SharpLinkServerInvocationContext? Context { get; private set; }
@@ -202,6 +258,17 @@ public class InterceptorIntegrationTests
             => ValueTask.FromException(new SharpLinkException(
                 SharpLinkErrorCode.PermissionDenied,
                 "Rejected by policy."));
+    }
+
+    private sealed class DoubleNextServerInterceptor : ISharpLinkServerInterceptor
+    {
+        public async ValueTask InvokeAsync(
+            SharpLinkServerInvocationContext context,
+            SharpLinkServerInvocationDelegate next)
+        {
+            await next(context).ConfigureAwait(false);
+            await next(context).ConfigureAwait(false);
+        }
     }
 
     private sealed class DelayedFirstServerInterceptor : ISharpLinkServerInterceptor
@@ -311,12 +378,20 @@ public interface IInterceptorTestService : IService
     [NonCancellable]
     ValueTask<int> FailAsync();
     [NonCancellable]
+    ValueTask<int> CountInvocationAsync();
+    [NonCancellable]
     IAsyncEnumerable<int> FailStreamAsync();
 }
 
 [RpcService]
 public sealed class InterceptorTestService : IInterceptorTestService
 {
+    private static int _invocationCount;
+
+    public static int InvocationCount => Volatile.Read(ref _invocationCount);
+
+    public static void ResetInvocationCount() => Volatile.Write(ref _invocationCount, 0);
+
     public ValueTask<string> DescribeAsync(int value, SharpLinkCallOptions options)
     {
         var source = options.Metadata is { Count: > 0 } metadata
@@ -330,6 +405,9 @@ public sealed class InterceptorTestService : IInterceptorTestService
 
     public ValueTask<int> FailAsync()
         => throw new InvalidOperationException("secret-service-detail");
+
+    public ValueTask<int> CountInvocationAsync()
+        => ValueTask.FromResult(Interlocked.Increment(ref _invocationCount));
 
     public async IAsyncEnumerable<int> FailStreamAsync()
     {

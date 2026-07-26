@@ -295,7 +295,7 @@ internal sealed partial class SharpLinkServer
     {
         while (!ct.IsCancellationRequested)
         {
-            await Task.Delay(heartbeatCheckInterval,ct);
+            await SharpLinkTimer.DelayAsync(heartbeatCheckInterval, ct).ConfigureAwait(false);
             var now = DateTime.UtcNow;
             foreach (var (id, connection) in _connections)
             {
@@ -466,6 +466,12 @@ internal sealed partial class SharpLinkServer
                     rpcSession.LocalEndPoint,
                     rpcSession.RemoteEndPoint),
                 cancellationToken).ConfigureAwait(false);
+            if (result.IsAuthenticated && result.ErrorCode != SharpLinkErrorCode.Unknown)
+            {
+                return SharpLinkAuthenticationResult.Reject(
+                    SharpLinkErrorCode.AuthenticationRejected,
+                    "Authentication provider returned a contradictory result.");
+            }
             if (result.IsAuthenticated && result.Context?.IsExpired() == true)
             {
                 return SharpLinkAuthenticationResult.Reject(

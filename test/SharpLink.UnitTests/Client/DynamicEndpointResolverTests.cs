@@ -204,6 +204,40 @@ public sealed class DynamicEndpointResolverTests
     }
 
     [Test]
+    public async Task EndpointResolverPollingShouldSupportTimerRangeExceedingIntervals()
+    {
+        await using var @delegate = new DelegateSharpLinkEndpointResolver(
+            static _ => ValueTask.FromResult(new SharpLinkEndpointSnapshot(0, [])),
+            TimeSpan.MaxValue);
+        await using var dns = new SharpLinkDnsEndpointResolver(
+            "service.example",
+            5001,
+            new SharpLinkDnsResolverOptions
+            {
+                RefreshInterval = TimeSpan.MaxValue,
+                MinimumRefreshInterval = TimeSpan.FromMilliseconds(1),
+                MaximumRefreshInterval = TimeSpan.MaxValue,
+                JitterRatio = 0
+            },
+            new TestDnsQuery { Addresses = [IPAddress.Loopback] });
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await using var delegateWatch = @delegate.WatchAsync(cancellation.Token)
+            .GetAsyncEnumerator(cancellation.Token);
+        await using var dnsWatch = dns.WatchAsync(cancellation.Token)
+            .GetAsyncEnumerator(cancellation.Token);
+
+        var delegateMove = delegateWatch.MoveNextAsync().AsTask();
+        var dnsMove = dnsWatch.MoveNextAsync().AsTask();
+        var delegateFailure = await CaptureFailureAsync(delegateMove);
+        var dnsFailure = await CaptureFailureAsync(dnsMove);
+
+        Ensure(delegateFailure is OperationCanceledException,
+            $"long delegate polling should remain cancellable, not fail as {delegateFailure?.GetType().Name}");
+        Ensure(dnsFailure is OperationCanceledException,
+            $"long DNS polling should remain cancellable, not fail as {dnsFailure?.GetType().Name}");
+    }
+
+    [Test]
     public async Task DynamicBuilderShouldOwnResolverAndRejectFixedTransportConflict()
     {
         var resolver = new TrackingResolver();
@@ -278,6 +312,19 @@ public sealed class DynamicEndpointResolverTests
         }
         catch (TException)
         {
+        }
+    }
+
+    private static async Task<Exception?> CaptureFailureAsync(Task task)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
         }
     }
 
@@ -364,4 +411,5 @@ public sealed class DynamicEndpointResolverTests
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
+
 }

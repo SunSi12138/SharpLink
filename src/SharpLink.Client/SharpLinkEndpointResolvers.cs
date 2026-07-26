@@ -66,7 +66,7 @@ public sealed class DelegateSharpLinkEndpointResolver : ISharpLinkEndpointResolv
 
         while (true)
         {
-            await Task.Delay(_pollingInterval, linked.Token).ConfigureAwait(false);
+            await SharpLinkTimer.DelayAsync(_pollingInterval, linked.Token).ConfigureAwait(false);
             yield return await _resolve(linked.Token).ConfigureAwait(false);
         }
     }
@@ -242,7 +242,7 @@ public sealed class SharpLinkDnsEndpointResolver : ISharpLinkEndpointResolver
         using var linked = CreateOperationCancellation(cancellationToken);
         while (true)
         {
-            await Task.Delay(GetRefreshDelay(), linked.Token).ConfigureAwait(false);
+            await SharpLinkTimer.DelayAsync(GetRefreshDelay(), linked.Token).ConfigureAwait(false);
             SharpLinkEndpointSnapshot? published = null;
             try
             {

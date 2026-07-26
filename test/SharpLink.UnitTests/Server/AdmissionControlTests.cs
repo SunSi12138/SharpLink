@@ -20,6 +20,20 @@ public sealed class AdmissionControlTests
     }
 
     [Test]
+    public void QueueDelayBeyondThePortableTimerRangeShouldFailDuringValidation()
+    {
+        var options = new SharpLinkAdmissionControlOptions
+        {
+            MaxQueuedCalls = 1,
+            MaxQueuedBytes = 1024,
+            MaxQueueDelay = TimeSpan.MaxValue
+        };
+        options.Global.UseConcurrency(1);
+
+        EnsureThrows<ArgumentOutOfRangeException>(options.Validate);
+    }
+
+    [Test]
     public void RuleMustRejectMultipleRatePolicies()
     {
         var rule = new SharpLinkAdmissionRuleOptions();

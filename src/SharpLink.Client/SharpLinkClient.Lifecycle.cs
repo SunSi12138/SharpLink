@@ -583,7 +583,7 @@ internal sealed partial class SharpLinkClient
         while (!ct.IsCancellationRequested)
         {
             session.SendPingAsync();
-            await Task.Delay(_heartbeatInterval, ct);
+            await SharpLinkTimer.DelayAsync(_heartbeatInterval, ct).ConfigureAwait(false);
             var now = DateTime.UtcNow;
             if (now - session.LastActive <= _heartbeatTimeout && session.IsConnected)
                 continue;

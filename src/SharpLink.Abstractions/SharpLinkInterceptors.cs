@@ -63,7 +63,7 @@ public readonly record struct SharpLinkClientInvocationResult(object? Value)
     }
 }
 
-/// <summary>Continues a client interceptor pipeline.</summary>
+/// <summary>Continues a client interceptor pipeline. Each delegate instance may be invoked once.</summary>
 public delegate ValueTask<SharpLinkClientInvocationResult> SharpLinkClientInvocationDelegate(
     SharpLinkClientInvocationContext context);
 
@@ -120,7 +120,7 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
     public TimeSpan Elapsed { get; internal set; }
 }
 
-/// <summary>Continues a server interceptor pipeline.</summary>
+/// <summary>Continues a server interceptor pipeline. Each delegate instance may be invoked once.</summary>
 public delegate ValueTask SharpLinkServerInvocationDelegate(SharpLinkServerInvocationContext context);
 
 /// <summary>Intercepts a server call for authorization, limiting, auditing, or exception policy.</summary>

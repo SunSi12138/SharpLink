@@ -152,6 +152,36 @@ public class SharpLinkServerHostedServiceTests
     }
 
     [Test]
+    public async Task HostedStopShouldPreserveCancellationAndListenerCleanupFailure()
+    {
+        var transport = new DelayedFailingDisposeTransport();
+        var builder = SharpLinkServerBuilder.Create().UseTransport(transport);
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var hosted = new SharpLinkServerHostedService(
+            builder,
+            NullLoggerFactory.Instance,
+            provider,
+            new SharpLinkServerReadiness(),
+            new TestHostApplicationLifetime());
+        await hosted.StartAsync(CancellationToken.None);
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+
+        var stopTask = hosted.StopAsync(cancelled.Token);
+        await transport.DisposeStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        transport.ReleaseDispose();
+        var failure = await CaptureFailureAsync(stopTask);
+
+        var failures = failure is AggregateException aggregate
+            ? aggregate.Flatten().InnerExceptions
+            : failure is null ? [] : [failure];
+        Ensure(failures.Any(static exception => exception is OperationCanceledException),
+            "Hosted Stop must preserve caller cancellation");
+        Ensure(failures.Any(static exception => exception is IOException { Message: "listener cleanup failed" }),
+            "Hosted Stop must preserve later listener cleanup failure");
+    }
+
+    [Test]
     [NotInParallel]
     public async Task ServerStopShouldReturnFaultedWhenFrameworkCleanupExceedsBudget()
     {
@@ -250,6 +280,32 @@ public class SharpLinkServerHostedServiceTests
         {
             DisposeStarted.TrySetResult();
             return new(_disposeRelease.Task);
+        }
+
+        public void ReleaseDispose() => _disposeRelease.TrySetResult(true);
+    }
+
+    private sealed class DelayedFailingDisposeTransport : IServerTransportListener
+    {
+        private readonly TaskCompletionSource<bool> _disposeRelease =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource DisposeStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public System.Net.EndPoint? LocalEndPoint => null;
+
+        public async ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("unreachable");
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            DisposeStarted.TrySetResult();
+            await _disposeRelease.Task;
+            throw new IOException("listener cleanup failed");
         }
 
         public void ReleaseDispose() => _disposeRelease.TrySetResult(true);
