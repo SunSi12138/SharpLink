@@ -19,8 +19,16 @@ internal sealed class SharpLinkClientHostedService(
         catch (Exception ex)
         {
             accessor.Fail(ex);
-            await DisposeAsync();
-            throw;
+            try
+            {
+                await DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception cleanupException)
+            {
+                throw new AggregateException(ex, cleanupException);
+            }
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex).Throw();
+            throw new System.Diagnostics.UnreachableException();
         }
     }
 

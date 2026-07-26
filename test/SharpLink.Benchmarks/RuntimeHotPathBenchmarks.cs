@@ -154,6 +154,33 @@ public class RuntimeHotPathBenchmarks
 
 [MemoryDiagnoser]
 [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+public class MetadataAllocationBenchmarks
+{
+    private ReadOnlySequence<byte> _payload;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        using var writer = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteMetadata(writer, new SharpLinkMetadata(
+            new KeyValuePair<string, string>("tenant", "factory-a"),
+            new KeyValuePair<string, string>("trace", "42")));
+        _payload = new ReadOnlySequence<byte>(writer.WrittenMemory.ToArray());
+    }
+
+    [Benchmark]
+    public SharpLinkMetadata ConstructTwoEntries()
+        => new(
+            new KeyValuePair<string, string>("tenant", "factory-a"),
+            new KeyValuePair<string, string>("trace", "42"));
+
+    [Benchmark]
+    public SharpLinkMetadata DecodeTwoEntries()
+        => ProtocolV2PayloadCodec.ReadMetadata(_payload);
+}
+
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
 public class FlowControlHotPathBenchmarks
 {
     private StreamFlowController _flowController = null!;

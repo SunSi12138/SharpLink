@@ -1,5 +1,7 @@
 using System.Threading;
 using System.Reflection;
+using Microsoft.Extensions.Logging.Abstractions;
+using SharpLink.Client;
 using SharpLink.Hosting;
 using SharpLink.Sdk;
 
@@ -52,6 +54,47 @@ public class SharpLinkClientAccessorTests
         }
     }
 
+    [Test]
+    public async Task HostedStartShouldPreserveConnectAndCleanupFailures()
+    {
+        var service = new SharpLinkClientHostedService(
+            SharpClientBuilder.Create().UseTransport(new ThrowingLifecycleTransportFactory()),
+            new SharpLinkClientAccessor(),
+            NullLoggerFactory.Instance);
+
+        Exception failure;
+        try
+        {
+            await service.StartAsync(CancellationToken.None);
+            throw new Exception("expected hosted client start failure");
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Ensure(ContainsMessage(failure, "hosted connect failed"),
+            "hosted start must retain its primary connect failure");
+        Ensure(ContainsMessage(failure, "hosted cleanup failed"),
+            "hosted start must retain its cleanup failure");
+    }
+
+    private static bool ContainsMessage(Exception exception, string message)
+    {
+        if (exception.Message == message)
+            return true;
+        if (exception is AggregateException aggregate)
+        {
+            foreach (var inner in aggregate.InnerExceptions)
+            {
+                if (ContainsMessage(inner, message))
+                    return true;
+            }
+            return false;
+        }
+        return exception.InnerException is { } nested && ContainsMessage(nested, message);
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
@@ -94,5 +137,15 @@ public class SharpLinkClientAccessorTests
                 Succeeded = true,
                 ReferencesReleased = true
             });
+    }
+
+    private sealed class ThrowingLifecycleTransportFactory : IClientTransportFactory
+    {
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(
+                new InvalidOperationException("hosted connect failed"));
+
+        public ValueTask DisposeAsync()
+            => ValueTask.FromException(new InvalidOperationException("hosted cleanup failed"));
     }
 }

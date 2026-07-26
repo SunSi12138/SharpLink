@@ -412,7 +412,7 @@ public static class ProtocolV2PayloadCodec
         }
         if (reader.Remaining != 0)
             throw ProtocolV2FrameParser.Violation("Request metadata has trailing bytes.");
-        return new SharpLinkMetadata(entries);
+        return SharpLinkMetadata.FromValidatedEntries(entries);
     }
 
     internal static void WriteVarUInt32(IBufferWriter<byte> writer, uint value)

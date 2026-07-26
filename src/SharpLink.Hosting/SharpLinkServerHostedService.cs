@@ -25,17 +25,22 @@ internal sealed class SharpLinkServerHostedService(
         {
             await _runTask.ConfigureAwait(false);
         }
-        catch
+        catch (Exception runException)
         {
+            var failures = new System.Collections.Generic.List<Exception> { runException };
             var server = Interlocked.Exchange(ref _server, null);
             if (server is not null)
             {
                 readiness.Clear(server);
-                await server.DisposeAsync().ConfigureAwait(false);
+                try { await server.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception cleanupException) { failures.Add(cleanupException); }
             }
-            _runCts.Dispose();
+            try { _runCts.Dispose(); }
+            catch (Exception cleanupException) { failures.Add(cleanupException); }
             _runCts = null;
-            throw;
+            if (failures.Count == 1)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(runException).Throw();
+            throw new AggregateException(failures);
         }
     }
 

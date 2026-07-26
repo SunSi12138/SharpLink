@@ -48,6 +48,7 @@
 - `0.8.0`（已完成）：深度审核第一批五项 P2 修复——Codec 精确消费与规范标记、跨 stream connection credit、继承契约方法、unmanaged Adapter 请求布局；保留回归与性能实证。
 - `0.8.1`（已完成）：冻结认证/拓扑/生成 Manifest 集合，收敛 Resolver 异步释放，恢复语义值 Codec 校验，并删除 `List<T>` 解码的中间数组。
 - `0.8.2`（已完成）：隔离共享连接等待取消，统一 endpoint-cluster 握手超时，收窄 DNS last-good，并拒绝非规范长度与非法 UTF-8 错误帧。
+- `0.8.3`（已完成）：深冻结 endpoint snapshot，异步化 shutdown cancellation，保留连接/Hosting 主失败，并消除 metadata 解码二次数组。
 - `0.8.x`（进行中）：每累计五项 P2 及以上实证改进推进一个小版本；其他低风险改进随批次合入但不单独推进版本。连续三轮审计无新改进点后结束。
 - `0.8.x-rc`：上述审核收敛后执行 Chaos、长稳、跨平台/AOT/Package/性能 Release Gate，只修复正确性、稳定性、性能回退和文档问题。
 - `1.0.0`：通过 RC 接受标准后发布稳定 API 与 Protocol v2。

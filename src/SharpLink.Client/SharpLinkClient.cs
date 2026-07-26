@@ -205,7 +205,8 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
         var cleanupFailures = new List<Exception>();
         lock (_registryGate)
             TransitionTo(SharpLinkConnectionState.Draining);
-        _shutdownCts.Cancel();
+        try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
         Volatile.Read(ref _readySignal).TrySetResult(true);
 
         var stoppingException = CreateConnectionClosedException("Client is stopping.");
@@ -274,7 +275,8 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
         var cleanupFailures = new List<Exception>();
         lock (_registryGate)
             TransitionTo(SharpLinkConnectionState.Draining);
-        _shutdownCts.Cancel();
+        try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
         Volatile.Read(ref _readySignal).TrySetResult(true);
         try { await _cluster!.StopAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }

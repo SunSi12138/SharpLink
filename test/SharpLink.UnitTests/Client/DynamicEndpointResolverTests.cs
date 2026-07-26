@@ -151,6 +151,41 @@ public sealed class DynamicEndpointResolverTests
     }
 
     [Test]
+    public void EndpointSnapshotShouldFreezeNestedEndpointAttributes()
+    {
+        var attributes = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["zone"] = "east"
+        };
+        var snapshot = new SharpLinkEndpointSnapshot(1,
+        [
+            new SharpLinkEndpoint
+            {
+                Id = "endpoint",
+                Address = new SharpLinkTcpAddress("127.0.0.1", 5001),
+                Attributes = attributes
+            }
+        ]);
+
+        attributes["zone"] = "west";
+        var injected = false;
+        if (snapshot.Endpoints[0].Attributes is IDictionary<string, string> mutable)
+        {
+            try
+            {
+                mutable["role"] = "admin";
+                injected = snapshot.Endpoints[0].Attributes.ContainsKey("role");
+            }
+            catch (NotSupportedException)
+            {
+            }
+        }
+
+        Ensure(snapshot.Endpoints[0].Attributes["zone"] == "east" && !injected,
+            "snapshot endpoints must own frozen attribute dictionaries");
+    }
+
+    [Test]
     public async Task BuiltInResolversShouldDisposeTheirCancellationSources()
     {
         var @delegate = new DelegateSharpLinkEndpointResolver(

@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-07-26
+
+### Fixed
+
+- `SharpLinkEndpointSnapshot` now clones each endpoint and freezes nested attributes, so mutations through the source dictionary or a cast cannot alter a published topology.
+- Fixed, static/dynamic-cluster, and multi-cluster client shutdown now await `CancelAsync`; blocking callbacks no longer prevent `StopAsync` from returning its asynchronous operation, and callback failures no longer skip remaining cleanup.
+- Failed fixed/static/dynamic connection attempts now preserve both the primary connect/handshake exception and any transport/session cleanup failure instead of replacing the root cause.
+- Client, multi-cluster, and Server HostedService startup cleanup now preserves the original startup/run failure together with cleanup errors and continues token cleanup.
+- Protocol metadata decoding now adopts its already validated entry array instead of allocating and copying a second array.
+
+### Compatibility and validation
+
+- Valid wire payloads are unchanged. `SharpLinkMetadata` keeps its existing public constructor signature; only the Runtime receives internal validated-array ownership.
+- Release build, Generator 83/83, Unit 348/348, Integration 227/227, four pre-fix mutation/lifecycle probes, and three-launch metadata benchmarks passed.
+- Two-entry metadata decode improved from 68.33 ns / 280 B to 61.89 ns / 224 B. Public construction remained 80 B and showed no regression.
+
 ## [0.8.2] - 2026-07-26
 
 ### Fixed

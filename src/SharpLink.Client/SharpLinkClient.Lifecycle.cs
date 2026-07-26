@@ -117,14 +117,39 @@ internal sealed partial class SharpLinkClient
             session = null;
             return clientConnection;
         }
-        catch
+        catch (Exception exception)
         {
-            if (connection is not null)
-                await connection.DisposeAsync().ConfigureAwait(false);
-            if (session is not null)
-                await session.DisposeAsync().ConfigureAwait(false);
-            throw;
+            await RethrowAfterFailedConnectionCleanupAsync(
+                exception,
+                connection,
+                clientConnection: null,
+                session).ConfigureAwait(false);
+            throw new UnreachableException();
         }
+    }
+
+    private static async Task RethrowAfterFailedConnectionCleanupAsync(
+        Exception primaryException,
+        ITransportConnection? transport,
+        ClientConnection? clientConnection,
+        RpcSession? session)
+    {
+        try
+        {
+            if (transport is not null)
+                await transport.DisposeAsync().ConfigureAwait(false);
+            if (clientConnection is not null)
+                await clientConnection.DisposeAsync().ConfigureAwait(false);
+            else if (session is not null)
+                await session.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception cleanupException)
+        {
+            throw new AggregateException(primaryException, cleanupException);
+        }
+
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(primaryException).Throw();
+        throw new UnreachableException();
     }
 
     private async Task CompleteHandshakeAsync(

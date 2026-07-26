@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Frozen;
 
 namespace SharpLink.Abstractions;
 
@@ -25,8 +26,21 @@ public sealed class SharpLinkEndpointSnapshot
         Version = version;
         var snapshot = new SharpLinkEndpoint[endpoints.Count];
         for (var index = 0; index < endpoints.Count; index++)
-            snapshot[index] = endpoints[index] ?? throw new ArgumentException(
+        {
+            var endpoint = endpoints[index] ?? throw new ArgumentException(
                 "Endpoint snapshots cannot contain null endpoints.", nameof(endpoints));
+            var attributes = endpoint.Attributes ?? throw new ArgumentException(
+                "Endpoint snapshot attributes cannot be null.", nameof(endpoints));
+            snapshot[index] = new SharpLinkEndpoint
+            {
+                Id = endpoint.Id,
+                Address = endpoint.Address,
+                Authority = endpoint.Authority,
+                Attributes = attributes.Count == 0
+                    ? FrozenDictionary<string, string>.Empty
+                    : attributes.ToFrozenDictionary(StringComparer.Ordinal)
+            };
+        }
         _endpoints = Array.AsReadOnly(snapshot);
     }
 

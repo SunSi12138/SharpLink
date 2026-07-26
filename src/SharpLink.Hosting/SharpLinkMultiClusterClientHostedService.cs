@@ -19,8 +19,16 @@ internal sealed class SharpLinkMultiClusterClientHostedService(
         catch (Exception exception)
         {
             accessor.Fail(exception);
-            await DisposeAsync().ConfigureAwait(false);
-            throw;
+            try
+            {
+                await DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception cleanupException)
+            {
+                throw new AggregateException(exception, cleanupException);
+            }
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(exception).Throw();
+            throw new System.Diagnostics.UnreachableException();
         }
     }
 

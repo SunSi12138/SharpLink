@@ -714,6 +714,7 @@ internal sealed partial class SharpLinkClient
             RpcSession? session = null;
             ITransportConnection? transport = null;
             ClientConnection? connection = null;
+            Exception? connectFailure = null;
             try
             {
                 using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _client._shutdownCts.Token);
@@ -759,6 +760,10 @@ internal sealed partial class SharpLinkClient
                 UpdateClientReadiness();
                 EnsureMinimumReadyEndpoints();
             }
+            catch (Exception exception)
+            {
+                connectFailure = exception;
+            }
             finally
             {
                 var release = false;
@@ -769,13 +774,10 @@ internal sealed partial class SharpLinkClient
                 }
                 if (release)
                     ScheduleRetiredStateRelease(endpoint);
-                if (transport is not null)
-                    await transport.DisposeAsync().ConfigureAwait(false);
-                if (connection is not null)
-                    await connection.DisposeAsync().ConfigureAwait(false);
-                else if (session is not null)
-                    await session.DisposeAsync().ConfigureAwait(false);
             }
+            if (connectFailure is not null)
+                await RethrowAfterFailedConnectionCleanupAsync(connectFailure, transport, connection, session)
+                    .ConfigureAwait(false);
         }
 
         private void HandleDisconnected(EndpointState endpoint, ClientConnection connection, Exception exception)

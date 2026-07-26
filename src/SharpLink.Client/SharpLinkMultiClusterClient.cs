@@ -315,9 +315,10 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
     private async Task StopCoreAsync()
     {
         Volatile.Write(ref _state, (int)SharpLinkMultiClusterState.Draining);
-        _shutdown.Cancel();
         var slots = Volatile.Read(ref _clusters).Values.ToArray();
         var failures = new List<Exception>();
+        try { await _shutdown.CancelAsync().ConfigureAwait(false); }
+        catch (Exception exception) { failures.Add(exception); }
         await StopSlotsAsync(slots, failures).ConfigureAwait(false);
         lock (_gate)
         {
