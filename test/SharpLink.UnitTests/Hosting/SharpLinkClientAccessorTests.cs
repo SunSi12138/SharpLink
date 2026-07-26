@@ -55,6 +55,65 @@ public class SharpLinkClientAccessorTests
     }
 
     [Test]
+    public async Task ConcurrentPublicationMustNotResurrectClientAfterStop()
+    {
+        const int attempts = 100_000;
+        using var start = new Barrier(3);
+        var accessor = new SharpLinkClientAccessor();
+        var client = new FakeSharpLinkClient();
+        Exception? publicationFailure = null;
+
+        var publish = Task.Run(() =>
+        {
+            for (var attempt = 0; attempt < attempts; attempt++)
+            {
+                start.SignalAndWait();
+                try
+                {
+                    accessor.SetClient(client);
+                }
+                catch (InvalidOperationException exception)
+                {
+                    publicationFailure = exception;
+                }
+                start.SignalAndWait();
+            }
+        });
+        var stop = Task.Run(() =>
+        {
+            for (var attempt = 0; attempt < attempts; attempt++)
+            {
+                start.SignalAndWait();
+                accessor.Stop();
+                start.SignalAndWait();
+            }
+        });
+
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            accessor = new SharpLinkClientAccessor();
+            publicationFailure = null;
+            start.SignalAndWait();
+            start.SignalAndWait();
+
+            try
+            {
+                await accessor.GetClientAsync();
+                throw new Exception($"attempt {attempt} returned a client after stop");
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            Ensure(publicationFailure is null ||
+                publicationFailure.Message.Contains("host has already stopped", StringComparison.Ordinal),
+                "publication may only fail because stop won the race");
+        }
+
+        await Task.WhenAll(publish, stop);
+    }
+
+    [Test]
     public async Task HostedStartShouldPreserveConnectAndCleanupFailures()
     {
         var service = new SharpLinkClientHostedService(

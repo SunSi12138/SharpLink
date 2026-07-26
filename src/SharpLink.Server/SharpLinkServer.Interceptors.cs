@@ -288,7 +288,7 @@ internal sealed partial class SharpLinkServer
         SharpLinkCallContextSnapshot context,
         bool hasRequestStreams)
     {
-        Exception? invocationException = null;
+        Exception? terminalException = null;
         try
         {
             await InvokeServiceTrackedAsync(
@@ -304,27 +304,33 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            invocationException = exception;
-            throw;
+            terminalException = exception;
         }
-        finally
+
+        try
         {
-            try
-            {
-                CompleteDynamicRequestStreams(session, requestId, hasRequestStreams);
-            }
-            finally
-            {
-                try
-                {
-                    await lease.DisposeAsync().ConfigureAwait(false);
-                }
-                catch when (invocationException is not null)
-                {
-                }
-            }
+            CompleteDynamicRequestStreams(session, requestId, hasRequestStreams);
         }
+        catch (Exception exception)
+        {
+            terminalException = CombineTerminalExceptions(terminalException, exception);
+        }
+
+        try
+        {
+            await lease.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            terminalException = CombineTerminalExceptions(terminalException, exception);
+        }
+
+        if (terminalException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(terminalException).Throw();
     }
+
+    private static Exception CombineTerminalExceptions(Exception? first, Exception next)
+        => first is null ? next : new AggregateException(first, next);
 
     private static void CompleteDynamicRequestStreams(
         IRpcSession session,

@@ -1,16 +1,15 @@
-# 0.8.4 test status
+# 0.8.5 test status
 
 ## Pre-fix evidence
 
-- Unit 351 total: the three deterministic codec races fail before the fix. Generated resolution returns generation 1 after generation 2 publication; fallback resolution returns fallback after a generated registration is published; in-flight resolution returns successfully after context disposal.
-- Unit 353 total: asynchronous retained-frame replay blocks registration for more than 200 ms, and a reentrant dispatcher configuration callback observes the request registry lock held for more than 200 ms.
-- Integration 228 total: one deterministic replacement test fails because a child that commits the new assembly and then reports old-generation cleanup failure leaves the multi-cluster coordinator routed to the removed generation.
-- All six deterministic failures were recorded before the corresponding production fixes.
+- Unit 360 total: all three new regression tests failed before production changes. The stopped-client race returned a client on attempt 16; activation rollback retained only scope cleanup failure; lease cleanup retained only service disposal failure.
+- Unit 362 total: the initial-pool rollback regression failed before its fix because cleanup replaced the second connection failure; inspection also confirmed the client remained in `Connecting` and rollback stopped at the first cleanup failure.
+- Unit 363 total: the leased-invocation regression failed before its fix because the handler failure was retained but the lease cleanup failure was absent.
+- The failures were recorded before their production fixes.
 
 ## Final gate
 
-- Verified P2-or-higher improvements: 5/5 executable proofs recorded (atomic codec publication; dispose/resolution exclusion; nonblocking pre-admission replay; callback lock isolation; replacement-state reconciliation).
-- All focused regressions pass, including replay ordering and completion during asynchronous replay.
-- Release build passed with 0 warnings and 0 errors. Generator 83/83, Unit 357/357, and Integration 228/228 passed.
-- Performance A/B: cached explicit/fallback lookups 6.529 → 6.533 ns and 6.515 → 6.504 ns; cached generated lookup 8.670 → 6.499 ns; attached pre-admission dispatch 17.656 → 17.098 ns. All remained 0 B/op. The first replay design's 19.755 ns result was rejected before release.
-- Version and Chinese/English audit, migration, performance, README, and changelog documentation are updated to 0.8.4.
+- Verified P2-or-higher improvements: 5/5 executable proofs recorded (atomic client publication/stop; activation rollback diagnostics; complete layered service cleanup diagnostics; complete fixed-client initialization rollback; complete leased-invocation terminal diagnostics).
+- Generator 83/83, Unit 364/364, Integration 228/228, Release build with 0 warnings/errors, package generation, SDK analyzer-content verification, and package restore/run smoke passed.
+- Same-machine BenchmarkDotNet A/B measured published-client accessor lookup at 1.457 → 1.483 ns with overlapping 99.9% confidence intervals and 0 B/op on both versions.
+- Version 0.8.5 and Chinese/English audit, migration, performance, README, and changelog documentation are complete.

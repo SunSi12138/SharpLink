@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-07-27
+
+### Fixed
+
+- Hosted single-client publication and terminal stop/failure are now serialized; a racing startup can no longer resurrect or return a client after the host stopped.
+- Call- and connection-scoped activation rollback now preserves both the service-factory failure and scope cleanup failure.
+- Call and connection service disposal now completes every cleanup layer and aggregates service and scope failures instead of silently discarding one cause.
+- Fixed-client initial pool rollback now disposes every established connection, preserves the later connection failure together with all cleanup failures, and always leaves a failed attempt in `Faulted` rather than `Connecting`.
+- Leased RPC invocation now preserves handler, request-stream completion, and lease cleanup failures together for exception mappers and diagnostics.
+
+### Compatibility and validation
+
+- Public APIs, generated Manifest versions, and Protocol v2 wire layouts are unchanged. Custom exception mappers may now receive an `AggregateException` when user execution and cleanup fail together; inspect its inner causes rather than assuming a single exception.
+- Release build completed with 0 warnings/errors. Generator 83/83, Unit 364/364, Integration 228/228, five deterministic pre-fix failure probes, connection/call branch-completeness regressions, and the package restore/run smoke passed.
+- Published-client accessor lookup remained allocation-free and statistically flat at 1.457 → 1.483 ns on the same Apple M4/.NET 10 benchmark gate; the 99.9% confidence intervals overlap.
+
 ## [0.8.4] - 2026-07-27
 
 ### Fixed

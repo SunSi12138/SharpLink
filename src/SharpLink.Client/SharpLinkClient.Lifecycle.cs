@@ -42,15 +42,28 @@ internal sealed partial class SharpLinkClient
                 connected.Add(await ConnectOneAsync(cancellationToken).ConfigureAwait(false));
             PublishReadyState();
         }
-        catch
+        catch (Exception connectException)
         {
+            List<Exception>? cleanupExceptions = null;
             for (var index = 0; index < connected.Count; index++)
             {
                 RemoveReadyConnection(connected[index]);
-                await connected[index].DisposeAsync().ConfigureAwait(false);
+                try
+                {
+                    await connected[index].DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception cleanupException)
+                {
+                    (cleanupExceptions ??= []).Add(cleanupException);
+                }
             }
             if (!_shutdownCts.IsCancellationRequested)
                 TransitionTo(SharpLinkConnectionState.Faulted);
+            if (cleanupExceptions is not null)
+            {
+                cleanupExceptions.Insert(0, connectException);
+                throw new AggregateException(cleanupExceptions);
+            }
             throw;
         }
     }

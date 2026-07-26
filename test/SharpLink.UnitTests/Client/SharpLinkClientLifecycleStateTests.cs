@@ -158,6 +158,48 @@ public class SharpLinkClientLifecycleStateTests
     }
 
     [Test]
+    public async Task InitialPoolRollbackShouldPreserveConnectAndCleanupFailures()
+    {
+        var client = new SharpLinkClient(
+            new InitialPoolRollbackFailingTransportFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            connectionPoolOptions: new SharpLinkConnectionPoolOptions
+            {
+                MinConnections = 2,
+                MaxConnections = 2
+            });
+
+        Exception failure;
+        try
+        {
+            await client.ConnectAsync();
+            throw new Exception("expected initial pool connection failure");
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Ensure(ContainsException(failure, static exception =>
+                exception is InvalidOperationException { Message: "second connection failed" }),
+            "initial pool rollback must retain the connection failure");
+        Ensure(ContainsException(failure, static exception =>
+                exception is InvalidOperationException { Message: "ready connection cleanup failed" }),
+            "initial pool rollback must retain the ready connection cleanup failure");
+        Ensure(client.State == SharpLinkConnectionState.Faulted,
+            "cleanup failure must not strand the client in Connecting state");
+
+        try
+        {
+            await client.StopAsync();
+        }
+        catch
+        {
+        }
+    }
+
+    [Test]
     public async Task StopShouldBeIdempotentAndRejectLaterConnects()
     {
         var transport = new TestClientTransportFactory();
@@ -735,6 +777,51 @@ public class SharpLinkClientLifecycleStateTests
             => ValueTask.FromResult<ITransportConnection>(new CleanupFailingConnection());
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class InitialPoolRollbackFailingTransportFactory : IClientTransportFactory
+    {
+        private int _connectCount;
+
+        public async ValueTask<ITransportConnection> ConnectAsync(
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _connectCount) != 1)
+                throw new InvalidOperationException("second connection failed");
+
+            var connection = new TestTransportConnection();
+            var payload = new PooledByteBufferWriter();
+            ProtocolV2PayloadCodec.WriteHandshakeResponse(payload, new ProtocolV2HandshakeResponse(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.None,
+                4 * 1024 * 1024,
+                1024 * 1024,
+                16 * 1024 * 1024));
+            await connection.InjectFrameAsync(
+                ProtocolV2FrameType.HandshakeResponse,
+                ProtocolV2FrameFlags.None,
+                0,
+                payload.WrittenMemory,
+                cancellationToken);
+            return new CleanupFailingReadyConnection(connection);
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class CleanupFailingReadyConnection(TestTransportConnection inner) : ITransportConnection
+    {
+        public string Id => inner.Id;
+        public System.IO.Pipelines.PipeReader Input => inner.Input;
+        public System.IO.Pipelines.PipeWriter Output => inner.Output;
+        public System.Net.EndPoint? LocalEndPoint => inner.LocalEndPoint;
+        public System.Net.EndPoint? RemoteEndPoint => inner.RemoteEndPoint;
+
+        public async ValueTask DisposeAsync()
+        {
+            await inner.DisposeAsync();
+            throw new InvalidOperationException("ready connection cleanup failed");
+        }
     }
 
     private sealed class CleanupFailingConnection : ITransportConnection
