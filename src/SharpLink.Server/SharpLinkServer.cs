@@ -507,6 +507,15 @@ internal sealed partial class SharpLinkServer(
             }
         }
 
+        try
+        {
+            _runtimeContext.Dispose();
+        }
+        catch (Exception exception)
+        {
+            firstException ??= exception;
+        }
+
         if (firstException is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
     }

@@ -280,6 +280,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                 admissionController.DisposeAsync().AsTask().GetAwaiter().GetResult();
             if (ownedServiceProvider is IDisposable disposable)
                 disposable.Dispose();
+            runtimeContext.Dispose();
             throw;
         }
 

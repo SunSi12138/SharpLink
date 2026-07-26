@@ -27,18 +27,12 @@ public class GeneratedRegistryTests
     }
 
     [Test]
-    public void GeneratedCodecRegistrationShouldBeIdempotentRejectConflictsAndFreezePerContext()
+    public void ProcessWideGeneratedCodecRegistryShouldBeRemoved()
     {
-        var beforeRegistration = new SharpLinkRuntimeContextBuilder().Build();
-        var factory = new RegistryCodecFactory("registry-schema-v1");
-        RpcGeneratedCodecRegistry.Register(factory);
-        RpcGeneratedCodecRegistry.Register(new RegistryCodecFactory("registry-schema-v1"));
-
-        AssertThrows<NotSupportedException>(() => beforeRegistration.Codecs.GetCodec<RegistryDto>());
-        var afterRegistration = new SharpLinkRuntimeContextBuilder().Build();
-        Ensure(afterRegistration.Codecs.GetCodec<RegistryDto>() is RegistryDtoCodec, "generated context codec");
-        AssertThrows<InvalidOperationException>(() =>
-            RpcGeneratedCodecRegistry.Register(new RegistryCodecFactory("registry-schema-v2")));
+        Ensure(
+            typeof(IRpcGeneratedCodecFactory).Assembly.GetType(
+                "SharpLink.Abstractions.RpcGeneratedCodecRegistry", throwOnError: false) is null,
+            "process-wide generated Codec registry must not root collectible types");
     }
 
     private static void AssertThrows<TException>(Action action) where TException : Exception
@@ -78,24 +72,6 @@ public class GeneratedRegistryTests
 
     private sealed class ConflictingStubMarker : StubMarker
     {
-    }
-
-    private sealed class RegistryDto;
-
-    private sealed class RegistryDtoCodec : IRpcCodec<RegistryDto>
-    {
-        public void Serialize(in RegistryDto value, IBufferWriter<byte> buffer)
-        {
-        }
-
-        public RegistryDto Deserialize(in ReadOnlySequence<byte> buffer) => new();
-    }
-
-    private sealed class RegistryCodecFactory(string schemaId) : IRpcGeneratedCodecFactory
-    {
-        public Type TargetType => typeof(RegistryDto);
-        public string SchemaId { get; } = schemaId;
-        public IRpcCodec Create(IRpcCodecProvider provider) => new RegistryDtoCodec();
     }
 
     private static void Ensure(bool condition, string message)

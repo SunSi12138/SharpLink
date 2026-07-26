@@ -19,9 +19,12 @@ internal sealed partial class SharpLinkServer
                 assembly);
         }
 
+        RpcGeneratedManifestRegistration? codecRegistration = null;
+        IReadOnlyDictionary<long, ServiceRegistration>? candidateServices = null;
+        IReadOnlyDictionary<long, ServiceRegistration>? retainedCandidateServices = null;
+        var published = false;
         try
         {
-            var module = new SharpLinkDynamicModule(assembly, manifest!);
             while (true)
             {
                 long generation;
@@ -48,41 +51,61 @@ internal sealed partial class SharpLinkServer
                     currentModules = [.. _dynamicModules.Values];
                 }
 
+                codecRegistration = _runtimeContext.PrepareGeneratedManifest(manifest!);
+                var module = new SharpLinkDynamicModule(assembly, manifest!, codecRegistration);
                 var candidate = BuildRegistrationCandidate(
                     manifest!, module, currentServices, currentModules, currentCodecs: null, out var error);
                 if (error is not null)
                     return SharpLinkAssemblyRegistrationResult.Failure(error);
+                candidateServices = candidate.Services;
+                retainedCandidateServices = currentServices;
 
+                var retry = false;
                 lock (_registryGate)
                 {
                     if (generation != _registryGeneration)
-                        continue;
-                    if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
                     {
-                        return Failure(
-                            SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
-                            $"Server state '{CurrentState}' does not accept runtime assembly registration.",
-                            assembly);
+                        retry = true;
                     }
-                    if (IsAssemblyRegistered(assembly))
+                    else
                     {
-                        return Failure(
-                            SharpLinkAssemblyRegistrationErrorCode.DuplicateAssembly,
-                            "The same Assembly object is already registered on this server.",
-                            assembly);
+                        if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+                        {
+                            return Failure(
+                                SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                                $"Server state '{CurrentState}' does not accept runtime assembly registration.",
+                                assembly);
+                        }
+                        if (IsAssemblyRegistered(assembly))
+                        {
+                            return Failure(
+                                SharpLinkAssemblyRegistrationErrorCode.DuplicateAssembly,
+                                "The same Assembly object is already registered on this server.",
+                                assembly);
+                        }
+
+                        var dependencyError = ValidateDependencies(
+                            manifest!,
+                            [.. _dynamicModules.Values]);
+                        if (dependencyError is not null)
+                            return SharpLinkAssemblyRegistrationResult.Failure(dependencyError);
+
+                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs);
+                        _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+                        Volatile.Write(ref _services, candidate.Services);
+                        _dynamicModules.Add(assembly, module);
+                        _registryGeneration++;
+                        published = true;
+                        return SharpLinkAssemblyRegistrationResult.Success();
                     }
-
-                    var dependencyError = ValidateDependencies(
-                        manifest!,
-                        [.. _dynamicModules.Values]);
-                    if (dependencyError is not null)
-                        return SharpLinkAssemblyRegistrationResult.Failure(dependencyError);
-
-                    _runtimeContext.PublishGeneratedCodecs(candidate.Codecs);
-                    Volatile.Write(ref _services, candidate.Services);
-                    _dynamicModules.Add(assembly, module);
-                    _registryGeneration++;
-                    return SharpLinkAssemblyRegistrationResult.Success();
+                }
+                if (retry)
+                {
+                    DisposeCandidateServices(candidate.Services, currentServices);
+                    candidateServices = null;
+                    retainedCandidateServices = null;
+                    codecRegistration.Dispose();
+                    codecRegistration = null;
                 }
             }
         }
@@ -92,6 +115,15 @@ internal sealed partial class SharpLinkServer
                 SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                 $"Assembly registration failed transactionally: {exception.GetType().Name}: {exception.Message}",
                 assembly);
+        }
+        finally
+        {
+            if (!published)
+            {
+                if (candidateServices is not null && retainedCandidateServices is not null)
+                    DisposeCandidateServices(candidateServices, retainedCandidateServices);
+                codecRegistration?.Dispose();
+            }
         }
     }
 
@@ -149,73 +181,123 @@ internal sealed partial class SharpLinkServer
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult>? drainCompletion = null;
         SharpLinkDynamicModule? oldModule = null;
         SharpLinkDynamicModule? newModule = null;
+        RpcGeneratedManifestRegistration? codecRegistration = null;
+        IReadOnlyDictionary<long, ServiceRegistration>? candidateServices = null;
+        IReadOnlyDictionary<long, ServiceRegistration>? retainedCandidateServices = null;
+        var published = false;
         try
         {
-            newModule = new SharpLinkDynamicModule(newAssembly, manifest!);
-            lock (_registryGate)
+            while (true)
             {
-                if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+                long generation;
+                SharpLinkDynamicModule[] currentModules;
+                ServiceRegistration[] detachedServices;
+                FrozenDictionary<long, ServiceRegistration> retainedServices;
+                IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> retainedCodecs;
+                lock (_registryGate)
                 {
-                    return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
-                        SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
-                        $"Server state '{CurrentState}' does not accept runtime assembly replacement.",
-                        newAssembly)));
-                }
-                if (!_dynamicModules.TryGetValue(oldAssembly, out oldModule) ||
-                    oldModule.State != SharpLinkDynamicModuleState.Running ||
-                    _unregisterOperations.ContainsKey(oldAssembly))
-                {
-                    return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
-                        SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
-                        "The old Assembly object does not own a running runtime registration.",
-                        newAssembly)));
-                }
-                if (IsAssemblyRegistered(newAssembly))
-                {
-                    return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
-                        SharpLinkAssemblyRegistrationErrorCode.DuplicateAssembly,
-                        "The new Assembly object is already registered on this server.",
-                        newAssembly)));
-                }
-                if (_dynamicModules.Count >= MaximumDynamicModules)
-                {
-                    return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
-                        SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded,
-                        $"The server runtime module limit of {MaximumDynamicModules} has been reached; wait for a draining replacement to finish.",
-                        newAssembly)));
+                    if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+                    {
+                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                            SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                            $"Server state '{CurrentState}' does not accept runtime assembly replacement.",
+                            newAssembly)));
+                    }
+                    if (!_dynamicModules.TryGetValue(oldAssembly, out oldModule) ||
+                        oldModule.State != SharpLinkDynamicModuleState.Running ||
+                        _unregisterOperations.ContainsKey(oldAssembly))
+                    {
+                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                            SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                            "The old Assembly object does not own a running runtime registration.",
+                            newAssembly)));
+                    }
+                    if (IsAssemblyRegistered(newAssembly))
+                    {
+                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                            SharpLinkAssemblyRegistrationErrorCode.DuplicateAssembly,
+                            "The new Assembly object is already registered on this server.",
+                            newAssembly)));
+                    }
+                    if (_dynamicModules.Count >= MaximumDynamicModules)
+                    {
+                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                            SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded,
+                            $"The server runtime module limit of {MaximumDynamicModules} has been reached; wait for a draining replacement to finish.",
+                            newAssembly)));
+                    }
+
+                    var replacementDependencyError = ValidateReplacementDependants(oldModule, manifest!);
+                    if (replacementDependencyError is not null)
+                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(replacementDependencyError));
+
+                    generation = _registryGeneration;
+                    currentModules = _dynamicModules.Values
+                        .Where(module => !ReferenceEquals(module, oldModule))
+                        .ToArray();
+                    var currentServices = Volatile.Read(ref _services);
+                    detachedServices = currentServices.Values
+                        .Where(service => ReferenceEquals(service.Module, oldModule))
+                        .ToArray();
+                    retainedServices = currentServices
+                        .Where(pair => !ReferenceEquals(pair.Value.Module, oldModule))
+                        .ToDictionary(static pair => pair.Key, static pair => pair.Value)
+                        .ToFrozenDictionary();
+                    retainedCodecs = CreateCodecSnapshotWithout(oldModule);
                 }
 
-                var replacementDependencyError = ValidateReplacementDependants(oldModule, manifest!);
-                if (replacementDependencyError is not null)
-                    return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(replacementDependencyError));
-
-                var currentModules = _dynamicModules.Values
-                    .Where(module => !ReferenceEquals(module, oldModule))
-                    .ToArray();
-                var currentServices = Volatile.Read(ref _services);
-                var detachedServices = currentServices.Values
-                    .Where(service => ReferenceEquals(service.Module, oldModule))
-                    .ToArray();
-                var retainedServices = currentServices
-                    .Where(pair => !ReferenceEquals(pair.Value.Module, oldModule))
-                    .ToDictionary(static pair => pair.Key, static pair => pair.Value)
-                    .ToFrozenDictionary();
-                var retainedCodecs = CreateCodecSnapshotWithout(oldModule);
+                codecRegistration = _runtimeContext.PrepareGeneratedManifest(manifest!);
+                newModule = new SharpLinkDynamicModule(newAssembly, manifest!, codecRegistration);
                 var candidate = BuildRegistrationCandidate(
                     manifest!, newModule, retainedServices, currentModules, retainedCodecs, out var error);
                 if (error is not null)
                     return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(error));
+                candidateServices = candidate.Services;
+                retainedCandidateServices = retainedServices;
 
-                drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
-                    TaskCreationOptions.RunContinuationsAsynchronously);
-                drainOperation = drainCompletion.Task;
-                _dynamicModules.Add(newAssembly, newModule);
-                _detachedModuleServices.Add(oldModule, detachedServices);
-                _unregisterOperations.Add(oldAssembly, drainOperation);
-                _runtimeContext.PublishGeneratedCodecs(candidate.Codecs);
-                Volatile.Write(ref _services, candidate.Services);
-                _registryGeneration++;
-                oldModule.TryBeginDraining();
+                var retry = false;
+                lock (_registryGate)
+                {
+                    if (generation != _registryGeneration)
+                    {
+                        retry = true;
+                    }
+                    else if (!_dynamicModules.TryGetValue(oldAssembly, out var currentOldModule) ||
+                        !ReferenceEquals(currentOldModule, oldModule) ||
+                        oldModule.State != SharpLinkDynamicModuleState.Running ||
+                        _unregisterOperations.ContainsKey(oldAssembly))
+                    {
+                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                            SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                            "The old Assembly object changed while the replacement candidate was being prepared.",
+                            newAssembly)));
+                    }
+                    else
+                    {
+                        drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
+                            TaskCreationOptions.RunContinuationsAsynchronously);
+                        drainOperation = drainCompletion.Task;
+                        _dynamicModules.Add(newAssembly, newModule);
+                        _detachedModuleServices.Add(oldModule, detachedServices);
+                        _unregisterOperations.Add(oldAssembly, drainOperation);
+                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs);
+                        _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+                        Volatile.Write(ref _services, candidate.Services);
+                        _registryGeneration++;
+                        oldModule.TryBeginDraining();
+                        published = true;
+                        break;
+                    }
+                }
+                if (retry)
+                {
+                    DisposeCandidateServices(candidate.Services, retainedServices);
+                    candidateServices = null;
+                    retainedCandidateServices = null;
+                    codecRegistration.Dispose();
+                    codecRegistration = null;
+                    newModule = null;
+                }
             }
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
@@ -224,6 +306,15 @@ internal sealed partial class SharpLinkServer
                 SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                 $"Assembly replacement failed transactionally: {exception.GetType().Name}: {exception.Message}",
                 newAssembly)));
+        }
+        finally
+        {
+            if (!published)
+            {
+                if (candidateServices is not null && retainedCandidateServices is not null)
+                    DisposeCandidateServices(candidateServices, retainedCandidateServices);
+                codecRegistration?.Dispose();
+            }
         }
 
         _ = CompleteUnregisterOperationAsync(oldAssembly, oldModule!, gracefulTimeout, drainCompletion!);
@@ -313,7 +404,7 @@ internal sealed partial class SharpLinkServer
     private async Task ReleaseModuleAsync(Assembly assembly, SharpLinkDynamicModule module)
     {
         ServiceRegistration[] removedServices;
-        Type[] removedCodecTypes;
+        RpcGeneratedManifestRegistration codecRegistration;
         lock (_registryGate)
         {
             if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
@@ -330,7 +421,8 @@ internal sealed partial class SharpLinkServer
                 .ToDictionary(static pair => pair.Key, static pair => pair.Value)
                 .ToFrozenDictionary();
             var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
-            removedCodecTypes = module.Manifest.Codecs.Select(static codec => codec.TargetType).ToArray();
+            codecRegistration = module.CodecRegistration;
+            var removedCodecTypes = codecRegistration.Codecs.Keys.ToArray();
             var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
             for (var index = 0; index < removedCodecTypes.Length; index++)
             {
@@ -376,7 +468,7 @@ internal sealed partial class SharpLinkServer
         }
         try
         {
-            _runtimeContext.RemoveResolvedGeneratedCodecs(removedCodecTypes);
+            _runtimeContext.ReleaseGeneratedManifest(codecRegistration);
         }
         catch (Exception exception)
         {
@@ -390,13 +482,13 @@ internal sealed partial class SharpLinkServer
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
     }
 
-    private IRpcGeneratedCodecFactory? FindReplacementCodec(
+    private RpcGeneratedCodecRegistration? FindReplacementCodec(
         Type targetType,
         SharpLinkDynamicModule removedModule)
     {
         for (var index = 0; index < _staticManifests.Count; index++)
         {
-            var replacement = _staticManifests[index].Codecs.FirstOrDefault(codec => codec.TargetType == targetType);
+            var replacement = _runtimeContext.FindGeneratedCodec(_staticManifests[index], targetType);
             if (replacement is not null)
                 return replacement;
         }
@@ -404,8 +496,7 @@ internal sealed partial class SharpLinkServer
         {
             if (ReferenceEquals(candidate, removedModule))
                 continue;
-            var replacement = candidate.Manifest.Codecs.FirstOrDefault(codec => codec.TargetType == targetType);
-            if (replacement is not null)
+            if (candidate.CodecRegistration.Codecs.TryGetValue(targetType, out var replacement))
                 return replacement;
         }
         return null;
@@ -416,7 +507,7 @@ internal sealed partial class SharpLinkServer
         SharpLinkDynamicModule module,
         FrozenDictionary<long, ServiceRegistration> currentServices,
         SharpLinkDynamicModule[] currentModules,
-        IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory>? currentCodecs,
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration>? currentCodecs,
         out SharpLinkAssemblyRegistrationError? error)
     {
         error = ValidateDependencies(incoming, currentModules);
@@ -448,86 +539,123 @@ internal sealed partial class SharpLinkServer
             allContracts.Add(contract.ContractId, (contract, incoming));
 
         var nextServices = currentServices.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-        foreach (var service in incoming.Services)
+        var createdServices = new List<ServiceRegistration>();
+        try
         {
-            if (nextServices.TryGetValue(service.ContractId, out var existingService))
+            foreach (var service in incoming.Services)
             {
-                var existingManifest = FindManifest(existingService.ContractType.Assembly, currentModules);
-                error = Conflict(
-                    SharpLinkAssemblyRegistrationErrorCode.ServiceConflict,
-                    "Service",
-                    incoming,
-                    service.ContractName,
-                    service.ContractId,
-                    service.Fingerprint,
-                    existingManifest,
-                    existingService.ContractType.FullName ?? existingService.ContractType.Name);
-                return default;
-            }
-            if (!allContracts.TryGetValue(service.ContractId, out var contract) ||
-                !ReferenceEquals(contract.Contract.ContractType, service.ContractType))
-            {
-                error = CreateError(
-                    SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
-                    $"Service '{service.ImplementationName}' requires contract '{service.ContractName}' ({service.ContractId}), but its contract manifest is not registered.",
-                    incoming.OwnerAssembly,
-                    artifact: "Service",
-                    contractName: service.ContractName,
-                    contractId: service.ContractId,
-                    incomingFingerprint: service.Fingerprint);
-                return default;
-            }
-            error = ValidateServiceDependencies(incoming, service);
-            if (error is not null)
-                return default;
-            var definition = new ServiceRegistrationDefinition(
-                service.ContractType,
-                contract.Contract.StubFactory(),
-                service.Lifetime,
-                service.Activator,
-                instance: null,
-                callerOwned: false);
-            nextServices.Add(service.ContractId, definition.Build(_serviceProvider, module));
-        }
-
-        var factories = currentCodecs ?? _runtimeContext.CreateGeneratedCodecSnapshot();
-        var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-        foreach (var codec in incoming.Codecs)
-        {
-            if (nextFactories.TryGetValue(codec.TargetType, out var existingCodec))
-            {
-                if (!string.Equals(existingCodec.SchemaId, codec.SchemaId, StringComparison.Ordinal))
+                if (nextServices.TryGetValue(service.ContractId, out var existingService))
                 {
-                    error = CreateError(
-                        SharpLinkAssemblyRegistrationErrorCode.CodecConflict,
-                        $"Codec conflict for '{codec.TargetType.FullName}': existing schema '{existingCodec.SchemaId}', incoming schema '{codec.SchemaId}'.",
-                        incoming.OwnerAssembly,
-                        artifact: "Codec",
-                        existingFingerprint: existingCodec.SchemaId,
-                        incomingFingerprint: codec.SchemaId);
+                    var existingManifest = FindManifest(existingService.ContractType.Assembly, currentModules);
+                    error = Conflict(
+                        SharpLinkAssemblyRegistrationErrorCode.ServiceConflict,
+                        "Service",
+                        incoming,
+                        service.ContractName,
+                        service.ContractId,
+                        service.Fingerprint,
+                        existingManifest,
+                        existingService.ContractType.FullName ?? existingService.ContractType.Name);
+                    DisposeCreatedServices(createdServices);
                     return default;
                 }
-                continue;
+                if (!allContracts.TryGetValue(service.ContractId, out var contract) ||
+                    !ReferenceEquals(contract.Contract.ContractType, service.ContractType))
+                {
+                    error = CreateError(
+                        SharpLinkAssemblyRegistrationErrorCode.MissingDependency,
+                        $"Service '{service.ImplementationName}' requires contract '{service.ContractName}' ({service.ContractId}), but its contract manifest is not registered.",
+                        incoming.OwnerAssembly,
+                        artifact: "Service",
+                        contractName: service.ContractName,
+                        contractId: service.ContractId,
+                        incomingFingerprint: service.Fingerprint);
+                    DisposeCreatedServices(createdServices);
+                    return default;
+                }
+                error = ValidateServiceDependencies(incoming, service);
+                if (error is not null)
+                {
+                    DisposeCreatedServices(createdServices);
+                    return default;
+                }
+                var definition = new ServiceRegistrationDefinition(
+                    service.ContractType,
+                    contract.Contract.StubFactory(),
+                    service.Lifetime,
+                    service.Activator,
+                    instance: null,
+                    callerOwned: false);
+                var registration = definition.Build(_serviceProvider, module);
+                createdServices.Add(registration);
+                nextServices.Add(service.ContractId, registration);
             }
-            nextFactories.Add(codec.TargetType, codec);
+
+            var factories = currentCodecs ?? _runtimeContext.CreateGeneratedCodecSnapshot();
+            var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
+            foreach (var pair in module.CodecRegistration.Codecs)
+            {
+                var codec = pair.Value;
+                if (nextFactories.TryGetValue(pair.Key, out var existingCodec))
+                {
+                    if (!string.Equals(existingCodec.Factory.SchemaId, codec.Factory.SchemaId, StringComparison.Ordinal) ||
+                        !string.Equals(existingCodec.Factory.WireFormatId, codec.Factory.WireFormatId, StringComparison.Ordinal))
+                    {
+                        error = CreateError(
+                            SharpLinkAssemblyRegistrationErrorCode.CodecConflict,
+                            $"Codec conflict for '{pair.Key.FullName}': existing schema/wire '{existingCodec.Factory.SchemaId}'/'{existingCodec.Factory.WireFormatId}', incoming schema/wire '{codec.Factory.SchemaId}'/'{codec.Factory.WireFormatId}'.",
+                            incoming.OwnerAssembly,
+                            artifact: "Codec",
+                            existingFingerprint: existingCodec.Factory.SchemaId,
+                            incomingFingerprint: codec.Factory.SchemaId);
+                        DisposeCreatedServices(createdServices);
+                        return default;
+                    }
+                    continue;
+                }
+                nextFactories.Add(pair.Key, codec);
+            }
+            return new RegistrationCandidate(nextServices.ToFrozenDictionary(), nextFactories);
         }
-        return new RegistrationCandidate(nextServices.ToFrozenDictionary(), nextFactories);
+        catch
+        {
+            DisposeCreatedServices(createdServices);
+            throw;
+        }
     }
 
-    private IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> CreateCodecSnapshotWithout(
+    private IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> CreateCodecSnapshotWithout(
         SharpLinkDynamicModule removedModule)
     {
         var nextFactories = _runtimeContext.CreateGeneratedCodecSnapshot()
             .ToDictionary(static pair => pair.Key, static pair => pair.Value);
-        foreach (var codec in removedModule.Manifest.Codecs)
+        foreach (var codec in removedModule.CodecRegistration.Codecs)
         {
-            var replacement = FindReplacementCodec(codec.TargetType, removedModule);
+            var replacement = FindReplacementCodec(codec.Key, removedModule);
             if (replacement is null)
-                nextFactories.Remove(codec.TargetType);
+                nextFactories.Remove(codec.Key);
             else
-                nextFactories[codec.TargetType] = replacement;
+                nextFactories[codec.Key] = replacement;
         }
         return nextFactories;
+    }
+
+    private static void DisposeCandidateServices(
+        IReadOnlyDictionary<long, ServiceRegistration> candidate,
+        IReadOnlyDictionary<long, ServiceRegistration> retained)
+    {
+        foreach (var pair in candidate)
+        {
+            if (retained.TryGetValue(pair.Key, out var existing) && ReferenceEquals(existing, pair.Value))
+                continue;
+            pair.Value.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    private static void DisposeCreatedServices(IReadOnlyList<ServiceRegistration> services)
+    {
+        for (var index = services.Count - 1; index >= 0; index--)
+            services[index].DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 
     private SharpLinkAssemblyRegistrationError? ValidateReplacementDependants(
@@ -746,5 +874,5 @@ internal sealed partial class SharpLinkServer
 
     private readonly record struct RegistrationCandidate(
         FrozenDictionary<long, ServiceRegistration> Services,
-        IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> Codecs);
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> Codecs);
 }

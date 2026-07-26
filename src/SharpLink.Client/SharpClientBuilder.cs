@@ -374,6 +374,22 @@ public class SharpClientBuilder
         var runtimeContext = staticManifests is null
             ? _runtimeContextBuilder.Build()
             : _runtimeContextBuilder.Build(staticManifests);
+        try
+        {
+            return BuildWithRuntimeContext(runtimeContext, staticManifests, preflightEndpoints);
+        }
+        catch
+        {
+            runtimeContext.Dispose();
+            throw;
+        }
+    }
+
+    private ISharpLinkClient BuildWithRuntimeContext(
+        SharpLinkRuntimeContext runtimeContext,
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests,
+        SharpLinkEndpoint[]? preflightEndpoints)
+    {
         var protocolOptions = runtimeContext.Protocol;
         if (_endpointResolver is not null)
         {
@@ -650,7 +666,7 @@ public class SharpClientBuilder
         if (_connectionPoolConfigured)
             return _connectionPool.CloneValidated().MaxConnections;
 
-        var runtimeContext = _runtimeContextBuilder.Build(includeGeneratedAssemblyCatalog: false);
+        using var runtimeContext = _runtimeContextBuilder.Build(includeGeneratedAssemblyCatalog: false);
         return runtimeContext.Options.PerformanceProfile == SharpLinkPerformanceProfile.Throughput
             ? Math.Max(1, Math.Min(Environment.ProcessorCount, 4))
             : 1;

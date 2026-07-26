@@ -10,9 +10,13 @@ public class DynamicModuleTests
     [Test]
     public void DrainShouldWaitUntilEveryConcurrentLeaseIsReleased()
     {
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var manifest = new EmptyManifest();
+        using var registration = context.PrepareGeneratedManifest(manifest);
         var module = new SharpLinkDynamicModule(
             typeof(DynamicModuleTests).Assembly,
-            new EmptyManifest());
+            manifest,
+            registration);
         Ensure(module.TryAcquire(stream: false, out var first), "first lease");
         Ensure(module.TryAcquire(stream: false, out var second), "second lease");
 
@@ -29,9 +33,13 @@ public class DynamicModuleTests
     [Test]
     public void ReleasedModuleCancellationTokenShouldRemainSafeForStaleRouteReaders()
     {
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var manifest = new EmptyManifest();
+        using var registration = context.PrepareGeneratedManifest(manifest);
         var module = new SharpLinkDynamicModule(
             typeof(DynamicModuleTests).Assembly,
-            new EmptyManifest());
+            manifest,
+            registration);
         module.TryBeginDraining();
         module.MarkReleased();
 

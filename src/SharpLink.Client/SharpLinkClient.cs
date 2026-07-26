@@ -246,6 +246,7 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
         await transportFactory.DisposeAsync().ConfigureAwait(false);
         _reconnectSignal.Dispose();
         _shutdownCts.Dispose();
+        _runtimeContext.Dispose();
         TransitionTo(SharpLinkConnectionState.Stopped);
     }
 
@@ -273,6 +274,8 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
         try { _reconnectSignal.Dispose(); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         try { _shutdownCts.Dispose(); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
+        try { _runtimeContext.Dispose(); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         TransitionTo(SharpLinkConnectionState.Stopped);
         ThrowStopCleanupFailures(cleanupFailures);

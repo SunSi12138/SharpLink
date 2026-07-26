@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Reflection;
+using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
 
@@ -132,6 +133,328 @@ public class SharpLinkRuntimeContextTests
         }
     }
 
+    [Test]
+    public void AdapterTypesInOneManifestShouldShareOneScopeAndDisposeWithContext()
+    {
+        var counters = new AdapterCounters();
+        using (var context = new SharpLinkRuntimeContextBuilder()
+                   .Build([new AdapterManifest(counters, includeSecondCodec: true)]))
+        {
+            Ensure(context.Codecs.GetCodec<AdapterValue>() is AdapterCodec<AdapterValue>,
+                "first Adapter Codec");
+            Ensure(context.Codecs.GetCodec<SecondAdapterValue>() is AdapterCodec<SecondAdapterValue>,
+                "second Adapter Codec");
+            Ensure(counters.ScopeCreateCount == 1,
+                "one Manifest and Adapter ID must create one Scope");
+            Ensure(counters.CodecCreateCount == 2,
+                "both closed Codecs are prepared transactionally");
+            Ensure(counters.ScopeDisposeCount == 0, "scope remains live with Context");
+        }
+        Ensure(counters.ScopeDisposeCount == 1, "Context disposes Adapter Scope once");
+    }
+
+    [Test]
+    public void SeparateContextsAndManifestsShouldOwnSeparateAdapterScopes()
+    {
+        var counters = new AdapterCounters();
+        var manifest = new AdapterManifest(counters, includeSecondCodec: false);
+        using var first = new SharpLinkRuntimeContextBuilder().Build([manifest]);
+        using var second = new SharpLinkRuntimeContextBuilder().Build([manifest]);
+        Ensure(counters.ScopeCreateCount == 2,
+            "same Manifest in two Runtime Contexts must use separate Scopes");
+    }
+
+    [Test]
+    public void DifferentManifestsInOneContextShouldOwnSeparateAdapterScopes()
+    {
+        var counters = new AdapterCounters();
+        using var context = new SharpLinkRuntimeContextBuilder().Build([
+            new TestManifest("first", new AdapterFactory<AdapterValue>(counters)),
+            new TestManifest("second", new AdapterFactory<SecondAdapterValue>(counters))
+        ]);
+
+        Ensure(counters.ScopeCreateCount == 2,
+            "the same Adapter ID in two Manifest instances must create separate Scopes");
+        Ensure(context.Codecs.GetCodec<AdapterValue>() is AdapterCodec<AdapterValue>,
+            "first Manifest Codec");
+        Ensure(context.Codecs.GetCodec<SecondAdapterValue>() is AdapterCodec<SecondAdapterValue>,
+            "second Manifest Codec");
+    }
+
+    [Test]
+    public void DifferentAdaptersInOneManifestShouldOwnSeparateScopes()
+    {
+        var firstCounters = new AdapterCounters();
+        var secondCounters = new AdapterCounters();
+        using var context = new SharpLinkRuntimeContextBuilder().Build([
+            new TestManifest(
+                "two-adapters",
+                new AdapterFactory<AdapterValue>(firstCounters),
+                new ConfigurableAdapterFactory<SecondAdapterValue>(
+                    new AlternateCountingAdapter(secondCounters),
+                    AlternateCountingAdapter.Id,
+                    AlternateCountingAdapter.Wire))
+        ]);
+
+        Ensure(firstCounters.ScopeCreateCount == 1, "first Adapter owns one Scope");
+        Ensure(secondCounters.ScopeCreateCount == 1, "second Adapter owns one Scope");
+        Ensure(context.Codecs.GetCodec<AdapterValue>() is AdapterCodec<AdapterValue>,
+            "first Adapter Codec");
+        Ensure(context.Codecs.GetCodec<SecondAdapterValue>() is AdapterCodec<SecondAdapterValue>,
+            "second Adapter Codec");
+    }
+
+    [Test]
+    public void FailedAdapterCodecPreparationShouldDisposeCandidateScope()
+    {
+        var counters = new AdapterCounters { FailOnCodecNumber = 2 };
+        try
+        {
+            using var _ = new SharpLinkRuntimeContextBuilder()
+                .Build([new AdapterManifest(counters, includeSecondCodec: true)]);
+            throw new Exception("expected second Adapter Codec creation to fail");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message.Contains("candidate failure", StringComparison.Ordinal),
+                "candidate failure is preserved");
+        }
+        Ensure(counters.ScopeDisposeCount == 1,
+            "failed transaction disposes the candidate Scope");
+    }
+
+    [Test]
+    public void ThirdAdapterCodecFailureShouldDisposeCandidateScope()
+    {
+        var counters = new AdapterCounters { FailOnCodecNumber = 3 };
+        try
+        {
+            using var _ = new SharpLinkRuntimeContextBuilder().Build([
+                new TestManifest(
+                    "third-codec-failure",
+                    new AdapterFactory<AdapterValue>(counters),
+                    new AdapterFactory<SecondAdapterValue>(counters),
+                    new AdapterFactory<ThirdAdapterValue>(counters))
+            ]);
+            throw new Exception("expected third Adapter Codec creation to fail");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message.Contains("candidate failure", StringComparison.Ordinal),
+                "third candidate failure is preserved");
+        }
+
+        Ensure(counters.CodecCreateCount == 3, "the third closed Codec triggers the failure");
+        Ensure(counters.ScopeDisposeCount == 1,
+            "the shared candidate Scope is disposed after the third Codec fails");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public void ScopeCreationFailureShouldRollbackEarlierScopes(bool returnNull)
+    {
+        var preparedCounters = new AdapterCounters();
+        var failingCounters = new AdapterCounters();
+        try
+        {
+            using var _ = new SharpLinkRuntimeContextBuilder().Build([
+                new TestManifest(
+                    "scope-failure",
+                    new AdapterFactory<AdapterValue>(preparedCounters),
+                    new ConfigurableAdapterFactory<SecondAdapterValue>(
+                        new FailingScopeAdapter(failingCounters, returnNull),
+                        FailingScopeAdapter.Id,
+                        FailingScopeAdapter.Wire))
+            ]);
+            throw new Exception("expected Adapter Scope creation to fail");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message.Contains(returnNull ? "null scope" : "scope failure", StringComparison.Ordinal),
+                "Scope failure reason is preserved");
+        }
+
+        Ensure(preparedCounters.ScopeCreateCount == 1, "the first Scope was prepared");
+        Ensure(preparedCounters.ScopeDisposeCount == 1, "the first Scope was rolled back");
+        Ensure(failingCounters.ScopeCreateCount == 1, "the failing Adapter was invoked exactly once");
+    }
+
+    [Test]
+    public void AdapterIdentityMismatchShouldRejectAndDisposePreparedScopes()
+    {
+        var preparedCounters = new AdapterCounters();
+        var mismatchedCounters = new AdapterCounters();
+        try
+        {
+            using var _ = new SharpLinkRuntimeContextBuilder().Build([
+                new TestManifest(
+                    "identity-mismatch",
+                    new AdapterFactory<AdapterValue>(preparedCounters),
+                    new ConfigurableAdapterFactory<SecondAdapterValue>(
+                        new CountingAdapter(mismatchedCounters),
+                        "z.test.adapter/v1",
+                        "test-wire/v1"))
+            ]);
+            throw new Exception("expected Adapter identity mismatch");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message.Contains("runtime identity", StringComparison.Ordinal),
+                "identity mismatch is reported before publication");
+        }
+
+        Ensure(preparedCounters.ScopeCreateCount == 1, "the earlier valid Scope was prepared");
+        Ensure(preparedCounters.ScopeDisposeCount == 1, "the earlier valid Scope was rolled back");
+        Ensure(mismatchedCounters.ScopeCreateCount == 0,
+            "an Adapter with mismatched identity cannot create a Scope");
+    }
+
+    [Test]
+    public void WrongTypedCodecShouldRejectAndDisposeCandidateScope()
+    {
+        var counters = new AdapterCounters();
+        try
+        {
+            using var _ = new SharpLinkRuntimeContextBuilder().Build([
+                new TestManifest(
+                    "wrong-codec",
+                    new ConfigurableAdapterFactory<AdapterValue>(
+                        new CountingAdapter(counters),
+                        CountingAdapter.Id,
+                        CountingAdapter.Wire,
+                        new CatalogCodec()))
+            ]);
+            throw new Exception("expected an incompatible Codec to be rejected");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message.Contains("incompatible IRpcCodec", StringComparison.Ordinal),
+                "wrong closed Codec type is rejected before publication");
+        }
+
+        Ensure(counters.ScopeCreateCount == 1, "candidate Scope was created");
+        Ensure(counters.ScopeDisposeCount == 1, "candidate Scope was rolled back");
+    }
+
+    [Test]
+    public void ExplicitCodecShouldWinAndRemainCallerOwned()
+    {
+        var counters = new AdapterCounters();
+        var explicitCodec = new CallerOwnedAdapterValueCodec();
+        var context = new SharpLinkRuntimeContextBuilder()
+            .AddCodec(explicitCodec)
+            .Build([new AdapterManifest(counters, includeSecondCodec: false)]);
+
+        Ensure(ReferenceEquals(context.Codecs.GetCodec<AdapterValue>(), explicitCodec),
+            "explicit UseCodec registration wins over generated Adapter Codec");
+        context.Dispose();
+        context.Dispose();
+
+        Ensure(counters.ScopeDisposeCount == 1, "Context-owned Adapter Scope is disposed once");
+        Ensure(explicitCodec.DisposeCount == 0, "caller-owned explicit Codec is not disposed by Runtime");
+    }
+
+    [Test]
+    public void ConflictingManifestCodecsShouldRollbackBothAdapterScopes()
+    {
+        var firstCounters = new AdapterCounters();
+        var secondCounters = new AdapterCounters();
+        try
+        {
+            using var _ = new SharpLinkRuntimeContextBuilder().Build([
+                new TestManifest("first-conflict", new AdapterFactory<AdapterValue>(firstCounters)),
+                new TestManifest(
+                    "second-conflict",
+                    new ConfigurableAdapterFactory<AdapterValue>(
+                        new AlternateCountingAdapter(secondCounters),
+                        AlternateCountingAdapter.Id,
+                        AlternateCountingAdapter.Wire,
+                        schemaId: "incompatible-schema"))
+            ]);
+            throw new Exception("expected generated Codec conflict");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message.Contains("schema/wire", StringComparison.Ordinal),
+                "same-target schema/wire conflict is rejected");
+        }
+
+        Ensure(firstCounters.ScopeDisposeCount == 1, "first Manifest Scope is rolled back");
+        Ensure(secondCounters.ScopeDisposeCount == 1, "second Manifest Scope is rolled back");
+    }
+
+    [Test]
+    public async Task TenThousandCodecPublicationRacesShouldPreserveRegistrationIdentity()
+    {
+        var oldCounters = new AdapterCounters();
+        var newCounters = new AdapterCounters();
+        var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var oldRegistration = context.PrepareGeneratedManifest(new TestManifest(
+            "old-generation",
+            new ConfigurableAdapterFactory<AdapterValue>(
+                new CountingAdapter(oldCounters),
+                CountingAdapter.Id,
+                CountingAdapter.Wire,
+                new TaggedAdapterValueCodec(1))));
+        var newRegistration = context.PrepareGeneratedManifest(new TestManifest(
+            "new-generation",
+            new ConfigurableAdapterFactory<AdapterValue>(
+                new CountingAdapter(newCounters),
+                CountingAdapter.Id,
+                CountingAdapter.Wire,
+                new TaggedAdapterValueCodec(2))));
+        context.AdoptGeneratedManifest(oldRegistration);
+        context.AdoptGeneratedManifest(newRegistration);
+        context.PublishGeneratedCodecs(oldRegistration.Codecs);
+
+        for (var iteration = 0; iteration < 10_000; iteration++)
+        {
+            var next = iteration % 2 == 0 ? newRegistration : oldRegistration;
+            var expectedTag = iteration % 2 == 0 ? 2 : 1;
+            var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var racedLookup = Task.Run(() =>
+            {
+                ready.SetResult();
+                return context.Codecs.GetCodec<AdapterValue>();
+            });
+            await ready.Task;
+            context.PublishGeneratedCodecs(next.Codecs);
+            var racedCodec = await racedLookup;
+            Ensure(racedCodec is TaggedAdapterValueCodec { Tag: 1 or 2 },
+                $"raced lookup {iteration} returns a complete published generation");
+            Ensure(context.Codecs.GetCodec<AdapterValue>() is TaggedAdapterValueCodec { Tag: var tag } &&
+                   tag == expectedTag,
+                $"post-publication lookup {iteration} uses the current registration");
+        }
+
+        context.PublishGeneratedCodecs(newRegistration.Codecs);
+        context.ReleaseGeneratedManifest(oldRegistration);
+        Ensure(context.Codecs.GetCodec<AdapterValue>() is TaggedAdapterValueCodec { Tag: 2 },
+            "old owner cleanup cannot evict the replacement Codec");
+        Ensure(oldCounters.ScopeDisposeCount == 1, "old generation Scope is disposed exactly once");
+        Ensure(newCounters.ScopeDisposeCount == 0, "new generation Scope remains active");
+        context.Dispose();
+        context.Dispose();
+        Ensure(newCounters.ScopeDisposeCount == 1, "new generation Scope is disposed exactly once");
+    }
+
+    [Test]
+    public void DisposedContextShouldRejectCodecResolution()
+    {
+        var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        context.Dispose();
+        context.Dispose();
+        try
+        {
+            _ = context.Codecs.GetCodec<TaggedValue>();
+            throw new Exception("expected disposed Context to reject Codec resolution");
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
     private sealed class TaggedValue;
 
     private sealed class TaggedCodec(int tag) : IRpcCodec<TaggedValue>
@@ -155,6 +478,9 @@ public class SharpLinkRuntimeContextTests
     }
 
     private sealed class CatalogValue;
+    private sealed class AdapterValue;
+    private sealed class SecondAdapterValue;
+    private sealed class ThirdAdapterValue;
 
     private sealed class CatalogCodec : IRpcCodec<CatalogValue>
     {
@@ -169,7 +495,14 @@ public class SharpLinkRuntimeContextTests
     {
         public Type TargetType => typeof(CatalogValue);
         public string SchemaId => "catalog-test-v1";
-        public IRpcCodec Create(IRpcCodecProvider provider) => new CatalogCodec();
+        public string WireFormatId => "sharplink-native/v1";
+        public string? AdapterId => null;
+        public IRpcCodecAdapter? Adapter => null;
+        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
+            => adapterScope is null
+                ? new CatalogCodec()
+                : throw new ArgumentException("Native factory does not accept an Adapter Scope.", nameof(adapterScope));
+        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<CatalogValue>;
     }
 
     private sealed class CatalogManifest : ISharpLinkGeneratedAssemblyManifest
@@ -183,6 +516,217 @@ public class SharpLinkRuntimeContextTests
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } = [new CatalogCodecFactory()];
         public IReadOnlyList<string> Dependencies => [];
+    }
+
+    public sealed class CountingAdapter : IRpcCodecAdapter
+    {
+        internal const string Id = "test.adapter/v1";
+        internal const string Wire = "test-wire/v1";
+        private readonly AdapterCounters _counters;
+
+        public CountingAdapter()
+            : this(new AdapterCounters())
+        {
+        }
+
+        internal CountingAdapter(AdapterCounters counters) => _counters = counters;
+
+        public string AdapterId => Id;
+        public string WireFormatId => Wire;
+
+        public IRpcCodecAdapterScope CreateScope()
+        {
+            Interlocked.Increment(ref _counters.ScopeCreateCount);
+            return new CountingScope(_counters);
+        }
+    }
+
+    public sealed class AlternateCountingAdapter : IRpcCodecAdapter
+    {
+        internal const string Id = "test.alternate-adapter/v1";
+        internal const string Wire = "test-alternate-wire/v1";
+        private readonly AdapterCounters _counters;
+
+        public AlternateCountingAdapter()
+            : this(new AdapterCounters())
+        {
+        }
+
+        internal AlternateCountingAdapter(AdapterCounters counters) => _counters = counters;
+
+        public string AdapterId => Id;
+        public string WireFormatId => Wire;
+
+        public IRpcCodecAdapterScope CreateScope()
+        {
+            Interlocked.Increment(ref _counters.ScopeCreateCount);
+            return new CountingScope(_counters);
+        }
+    }
+
+    public sealed class FailingScopeAdapter : IRpcCodecAdapter
+    {
+        internal const string Id = "z.test.failing-adapter/v1";
+        internal const string Wire = "test-failing-wire/v1";
+        private readonly AdapterCounters _counters;
+        private readonly bool _returnNull;
+
+        public FailingScopeAdapter()
+            : this(new AdapterCounters(), returnNull: false)
+        {
+        }
+
+        internal FailingScopeAdapter(AdapterCounters counters, bool returnNull)
+        {
+            _counters = counters;
+            _returnNull = returnNull;
+        }
+
+        public string AdapterId => Id;
+        public string WireFormatId => Wire;
+
+        public IRpcCodecAdapterScope CreateScope()
+        {
+            Interlocked.Increment(ref _counters.ScopeCreateCount);
+            if (_returnNull)
+                return null!;
+            throw new InvalidOperationException("scope failure");
+        }
+    }
+
+    private sealed class CountingScope(AdapterCounters counters) : IRpcCodecAdapterScope
+    {
+        private int _disposed;
+
+        public IRpcCodec<T> CreateCodec<
+            [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(
+                System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All)] T>()
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            var number = Interlocked.Increment(ref counters.CodecCreateCount);
+            if (number == Volatile.Read(ref counters.FailOnCodecNumber))
+                throw new InvalidOperationException("candidate failure");
+            return new AdapterCodec<T>();
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                Interlocked.Increment(ref counters.ScopeDisposeCount);
+        }
+    }
+
+    private sealed class AdapterCodec<T> : IRpcCodec<T>
+    {
+        public void Serialize(in T value, IBufferWriter<byte> buffer)
+        {
+        }
+
+        public T? Deserialize(in ReadOnlySequence<byte> buffer) => default;
+    }
+
+    private sealed class TaggedAdapterValueCodec(int tag) : IRpcCodec<AdapterValue>
+    {
+        internal int Tag { get; } = tag;
+
+        public void Serialize(in AdapterValue value, IBufferWriter<byte> buffer)
+        {
+        }
+
+        public AdapterValue Deserialize(in ReadOnlySequence<byte> buffer) => new();
+    }
+
+    private sealed class AdapterFactory<T>(AdapterCounters counters) : IRpcGeneratedCodecFactory
+    {
+        public Type TargetType => typeof(T);
+        public string SchemaId => $"adapter:{typeof(T).FullName}";
+        public string WireFormatId => "test-wire/v1";
+        public string? AdapterId => "test.adapter/v1";
+        public IRpcCodecAdapter Adapter { get; } = new CountingAdapter(counters);
+
+        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
+            => (adapterScope ?? throw new ArgumentNullException(nameof(adapterScope))).CreateCodec<T>();
+        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<T>;
+    }
+
+    private sealed class ConfigurableAdapterFactory<T> : IRpcGeneratedCodecFactory
+    {
+        private readonly IRpcCodec? _codec;
+
+        internal ConfigurableAdapterFactory(
+            IRpcCodecAdapter adapter,
+            string adapterId,
+            string wireFormatId,
+            IRpcCodec? codec = null,
+            string? schemaId = null)
+        {
+            Adapter = adapter;
+            AdapterId = adapterId;
+            WireFormatId = wireFormatId;
+            SchemaId = schemaId ?? $"adapter:{typeof(T).FullName}";
+            _codec = codec;
+        }
+
+        public Type TargetType => typeof(T);
+        public string SchemaId { get; }
+        public string WireFormatId { get; }
+        public string AdapterId { get; }
+        public IRpcCodecAdapter Adapter { get; }
+
+        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
+            => _codec ?? (adapterScope ?? throw new ArgumentNullException(nameof(adapterScope))).CreateCodec<T>();
+
+        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<T>;
+    }
+
+    private sealed class AdapterManifest(AdapterCounters counters, bool includeSecondCodec) : ISharpLinkGeneratedAssemblyManifest
+    {
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "test";
+        public Assembly OwnerAssembly => typeof(AdapterManifest).Assembly;
+        public string CompileTimeDescriptor => "adapter-test";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } = includeSecondCodec
+            ? [new AdapterFactory<AdapterValue>(counters), new AdapterFactory<SecondAdapterValue>(counters)]
+            : [new AdapterFactory<AdapterValue>(counters)];
+        public IReadOnlyList<string> Dependencies => [];
+    }
+
+    private sealed class TestManifest(string descriptor, params IRpcGeneratedCodecFactory[] codecs)
+        : ISharpLinkGeneratedAssemblyManifest
+    {
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "test";
+        public Assembly OwnerAssembly => typeof(TestManifest).Assembly;
+        public string CompileTimeDescriptor => descriptor;
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } = codecs;
+        public IReadOnlyList<string> Dependencies => [];
+    }
+
+    private sealed class CallerOwnedAdapterValueCodec : IRpcCodec<AdapterValue>, IDisposable
+    {
+        internal int DisposeCount { get; private set; }
+
+        public void Serialize(in AdapterValue value, IBufferWriter<byte> buffer)
+        {
+        }
+
+        public AdapterValue Deserialize(in ReadOnlySequence<byte> buffer) => new();
+
+        public void Dispose() => DisposeCount++;
+    }
+
+    internal sealed class AdapterCounters
+    {
+        internal int ScopeCreateCount;
+        internal int CodecCreateCount;
+        internal int ScopeDisposeCount;
+        internal int FailOnCodecNumber;
     }
 
     private static void Ensure(bool condition, string message)

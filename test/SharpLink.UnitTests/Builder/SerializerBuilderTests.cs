@@ -75,11 +75,14 @@ public class SerializerBuilderTests
     public void RemovingGeneratedCodecStateShouldPreserveExplicitCodecs()
     {
         var codec = new TaggedCodec("explicit");
-        var context = new SharpLinkRuntimeContextBuilder()
+        using var context = new SharpLinkRuntimeContextBuilder()
             .AddCodec<Payload>(codec)
             .Build();
+        var registration = context.PrepareGeneratedManifest(new TaggedManifest());
+        context.PublishGeneratedCodecs(registration.Codecs);
+        context.AdoptGeneratedManifest(registration);
 
-        context.RemoveResolvedGeneratedCodecs([typeof(Payload)]);
+        context.ReleaseGeneratedManifest(registration);
 
         Ensure(ReferenceEquals(context.Codecs.GetCodec<Payload>(), codec),
             "generated module cleanup must preserve an explicit codec");
@@ -89,16 +92,15 @@ public class SerializerBuilderTests
     public void PublishedGeneratedCodecShouldReplaceCachedFallbackCodec()
     {
         var fallback = new TaggedCodec("fallback");
-        var context = new SharpLinkRuntimeContextBuilder()
+        using var context = new SharpLinkRuntimeContextBuilder()
             .UseCodecResolver(type => type == typeof(Payload) ? fallback : null)
             .Build();
         Ensure(ReferenceEquals(context.Codecs.GetCodec<Payload>(), fallback),
             "fallback codec cached before module publication");
 
-        context.PublishGeneratedCodecs(new Dictionary<Type, IRpcGeneratedCodecFactory>
-        {
-            [typeof(Payload)] = new TaggedCodecFactory()
-        });
+        var registration = context.PrepareGeneratedManifest(new TaggedManifest());
+        context.PublishGeneratedCodecs(registration.Codecs);
+        context.AdoptGeneratedManifest(registration);
 
         Ensure(context.Codecs.GetCodec<Payload>() is TaggedCodec { Tag: "generated" },
             "generated codec takes precedence after publication");
@@ -156,7 +158,27 @@ public class SerializerBuilderTests
     {
         public Type TargetType => typeof(Payload);
         public string SchemaId => "generated-test-v1";
-        public IRpcCodec Create(IRpcCodecProvider provider) => new TaggedCodec("generated");
+        public string WireFormatId => "sharplink-native/v1";
+        public string? AdapterId => null;
+        public IRpcCodecAdapter? Adapter => null;
+        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
+            => adapterScope is null
+                ? new TaggedCodec("generated")
+                : throw new ArgumentException("Native factory does not accept an Adapter Scope.", nameof(adapterScope));
+        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<Payload>;
+    }
+
+    private sealed class TaggedManifest : ISharpLinkGeneratedAssemblyManifest
+    {
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "test";
+        public Assembly OwnerAssembly => typeof(TaggedManifest).Assembly;
+        public string CompileTimeDescriptor => "tagged-test";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } = [new TaggedCodecFactory()];
+        public IReadOnlyList<string> Dependencies => [];
     }
 
     private sealed class NoopTransport : IClientTransportFactory, IServerTransportListener
