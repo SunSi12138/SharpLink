@@ -1,23 +1,25 @@
-# 0.8.0 regression-test research
+# 0.8.1 regression-test research
 
 ## Scope
 
-- Native built-in Codec decoding in `src/SharpLink.Runtime/Codec`.
-- Stream/connection credit batching in `StreamFlowController`.
-- RPC method modeling and diagnostics in `SharpLink.Generator`.
+- Authentication and topology immutability boundaries.
+- Generated manifest and built-in request Codec integrity.
+- Built-in endpoint-resolver cancellation lifecycle.
+- Native `List<T>` decode allocation/copy cost.
 
-## Existing conventions
+## Confirmed candidates
 
-- Tests use TUnit `[Test]` methods and small local `Ensure` helpers.
-- Runtime edge cases live under `test/SharpLink.UnitTests/Runtime`.
-- Generator diagnostics and emitted-source assertions live in `RpcAnalyzerTests`.
-- Final validation uses the Microsoft Testing Platform commands documented in `CONTRIBUTING.md`.
+- `SharpLinkAuthenticationContext.Scopes` exposes mutable `HashSet` instances, including one process-wide shared empty set.
+- `SharpLinkEndpointSnapshot.Endpoints` and generated manifest collections expose arrays behind read-only interfaces.
+- Both built-in endpoint resolvers cancel but never dispose their owned `CancellationTokenSource`; synchronous cancellation also violates their async disposal surface.
+- Generated inline requests bypass validating built-in Codecs for Boolean and semantic value types.
+- `BlitListCodec<T>` materializes an intermediate array and then copies it into a second List-owned array. The frozen 0.8.0 RPC baseline is 560 B/op for 16 integers and 2480 B/op for 256 integers.
 
 ## Acceptance checklist
 
-- [x] Fixed and variable native Codecs reject trailing bytes identically for contiguous and segmented input.
-- [x] Boolean values and nullable presence markers reject non-canonical wire bytes.
-- [x] Reaching the connection-credit batching threshold does not leave consumed credit stranded on another open stream.
-- [x] Adapter-selected unmanaged request values are length-delimited through their selected Codec rather than native-blitted.
-- [x] A marked RPC contract models methods inherited from an ordinary base interface.
-- [x] Narrow tests, full Release build, generator/unit/integration suites, and targeted performance evidence pass.
+- [x] Authorization scopes cannot be mutated or shared-contaminated by callers.
+- [x] Endpoint and generated manifest collections cannot be cast back to writable arrays/lists.
+- [x] Resolver disposal is idempotent, asynchronous, and disposes the owned cancellation source.
+- [x] Semantic fixed request parameters use validating built-in Codecs; raw numeric hot-path parameters remain inline.
+- [x] List decoding writes directly into the List-owned storage and reduces allocations without throughput regression.
+- [ ] Release, Generator, Unit, Integration, focused benchmarks, and pseudo-mutation review pass.

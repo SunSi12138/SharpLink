@@ -156,14 +156,18 @@ internal sealed class BlitListCodec<T> : IRpcCodec<List<T>?> where T:unmanaged
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public List<T>? Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        // 先反序列化出数组
-        var array = BlitArrayCodec<T>.Instance.Deserialize(buffer);
-        if (array is null) return null;
-        
-        // 包装成 List
-        // 注意：这会发生一次 T[] 到 List._items 的内存拷贝 (Array.Copy)
-        // 但这是目前安全且标准的做法。
-        return new List<T>(array);
+        var length = CodecHelpers.ReadInt32(buffer);
+        var byteCount = CodecHelpers.GetValidatedCollectionByteCount<T>(buffer, length);
+        if (length == -1)
+            return null;
+        if (length == 0)
+            return [];
+
+        var list = new List<T>(length);
+        CollectionsMarshal.SetCount(list, length);
+        buffer.Slice(sizeof(int), byteCount)
+            .CopyTo(MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(list)));
+        return list;
     }
 }
 

@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-07-26
+
+### Fixed
+
+- Authentication scopes are now frozen snapshots. Callers can no longer cast `Scopes` to a mutable set, inject privileges, or contaminate the process-wide empty scope set.
+- Endpoint snapshots and all generated assembly/cluster manifest collections now expose read-only wrappers, including nested method and service-dependency arrays.
+- Built-in delegate and DNS endpoint resolvers now share idempotent asynchronous disposal, await cancellation callbacks, dispose their owned cancellation sources, and synchronize operation admission against disposal.
+- Generated request decoders canonicalize and validate Boolean bytes and route semantic fixed values (`decimal`, date/time types, `Rune`, `Index`, and `Range`) through their validating built-in Codecs. Raw numeric hot paths remain inline.
+- Native `List<T>` decoding now writes directly into List-owned storage, eliminating the intermediate array and full copy.
+
+### Compatibility and validation
+
+- Requests containing the semantic fixed values listed above use length-delimited Codec framing in 0.8.1. Rebuild and deploy affected Client/Server contracts together; Boolean and raw numeric request layouts remain unchanged.
+- Release build, Generator 83/83, Unit 339/339, Integration 227/227, immutability/lifecycle mutation probes, and three-round alternating `Rpc_SumList` benchmarks passed.
+- `Rpc_SumList` retained 99.56% throughput at 16 items and improved to 102.53% at 256 items. Allocations fell from 560 to 472 B/op and from 2480 to 1432 B/op.
+
 ## [0.8.0] - 2026-07-26
 
 ### Fixed

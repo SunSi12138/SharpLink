@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Client;
@@ -93,6 +94,55 @@ public sealed class DynamicEndpointResolverTests
     }
 
     [Test]
+    public void EndpointSnapshotShouldNotExposeItsMutableBackingArray()
+    {
+        var original = new SharpLinkEndpoint
+        {
+            Id = "original",
+            Address = new SharpLinkTcpAddress("127.0.0.1", 5001)
+        };
+        var snapshot = new SharpLinkEndpointSnapshot(1, [original]);
+        var mutated = false;
+        if (snapshot.Endpoints is IList<SharpLinkEndpoint> mutable)
+        {
+            var replacement = new SharpLinkEndpoint
+            {
+                Id = "injected",
+                Address = new SharpLinkTcpAddress("127.0.0.1", 5002)
+            };
+            try
+            {
+                mutable[0] = replacement;
+                mutated = ReferenceEquals(snapshot.Endpoints[0], replacement);
+                mutable[0] = original;
+            }
+            catch (NotSupportedException)
+            {
+            }
+        }
+
+        Ensure(!mutated, "a published endpoint topology must remain immutable");
+    }
+
+    [Test]
+    public async Task BuiltInResolversShouldDisposeTheirCancellationSources()
+    {
+        var @delegate = new DelegateSharpLinkEndpointResolver(
+            static _ => ValueTask.FromResult(new SharpLinkEndpointSnapshot(0, [])));
+        var dns = new SharpLinkDnsEndpointResolver(
+            "service.example",
+            5001,
+            new SharpLinkDnsResolverOptions(),
+            new TestDnsQuery { Addresses = [IPAddress.Loopback] });
+
+        await @delegate.DisposeAsync();
+        await dns.DisposeAsync();
+
+        EnsureCancellationSourceDisposed(@delegate);
+        EnsureCancellationSourceDisposed(dns);
+    }
+
+    [Test]
     public async Task DynamicBuilderShouldOwnResolverAndRejectFixedTransportConflict()
     {
         var resolver = new TrackingResolver();
@@ -166,6 +216,23 @@ public sealed class DynamicEndpointResolverTests
             throw new Exception($"expected {typeof(TException).Name}");
         }
         catch (TException)
+        {
+        }
+    }
+
+    private static void EnsureCancellationSourceDisposed(object resolver)
+    {
+        var field = resolver.GetType().GetField(
+            "_disposeCts",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("resolver cancellation source field was not found");
+        var source = (CancellationTokenSource)field.GetValue(resolver)!;
+        try
+        {
+            _ = source.Token;
+            throw new Exception("resolver cancellation source was cancelled but not disposed");
+        }
+        catch (ObjectDisposedException)
         {
         }
     }

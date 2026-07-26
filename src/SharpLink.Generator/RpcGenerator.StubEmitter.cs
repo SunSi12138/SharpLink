@@ -238,6 +238,12 @@ public partial class RpcGenerator
             foreach (var p in blittableParams)
             {
                 var sizeToken = GetSizeToken(p.Type);
+                if (IsBooleanType(p.Type))
+                {
+                    sb.AppendLine($"                if (!reader.TryRead(out var marker_{p.Name}) || marker_{p.Name} is not (0 or 1)) throw new InvalidDataException();");
+                    sb.AppendLine($"                arg_{p.Name} = marker_{p.Name} == 1;");
+                    continue;
+                }
                 sb.AppendLine($"                if (reader.Remaining < {sizeToken}) throw new InvalidDataException();");
                 sb.AppendLine($"                if (reader.UnreadSpan.Length >= {sizeToken})");
                 sb.AppendLine("                {");
@@ -390,6 +396,9 @@ public partial class RpcGenerator
     {
         return $"System.Runtime.CompilerServices.Unsafe.SizeOf<{typeName}>()";
     }
+
+    private static bool IsBooleanType(string typeName)
+        => typeName is "bool" or "System.Boolean" or "global::System.Boolean";
 
     private static bool TryGetConstantSize(string typeName, out int size)
     {

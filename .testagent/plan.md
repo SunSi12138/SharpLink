@@ -1,7 +1,7 @@
-# 0.8.0 regression-test plan
+# 0.8.1 regression-test plan
 
-1. [x] Extend `CodecSafetyTests` so existing round-trip inventories also test one trailing byte in contiguous and segmented buffers; add malformed boolean/presence-marker cases.
-2. [x] Add a `StreamFlowControllerTests` invariant that demonstrates cross-stream connection-credit stranding at the batching threshold, then strengthen it against the repaired update-batch API.
-3. [x] Strengthen generator tests for adapter-selected unmanaged request values and inherited contract methods.
-4. [x] Run the two narrow test projects before production changes to capture the expected failures.
-5. [x] Implement the smallest production fixes, rerun narrow tests, review assertion quality and behavior gaps, and complete the performance gate.
+1. [x] Add mutation probes for authentication scopes and endpoint snapshots, then assert read-only wrappers in generated manifests.
+2. [x] Add resolver owned-resource disposal checks for both built-in implementations.
+3. [x] Strengthen emitted-source tests so semantic fixed values resolve validating Codecs while ordinary integers remain inline.
+4. [x] Capture the existing `Rpc_SumList` allocation/latency baseline, then remove the intermediate array from `BlitListCodec<T>`.
+5. [x] Run focused failures before production changes, implement minimal fixes, review assertion gaps, and complete full correctness/performance gates.

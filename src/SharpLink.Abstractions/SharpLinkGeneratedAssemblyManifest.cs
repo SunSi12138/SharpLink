@@ -85,7 +85,7 @@ public interface ISharpLinkGeneratedAssemblyManifest
     IReadOnlyList<string> Dependencies { get; }
 }
 
-/// <summary>Defines generated manifest compatibility constants for SharpLink 0.7.x.</summary>
+/// <summary>Defines generated manifest compatibility constants for the current SharpLink release line.</summary>
 public static class SharpLinkGeneratedManifestVersions
 {
     /// <summary>The current generated manifest API version.</summary>

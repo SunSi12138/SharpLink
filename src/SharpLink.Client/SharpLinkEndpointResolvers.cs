@@ -16,6 +16,8 @@ public sealed class DelegateSharpLinkEndpointResolver : ISharpLinkEndpointResolv
     private readonly Func<CancellationToken, IAsyncEnumerable<SharpLinkEndpointSnapshot>>? _watch;
     private readonly TimeSpan _pollingInterval;
     private readonly CancellationTokenSource _disposeCts = new();
+    private readonly Lock _disposeGate = new();
+    private Task? _disposeTask;
     private int _disposed;
 
     /// <summary>Initializes a polling delegate resolver.</summary>
@@ -46,8 +48,7 @@ public sealed class DelegateSharpLinkEndpointResolver : ISharpLinkEndpointResolv
     /// <inheritdoc />
     public async ValueTask<SharpLinkEndpointSnapshot> ResolveAsync(CancellationToken cancellationToken)
     {
-        ThrowIfDisposed();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token);
+        using var linked = CreateOperationCancellation(cancellationToken);
         return await _resolve(linked.Token).ConfigureAwait(false);
     }
 
@@ -55,8 +56,7 @@ public sealed class DelegateSharpLinkEndpointResolver : ISharpLinkEndpointResolv
     public async IAsyncEnumerable<SharpLinkEndpointSnapshot> WatchAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        ThrowIfDisposed();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token);
+        using var linked = CreateOperationCancellation(cancellationToken);
         if (_watch is not null)
         {
             await foreach (var snapshot in _watch(linked.Token).WithCancellation(linked.Token).ConfigureAwait(false))
@@ -74,9 +74,31 @@ public sealed class DelegateSharpLinkEndpointResolver : ISharpLinkEndpointResolv
     /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) == 0)
-            _disposeCts.Cancel();
-        return ValueTask.CompletedTask;
+        lock (_disposeGate)
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+        try
+        {
+            await _disposeCts.CancelAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _disposeCts.Dispose();
+        }
+    }
+
+    private CancellationTokenSource CreateOperationCancellation(CancellationToken cancellationToken)
+    {
+        lock (_disposeGate)
+        {
+            ThrowIfDisposed();
+            return CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token);
+        }
     }
 
     private void ThrowIfDisposed()
@@ -160,6 +182,8 @@ public sealed class SharpLinkDnsEndpointResolver : ISharpLinkEndpointResolver
     private readonly ISharpLinkDnsQuery _query;
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Lock _gate = new();
+    private readonly Lock _disposeGate = new();
+    private Task? _disposeTask;
     private SharpLinkEndpointSnapshot? _lastSnapshot;
     private string[] _lastEndpointKeys = [];
     private long _version;
@@ -195,8 +219,7 @@ public sealed class SharpLinkDnsEndpointResolver : ISharpLinkEndpointResolver
     /// <inheritdoc />
     public async ValueTask<SharpLinkEndpointSnapshot> ResolveAsync(CancellationToken cancellationToken)
     {
-        ThrowIfDisposed();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token);
+        using var linked = CreateOperationCancellation(cancellationToken);
         try
         {
             var result = await QueryAndCreateSnapshotAsync(linked.Token).ConfigureAwait(false);
@@ -216,8 +239,7 @@ public sealed class SharpLinkDnsEndpointResolver : ISharpLinkEndpointResolver
     public async IAsyncEnumerable<SharpLinkEndpointSnapshot> WatchAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        ThrowIfDisposed();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token);
+        using var linked = CreateOperationCancellation(cancellationToken);
         while (true)
         {
             await Task.Delay(GetRefreshDelay(), linked.Token).ConfigureAwait(false);
@@ -244,9 +266,31 @@ public sealed class SharpLinkDnsEndpointResolver : ISharpLinkEndpointResolver
     /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) == 0)
-            _disposeCts.Cancel();
-        return ValueTask.CompletedTask;
+        lock (_disposeGate)
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+        try
+        {
+            await _disposeCts.CancelAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _disposeCts.Dispose();
+        }
+    }
+
+    private CancellationTokenSource CreateOperationCancellation(CancellationToken cancellationToken)
+    {
+        lock (_disposeGate)
+        {
+            ThrowIfDisposed();
+            return CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token);
+        }
     }
 
     private async ValueTask<(SharpLinkEndpointSnapshot Snapshot, bool Changed)> QueryAndCreateSnapshotAsync(

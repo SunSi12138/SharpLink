@@ -195,7 +195,10 @@ public partial class RpcGenerator
             foreach (var parameter in blittable)
             {
                 var size = GetInlineSizeToken(parameter.Type);
-                sb.AppendLine($"        Unsafe.WriteUnaligned(ref System.Runtime.InteropServices.MemoryMarshal.GetReference(fixedSpan.Slice(fixedOffset, {size})), value.{parameter.Name});");
+                if (IsBooleanType(parameter.Type))
+                    sb.AppendLine($"        fixedSpan[fixedOffset] = value.{parameter.Name} ? (byte)1 : (byte)0;");
+                else
+                    sb.AppendLine($"        Unsafe.WriteUnaligned(ref System.Runtime.InteropServices.MemoryMarshal.GetReference(fixedSpan.Slice(fixedOffset, {size})), value.{parameter.Name});");
                 sb.AppendLine($"        fixedOffset += {size};");
             }
             sb.AppendLine("        writer.Advance(fixedSize);");
@@ -221,6 +224,13 @@ public partial class RpcGenerator
         foreach (var parameter in blittable)
         {
             var size = GetInlineSizeToken(parameter.Type);
+            if (IsBooleanType(parameter.Type))
+            {
+                sb.AppendLine($"        if (!reader.TryRead(out var marker_{parameter.Name}) || marker_{parameter.Name} is not (0 or 1))");
+                sb.AppendLine($"            throw new InvalidDataException(\"Request field '{parameter.Name}' has an invalid Boolean marker.\");");
+                sb.AppendLine($"        var value_{parameter.Name} = marker_{parameter.Name} == 1;");
+                continue;
+            }
             sb.AppendLine($"        if (reader.Remaining < {size}) throw new InvalidDataException(\"Request field '{parameter.Name}' is truncated.\");");
             sb.AppendLine($"        {parameter.Type} value_{parameter.Name};");
             sb.AppendLine($"        if (reader.UnreadSpan.Length >= {size})");

@@ -12,6 +12,42 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
     [Test]
+    public Task SemanticFixedRequestValuesShouldUseValidatedBuiltInCodecs()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IValidatedValueService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Validate(
+        bool enabled,
+        decimal amount,
+        DateOnly day,
+        DateTime timestamp,
+        DateTimeOffset offset,
+        TimeOnly time,
+        System.Text.Rune rune,
+        CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(CountOccurrences(generated, "marker_enabled is not (0 or 1)") == 2,
+            "proxy and stub request decoders must reject non-canonical Boolean markers");
+        Ensure(generated.Contains("value.enabled ? (byte)1 : (byte)0", StringComparison.Ordinal),
+            "the request encoder must canonicalize Boolean values");
+        foreach (var type in new[]
+                 {
+                     "decimal", "global::System.DateOnly", "global::System.DateTime",
+                     "global::System.DateTimeOffset", "global::System.TimeOnly", "global::System.Text.Rune"
+                 })
+        {
+            Ensure(generated.Contains($"codecs.GetCodec<{type}>()", StringComparison.Ordinal),
+                $"request value {type} must use its validating built-in Codec");
+        }
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task RpcContractShouldGenerateInheritedBaseMethods()
     {
         var source = BuildSource("""
@@ -779,6 +815,8 @@ public interface IOrdersService : SharpLink.Sdk.IService
             "cluster route should preserve the declared key");
         Ensure(route.Contains("SharpLinkGeneratedClusterRouteCatalog.Register", StringComparison.Ordinal),
             "cluster route manifest should register from a module initializer");
+        Ensure(route.Contains("System.Array.AsReadOnly(__routes)", StringComparison.Ordinal),
+            "cluster route manifest must not expose its generated array");
         return Task.CompletedTask;
     }
 

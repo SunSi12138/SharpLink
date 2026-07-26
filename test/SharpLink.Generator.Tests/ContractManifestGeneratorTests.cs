@@ -64,20 +64,54 @@ public sealed class HelloService : IHelloService
         Ensure(first.Json.Contains("\"tag\": 1", StringComparison.Ordinal), "union tag");
         Ensure(first.Json.Contains("\"schemaFingerprint\":", StringComparison.Ordinal),
             "schema fingerprint");
-        Ensure(first.Json.Contains("\"generatorVersion\": \"0.8.0\"", StringComparison.Ordinal),
-            "0.8.0 generator version");
+        Ensure(first.Json.Contains("\"generatorVersion\": \"0.8.1\"", StringComparison.Ordinal),
+            "0.8.1 generator version");
         Ensure(!first.Json.Contains(Directory.GetCurrentDirectory(), StringComparison.Ordinal),
             "Manifest must not contain absolute paths");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task GeneratedAssemblyManifestShouldReportVersion080()
+    public Task GeneratedAssemblyManifestShouldReportVersion081()
     {
         var source = SimpleContract("ValueTask<int> Echo(int value, CancellationToken cancellationToken);");
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(generated.Contains("public string GeneratorVersion => \"0.8.0\";", StringComparison.Ordinal),
+        Ensure(generated.Contains("public string GeneratorVersion => \"0.8.1\";", StringComparison.Ordinal),
             "generated assembly Manifest version");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task GeneratedManifestCollectionsShouldNotExposeMutableArrays()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IImmutableManifestService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class ImmutableManifestService : IImmutableManifestService
+{
+    public ImmutableManifestService(object dependency) { }
+    public ValueTask<int> Echo(int value, CancellationToken cancellationToken) => new(value);
+}
+""");
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+
+        Ensure(generated.Contains("Array.AsReadOnly(__contracts)", StringComparison.Ordinal),
+            "contract descriptors must be exposed through a read-only wrapper");
+        Ensure(generated.Contains("Array.AsReadOnly(__services)", StringComparison.Ordinal),
+            "service descriptors must be exposed through a read-only wrapper");
+        Ensure(generated.Contains("Array.AsReadOnly(__codecs)", StringComparison.Ordinal),
+            "Codec factories must be exposed through a read-only wrapper");
+        Ensure(generated.Contains("Array.AsReadOnly(__dependencies)", StringComparison.Ordinal),
+            "dependency identities must be exposed through a read-only wrapper");
+        Ensure(generated.Contains("Array.AsReadOnly(new SharpLinkGeneratedMethodDescriptor[]", StringComparison.Ordinal),
+            "nested method descriptors must not expose their generated array");
+        Ensure(generated.Contains("Array.AsReadOnly(new Type[]", StringComparison.Ordinal),
+            "nested service dependencies must not expose their generated array");
         return Task.CompletedTask;
     }
 

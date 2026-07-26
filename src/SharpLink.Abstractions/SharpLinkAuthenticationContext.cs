@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Frozen;
 
 namespace SharpLink.Abstractions;
 
@@ -6,7 +7,7 @@ public sealed class SharpLinkAuthenticationContext
 {
     private static readonly IReadOnlyDictionary<string, string> SEmptyClaims =
         new ReadOnlyDictionary<string, string>(new Dictionary<string, string>(StringComparer.Ordinal));
-    private static readonly IReadOnlySet<string> SEmptyScopes = new HashSet<string>(StringComparer.Ordinal);
+    private static readonly IReadOnlySet<string> SEmptyScopes = FrozenSet<string>.Empty;
 
     public string? Subject { get; }
     public string? TenantId { get; }
@@ -40,7 +41,9 @@ public sealed class SharpLinkAuthenticationContext
                 normalizedScopes.Add(scope);
             }
 
-            Scopes = normalizedScopes.Count == 0 ? SEmptyScopes : normalizedScopes;
+            Scopes = normalizedScopes.Count == 0
+                ? SEmptyScopes
+                : normalizedScopes.ToFrozenSet(StringComparer.Ordinal);
         }
 
         if (claims is null || claims.Count == 0)

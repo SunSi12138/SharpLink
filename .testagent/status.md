@@ -1,33 +1,28 @@
-# 0.8.0 test status
+# 0.8.1 test status
 
-## Research → Plan → Implement
+## Pre-fix evidence
 
-- Baseline: `v0.7.11`, commit `0151db10c89c8067859daef06ef04e2905cd0e89`.
-- Pre-fix Unit evidence: 335 total, 6 failed across exact Codec consumption, canonical markers, and cross-stream connection credit.
-- Pre-fix Generator evidence: 81 total, 2 failed for inherited methods and selected-Codec unmanaged requests.
-- One suspected overload defect was rejected after the existing `SHARPLINK027` diagnostic reproduced the intended behavior.
-
-## Focused behavior evidence
-
-| Requirement | Evidence |
-| --- | --- |
-| Exact fixed/variable Codec consumption | `FixedLengthCodecsShouldRoundTripSingleAndMultiSegmentAndRejectTruncation`, `StringCodecShouldValidateLengthsAndDecodeAcrossSegments`, `BlitCollectionsShouldValidateLengthBeforeAllocationAndRoundTrip` |
-| Canonical Boolean/nullable markers | `BooleanAndNullableCodecsShouldRejectNonCanonicalMarkers` across contiguous and segmented payloads |
-| Cross-stream connection credit | `ConnectionThresholdShouldNotStrandConsumedCreditOnAnotherOpenStream` and real frame test `ConnectionThresholdShouldSendCreditForEveryContributingStream` |
-| Inherited RPC methods | `RpcContractShouldGenerateInheritedBaseMethods`, including inherited-only and directly redeclared signatures |
-| Selected Codec for unmanaged requests | strengthened `SelectorShouldOverrideUnmanagedNativeFallback` emitted-source assertions |
+- Unit: 339 total, 3 failed for mutable authorization scopes, mutable endpoint snapshots, and undisposed resolver cancellation sources.
+- Generator: 83 total, 2 failed for exposed manifest arrays and semantic request values bypassing built-in Codecs.
+- `Rpc_SumList` baseline allocation: 560 B/op at 16 items and 2480 B/op at 256 items.
 
 ## Assertion and pseudo-mutation review
 
-- New tests use exception, equality, collection, negative, state, and emitted-structure assertions; none is assertion-free or trivial-only.
-- Contiguous and segmented branches, null/empty/positive collection shapes, valid 0/1 markers, invalid markers, truncation, and trailing bytes are distinguished.
-- Pseudo-mutation review found two initially surviving changes: removing session queue draining, and failing to de-duplicate a directly redeclared inherited method. Both now have regression assertions and were fixed.
+- Authorization tests mutate then restore the old backing sets, proving both direct privilege injection and shared-empty-set contamination without leaking state to other tests.
+- Topology tests distinguish a writable array from a wrapper whose mutation throws `NotSupportedException`.
+- Generated-source checks cover top-level contracts/services/Codecs/dependencies, nested methods/service dependencies, and cluster routes.
+- Boolean checks cover canonical serialization plus both request decode implementations; ordinary raw numeric types remain inline.
+- Resolver tests verify the owned CTS is disposed rather than only cancelled. Operation admission and disposal now share one gate, and every concurrent dispose observes the same Task.
+- Existing List Codec tests retain null/empty/positive, contiguous/segmented, trailing, invalid-length, and overflow coverage.
 
-## Validation
+## Performance
 
-- Release solution build: 0 warnings, 0 errors.
-- Generator: 81/81 passed.
-- Unit: 336/336 passed.
-- Integration: 227/227 passed.
-- RuntimeHotPath BenchmarkDotNet medians: 93.09%–101.64% of 0.7.11 latency; allocations unchanged for all seven cases.
-- `git diff --check`: passed; final Release and all three test projects were rerun after the 0.8.0 version/documentation update.
+- Three alternating A/B rounds: 16 items retained 99.56% throughput and reduced 560 → 472 B/op; 256 items reached 102.53% throughput and reduced 2480 → 1432 B/op.
+- Invalid no-measurement runs (compiler code 139 and duplicate benchmark project discovery) were excluded and documented.
+
+## Final gate
+
+- Versioned Release build passed with 0 warnings and 0 errors.
+- Generator 83/83, Unit 339/339, and Integration 227/227 passed.
+- The seven runtime hot-path allocation counts were unchanged. Their absolute latency run was excluded from the gate because every unrelated benchmark shifted by roughly the same host-wide factor; the affected List path instead passed the stricter three-round alternating A/B gate above.
+- `git diff --check` passed.
