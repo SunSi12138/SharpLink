@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-07-27
+
+### Fixed
+
+- Stream transport and RPC session teardown now continue through every owned resource after unexpected completion failures and preserve the complete ordered error set.
+- Concurrent RPC session disposers now observe the same terminal cleanup outcome.
+- Connection-scoped and server-wide service cleanup now reports every disposal failure after completing all remaining services and the owned provider.
+- Hosted servers now supervise asynchronous run-loop failure, log it, and request Generic Host shutdown instead of leaving a live process with a dead RPC endpoint.
+
+### Compatibility and validation
+
+- Public APIs, Protocol v2, and generated Manifest versions are unchanged. Cleanup callers may now receive `AggregateException` when multiple resources fail.
+- Release build, Generator 83/83, Unit 369/369, Integration 228/228, package smoke, and same-machine disposal A/B passed.
+- Normal session disposal measured 950.9 → 955.8 ns with overlapping 99.9% confidence intervals and unchanged 17.5 KB allocation.
+
 ## [0.8.5] - 2026-07-27
 
 ### Fixed

@@ -74,6 +74,29 @@ public class ServiceRegistrationTests
             "connection cleanup must retain the scope disposal failure");
     }
 
+    [Test]
+    public async Task ServerServiceCleanupShouldPreserveEveryRegistrationAndProviderFailure()
+    {
+        var first = ServiceRegistration.CreateSingleton(
+            typeof(object), new StubMarker(),
+            new ThrowingAsyncDisposable("first singleton cleanup failed"), ownsService: true);
+        var second = ServiceRegistration.CreateSingleton(
+            typeof(string), new StubMarker(),
+            new ThrowingAsyncDisposable("second singleton cleanup failed"), ownsService: true);
+        var cleanup = new ServerServiceCleanup(
+            [first, second],
+            new ThrowingAsyncDisposable("provider cleanup failed"));
+
+        var failure = await CaptureAsync(cleanup.DisposeAsync);
+
+        Ensure(ContainsMessage(failure, "first singleton cleanup failed"),
+            "server cleanup must retain the first registration failure");
+        Ensure(ContainsMessage(failure, "second singleton cleanup failed"),
+            "server cleanup must retain the second registration failure");
+        Ensure(ContainsMessage(failure, "provider cleanup failed"),
+            "server cleanup must retain the owned provider failure");
+    }
+
     private static async Task<Exception> CaptureAsync(Func<ValueTask> action)
     {
         try

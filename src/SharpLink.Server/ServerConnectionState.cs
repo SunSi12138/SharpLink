@@ -291,22 +291,40 @@ internal sealed class ServerConnectionState
     private async Task CleanupServicesWhenCallsDrainAsync()
     {
         await _callsDrained.Task.ConfigureAwait(false);
+        List<Exception>? failures = null;
         foreach (var registration in _services.Keys)
         {
             try
             {
                 await DisposeServiceAsync(registration).ConfigureAwait(false);
             }
-            catch
+            catch (Exception exception)
             {
-                // Connection teardown has already completed. Service cleanup is
-                // best-effort here and must never turn a bounded stop into a wait
-                // for uncooperative user code.
+                (failures ??= []).Add(exception);
             }
         }
         _services.Clear();
-        DeadlineScheduler.Dispose();
-        _connectionCancellation.Dispose();
+        try
+        {
+            DeadlineScheduler.Dispose();
+        }
+        catch (Exception exception)
+        {
+            (failures ??= []).Add(exception);
+        }
+        try
+        {
+            _connectionCancellation.Dispose();
+        }
+        catch (Exception exception)
+        {
+            (failures ??= []).Add(exception);
+        }
+
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
     }
 
     private sealed class ConnectionServiceEntry

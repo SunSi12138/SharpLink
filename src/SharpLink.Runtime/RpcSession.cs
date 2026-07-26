@@ -467,14 +467,29 @@ public sealed partial class RpcSession : IRpcSession
             return;
         }
 
+        Exception? cleanupException = null;
         try
         {
-            _cts.Cancel();
+            try
+            {
+                _cts.Cancel();
+            }
+            catch (Exception exception)
+            {
+                cleanupException = exception;
+            }
 
             var pump = Volatile.Read(ref _pump);
-            pump?.Stop();
-            if (pump is not null)
-                await pump.WaitForStopAsync().ConfigureAwait(false);
+            try
+            {
+                pump?.Stop();
+                if (pump is not null)
+                    await pump.WaitForStopAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                cleanupException = CombineCleanupExceptions(cleanupException, exception);
+            }
 
             try
             {
@@ -482,6 +497,10 @@ public sealed partial class RpcSession : IRpcSession
             }
             catch (Exception ex) when (ex is ObjectDisposedException or IOException or InvalidOperationException or ArgumentNullException)
             {
+            }
+            catch (Exception exception)
+            {
+                cleanupException = CombineCleanupExceptions(cleanupException, exception);
             }
 
             try
@@ -491,16 +510,36 @@ public sealed partial class RpcSession : IRpcSession
             catch (Exception ex) when (ex is ObjectDisposedException or IOException or InvalidOperationException)
             {
             }
+            catch (Exception exception)
+            {
+                cleanupException = CombineCleanupExceptions(cleanupException, exception);
+            }
 
-            await StartTransportDispose().ConfigureAwait(false);
+            try
+            {
+                await StartTransportDispose().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                cleanupException = CombineCleanupExceptions(cleanupException, exception);
+            }
         }
         finally
         {
             Volatile.Write(ref _stopped, 1);
             _cts.Dispose();
-            _stoppedTcs.TrySetResult(true);
+            if (cleanupException is null)
+                _stoppedTcs.TrySetResult(true);
+            else
+                _stoppedTcs.TrySetException(cleanupException);
         }
+
+        if (cleanupException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
     }
+
+    private static Exception CombineCleanupExceptions(Exception? first, Exception next)
+        => first is null ? next : new AggregateException(first, next);
 
     private void RecordTelemetryConnectionClosed()
     {

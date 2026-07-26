@@ -1,5 +1,6 @@
 using System.IO.Pipelines;
 using System.Threading;
+using Microsoft.Extensions.DependencyInjection;
 using SharpLink.Sdk;
 using SharpLink.Server;
 
@@ -109,6 +110,29 @@ public class ServerConnectionStateTests
         await second.CloseAsync();
     }
 
+    [Test]
+    public async Task ConnectionServiceCleanupShouldSurfaceEveryFailure()
+    {
+        var state = CreateState(static () => { });
+        Ensure(state.MarkReady(null), "connection ready");
+        var firstService = new ThrowingService("first connection service cleanup failed");
+        var secondService = new ThrowingService("second connection service cleanup failed");
+        var first = CreateConnectionRegistration(firstService);
+        var second = CreateConnectionRegistration(secondService);
+        _ = await state.AcquireServiceAsync(first, default);
+        _ = await state.AcquireServiceAsync(second, default);
+
+        await state.CloseAsync();
+        var failure = await CaptureFailureAsync(state.ServiceCleanupTask);
+
+        Ensure(ContainsMessage(failure, "first connection service cleanup failed"),
+            "connection cleanup must retain the first service failure");
+        Ensure(ContainsMessage(failure, "second connection service cleanup failed"),
+            "connection cleanup must retain the second service failure");
+        Ensure(firstService.DisposeCount == 1 && secondService.DisposeCount == 1,
+            "one service failure must not skip later connection services");
+    }
+
     private static ServerConnectionState CreateState(
         Action disconnect,
         CancellationToken serverToken = default)
@@ -122,6 +146,87 @@ public class ServerConnectionStateTests
             disconnect,
             static () => true);
         return new ServerConnectionState(session, new RuntimeConcurrencyOptions(), serverToken);
+    }
+
+    private static ServiceRegistration CreateConnectionRegistration(ThrowingService service)
+        => ServiceRegistration.CreateConnection(
+            typeof(object),
+            new StubMarker(),
+            new ScopeFactory(),
+            _ => service,
+            disposeService: true);
+
+    private static async Task<Exception> CaptureFailureAsync(Task operation)
+    {
+        try
+        {
+            await operation;
+            throw new Exception("expected connection service cleanup failure");
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static bool ContainsMessage(Exception exception, string message)
+    {
+        if (exception.Message == message)
+            return true;
+        if (exception is AggregateException aggregate)
+        {
+            foreach (var inner in aggregate.InnerExceptions)
+            {
+                if (ContainsMessage(inner, message))
+                    return true;
+            }
+            return false;
+        }
+        return exception.InnerException is { } nested && ContainsMessage(nested, message);
+    }
+
+    private sealed class ScopeFactory : IServiceScopeFactory
+    {
+        public IServiceScope CreateScope() => new Scope();
+    }
+
+    private sealed class Scope : IServiceScope
+    {
+        public IServiceProvider ServiceProvider { get; } = new EmptyServiceProvider();
+        public void Dispose() { }
+    }
+
+    private sealed class EmptyServiceProvider : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => null;
+    }
+
+    private sealed class ThrowingService(string message) : IAsyncDisposable
+    {
+        private int _disposeCount;
+        internal int DisposeCount => Volatile.Read(ref _disposeCount);
+
+        public ValueTask DisposeAsync()
+        {
+            Interlocked.Increment(ref _disposeCount);
+            return ValueTask.FromException(new InvalidOperationException(message));
+        }
+    }
+
+    private sealed class StubMarker : IRpcStub
+    {
+        public long InterfaceHash => 1;
+        public ValueTask InvokeNoReturnAsync(object service, IRpcSession session, long methodHash,
+            long requestId, ReadOnlySequence<byte> args) => ValueTask.CompletedTask;
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcSession session, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+        public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output)
+            => ValueTask.CompletedTask;
+        public ValueTask InvokeCancellableAsync(object service, IRpcSession session, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output,
+            CancellationToken cancellationToken) => ValueTask.CompletedTask;
     }
 
     private static void Ensure(bool condition, string message)

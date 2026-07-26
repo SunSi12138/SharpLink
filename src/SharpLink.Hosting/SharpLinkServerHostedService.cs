@@ -4,7 +4,8 @@ internal sealed class SharpLinkServerHostedService(
     SharpLinkServerBuilder builder,
     ILoggerFactory loggerFactory,
     IServiceProvider serviceProvider,
-    SharpLinkServerReadiness readiness) : IHostedService
+    SharpLinkServerReadiness readiness,
+    IHostApplicationLifetime applicationLifetime) : IHostedService
 {
     private ISharpLinkServer? _server;
     private Task? _runTask;
@@ -19,7 +20,10 @@ internal sealed class SharpLinkServerHostedService(
         _runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _runTask = _server.RunAsync(_runCts.Token).AsTask();
         if (!_runTask.IsCompleted)
+        {
+            _ = ObserveRunTaskAsync(_runTask);
             return;
+        }
 
         try
         {
@@ -41,6 +45,23 @@ internal sealed class SharpLinkServerHostedService(
             if (failures.Count == 1)
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(runException).Throw();
             throw new AggregateException(failures);
+        }
+    }
+
+    private async Task ObserveRunTaskAsync(Task runTask)
+    {
+        try
+        {
+            await runTask.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            if (applicationLifetime.ApplicationStopping.IsCancellationRequested)
+                return;
+            loggerFactory.CreateLogger<SharpLinkServerHostedService>().LogCritical(
+                exception,
+                "SharpLink server run loop terminated unexpectedly.");
+            applicationLifetime.StopApplication();
         }
     }
 

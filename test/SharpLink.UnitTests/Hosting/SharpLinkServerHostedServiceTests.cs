@@ -1,5 +1,8 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Hosting;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using SharpLink.Hosting;
 using SharpLink.Server;
@@ -17,11 +20,13 @@ public class SharpLinkServerHostedServiceTests
             .UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var readiness = new SharpLinkServerReadiness();
+        var lifetime = new TestHostApplicationLifetime();
         var hosted = new SharpLinkServerHostedService(
             builder,
             NullLoggerFactory.Instance,
             provider,
-            readiness);
+            readiness,
+            lifetime);
 
         await hosted.StartAsync(CancellationToken.None);
         Ensure(readiness.Status == SharpLinkHealthStatus.Ready,
@@ -32,6 +37,41 @@ public class SharpLinkServerHostedServiceTests
         Ensure(transport.DisposeCalled, "transport should be disposed when hosted service stops");
         Ensure(readiness.Status == SharpLinkHealthStatus.Unhealthy,
             "readiness should be unhealthy after hosted service stops");
+        Ensure(!lifetime.ApplicationStopping.IsCancellationRequested,
+            "normal hosted stop must not be reported as a run failure");
+    }
+
+    [Test]
+    public async Task AsynchronousRunFailureShouldStopTheHost()
+    {
+        var transport = new DeferredFailureTransport();
+        var lifetime = new TestHostApplicationLifetime();
+        var services = new ServiceCollection();
+        services.AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance);
+        services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
+        services.AddSingleton<IHostApplicationLifetime>(lifetime);
+        services.AddSharpLinkServer(builder => builder.UseTransport(transport));
+        await using var provider = services.BuildServiceProvider();
+        var hosted = provider.GetServices<IHostedService>()
+            .Single(service => service is SharpLinkServerHostedService);
+
+        await hosted.StartAsync(CancellationToken.None);
+        transport.Fail(new IOException("deferred accept failed"));
+
+        try
+        {
+            await lifetime.StopRequested.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            try
+            {
+                await hosted.StopAsync(CancellationToken.None);
+            }
+            catch (IOException exception) when (exception.Message == "deferred accept failed")
+            {
+            }
+        }
     }
 
     [Test]
@@ -98,5 +138,40 @@ public class SharpLinkServerHostedServiceTests
         public ValueTask DisposeAsync() => new(_disposeRelease.Task);
 
         public void ReleaseDispose() => _disposeRelease.TrySetResult(true);
+    }
+
+    private sealed class DeferredFailureTransport : IServerTransportListener
+    {
+        private readonly TaskCompletionSource<ITransportConnection> _accept =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public System.Net.EndPoint? LocalEndPoint => null;
+
+        public ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
+            => new(_accept.Task.WaitAsync(cancellationToken));
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        internal void Fail(Exception exception) => _accept.TrySetException(exception);
+    }
+
+    private sealed class TestHostApplicationLifetime : IHostApplicationLifetime
+    {
+        private readonly CancellationTokenSource _started = new();
+        private readonly CancellationTokenSource _stopping = new();
+        private readonly CancellationTokenSource _stopped = new();
+
+        internal TaskCompletionSource StopRequested { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public CancellationToken ApplicationStarted => _started.Token;
+        public CancellationToken ApplicationStopping => _stopping.Token;
+        public CancellationToken ApplicationStopped => _stopped.Token;
+
+        public void StopApplication()
+        {
+            StopRequested.TrySetResult();
+            _stopping.Cancel();
+        }
     }
 }
