@@ -74,6 +74,8 @@ public class TlsTransportIntegrationTests
 
         var missingCertificateOptions = CreateClientOptions("localhost");
         missingCertificateOptions.EnabledSslProtocols = SslProtocols.Tls12;
+        missingCertificateOptions.ClientCertificates = new X509CertificateCollection();
+        missingCertificateOptions.LocalCertificateSelectionCallback = static (_, _, _, _, _) => null;
         await using (var missingCertificateClient = CreateClient(server.Port, missingCertificateOptions))
         {
             await EnsureTlsFailure(
