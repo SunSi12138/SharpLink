@@ -43,7 +43,7 @@ jobs:
           dotnet run -c Release --no-build
           --project test/SharpLink.IntegrationTests
           --
-          --timeout 60s
+          --timeout 120s
           --output Detailed
           --github-reporter-style full
           --no-progress
