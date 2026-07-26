@@ -1341,16 +1341,25 @@ public class IntegrationBehaviorTests
                 options.MaxQueueDelay = TimeSpan.FromSeconds(10);
             }));
         var service = harness.Client.Get<ITestService>();
-        var active = service.SlowAddWithoutTimeoutAsync(1, 1).AsTask();
-        await Task.Delay(75);
-        var queued = service.SlowAddWithoutTimeoutAsync(2, 2).AsTask();
-        await Task.Delay(50);
+        TestService.ResetBlockingAdd();
+        var active = service.BlockingAddAsync(1, 1).AsTask();
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            var queued = service.SlowAddWithoutTimeoutAsync(2, 2).AsTask();
+            await Task.Delay(50);
+            Ensure(!queued.IsCompleted, "queued call must await admission before stop");
 
-        var started = Stopwatch.GetTimestamp();
-        await harness.DisposeServerOnlyAsync(TimeSpan.Zero).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
-        Ensure(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(2), "bounded stop with waiter");
-        await EnsureThrows<SharpLinkException>(queued, "queued call stopped before execution");
-        await EnsureThrows<SharpLinkException>(active, "active call disconnected by forced stop");
+            var started = Stopwatch.GetTimestamp();
+            await harness.DisposeServerOnlyAsync(TimeSpan.Zero).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(2), "bounded stop with waiter");
+            await EnsureThrows<SharpLinkException>(queued, "queued call stopped before execution");
+            await EnsureThrows<SharpLinkException>(active, "active call disconnected by forced stop");
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+        }
     }
 
     [Test]
@@ -1366,16 +1375,25 @@ public class IntegrationBehaviorTests
                 options.MaxQueueDelay = TimeSpan.FromSeconds(10);
             }));
         var service = harness.Client.Get<ITestService>();
-        var active = service.SlowAddWithoutTimeoutAsync(1, 1).AsTask();
-        await Task.Delay(75);
-        var queued = service.SlowAddWithoutTimeoutAsync(2, 2).AsTask();
-        await Task.Delay(50);
+        TestService.ResetBlockingAdd();
+        var active = service.BlockingAddAsync(1, 1).AsTask();
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            var queued = service.SlowAddWithoutTimeoutAsync(2, 2).AsTask();
+            await Task.Delay(50);
+            Ensure(!queued.IsCompleted, "queued call must await admission before disconnect");
 
-        await harness.DisposeClientOnlyAsync();
-        await EnsureThrows<SharpLinkException>(queued, "disconnected admission waiter");
-        await EnsureThrows<SharpLinkException>(active, "disconnected active call");
-        await harness.DisposeServerOnlyAsync(TimeSpan.FromSeconds(1))
-            .AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            await harness.DisposeClientOnlyAsync();
+            await EnsureThrows<SharpLinkException>(queued, "disconnected admission waiter");
+            await EnsureThrows<SharpLinkException>(active, "disconnected active call");
+            await harness.DisposeServerOnlyAsync(TimeSpan.FromSeconds(1))
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+        }
     }
 
     private static async Task EnsureThrows<TException>(Task task, string name) where TException : Exception
