@@ -687,6 +687,8 @@ public sealed class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
+        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 2, "least-pending endpoints must both be ready");
         var service = client.Get<IConnectionBehaviorService>();
         var slow = service.SlowAsync(200, CancellationToken.None).AsTask();
         var completed = await Task.WhenAny(first.Service.SlowCallStarted!.Task, second.Service.SlowCallStarted!.Task);
@@ -716,6 +718,8 @@ public sealed class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
+        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 2, "least-pending endpoints must both be ready");
         var service = client.Get<IConnectionBehaviorService>();
         var ids = new[]
         {
