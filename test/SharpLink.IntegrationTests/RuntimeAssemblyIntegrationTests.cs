@@ -368,10 +368,17 @@ public sealed class RuntimeAssemblyIntegrationTests
         var unary = await InvokeValueTaskAsync<int>(proxy, plugin.ContractType, "UnaryAsync", 7, CancellationToken.None);
         Ensure(unary == 8, "dynamic unary");
         var payloadType = plugin.GetContractType("SharpLink.DynamicPlugin.DynamicPayload");
-        var payload = Activator.CreateInstance(payloadType, 5, "codec")!;
+        var payload = Activator.CreateInstance(payloadType)!;
+        payloadType.GetProperty("Value")!.SetValue(payload, 5);
+        payloadType.GetProperty("Label")!.SetValue(payload, "codec");
+        payloadType.GetProperty("Parent")!.SetValue(payload, payload);
+        var values = (System.Collections.IList)payloadType.GetProperty("Values")!.GetValue(payload)!;
+        values.Add(1);
+        values.Add(2);
+        values.Add(3);
         var payloadResult = await InvokeValueTaskAsync<int>(
             proxy, plugin.ContractType, "UsePayloadAsync", payload, CancellationToken.None);
-        Ensure(payloadResult == 10, "identical contract and service DTO codecs");
+        Ensure(payloadResult == 16, "SharpPack dynamic nested/circular/collection payload");
 
         await InvokeValueTaskAsync(proxy, plugin.ContractType, "NotifyAsync", 3, CancellationToken.None);
         await WaitUntilAsync(() => plugin.GetStaticInt("Notifications") == 3);
@@ -1167,15 +1174,16 @@ public sealed class RuntimeAssemblyIntegrationTests
     [NotInParallel]
     public async Task CollectibleContextShouldUnloadAfterFrameworkReferencesAreReleased()
     {
-        var weakContext = await LoadInvokeUnregisterAndUnloadAsync();
-        for (var attempt = 0; attempt < 20 && weakContext.IsAlive; attempt++)
+        var tracked = await LoadInvokeUnregisterAndUnloadAsync();
+        for (var attempt = 0; attempt < 20 && tracked.AnyAlive; attempt++)
         {
             GC.Collect();
             GC.WaitForPendingFinalizers();
             GC.Collect();
             await Task.Delay(20);
         }
-        Ensure(!weakContext.IsAlive, "collectible ALC must not be rooted by SharpLink");
+        Ensure(!tracked.AnyAlive,
+            $"collectible plugin state must not be rooted by SharpLink; alive: {tracked.AliveNames}");
     }
 
     [Test]
@@ -1199,13 +1207,29 @@ public sealed class RuntimeAssemblyIntegrationTests
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task<WeakReference> LoadInvokeUnregisterAndUnloadAsync()
+    private static async Task<TrackedWeakReferences> LoadInvokeUnregisterAndUnloadAsync()
     {
         await using var harness = await DynamicHarness.CreateAsync();
         var plugin = PluginBundle.Load("dynamic-unload");
         RegisterAll(harness, plugin);
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
         Ensure(InvokeProbeBlocking(proxy, plugin.ContractType) == 10, "ALC probe call");
+        var payloadType = plugin.GetContractType("SharpLink.DynamicPlugin.DynamicPayload");
+        var payload = Activator.CreateInstance(payloadType)!;
+        payloadType.GetProperty("Value")!.SetValue(payload, 5);
+        payloadType.GetProperty("Label")!.SetValue(payload, "alc-sharppack");
+        payloadType.GetProperty("Parent")!.SetValue(payload, payload);
+        ((System.Collections.IList)payloadType.GetProperty("Values")!.GetValue(payload)!).Add(7);
+        Ensure(await InvokeValueTaskAsync<int>(
+                proxy, plugin.ContractType, "UsePayloadAsync", payload, CancellationToken.None) == 25,
+            "ALC SharpPack payload call");
+        var tracked = CapturePluginRuntimeObjects(harness.Client, plugin.ContractAssembly);
+        tracked.Add("ContractAssembly", plugin.ContractAssembly);
+        tracked.Add("ServiceAssembly", plugin.ServiceAssembly);
+        tracked.Add("ContractType", plugin.ContractType);
+        tracked.Add("PayloadType", payloadType);
+        payload = null;
+        payloadType = null!;
         proxy = null;
         Ensure((await harness.Server.UnregisterAssemblyAsync(
             plugin.ServiceAssembly,
@@ -1216,7 +1240,64 @@ public sealed class RuntimeAssemblyIntegrationTests
         Ensure((await harness.Client.UnregisterAssemblyAsync(
             plugin.ContractAssembly,
             TimeSpan.FromSeconds(2))).ReferencesReleased, "ALC client contract release");
-        return plugin.Unload();
+        tracked.Add("AssemblyLoadContext", plugin.Unload());
+        return tracked;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static TrackedWeakReferences CapturePluginRuntimeObjects(
+        ISharpLinkClient client,
+        Assembly contractAssembly)
+    {
+        const BindingFlags instanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var tracked = new TrackedWeakReferences();
+        var runtimeContext = (IRpcRuntimeContext)client.GetType()
+            .GetProperty("RuntimeContext", instanceFlags)!
+            .GetValue(client)!;
+        var registrations = runtimeContext.GetType()
+            .GetField("_manifestRegistrations", instanceFlags)!
+            .GetValue(runtimeContext) as System.Collections.IEnumerable
+            ?? throw new InvalidOperationException("Runtime Manifest registrations were not enumerable.");
+        foreach (var registration in registrations)
+        {
+            var registrationType = registration!.GetType();
+            var manifest = (ISharpLinkGeneratedAssemblyManifest)registrationType
+                .GetProperty("Manifest", instanceFlags)!
+                .GetValue(registration)!;
+            if (!ReferenceEquals(manifest.OwnerAssembly, contractAssembly))
+                continue;
+
+            tracked.Add("Manifest", manifest);
+            tracked.Add("ManifestType", manifest.GetType());
+            var scopes = (Array)registrationType.GetField("_scopes", instanceFlags)!.GetValue(registration)!;
+            foreach (var scope in scopes)
+            {
+                tracked.Add("AdapterScope", scope!);
+                var serializerContext = scope!.GetType().GetField("_context", instanceFlags)!.GetValue(scope);
+                if (serializerContext is not null)
+                    tracked.Add("SharpPackSerializerContext", serializerContext);
+            }
+
+            var codecs = registrationType.GetProperty("Codecs", instanceFlags)!.GetValue(registration)
+                as System.Collections.IEnumerable
+                ?? throw new InvalidOperationException("Manifest Codec registrations were not enumerable.");
+            foreach (var pair in codecs)
+            {
+                var pairType = pair!.GetType();
+                tracked.Add("CodecTargetType", pairType.GetProperty("Key")!.GetValue(pair)!);
+                var codecRegistration = pairType.GetProperty("Value")!.GetValue(pair)!;
+                var codecRegistrationType = codecRegistration.GetType();
+                tracked.Add("GeneratedCodecFactory",
+                    codecRegistrationType.GetProperty("Factory", instanceFlags)!.GetValue(codecRegistration)!);
+                var preparedCodec = codecRegistrationType
+                    .GetField("_preparedCodec", instanceFlags)!
+                    .GetValue(codecRegistration);
+                if (preparedCodec is not null)
+                    tracked.Add("PreparedCodec", preparedCodec);
+            }
+        }
+        Ensure(tracked.Count >= 7, "plugin runtime Adapter state was captured before unregister");
+        return tracked;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1392,6 +1473,21 @@ public sealed class RuntimeAssemblyIntegrationTests
     {
         if (!condition)
             throw new Exception($"assert failed: {message}");
+    }
+
+    private sealed class TrackedWeakReferences
+    {
+        private readonly List<(string Name, WeakReference Reference)> _items = [];
+
+        internal int Count => _items.Count;
+        internal bool AnyAlive => _items.Any(static item => item.Reference.IsAlive);
+        internal string AliveNames => string.Join(", ", _items
+            .Where(static item => item.Reference.IsAlive)
+            .Select(static item => item.Name)
+            .Distinct(StringComparer.Ordinal));
+
+        internal void Add(string name, object value)
+            => _items.Add((name, value as WeakReference ?? new WeakReference(value, trackResurrection: false)));
     }
 
     private static object? GetMultiClusterProxy(ISharpLinkMultiClusterClient client, Type contractType)

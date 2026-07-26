@@ -113,6 +113,7 @@ internal enum StaticRouteConflictKind
 
 internal enum GeneratedCodecKind
 {
+    Adapter,
     Dto,
     Array,
     List,
@@ -159,6 +160,9 @@ internal sealed record GeneratedCodecModel(
     string? ElementType,
     string? KeyType,
     string? ValueType,
+    string? AdapterType,
+    string? AdapterId,
+    string WireFormatId,
     ImmutableArray<string> AssemblyDependencies,
     Location? Location);
 
@@ -168,7 +172,15 @@ internal enum DtoDiagnosticKind
     Cycle,
     MemberIdCollision,
     Constructor,
-    Depth
+    Depth,
+    AdapterRegistrationInvalid,
+    AdapterTypeInvalid,
+    SelectorConflict,
+    AdapterSelectionConflict,
+    AdapterBindingInvalid,
+    AdapterTargetInvalid,
+    AdapterIdentityConflict,
+    BuiltinAdapterOverride
 }
 
 internal readonly record struct DtoDiagnosticModel(
@@ -256,6 +268,9 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             !string.Equals(left.ElementType, right.ElementType, StringComparison.Ordinal) ||
             !string.Equals(left.KeyType, right.KeyType, StringComparison.Ordinal) ||
             !string.Equals(left.ValueType, right.ValueType, StringComparison.Ordinal) ||
+            !string.Equals(left.AdapterType, right.AdapterType, StringComparison.Ordinal) ||
+            !string.Equals(left.AdapterId, right.AdapterId, StringComparison.Ordinal) ||
+            !string.Equals(left.WireFormatId, right.WireFormatId, StringComparison.Ordinal) ||
             !left.ConstructorMembers.SequenceEqual(right.ConstructorMembers, StringComparer.Ordinal) ||
             !left.AssemblyDependencies.SequenceEqual(right.AssemblyDependencies, StringComparer.Ordinal) ||
             left.Members.Length != right.Members.Length)

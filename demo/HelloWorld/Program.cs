@@ -1,7 +1,7 @@
 using SharpLink.Sdk;
 using System.Runtime.InteropServices;
 using DemoBase;
-using MemoryPack;
+using SharpPack;
 using SharpLink.Runtime;
 
 const int port = 19090;
@@ -169,7 +169,7 @@ public struct BlittablePoint
     public int Y;
 }
 
-[MemoryPackable]
+[SharpPackable]
 public partial class UserProfile
 {
     public string Name { get; set; } = string.Empty;

@@ -202,6 +202,7 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
             return;
         }
 
+        var cleanupFailures = new List<Exception>();
         lock (_registryGate)
             TransitionTo(SharpLinkConnectionState.Draining);
         _shutdownCts.Cancel();
@@ -217,8 +218,10 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
         }
         for (var index = 0; index < connections.Length; index++)
         {
-            connections[index].Fail(stoppingException);
-            await connections[index].DisposeAsync().ConfigureAwait(false);
+            try { connections[index].Fail(stoppingException); }
+            catch (Exception exception) { cleanupFailures.Add(exception); }
+            try { await connections[index].DisposeAsync().ConfigureAwait(false); }
+            catch (Exception exception) { cleanupFailures.Add(exception); }
         }
 
         Task? connectTask;
@@ -230,23 +233,40 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
             reconnectTask = _reconnectTask;
             expansionTask = _expansionTask;
         }
-        await IgnoreExpectedStopExceptionAsync(connectTask).ConfigureAwait(false);
+        try { await IgnoreExpectedStopExceptionAsync(connectTask).ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
         if (!ReferenceEquals(reconnectTask, connectTask))
-            await IgnoreExpectedStopExceptionAsync(reconnectTask).ConfigureAwait(false);
+        {
+            try { await IgnoreExpectedStopExceptionAsync(reconnectTask).ConfigureAwait(false); }
+            catch (Exception exception) { cleanupFailures.Add(exception); }
+        }
         if (!ReferenceEquals(expansionTask, connectTask) && !ReferenceEquals(expansionTask, reconnectTask))
-            await IgnoreExpectedStopExceptionAsync(expansionTask).ConfigureAwait(false);
-        await WaitForBackgroundTasksAsync().ConfigureAwait(false);
+        {
+            try { await IgnoreExpectedStopExceptionAsync(expansionTask).ConfigureAwait(false); }
+            catch (Exception exception) { cleanupFailures.Add(exception); }
+        }
+        try { await WaitForBackgroundTasksAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
 
         Assembly[] dynamicAssemblies;
         lock (_registryGate)
             dynamicAssemblies = [.. _dynamicModules.Keys];
         for (var index = 0; index < dynamicAssemblies.Length; index++)
-            await UnregisterAssemblyAsync(dynamicAssemblies[index], TimeSpan.Zero).ConfigureAwait(false);
+        {
+            try { await UnregisterAssemblyAsync(dynamicAssemblies[index], TimeSpan.Zero).ConfigureAwait(false); }
+            catch (Exception exception) { cleanupFailures.Add(exception); }
+        }
 
-        await transportFactory.DisposeAsync().ConfigureAwait(false);
-        _reconnectSignal.Dispose();
-        _shutdownCts.Dispose();
+        try { await transportFactory.DisposeAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
+        try { _reconnectSignal.Dispose(); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
+        try { _shutdownCts.Dispose(); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
+        try { _runtimeContext.Dispose(); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
         TransitionTo(SharpLinkConnectionState.Stopped);
+        ThrowStopCleanupFailures(cleanupFailures);
     }
 
     private async Task StopStaticClusterCoreAsync()
@@ -273,6 +293,8 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
         try { _reconnectSignal.Dispose(); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         try { _shutdownCts.Dispose(); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
+        try { _runtimeContext.Dispose(); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         TransitionTo(SharpLinkConnectionState.Stopped);
         ThrowStopCleanupFailures(cleanupFailures);

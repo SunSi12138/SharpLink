@@ -10,7 +10,7 @@ global using System.Net.Sockets;
 global using System.Runtime.CompilerServices;
 global using System.Threading;
 global using System.Threading.Tasks;
-global using MemoryPack;
+global using SharpPack;
 global using SharpLink.Abstractions;
 global using SharpLink.Client;
 global using SharpLink.Runtime;

@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using MemoryPack;
+using SharpPack;
 using SharpLink.Sdk;
 
 namespace SharpLink.Benchmarks;
@@ -36,7 +36,7 @@ public interface IBenchmarkRpc : IService
     ValueTask<int> MergeStreamsAsync(IAsyncEnumerable<int> left, IAsyncEnumerable<int> right);
 }
 
-[MemoryPackable]
+[SharpPackable]
 public partial class BenchmarkPayload
 {
     public string Name { get; set; } = string.Empty;

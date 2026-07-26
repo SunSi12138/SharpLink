@@ -136,7 +136,7 @@ BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 均为 832 B/op
 
 ## 0.5.4 原生 DTO Codec Generator 回归（2026-07-17，同一 runner）
 
-Generator 自动发现 RPC 参数、返回值、stream item 与 `[RpcSerializable]` 入口，生成字段 ID 驱动的 DTO Codec、闭合集合 Codec 和 assembly manifest。manifest 是进程级 append-only 元数据，但每个 `SharpLinkRuntimeContext` 只导入 Build 时快照；显式 Context Codec 优先，`[MemoryPackable]`/`[RpcExternalCodec]` 类型不由原生生成器接管。生成路径不扫描程序集、不调用 `MakeGenericType`，AOT Smoke 已移除 MemoryPack 引用并完成无 warning native publish/run。
+Generator 自动发现 RPC 参数、返回值、stream item 与 `[RpcSerializable]` 入口，生成字段 ID 驱动的 DTO Codec、闭合集合 Codec 和 assembly manifest。0.7.11 起第三方复杂图通过通用 manifest-scoped Codec Adapter 选择；显式 Context Codec 仍优先。生成路径不扫描程序集、不调用 `MakeGenericType`。
 
 在临时 detached worktree 构建 `d7d20e1` 作为 0.5.3 基线，随后与 0.5.4 使用相同机器、相同时段、1 秒 warmup、3 秒测量、每档五次取中位数：
 
@@ -147,6 +147,8 @@ Generator 自动发现 RPC 参数、返回值、stream item 与 `[RpcSerializabl
 | 32 | 589.86k QPS / P99 76 μs | 592.54k QPS / P99 76 μs | 通过（QPS 100.5%，P99 100.0%） |
 
 BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 仍均为 832 B/op，说明 manifest 快照与生成 Codec 优先级没有增加基础 Unary 每调用分配。
+
+0.7.11 的 SharpPack Adapter、原生热路径和五轮 TCP QPS/P99 结果见 [`performance-0.7.11.md`](performance-0.7.11.md)。
 
 ## 0.5.5 Stream/Connection 字节流控回归（2026-07-17，同一 runner）
 

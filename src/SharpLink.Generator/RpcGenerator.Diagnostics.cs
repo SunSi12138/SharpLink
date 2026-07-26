@@ -267,6 +267,39 @@ public partial class RpcGenerator
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    private static readonly DiagnosticDescriptor InvalidAdapterRegistrationRule = AdapterRule(
+        "SHARPLINK042", "Codec Adapter Registration Is Invalid");
+
+    private static readonly DiagnosticDescriptor InvalidAdapterTypeRule = AdapterRule(
+        "SHARPLINK043", "Codec Adapter Type Is Invalid");
+
+    private static readonly DiagnosticDescriptor SelectorAdapterConflictRule = AdapterRule(
+        "SHARPLINK044", "Selector Attribute Has Multiple Codec Adapters");
+
+    private static readonly DiagnosticDescriptor AdapterSelectionConflictRule = AdapterRule(
+        "SHARPLINK045", "RPC Payload Selects Multiple Codec Adapters");
+
+    private static readonly DiagnosticDescriptor InvalidAdapterBindingRule = AdapterRule(
+        "SHARPLINK046", "RpcCodecAdapter Usage Is Invalid");
+
+    private static readonly DiagnosticDescriptor InvalidAdapterTargetRule = AdapterRule(
+        "SHARPLINK047", "Codec Adapter Target Is Invalid");
+
+    private static readonly DiagnosticDescriptor AdapterIdentityConflictRule = AdapterRule(
+        "SHARPLINK048", "Codec Adapter Identity Conflicts");
+
+    private static readonly DiagnosticDescriptor BuiltinAdapterOverrideRule = AdapterRule(
+        "SHARPLINK049", "Built-in Codec Cannot Be Rebound");
+
+    private static DiagnosticDescriptor AdapterRule(string id, string title)
+        => new(
+            id: id,
+            title: title,
+            messageFormat: "Codec Adapter error for '{0}': {1}",
+            category: "SharpLink.Generator",
+            defaultSeverity: DiagnosticSeverity.Error,
+            isEnabledByDefault: true);
+
     private static DiagnosticDescriptor CompatibilityRule(string id, string title)
         => new(
             id: id,

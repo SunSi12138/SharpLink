@@ -25,7 +25,7 @@ public static class LoadTestTransportFactory
         Action<SharpLinkRuntimeOptions>? configureRuntime = null)
     {
         var builder = configure(SharpLinkServerBuilder.Create())
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseRuntime(options =>
             {
                 options.PerformanceProfile = performanceProfile;
@@ -65,7 +65,7 @@ public static class LoadTestTransportFactory
         Action<SharpLinkRuntimeOptions>? configureRuntime = null)
     {
         var builder = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseRuntime(options =>
             {
                 options.PerformanceProfile = performanceProfile;
@@ -145,7 +145,7 @@ public static class LoadTestTransportFactory
         }
 
         var serverBuilder = configure(SharpLinkServerBuilder.Create())
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseRuntime(options =>
             {
                 options.PerformanceProfile = performanceProfile;
@@ -155,11 +155,11 @@ public static class LoadTestTransportFactory
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
         var anonymousPipeAllocator = (IAnonymousPipeAllocator)serverBuilder.Transport!;
         var serverAnonymous = serverBuilder.Build();
-        
+
         var (inHandler, outHandler) = await anonymousPipeAllocator.AllocateAsync();
         var clientAnonymous = SharpClientBuilder.Create()
             .UseTransport(new AnonymousPipeClientTransportFactory(inHandler, outHandler))
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseRuntime(options =>
             {
                 options.PerformanceProfile = performanceProfile;
@@ -176,7 +176,7 @@ public static class LoadTestTransportFactory
             clientAnonymous.DisableRequestTimeout();
         else if (requestTimeout is { } timeout)
             clientAnonymous.UseRequestTimeout(timeout);
-        
+
         return new LocalHarness(serverAnonymous, clientAnonymous.Build(), static () => { });
     }
 

@@ -265,7 +265,7 @@ public class InterceptorIntegrationTests
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
                 .UseTcp(0, IPAddress.Loopback.ToString())
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
             if (serverInterceptor is not null)
                 serverBuilder.AddInterceptor(serverInterceptor);
@@ -280,7 +280,7 @@ public class InterceptorIntegrationTests
 
             var clientBuilder = SharpClientBuilder.Create()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
             if (clientInterceptor is not null)
                 clientBuilder.AddInterceptor(clientInterceptor);

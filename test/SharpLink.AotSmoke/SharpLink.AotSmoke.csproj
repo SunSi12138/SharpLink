@@ -11,10 +11,15 @@
     <ProjectReference Include="..\..\src\SharpLink.Client\SharpLink.Client.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Server\SharpLink.Server.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Sdk\SharpLink.Sdk.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Serializer.SharpPack\SharpLink.Serializer.SharpPack.csproj" />
     <ProjectReference Include="..\SharpLink.AotContracts\SharpLink.AotContracts.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Generator\SharpLink.Generator.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false"
                       GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpPack" />
   </ItemGroup>
 </Project>

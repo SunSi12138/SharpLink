@@ -766,7 +766,7 @@ public class SharedMemoryTransportConnectionIntegrationTests
         using var serverCts = new CancellationTokenSource();
         var server = SharpLinkServerBuilder.Create()
             .UseSharedMemory(name)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(SharpLinkAuthenticator.CreateServer((request, _) =>
             {
                 var token = Encoding.UTF8.GetString(request.Payload.Span);
@@ -1092,7 +1092,7 @@ public class SharedMemoryTransportConnectionIntegrationTests
         var payload = Encoding.UTF8.GetBytes(token);
         return SharpClientBuilder.Create()
             .UseSharedMemory(name)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(SharpLinkAuthenticator.CreateClient(
                 _ => ValueTask.FromResult<ReadOnlyMemory<byte>>(payload)))
             .Build();
@@ -1212,7 +1212,7 @@ public class SharedMemoryTransportConnectionIntegrationTests
                     options.CapacityPerDirectionBytes = 64 * 1024;
                     options.HandshakeTimeout = TimeSpan.FromSeconds(5);
                 })
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
                 .Build();
             var client = SharpClientBuilder.Create()
@@ -1221,7 +1221,7 @@ public class SharedMemoryTransportConnectionIntegrationTests
                     options.CapacityPerDirectionBytes = 64 * 1024;
                     options.HandshakeTimeout = TimeSpan.FromSeconds(5);
                 })
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
                 .Build();
             var serverTask = Task.Run(async () =>

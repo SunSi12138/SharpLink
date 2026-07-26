@@ -43,3 +43,11 @@
  SHARPLINK039 | SharpLink.Generator | Error | Contract assembly has conflicting cluster routes
  SHARPLINK040 | SharpLink.Generator | Error | Cluster route marker lacks generated manifest
  SHARPLINK041 | SharpLink.Generator | Error | Multi-cluster route attribute is invalid
+ SHARPLINK042 | SharpLink.Generator | Error | Codec Adapter registration is invalid
+ SHARPLINK043 | SharpLink.Generator | Error | Codec Adapter type is invalid
+ SHARPLINK044 | SharpLink.Generator | Error | Selector Attribute is claimed by multiple Adapters
+ SHARPLINK045 | SharpLink.Generator | Error | RPC payload selects multiple different Adapters
+ SHARPLINK046 | SharpLink.Generator | Error | RpcCodecAdapter usage is invalid
+ SHARPLINK047 | SharpLink.Generator | Error | Codec Adapter target is open or unsupported
+ SHARPLINK048 | SharpLink.Generator | Error | Codec Adapter or Wire Format identity conflicts
+ SHARPLINK049 | SharpLink.Generator | Error | Codec Adapter attempts to replace a built-in Codec

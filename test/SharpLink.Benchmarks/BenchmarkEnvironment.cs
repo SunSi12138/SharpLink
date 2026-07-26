@@ -48,7 +48,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
 
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver);
+            ;
         if (configureServerRuntime is not null)
             serverBuilder.UseRuntime(configureServerRuntime);
         configureServer?.Invoke(serverBuilder);
@@ -70,7 +70,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver);
+            ;
         if (configureClientRuntime is not null)
             client.UseRuntime(configureClientRuntime);
         var builtClient = client.Build();

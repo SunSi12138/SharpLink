@@ -4,6 +4,31 @@
 
 ## [Unreleased]
 
+## [0.7.11] - 2026-07-26
+
+### Added
+
+- Added generic compile-time Codec Adapter registration and explicit binding APIs: `RpcCodecAdapterRegistrationAttribute`, `RpcCodecAdapterAttribute`, `IRpcCodecAdapter`, and `IRpcCodecAdapterScope`.
+- Added `SharpLink.Serializer.SharpPack` with the exact SharpPack dependency range `[1.1.0]`. `[SharpPackable]` selects the Adapter automatically, while frameworks without a selector Attribute can use explicit type or assembly bindings.
+- Contract manifests now require `wireFormatId` for every request, response, stream item, and DTO member, plus a top-level reachable Codec wire inventory. Compatibility compares wire identity rather than Adapter implementation identity, including Adapter types nested inside native collections.
+
+### Changed
+
+- Generated Manifest API is version 3. Adapter factories emit closed `CreateCodec<T>()` calls and contain no runtime generic construction, serializer scanning, or reflection resolver.
+- Adapter state is owned per Runtime Context, Manifest instance, and Adapter ID. Automatic SharpPack Scopes own isolated formatter graphs. Dynamic register/replace/unregister publishes transactionally, validates every factory Adapter instance, and releases generation-owned Codec caches, Scopes, and serializer Contexts after drain even when another cleanup fails.
+- SharpPack serialization uses a zero-allocation concrete writer bridge so SharpPack 1.1.0 remains visible to the NativeAOT IL scanner when SharpLink receives an `IBufferWriter<byte>` interface.
+- Explicit `UseCodec` remains the highest priority and caller-owned. Ordinary supported DTOs continue to use SharpLink native generated Codecs even when an Adapter package is installed.
+
+### Removed
+
+- Removed `SharpLink.Serializer.MemoryPack`, the MemoryPack package dependency, `MemoryPackCodec`, `MemoryPackCodec<T>`, `RpcExternalCodecAttribute`, and the process-wide generated Codec registry.
+
+### Compatibility and validation
+
+- This is a source/API-breaking pre-1.0 migration. Development-time contract manifests without `wireFormatId` or the reachable `codecs` inventory are invalid and must be regenerated; no legacy fallback or compatibility shell is retained.
+- MemoryPack 1.21.4 golden payloads for null, nullable/string/non-ASCII, arrays/lists/dictionaries, nested objects, empty collections, unions, and circular graphs are byte-identical under SharpPack 1.1.0.
+- Local Release, Generator/Unit/Integration, collectible ALC, NativeAOT, local NuGet PackageSmoke, five-round BenchmarkDotNet, and TCP QPS/P99 validation cover the migration. No remote state or package feed was changed.
+
 ## [0.7.10] - 2026-07-22
 
 ### Added

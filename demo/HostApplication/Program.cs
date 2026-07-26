@@ -22,14 +22,14 @@ builder.Services.AddSharpLinkServer(server =>
 {
     server
         .UseTcp(port, "127.0.0.1")
-        .UseSerializer(MemoryPackCodec.Resolver);
+        ;
 });
 
 builder.Services.AddSharpLinkClient(client =>
 {
     client
         .UseTcp("127.0.0.1", port)
-        .UseSerializer(MemoryPackCodec.Resolver);
+        ;
 });
 
 builder.Services.AddHostedService<HostRpcDemoService>();

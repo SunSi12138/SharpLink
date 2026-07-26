@@ -7,7 +7,7 @@
 - `.NET 10 LTS`、Windows/Linux/macOS 与 NativeAOT 一等支持。
 - TCP/UDS、NamedPipe、AnonymousPipe 使用统一会话、错误与生命周期语义。
 - 默认单连接复用，可配置连接池；默认 `Balanced`，提供 `LowLatency` 与 `Throughput`。
-- SDK 内置无反射 DTO Source Generator Codec；MemoryPack 保持可选插件。
+- SDK 内置无反射 DTO Source Generator Codec；第三方序列化通过通用 Codec Adapter SPI 接入，官方复杂图扩展使用 SharpPack。
 - 核心提供 TLS、认证、Interceptor、deadline、背压、健康检查、遥测与优雅停机。
 - Discovery、Load Balancing、Retry 与 Circuit Breaker 内置于现有程序集；第三方注册中心仅通过显式 Resolver SPI 接入。
 
@@ -22,7 +22,7 @@
 1. `0.5.1`（已完成）：PendingRequestTable、异步 admission 与统一完成仲裁。
 2. `0.5.2`（已完成）：Unary、OneWay、ClientStreaming、ServerStreaming、DuplexStreaming 五类内部 Invoker。
 3. `0.5.3`（已完成）：`PooledByteBufferWriter`、`ArrayPool<byte>` 与明确的 payload ownership。
-4. `0.5.4`（已完成）：受限、无反射、AOT 友好的 DTO Codec Generator；MemoryPack 承接复杂对象图和显式自定义类型。
+4. `0.5.4`（已完成）：受限、无反射、AOT 友好的 DTO Codec Generator；复杂对象图保留显式扩展边界。
 5. `0.5.5`（已完成）：stream/connection 按字节窗口、`WindowUpdate` 与慢消费者背压。
 6. `0.5.6`（已完成）：每 Endpoint 连接池、power-of-two choices 与性能门禁工具入口。
 
@@ -54,6 +54,8 @@
 6. `0.7.7`（已完成）：Logical Call/Attempt、仅 `[Idempotent]` Unary 的 Retry。
 7. `0.7.8`（已完成）：endpoint admission SPI 与 generation-scoped Circuit Breaker。
 8. `0.7.9`（已完成）：组合验证、低基数 telemetry、迁移文档与 API freeze。
+9. `0.7.10`（已完成）：多 cluster Client、静态/动态 contract route 与 child lifecycle 隔离。
+10. `0.7.11`（已完成）：删除 MemoryPack 扩展与 `RpcExternalCodec`，引入 manifest-scoped Codec Adapter SPI，并迁移到 SharpPack 1.1.0。
 
 ## 0.8.0-rc：发布门禁
 

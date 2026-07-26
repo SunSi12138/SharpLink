@@ -12,5 +12,6 @@
     <PackageReference Include="SharpLink.Client" Version="$(SharpLinkPackageVersion)" />
     <PackageReference Include="SharpLink.Server" Version="$(SharpLinkPackageVersion)" />
     <PackageReference Include="SharpLink.Sdk" Version="$(SharpLinkPackageVersion)" />
+    <PackageReference Include="SharpLink.Serializer.SharpPack" Version="$(SharpLinkPackageVersion)" />
   </ItemGroup>
 </Project>

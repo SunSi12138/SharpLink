@@ -1,97 +1,110 @@
 using System.Text;
+using System.Linq;
 
 namespace SharpLink.Runtime;
 
-internal sealed class RpcCodecProvider : IRpcCodecProvider
+internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
 {
     private readonly Func<Type, IRpcCodec?>? _resolver;
-    private readonly ConcurrentDictionary<Type, ResolvedCodec> _resolvedCodecs;
+    private readonly ConcurrentDictionary<Type, ResolvedCodec> _resolvedCodecs = new();
     private readonly HashSet<Type> _explicitCodecTypes;
-    private IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> _generatedFactories;
+    private IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> _generatedRegistrations;
+    private int _disposed;
 
     internal RpcCodecProvider(
         Func<Type, IRpcCodec?>? resolver,
-        IReadOnlyDictionary<Type, IRpcCodec> explicitCodecs,
-        IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> generatedFactories)
+        IReadOnlyDictionary<Type, IRpcCodec> explicitCodecs)
     {
         _resolver = resolver;
-        _resolvedCodecs = new ConcurrentDictionary<Type, ResolvedCodec>();
         foreach (var pair in explicitCodecs)
-        {
-            _resolvedCodecs.TryAdd(
-                pair.Key,
-                new ResolvedCodec(pair.Value, isFallback: false));
-        }
+            _resolvedCodecs.TryAdd(pair.Key, ResolvedCodec.Explicit(pair.Value));
         _explicitCodecTypes = [.. explicitCodecs.Keys];
-        _generatedFactories = generatedFactories;
+        _generatedRegistrations = new Dictionary<Type, RpcGeneratedCodecRegistration>();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public IRpcCodec<T> GetCodec<T>()
     {
-        // Built-in codecs are immutable process-wide singletons. Resolve them once per
-        // closed generic type so primitive response decoding does not pay a Type-keyed
-        // dictionary lookup on every RPC.
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
         if (SharedRpcCodec<T>.Instance is { } shared)
             return shared;
 
-        if (_resolvedCodecs.TryGetValue(typeof(T), out var registered))
+        var targetType = typeof(T);
+        while (true)
         {
-            if (!registered.IsFallback)
-                return Cast<T>(registered.Codec);
+            var registrations = Volatile.Read(ref _generatedRegistrations);
+            registrations.TryGetValue(targetType, out var currentRegistration);
 
-            var currentFactories = Volatile.Read(ref _generatedFactories);
-            if (!currentFactories.TryGetValue(typeof(T), out var replacementFactory))
-                return Cast<T>(registered.Codec);
+            if (_resolvedCodecs.TryGetValue(targetType, out var cached))
+            {
+                if (cached.IsExplicit || ReferenceEquals(cached.Registration, currentRegistration))
+                    return Cast<T>(cached.Codec);
 
-            var replacement = new ResolvedCodec(
-                replacementFactory.Create(this),
-                isFallback: false);
-            if (_resolvedCodecs.TryUpdate(typeof(T), replacement, registered))
-                return Cast<T>(replacement.Codec);
-            return GetCodec<T>();
+                if (currentRegistration is not null)
+                {
+                    var replacement = new ResolvedCodec(
+                        currentRegistration.GetCodec(this),
+                        currentRegistration,
+                        isExplicit: false,
+                        isFallback: false);
+                    if (_resolvedCodecs.TryUpdate(targetType, replacement, cached))
+                        return Cast<T>(replacement.Codec);
+                    continue;
+                }
+
+                if (cached.IsFallback)
+                    return Cast<T>(cached.Codec);
+                ((ICollection<KeyValuePair<Type, ResolvedCodec>>)_resolvedCodecs)
+                    .Remove(new KeyValuePair<Type, ResolvedCodec>(targetType, cached));
+                continue;
+            }
+
+            if (currentRegistration is not null)
+            {
+                var generated = new ResolvedCodec(
+                    currentRegistration.GetCodec(this),
+                    currentRegistration,
+                    isExplicit: false,
+                    isFallback: false);
+                var selected = _resolvedCodecs.GetOrAdd(targetType, generated);
+                if (ReferenceEquals(selected.Registration, currentRegistration) || selected.IsExplicit)
+                    return Cast<T>(selected.Codec);
+                continue;
+            }
+
+            var resolved = _resolver?.Invoke(targetType);
+            if (resolved is not null)
+            {
+                var typed = Cast<T>(resolved);
+                var fallback = new ResolvedCodec(typed, null, isExplicit: false, isFallback: true);
+                return Cast<T>(_resolvedCodecs.GetOrAdd(targetType, fallback).Codec);
+            }
+
+            if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+                return UnsafeBlitCodec<T>.Instance;
+
+            throw new NotSupportedException(
+                $"Codec for '{targetType.FullName}' was not registered in this SharpLink runtime context.");
         }
-
-        var generatedFactories = Volatile.Read(ref _generatedFactories);
-        if (generatedFactories.TryGetValue(typeof(T), out var generatedFactory))
-        {
-            var generated = new ResolvedCodec(generatedFactory.Create(this), isFallback: false);
-            var selected = _resolvedCodecs.GetOrAdd(typeof(T), generated);
-            if (selected.IsFallback && _resolvedCodecs.TryUpdate(typeof(T), generated, selected))
-                selected = generated;
-            return Cast<T>(selected.Codec);
-        }
-
-        var resolved = _resolver?.Invoke(typeof(T));
-        if (resolved is not null)
-        {
-            var typed = Cast<T>(resolved);
-            var selected = _resolvedCodecs.GetOrAdd(
-                typeof(T),
-                new ResolvedCodec(typed, isFallback: true));
-            return Cast<T>(selected.Codec);
-        }
-
-        if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
-            return UnsafeBlitCodec<T>.Instance;
-
-        throw new NotSupportedException(
-            $"Codec for '{typeof(T).FullName}' was not registered in this SharpLink runtime context.");
     }
 
     private static IRpcCodec<T> Cast<T>(IRpcCodec codec)
         => codec as IRpcCodec<T> ?? throw new InvalidOperationException(
             $"The codec registered for '{typeof(T).FullName}' implements an incompatible codec interface.");
 
-    internal IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> CreateGeneratedFactorySnapshot()
-        => Volatile.Read(ref _generatedFactories);
+    internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> CreateGeneratedRegistrationSnapshot()
+        => Volatile.Read(ref _generatedRegistrations);
 
-    internal void PublishGeneratedFactories(IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> factories)
+    internal void PublishGeneratedRegistrations(
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)
     {
-        Volatile.Write(ref _generatedFactories, factories);
-        foreach (var pair in factories)
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        Volatile.Write(ref _generatedRegistrations, registrations);
+        foreach (var pair in registrations)
         {
-            while (_resolvedCodecs.TryGetValue(pair.Key, out var cached) && cached.IsFallback)
+            while (_resolvedCodecs.TryGetValue(pair.Key, out var cached) &&
+                   !cached.IsExplicit && !ReferenceEquals(cached.Registration, pair.Value))
             {
                 if (((ICollection<KeyValuePair<Type, ResolvedCodec>>)_resolvedCodecs)
                     .Remove(new KeyValuePair<Type, ResolvedCodec>(pair.Key, cached)))
@@ -102,22 +115,226 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider
         }
     }
 
-    internal void RemoveResolvedCodecs(IEnumerable<Type> types)
+    internal void RemoveResolvedCodecs(RpcGeneratedManifestRegistration owner)
     {
-        foreach (var type in types)
+        foreach (var pair in _resolvedCodecs)
         {
-            if (!_explicitCodecTypes.Contains(type))
+            if (!_explicitCodecTypes.Contains(pair.Key) &&
+                ReferenceEquals(pair.Value.Registration?.Owner, owner))
             {
-                _resolvedCodecs.TryRemove(type, out _);
+                ((ICollection<KeyValuePair<Type, ResolvedCodec>>)_resolvedCodecs)
+                    .Remove(new KeyValuePair<Type, ResolvedCodec>(pair.Key, pair.Value));
             }
         }
     }
 
-    private sealed class ResolvedCodec(IRpcCodec codec, bool isFallback)
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+        Volatile.Write(ref _generatedRegistrations,
+            new Dictionary<Type, RpcGeneratedCodecRegistration>());
+        _resolvedCodecs.Clear();
+    }
+
+    private sealed class ResolvedCodec(
+        IRpcCodec codec,
+        RpcGeneratedCodecRegistration? registration,
+        bool isExplicit,
+        bool isFallback)
     {
         internal IRpcCodec Codec { get; } = codec;
+        internal RpcGeneratedCodecRegistration? Registration { get; } = registration;
+        internal bool IsExplicit { get; } = isExplicit;
         internal bool IsFallback { get; } = isFallback;
+
+        internal static ResolvedCodec Explicit(IRpcCodec codec)
+            => new(codec, null, isExplicit: true, isFallback: false);
     }
+}
+
+internal sealed class RpcGeneratedManifestRegistration : IDisposable
+{
+    private readonly IRpcCodecAdapterScope[] _scopes;
+    private int _disposed;
+
+    private RpcGeneratedManifestRegistration(
+        ISharpLinkGeneratedAssemblyManifest manifest,
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> codecs,
+        IRpcCodecAdapterScope[] scopes)
+    {
+        Manifest = manifest;
+        Codecs = codecs;
+        _scopes = scopes;
+    }
+
+    internal ISharpLinkGeneratedAssemblyManifest Manifest { get; }
+
+    internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> Codecs { get; }
+
+    internal static RpcGeneratedManifestRegistration Create(
+        ISharpLinkGeneratedAssemblyManifest manifest,
+        IRpcCodecProvider provider)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        ArgumentNullException.ThrowIfNull(provider);
+
+        var scopes = new List<IRpcCodecAdapterScope>();
+        try
+        {
+            var scopeByAdapterId = new Dictionary<string, AdapterScopeRegistration>(StringComparer.Ordinal);
+            foreach (var factory in manifest.Codecs.OrderBy(static factory => factory.AdapterId, StringComparer.Ordinal)
+                         .ThenBy(static factory => factory.WireFormatId, StringComparer.Ordinal)
+                         .ThenBy(static factory => factory.TargetType.FullName, StringComparer.Ordinal))
+            {
+                ValidateFactory(factory);
+                if (factory.AdapterId is null)
+                    continue;
+
+                var adapter = factory.Adapter!;
+                ValidateAdapter(factory, adapter);
+                if (scopeByAdapterId.TryGetValue(factory.AdapterId, out var existing))
+                {
+                    if (existing.Adapter.GetType() != adapter.GetType() ||
+                        !string.Equals(existing.WireFormatId, factory.WireFormatId, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"Adapter '{factory.AdapterId}' has inconsistent implementation or wire-format metadata in manifest '{manifest.OwnerAssembly.FullName}'.");
+                    }
+                    continue;
+                }
+
+                var scope = adapter.CreateScope() ?? throw new InvalidOperationException(
+                    $"Adapter '{factory.AdapterId}' returned a null scope.");
+                scopes.Add(scope);
+                scopeByAdapterId.Add(factory.AdapterId,
+                    new AdapterScopeRegistration(adapter, factory.WireFormatId, scope));
+            }
+
+            var ownerBox = new OwnerBox();
+            var codecs = new Dictionary<Type, RpcGeneratedCodecRegistration>();
+            foreach (var factory in manifest.Codecs.OrderBy(static factory => factory.TargetType.FullName, StringComparer.Ordinal))
+            {
+                IRpcCodec? preparedCodec = null;
+                if (factory.AdapterId is not null)
+                {
+                    var scope = scopeByAdapterId[factory.AdapterId].Scope;
+                    preparedCodec = factory.Create(provider, scope) ?? throw new InvalidOperationException(
+                        $"Generated Codec factory for '{factory.TargetType.FullName}' returned null.");
+                    ValidateCodec(factory, preparedCodec);
+                }
+                if (codecs.ContainsKey(factory.TargetType))
+                    throw new InvalidOperationException(
+                        $"Manifest '{manifest.OwnerAssembly.FullName}' contains duplicate Codec target '{factory.TargetType.FullName}'.");
+                codecs.Add(factory.TargetType, new RpcGeneratedCodecRegistration(
+                    ownerBox, factory, preparedCodec));
+            }
+
+            var registration = new RpcGeneratedManifestRegistration(manifest, codecs, [.. scopes]);
+            ownerBox.Value = registration;
+            return registration;
+        }
+        catch
+        {
+            for (var index = scopes.Count - 1; index >= 0; index--)
+            {
+                try { scopes[index].Dispose(); }
+                catch { }
+            }
+            throw;
+        }
+    }
+
+    private static void ValidateFactory(IRpcGeneratedCodecFactory factory)
+    {
+        ArgumentNullException.ThrowIfNull(factory);
+        ArgumentNullException.ThrowIfNull(factory.TargetType);
+        ArgumentException.ThrowIfNullOrWhiteSpace(factory.SchemaId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(factory.WireFormatId);
+        if (factory.AdapterId is null)
+        {
+            if (factory.Adapter is not null ||
+                !string.Equals(factory.WireFormatId, "sharplink-native/v1", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Native Codec factory for '{factory.TargetType.FullName}' has invalid adapter metadata.");
+            }
+            return;
+        }
+        ArgumentException.ThrowIfNullOrWhiteSpace(factory.AdapterId);
+        if (factory.Adapter is null)
+            throw new InvalidOperationException(
+                $"Adapter Codec factory for '{factory.TargetType.FullName}' has no adapter instance.");
+    }
+
+    private static void ValidateAdapter(IRpcGeneratedCodecFactory factory, IRpcCodecAdapter adapter)
+    {
+        if (!string.Equals(adapter.AdapterId, factory.AdapterId, StringComparison.Ordinal) ||
+            !string.Equals(adapter.WireFormatId, factory.WireFormatId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Codec adapter '{adapter.GetType().FullName}' runtime identity does not match its generated registration metadata.");
+        }
+    }
+
+    private static void ValidateCodec(IRpcGeneratedCodecFactory factory, IRpcCodec codec)
+    {
+        if (!factory.IsCompatibleCodec(codec))
+            throw new InvalidOperationException(
+                $"Codec returned for '{factory.TargetType.FullName}' implements an incompatible IRpcCodec<T>.");
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+        Exception? firstException = null;
+        for (var index = _scopes.Length - 1; index >= 0; index--)
+        {
+            try
+            {
+                _scopes[index].Dispose();
+            }
+            catch (Exception exception)
+            {
+                firstException ??= exception;
+            }
+        }
+        if (firstException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+    }
+
+    private sealed record AdapterScopeRegistration(
+        IRpcCodecAdapter Adapter,
+        string WireFormatId,
+        IRpcCodecAdapterScope Scope);
+
+    internal sealed class OwnerBox
+    {
+        internal RpcGeneratedManifestRegistration Value { get; set; } = null!;
+    }
+}
+
+internal sealed class RpcGeneratedCodecRegistration
+{
+    private readonly RpcGeneratedManifestRegistration.OwnerBox _owner;
+    private readonly IRpcCodec? _preparedCodec;
+
+    internal RpcGeneratedCodecRegistration(
+        RpcGeneratedManifestRegistration.OwnerBox owner,
+        IRpcGeneratedCodecFactory factory,
+        IRpcCodec? preparedCodec)
+    {
+        _owner = owner;
+        Factory = factory;
+        _preparedCodec = preparedCodec;
+    }
+
+    internal RpcGeneratedManifestRegistration Owner => _owner.Value;
+    internal IRpcGeneratedCodecFactory Factory { get; }
+
+    internal IRpcCodec GetCodec(IRpcCodecProvider provider)
+        => _preparedCodec ?? Factory.Create(provider, adapterScope: null);
 }
 
 internal static class SharedRpcCodec<T>

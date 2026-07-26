@@ -8,7 +8,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .UseEndpoints(
                 [
@@ -43,7 +43,7 @@ public sealed class StaticEndpointIntegrationTests
 
         await using var available = await TcpServerScope.StartAsync("available");
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("unavailable", unavailablePort), Endpoint("available", available.Port)],
                 SharpLinkTransportFactories.Sockets())
@@ -69,7 +69,7 @@ public sealed class StaticEndpointIntegrationTests
         var failing = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
         var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [
                     Endpoint("failed", 1),
@@ -112,7 +112,7 @@ public sealed class StaticEndpointIntegrationTests
         var firstPort = GetUnusedTcpPort();
         var secondPort = GetUnusedTcpPort();
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("first", firstPort), Endpoint("second", secondPort)],
                 SharpLinkTransportFactories.Sockets())
@@ -129,7 +129,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
                 SharpLinkTransportFactories.Sockets())
@@ -163,7 +163,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
                 SharpLinkTransportFactories.Sockets())
@@ -187,7 +187,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
                 SharpLinkTransportFactories.Sockets())
@@ -208,7 +208,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
                 SharpLinkTransportFactories.Sockets())
@@ -240,7 +240,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var east = await TcpServerScope.StartAsync("east");
         await using var west = await TcpServerScope.StartAsync("west");
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("east", east.Port, "east"), Endpoint("west", west.Port, "west")],
                 SharpLinkTransportFactories.Sockets())
@@ -273,7 +273,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var first = await TcpServerScope.StartNamedPipeAsync(firstName);
         await using var second = await TcpServerScope.StartNamedPipeAsync(secondName);
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [
                     new SharpLinkEndpoint { Id = "first", Address = new SharpLinkNamedPipeAddress(firstName) },
@@ -294,7 +294,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var first = await TcpServerScope.StartSharedMemoryAsync(firstName);
         await using var second = await TcpServerScope.StartSharedMemoryAsync(secondName);
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [
                     new SharpLinkEndpoint { Id = "first", Address = new SharpLinkSharedMemoryAddress(firstName) },
@@ -317,7 +317,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var first = await TcpServerScope.StartUdsAsync(firstPath);
         await using var second = await TcpServerScope.StartUdsAsync(secondPath);
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [
                     new SharpLinkEndpoint { Id = "first", Address = new SharpLinkUnixDomainSocketAddress(firstPath) },
@@ -357,7 +357,7 @@ public sealed class StaticEndpointIntegrationTests
         }
 
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
             .UseCluster(options =>
             {
@@ -387,7 +387,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var first = await TcpServerScope.StartAsync();
         await using var second = await TcpServerScope.StartAsync();
         var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
                 SharpLinkTransportFactories.Sockets())
@@ -423,7 +423,7 @@ public sealed class StaticEndpointIntegrationTests
         var blocking = new BlockingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
         var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("blocked", GetUnusedTcpPort())],
                 endpoint => endpoint.Id == "first" ? sockets(endpoint) : blocking)
@@ -460,7 +460,7 @@ public sealed class StaticEndpointIntegrationTests
         var surplus = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
         var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("blocked", 1), Endpoint("surplus", 2)],
                 endpoint => endpoint.Id switch
@@ -503,7 +503,7 @@ public sealed class StaticEndpointIntegrationTests
         var blocking = new BlockAfterFirstConnectFactory(sockets(Endpoint("first", first.Port)));
         var unavailable = new FailingConnectFactory();
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("unavailable", 1)],
                 endpoint => endpoint.Id == "first" ? blocking : unavailable)
@@ -535,7 +535,7 @@ public sealed class StaticEndpointIntegrationTests
         var sockets = SharpLinkTransportFactories.Sockets();
         var delayedFailure = new DeferredFailOnceFactory(sockets(Endpoint("recovered", recovered.Port)));
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("recovered", recovered.Port)],
                 endpoint => endpoint.Id == "recovered" ? delayedFailure : sockets(endpoint))
@@ -570,7 +570,7 @@ public sealed class StaticEndpointIntegrationTests
         var failing = new FailingConnectFactory();
         var sockets = SharpLinkTransportFactories.Sockets();
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("bad", 1), Endpoint("first", first.Port), Endpoint("second", second.Port)],
                 endpoint => endpoint.Id == "bad" ? failing : sockets(endpoint))
@@ -600,7 +600,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var fourth = await TcpServerScope.StartAsync("fourth");
         await using var fifth = await TcpServerScope.StartAsync("fifth");
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [
                     Endpoint("first", first.Port),
@@ -637,7 +637,7 @@ public sealed class StaticEndpointIntegrationTests
         };
 
         await using (var roundRobin = SharpClientBuilder.Create()
-                         .UseSerializer(MemoryPackCodec.Resolver)
+
                          .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
                          .UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin)
                          .Build())
@@ -657,7 +657,7 @@ public sealed class StaticEndpointIntegrationTests
         }
 
         await using var custom = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
             .UseEndpointSelector(new AttributeSelector("west"))
             .Build();
@@ -673,7 +673,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
                 SharpLinkTransportFactories.Sockets())
@@ -696,7 +696,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
                 SharpLinkTransportFactories.Sockets())
@@ -722,7 +722,7 @@ public sealed class StaticEndpointIntegrationTests
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
         await using var client = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
                 SharpLinkTransportFactories.Sockets())
@@ -834,7 +834,7 @@ public sealed class StaticEndpointIntegrationTests
             var listenAddress = address ?? IPAddress.Loopback;
             var builder = SharpLinkServerBuilder.Create()
                 .UseTcp(port, listenAddress.ToString())
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
             var service = new ConnectionBehaviorService
             {
@@ -851,7 +851,7 @@ public sealed class StaticEndpointIntegrationTests
         {
             var builder = SharpLinkServerBuilder.Create()
                 .UseNamedPipe(name)
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
             return Task.FromResult(new TcpServerScope(builder.Build(), 0, new ConnectionBehaviorService()));
         }
@@ -860,7 +860,7 @@ public sealed class StaticEndpointIntegrationTests
         {
             var builder = SharpLinkServerBuilder.Create()
                 .UseSharedMemory(name)
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
             return Task.FromResult(new TcpServerScope(builder.Build(), 0, new ConnectionBehaviorService()));
         }
@@ -869,7 +869,7 @@ public sealed class StaticEndpointIntegrationTests
         {
             var builder = SharpLinkServerBuilder.Create()
                 .UseUds(path)
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
             return Task.FromResult(new TcpServerScope(builder.Build(), 0, new ConnectionBehaviorService()));
         }

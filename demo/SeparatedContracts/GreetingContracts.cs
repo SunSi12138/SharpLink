@@ -1,4 +1,4 @@
-using MemoryPack;
+using SharpPack;
 using SharpLink.Sdk;
 
 namespace SeparatedContracts;
@@ -12,7 +12,7 @@ public interface IGreetingService : IService
     ValueTask<int> Add(int left, int right);
 }
 
-[MemoryPackable]
+[SharpPackable]
 public partial class GreetRequest
 {
     public string Name { get; set; } = string.Empty;

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -11,6 +12,7 @@ using SharpLink.Client;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
 using SharpLink.Server;
+using SharpPack;
 
 [assembly: SharpLinkClusterContractAssembly("orders", typeof(SharpLink.AotSmoke.IAotService))]
 [assembly: SharpLinkClusterContractAssembly("payments", typeof(ISecondAotService))]
@@ -191,6 +193,23 @@ public static class Program
         if (profileEcho.Name != profileName || profileEcho.Tags.Length != 3 || profileEcho.Tags[2] != "smoke")
             throw new Exception("unexpected profile echo");
 
+        var graph = new AotSharpPackGraph
+        {
+            Name = "root-中文",
+            Values = [1, 2, 3],
+            Children = [new AotSharpPackGraph { Name = "child", Values = [4, 5] }]
+        };
+        graph.Parent = graph;
+        var graphEcho = await svc.EchoSharpPackGraphAsync(graph).ConfigureAwait(false);
+        if (graphEcho.Name != "root-中文" ||
+            graphEcho.Values.Count != 3 ||
+            graphEcho.Children.Count != 1 ||
+            graphEcho.Children[0].Values.Count != 2 ||
+            !ReferenceEquals(graphEcho, graphEcho.Parent))
+        {
+            throw new Exception("unexpected SharpPack nested/circular/collection echo");
+        }
+
         var ints = await svc.ReverseIntsAsync([1, 2, 3, 4]).ConfigureAwait(false);
         if (ints.Length != 4 || ints[0] != 4 || ints[3] != 1)
             throw new Exception("unexpected int[] echo");
@@ -296,6 +315,8 @@ public interface IAotService : IService
     [NonCancellable]
     ValueTask<UserProfile> EchoProfileAsync(UserProfile profile);
     [NonCancellable]
+    ValueTask<AotSharpPackGraph> EchoSharpPackGraphAsync(AotSharpPackGraph value);
+    [NonCancellable]
     ValueTask<int[]> ReverseIntsAsync(int[] values);
     [NonCancellable]
     ValueTask<string[][]> EchoNestedStringsAsync(string[][] values);
@@ -314,6 +335,9 @@ public class AotService : IAotService
     public ValueTask<string> PingAsync() => ValueTask.FromResult("pong");
 
     public ValueTask<UserProfile> EchoProfileAsync(UserProfile profile) => ValueTask.FromResult(profile);
+
+    public ValueTask<AotSharpPackGraph> EchoSharpPackGraphAsync(AotSharpPackGraph value)
+        => ValueTask.FromResult(value);
 
     public ValueTask<int[]> ReverseIntsAsync(int[] values)
     {
@@ -343,6 +367,15 @@ public sealed class UserProfile
 {
     public string Name { get; set; } = string.Empty;
     public string[] Tags { get; set; } = Array.Empty<string>();
+}
+
+[SharpPackable(GenerateType.CircularReference)]
+public sealed partial class AotSharpPackGraph
+{
+    [SharpPackOrder(0)] public string Name { get; set; } = string.Empty;
+    [SharpPackOrder(1)] public AotSharpPackGraph? Parent { get; set; }
+    [SharpPackOrder(2), SharpPackAllowSerialize] public List<AotSharpPackGraph> Children { get; set; } = [];
+    [SharpPackOrder(3), SharpPackAllowSerialize] public List<int> Values { get; set; } = [];
 }
 
 public sealed record AotPair(int Number, string Text);

@@ -1,9 +1,12 @@
 namespace SharpLink.Runtime;
 
 /// <summary>Immutable, instance-scoped runtime services for one SharpLink client or server.</summary>
-public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext
+public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
 {
     private readonly SharpLinkRuntimeOptions _options;
+    private readonly Lock _registrationGate = new();
+    private readonly HashSet<RpcGeneratedManifestRegistration> _manifestRegistrations = [];
+    private int _disposed;
 
     internal SharpLinkRuntimeContext(
         SharpLinkRuntimeOptions options,
@@ -15,23 +18,43 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext
     {
         _options = options.CloneValidated();
         Concurrency = concurrency.CloneValidated();
-        var generatedFactories = new Dictionary<Type, IRpcGeneratedCodecFactory>(
-            RpcGeneratedCodecRegistry.CreateSnapshot());
-        foreach (var manifest in generatedManifests)
+        Codecs = new RpcCodecProvider(resolver, codecs);
+        var generatedRegistrations = new Dictionary<Type, RpcGeneratedCodecRegistration>();
+        var prepared = new List<RpcGeneratedManifestRegistration>(generatedManifests.Count);
+        try
         {
-            foreach (var factory in manifest.Codecs)
+            foreach (var manifest in generatedManifests)
             {
-                if (generatedFactories.TryGetValue(factory.TargetType, out var existing) &&
-                    !string.Equals(existing.SchemaId, factory.SchemaId, StringComparison.Ordinal))
+                var owner = PrepareGeneratedManifest(manifest);
+                prepared.Add(owner);
+                foreach (var pair in owner.Codecs)
                 {
-                    throw new InvalidOperationException(
-                        $"Generated Codec schema conflict for '{factory.TargetType.FullName}': " +
-                        $"'{existing.SchemaId}' and '{factory.SchemaId}'.");
+                    if (generatedRegistrations.TryGetValue(pair.Key, out var existing) &&
+                        (!string.Equals(existing.Factory.SchemaId, pair.Value.Factory.SchemaId, StringComparison.Ordinal) ||
+                         !string.Equals(existing.Factory.WireFormatId, pair.Value.Factory.WireFormatId, StringComparison.Ordinal)))
+                    {
+                        throw new InvalidOperationException(
+                            $"Generated Codec conflict for '{pair.Key.FullName}': " +
+                            $"schema/wire '{existing.Factory.SchemaId}'/'{existing.Factory.WireFormatId}' and " +
+                            $"'{pair.Value.Factory.SchemaId}'/'{pair.Value.Factory.WireFormatId}'.");
+                    }
+                    generatedRegistrations[pair.Key] = pair.Value;
                 }
-                generatedFactories[factory.TargetType] = factory;
             }
+            PublishGeneratedCodecs(generatedRegistrations);
+            foreach (var registration in prepared)
+                AdoptGeneratedManifest(registration);
         }
-        Codecs = new RpcCodecProvider(resolver, codecs, generatedFactories);
+        catch
+        {
+            for (var index = prepared.Count - 1; index >= 0; index--)
+            {
+                try { prepared[index].Dispose(); }
+                catch { }
+            }
+            ((RpcCodecProvider)Codecs).Dispose();
+            throw;
+        }
         Buffers = new SharpLinkBufferWriterPool(bufferPool);
     }
 
@@ -54,14 +77,85 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext
 
     internal SharpLinkCompressionOptions Compression => _options.Compression;
 
-    internal IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> CreateGeneratedCodecSnapshot()
-        => ((RpcCodecProvider)Codecs).CreateGeneratedFactorySnapshot();
+    internal RpcGeneratedManifestRegistration PrepareGeneratedManifest(
+        ISharpLinkGeneratedAssemblyManifest manifest)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        return RpcGeneratedManifestRegistration.Create(manifest, Codecs);
+    }
 
-    internal void PublishGeneratedCodecs(IReadOnlyDictionary<Type, IRpcGeneratedCodecFactory> factories)
-        => ((RpcCodecProvider)Codecs).PublishGeneratedFactories(factories);
+    internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> CreateGeneratedCodecSnapshot()
+        => ((RpcCodecProvider)Codecs).CreateGeneratedRegistrationSnapshot();
 
-    internal void RemoveResolvedGeneratedCodecs(IEnumerable<Type> types)
-        => ((RpcCodecProvider)Codecs).RemoveResolvedCodecs(types);
+    internal void PublishGeneratedCodecs(IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ((RpcCodecProvider)Codecs).PublishGeneratedRegistrations(registrations);
+    }
+
+    internal void AdoptGeneratedManifest(RpcGeneratedManifestRegistration registration)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        lock (_registrationGate)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            _manifestRegistrations.Add(registration);
+        }
+    }
+
+    internal RpcGeneratedCodecRegistration? FindGeneratedCodec(
+        ISharpLinkGeneratedAssemblyManifest manifest,
+        Type targetType)
+    {
+        lock (_registrationGate)
+        {
+            foreach (var registration in _manifestRegistrations)
+            {
+                if (ReferenceEquals(registration.Manifest, manifest) &&
+                    registration.Codecs.TryGetValue(targetType, out var codec))
+                {
+                    return codec;
+                }
+            }
+        }
+        return null;
+    }
+
+    internal void ReleaseGeneratedManifest(RpcGeneratedManifestRegistration registration)
+    {
+        ((RpcCodecProvider)Codecs).RemoveResolvedCodecs(registration);
+        lock (_registrationGate)
+            _manifestRegistrations.Remove(registration);
+        registration.Dispose();
+    }
+
+    /// <summary>Releases all generated Adapter scopes owned by this runtime Context.</summary>
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+        RpcGeneratedManifestRegistration[] registrations;
+        lock (_registrationGate)
+        {
+            registrations = [.. _manifestRegistrations];
+            _manifestRegistrations.Clear();
+        }
+        ((RpcCodecProvider)Codecs).Dispose();
+        Exception? firstException = null;
+        for (var index = registrations.Length - 1; index >= 0; index--)
+        {
+            try
+            {
+                registrations[index].Dispose();
+            }
+            catch (Exception exception)
+            {
+                firstException ??= exception;
+            }
+        }
+        if (firstException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+    }
 
     // This process-wide fallback is used only before an instance-owned Context is attached.
     // It must never snapshot weak manifest entries because it has no unregister boundary and
