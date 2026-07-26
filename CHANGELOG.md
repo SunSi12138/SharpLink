@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.9] - 2026-07-27
+
+### Fixed
+
+- Shared-memory control disposal now joins reader termination after an unexpected stream cleanup failure and preserves the terminal failure set.
+- Concurrent single-client Hosted Stop/Dispose callers now await one shared client cleanup operation.
+- Concurrent multi-cluster Hosted Stop/Dispose callers now await one shared coordinator cleanup operation.
+- Anonymous-pipe, named-pipe, and shared-memory listeners now share asynchronous disposal completion instead of letting later callers return while pending resources drain.
+- Anonymous-pipe listener cleanup now continues through every queued connection and disposes its cancellation owner after an earlier connection failure.
+
+### Compatibility and validation
+
+- Public APIs, Protocol v2, and generated Manifest versions are unchanged; repeated lifecycle calls now observe the same completion or cleanup failure.
+- Release build, Generator 83/83, Unit 384/384, Integration 228/228, package smoke, and same-machine A/B passed.
+- Normal anonymous-pipe offer allocation/disposal remained at 2.576 → 2.597 µs with overlapping 99.9% confidence intervals and unchanged 2.13 KB allocation; an earlier 2.19 KB design was rejected.
+
 ## [0.8.8] - 2026-07-27
 
 ### Fixed

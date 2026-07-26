@@ -126,6 +126,7 @@ public sealed class SharedMemoryServerTransportListener : IServerTransportListen
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Lock _gate = new();
     private readonly HashSet<NamedPipeServerStream> _pendingAccepts = [];
+    private Task? _disposeTask;
     private SharpLinkPerformanceProfile _profile = SharpLinkPerformanceProfile.Balanced;
     private int _started;
     private int _disposed;
@@ -266,11 +267,35 @@ public sealed class SharedMemoryServerTransportListener : IServerTransportListen
     }
 
     /// <inheritdoc />
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
-        _disposeCts.Cancel();
+        lock (_pendingAccepts)
+        {
+            if (_disposeTask is not null)
+                return new ValueTask(_disposeTask);
+            if (Volatile.Read(ref _disposed) != 0)
+                return ValueTask.CompletedTask;
+
+            var operation = DisposeCoreAsync();
+            if (operation.IsCompletedSuccessfully)
+                return operation;
+            _disposeTask = operation.AsTask();
+            return new ValueTask(_disposeTask);
+        }
+    }
+
+    private async ValueTask DisposeCoreAsync()
+    {
+        Interlocked.Exchange(ref _disposed, 1);
+        Exception? cleanupException = null;
+        try
+        {
+            _disposeCts.Cancel();
+        }
+        catch (Exception exception)
+        {
+            cleanupException = exception;
+        }
         NamedPipeServerStream[] pending;
         lock (_gate)
         {
@@ -286,8 +311,26 @@ public sealed class SharedMemoryServerTransportListener : IServerTransportListen
             catch (Exception ex) when (StreamTransportConnection.IsExpectedDisposeException(ex))
             {
             }
+            catch (Exception exception)
+            {
+                cleanupException = StreamTransportConnection.CombineCleanupExceptions(
+                    cleanupException,
+                    exception);
+            }
         }
-        _disposeCts.Dispose();
+        try
+        {
+            _disposeCts.Dispose();
+        }
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(
+                cleanupException,
+                exception);
+        }
+
+        if (cleanupException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
     }
 
     private bool TryRegisterPending(NamedPipeServerStream pipe)

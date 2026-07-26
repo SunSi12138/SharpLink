@@ -1,14 +1,14 @@
-# 0.8.8 test status
+# 0.8.9 test status
 
 ## Pre-fix evidence
 
-- Unit 379 total: exactly five new regressions failed against unchanged production code while the prior 374 tests passed.
-- Anonymous-pipe teardown skipped the input pipe after output cleanup failed; shared-memory teardown left the mapping active after control cleanup failed.
-- Dynamic-module release discarded its second service failure; multi-module shutdown discarded its second module failure; server-wide cleanup discarded the later static ownership failure.
+- Unit 384 total: exactly five new regressions failed against unchanged production code while the prior 379 tests passed.
+- Shared-memory control disposal returned after stream failure while its reader was still blocked; single-client and multi-cluster Hosted Stop callers returned before the winning cleanup.
+- Concurrent listener disposal returned before queued cleanup, and one queued connection failure prevented a later connection from being disposed.
 
 ## Final gate
 
-- Verified P2-or-higher improvements: 5/5 (anonymous-pipe cleanup isolation; shared-memory mapping cleanup isolation; complete single-module diagnostics; complete multi-module diagnostics; complete server-wide ownership diagnostics).
-- Release build passed with 0 warnings/errors. Generator 83/83, Unit 379/379, Integration 228/228, package generation/analyzer verification, and independent package restore/run smoke passed.
-- Isolated A/B measured normal anonymous-pipe offer allocation/disposal at 2.590 → 2.592 µs with overlapping 99.9% confidence intervals and unchanged 2.13 KB allocation.
-- Version 0.8.8 and Chinese/English audit, migration, performance, README, and changelog documentation are complete.
+- Verified P2-or-higher improvements: 5/5 (control-reader convergence after cleanup failure; single-client Hosted Stop convergence; multi-cluster Hosted Stop convergence; asynchronous listener disposal convergence; queued listener cleanup isolation).
+- Release build passed with 0 warnings/errors. Generator 83/83, Unit 384/384, Integration 228/228, package generation/analyzer verification, and independent package restore/run smoke passed.
+- Isolated A/B measured normal anonymous-pipe offer allocation/disposal at 2.576 → 2.597 µs with overlapping 99.9% confidence intervals and unchanged 2.13 KB allocation. An earlier unconditional Task/lock design was rejected at 2.19 KB.
+- Version 0.8.9 and Chinese/English audit, migration, performance, README, and changelog documentation are complete.

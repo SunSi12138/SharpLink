@@ -285,4 +285,76 @@ public class SharedMemoryControlChannelTests
             await Assert.That(exception.Code).IsEqualTo(SharpLinkErrorCode.ProtocolViolation);
         }
     }
+
+    [Test]
+    public async Task DisposeShouldJoinReaderAfterStreamCleanupFailure()
+    {
+        var stream = new ControlledDisposePipeStream();
+        var control = new SharedMemoryControlChannel(stream);
+        var dispose = control.DisposeAsync().AsTask();
+
+        await stream.DisposeStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var returnedBeforeReaderExited = dispose.IsCompleted;
+        stream.ReleaseReader();
+        var failure = await CaptureFailureAsync(dispose);
+
+        await Assert.That(returnedBeforeReaderExited).IsFalse();
+        await Assert.That(ContainsMessage(failure, "control stream cleanup failed")).IsTrue();
+    }
+
+    private static async Task<Exception> CaptureFailureAsync(Task operation)
+    {
+        try
+        {
+            await operation;
+            throw new Exception("expected control cleanup failure");
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static bool ContainsMessage(Exception exception, string message)
+    {
+        if (exception.Message == message)
+            return true;
+        if (exception is AggregateException aggregate)
+        {
+            foreach (var inner in aggregate.InnerExceptions)
+                if (ContainsMessage(inner, message))
+                    return true;
+            return false;
+        }
+        return exception.InnerException is { } nested && ContainsMessage(nested, message);
+    }
+
+    private sealed class ControlledDisposePipeStream()
+        : PipeStream(PipeDirection.InOut, bufferSize: 1)
+    {
+        private readonly TaskCompletionSource<int> _readerRelease =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource DisposeStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+            => new(_readerRelease.Task);
+
+        public override ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default)
+            => ValueTask.CompletedTask;
+
+        public override ValueTask DisposeAsync()
+        {
+            DisposeStarted.TrySetResult();
+            return ValueTask.FromException(
+                new ApplicationException("control stream cleanup failed"));
+        }
+
+        internal void ReleaseReader() => _readerRelease.TrySetResult(0);
+    }
 }

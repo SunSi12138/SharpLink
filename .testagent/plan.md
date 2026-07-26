@@ -1,6 +1,6 @@
-# 0.8.8 regression-test plan
+# 0.8.9 regression-test plan
 
-1. [x] Prove anonymous-pipe and shared-memory connection teardown release every owned resource after an earlier cleanup failure.
-2. [x] Prove dynamic-module release preserves every service/manifest cleanup failure.
-3. [x] Prove multi-module shutdown and server-wide service cleanup preserve failures from every ownership boundary.
+1. [x] Prove shared-memory control cleanup still joins its reader after stream disposal fails.
+2. [x] Prove single-client and multi-cluster Hosted Stop callers join one terminal operation.
+3. [x] Prove public asynchronous listeners share disposal completion and do not skip queued owners after one failure.
 4. [x] Complete full validation, performance and package gates, documentation, and local commit after five verified findings.
