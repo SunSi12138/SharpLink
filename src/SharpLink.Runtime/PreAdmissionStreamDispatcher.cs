@@ -16,6 +16,7 @@ internal sealed class PreAdmissionStreamDispatcher(
     private readonly Lock _gate = new();
     private readonly Queue<BufferedItem> _items = [];
     private IStreamDispatcher? _dispatcher;
+    private IStreamDispatcher? _attachingDispatcher;
     private Action<long, ushort, int>? _bytesConsumed;
     private long _requestId;
     private ushort _streamId;
@@ -23,13 +24,17 @@ internal sealed class PreAdmissionStreamDispatcher(
     private bool _completed;
     private IStreamDispatchState? _dispatchState;
     private IStreamDispatchLease? _failedDispatchLease;
+    private TaskCompletionSource? _attachmentBarrier;
+    private int _configurationVersion;
+    private bool _drainRequested;
+    private bool _drainForwarded;
 
     internal bool IsAttached
     {
         get
         {
             lock (_gate)
-                return _dispatcher is not null;
+                return _dispatcher is not null || _attachingDispatcher is not null;
         }
     }
 
@@ -138,82 +143,90 @@ internal sealed class PreAdmissionStreamDispatcher(
             attached = _dispatcher;
         }
 
+        ValueTask dispatch;
         try
         {
             if (attached is null)
             {
                 _bytesConsumed?.Invoke(_requestId, _streamId, originalByteCount);
+                buffers.Return(owner);
+                releaseBytes(retainedBytes);
                 return ValueTask.CompletedTask;
             }
-            return DecodeAndDispatch(
-                attached,
-                new ReadOnlySequence<byte>(owner.WrittenMemory),
-                originalByteCount,
-                decoder);
+            dispatch = attached is DiscardingStreamDispatcher
+                ? DispatchAttached(
+                    attached,
+                    new ReadOnlySequence<byte>(owner.WrittenMemory),
+                    originalByteCount)
+                : DecodeAndDispatch(
+                    attached,
+                    new ReadOnlySequence<byte>(owner.WrittenMemory),
+                    originalByteCount,
+                    decoder);
         }
-        finally
+        catch
         {
             buffers.Return(owner);
             releaseBytes(retainedBytes);
+            throw;
         }
+        if (dispatch.IsCompletedSuccessfully)
+        {
+            buffers.Return(owner);
+            releaseBytes(retainedBytes);
+            return ValueTask.CompletedTask;
+        }
+        return AwaitRetainedCompressedDispatchAsync(
+            dispatch, owner, retainedBytes);
     }
 
-    internal bool Attach(IStreamDispatcher dispatcher)
+    internal bool TryBeginAttach(IStreamDispatcher dispatcher, out bool alreadyCompleted)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
         lock (_gate)
         {
-            if (_dispatcher is not null)
-                throw new InvalidOperationException("The generated stream dispatcher is already attached.");
-            _dispatcher = dispatcher;
-            if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
-                consumptionAware.SetBytesConsumedCallback(_bytesConsumed, _requestId, _streamId);
-            if (dispatcher is IStreamDispatchLease dispatchLease && _dispatchState is not null)
-                dispatchLease.BindDispatchState(_dispatchState);
-
-            try
+            if (_dispatcher is not null || _attachingDispatcher is not null)
             {
-                while (_items.TryDequeue(out var item))
-                {
-                    try
-                    {
-                        var bufferedPayload = new ReadOnlySequence<byte>(item.Owner.WrittenMemory);
-                        var dispatch = item.IsCompressed && dispatcher is not DiscardingStreamDispatcher
-                            ? DecodeAndDispatch(
-                                dispatcher,
-                                bufferedPayload,
-                                item.EncodedByteCount,
-                                decodeCompressed ?? throw new InvalidOperationException(
-                                    "The pre-admission stream has no compressed-frame decoder."))
-                            : DispatchAttached(dispatcher, bufferedPayload, item.EncodedByteCount);
-                        if (!dispatch.IsCompletedSuccessfully)
-                            dispatch.AsTask().GetAwaiter().GetResult();
-                    }
-                    finally
-                    {
-                        buffers.Return(item.Owner);
-                        releaseBytes(item.RetainedBytes);
-                    }
-                }
+                alreadyCompleted = false;
+                return false;
             }
-            catch (Exception exception)
-            {
-                ReleaseBufferedItems();
-                try
-                {
-                    dispatcher.Complete(exception);
-                }
-                finally
-                {
-                    _failedDispatchLease = dispatcher as IStreamDispatchLease;
-                    _dispatcher = null;
-                }
-                throw;
-            }
-            if (_completed)
-                dispatcher.Complete(_completion);
-            return _completed;
+            _attachingDispatcher = dispatcher;
+            _attachmentBarrier = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            alreadyCompleted = _completed;
+            return true;
         }
+    }
+
+    internal void FinishAttach(IStreamDispatcher dispatcher)
+    {
+        TaskCompletionSource barrier;
+        lock (_gate)
+        {
+            if (!ReferenceEquals(_attachingDispatcher, dispatcher) || _attachmentBarrier is null)
+                throw new InvalidOperationException("The generated stream dispatcher was not claimed for attachment.");
+            barrier = _attachmentBarrier;
+        }
+
+        try
+        {
+            ConfigureAttachingDispatcher(dispatcher);
+        }
+        catch (Exception exception)
+        {
+            FailAttachment(dispatcher, barrier, exception);
+            throw;
+        }
+
+        var replay = ReplayBufferedItemsAsync(dispatcher, barrier);
+        if (replay.IsCompleted)
+            replay.GetAwaiter().GetResult();
+        else
+            _ = replay.ContinueWith(
+                static task => _ = task.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
     }
 
     public void Complete(bool isError, string? errorMessage)
@@ -242,14 +255,17 @@ internal sealed class PreAdmissionStreamDispatcher(
         long requestId,
         ushort streamId)
     {
+        IStreamConsumptionAwareDispatcher? consumptionAware;
         lock (_gate)
         {
             _bytesConsumed = callback;
             _requestId = requestId;
             _streamId = streamId;
-            if (_dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
-                consumptionAware.SetBytesConsumedCallback(callback, requestId, streamId);
+            _configurationVersion++;
+            consumptionAware = (_dispatcher ?? _attachingDispatcher) as
+                IStreamConsumptionAwareDispatcher;
         }
+        consumptionAware?.SetBytesConsumedCallback(callback, requestId, streamId);
     }
 
     ValueTask IStreamDispatchLease.DispatchAcquiredAsync(
@@ -259,24 +275,196 @@ internal sealed class PreAdmissionStreamDispatcher(
 
     void IStreamDispatchLease.BindDispatchState(IStreamDispatchState state)
     {
+        IStreamDispatchLease? dispatchLease;
         lock (_gate)
         {
             _dispatchState = state;
-            if (_dispatcher is IStreamDispatchLease dispatchLease)
-                dispatchLease.BindDispatchState(state);
+            _configurationVersion++;
+            dispatchLease = (_dispatcher ?? _attachingDispatcher) as IStreamDispatchLease;
         }
+        dispatchLease?.BindDispatchState(state);
     }
 
     void IStreamDispatchLease.OnDispatchesDrained()
     {
         lock (_gate)
+            _drainRequested = true;
+        TryForwardDrain();
+    }
+
+    private async Task ReplayBufferedItemsAsync(
+        IStreamDispatcher dispatcher,
+        TaskCompletionSource barrier)
+    {
+        var completionStarted = false;
+        try
         {
-            _failedDispatchLease?.OnDispatchesDrained();
+            while (true)
+            {
+                BufferedItem item;
+                bool completed;
+                lock (_gate)
+                {
+                    if (!_items.TryDequeue(out item))
+                    {
+                        if (!ReferenceEquals(_attachingDispatcher, dispatcher))
+                            throw new InvalidOperationException(
+                                "The generated stream dispatcher lost its attachment claim during replay.");
+                        _attachingDispatcher = null;
+                        _dispatcher = dispatcher;
+                        completed = _completed;
+                        if (!completed)
+                            barrier.TrySetResult();
+                        else
+                            break;
+                        return;
+                    }
+                }
+                try
+                {
+                    var bufferedPayload = new ReadOnlySequence<byte>(item.Owner.WrittenMemory);
+                    var dispatch = item.IsCompressed && dispatcher is not DiscardingStreamDispatcher
+                        ? DecodeAndDispatch(
+                            dispatcher,
+                            bufferedPayload,
+                            item.EncodedByteCount,
+                            decodeCompressed ?? throw new InvalidOperationException(
+                                "The pre-admission stream has no compressed-frame decoder."))
+                        : DispatchAttached(dispatcher, bufferedPayload, item.EncodedByteCount);
+                    await dispatch.ConfigureAwait(false);
+                }
+                finally
+                {
+                    buffers.Return(item.Owner);
+                    releaseBytes(item.RetainedBytes);
+                }
+            }
+
+            completionStarted = true;
+            dispatcher.Complete(_completion);
+            barrier.TrySetResult();
+        }
+        catch (Exception exception)
+        {
+            FailAttachment(
+                dispatcher,
+                barrier,
+                exception,
+                completeDispatcher: !completionStarted);
+            throw;
+        }
+        finally
+        {
+            TryForwardDrain();
+        }
+    }
+
+    private void FailAttachment(
+        IStreamDispatcher dispatcher,
+        TaskCompletionSource barrier,
+        Exception exception,
+        bool completeDispatcher = true)
+    {
+        BufferedItem[] remaining;
+        lock (_gate)
+        {
+            remaining = [.. _items];
+            _items.Clear();
+            _failedDispatchLease = dispatcher as IStreamDispatchLease;
+            if (ReferenceEquals(_attachingDispatcher, dispatcher))
+                _attachingDispatcher = null;
+            if (ReferenceEquals(_dispatcher, dispatcher))
+                _dispatcher = null;
+        }
+        ReleaseBufferedItems(remaining);
+        if (!completeDispatcher)
+        {
+            barrier.TrySetException(exception);
+            return;
+        }
+        try
+        {
+            dispatcher.Complete(exception);
+        }
+        finally
+        {
+            barrier.TrySetException(exception);
+        }
+    }
+
+    private void TryForwardDrain()
+    {
+        IStreamDispatchLease? dispatchLease = null;
+        BufferedItem[] bufferedItems = [];
+        lock (_gate)
+        {
+            if (!_drainRequested || _drainForwarded ||
+                _attachmentBarrier?.Task.IsCompleted == false)
+            {
+                return;
+            }
+            _drainForwarded = true;
+            dispatchLease = _failedDispatchLease ??
+                (_dispatcher ?? _attachingDispatcher) as IStreamDispatchLease;
             _failedDispatchLease = null;
-            if (_dispatcher is IStreamDispatchLease dispatchLease)
-                dispatchLease.OnDispatchesDrained();
-            else
-                ReleaseBufferedItems();
+            if (dispatchLease is null)
+            {
+                bufferedItems = [.. _items];
+                _items.Clear();
+            }
+        }
+        if (dispatchLease is not null)
+            dispatchLease.OnDispatchesDrained();
+        else
+            ReleaseBufferedItems(bufferedItems);
+    }
+
+    private void ConfigureAttachingDispatcher(IStreamDispatcher dispatcher)
+    {
+        while (true)
+        {
+            Action<long, ushort, int>? bytesConsumed;
+            long requestId;
+            ushort streamId;
+            IStreamDispatchState? dispatchState;
+            int version;
+            lock (_gate)
+            {
+                if (!ReferenceEquals(_attachingDispatcher, dispatcher))
+                    return;
+                bytesConsumed = _bytesConsumed;
+                requestId = _requestId;
+                streamId = _streamId;
+                dispatchState = _dispatchState;
+                version = _configurationVersion;
+            }
+
+            if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+                consumptionAware.SetBytesConsumedCallback(bytesConsumed, requestId, streamId);
+            if (dispatcher is IStreamDispatchLease dispatchLease && dispatchState is not null)
+                dispatchLease.BindDispatchState(dispatchState);
+
+            lock (_gate)
+            {
+                if (version == _configurationVersion)
+                    return;
+            }
+        }
+    }
+
+    private async ValueTask AwaitRetainedCompressedDispatchAsync(
+        ValueTask dispatch,
+        IRpcByteBufferWriter owner,
+        int retainedBytes)
+    {
+        try
+        {
+            await dispatch.ConfigureAwait(false);
+        }
+        finally
+        {
+            buffers.Return(owner);
+            releaseBytes(retainedBytes);
         }
     }
 
@@ -326,9 +514,9 @@ internal sealed class PreAdmissionStreamDispatcher(
         }
     }
 
-    private void ReleaseBufferedItems()
+    private void ReleaseBufferedItems(IEnumerable<BufferedItem> items)
     {
-        while (_items.TryDequeue(out var item))
+        foreach (var item in items)
         {
             buffers.Return(item.Owner);
             releaseBytes(item.RetainedBytes);

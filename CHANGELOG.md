@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-07-27
+
+### Fixed
+
+- Codec resolution now revalidates the generated-registration snapshot after user/native factory work, preventing a lookup that overlaps dynamic publication from returning or caching a superseded wire Codec.
+- In-flight fallback and generated Codec resolution now observes Runtime Context disposal before publishing its result, so a disposed provider cannot be repopulated or return a newly resolved Codec.
+- Pre-admission client-stream replay no longer synchronously waits for an incomplete dispatcher operation. Retained and newly arriving frames remain in one bounded ordered queue until the generated dispatcher is ready.
+- Generated dispatcher configuration and replay now execute outside the per-request stream-registry lock, allowing safe callback reentrancy while preserving entry and buffer leases through asynchronous replay.
+- Multi-cluster replacement now reconciles coordinator routes when the child committed its new assembly but old-generation cleanup failed; the original cleanup exception still reaches the caller.
+
+### Compatibility and validation
+
+- Public APIs and Protocol v2 wire layouts are unchanged. Rare Codec publication races may retry a fallback resolver or native generated factory, which must already tolerate concurrent resolution.
+- Release build, Generator 83/83, Unit 357/357, Integration 228/228, six deterministic pre-fix failure probes across five findings plus branch-completeness regressions, and same-machine BenchmarkDotNet A/B validation passed.
+- Cached explicit/fallback Codec lookup remained statistically flat at 6.529 → 6.533 ns and 6.515 → 6.504 ns. Cached generated lookup improved from 8.670 to 6.499 ns; attached pre-admission dispatch improved from 17.656 to 17.098 ns. All remained 0 B/op; an earlier 19.755 ns dispatch candidate was rejected and redesigned.
+
 ## [0.8.3] - 2026-07-26
 
 ### Fixed

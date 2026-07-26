@@ -457,18 +457,38 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
         var childOperation = slot.Client.ReplaceAssemblyAsync(
             registration.Assembly, newAssembly, gracefulTimeout);
 
-        if (childOperation.IsCompleted)
+        try
         {
-            var completedResult = await childOperation.ConfigureAwait(false);
-            if (completedResult.Succeeded)
-                PublishReplacement(registration, newAssembly, newManifest);
-            return completedResult;
-        }
+            if (childOperation.IsCompleted)
+            {
+                var completedResult = await childOperation.ConfigureAwait(false);
+                if (completedResult.Succeeded)
+                    PublishReplacement(registration, newAssembly, newManifest);
+                return completedResult;
+            }
 
-        // SharpLinkClient publishes the replacement before returning its pending drain operation.
-        // Keep the coordinator route in the same state while old calls drain.
-        PublishReplacement(registration, newAssembly, newManifest);
-        return await childOperation.ConfigureAwait(false);
+            // SharpLinkClient publishes the replacement before returning its pending drain operation.
+            // Keep the coordinator route in the same state while old calls drain.
+            PublishReplacement(registration, newAssembly, newManifest);
+            return await childOperation.ConfigureAwait(false);
+        }
+        catch (Exception childException)
+        {
+            try
+            {
+                if (slot.Client is IDynamicAssemblyRegistrationInspector inspector &&
+                    inspector.IsDynamicAssemblyRegistered(newAssembly))
+                {
+                    PublishReplacement(registration, newAssembly, newManifest);
+                }
+            }
+            catch (Exception reconciliationException)
+            {
+                throw new AggregateException(childException, reconciliationException);
+            }
+            ExceptionDispatchInfo.Capture(childException).Throw();
+            throw;
+        }
     }
 
     private void PublishReplacement(
@@ -484,7 +504,8 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
             if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped)
                 return;
 
-            _dynamicRegistrations.Remove(registration);
+            if (!_dynamicRegistrations.Remove(registration))
+                return;
             _dynamicRegistrations.Add(new DynamicAssemblyRegistration(registration.Slot, newAssembly, newManifest));
             var nextRoutes = Volatile.Read(ref _routes).ToDictionary(static pair => pair.Key, static pair => pair.Value);
             foreach (var contract in registration.Manifest.Contracts)

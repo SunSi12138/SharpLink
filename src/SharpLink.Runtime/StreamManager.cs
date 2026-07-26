@@ -453,25 +453,51 @@ public class StreamManager : IStreamManager
             alreadyCompleted = false;
             if (streamId == 0)
             {
-                if (Volatile.Read(ref _defaultDispatcher)?.Dispatcher is not
-                    PreAdmissionStreamDispatcher preAdmission || preAdmission.IsAttached)
+                var entry = Volatile.Read(ref _defaultDispatcher);
+                if (entry?.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
+                    !entry.TryAcquire())
                 {
                     return false;
                 }
-                alreadyCompleted = preAdmission.Attach(dispatcher);
-                return true;
+                try
+                {
+                    if (!preAdmission.TryBeginAttach(dispatcher, out alreadyCompleted))
+                        return false;
+                    preAdmission.FinishAttach(dispatcher);
+                    return true;
+                }
+                finally
+                {
+                    entry.Release();
+                }
             }
 
+            DispatcherEntry? acquiredEntry;
+            PreAdmissionStreamDispatcher? acquiredPreAdmission;
             lock (_gate)
             {
                 if (!_byStreamId.TryGetValue(streamId, out var entry) ||
                     entry.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
-                    preAdmission.IsAttached)
+                    !entry.TryAcquire())
                 {
                     return false;
                 }
-                alreadyCompleted = preAdmission.Attach(dispatcher);
+                if (!preAdmission.TryBeginAttach(dispatcher, out alreadyCompleted))
+                {
+                    entry.Release();
+                    return false;
+                }
+                acquiredEntry = entry;
+                acquiredPreAdmission = preAdmission;
+            }
+            try
+            {
+                acquiredPreAdmission.FinishAttach(dispatcher);
                 return true;
+            }
+            finally
+            {
+                acquiredEntry.Release();
             }
         }
 

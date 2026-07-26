@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 
@@ -543,6 +544,183 @@ public class SharpLinkRuntimeContextTests
     }
 
     [Test]
+    public async Task GeneratedCodecResolutionCrossingPublicationShouldUseCurrentGeneration()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var oldRegistration = context.PrepareGeneratedManifest(new TestManifest(
+            "blocking-old-generation",
+            new BlockingNativeFactory<ThirdAdapterValue>(
+                new TaggedThirdAdapterValueCodec(1), entered, release)));
+        var newRegistration = context.PrepareGeneratedManifest(new TestManifest(
+            "new-generation",
+            new FixedNativeFactory<ThirdAdapterValue>(new TaggedThirdAdapterValueCodec(2))));
+        context.AdoptGeneratedManifest(oldRegistration);
+        context.AdoptGeneratedManifest(newRegistration);
+        context.PublishGeneratedCodecs(oldRegistration.Codecs);
+
+        var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        context.PublishGeneratedCodecs(newRegistration.Codecs);
+        release.TrySetResult();
+
+        var resolved = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+        Ensure(resolved is TaggedThirdAdapterValueCodec { Tag: 2 },
+            "a Codec resolution returning after publication must use the current generation");
+    }
+
+    [Test]
+    public async Task FallbackCodecResolutionCrossingPublicationShouldUseGeneratedCodec()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseCodecResolver(type =>
+            {
+                if (type != typeof(ThirdAdapterValue))
+                    return null;
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+                return new TaggedThirdAdapterValueCodec(1);
+            })
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var registration = context.PrepareGeneratedManifest(new TestManifest(
+            "generated-during-fallback",
+            new FixedNativeFactory<ThirdAdapterValue>(new TaggedThirdAdapterValueCodec(2))));
+        context.AdoptGeneratedManifest(registration);
+
+        var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        context.PublishGeneratedCodecs(registration.Codecs);
+        release.TrySetResult();
+
+        var resolved = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+        Ensure(resolved is TaggedThirdAdapterValueCodec { Tag: 2 },
+            "a fallback resolution must not cross a generated publication boundary");
+    }
+
+    [Test]
+    public async Task NullFallbackResolutionCrossingPublicationShouldUseGeneratedCodec()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseCodecResolver(type =>
+            {
+                if (type != typeof(ThirdAdapterValue))
+                    return null;
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+                return null;
+            })
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var registration = context.PrepareGeneratedManifest(new TestManifest(
+            "generated-during-null-fallback",
+            new FixedNativeFactory<ThirdAdapterValue>(new TaggedThirdAdapterValueCodec(2))));
+        context.AdoptGeneratedManifest(registration);
+
+        var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        context.PublishGeneratedCodecs(registration.Codecs);
+        release.TrySetResult();
+
+        var resolved = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+        Ensure(resolved is TaggedThirdAdapterValueCodec { Tag: 2 },
+            "a null fallback result must recheck generated publication");
+    }
+
+    [Test]
+    public async Task CodecResolutionCrossingContextDisposalShouldFail()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var context = new SharpLinkRuntimeContextBuilder()
+            .UseCodecResolver(type =>
+            {
+                if (type != typeof(ThirdAdapterValue))
+                    return null;
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+                return new TaggedThirdAdapterValueCodec(1);
+            })
+            .Build(includeGeneratedAssemblyCatalog: false);
+
+        var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        context.Dispose();
+        release.TrySetResult();
+
+        try
+        {
+            _ = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+            throw new Exception("expected in-flight Codec resolution to observe Context disposal");
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    [Test]
+    public async Task NullCodecResolutionCrossingContextDisposalShouldFailAsDisposed()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var context = new SharpLinkRuntimeContextBuilder()
+            .UseCodecResolver(type =>
+            {
+                if (type != typeof(ThirdAdapterValue))
+                    return null;
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+                return null;
+            })
+            .Build(includeGeneratedAssemblyCatalog: false);
+
+        var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        context.Dispose();
+        release.TrySetResult();
+
+        try
+        {
+            _ = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+            throw new Exception("expected null Codec resolution to observe Context disposal");
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    [Test]
+    public void UnchangedCodecShouldRefreshAcrossAnUnrelatedSnapshotRemoval()
+    {
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var stableRegistration = context.PrepareGeneratedManifest(new TestManifest(
+            "stable-codec",
+            new FixedNativeFactory<ThirdAdapterValue>(new TaggedThirdAdapterValueCodec(3))));
+        var removedRegistration = context.PrepareGeneratedManifest(new TestManifest(
+            "removed-codec",
+            new FixedNativeFactory<SecondAdapterValue>(new AdapterCodec<SecondAdapterValue>())));
+        context.AdoptGeneratedManifest(stableRegistration);
+        context.AdoptGeneratedManifest(removedRegistration);
+        var combined = stableRegistration.Codecs
+            .Concat(removedRegistration.Codecs)
+            .ToDictionary(static pair => pair.Key, static pair => pair.Value);
+        context.PublishGeneratedCodecs(combined);
+        var before = context.Codecs.GetCodec<ThirdAdapterValue>();
+
+        context.PublishGeneratedCodecs(stableRegistration.Codecs);
+        var after = context.Codecs.GetCodec<ThirdAdapterValue>();
+
+        Ensure(ReferenceEquals(before, after),
+            "an unchanged registration refreshes its snapshot identity without recreating its Codec");
+        context.ReleaseGeneratedManifest(removedRegistration);
+    }
+
+    [Test]
     public void DisposedContextShouldRejectCodecResolution()
     {
         var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
@@ -815,6 +993,54 @@ public class SharpLinkRuntimeContextTests
         }
 
         public AdapterValue Deserialize(in ReadOnlySequence<byte> buffer) => new();
+    }
+
+    private sealed class TaggedThirdAdapterValueCodec(int tag) : IRpcCodec<ThirdAdapterValue>
+    {
+        internal int Tag { get; } = tag;
+
+        public void Serialize(in ThirdAdapterValue value, IBufferWriter<byte> buffer)
+        {
+        }
+
+        public ThirdAdapterValue Deserialize(in ReadOnlySequence<byte> buffer) => new();
+    }
+
+    private sealed class FixedNativeFactory<T>(IRpcCodec<T> codec) : IRpcGeneratedCodecFactory
+    {
+        public Type TargetType => typeof(T);
+        public string SchemaId => $"native:{typeof(T).FullName}";
+        public string WireFormatId => "sharplink-native/v1";
+        public string? AdapterId => null;
+        public IRpcCodecAdapter? Adapter => null;
+        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
+            => adapterScope is null
+                ? codec
+                : throw new ArgumentException("Native factory does not accept an Adapter Scope.", nameof(adapterScope));
+        public bool IsCompatibleCodec(IRpcCodec candidate) => candidate is IRpcCodec<T>;
+    }
+
+    private sealed class BlockingNativeFactory<T>(
+        IRpcCodec<T> codec,
+        TaskCompletionSource entered,
+        TaskCompletionSource release) : IRpcGeneratedCodecFactory
+    {
+        public Type TargetType => typeof(T);
+        public string SchemaId => $"blocking-native:{typeof(T).FullName}";
+        public string WireFormatId => "sharplink-native/v1";
+        public string? AdapterId => null;
+        public IRpcCodecAdapter? Adapter => null;
+
+        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
+        {
+            if (adapterScope is not null)
+                throw new ArgumentException("Native factory does not accept an Adapter Scope.", nameof(adapterScope));
+            entered.TrySetResult();
+            release.Task.GetAwaiter().GetResult();
+            return codec;
+        }
+
+        public bool IsCompatibleCodec(IRpcCodec candidate) => candidate is IRpcCodec<T>;
     }
 
     private sealed class AdapterFactory<T>(AdapterCounters counters) : IRpcGeneratedCodecFactory

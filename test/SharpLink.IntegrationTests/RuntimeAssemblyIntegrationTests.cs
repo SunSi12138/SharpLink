@@ -252,6 +252,52 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task MultiClusterReplacementCleanupFailureShouldReconcilePublishedChildRoutes()
+    {
+        using var oldPlugin = PluginBundle.Load(
+            "multi-cluster-replacement-cleanup-failure-old", loadService: false);
+        using var newPlugin = PluginBundle.Load(
+            "multi-cluster-replacement-cleanup-failure-new", loadService: false);
+        await using var registrationSource = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), 1)
+            .Build();
+        var registrationResult = registrationSource.RegisterAssembly(oldPlugin.ContractAssembly);
+        Ensure(registrationResult.Succeeded, "controlled child registration result");
+
+        var child = new ControlledDynamicAssemblyClient(registrationResult);
+        var slot = new SharpLinkClusterSlot("plugins", child, AllowDynamicContracts: true);
+        await using var client = new SharpLinkMultiClusterClient(
+            new SharpLinkMultiClusterOptions(),
+            new[] { slot }.ToFrozenDictionary(static candidate => candidate.Key),
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
+            []);
+        Ensure(client.RegisterAssembly("plugins", oldPlugin.ContractAssembly).Succeeded,
+            "multi-cluster controlled registration");
+        child.PublishReplacementThenFailCleanup();
+
+        try
+        {
+            _ = await client.ReplaceAssemblyAsync(
+                "plugins",
+                oldPlugin.ContractAssembly,
+                newPlugin.ContractAssembly,
+                TimeSpan.Zero);
+            throw new Exception("assert failed: child cleanup failure must reach the caller");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message.Contains("replacement cleanup failure", StringComparison.Ordinal),
+                "child cleanup failure is preserved");
+        }
+
+        Ensure(child.IsDynamicAssemblyRegistered(newPlugin.ContractAssembly) &&
+               !child.IsDynamicAssemblyRegistered(oldPlugin.ContractAssembly),
+            "the child has already committed the replacement generation");
+        _ = GetMultiClusterProxy(client, newPlugin.ContractType);
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task MultiClusterReplacementShouldPublishCoordinatorRoutesBeforeOldDrainAndAfterCallerCancellation()
     {
         await using var harness = await DynamicHarness.CreateAsync();
@@ -1633,6 +1679,7 @@ public sealed class RuntimeAssemblyIntegrationTests
         private int _unregisterCalls;
         private int _rejectNextUnregister;
         private int _blockNextUnregisterRejection;
+        private int _publishReplacementThenFailCleanup;
 
         internal ControlledDynamicAssemblyClient(SharpLinkAssemblyRegistrationResult registrationResult)
         {
@@ -1691,7 +1738,19 @@ public sealed class RuntimeAssemblyIntegrationTests
             Assembly newAssembly,
             TimeSpan gracefulTimeout,
             CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+        {
+            _ = gracefulTimeout;
+            _ = cancellationToken;
+            if (Interlocked.Exchange(ref _publishReplacementThenFailCleanup, 0) == 0)
+                throw new NotSupportedException();
+            lock (_gate)
+            {
+                _registeredAssemblies.Remove(oldAssembly);
+                _registeredAssemblies.Add(newAssembly);
+            }
+            return ValueTask.FromException<SharpLinkAssemblyReplacementResult>(
+                new InvalidOperationException("controlled replacement cleanup failure"));
+        }
 
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 
@@ -1727,6 +1786,9 @@ public sealed class RuntimeAssemblyIntegrationTests
         internal void RejectNextUnregister() => Volatile.Write(ref _rejectNextUnregister, 1);
 
         internal void BlockAndRejectNextUnregister() => Volatile.Write(ref _blockNextUnregisterRejection, 1);
+
+        internal void PublishReplacementThenFailCleanup()
+            => Volatile.Write(ref _publishReplacementThenFailCleanup, 1);
 
         internal void CompleteRejectedUnregister()
             => RejectedUnregisterCompletion.TrySetException(
