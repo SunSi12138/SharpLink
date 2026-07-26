@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.11] - 2026-07-27
+
+### Fixed
+
+- Client runtime registration rollback now preserves a structured rejection together with generated Codec Adapter cleanup failure.
+- Server runtime registration rollback now preserves a structured rejection, cleans every candidate service, and retains generated Codec Adapter cleanup failure.
+- Client runtime replacement rollback now preserves its structured preparation rejection together with generated Codec Adapter cleanup failure.
+- Server runtime replacement rollback now preserves its structured preparation rejection while completing candidate-service and generated Codec cleanup.
+- Server profile binding failure now disposes the newly built Runtime Context and preserves both binding and Context cleanup failures.
+
+### Compatibility and validation
+
+- Public APIs, Protocol v2, and generated Manifest versions are unchanged; failed dynamic transactions may now surface `AggregateException` only when rollback also fails, with the transaction rejection first.
+- Release build, Generator 83/83, Unit 394/394, Integration 228/228, package smoke, and same-machine alternating A/B passed.
+- Normal Client registration/unregistration measured 6.535 → 6.518 µs with 30.50 → 30.44 KB; Server measured 6.407 → 6.407 µs across two reversed-order runs, with the repeated run at 29.52 KB on both revisions.
+
 ## [0.8.10] - 2026-07-27
 
 ### Fixed

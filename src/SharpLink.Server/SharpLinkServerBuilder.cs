@@ -245,7 +245,25 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
         var runtimeContext = _runtimeContextBuilder.Build();
         if (_transport is IPerformanceProfileAwareTransport profileAwareTransport)
-            profileAwareTransport.BindPerformanceProfile(runtimeContext.Options.PerformanceProfile);
+        {
+            try
+            {
+                profileAwareTransport.BindPerformanceProfile(runtimeContext.Options.PerformanceProfile);
+            }
+            catch (Exception bindingException)
+            {
+                try
+                {
+                    runtimeContext.Dispose();
+                }
+                catch (Exception cleanupException)
+                {
+                    throw new AggregateException(bindingException, cleanupException);
+                }
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(bindingException).Throw();
+                throw new System.Diagnostics.UnreachableException();
+            }
+        }
         var protocolOptions = runtimeContext.Protocol;
         var serviceProvider = _serviceProvider;
         IAsyncDisposable? ownedServiceProvider = null;
