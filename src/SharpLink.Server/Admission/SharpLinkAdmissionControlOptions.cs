@@ -100,6 +100,34 @@ public class SharpLinkAdmissionRuleOptions
 
     internal bool HasLimit => Concurrency is not null || RateLimit is not null;
 
+    private protected void CopyLimitsTo(SharpLinkAdmissionRuleOptions destination)
+    {
+        destination.Concurrency = Concurrency is null
+            ? null
+            : new SharpLinkConcurrencyLimitOptions { PermitLimit = Concurrency.PermitLimit };
+        destination.RateLimit = RateLimit switch
+        {
+            SharpLinkTokenBucketLimitOptions source => new SharpLinkTokenBucketLimitOptions
+            {
+                TokenLimit = source.TokenLimit,
+                TokensPerPeriod = source.TokensPerPeriod,
+                ReplenishmentPeriod = source.ReplenishmentPeriod
+            },
+            SharpLinkFixedWindowLimitOptions source => new SharpLinkFixedWindowLimitOptions
+            {
+                PermitLimit = source.PermitLimit,
+                Window = source.Window
+            },
+            SharpLinkSlidingWindowLimitOptions source => new SharpLinkSlidingWindowLimitOptions
+            {
+                PermitLimit = source.PermitLimit,
+                Window = source.Window,
+                SegmentsPerWindow = source.SegmentsPerWindow
+            },
+            _ => null
+        };
+    }
+
     internal void Validate()
     {
         Concurrency?.Validate();
@@ -146,6 +174,18 @@ public sealed class SharpLinkPartitionAdmissionOptions : SharpLinkAdmissionRuleO
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(IdleTimeout, TimeSpan.Zero);
         if (!HasLimit)
             throw new InvalidOperationException("A partition selector requires at least one partition limit.");
+    }
+
+    internal SharpLinkPartitionAdmissionOptions CloneValidated()
+    {
+        Validate();
+        var clone = new SharpLinkPartitionAdmissionOptions
+        {
+            MaxPartitions = MaxPartitions,
+            IdleTimeout = IdleTimeout
+        };
+        CopyLimitsTo(clone);
+        return clone;
     }
 }
 

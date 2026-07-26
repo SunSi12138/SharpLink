@@ -3,6 +3,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
 using SharpLink.Client;
@@ -128,6 +129,53 @@ public class TransportValidationTests
         await using var server = await accepting;
 
         await Assert.That(((IPEndPoint)client.RemoteEndPoint!).Port).IsEqualTo(port);
+    }
+
+    [Test]
+    public async Task TlsSnapshotsShouldPreserveAndIsolateChainPolicy()
+    {
+        var clientPolicy = new X509ChainPolicy
+        {
+            RevocationMode = X509RevocationMode.NoCheck,
+            VerificationFlags = X509VerificationFlags.AllowUnknownCertificateAuthority
+        };
+        var clientSource = new SslClientAuthenticationOptions
+        {
+            TargetHost = "client.example",
+            CertificateChainPolicy = clientPolicy
+        };
+        var clientSnapshot = TlsAuthenticationOptionsSnapshot.Clone(clientSource)!;
+
+        var serverPolicy = new X509ChainPolicy
+        {
+            RevocationMode = X509RevocationMode.Offline,
+            VerificationFlags = X509VerificationFlags.IgnoreWrongUsage
+        };
+        var serverSource = new SslServerAuthenticationOptions
+        {
+            ServerCertificateSelectionCallback = static (_, _) => null!,
+            CertificateChainPolicy = serverPolicy
+        };
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsWindows())
+        {
+            serverSource.AllowRsaPkcs1Padding = false;
+            serverSource.AllowRsaPssPadding = false;
+        }
+        var serverSnapshot = TlsAuthenticationOptionsSnapshot.Clone(serverSource)!;
+
+        clientPolicy.RevocationMode = X509RevocationMode.Online;
+        serverPolicy.RevocationMode = X509RevocationMode.Online;
+        await Assert.That(clientSnapshot.CertificateChainPolicy).IsNotSameReferenceAs(clientPolicy);
+        await Assert.That(clientSnapshot.CertificateChainPolicy!.RevocationMode)
+            .IsEqualTo(X509RevocationMode.NoCheck);
+        await Assert.That(serverSnapshot.CertificateChainPolicy).IsNotSameReferenceAs(serverPolicy);
+        await Assert.That(serverSnapshot.CertificateChainPolicy!.RevocationMode)
+            .IsEqualTo(X509RevocationMode.Offline);
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsWindows())
+        {
+            await Assert.That(serverSnapshot.AllowRsaPkcs1Padding).IsFalse();
+            await Assert.That(serverSnapshot.AllowRsaPssPadding).IsFalse();
+        }
     }
 
     private static bool HasUnpairedSurrogate(string value)

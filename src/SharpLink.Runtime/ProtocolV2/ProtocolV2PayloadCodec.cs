@@ -5,6 +5,12 @@ namespace SharpLink.Runtime;
 /// <summary>Encodes and decodes Protocol v2 control and error payloads.</summary>
 public static class ProtocolV2PayloadCodec
 {
+    private const ProtocolV2Capabilities KnownCapabilities =
+        ProtocolV2Capabilities.Metadata |
+        ProtocolV2Capabilities.Compression |
+        ProtocolV2Capabilities.FlowControl |
+        ProtocolV2Capabilities.HealthCheck |
+        ProtocolV2Capabilities.CancellationReason;
     private static readonly Encoding SStrictUtf8 = new UTF8Encoding(false, true);
     private const int HandshakeRequestFixedBytes =
         sizeof(ushort) + sizeof(ulong) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int);
@@ -19,6 +25,12 @@ public static class ProtocolV2PayloadCodec
     {
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(limits);
+        if ((request.RequiredCapabilities & ~request.SupportedCapabilities) != 0)
+        {
+            throw new ArgumentException(
+                "Required handshake capabilities must also be advertised as supported.",
+                nameof(request));
+        }
         ValidatePeerLimits(request.MaxFramePayloadBytes, request.StreamReceiveWindowBytes,
             request.ConnectionReceiveWindowBytes);
         if (request.AuthenticationPayload.Length > limits.MaxMetadataBytes)
@@ -70,10 +82,17 @@ public static class ProtocolV2PayloadCodec
         var auth = authLength == 0
             ? ReadOnlyMemory<byte>.Empty
             : reader.Sequence.Slice(reader.Position, authLength).ToArray();
+        var supportedCapabilities = (ProtocolV2Capabilities)unchecked((ulong)supportedBits);
+        var requiredCapabilities = (ProtocolV2Capabilities)unchecked((ulong)requiredBits);
+        if ((requiredCapabilities & ~supportedCapabilities) != 0)
+        {
+            throw ProtocolV2FrameParser.Violation(
+                "Required handshake capabilities were not included in the supported capability set.");
+        }
         return new ProtocolV2HandshakeRequest(
             unchecked((ushort)minorBits),
-            (ProtocolV2Capabilities)unchecked((ulong)supportedBits),
-            (ProtocolV2Capabilities)unchecked((ulong)requiredBits),
+            supportedCapabilities,
+            requiredCapabilities,
             maxFrame,
             streamWindow,
             connectionWindow,
@@ -87,6 +106,7 @@ public static class ProtocolV2PayloadCodec
         in ProtocolV2HandshakeResponse response)
     {
         ArgumentNullException.ThrowIfNull(writer);
+        ValidateKnownCapabilities(response.NegotiatedCapabilities, nameof(response));
         ValidatePeerLimits(response.MaxFramePayloadBytes, response.StreamReceiveWindowBytes,
             response.ConnectionReceiveWindowBytes);
         WriteUInt16(writer, response.MinorVersion);
@@ -129,13 +149,24 @@ public static class ProtocolV2PayloadCodec
             throw ProtocolV2FrameParser.Violation("HandshakeResponse compression token length does not match the frame.");
         var profile = profileLength == 0 ? null : ReadCompressionProfile(ref reader, profileLength);
         ValidatePeerLimits(maxFrame, streamWindow, connectionWindow);
+        var negotiatedCapabilities = (ProtocolV2Capabilities)unchecked((ulong)capabilitiesBits);
+        if ((negotiatedCapabilities & ~KnownCapabilities) != 0)
+            throw ProtocolV2FrameParser.Violation("HandshakeResponse negotiated unknown capabilities.");
         return new ProtocolV2HandshakeResponse(
             unchecked((ushort)minorBits),
-            (ProtocolV2Capabilities)unchecked((ulong)capabilitiesBits),
+            negotiatedCapabilities,
             maxFrame,
             streamWindow,
             connectionWindow,
             profile);
+    }
+
+    private static void ValidateKnownCapabilities(
+        ProtocolV2Capabilities capabilities,
+        string parameterName)
+    {
+        if ((capabilities & ~KnownCapabilities) != 0)
+            throw new ArgumentOutOfRangeException(parameterName, "Handshake capabilities contain unknown bits.");
     }
 
     private static void ValidateCompressionProfiles(ReadOnlySpan<string> profiles)

@@ -691,7 +691,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
         int queueLimit)
     {
         _selector = selector;
-        _options = options;
+        _options = options.CloneValidated();
         _queueLimit = queueLimit;
     }
 

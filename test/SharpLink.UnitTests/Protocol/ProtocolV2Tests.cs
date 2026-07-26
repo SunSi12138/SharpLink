@@ -129,6 +129,59 @@ public class ProtocolV2Tests
     }
 
     [Test]
+    public void HandshakeCapabilitiesShouldRejectInconsistentOrUnknownSets()
+    {
+        var inconsistent = new ProtocolV2HandshakeRequest(
+            ProtocolV2Constants.MinorVersion,
+            ProtocolV2Capabilities.Metadata,
+            ProtocolV2Capabilities.FlowControl,
+            4 * 1024 * 1024,
+            1024 * 1024,
+            16 * 1024 * 1024,
+            ReadOnlyMemory<byte>.Empty);
+        var writeFailure = CaptureException(() =>
+            ProtocolV2PayloadCodec.WriteHandshakeRequest(
+                new PooledByteBufferWriter(), inconsistent, Limits));
+
+        var requestPayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeRequest(
+            requestPayload,
+            inconsistent with { RequiredCapabilities = ProtocolV2Capabilities.None },
+            Limits);
+        var requestBytes = requestPayload.WrittenMemory.ToArray();
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            requestBytes.AsSpan(sizeof(ushort) + sizeof(ulong), sizeof(ulong)),
+            (ulong)ProtocolV2Capabilities.FlowControl);
+        var readRequestFailure = CaptureException(() =>
+            ProtocolV2PayloadCodec.ReadHandshakeRequest(
+                new ReadOnlySequence<byte>(requestBytes), Limits));
+
+        var responsePayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeResponse(
+            responsePayload,
+            new ProtocolV2HandshakeResponse(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.None,
+                4 * 1024 * 1024,
+                1024 * 1024,
+                16 * 1024 * 1024));
+        var responseBytes = responsePayload.WrittenMemory.ToArray();
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            responseBytes.AsSpan(sizeof(ushort), sizeof(ulong)),
+            1UL << 63);
+        var readResponseFailure = CaptureException(() =>
+            ProtocolV2PayloadCodec.ReadHandshakeResponse(
+                new ReadOnlySequence<byte>(responseBytes), Limits));
+
+        Ensure(writeFailure is ArgumentException,
+            "outbound required capabilities must be a subset of supported capabilities");
+        Ensure(readRequestFailure is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation },
+            "inbound inconsistent request capabilities must be a protocol violation");
+        Ensure(readResponseFailure is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation },
+            "an unknown negotiated response capability must be a protocol violation");
+    }
+
+    [Test]
     public async Task CancelReasonShouldRoundTripAndEnforceNegotiatedShape()
     {
         foreach (var reason in new[]
@@ -446,6 +499,19 @@ public class ProtocolV2Tests
         catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
         {
             await Task.CompletedTask;
+        }
+    }
+
+    private static Exception? CaptureException(Action action)
+    {
+        try
+        {
+            action();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
         }
     }
 

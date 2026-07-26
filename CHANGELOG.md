@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.17] - 2026-07-27
+
+### Fixed
+
+- Concurrent multi-cluster assembly unregister callers now share one coordinator operation and preserve the original child rejection instead of racing route restoration.
+- Client and Server TLS snapshots now deep-clone certificate chain policies; Server snapshots also preserve supported RSA signature-padding settings.
+- Protocol v2 handshakes now reject required capabilities that were not advertised as supported and reject unknown negotiated response bits.
+- Partitioned admission control now owns a deep validated snapshot of its limits instead of retaining caller-mutable configuration.
+- Runtime state stores and retained writer pools now enforce hard aggregate sizing bounds before allocating or retaining memory.
+
+### Compatibility and validation
+
+- Protocol v2 wire formats and generated Manifest versions are unchanged. Unknown request capabilities remain forward-compatible and are handled by negotiation; malformed required/supported sets and unknown negotiated responses are rejected. Configurations above 1,024 stripes, 1,048,576 aggregate initial map entries, or 64 MiB of configured retained writer memory are rejected.
+- Non-incremental Release build, Generator 83/83, Unit 427/427, Integration 228/228, seven-package pack, and fresh-cache package smoke passed.
+- Hot-path allocations were unchanged with no stable latency regression. TLS policy and admission configuration snapshots intentionally add 88 B and 72 B respectively at cold configuration/lifecycle boundaries.
+
 ## [0.8.16] - 2026-07-27
 
 ### Fixed

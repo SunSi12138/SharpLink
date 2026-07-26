@@ -162,6 +162,34 @@ public class SharpLinkRuntimeContextTests
     }
 
     [Test]
+    public void RuntimeSizingShouldRejectUnboundedAggregateMemory()
+    {
+        var stripeFailure = CaptureFailure(new RuntimeConcurrencyOptions
+        {
+            StripeCount = 2048,
+            InitialMapCapacityPerStripe = 0
+        }.Validate);
+        var mapCapacityFailure = CaptureFailure(new RuntimeConcurrencyOptions
+        {
+            StripeCount = 1024,
+            InitialMapCapacityPerStripe = 2048
+        }.Validate);
+        var retainedWriterFailure = CaptureFailure(new BufferWriterPoolOptions
+        {
+            InitialCapacity = 1024,
+            MaxPooledWriters = 2048,
+            MaxRetainedCapacityBytes = 64 * 1024
+        }.Validate);
+
+        Ensure(stripeFailure is ArgumentOutOfRangeException,
+            "stripe objects must have a hard count bound");
+        Ensure(mapCapacityFailure is ArgumentOutOfRangeException,
+            "aggregate initial map entries must have a hard bound");
+        Ensure(retainedWriterFailure is ArgumentOutOfRangeException,
+            "aggregate retained writer bytes must have a hard bound");
+    }
+
+    [Test]
     public async Task BuildingOneHundredContextsInParallelShouldNotCrossContaminate()
     {
         var tasks = new Task<SharpLinkRuntimeContext>[100];

@@ -11,6 +11,8 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
     private FrozenDictionary<SharpLinkClusterKey, SharpLinkClusterSlot> _clusters;
     private FrozenDictionary<Type, SharpLinkClusterRouteRegistration> _routes;
     private readonly List<DynamicAssemblyRegistration> _dynamicRegistrations = [];
+    private readonly Dictionary<DynamicAssemblyRegistration, Task<SharpLinkAssemblyUnregisterResult>>
+        _unregisterOperations = new(ReferenceEqualityComparer.Instance);
     private Task? _connectTask;
     private Task? _stopTask;
     private int _state = (int)SharpLinkMultiClusterState.Created;
@@ -203,17 +205,27 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
                 ReferenceEquals(candidate.Slot, slot) && ReferenceEquals(candidate.Assembly, assembly));
             if (registration is null)
                 return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
+            if (_unregisterOperations.TryGetValue(registration, out var activeOperation))
+                return WaitForOperationAsync(activeOperation, cancellationToken);
 
             var nextRoutes = Volatile.Read(ref _routes)
                 .Where(pair => !ReferenceEquals(pair.Value.OwnerAssembly, assembly))
                 .ToDictionary(static pair => pair.Key, static pair => pair.Value)
                 .ToFrozenDictionary();
             Volatile.Write(ref _routes, nextRoutes);
-        }
 
-        var operation = CompleteUnregisterAsync(slot, registration!, gracefulTimeout);
-        ObserveBackgroundFailure(operation);
-        return WaitForOperationAsync(operation, cancellationToken);
+            var completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var operation = completion.Task;
+            _unregisterOperations.Add(registration, operation);
+            _ = CompleteSharedUnregisterAsync(
+                slot,
+                registration,
+                gracefulTimeout,
+                completion);
+            ObserveBackgroundFailure(operation);
+            return WaitForOperationAsync(operation, cancellationToken);
+        }
     }
 
     public ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
@@ -325,6 +337,7 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
             Volatile.Write(ref _routes, FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty);
             Volatile.Write(ref _clusters, FrozenDictionary<SharpLinkClusterKey, SharpLinkClusterSlot>.Empty);
             _dynamicRegistrations.Clear();
+            _unregisterOperations.Clear();
         }
         _shutdown.Dispose();
         Volatile.Write(ref _state, (int)SharpLinkMultiClusterState.Stopped);
@@ -369,6 +382,30 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
             ObserveBackgroundFailure(CompleteDeferredUnregisterAsync(slot, registration));
         }
         return result;
+    }
+
+    private async Task CompleteSharedUnregisterAsync(
+        SharpLinkClusterSlot slot,
+        DynamicAssemblyRegistration registration,
+        TimeSpan gracefulTimeout,
+        TaskCompletionSource<SharpLinkAssemblyUnregisterResult> completion)
+    {
+        try
+        {
+            completion.TrySetResult(await CompleteUnregisterAsync(
+                slot,
+                registration,
+                gracefulTimeout).ConfigureAwait(false));
+        }
+        catch (Exception exception)
+        {
+            completion.TrySetException(exception);
+        }
+        finally
+        {
+            lock (_gate)
+                _unregisterOperations.Remove(registration);
+        }
     }
 
     private void RestoreRoutesAfterRejectedUnregister(DynamicAssemblyRegistration registration)

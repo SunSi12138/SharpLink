@@ -144,7 +144,7 @@ internal static class TlsAuthenticationOptionsSnapshot
             AllowRenegotiation = source.AllowRenegotiation,
             AllowTlsResume = source.AllowTlsResume,
             CipherSuitesPolicy = source.CipherSuitesPolicy,
-            CertificateChainPolicy = source.CertificateChainPolicy
+            CertificateChainPolicy = source.CertificateChainPolicy?.Clone()
         };
         if (OperatingSystem.IsLinux() || OperatingSystem.IsWindows())
         {
@@ -179,7 +179,7 @@ internal static class TlsAuthenticationOptionsSnapshot
                 nameof(source));
         }
 
-        return new SslServerAuthenticationOptions
+        var clone = new SslServerAuthenticationOptions
         {
             ServerCertificate = source.ServerCertificate,
             ServerCertificateContext = source.ServerCertificateContext,
@@ -194,7 +194,14 @@ internal static class TlsAuthenticationOptionsSnapshot
                 : new List<SslApplicationProtocol>(source.ApplicationProtocols),
             AllowRenegotiation = source.AllowRenegotiation,
             AllowTlsResume = source.AllowTlsResume,
-            CipherSuitesPolicy = source.CipherSuitesPolicy
+            CipherSuitesPolicy = source.CipherSuitesPolicy,
+            CertificateChainPolicy = source.CertificateChainPolicy?.Clone()
         };
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsWindows())
+        {
+            clone.AllowRsaPkcs1Padding = source.AllowRsaPkcs1Padding;
+            clone.AllowRsaPssPadding = source.AllowRsaPssPadding;
+        }
+        return clone;
     }
 }

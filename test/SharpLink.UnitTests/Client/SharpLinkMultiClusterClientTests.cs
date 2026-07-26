@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -304,6 +305,48 @@ public sealed class SharpLinkMultiClusterClientTests
         await client.StopAsync();
     }
 
+    [Test]
+    public async Task ConcurrentDynamicUnregisterShouldShareOneCoordinatorOperation()
+    {
+        var child = new CoordinatedUnregisterClient();
+        SharpLinkClusterKey cluster = "plugins";
+        var slot = new SharpLinkClusterSlot(cluster, child, AllowDynamicContracts: true);
+        var route = new SharpLinkClusterRouteRegistration(
+            typeof(IOrdersContract),
+            8_101,
+            "orders-v1",
+            slot,
+            TestManifestAssembly);
+        await using var client = new SharpLinkMultiClusterClient(
+            new SharpLinkMultiClusterOptions(),
+            new Dictionary<SharpLinkClusterKey, SharpLinkClusterSlot> { [cluster] = slot }
+                .ToFrozenDictionary(),
+            new Dictionary<Type, SharpLinkClusterRouteRegistration>
+            {
+                [typeof(IOrdersContract)] = route
+            }.ToFrozenDictionary(),
+            []);
+        var registrations = (List<DynamicAssemblyRegistration>)(typeof(SharpLinkMultiClusterClient)
+            .GetField("_dynamicRegistrations", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(client)!);
+        registrations.Add(new DynamicAssemblyRegistration(slot, TestManifestAssembly, Manifest.Instance));
+
+        var first = client.UnregisterAssemblyAsync(
+            cluster, TestManifestAssembly, TimeSpan.Zero).AsTask();
+        var second = client.UnregisterAssemblyAsync(
+            cluster, TestManifestAssembly, TimeSpan.Zero).AsTask();
+        child.RejectUnregister(new InvalidOperationException("controlled child unregister failed"));
+        var firstFailure = await CaptureExceptionAsync(first);
+        var secondFailure = await CaptureExceptionAsync(second);
+
+        Ensure(child.UnregisterCallCount == 1,
+            "concurrent coordinator callers must invoke the child unregister operation once");
+        Ensure(ReferenceEquals(firstFailure, secondFailure),
+            "concurrent coordinator callers must observe the same original failure");
+        Ensure(firstFailure is InvalidOperationException { Message: "controlled child unregister failed" },
+            "the shared operation must preserve the child failure");
+    }
+
     private static async Task EnsureThrows<TException>(Func<Task> action) where TException : Exception
     {
         try
@@ -315,6 +358,19 @@ public sealed class SharpLinkMultiClusterClientTests
             return;
         }
         throw new Exception($"Expected {typeof(TException).Name}.");
+    }
+
+    private static async Task<Exception?> CaptureExceptionAsync(Task task)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 
     private static void Ensure(bool condition, string message)
@@ -432,6 +488,62 @@ public sealed class SharpLinkMultiClusterClientTests
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class CoordinatedUnregisterClient : ISharpLinkClient, IDynamicAssemblyRegistrationInspector
+    {
+        private readonly TaskCompletionSource<SharpLinkAssemblyUnregisterResult> _unregister =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _unregisterCallCount;
+
+        internal int UnregisterCallCount => Volatile.Read(ref _unregisterCallCount);
+        public SharpLinkConnectionState State { get; private set; } = SharpLinkConnectionState.Created;
+
+        public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
+            => SharpLinkAssemblyRegistrationResult.Success();
+
+        public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
+            Assembly assembly,
+            TimeSpan gracefulTimeout,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _unregisterCallCount);
+            return new ValueTask<SharpLinkAssemblyUnregisterResult>(_unregister.Task);
+        }
+
+        public ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
+            Assembly oldAssembly,
+            Assembly newAssembly,
+            TimeSpan gracefulTimeout,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(
+                new SharpLinkAssemblyRegistrationError(
+                    SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                    "not supported")));
+
+        public ValueTask ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.CompletedTask;
+
+        public ValueTask StopAsync(CancellationToken cancellationToken = default)
+        {
+            State = SharpLinkConnectionState.Stopped;
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Unhealthy));
+
+        public TContract Get<TContract>() where TContract : IService
+            => throw new NotSupportedException();
+
+        public ValueTask DisposeAsync() => StopAsync();
+
+        bool IDynamicAssemblyRegistrationInspector.IsDynamicAssemblyRegistered(Assembly assembly)
+            => true;
+
+        internal void RejectUnregister(Exception exception)
+            => _unregister.TrySetException(exception);
     }
 
     private sealed class OneShotEndpointEnumerable : IEnumerable<SharpLinkEndpoint>

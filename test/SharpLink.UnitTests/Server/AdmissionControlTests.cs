@@ -88,6 +88,41 @@ public sealed class AdmissionControlTests
     }
 
     [Test]
+    public async Task PartitionRuntimeShouldFreezeConfigurationAtCreation()
+    {
+        var key = "first";
+        SharpLinkPartitionAdmissionOptions? leaked = null;
+        var options = new SharpLinkAdmissionControlOptions();
+        options.UsePartition(
+            _ => key,
+            partition =>
+            {
+                partition.MaxPartitions = 1;
+                partition.UseConcurrency(1);
+                leaked = partition;
+            });
+        await using var controller = SharpLinkAdmissionController.Create(options, []);
+        leaked!.MaxPartitions = 2;
+        leaked.Concurrency!.PermitLimit = 2;
+
+        var first = await controller.AcquireAsync(CreateContext(), 1, false, CancellationToken.None);
+        var samePartition = await controller.AcquireAsync(
+            CreateContext(), 1, false, CancellationToken.None);
+        key = "second";
+        var secondPartition = await controller.AcquireAsync(
+            CreateContext(), 1, false, CancellationToken.None);
+
+        first.Lease?.Dispose();
+        samePartition.Lease?.Dispose();
+        secondPartition.Lease?.Dispose();
+        Ensure(first.IsAcquired, "first frozen partition permit");
+        Ensure(!samePartition.IsAcquired && samePartition.Reason == "concurrency",
+            "later concurrency mutation must not alter a new partition runtime");
+        Ensure(!secondPartition.IsAcquired && secondPartition.Reason == "partition_capacity",
+            "later capacity mutation must not enlarge the live partition pool");
+    }
+
+    [Test]
     public async Task EmptyPartitionKeyShouldUseOneExplicitDefaultPartition()
     {
         var options = new SharpLinkAdmissionControlOptions();
