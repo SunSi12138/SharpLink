@@ -1,21 +1,21 @@
-# 0.8.15 regression-test research
+# 0.8.16 regression-test research
 
 ## Target inventory and evidence candidates
 
-- `SocketServerTransportListener`: Unix-domain listener construction deletes any pre-existing path before binding, including an ordinary caller-owned file.
-- `SocketClientTransportFactory`: the factory retains a caller-owned mutable `IPEndPoint`, so changing its port after construction silently changes later connection attempts and bypasses the constructor snapshot.
-- `SharpLinkTransportFactories`: built-in endpoint-factory delegates retain mutable socket, TLS, and shared-memory option objects, allowing later topology generations to receive different configuration from earlier generations.
-- `SharpClientBuilder`: direct transports and endpoint resolvers are documented as owned by the built Client, but the builder can transfer the same instance into multiple Clients.
-- `SharpLinkServerBuilder`: the same listener can be transferred into multiple Servers, while a failed build does not release the listener even though the analogous Client rollback does.
+- `PendingRequestTable`: unlike the Server deadline scheduler, its timer arms the full remaining duration. A valid deadline beyond the platform `Timer` range throws while registering an otherwise valid call.
+- `SharpLinkBufferWriterPool` / `SharpLinkRuntimeContext`: returned writers can retain up to the configured pool budget, but Context disposal neither drains the pool nor prevents later rents, so a disposed Client/Server object can retain large arrays indefinitely.
+- `SharpLinkServer.StopCoreAsync`: an immediately faulted listener/framework-cleanup task is logged and converted only to `HealthStatus == Unhealthy`; the public Stop/Dispose operation reports success and hides the owned-resource cleanup failure.
+- `SharpLinkServerHostedService`: the long-lived Run loop is linked to the transient `StartAsync` cancellation token. Canceling that token after startup silently stops a healthy server.
+- `SharpLinkProtocolOptions.MaxPendingRequestsPerConnection`: any positive power of two is accepted, including values that require multi-gigabyte arrays for every physical Client connection.
 
 ## Acceptance checklist
 
-- Unix-domain bind never deletes a pre-existing filesystem entry and still removes a path created by a successfully owned listener.
-- Built-in socket factories snapshot supported endpoint values, including a mutable `IPEndPoint` and IPv6 address scope.
-- Endpoint transport delegates freeze every option object at delegate creation; later caller mutations cannot split endpoint generations.
-- A direct Client transport or resolver is transferred once and the builder requires an explicitly supplied replacement before another build.
-- Server listener ownership transfers once on success and is released exactly once, with all failures preserved, when a build attempt fails after Runtime Context creation.
+- Client deadline scheduling slices delays beyond the portable timer maximum without changing short-deadline behavior.
+- Context disposal drains idle writer buffers, rejects new rents, and releases active writers when they are returned after disposal.
+- Server Stop/Dispose preserves immediate framework cleanup failures while still reaching the faulted terminal state and completing all cleanup layers.
+- Hosted Server startup honors cancellation during startup but does not retain the startup token after successful publication.
+- Pending request capacity has a documented power-of-two hard maximum enforced both by public protocol validation and the table constructor.
 
 ## Audit guardrails
 
-This pass reviews transport filesystem safety and builder/configuration ownership. Style-only analyzer suggestions and extreme-duration validation ideas remain below P2 and are not counted. Multi-endpoint builders remain reusable because they create fresh factories for each build; only already-instantiated single-owner resources are consumed.
+These findings cover timer correctness, bounded memory ownership, cleanup observability, and Generic Host lifecycle semantics. Cosmetic syntax changes, arbitrary tighter defaults, and the larger anonymous-pipe transfer API redesign are excluded from this batch pending a separately bounded compatibility design.

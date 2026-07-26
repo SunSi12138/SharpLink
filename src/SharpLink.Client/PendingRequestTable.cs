@@ -59,6 +59,7 @@ internal interface IPendingCallCompletionObserver
 /// </remarks>
 internal sealed class PendingRequestTable : IDisposable
 {
+    private static readonly TimeSpan MaxTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue);
     private readonly int _indexMask;
     private readonly PendingCall?[] _slots;
     private readonly IRpcCodecProvider _codecProvider;
@@ -79,6 +80,12 @@ internal sealed class PendingRequestTable : IDisposable
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
         if (!System.Numerics.BitOperations.IsPow2(capacity))
             throw new ArgumentException("Pending request capacity must be a power of two.", nameof(capacity));
+        if (capacity > SharpLinkProtocolOptions.MaximumPendingRequestsPerConnection)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(capacity),
+                $"Pending request capacity cannot exceed {SharpLinkProtocolOptions.MaximumPendingRequestsPerConnection}.");
+        }
 
         _slots = new PendingCall?[capacity];
         _indexMask = capacity - 1;
@@ -689,6 +696,8 @@ internal sealed class PendingRequestTable : IDisposable
         var delay = remainingTicks <= 0
             ? TimeSpan.Zero
             : TimeSpan.FromSeconds((double)remainingTicks / Stopwatch.Frequency);
+        if (delay > MaxTimerDelay)
+            delay = MaxTimerDelay;
         try
         {
             _deadlineTimer.Change(delay, Timeout.InfiniteTimeSpan);

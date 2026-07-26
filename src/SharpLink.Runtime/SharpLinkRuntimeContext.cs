@@ -168,6 +168,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
             _manifestRegistrations.Clear();
         }
         ((RpcCodecProvider)Codecs).Dispose();
+        Buffers.Dispose();
         List<Exception>? failures = null;
         for (var index = registrations.Length - 1; index >= 0; index--)
         {

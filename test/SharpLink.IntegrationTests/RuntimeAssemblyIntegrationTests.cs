@@ -663,8 +663,19 @@ public sealed class RuntimeAssemblyIntegrationTests
         plugin.InvokeServiceStatic(firstServiceName, "EnableDisposeFailure");
 
         await harness.Client.StopAsync();
-        await harness.Server.StopAsync(TimeSpan.FromSeconds(2));
+        Exception? stopFailure = null;
+        try
+        {
+            await harness.Server.StopAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (Exception exception)
+        {
+            stopFailure = exception;
+            harness.ExpectServerStopFailure("First dynamic disposal failure.");
+        }
 
+        Ensure(stopFailure is not null && ContainsMessage(stopFailure, "First dynamic disposal failure."),
+            "Server Stop must surface the dynamic disposal failure");
         Ensure(plugin.GetServiceStaticInt(firstServiceName, "Disposed") == 1,
             "throwing dynamic service disposed once during stop");
         Ensure(plugin.GetServiceStaticInt(secondServiceName, "Disposed") == 1,
@@ -1882,6 +1893,7 @@ public sealed class RuntimeAssemblyIntegrationTests
         private readonly CancellationTokenSource _serverCancellation;
         private readonly Task _serverTask;
         private readonly ServiceProvider _serviceProvider;
+        private string? _expectedServerStopFailure;
 
         private DynamicHarness(
             ISharpLinkServer server,
@@ -1902,6 +1914,9 @@ public sealed class RuntimeAssemblyIntegrationTests
         internal ISharpLinkServer Server { get; }
         internal ISharpLinkClient Client { get; }
         internal int Port { get; }
+
+        internal void ExpectServerStopFailure(string message)
+            => _expectedServerStopFailure = message;
 
         internal static async Task<DynamicHarness> CreateAsync(
             bool registerDynamicServiceDependencies = true)
@@ -1929,14 +1944,22 @@ public sealed class RuntimeAssemblyIntegrationTests
         public async ValueTask DisposeAsync()
         {
             await Client.StopAsync();
-            await Server.StopAsync(TimeSpan.FromSeconds(2));
+            try
+            {
+                await Server.StopAsync(TimeSpan.FromSeconds(2));
+            }
+            catch (Exception exception) when (
+                _expectedServerStopFailure is { } message && ContainsMessage(exception, message))
+            {
+            }
             await _serverCancellation.CancelAsync();
             try
             {
                 await _serverTask.WaitAsync(TimeSpan.FromSeconds(2));
             }
             catch (Exception exception) when (
-                exception is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
+                exception is OperationCanceledException or ObjectDisposedException or IOException or SocketException ||
+                _expectedServerStopFailure is { } message && ContainsMessage(exception, message))
             {
             }
             _serverCancellation.Dispose();

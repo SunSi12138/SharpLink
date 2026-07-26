@@ -15,21 +15,25 @@ internal sealed class SharpLinkServerHostedService(
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         builder.UseLoggerFactoryIfUnset(loggerFactory);
         builder.UseServiceProvider(serviceProvider);
         _server = builder.Build();
         readiness.Publish(_server);
-        _runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _runCts = new CancellationTokenSource();
         _runTask = _server.RunAsync(_runCts.Token).AsTask();
-        if (!_runTask.IsCompleted)
-        {
-            _ = ObserveRunTaskAsync(_runTask);
-            return;
-        }
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!_runTask.IsCompleted)
+            {
+                _ = ObserveRunTaskAsync(_runTask);
+                return;
+            }
+
             await _runTask.ConfigureAwait(false);
+            throw new InvalidOperationException("SharpLink server RunAsync completed during startup.");
         }
         catch (Exception runException)
         {

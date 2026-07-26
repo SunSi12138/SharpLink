@@ -1,9 +1,10 @@
-# 0.8.15 regression-test plan
+# 0.8.16 regression-test plan
 
-1. [x] Add a real-filesystem regression proving Unix listener construction preserves a pre-existing ordinary file.
-2. [x] Add a real-loopback regression proving socket factories retain their construction-time endpoint.
-3. [x] Add frozen-configuration regressions for built-in socket, TLS, and shared-memory endpoint delegates.
-4. [x] Add direct Client transport/resolver ownership regressions for a second build.
-5. [x] Add Server listener ownership regressions for a second build and failed-build rollback.
-6. [x] Run the pre-fix evidence set, implement only proven fixes, then complete assertion/pseudo-mutation review and performance A/B.
-7. [x] Complete non-incremental build, full tests, package smoke, documentation, and local 0.8.15 commit.
+1. [x] Prove a deadline beyond the native timer range can be registered without a synchronous failure.
+2. [x] Prove Runtime Context disposal drains idle buffers and governs active leases returned afterward.
+3. [x] Prove Server Stop surfaces an immediate listener cleanup failure.
+4. [x] Prove a successful Hosted Server does not retain its startup cancellation token.
+5. [x] Prove oversized pending-request capacities fail validation before allocating a connection table.
+6. [x] Run the complete pre-fix Unit probe and record the exact failure set.
+7. [x] Implement only proven fixes, review assertions/pseudo-mutations, and run performance A/B.
+8. [x] Complete release gates, documentation, and the local 0.8.16 commit.

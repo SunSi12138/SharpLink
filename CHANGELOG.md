@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.16] - 2026-07-27
+
+### Fixed
+
+- Client deadlines beyond the portable native timer interval are now re-armed in bounded slices instead of throwing after the pending call has already occupied a slot.
+- Runtime Context disposal now drains retained writer buffers, rejects later rents, and releases active writer arrays when they are returned after disposal.
+- Server Stop and Run now preserve immediate listener, framework, and service cleanup failures instead of reporting a successful stop with only an unhealthy status.
+- The Generic Host server no longer retains the transient `StartAsync` cancellation token as the lifetime token of its Run loop.
+- Pending-request tables now enforce a 1,048,576-slot hard maximum in both public protocol validation and their internal constructor.
+
+### Compatibility and validation
+
+- Public protocol wire formats and generated Manifest versions are unchanged. `SharpLinkBufferWriterPool` now implements `IDisposable`; a pool owned by a disposed Runtime Context rejects new rents. Server Stop/Dispose may now throw one cleanup exception or an `AggregateException`, and pending capacities above 1,048,576 are rejected during configuration.
+- Non-incremental Release build, Generator 83/83, Unit 422/422, Integration 228/228, package smoke, and reversed same-machine A/B passed.
+- Buffer rent/return and a 32-byte packet remained allocation-free with no stable latency regression; pending completion retained 48 B/op, while Runtime Context and Server lifecycle allocations were unchanged.
+
 ## [0.8.15] - 2026-07-27
 
 ### Fixed

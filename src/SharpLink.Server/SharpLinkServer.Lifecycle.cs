@@ -69,7 +69,7 @@ internal sealed partial class SharpLinkServer
                 }
                 await stopTask.ConfigureAwait(false);
             }
-            else if (CurrentState == ServerState.Draining)
+            else
             {
                 Task? stopTask;
                 lock (_stateGate)

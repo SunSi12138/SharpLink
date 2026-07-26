@@ -26,6 +26,9 @@ public sealed class SharpLinkProtocolOptions
     /// <summary>The default maximum remote error message size: 64 KiB.</summary>
     public const int DefaultMaxErrorMessageBytes = 64 * 1024;
 
+    /// <summary>The hard maximum pending-request table capacity per physical Client connection.</summary>
+    public const int MaximumPendingRequestsPerConnection = 1024 * 1024;
+
     /// <summary>Gets or sets the largest payload accepted for a single protocol frame.</summary>
     public int MaxFramePayloadBytes { get; set; } = DefaultMaxFramePayloadBytes;
 
@@ -58,6 +61,12 @@ public sealed class SharpLinkProtocolOptions
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxErrorMessageBytes);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(HandshakeTimeout, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxPendingRequestsPerConnection);
+        if (MaxPendingRequestsPerConnection > MaximumPendingRequestsPerConnection)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxPendingRequestsPerConnection),
+                $"MaxPendingRequestsPerConnection cannot exceed {MaximumPendingRequestsPerConnection}.");
+        }
         if (!BitOperations.IsPow2(MaxPendingRequestsPerConnection))
             throw new ArgumentException("MaxPendingRequestsPerConnection must be a power of two.", nameof(MaxPendingRequestsPerConnection));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxConcurrentStreamsPerConnection);

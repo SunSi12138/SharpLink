@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Runtime;
 
@@ -101,6 +102,63 @@ public class SharpLinkRuntimeContextTests
         var leakedCopy = first.Options;
         leakedCopy.Protocol.MaxFramePayloadBytes = 8192;
         Ensure(first.Options.Protocol.MaxFramePayloadBytes == 2048, "returned options must be isolated copies");
+    }
+
+    [Test]
+    public void ContextDisposalShouldDrainAndCloseItsWriterPool()
+    {
+        var context = new SharpLinkRuntimeContextBuilder()
+            .ConfigureBufferPool(options =>
+            {
+                options.InitialCapacity = 1024;
+                options.MaxPooledWriters = 2;
+                options.MaxRetainedCapacityBytes = 64 * 1024;
+            })
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var idle = (PooledByteBufferWriter)context.Buffers.Rent();
+        var active = (PooledByteBufferWriter)context.Buffers.Rent();
+        _ = idle.GetSpan(32 * 1024);
+        _ = active.GetSpan(32 * 1024);
+        context.Buffers.Return(idle);
+
+        context.Dispose();
+        var retainedAfterDispose = ReadPrivate<int>(context.Buffers, "_pooledCount");
+        Exception? rentFailure = null;
+        try
+        {
+            context.Buffers.Rent().Dispose();
+        }
+        catch (Exception exception)
+        {
+            rentFailure = exception;
+        }
+        context.Buffers.Return(active);
+        var activeBuffer = ReadPrivate<byte[]?>(active, "_buffer");
+
+        Ensure(retainedAfterDispose == 0, "Context disposal must drain idle writer buffers");
+        Ensure(rentFailure is ObjectDisposedException, "a disposed Context pool must reject new rents");
+        Ensure(activeBuffer is null, "an active writer returned after Context disposal must release its array");
+    }
+
+    [Test]
+    public void PendingRequestCapacityShouldHaveAHardMemoryBound()
+    {
+        const int oversizedCapacity = 2 * 1024 * 1024;
+        var options = new SharpLinkProtocolOptions
+        {
+            MaxPendingRequestsPerConnection = oversizedCapacity
+        };
+
+        var optionFailure = CaptureFailure(options.Validate);
+        var tableFailure = CaptureFailure(() =>
+        {
+            using var table = new PendingRequestTable(oversizedCapacity);
+        });
+
+        Ensure(optionFailure is ArgumentOutOfRangeException,
+            "public protocol validation must reject an oversized pending table");
+        Ensure(tableFailure is ArgumentOutOfRangeException,
+            "the internal table constructor must independently enforce the hard bound");
     }
 
     [Test]
@@ -1252,6 +1310,13 @@ public class SharpLinkRuntimeContextTests
         {
             return exception;
         }
+    }
+
+    private static T ReadPrivate<T>(object instance, string fieldName)
+    {
+        var field = instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception($"cannot find {fieldName}");
+        return (T)field.GetValue(instance)!;
     }
 
     private static void Ensure(bool condition, string message)

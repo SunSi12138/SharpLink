@@ -304,6 +304,38 @@ public class PendingRequestTableTests
     }
 
     [Test]
+    public async Task LongMonotonicDeadlineShouldNotExceedTheNativeTimerRange()
+    {
+        using var manager = new PendingRequestTable(8);
+        var deadline = Stopwatch.GetTimestamp() +
+            (long)(TimeSpan.FromDays(60).TotalSeconds * Stopwatch.Frequency);
+        RpcRequestOperation<int>? operation = null;
+        Exception? registrationFailure = null;
+        long requestId = 0;
+        try
+        {
+            operation = manager.Rent(
+                new Int32Codec(),
+                PendingCallKind.Unary,
+                deadline,
+                CancellationToken.None,
+                out requestId);
+        }
+        catch (Exception exception)
+        {
+            registrationFailure = exception;
+        }
+
+        await Assert.That(registrationFailure).IsNull();
+        await Assert.That(operation).IsNotNull();
+        await Assert.That(manager.TryComplete(
+            requestId,
+            PendingCallCompletionReason.ConnectionClosed,
+            new IOException("test cleanup"))).IsTrue();
+        await EnsureThrows<IOException>(operation!.AsValueTask(), "test cleanup");
+    }
+
+    [Test]
     public async Task CancellationResponseDeadlineRaceShouldHaveOneWinnerAndNotCorruptPool()
     {
         using var manager = new PendingRequestTable(8);

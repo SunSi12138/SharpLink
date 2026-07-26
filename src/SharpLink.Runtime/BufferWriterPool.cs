@@ -1,9 +1,9 @@
 namespace SharpLink.Runtime;
 
 /// <summary>Instance-scoped pool for packet writers.</summary>
-public sealed class SharpLinkBufferWriterPool : IRpcBufferWriterPool
+public sealed class SharpLinkBufferWriterPool : IRpcBufferWriterPool, IDisposable
 {
-    private readonly ConcurrentQueue<PooledByteBufferWriter> _pool = [];
+    private ConcurrentQueue<PooledByteBufferWriter>? _pool = [];
     private readonly int _initialCapacity;
     private readonly int _maxPooledWriters;
     private readonly int _maxRetainedCapacityBytes;
@@ -36,7 +36,9 @@ public sealed class SharpLinkBufferWriterPool : IRpcBufferWriterPool
 
     private IRpcByteBufferWriter RentCore(int maxWrittenBytes)
     {
-        if (!_pool.TryDequeue(out var writer))
+        var pool = Volatile.Read(ref _pool);
+        ObjectDisposedException.ThrowIf(pool is null, this);
+        if (!pool.TryDequeue(out var writer))
             writer = PooledByteBufferWriter.CreateInactive();
         else
             Interlocked.Decrement(ref _pooledCount);
@@ -56,6 +58,12 @@ public sealed class SharpLinkBufferWriterPool : IRpcBufferWriterPool
         }
         if (!pooledWriter.TryReturnToPool(_maxRetainedCapacityBytes))
             return;
+        var pool = Volatile.Read(ref _pool);
+        if (pool is null)
+        {
+            pooledWriter.ReleaseRetainedBuffer();
+            return;
+        }
         while (true)
         {
             var current = Volatile.Read(ref _pooledCount);
@@ -68,6 +76,24 @@ public sealed class SharpLinkBufferWriterPool : IRpcBufferWriterPool
                 break;
         }
 
-        _pool.Enqueue(pooledWriter);
+        pool.Enqueue(pooledWriter);
+    }
+
+    /// <summary>Releases every idle writer retained by this pool and rejects subsequent rents.</summary>
+    public void Dispose()
+    {
+        var pool = Interlocked.Exchange(ref _pool, null);
+        if (pool is null)
+            return;
+        DrainRetainedWriters(pool);
+    }
+
+    private void DrainRetainedWriters(ConcurrentQueue<PooledByteBufferWriter> pool)
+    {
+        while (pool.TryDequeue(out var writer))
+        {
+            Interlocked.Decrement(ref _pooledCount);
+            writer.ReleaseRetainedBuffer();
+        }
     }
 }

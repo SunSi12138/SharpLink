@@ -120,6 +120,7 @@ internal sealed partial class SharpLinkServer(
         var gracefulDeadline = AddStopwatchDuration(started, gracefulTimeout);
         var finalDeadline = AddStopwatchDuration(gracefulDeadline, TimeSpan.FromSeconds(cleanupBudgetSeconds));
         var faulted = false;
+        List<Exception>? stopFailures = null;
 
         lock (_registryGate)
             TransitionTo(ServerState.Draining);
@@ -171,6 +172,7 @@ internal sealed partial class SharpLinkServer(
                 faulted = true;
                 frameworkCleanupCompleted = true;
                 LogDeferredCleanupFailed(_logger, "Framework", exception);
+                AddTaskFailures(ref stopFailures, frameworkCleanupTask, exception);
             }
 
             if (!frameworkCleanupCompleted)
@@ -192,13 +194,22 @@ internal sealed partial class SharpLinkServer(
             if (unfinishedCalls == 0)
             {
                 var serviceCleanupTask = DisposeRegisteredServicesAsync();
-                if (!await WaitUntilAsync(serviceCleanupTask, finalDeadline).ConfigureAwait(false))
+                try
+                {
+                    if (!await WaitUntilAsync(serviceCleanupTask, finalDeadline).ConfigureAwait(false))
+                    {
+                        faulted = true;
+                        _serviceCleanupObserver = ObserveCleanupFailureAsync(
+                            serviceCleanupTask,
+                            _logger,
+                            "Services");
+                    }
+                }
+                catch (Exception exception)
                 {
                     faulted = true;
-                    _serviceCleanupObserver = ObserveCleanupFailureAsync(
-                        serviceCleanupTask,
-                        _logger,
-                        "Services");
+                    LogDeferredCleanupFailed(_logger, "Services", exception);
+                    AddTaskFailures(ref stopFailures, serviceCleanupTask, exception);
                 }
             }
         }
@@ -206,9 +217,35 @@ internal sealed partial class SharpLinkServer(
         {
             faulted = true;
             LogDeferredCleanupFailed(_logger, "Stop", exception);
+            (stopFailures ??= []).Add(exception);
         }
 
         TransitionTo(faulted ? ServerState.Faulted : ServerState.Stopped);
+        ThrowStopFailures(stopFailures);
+    }
+
+    private static void AddTaskFailures(
+        ref List<Exception>? failures,
+        Task task,
+        Exception fallback)
+    {
+        if (task.Exception is not { } aggregate)
+        {
+            (failures ??= []).Add(fallback);
+            return;
+        }
+
+        foreach (var exception in aggregate.Flatten().InnerExceptions)
+            (failures ??= []).Add(exception);
+    }
+
+    private static void ThrowStopFailures(List<Exception>? failures)
+    {
+        if (failures is null)
+            return;
+        if (failures.Count == 1)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        throw new AggregateException(failures);
     }
 
     private async Task CleanupAfterRunFailureAsync()

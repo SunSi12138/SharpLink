@@ -98,6 +98,60 @@ public class SharpLinkServerHostedServiceTests
     }
 
     [Test]
+    public async Task SuccessfulStartupShouldNotRetainItsCancellationToken()
+    {
+        var transport = new BlockingTransport();
+        var builder = SharpLinkServerBuilder.Create().UseTransport(transport);
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var readiness = new SharpLinkServerReadiness();
+        var hosted = new SharpLinkServerHostedService(
+            builder,
+            NullLoggerFactory.Instance,
+            provider,
+            readiness,
+            new TestHostApplicationLifetime());
+        using var startupCancellation = new CancellationTokenSource();
+
+        await hosted.StartAsync(startupCancellation.Token);
+        startupCancellation.Cancel();
+        _ = await Task.WhenAny(
+            transport.DisposeObserved.Task,
+            Task.Delay(TimeSpan.FromMilliseconds(500)));
+        var stoppedByStartupToken = transport.DisposeCalled;
+        try
+        {
+            Ensure(!stoppedByStartupToken,
+                "the transient StartAsync token must not own the long-lived Run loop");
+            Ensure(readiness.Status == SharpLinkHealthStatus.Ready,
+                "startup-token cancellation after publication must not change readiness");
+        }
+        finally
+        {
+            await hosted.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Test]
+    public async Task ServerStopShouldSurfaceImmediateListenerCleanupFailure()
+    {
+        var server = SharpLinkServerBuilder.Create()
+            .UseTransport(new FailingDisposeTransport())
+            .Build();
+        var runTask = server.RunAsync().AsTask();
+
+        var stopFailure = await CaptureFailureAsync(
+            server.StopAsync(TimeSpan.Zero).AsTask());
+        var runFailure = await CaptureFailureAsync(runTask);
+
+        Ensure(stopFailure is IOException { Message: "listener cleanup failed" },
+            "StopAsync must surface the owned listener cleanup failure");
+        Ensure(runFailure is IOException { Message: "listener cleanup failed" },
+            "the shared Run operation must observe the same failed stop");
+        Ensure(server.HealthStatus == SharpLinkHealthStatus.Unhealthy,
+            "a cleanup failure must leave the server unhealthy");
+    }
+
+    [Test]
     [NotInParallel]
     public async Task ServerStopShouldReturnFaultedWhenFrameworkCleanupExceedsBudget()
     {
@@ -126,9 +180,24 @@ public class SharpLinkServerHostedServiceTests
             throw new Exception(message);
     }
 
+    private static async Task<Exception?> CaptureFailureAsync(Task task)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
     private sealed class BlockingTransport : IServerTransportListener
     {
         private int _disposed;
+        internal TaskCompletionSource DisposeObserved { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool DisposeCalled => Volatile.Read(ref _disposed) == 1;
         public System.Net.EndPoint? LocalEndPoint => null;
 
@@ -141,8 +210,24 @@ public class SharpLinkServerHostedServiceTests
         public ValueTask DisposeAsync()
         {
             Interlocked.Exchange(ref _disposed, 1);
+            DisposeObserved.TrySetResult();
             return ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class FailingDisposeTransport : IServerTransportListener
+    {
+        public System.Net.EndPoint? LocalEndPoint => null;
+
+        public async ValueTask<ITransportConnection> AcceptAsync(
+            CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("unreachable");
+        }
+
+        public ValueTask DisposeAsync()
+            => ValueTask.FromException(new IOException("listener cleanup failed"));
     }
 
     private sealed class DelayedDisposeTransport : IServerTransportListener
