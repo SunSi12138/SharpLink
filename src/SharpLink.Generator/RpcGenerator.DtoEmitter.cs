@@ -17,15 +17,69 @@ public partial class RpcGenerator
         sb.AppendLine("namespace SharpLink.Generated;");
         sb.AppendLine();
 
+        foreach (var adapter in codecs
+                     .Where(static codec => codec.Kind == GeneratedCodecKind.Adapter)
+                     .GroupBy(static codec => codec.AdapterId, StringComparer.Ordinal)
+                     .Select(static group => group.First())
+                     .OrderBy(static codec => codec.AdapterId, StringComparer.Ordinal))
+        {
+            sb.AppendLine($"internal static class {GetAdapterHolderName(adapter.AdapterId!)}");
+            sb.AppendLine("{");
+            sb.AppendLine($"    internal static readonly IRpcCodecAdapter Instance = new {adapter.AdapterType}();");
+            sb.AppendLine("}");
+            sb.AppendLine();
+        }
+
         foreach (var codec in codecs)
         {
-            if (codec.Kind == GeneratedCodecKind.Dto)
+            if (codec.Kind == GeneratedCodecKind.Adapter)
+                AppendAdapterCodecFactory(sb, codec);
+            else if (codec.Kind == GeneratedCodecKind.Dto)
                 AppendDtoCodec(sb, codec);
             else
                 AppendCollectionCodec(sb, codec);
         }
 
         return sb.ToString();
+    }
+
+    private static void AppendAdapterCodecFactory(StringBuilder sb, GeneratedCodecModel model)
+    {
+        sb.AppendLine($"internal static class {model.CodecName}");
+        sb.AppendLine("{");
+        sb.AppendLine("    internal sealed class Factory : IRpcGeneratedCodecFactory");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        public Type TargetType => typeof({model.TypeName});");
+        sb.AppendLine($"        public string SchemaId => \"{EscapeString(model.SchemaId)}\";");
+        sb.AppendLine($"        public string WireFormatId => \"{EscapeString(model.WireFormatId)}\";");
+        sb.AppendLine($"        public string? AdapterId => \"{EscapeString(model.AdapterId!)}\";");
+        sb.AppendLine($"        public IRpcCodecAdapter Adapter => {GetAdapterHolderName(model.AdapterId!)}.Instance;");
+        sb.AppendLine("        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            ArgumentNullException.ThrowIfNull(provider);");
+        sb.AppendLine("            ArgumentNullException.ThrowIfNull(adapterScope);");
+        sb.AppendLine($"            return adapterScope.CreateCodec<{model.TypeName}>();");
+        sb.AppendLine("        }");
+        sb.AppendLine($"        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<{model.TypeName}>;");
+        sb.AppendLine("    }");
+        sb.AppendLine("}");
+        sb.AppendLine();
+    }
+
+    private static string GetAdapterHolderName(string adapterId)
+        => "__SharpLinkGeneratedAdapter_" + ComputeEmitterHash(adapterId).ToString("X16", InvariantCulture);
+
+    private static ulong ComputeEmitterHash(string value)
+    {
+        const ulong offset = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
+        var hash = offset;
+        foreach (var character in value)
+        {
+            hash ^= character;
+            hash *= prime;
+        }
+        return hash;
     }
 
     private static void AppendDtoCodec(StringBuilder sb, GeneratedCodecModel model)
@@ -405,7 +459,16 @@ public partial class RpcGenerator
         sb.AppendLine("    {");
         sb.AppendLine($"        public Type TargetType => typeof({model.TypeName});");
         sb.AppendLine($"        public string SchemaId => \"{EscapeString(model.SchemaId)}\";");
-        sb.AppendLine($"        public IRpcCodec Create(IRpcCodecProvider provider) => new {model.CodecName}(provider);");
+        sb.AppendLine("        public string WireFormatId => \"sharplink-native/v1\";");
+        sb.AppendLine("        public string? AdapterId => null;");
+        sb.AppendLine("        public IRpcCodecAdapter? Adapter => null;");
+        sb.AppendLine($"        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (adapterScope is not null)");
+        sb.AppendLine("                throw new ArgumentException(\"Native Codec factories do not accept an adapter scope.\", nameof(adapterScope));");
+        sb.AppendLine($"            return new {model.CodecName}(provider);");
+        sb.AppendLine("        }");
+        sb.AppendLine($"        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<{model.TypeName}>;");
         sb.AppendLine("    }");
     }
 

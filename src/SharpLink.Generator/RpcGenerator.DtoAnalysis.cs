@@ -13,7 +13,12 @@ public partial class RpcGenerator
         private readonly Compilation _compilation;
         private readonly CancellationToken _cancellationToken;
         private readonly HashSet<string> _allowedAssemblyNames;
-        private readonly HashSet<ITypeSymbol> _externalTypes = new(SymbolEqualityComparer.Default);
+        private readonly Dictionary<ITypeSymbol, AdapterRegistration> _adaptersByType =
+            new(SymbolEqualityComparer.Default);
+        private readonly Dictionary<ITypeSymbol, AdapterRegistration> _adaptersBySelector =
+            new(SymbolEqualityComparer.Default);
+        private readonly Dictionary<ITypeSymbol, ITypeSymbol> _assemblyBindings =
+            new(SymbolEqualityComparer.Default);
         private readonly Dictionary<string, GeneratedCodecModel> _models = new(StringComparer.Ordinal);
         private readonly Dictionary<string, GeneratedEnumModel> _enums = new(StringComparer.Ordinal);
         private readonly HashSet<string> _failed = new(StringComparer.Ordinal);
@@ -26,7 +31,8 @@ public partial class RpcGenerator
             _cancellationToken = cancellationToken;
             _allowedAssemblyNames = ResolveReferenceAssemblyNames(compilation);
             _allowedAssemblyNames.Add(compilation.Assembly.Identity.Name);
-            CollectAssemblyExternalTypes();
+            CollectAdapterRegistrations();
+            CollectAssemblyBindings();
         }
 
         public DtoGenerationResult Analyze()
@@ -144,18 +150,140 @@ public partial class RpcGenerator
                 roots.Add(key, type);
         }
 
-        private void CollectAssemblyExternalTypes()
+        private void CollectAdapterRegistrations()
         {
-            foreach (var attribute in _compilation.Assembly.GetAttributes())
+            var assemblies = new Dictionary<string, IAssemblySymbol>(StringComparer.Ordinal)
             {
-                if (!IsAttribute(attribute, "SharpLink.Sdk", "RpcExternalCodecAttribute") ||
-                    attribute.ConstructorArguments.Length == 0)
+                [_compilation.Assembly.Identity.ToString()] = _compilation.Assembly
+            };
+            var pending = new Queue<IAssemblySymbol>();
+            pending.Enqueue(_compilation.Assembly);
+            while (pending.Count != 0)
+            {
+                var assembly = pending.Dequeue();
+                foreach (var referenced in assembly.Modules.SelectMany(static module => module.ReferencedAssemblySymbols)
+                             .OrderBy(static item => item.Identity.ToString(), StringComparer.Ordinal))
                 {
+                    if (!assemblies.ContainsKey(referenced.Identity.ToString()))
+                    {
+                        assemblies.Add(referenced.Identity.ToString(), referenced);
+                        pending.Enqueue(referenced);
+                    }
+                }
+            }
+
+            var adapterIds = new Dictionary<string, AdapterRegistration>(StringComparer.Ordinal);
+            foreach (var assembly in assemblies.Values.OrderBy(static item => item.Identity.ToString(), StringComparer.Ordinal))
+            {
+                foreach (var attribute in assembly.GetAttributes()
+                             .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAdapterRegistrationAttribute"))
+                             .OrderBy(static attribute => attribute.ToString(), StringComparer.Ordinal))
+                {
+                    var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
+                    if (attribute.ConstructorArguments.Length != 3 ||
+                        attribute.ConstructorArguments[0].Value is not INamedTypeSymbol adapterType ||
+                        attribute.ConstructorArguments[1].Value is not string adapterId ||
+                        attribute.ConstructorArguments[2].Value is not string wireFormatId ||
+                        !IsStableIdentity(adapterId) || !IsStableIdentity(wireFormatId))
+                    {
+                        Report(DtoDiagnosticKind.AdapterRegistrationInvalid, assembly,
+                            "registration requires a concrete Adapter type and non-empty stable ASCII Adapter/Wire Format IDs", location);
+                        continue;
+                    }
+
+                    ITypeSymbol? selector = null;
+                    foreach (var namedArgument in attribute.NamedArguments)
+                    {
+                        if (namedArgument.Key == "SelectorAttributeType")
+                            selector = namedArgument.Value.Value as ITypeSymbol;
+                    }
+                    if (!IsValidAdapterType(adapterType))
+                    {
+                        Report(DtoDiagnosticKind.AdapterTypeInvalid, adapterType,
+                            "Adapter must implement IRpcCodecAdapter, be public sealed, and expose a public parameterless constructor", location);
+                        continue;
+                    }
+                    if (selector is not null && !InheritsFromAttribute(selector))
+                    {
+                        Report(DtoDiagnosticKind.AdapterRegistrationInvalid, selector,
+                            "SelectorAttributeType must derive from System.Attribute", location);
+                        continue;
+                    }
+
+                    var registration = new AdapterRegistration(adapterType, adapterId, wireFormatId, selector, location);
+                    if (_adaptersByType.TryGetValue(adapterType, out var existingType) &&
+                        (!string.Equals(existingType.AdapterId, adapterId, StringComparison.Ordinal) ||
+                         !string.Equals(existingType.WireFormatId, wireFormatId, StringComparison.Ordinal)))
+                    {
+                        Report(DtoDiagnosticKind.AdapterIdentityConflict, adapterType,
+                            "the same Adapter type has inconsistent Adapter or Wire Format IDs", location);
+                        continue;
+                    }
+                    if (adapterIds.TryGetValue(adapterId, out var existingId) &&
+                        (!SymbolEqualityComparer.Default.Equals(existingId.AdapterType, adapterType) ||
+                         !string.Equals(existingId.WireFormatId, wireFormatId, StringComparison.Ordinal)))
+                    {
+                        Report(DtoDiagnosticKind.AdapterIdentityConflict, adapterType,
+                            $"Adapter ID '{adapterId}' is declared by inconsistent types or Wire Format IDs", location);
+                        continue;
+                    }
+                    if (selector is not null && _adaptersBySelector.TryGetValue(selector, out var existingSelector) &&
+                        !SymbolEqualityComparer.Default.Equals(existingSelector.AdapterType, adapterType))
+                    {
+                        Report(DtoDiagnosticKind.SelectorConflict, selector,
+                            "one selector Attribute cannot select multiple Codec Adapters", location);
+                        continue;
+                    }
+
+                    _adaptersByType[adapterType] = registration;
+                    adapterIds[adapterId] = registration;
+                    if (selector is not null)
+                        _adaptersBySelector[selector] = registration;
+                }
+            }
+        }
+
+        private void CollectAssemblyBindings()
+        {
+            foreach (var attribute in _compilation.Assembly.GetAttributes()
+                         .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAdapterAttribute")))
+            {
+                var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
+                if (attribute.ConstructorArguments.Length != 2 ||
+                    attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
+                    attribute.ConstructorArguments[1].Value is not ITypeSymbol adapter)
+                {
+                    Report(DtoDiagnosticKind.AdapterBindingInvalid, _compilation.Assembly,
+                        "assembly-level RpcCodecAdapter requires targetType and adapterType", location);
                     continue;
                 }
-                if (attribute.ConstructorArguments[0].Value is ITypeSymbol type)
-                    _externalTypes.Add(type);
+                if (HasTypeParameter(target))
+                {
+                    Report(DtoDiagnosticKind.AdapterTargetInvalid, target,
+                        "Adapter target must be a closed type", location);
+                    continue;
+                }
+                target = NormalizeAdapterTarget(target);
+                if (IsNonOverridableBuiltin(target))
+                {
+                    Report(DtoDiagnosticKind.BuiltinAdapterOverride, target,
+                        "built-in primitive Codecs cannot be rebound to an Adapter", location);
+                    continue;
+                }
+                AddAssemblyBinding(target, adapter, location);
             }
+        }
+
+        private void AddAssemblyBinding(ITypeSymbol target, ITypeSymbol adapter, Location location)
+        {
+            if (_assemblyBindings.TryGetValue(target, out var existing) &&
+                !SymbolEqualityComparer.Default.Equals(existing, adapter))
+            {
+                Report(DtoDiagnosticKind.AdapterSelectionConflict, target,
+                    "the target is explicitly bound to multiple Codec Adapters", location);
+                return;
+            }
+            _assemblyBindings[target] = adapter;
         }
 
         private void Visit(ITypeSymbol type, List<ITypeSymbol> stack, int depth)
@@ -163,7 +291,32 @@ public partial class RpcGenerator
             _cancellationToken.ThrowIfCancellationRequested();
             CollectEnums(type);
             var typeName = GetTypeName(type);
-            if (_models.ContainsKey(typeName) || _failed.Contains(typeName) || IsBuiltin(type))
+            if (_models.ContainsKey(typeName) || _failed.Contains(typeName))
+                return;
+            if (TrySelectAdapter(type, out var adapter))
+            {
+                if (adapter is not null)
+                {
+                    _models[typeName] = new GeneratedCodecModel(
+                        typeName,
+                        GetCodecName(typeName),
+                        GetSchemaId(typeName, adapter.WireFormatId),
+                        GeneratedCodecKind.Adapter,
+                        type.IsReferenceType,
+                        ImmutableArray<GeneratedMemberModel>.Empty,
+                        ImmutableArray<string>.Empty,
+                        null,
+                        null,
+                        null,
+                        GetTypeName(adapter.AdapterType),
+                        adapter.AdapterId,
+                        adapter.WireFormatId,
+                        GetAssemblyDependencies([type]),
+                        type.Locations.FirstOrDefault());
+                }
+                return;
+            }
+            if (IsBuiltin(type))
                 return;
             if (depth > MaximumDepth)
             {
@@ -178,8 +331,6 @@ public partial class RpcGenerator
                 _failed.Add(typeName);
                 return;
             }
-            if (IsExplicitExternal(type))
-                return;
             if (stack.Any(existing => SymbolEqualityComparer.Default.Equals(existing, type)))
             {
                 var path = string.Join(" -> ", stack.Select(GetTypeName).Concat([typeName]));
@@ -214,13 +365,21 @@ public partial class RpcGenerator
                     elementType is null ? null : GetTypeName(elementType),
                     keyType is null ? null : GetTypeName(keyType),
                     valueType is null ? null : GetTypeName(valueType),
+                    null,
+                    null,
+                    "sharplink-native/v1",
                     GetAssemblyDependencies([type]),
                     type.Locations.FirstOrDefault());
                 return;
             }
 
             if (IsThirdPartyType(type))
+            {
+                Report(DtoDiagnosticKind.Unsupported, type,
+                    "the type is owned by a referenced assembly and has no registered Codec Adapter; add a serializer selector Attribute or an assembly-level [RpcCodecAdapter(typeof(Target), typeof(Adapter))] binding");
+                _failed.Add(typeName);
                 return;
+            }
 
             AnalyzeDto(type, stack, depth);
         }
@@ -246,7 +405,8 @@ public partial class RpcGenerator
             }
             if (named.TypeKind == TypeKind.Class && !named.IsSealed && !named.IsRecord)
             {
-                Report(DtoDiagnosticKind.Unsupported, type, "classes must be sealed; use RpcExternalCodec for polymorphic graphs");
+                Report(DtoDiagnosticKind.Unsupported, type,
+                    "classes must be sealed; add an installed serializer selector Attribute or [RpcCodecAdapter(typeof(...))] for polymorphic graphs");
                 _failed.Add(typeName);
                 return;
             }
@@ -349,6 +509,9 @@ public partial class RpcGenerator
                 null,
                 null,
                 null,
+                null,
+                null,
+                "sharplink-native/v1",
                 GetAssemblyDependencies(dependencyTypes),
                 named.Locations.FirstOrDefault());
         }
@@ -479,11 +642,91 @@ public partial class RpcGenerator
             return constructor.DeclaredAccessibility is Accessibility.Internal or Accessibility.ProtectedOrInternal;
         }
 
-        private bool IsExplicitExternal(ITypeSymbol type)
+        private bool TrySelectAdapter(ITypeSymbol type, out AdapterRegistration? selected)
         {
-            if (_externalTypes.Contains(type) || HasAttribute(type, "SharpLink.Sdk", "RpcExternalCodecAttribute"))
+            var candidates = new List<(ITypeSymbol Adapter, Location Location)>();
+            foreach (var attribute in type.GetAttributes())
+            {
+                var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ??
+                    type.Locations.FirstOrDefault() ?? Location.None;
+                if (IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAdapterAttribute"))
+                {
+                    if (attribute.ConstructorArguments.Length != 1 ||
+                        attribute.ConstructorArguments[0].Value is not ITypeSymbol adapter)
+                    {
+                        Report(DtoDiagnosticKind.AdapterBindingInvalid, type,
+                            "type-level RpcCodecAdapter requires only adapterType", location);
+                        selected = null;
+                        return true;
+                    }
+                    candidates.Add((adapter, location));
+                }
+                if (_adaptersBySelector.TryGetValue(attribute.AttributeClass!, out var selectorRegistration))
+                    candidates.Add((selectorRegistration.AdapterType, location));
+            }
+            if (_assemblyBindings.TryGetValue(NormalizeAdapterTarget(type), out var assemblyAdapter))
+                candidates.Add((assemblyAdapter, type.Locations.FirstOrDefault() ?? Location.None));
+            if (candidates.Count == 0)
+            {
+                selected = null;
+                return false;
+            }
+
+            var distinct = new List<ITypeSymbol>();
+            foreach (var candidate in candidates)
+            {
+                if (!distinct.Any(existing => SymbolEqualityComparer.Default.Equals(existing, candidate.Adapter)))
+                    distinct.Add(candidate.Adapter);
+            }
+            if (distinct.Count != 1)
+            {
+                Report(DtoDiagnosticKind.AdapterSelectionConflict, type,
+                    "the target selects multiple different Codec Adapters", candidates[0].Location);
+                selected = null;
+                _failed.Add(GetTypeName(type));
                 return true;
-            return HasAttribute(type, "MemoryPack", "MemoryPackableAttribute");
+            }
+            if (!_adaptersByType.TryGetValue(distinct[0], out selected))
+            {
+                Report(DtoDiagnosticKind.AdapterRegistrationInvalid, type,
+                    $"selected Adapter '{GetTypeName(distinct[0])}' has no valid RpcCodecAdapterRegistration",
+                    candidates[0].Location);
+                _failed.Add(GetTypeName(type));
+                return true;
+            }
+            return true;
+        }
+
+        private static bool IsValidAdapterType(INamedTypeSymbol type)
+            => type.DeclaredAccessibility == Accessibility.Public &&
+               type.IsSealed &&
+               type.InstanceConstructors.Any(static constructor =>
+                   constructor.DeclaredAccessibility == Accessibility.Public &&
+                   constructor.Parameters.Length == 0) &&
+               type.AllInterfaces.Any(static item =>
+                   item.Name == "IRpcCodecAdapter" &&
+                   item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions");
+
+        private static bool InheritsFromAttribute(ITypeSymbol type)
+        {
+            for (var current = type as INamedTypeSymbol; current is not null; current = current.BaseType)
+            {
+                if (current.Name == "Attribute" && current.ContainingNamespace.ToDisplayString() == "System")
+                    return true;
+            }
+            return false;
+        }
+
+        private static bool IsStableIdentity(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+            foreach (var character in value)
+            {
+                if (character < 0x21 || character > 0x7E)
+                    return false;
+            }
+            return true;
         }
 
         private bool IsThirdPartyType(ITypeSymbol type)
@@ -554,7 +797,7 @@ public partial class RpcGenerator
 
         private static bool IsBuiltin(ITypeSymbol type)
         {
-            if (type.SpecialType == SpecialType.System_String || GetFixedSize(type) != 0)
+            if (type.SpecialType == SpecialType.System_String || GetFixedSize(type) != 0 || type.IsUnmanagedType)
                 return true;
             if (type is INamedTypeSymbol nullable &&
                 nullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
@@ -570,6 +813,31 @@ public partial class RpcGenerator
             }
             return IsBuiltinBlitElement(element);
         }
+
+        private static bool IsNonOverridableBuiltin(ITypeSymbol type)
+        {
+            if (type.SpecialType == SpecialType.System_String || GetFixedSize(type) != 0)
+                return true;
+            if (type is INamedTypeSymbol nullable &&
+                nullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
+                GetFixedSize(nullable.TypeArguments[0]) != 0)
+            {
+                return true;
+            }
+            return TryGetCollection(type, out var kind, out var element, out _, out _) &&
+                kind is not (GeneratedCodecKind.Dictionary or GeneratedCodecKind.Nullable) &&
+                element is not null &&
+                IsBuiltinBlitElement(element);
+        }
+
+        private static ITypeSymbol NormalizeAdapterTarget(ITypeSymbol type)
+            => type is INamedTypeSymbol
+               {
+                   IsTupleType: true,
+                   TupleUnderlyingType: { } underlying
+               }
+                ? underlying
+                : type;
 
         private static bool IsBuiltinBlitElement(ITypeSymbol type)
         {
@@ -733,6 +1001,22 @@ public partial class RpcGenerator
                 location ?? type.Locations.FirstOrDefault()));
         }
 
+        private void Report(
+            DtoDiagnosticKind kind,
+            IAssemblySymbol assembly,
+            string detail,
+            Location? location = null)
+        {
+            var key = $"{kind}|{assembly.Identity}|{detail}";
+            if (!_diagnosticKeys.Add(key))
+                return;
+            _diagnostics.Add(new DtoDiagnosticModel(
+                kind,
+                assembly.Identity.ToString(),
+                detail,
+                location));
+        }
+
         private static bool HasAttribute(ISymbol symbol, string ns, string name)
             => symbol.GetAttributes().Any(attribute => IsAttribute(attribute, ns, name));
 
@@ -777,5 +1061,12 @@ public partial class RpcGenerator
             bool Assignable,
             bool HasExplicitId,
             string? EnumUnderlyingType);
+
+        private sealed record AdapterRegistration(
+            INamedTypeSymbol AdapterType,
+            string AdapterId,
+            string WireFormatId,
+            ITypeSymbol? SelectorType,
+            Location Location);
     }
 }

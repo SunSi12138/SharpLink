@@ -443,7 +443,8 @@ public partial class RpcGenerator
         {
             IArrayTypeSymbol arrayType => HasTypeParameter(arrayType.ElementType),
             IPointerTypeSymbol pointerType => HasTypeParameter(pointerType.PointedAtType),
-            INamedTypeSymbol namedType => namedType.TypeArguments.Any(HasTypeParameter),
+            INamedTypeSymbol namedType => namedType.IsUnboundGenericType ||
+                                         namedType.TypeArguments.Any(HasTypeParameter),
             _ => false
         };
     }

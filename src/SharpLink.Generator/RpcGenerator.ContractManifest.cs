@@ -103,6 +103,15 @@ public partial class RpcGenerator
                             $"format version {baseline.Version} is not supported by version {ContractManifestFormatVersion}",
                             "regenerate the baseline with the current SharpLink SDK"));
                     }
+                    else if (!HasRequiredWireFormatIds(baseline))
+                    {
+                        diagnostics.Add(new ContractCompatibilityDiagnostic(
+                            ContractCompatibilityKind.BaselineInvalid,
+                            Location.None,
+                            options.BaselinePath,
+                            "one or more payload or DTO member entries are missing a non-empty wireFormatId",
+                            "regenerate the baseline with the current SharpLink SDK"));
+                    }
                     else if (string.IsNullOrWhiteSpace(baseline.SchemaFingerprint) ||
                              !string.Equals(
                                  baseline.SchemaFingerprint,
@@ -152,6 +161,12 @@ public partial class RpcGenerator
         ImmutableArray<RpcUnionModel?> unions)
     {
         var document = new ContractManifestDocument();
+        var wireFormats = codecs
+            .GroupBy(static codec => RemoveGlobalPrefix(codec.TypeName), StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.First().WireFormatId,
+                StringComparer.Ordinal);
         foreach (var contract in interfaces
                      .Where(static item => item is not null)
                      .Select(static item => item!)
@@ -190,6 +205,7 @@ public partial class RpcGenerator
                         WireType = GetContractWireType(typeName, parameter.IsStream
                             ? parameter.StreamItemEnumUnderlyingType
                             : parameter.EnumUnderlyingType),
+                        WireFormatId = GetWireFormatId(typeName, wireFormats),
                         Nullable = parameter.PayloadNullable,
                         Stream = parameter.IsStream,
                         SourceLocation = parameter.Location
@@ -209,6 +225,7 @@ public partial class RpcGenerator
                         method.IsStreamReturn
                             ? method.StreamItemEnumUnderlyingType
                             : method.ResponseEnumUnderlyingType),
+                    WireFormatId = GetWireFormatId(responseType, wireFormats),
                     Nullable = method.ResponseNullable,
                     Stream = method.IsStreamReturn,
                     SourceLocation = method.Location
@@ -236,6 +253,7 @@ public partial class RpcGenerator
                     Id = member.FieldId,
                     Type = RemoveGlobalPrefix(member.TypeName),
                     WireType = GetMemberWireType(member),
+                    WireFormatId = GetWireFormatId(member.TypeName, wireFormats),
                     Nullable = member.Nullable,
                     Required = member.Required,
                     ExplicitId = member.HasExplicitId,
@@ -487,13 +505,14 @@ public partial class RpcGenerator
                 {
                     matchedNewIds.Add(newMember.Id);
                     if (!string.Equals(oldMember.Type, newMember.Type, StringComparison.Ordinal) ||
-                        !string.Equals(oldMember.WireType, newMember.WireType, StringComparison.Ordinal))
+                        !string.Equals(oldMember.WireType, newMember.WireType, StringComparison.Ordinal) ||
+                        !string.Equals(oldMember.WireFormatId, newMember.WireFormatId, StringComparison.Ordinal))
                     {
                         diagnostics.Add(Change(
                             ContractCompatibilityKind.WireType,
                             newMember.SourceLocation,
                             $"{newDto.Name}.{newMember.Name}",
-                            $"member {oldMember.Id} changed from {oldMember.Type}/{oldMember.WireType} to {newMember.Type}/{newMember.WireType}",
+                            $"member {oldMember.Id} changed from {oldMember.Type}/{oldMember.WireType}/{oldMember.WireFormatId} to {newMember.Type}/{newMember.WireType}/{newMember.WireFormatId}",
                             "restore the old wire type or add a new optional member ID"));
                     }
                     if (!oldMember.Required && newMember.Required)
@@ -639,6 +658,7 @@ public partial class RpcGenerator
             var newValue = current[index];
             if (!string.Equals(oldValue.Type, newValue.Type, StringComparison.Ordinal) ||
                 !string.Equals(oldValue.WireType, newValue.WireType, StringComparison.Ordinal) ||
+                !string.Equals(oldValue.WireFormatId, newValue.WireFormatId, StringComparison.Ordinal) ||
                 oldValue.Stream != newValue.Stream ||
                 oldValue.Nullable != newValue.Nullable)
             {
@@ -646,11 +666,26 @@ public partial class RpcGenerator
                     ContractCompatibilityKind.WireType,
                     newValue.SourceLocation ?? fallbackLocation,
                     item,
-                    $"element {index} changed from {oldValue.Type}/{oldValue.WireType}/nullable={oldValue.Nullable} to {newValue.Type}/{newValue.WireType}/nullable={newValue.Nullable}",
+                    $"element {index} changed from {oldValue.Type}/{oldValue.WireType}/{oldValue.WireFormatId}/nullable={oldValue.Nullable} to {newValue.Type}/{newValue.WireType}/{newValue.WireFormatId}/nullable={newValue.Nullable}",
                     "restore the previous type or add a new method route"));
             }
         }
     }
+
+    private static bool HasRequiredWireFormatIds(ContractManifestDocument manifest)
+        => manifest.Contracts.All(static contract =>
+               contract.Methods.All(static method =>
+                   method.Request.All(static value => !string.IsNullOrWhiteSpace(value.WireFormatId)) &&
+                   !string.IsNullOrWhiteSpace(method.Response.WireFormatId))) &&
+           manifest.Dtos.All(static dto =>
+               dto.Members.All(static member => !string.IsNullOrWhiteSpace(member.WireFormatId)));
+
+    private static string GetWireFormatId(
+        string typeName,
+        IReadOnlyDictionary<string, string> wireFormats)
+        => wireFormats.TryGetValue(RemoveGlobalPrefix(typeName), out var wireFormatId)
+            ? wireFormatId
+            : "sharplink-native/v1";
 
     private static ContractCompatibilityDiagnostic Change(
         ContractCompatibilityKind kind,
@@ -809,7 +844,7 @@ internal static class __SharpLinkContractManifest
     {
         public string Format { get; set; } = ContractManifestFormat;
         public int Version { get; set; } = ContractManifestFormatVersion;
-        public string GeneratorVersion { get; set; } = "0.7.4";
+        public string GeneratorVersion { get; set; } = "0.7.11";
         public string SchemaFingerprint { get; set; } = string.Empty;
         public List<ContractManifestContract> Contracts { get; set; } = [];
         public List<ContractManifestDto> Dtos { get; set; } = [];
@@ -843,6 +878,7 @@ internal static class __SharpLinkContractManifest
         public string Name { get; set; } = string.Empty;
         public string Type { get; set; } = string.Empty;
         public string WireType { get; set; } = string.Empty;
+        public string WireFormatId { get; set; } = string.Empty;
         public bool Nullable { get; set; }
         public bool Stream { get; set; }
         [JsonIgnore] public Location? SourceLocation { get; set; }
@@ -862,6 +898,7 @@ internal static class __SharpLinkContractManifest
         public uint Id { get; set; }
         public string Type { get; set; } = string.Empty;
         public string WireType { get; set; } = string.Empty;
+        public string WireFormatId { get; set; } = string.Empty;
         public bool Nullable { get; set; }
         public bool Required { get; set; }
         public bool ExplicitId { get; set; }

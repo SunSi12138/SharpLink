@@ -248,6 +248,14 @@ public partial class RpcGenerator : IIncrementalGenerator
                     DtoDiagnosticKind.MemberIdCollision => DuplicateDtoMemberIdRule,
                     DtoDiagnosticKind.Constructor => DtoConstructionRule,
                     DtoDiagnosticKind.Depth => DtoDepthRule,
+                    DtoDiagnosticKind.AdapterRegistrationInvalid => InvalidAdapterRegistrationRule,
+                    DtoDiagnosticKind.AdapterTypeInvalid => InvalidAdapterTypeRule,
+                    DtoDiagnosticKind.SelectorConflict => SelectorAdapterConflictRule,
+                    DtoDiagnosticKind.AdapterSelectionConflict => AdapterSelectionConflictRule,
+                    DtoDiagnosticKind.AdapterBindingInvalid => InvalidAdapterBindingRule,
+                    DtoDiagnosticKind.AdapterTargetInvalid => InvalidAdapterTargetRule,
+                    DtoDiagnosticKind.AdapterIdentityConflict => AdapterIdentityConflictRule,
+                    DtoDiagnosticKind.BuiltinAdapterOverride => BuiltinAdapterOverrideRule,
                     _ => UnsupportedGeneratedDtoRule
                 };
                 spc.ReportDiagnostic(Diagnostic.Create(
