@@ -4,6 +4,30 @@
 
 ## [Unreleased]
 
+## [0.7.11] - 2026-07-26
+
+### Added
+
+- Added generic compile-time Codec Adapter registration and explicit binding APIs: `RpcCodecAdapterRegistrationAttribute`, `RpcCodecAdapterAttribute`, `IRpcCodecAdapter`, and `IRpcCodecAdapterScope`.
+- Added `SharpLink.Serializer.SharpPack` pinned to SharpPack 1.0.1. `[SharpPackable]` selects the Adapter automatically, while frameworks without a selector Attribute can use explicit type or assembly bindings.
+- Contract manifests now require `wireFormatId` for every request, response, stream item, and DTO member. Compatibility compares wire identity rather than Adapter implementation identity.
+
+### Changed
+
+- Generated Manifest API is version 3. Adapter factories emit closed `CreateCodec<T>()` calls and contain no runtime generic construction, serializer scanning, or reflection resolver.
+- Adapter state is owned per Runtime Context, Manifest instance, and Adapter ID. Dynamic register/replace/unregister publishes transactionally and releases generation-owned Codec caches, Scopes, and serializer Contexts after drain.
+- Explicit `UseCodec` remains the highest priority and caller-owned. Ordinary supported DTOs continue to use SharpLink native generated Codecs even when an Adapter package is installed.
+
+### Removed
+
+- Removed `SharpLink.Serializer.MemoryPack`, the MemoryPack package dependency, `MemoryPackCodec`, `MemoryPackCodec<T>`, `RpcExternalCodecAttribute`, and the process-wide generated Codec registry.
+
+### Compatibility and validation
+
+- This is a source/API-breaking pre-1.0 migration. Development-time contract manifests without `wireFormatId` are invalid and must be regenerated; no legacy fallback or compatibility shell is retained.
+- MemoryPack 1.21.4 golden payloads for null, nullable/string/non-ASCII, arrays/lists/dictionaries, nested objects, empty collections, unions, and circular graphs are byte-identical under SharpPack 1.0.1.
+- Local Release, Generator/Unit/Integration, collectible ALC, NativeAOT, local NuGet PackageSmoke, five-round BenchmarkDotNet, and TCP QPS/P99 validation cover the migration. No remote state or package feed was changed.
+
 ## [0.7.10] - 2026-07-22
 
 ### Added

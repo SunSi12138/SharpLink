@@ -9,7 +9,7 @@
 - 自动服务注册、`Singleton/Connection/Call` 生命周期、运行时程序集安全注册/注销
 - `Microsoft.Extensions.Hosting`、DI、readiness 与优雅排空
 - `Socket / NamedPipe / AnonymousPipe / UDS` 传输，以及实验性的同用户共享内存传输
-- 内置基础编解码器，并可接入 `MemoryPack` 作为复杂类型回退序列化器
+- 内置无反射 DTO Codec，并通过通用 Codec Adapter 接入 `SharpPack` 等复杂图序列化器
 
 ## 项目结构
 
@@ -22,7 +22,7 @@
 - `SharpLink.Server`：服务端 Builder、连接管理、Stub 分发、心跳与取消处理
 - `SharpLink.Hosting`：`IServiceCollection` 扩展与 HostedService 集成
 - `SharpLink.Generator`：契约/服务分析器与 `Proxy/Stub` 代码生成
-- `SharpLink.Serializer.MemoryPack`：MemoryPack 编解码适配
+- `SharpLink.Serializer.SharpPack`：SharpPack 1.0.1 Codec Adapter（`memorypack-binary/v1`）
 
 示例（`demo/`）：
 
@@ -173,18 +173,30 @@ public sealed class WorkOrder
 
 原生子集包含 primitive、enum、nullable、string、数组、`List`、`Dictionary`、`Memory`、`ReadOnlyMemory`、`ImmutableArray`、class/struct/record 及无环嵌套。未直接出现在 RPC 签名中的入口可标记 `[RpcSerializable]`。默认成员 ID 来自稳定成员名 hash；重命名同时要求 wire 兼容时，应保留显式 `[RpcMember(id)]`。
 
-循环/多态对象图、任意 `object` 和第三方运行时类型继续交给显式 Codec。`[MemoryPackable]` 会自动退出原生生成；其他类型可使用 `[RpcExternalCodec]` 或程序集级声明：
+循环/多态对象图和第三方运行时类型可以交给编译期选择的 Codec Adapter。引用 `SharpLink.Serializer.SharpPack` 后，`[SharpPackable]` 会自动选择 SharpPack Adapter；普通 DTO 仍优先使用 SharpLink 原生 Codec：
 
 ```csharp
-[assembly: RpcExternalCodec(typeof(ThirdPartyGraph))]
+using SharpPack;
 
-var client = SharpClientBuilder.Create()
-    .UseTcp("127.0.0.1", 5000)
-    .UseCodec(MemoryPackCodec<ThirdPartyGraph>.Instance)
-    .Build();
+[SharpPackable]
+public partial class PluginGraph
+{
+    public PluginGraph? Parent { get; set; }
+    public List<PluginGraph> Children { get; set; } = [];
+}
 ```
 
-生成 manifest 由所属程序集锚定，进程 Catalog 只保留有界弱引用；每个 Client/Server 在 Build 或运行时注册时发布自己的 Registry 快照，因此同进程实例不会互相覆盖。`test/SharpLink.AotSmoke` 使用纯生成 Codec 完成 NativeAOT publish/run，不扫描程序集或调用 `MakeGenericType`。
+没有框架自带 Attribute 的第三方类型使用通用显式绑定：
+
+```csharp
+[assembly: RpcCodecAdapter(
+    typeof(ThirdPartyGraph),
+    typeof(SharpPackRpcCodecAdapter))]
+```
+
+Client/Server 不需要 resolver 或手工注册自动 Adapter Codec。高级自定义 formatter 可由调用方创建 `SharpPackSerializerContext`，再通过 `SharpPackRpcCodec.Create<T>(context)` 显式 `UseCodec`；该 Codec 仍保持最高优先级且 Context 所有权属于调用方。
+
+每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。详细设计与迁移见 [`doc/architecture-0.7.11.md`](doc/architecture-0.7.11.md) 和 [`doc/migration-0.7.11.md`](doc/migration-0.7.11.md)。
 
 ## 协商压缩
 

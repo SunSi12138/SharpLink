@@ -14,8 +14,8 @@ SharpLink.Sdk
 SharpLink.Generator
   -> 扫描契约与服务，生成 Proxy / Stub / Codec / Assembly Manifest
 
-SharpLink.Serializer.MemoryPack
-  -> 作为复杂类型的可选编解码兜底
+SharpLink.Serializer.SharpPack
+  -> 声明通用 Codec Adapter registration，并为复杂对象图提供 manifest-scoped SharpPack Context
 ```
 
 ## 各模块职责
@@ -60,6 +60,7 @@ SharpLink.Serializer.MemoryPack
   - Contract 程序集生成 Descriptor、Proxy、contract-based Stub 与 Codec；Service 程序集生成 Descriptor、Activator、生命周期与依赖
   - 每程序集生成唯一 Manifest、定位特性、Module Initializer 和 SHA-256 wire/schema 指纹
   - 输出编译期诊断（取消令牌、超时、泛型、契约继承、服务声明和静态 Artifact 冲突等）
+  - 只读取 `RpcCodecAdapterRegistrationAttribute` 的 Roslyn metadata；不硬编码或加载第三方序列化框架
 
 ## Unary 调用链
 
@@ -130,9 +131,15 @@ SharpLink.Serializer.MemoryPack
 - 默认内置基础类型与 blittable 容器 Codec；RPC 可达的封闭 DTO/集合由 Source Generator 生成字段 ID Codec
 - 进程 Catalog 只保存有界、可清理的弱 Manifest 引用，collectible ALC 不会被它强引用
 - 每个 Runtime Context 在 Build 时导入已加载 Manifest 快照；Build 后插件通过实例的 `RegisterAssembly` 原子发布新快照
-- `[MemoryPackable]`、`[RpcExternalCodec]`、循环/多态图与第三方类型保留为显式插件边界
-- 显式 Context Codec 优先于生成 Codec，MemoryPack resolver 只处理未生成且用户明确选择的类型
+- 普通 DTO 继续优先使用原生 Codec；`[SharpPackable]` 通过扩展包 registration 自动选择 SharpPack Adapter
+- 没有 selector Attribute 的类型使用类型级或程序集级 `[RpcCodecAdapter(...)]` 显式绑定；安装 Adapter 包不会自动 fallback 或改变 wire format
+- generated factory 直接发出闭合 `IRpcCodecAdapterScope.CreateCodec<T>()`；不使用 `MakeGenericType`、`Activator`、运行时类型扫描或非泛型序列化 API
+- Adapter Scope 按 `Runtime Context × Manifest instance × AdapterId` 创建；同组 Codec 共享 Scope，不同 Runtime、Manifest 和插件代际互相隔离
+- 显式 `UseCodec` 始终优先于 Manifest Adapter，且 Runtime 不释放调用方 Codec 或自定义 serializer Context
+- Codec cache 绑定 Manifest registration identity；replace 发布新代后，旧模块清理不会删除新 Codec
 - Codec Provider、Buffer Pool、状态容器配置都冻结在各自的 `SharpLinkRuntimeContext` 中，不允许 Builder 覆盖进程级可变配置
+
+完整 Adapter SPI、事务发布和动态卸载设计见 [`architecture-0.7.11.md`](architecture-0.7.11.md)。
 
 ## 平台约束
 
