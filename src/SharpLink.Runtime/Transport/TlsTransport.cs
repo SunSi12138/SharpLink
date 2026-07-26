@@ -85,8 +85,14 @@ internal sealed class TlsStreamTransportConnection : StreamTransportConnection,
             }
             else
             {
-                await _stream.AuthenticateAsServerAsync(_serverOptions!, handshakeCts.Token)
+                var serverOptions = _serverOptions!;
+                await _stream.AuthenticateAsServerAsync(serverOptions, handshakeCts.Token)
                     .ConfigureAwait(false);
+                if (serverOptions.ClientCertificateRequired && _stream.RemoteCertificate is null)
+                {
+                    throw new AuthenticationException(
+                        "TLS client certificate authentication was required, but the client did not provide a certificate.");
+                }
             }
         }
         catch (OperationCanceledException exception) when (
