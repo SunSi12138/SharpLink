@@ -19,6 +19,28 @@ internal static class CodecHelpers
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void EnsureExactSize(in ReadOnlySequence<byte> buffer, long requiredBytes)
+    {
+        if (requiredBytes < 0 || buffer.Length != requiredBytes)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.DataLoss,
+                $"Codec input length is invalid: required exactly {requiredBytes} bytes, received {buffer.Length} bytes.");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool ReadNullablePresence(byte marker)
+        => marker switch
+        {
+            0 => false,
+            1 => true,
+            _ => throw new SharpLinkException(
+                SharpLinkErrorCode.DataLoss,
+                $"Nullable Codec presence marker {marker} is invalid.")
+        };
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int ReadInt32(in ReadOnlySequence<byte> buffer)
     {
         EnsureAvailable(buffer, sizeof(int));
@@ -37,7 +59,7 @@ internal static class CodecHelpers
         if (size > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes)
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, $"Codec value size {size} exceeds the protocol maximum.");
 
-        EnsureAvailable(buffer, size);
+        EnsureExactSize(buffer, size);
         if (buffer.FirstSpan.Length >= size)
             return Unsafe.ReadUnaligned<T>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
 
@@ -69,7 +91,10 @@ internal static class CodecHelpers
         if (length < -1)
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, $"Invalid collection length {length}.");
         if (length <= 0)
+        {
+            EnsureExactSize(buffer, sizeof(int));
             return 0;
+        }
 
         int byteCount;
         try
@@ -84,7 +109,7 @@ internal static class CodecHelpers
         if (byteCount > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes - sizeof(int))
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Collection payload exceeds the protocol maximum.");
 
-        EnsureAvailable(buffer, (long)sizeof(int) + byteCount);
+        EnsureExactSize(buffer, (long)sizeof(int) + byteCount);
         return byteCount;
     }
 

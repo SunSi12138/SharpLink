@@ -72,6 +72,7 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
         if (buffer.FirstSpan.Length < 4) return ReadSlow(buffer);
         
         var length = CodecHelpers.ReadInt32(buffer);
+        var byteCount = CodecHelpers.GetValidatedCollectionByteCount<T>(buffer, length);
         switch (length)
         {
             case -1:
@@ -79,8 +80,6 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
             case 0:
                 return [];
         }
-
-        var byteCount = CodecHelpers.GetValidatedCollectionByteCount<T>(buffer, length);
 
         var array = new T[length];
         
@@ -107,10 +106,10 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
     private static T[]? ReadSlow(ReadOnlySequence<byte> buffer)
     {
         var length = CodecHelpers.ReadInt32(buffer);
+        var byteCount = CodecHelpers.GetValidatedCollectionByteCount<T>(buffer, length);
         if (length == -1) return null;
         if (length == 0) return [];
 
-        var byteCount = CodecHelpers.GetValidatedCollectionByteCount<T>(buffer, length);
         var array = new T[length];
         buffer.Slice(sizeof(int), byteCount).CopyTo(MemoryMarshal.AsBytes(array.AsSpan()));
         return array;

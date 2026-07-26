@@ -902,7 +902,7 @@ internal static class __SharpLinkContractManifest
     {
         public string Format { get; set; } = ContractManifestFormat;
         public int Version { get; set; } = ContractManifestFormatVersion;
-        public string GeneratorVersion { get; set; } = "0.7.11";
+        public string GeneratorVersion { get; set; } = "0.8.0";
         public string SchemaFingerprint { get; set; } = string.Empty;
         public List<ContractManifestContract> Contracts { get; set; } = [];
         public List<ContractManifestDto> Dtos { get; set; } = [];

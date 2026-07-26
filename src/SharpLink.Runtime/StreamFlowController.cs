@@ -16,6 +16,7 @@ internal sealed class StreamFlowController
     private readonly Dictionary<StreamKey, SendState> _sendStates = [];
     private readonly Dictionary<StreamKey, ReceiveState> _receiveStates = [];
     private readonly LinkedList<CreditWaiter> _waiters = [];
+    private Queue<ConsumedCreditUpdate>? _consumedCreditUpdates;
     private long _sendConnectionCredit;
     private long _receiveConnectionCredit;
     private long _pendingConnectionConsumed;
@@ -285,13 +286,33 @@ internal sealed class StreamFlowController
                     _receiveStates.Remove(key);
                 return completedDelta;
             }
-            if (state.PendingConsumed < _streamUpdateThreshold &&
-                _pendingConnectionConsumed < _connectionUpdateThreshold)
+            if (state.PendingConsumed >= _streamUpdateThreshold)
+                return TakePendingCredit(state);
+            if (_pendingConnectionConsumed < _connectionUpdateThreshold)
             {
                 return 0;
             }
 
-            return TakePendingCredit(state);
+            return FlushPendingConnectionCredit(key);
+        }
+    }
+
+    public bool TryTakeConsumedCreditUpdate(out long requestId, out ushort streamId, out int credit)
+    {
+        lock (_gate)
+        {
+            if (_consumedCreditUpdates is null || !_consumedCreditUpdates.TryDequeue(out var update))
+            {
+                requestId = 0;
+                streamId = 0;
+                credit = 0;
+                return false;
+            }
+
+            requestId = update.Key.RequestId;
+            streamId = update.Key.StreamId;
+            credit = update.Credit;
+            return true;
         }
     }
 
@@ -331,6 +352,7 @@ internal sealed class StreamFlowController
                 waiters[index].Node = null;
             _sendStates.Clear();
             _receiveStates.Clear();
+            _consumedCreditUpdates?.Clear();
         }
 
         for (var index = 0; index < waiters.Length; index++)
@@ -426,6 +448,35 @@ internal sealed class StreamFlowController
         return checked((int)delta);
     }
 
+    private int FlushPendingConnectionCredit(StreamKey currentKey)
+    {
+        var currentCredit = 0;
+        List<StreamKey>? completed = null;
+        foreach (var pair in _receiveStates)
+        {
+            var state = pair.Value;
+            var credit = TakePendingCredit(state);
+            if (credit != 0)
+            {
+                if (pair.Key == currentKey)
+                    currentCredit = credit;
+                else
+                    (_consumedCreditUpdates ??= new Queue<ConsumedCreditUpdate>())
+                        .Enqueue(new ConsumedCreditUpdate(pair.Key, credit));
+            }
+            if (state.Completed && state.Credit == _streamWindow)
+                (completed ??= []).Add(pair.Key);
+        }
+
+        if (completed is not null)
+        {
+            for (var index = 0; index < completed.Count; index++)
+                _receiveStates.Remove(completed[index]);
+        }
+
+        return currentCredit;
+    }
+
     private void CancelWaiter(CreditWaiter waiter, CancellationToken cancellationToken)
     {
         List<CreditWaiter>? ready;
@@ -465,6 +516,8 @@ internal sealed class StreamFlowController
         => new(SharpLinkErrorCode.ConnectionClosed, "The stream is closed.");
 
     private readonly record struct StreamKey(long RequestId, ushort StreamId);
+
+    private readonly record struct ConsumedCreditUpdate(StreamKey Key, int Credit);
 
     private sealed class SendState(long initialCredit)
     {

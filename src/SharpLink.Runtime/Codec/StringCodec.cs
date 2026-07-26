@@ -36,17 +36,24 @@ internal sealed class StringCodec : IRpcCodec<string?>
     {
         var bytesCount = CodecHelpers.ReadInt32(buffer);
         if (bytesCount == -1)
+        {
+            CodecHelpers.EnsureExactSize(buffer, sizeof(int));
             return null;
+        }
         if (bytesCount < -1)
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, $"Invalid string byte length {bytesCount}.");
 
-        if (bytesCount == 0) return string.Empty;
+        if (bytesCount == 0)
+        {
+            CodecHelpers.EnsureExactSize(buffer, sizeof(int));
+            return string.Empty;
+        }
         if ((bytesCount & 1) != 0)
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "UTF-16 string byte length must be even.");
         if (bytesCount > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes - sizeof(int))
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "String payload exceeds the protocol maximum.");
 
-        CodecHelpers.EnsureAvailable(buffer, (long)sizeof(int) + bytesCount);
+        CodecHelpers.EnsureExactSize(buffer, (long)sizeof(int) + bytesCount);
         var payload = buffer.Slice(sizeof(int), bytesCount);
 
         if (payload.FirstSpan.Length >= bytesCount)

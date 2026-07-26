@@ -12,6 +12,34 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
     [Test]
+    public Task RpcContractShouldGenerateInheritedBaseMethods()
+    {
+        var source = BuildSource("""
+public interface IBaseOperations
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+    ValueTask<int> Ping(int value, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IDerivedService : SharpLink.Sdk.IService, IBaseOperations
+{
+    new ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+    ValueTask<int> Add(int left, int right, CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains("public global::System.Threading.Tasks.ValueTask<int> Ping(", StringComparison.Ordinal),
+            "proxy should implement an inherited-only RPC method");
+        Ensure(generated.Contains("impl.Ping(", StringComparison.Ordinal),
+            "stub should dispatch an inherited-only RPC method");
+        Ensure(CountOccurrences(generated, "public global::System.Threading.Tasks.ValueTask<int> Echo(") == 1,
+            "a directly redeclared base method should be generated exactly once");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task InvalidReturnTypeShouldReportSharplink001()
     {
         var source = BuildSource("""
@@ -963,6 +991,10 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("CreateCodec<global::Point>()", StringComparison.Ordinal),
             "a selected Adapter must win for an unmanaged user-defined struct");
+        Ensure(generated.Contains("__codec_value = codecs.GetCodec<global::Point>();", StringComparison.Ordinal),
+            "an unmanaged request must resolve the selected Adapter Codec");
+        Ensure(generated.Contains("__codec_value.Serialize(value.value, writer);", StringComparison.Ordinal),
+            "an unmanaged request must be length-delimited through the selected Adapter Codec");
         return Task.CompletedTask;
     }
 

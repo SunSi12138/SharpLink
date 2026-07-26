@@ -118,8 +118,7 @@ public partial class RpcGenerator
             INamedTypeSymbol contract,
             Dictionary<string, ITypeSymbol> roots)
         {
-            foreach (var method in contract.GetMembers().OfType<IMethodSymbol>()
-                         .Where(static method => method.MethodKind == MethodKind.Ordinary))
+            foreach (var method in GetContractMethods(contract))
             {
                 foreach (var parameter in method.Parameters)
                 {

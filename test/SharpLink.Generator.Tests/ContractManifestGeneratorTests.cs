@@ -64,19 +64,19 @@ public sealed class HelloService : IHelloService
         Ensure(first.Json.Contains("\"tag\": 1", StringComparison.Ordinal), "union tag");
         Ensure(first.Json.Contains("\"schemaFingerprint\":", StringComparison.Ordinal),
             "schema fingerprint");
-        Ensure(first.Json.Contains("\"generatorVersion\": \"0.7.11\"", StringComparison.Ordinal),
-            "0.7.11 generator version");
+        Ensure(first.Json.Contains("\"generatorVersion\": \"0.8.0\"", StringComparison.Ordinal),
+            "0.8.0 generator version");
         Ensure(!first.Json.Contains(Directory.GetCurrentDirectory(), StringComparison.Ordinal),
             "Manifest must not contain absolute paths");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task GeneratedAssemblyManifestShouldReportVersion0711()
+    public Task GeneratedAssemblyManifestShouldReportVersion080()
     {
         var source = SimpleContract("ValueTask<int> Echo(int value, CancellationToken cancellationToken);");
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(generated.Contains("public string GeneratorVersion => \"0.7.11\";", StringComparison.Ordinal),
+        Ensure(generated.Contains("public string GeneratorVersion => \"0.8.0\";", StringComparison.Ordinal),
             "generated assembly Manifest version");
         return Task.CompletedTask;
     }

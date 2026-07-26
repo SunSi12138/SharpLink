@@ -180,7 +180,7 @@ public partial class RpcGenerator
             return ImmutableArray<InvalidRpcMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidRpcMethodModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             if (IsSupportedRpcReturnType(method.ReturnType))
                 continue;
@@ -202,7 +202,7 @@ public partial class RpcGenerator
             return ImmutableArray<InvalidCancellationTokenMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidCancellationTokenMethodModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             var cancellationTokenCount = method.Parameters.Count(IsCancellationTokenParameter);
             if (cancellationTokenCount <= 1)
@@ -224,7 +224,7 @@ public partial class RpcGenerator
             return ImmutableArray<InvalidStreamCountMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidStreamCountMethodModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             var streamCount = method.Parameters.Count(p => IsAsyncEnumerable(p.Type, out var _));
             if (streamCount <= sbyte.MaxValue)
@@ -250,7 +250,7 @@ public partial class RpcGenerator
         }
 
         var list = ImmutableArray.CreateBuilder<NonCancellableRpcMethodModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             if (method.Parameters.Any(IsCancellationTokenParameter) ||
                 method.GetAttributes().Any(IsNonCancellableAttribute) ||
@@ -275,7 +275,7 @@ public partial class RpcGenerator
         }
 
         var list = ImmutableArray.CreateBuilder<StreamingWithoutCancellationModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             if (!IsStreamingMethod(method) ||
                 method.Parameters.Any(IsCancellationTokenParameter) ||
@@ -300,7 +300,7 @@ public partial class RpcGenerator
         }
 
         var list = ImmutableArray.CreateBuilder<ConflictingCancellationContractModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             if (!method.Parameters.Any(IsCancellationTokenParameter) ||
                 !method.GetAttributes().Any(IsNonCancellableAttribute))
@@ -326,7 +326,7 @@ public partial class RpcGenerator
             return ImmutableArray<InvalidCallOptionsMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidCallOptionsMethodModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             if (method.Parameters.Count(IsCallOptionsParameter) <= 1)
                 continue;
@@ -344,7 +344,7 @@ public partial class RpcGenerator
             return ImmutableArray<InvalidControlParameterOrderModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidControlParameterOrderModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             var optionsIndex = -1;
             var cancellationIndex = -1;
@@ -383,7 +383,7 @@ public partial class RpcGenerator
                 symbol.Locations.FirstOrDefault()));
         }
 
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             var hasGenericUsage = method.IsGenericMethod ||
                                   HasTypeParameter(method.ReturnType) ||
@@ -419,9 +419,7 @@ public partial class RpcGenerator
         if (interfaceSymbol.Arity > 0)
             return true;
 
-        return interfaceSymbol.GetMembers()
-            .OfType<IMethodSymbol>()
-            .Where(m => m.MethodKind == MethodKind.Ordinary)
+        return GetContractMethods(interfaceSymbol)
             .Any(m =>
                 !IsSupportedRpcReturnType(m.ReturnType) ||
                 m.IsGenericMethod ||
@@ -472,6 +470,52 @@ public partial class RpcGenerator
 
     private static bool InheritsIService(INamedTypeSymbol symbol)
         => symbol.AllInterfaces.Any(IsIService);
+
+    private static IEnumerable<IMethodSymbol> GetContractMethods(INamedTypeSymbol symbol)
+    {
+        var methods = new List<IMethodSymbol>();
+        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>()
+                     .Where(static method => method.MethodKind == MethodKind.Ordinary))
+        {
+            methods.Add(method);
+        }
+
+        foreach (var method in symbol.AllInterfaces
+                     .Where(static contract => !IsIService(contract))
+                     .OrderBy(static contract => contract.ToDisplayString(), StringComparer.Ordinal)
+                     .SelectMany(static contract => contract.GetMembers()
+                         .OfType<IMethodSymbol>()
+                         .Where(static method => method.MethodKind == MethodKind.Ordinary)))
+        {
+            if (!methods.Any(existing => HasSameContractSignature(existing, method)))
+                methods.Add(method);
+        }
+
+        return methods;
+    }
+
+    private static bool HasSameContractSignature(IMethodSymbol left, IMethodSymbol right)
+    {
+        if (!string.Equals(left.Name, right.Name, StringComparison.Ordinal) ||
+            left.Arity != right.Arity ||
+            left.Parameters.Length != right.Parameters.Length)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < left.Parameters.Length; index++)
+        {
+            var leftParameter = left.Parameters[index];
+            var rightParameter = right.Parameters[index];
+            if (leftParameter.RefKind != rightParameter.RefKind ||
+                !SymbolEqualityComparer.Default.Equals(leftParameter.Type, rightParameter.Type))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private static bool IsIService(INamedTypeSymbol symbol)
         => string.Equals(symbol.Name, "IService", StringComparison.Ordinal) &&
@@ -557,8 +601,7 @@ public partial class RpcGenerator
     {
         var ns = symbol.ContainingNamespace.IsGlobalNamespace ? "" : symbol.ContainingNamespace.ToDisplayString();
 
-        var methods = symbol.GetMembers().OfType<IMethodSymbol>()
-            .Where(m => m.MethodKind == MethodKind.Ordinary)
+        var methods = GetContractMethods(symbol)
             .Select(m =>
             {
                 var returnType = m.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -597,7 +640,7 @@ public partial class RpcGenerator
                         pType,
                         isStream,
                         isStream ? pItemType!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) : null,
-                        p.Type.IsUnmanagedType,
+                        IsInlineFixedRpcType(p.Type),
                         isValueType,
                         isNullableReference,
                         IsNullablePayload(payloadType),
@@ -659,8 +702,7 @@ public partial class RpcGenerator
         var canonicalContract = $"{fullname}|{interfaceHash}|" + string.Join("|", methods
             .OrderBy(static method => method.Hash)
             .Select(static method => method.Fingerprint));
-        var dependencyTypes = symbol.GetMembers().OfType<IMethodSymbol>()
-            .Where(static method => method.MethodKind == MethodKind.Ordinary)
+        var dependencyTypes = GetContractMethods(symbol)
             .SelectMany(static method => method.Parameters.Select(static parameter => parameter.Type)
                 .Append(method.ReturnType));
         return new RpcInterfaceModel(
@@ -678,6 +720,25 @@ public partial class RpcGenerator
         => type is INamedTypeSymbol { TypeKind: TypeKind.Enum, EnumUnderlyingType: { } underlying }
             ? underlying.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
             : null;
+
+    private static bool IsInlineFixedRpcType(ITypeSymbol type)
+    {
+        if (type.TypeKind == TypeKind.Enum)
+            return true;
+        if (type.SpecialType is SpecialType.System_Boolean or SpecialType.System_Byte or
+            SpecialType.System_SByte or SpecialType.System_Int16 or SpecialType.System_UInt16 or
+            SpecialType.System_Char or SpecialType.System_Int32 or SpecialType.System_UInt32 or
+            SpecialType.System_Single or SpecialType.System_Int64 or SpecialType.System_UInt64 or
+            SpecialType.System_Double or SpecialType.System_Decimal)
+        {
+            return true;
+        }
+
+        return type.ToDisplayString() is "System.Half" or "System.Text.Rune" or
+            "System.Guid" or "System.DateTimeOffset" or "System.DateTime" or
+            "System.DateOnly" or "System.TimeOnly" or "System.TimeSpan" or
+            "System.Int128" or "System.UInt128" or "System.Index" or "System.Range";
+    }
 
     private static bool IsNullablePayload(ITypeSymbol type)
         => type.NullableAnnotation == NullableAnnotation.Annotated ||

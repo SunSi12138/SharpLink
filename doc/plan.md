@@ -57,7 +57,13 @@
 9. `0.7.10`（已完成）：多 cluster Client、静态/动态 contract route 与 child lifecycle 隔离。
 10. `0.7.11`（已完成）：删除 MemoryPack 扩展与 `RpcExternalCodec`，引入 manifest-scoped Codec Adapter SPI，并迁移到 SharpPack 1.1.0。
 
-## 0.8.0-rc：发布门禁
+## 0.8.x：证据驱动的框架深度审核（进行中）
+
+- `0.8.0`：修复原生 Codec 非精确消费/非规范标记、跨 stream connection credit 滞留、继承接口 RPC 遗漏，以及 unmanaged Adapter 请求绕过 Codec；详见 [`audit-0.8.0.md`](audit-0.8.0.md)。
+- 后续每五项 P2 及以上的已复现、已修复、已验证改进形成一个小版本；P3/语法与抽象收敛可随批次提交，但不单独推进版本。
+- 每批必须通过 Release、Generator、Unit、Integration 和相关性能门禁；连续三轮无新改进点后转入 RC。
+
+## 0.8.x-rc：发布门禁
 
 - Unit、Generator、Integration、AOT、Package、Load、StreamLoad、Benchmark 与 Chaos 分层测试。
 - Windows/Linux/macOS Transport matrix，Linux/Windows 72 小时长稳与固定 runner 性能基线。

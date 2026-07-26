@@ -19,7 +19,7 @@ internal sealed class DateTimeOffsetCodec : IRpcCodec<DateTimeOffset>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public DateTimeOffset Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        CodecHelpers.EnsureAvailable(buffer, Size);
+        CodecHelpers.EnsureExactSize(buffer, Size);
         long ticks;
         short offsetMinutes;
 
@@ -73,11 +73,11 @@ internal sealed class NullableDateTimeOffsetCodec : IRpcCodec<DateTimeOffset?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public DateTimeOffset? Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        CodecHelpers.EnsureAvailable(buffer, Size);
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
-            if (start == 0) return null;
+            if (!CodecHelpers.ReadNullablePresence(start)) return null;
 
             var ticks = Unsafe.ReadUnaligned<long>(ref Unsafe.Add(ref start, 1));
             var offsetMinutes = Unsafe.ReadUnaligned<short>(ref Unsafe.Add(ref start, 9));
@@ -89,7 +89,7 @@ internal sealed class NullableDateTimeOffsetCodec : IRpcCodec<DateTimeOffset?>
         buffer.CopyTo(temp);
 
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
-        if (tempStart == 0) return null;
+        if (!CodecHelpers.ReadNullablePresence(tempStart)) return null;
 
         var t = Unsafe.ReadUnaligned<long>(ref Unsafe.Add(ref tempStart, 1));
         var o = Unsafe.ReadUnaligned<short>(ref Unsafe.Add(ref tempStart, 9));

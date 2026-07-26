@@ -106,6 +106,38 @@ public class CodecSafetyTests
     }
 
     [Test]
+    public void BooleanAndNullableCodecsShouldRejectNonCanonicalMarkers()
+    {
+        ExpectDataLoss(() => Deserialize<bool>(new ReadOnlySequence<byte>(new byte[] { 2 })));
+        ExpectDataLoss(() => Deserialize<bool?>(new ReadOnlySequence<byte>(new byte[] { 2 })));
+
+        AssertRejectsInvalidNullableMarker<byte?>(123);
+        AssertRejectsInvalidNullableMarker<sbyte?>(-12);
+        AssertRejectsInvalidNullableMarker<short?>(-1234);
+        AssertRejectsInvalidNullableMarker<ushort?>(4567);
+        AssertRejectsInvalidNullableMarker<char?>('A');
+        AssertRejectsInvalidNullableMarker<int?>(-1234567);
+        AssertRejectsInvalidNullableMarker<uint?>(3456789);
+        AssertRejectsInvalidNullableMarker<long?>(-1234567890123);
+        AssertRejectsInvalidNullableMarker<ulong?>(3456789012345);
+        AssertRejectsInvalidNullableMarker<Int128?>(Int128.Parse("123456789012345678901234"));
+        AssertRejectsInvalidNullableMarker<UInt128?>(UInt128.Parse("345678901234567890123456"));
+        AssertRejectsInvalidNullableMarker<float?>(12.5f);
+        AssertRejectsInvalidNullableMarker<double?>(123.5d);
+        AssertRejectsInvalidNullableMarker<Half?>((Half)1.5f);
+        AssertRejectsInvalidNullableMarker<decimal?>(123456.789m);
+        AssertRejectsInvalidNullableMarker<Guid?>(Guid.Parse("9f183a2e-0121-4c82-9fa6-7069cfab1447"));
+        AssertRejectsInvalidNullableMarker<DateOnly?>(new DateOnly(2026, 7, 16));
+        AssertRejectsInvalidNullableMarker<DateTime?>(new DateTime(2026, 7, 16, 12, 34, 56, DateTimeKind.Utc));
+        AssertRejectsInvalidNullableMarker<DateTimeOffset?>(new DateTimeOffset(2026, 7, 16, 12, 34, 56, TimeSpan.FromHours(8)));
+        AssertRejectsInvalidNullableMarker<TimeOnly?>(new TimeOnly(12, 34, 56));
+        AssertRejectsInvalidNullableMarker<TimeSpan?>(TimeSpan.FromHours(123.5));
+        AssertRejectsInvalidNullableMarker<Index?>(new Index(123, fromEnd: false));
+        AssertRejectsInvalidNullableMarker<Range?>(new Range(new Index(1), new Index(2, fromEnd: true)));
+        AssertRejectsInvalidNullableMarker<Rune?>(new Rune('界'));
+    }
+
+    [Test]
     public void StringCodecShouldValidateLengthsAndDecodeAcrossSegments()
     {
         AssertVariableRoundTrip<string?>(null, static (left, right) => left == right);
@@ -135,6 +167,8 @@ public class CodecSafetyTests
         Ensure(Deserialize<int[]?>(new ReadOnlySequence<byte>(CreateLengthPrefix(-1))) is null, "null array");
         Ensure(Deserialize<List<int>?>(new ReadOnlySequence<byte>(CreateLengthPrefix(-1))) is null, "null list");
         Ensure(Deserialize<ImmutableArray<int>>(new ReadOnlySequence<byte>(CreateLengthPrefix(-1))).IsDefault, "default immutable array");
+        ExpectDataLoss(() => Deserialize<int[]?>(new ReadOnlySequence<byte>(CreateLengthPrefixedPayload(-1, [0xA5]))));
+        ExpectDataLoss(() => Deserialize<List<int>?>(CreateSegmentedSequence(CreateLengthPrefixedPayload(-1, [0xA5]))));
         Ensure(Deserialize<int[]>(new ReadOnlySequence<byte>(CreateLengthPrefix(0))) is { Length: 0 }, "empty array");
         ExpectDataLoss(() => Deserialize<int[]>(new ReadOnlySequence<byte>(CreateLengthPrefix(-2))));
         ExpectDataLoss(() => Deserialize<int[]>(new ReadOnlySequence<byte>(CreateLengthPrefix(int.MaxValue))));
@@ -246,6 +280,20 @@ public class CodecSafetyTests
             var truncated = new ReadOnlySequence<byte>(bytes.AsMemory(0, length));
             ExpectDataLoss(() => Deserialize<T>(truncated));
         }
+
+        var trailing = bytes.Concat(new byte[] { 0xA5 }).ToArray();
+        ExpectDataLoss(() => Deserialize<T>(new ReadOnlySequence<byte>(trailing)));
+        ExpectDataLoss(() => Deserialize<T>(CreateSegmentedSequence(trailing)));
+    }
+
+    private static void AssertRejectsInvalidNullableMarker<T>(T value)
+    {
+        var writer = new ArrayBufferWriter<byte>();
+        Serialize(value, writer);
+        var bytes = writer.WrittenSpan.ToArray();
+        bytes[0] = 2;
+        ExpectDataLoss(() => Deserialize<T>(new ReadOnlySequence<byte>(bytes)));
+        ExpectDataLoss(() => Deserialize<T>(CreateSegmentedSequence(bytes)));
     }
 
     private static void Serialize<T>(in T value, IBufferWriter<byte> writer)
@@ -263,6 +311,10 @@ public class CodecSafetyTests
         var segmented = Deserialize<T>(CreateSegmentedSequence(bytes));
         Ensure(equals(value, single), $"single segment {typeof(T)}");
         Ensure(equals(value, segmented), $"multi segment {typeof(T)}");
+
+        var trailing = bytes.Concat(new byte[] { 0xA5 }).ToArray();
+        ExpectDataLoss(() => Deserialize<T>(new ReadOnlySequence<byte>(trailing)));
+        ExpectDataLoss(() => Deserialize<T>(CreateSegmentedSequence(trailing)));
     }
 
     private static void AssertSequenceRoundTrip<T>(T value, Func<T, IEnumerable<int>> values)
@@ -276,6 +328,10 @@ public class CodecSafetyTests
         var segmented = Deserialize<T>(CreateSegmentedSequence(bytes));
         Ensure(single is not null && values(single).SequenceEqual(expected), $"single segment {typeof(T)}");
         Ensure(segmented is not null && values(segmented).SequenceEqual(expected), $"multi segment {typeof(T)}");
+
+        var trailing = bytes.Concat(new byte[] { 0xA5 }).ToArray();
+        ExpectDataLoss(() => Deserialize<T>(new ReadOnlySequence<byte>(trailing)));
+        ExpectDataLoss(() => Deserialize<T>(CreateSegmentedSequence(trailing)));
     }
 
     private static byte[] CreateLengthPrefix(int length)

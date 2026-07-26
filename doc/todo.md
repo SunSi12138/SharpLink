@@ -45,7 +45,9 @@
 - `0.7.9`（已完成）：组合验证、低基数 telemetry、迁移文档与 API freeze。
 - `0.7.10`（已完成）：多 cluster Client、编译期 route Manifest 与动态模块协调。
 - `0.7.11`（已完成）：通用 Codec Adapter、Manifest API v3、SharpPack 1.1.0、wire-format identity、collectible Scope 生命周期与 MemoryPack 扩展删除。
-- `0.8.0-rc`：Chaos、长稳、跨平台/AOT/Package/性能 Release Gate，只修复正确性、稳定性、性能回退和文档问题。
+- `0.8.0`（已完成）：深度审核第一批五项 P2 修复——Codec 精确消费与规范标记、跨 stream connection credit、继承契约方法、unmanaged Adapter 请求布局；保留回归与性能实证。
+- `0.8.x`（进行中）：每累计五项 P2 及以上实证改进推进一个小版本；其他低风险改进随批次合入但不单独推进版本。连续三轮审计无新改进点后结束。
+- `0.8.x-rc`：上述审核收敛后执行 Chaos、长稳、跨平台/AOT/Package/性能 Release Gate，只修复正确性、稳定性、性能回退和文档问题。
 - `1.0.0`：通过 RC 接受标准后发布稳定 API 与 Protocol v2。
 
 ## 提交规则

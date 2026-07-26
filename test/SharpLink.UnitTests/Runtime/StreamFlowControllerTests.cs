@@ -108,6 +108,33 @@ public class StreamFlowControllerTests
     }
 
     [Test]
+    public async Task ConnectionThresholdShouldNotStrandConsumedCreditOnAnotherOpenStream()
+    {
+        var receiver = new StreamFlowController(4, 4, 16);
+        receiver.AcceptReceived(1, 1, 1);
+        Ensure(receiver.RecordConsumed(1, 1, 1) == 0,
+            "the first stream should batch below both thresholds");
+
+        receiver.AcceptReceived(2, 1, 1);
+        Ensure(receiver.RecordConsumed(2, 1, 1) == 1,
+            "the second stream should reach the connection threshold");
+
+        var pendingField = typeof(StreamFlowController).GetField(
+            "_pendingConnectionConsumed",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new Exception("pending connection credit field was not found");
+        Ensure((long)pendingField.GetValue(receiver)! == 0,
+            "reaching the connection threshold must flush consumed credit from every contributing stream");
+        Ensure(receiver.TryTakeConsumedCreditUpdate(out var requestId, out var streamId, out var credit),
+            "the threshold must expose the other stream's pending credit");
+        Ensure(requestId == 1 && streamId == 1 && credit == 1,
+            "the additional update must retain its exact stream identity and byte count");
+        Ensure(!receiver.TryTakeConsumedCreditUpdate(out _, out _, out _),
+            "each contributing stream credit must be emitted exactly once");
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task FailedSendStreamShouldAcceptInFlightCreditBeforeReusingCapacity()
     {
         var controller = new StreamFlowController(4, 4, 1024, maxConcurrentStreams: 1);

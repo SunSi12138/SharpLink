@@ -200,6 +200,7 @@ public sealed partial class RpcSession : IRpcSession
         var credit = controller?.RecordConsumed(requestId, streamId, encodedBytes) ?? 0;
         if (credit != 0)
             TrySendWindowUpdate(requestId, streamId, credit);
+        DrainConsumedCreditUpdates(controller);
     }
 
     private void OnReceiveStreamCompleted(long requestId, ushort streamId)
@@ -207,6 +208,15 @@ public sealed partial class RpcSession : IRpcSession
         var controller = Volatile.Read(ref _streamFlowControl);
         var credit = controller?.FlushConsumed(requestId, streamId) ?? 0;
         if (credit != 0)
+            TrySendWindowUpdate(requestId, streamId, credit);
+        DrainConsumedCreditUpdates(controller);
+    }
+
+    private void DrainConsumedCreditUpdates(StreamFlowController? controller)
+    {
+        if (controller is null)
+            return;
+        while (controller.TryTakeConsumedCreditUpdate(out var requestId, out var streamId, out var credit))
             TrySendWindowUpdate(requestId, streamId, credit);
     }
 

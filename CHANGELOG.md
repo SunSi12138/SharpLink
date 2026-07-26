@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-26
+
+### Fixed
+
+- Native built-in Codecs now reject truncated or trailing payload bytes consistently for contiguous and segmented input, and reject non-canonical Boolean and nullable-presence markers as `DataLoss`.
+- Connection-level stream-credit batching now returns credit for every contributing stream instead of stranding credit on an idle open stream; the session emits each resulting `WindowUpdate` exactly once.
+- RPC contracts now include inherited base-interface methods, including diagnostics, DTO-root discovery, proxy generation, stub dispatch, and deterministic handling of directly redeclared signatures.
+- Unmanaged user-defined and nullable request parameters now use the selected registered Codec and length-delimited request framing instead of bypassing it through native layout blitting.
+
+### Compatibility and validation
+
+- Valid built-in Codec payloads remain compatible; previously accepted non-canonical or trailing bytes are now rejected.
+- Generated request wire layout changes for nullable and user-defined unmanaged parameters, and inherited methods change the derived contract fingerprint. Rebuild and deploy both peers together; see `doc/migration-0.8.0.md`.
+- Release build, Generator 81/81, Unit 336/336, Integration 227/227, targeted malformed-input coverage, emitted-frame verification, and same-machine BenchmarkDotNet comparison passed. The seven runtime hot paths retained allocations and ranged from 93.09% to 101.64% of baseline latency (lower is better), with no regression signal.
+
 ## [0.7.11] - 2026-07-26
 
 ### Added
