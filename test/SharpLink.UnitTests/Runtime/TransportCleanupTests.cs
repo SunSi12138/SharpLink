@@ -1,5 +1,7 @@
 using System.IO.Pipelines;
+using System.IO.Pipes;
 using System.Net;
+using System.Security.Cryptography;
 using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
@@ -32,6 +34,48 @@ public class TransportCleanupTests
         Ensure(transport.DisposeCount == 1, "session must dispose its transport after pipeline failure");
     }
 
+    [Test]
+    public async Task AnonymousPipeConnectionShouldDisposeInputAfterOutputCleanupFailure()
+    {
+        var input = new TrackingPipeStream();
+        var output = new TrackingPipeStream("anonymous output cleanup failed");
+        var connection = new AnonymousPipeTransportConnection(input, output);
+
+        var failure = await CaptureAsync(connection.DisposeAsync);
+
+        Ensure(ContainsMessage(failure, "anonymous output cleanup failed"),
+            "anonymous-pipe cleanup must retain the output failure");
+        Ensure(output.DisposeCount == 1, "anonymous-pipe output must be disposed once");
+        Ensure(input.DisposeCount == 1,
+            "anonymous-pipe input must still be disposed after output cleanup fails");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task SharedMemoryConnectionShouldReleaseMappingAfterControlCleanupFailure()
+    {
+        var initialMappings = SharedMemoryMapping.ActiveMappingCount;
+        var nonce = RandomNumberGenerator.GetBytes(SharedMemoryLayout.NonceBytes);
+        var mapping = SharedMemoryMapping.CreateServer(64 * 1024, nonce, out _);
+        var control = new SharedMemoryControlChannel(
+            new TrackingPipeStream("shared-memory control cleanup failed"));
+        var connection = SharedMemoryTransportConnection.Create(mapping, control, isClient: true, spinCount: 0);
+
+        try
+        {
+            var failure = await CaptureAsync(connection.DisposeAsync);
+
+            Ensure(ContainsMessage(failure, "shared-memory control cleanup failed"),
+                "shared-memory cleanup must retain the control-channel failure");
+            Ensure(SharedMemoryMapping.ActiveMappingCount == initialMappings,
+                "shared-memory mapping must be released after control-channel cleanup fails");
+        }
+        finally
+        {
+            await mapping.DisposeAsync();
+        }
+    }
+
     private static async Task<Exception> CaptureAsync(Func<ValueTask> action)
     {
         try
@@ -49,6 +93,36 @@ public class TransportCleanupTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private static bool ContainsMessage(Exception exception, string message)
+    {
+        if (exception.Message == message)
+            return true;
+        if (exception is AggregateException aggregate)
+        {
+            foreach (var inner in aggregate.InnerExceptions)
+                if (ContainsMessage(inner, message))
+                    return true;
+            return false;
+        }
+        return exception.InnerException is { } innerException && ContainsMessage(innerException, message);
+    }
+
+    private sealed class TrackingPipeStream(string? failure = null)
+        : PipeStream(PipeDirection.InOut, bufferSize: 1)
+    {
+        private int _disposeCount;
+
+        internal int DisposeCount => Volatile.Read(ref _disposeCount);
+
+        public override ValueTask DisposeAsync()
+        {
+            Interlocked.Increment(ref _disposeCount);
+            return failure is null
+                ? ValueTask.CompletedTask
+                : ValueTask.FromException(new ApplicationException(failure));
+        }
     }
 
     private sealed class PipelineFailingTransport : ITransportConnection

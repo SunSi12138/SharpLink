@@ -476,14 +476,14 @@ internal sealed partial class SharpLinkServer(
 
     private async Task DisposeRegisteredServicesAsync()
     {
-        Exception? firstException = null;
+        List<Exception>? failures = null;
         try
         {
             await ReleaseDrainedDynamicModulesAsync().ConfigureAwait(false);
         }
         catch (Exception exception)
         {
-            firstException = exception;
+            (failures ??= []).Add(exception);
         }
 
         try
@@ -492,7 +492,7 @@ internal sealed partial class SharpLinkServer(
         }
         catch (Exception exception)
         {
-            firstException ??= exception;
+            (failures ??= []).Add(exception);
         }
 
         if (_admissionController is not null)
@@ -503,7 +503,7 @@ internal sealed partial class SharpLinkServer(
             }
             catch (Exception exception)
             {
-                firstException ??= exception;
+                (failures ??= []).Add(exception);
             }
         }
 
@@ -513,11 +513,13 @@ internal sealed partial class SharpLinkServer(
         }
         catch (Exception exception)
         {
-            firstException ??= exception;
+            (failures ??= []).Add(exception);
         }
 
-        if (firstException is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
     }
 
     private static async Task ObserveShutdownAndDisposeTokensAsync(

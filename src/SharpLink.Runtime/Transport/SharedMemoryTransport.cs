@@ -375,12 +375,17 @@ internal sealed class SharedMemoryTransportConnection : ITransportConnection
 
     private async Task DisposeCoreAsync()
     {
+        Exception? cleanupException = null;
         try
         {
             Output.Complete();
         }
         catch (Exception ex) when (StreamTransportConnection.IsExpectedDisposeException(ex) || ex is SharpLinkException)
         {
+        }
+        catch (Exception exception)
+        {
+            cleanupException = exception;
         }
         try
         {
@@ -389,8 +394,29 @@ internal sealed class SharedMemoryTransportConnection : ITransportConnection
         catch (Exception ex) when (StreamTransportConnection.IsExpectedDisposeException(ex) || ex is SharpLinkException)
         {
         }
-        await _control.DisposeAsync().ConfigureAwait(false);
-        await _mapping.DisposeAsync().ConfigureAwait(false);
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(cleanupException, exception);
+        }
+        try
+        {
+            await _control.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(cleanupException, exception);
+        }
+        try
+        {
+            await _mapping.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(cleanupException, exception);
+        }
+
+        if (cleanupException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
     }
 }
 

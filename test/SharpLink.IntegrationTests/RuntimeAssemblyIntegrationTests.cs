@@ -609,10 +609,12 @@ public sealed class RuntimeAssemblyIntegrationTests
                 plugin.ServiceAssembly, TimeSpan.FromSeconds(2));
             throw new Exception("assert failed: service disposal failure must be reported");
         }
-        catch (InvalidOperationException exception)
+        catch (Exception exception)
         {
-            Ensure(exception.Message.Contains("dynamic disposal failure", StringComparison.Ordinal),
-                "original disposal failure is preserved");
+            Ensure(ContainsMessage(exception, "First dynamic disposal failure."),
+                "first disposal failure is preserved");
+            Ensure(ContainsMessage(exception, "Second dynamic disposal failure."),
+                "second disposal failure is preserved");
         }
 
         Ensure(plugin.GetServiceStaticInt(firstServiceName, "Disposed") == 1,
@@ -1519,6 +1521,20 @@ public sealed class RuntimeAssemblyIntegrationTests
     {
         if (!condition)
             throw new Exception($"assert failed: {message}");
+    }
+
+    private static bool ContainsMessage(Exception exception, string message)
+    {
+        if (exception.Message == message)
+            return true;
+        if (exception is AggregateException aggregate)
+        {
+            foreach (var inner in aggregate.InnerExceptions)
+                if (ContainsMessage(inner, message))
+                    return true;
+            return false;
+        }
+        return exception.InnerException is { } nested && ContainsMessage(nested, message);
     }
 
     private sealed class TrackedWeakReferences

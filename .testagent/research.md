@@ -1,12 +1,12 @@
-# 0.8.7 regression-test research
+# 0.8.8 regression-test research
 
 ## Verified candidates
 
-- `ClientConnection.DisposeAsync` uses an exchange-only idempotence flag. A concurrent caller returns successfully while the winning caller can still be blocked in physical Session/transport cleanup.
-- `SharpLinkRuntimeContext.Dispose` and each generated registration reach remaining Adapter scopes but expose only the first disposal failure, discarding the complete plugin cleanup diagnosis.
-- `SharpLinkServerHostedService.StopAsync` exchanges away `_runCts` before awaiting shutdown, so concurrent Stop callers can return while listener/server cleanup is still blocked.
-- `ServerConnectionState.CloseCoreAsync` continues after connection-cancellation failure but retains only that first exception, discarding a later Session cleanup failure.
-- `ClientConnection.Fail` lets a throwing cancellation callback abort pending-call and stream completion, stranding RPC operations and preventing disconnect/reconnect cleanup.
+- `AnonymousPipeTransportConnection.DisposeCoreAsync` can skip the input pipe after writer, reader, or output cleanup fails.
+- `SharedMemoryTransportConnection.DisposeCoreAsync` can skip its mapping after control-channel cleanup fails.
+- `SharpLinkServer.ReleaseModuleAsync` reaches remaining services and manifest cleanup but exposes only the first failure.
+- `SharpLinkServer.ReleaseDrainedDynamicModulesAsync` reaches remaining modules but exposes only the first module failure.
+- `SharpLinkServer.DisposeRegisteredServicesAsync` reaches later ownership boundaries but exposes only the first dynamic/static/admission/runtime failure.
 
 ## Audit guardrails
 

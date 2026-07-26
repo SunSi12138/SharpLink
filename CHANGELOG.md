@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-07-27
+
+### Fixed
+
+- Anonymous-pipe connection teardown now continues through reader and both owned pipe handles after an earlier pipeline or output cleanup failure.
+- Shared-memory connection teardown now releases its mapping after control-channel cleanup fails and preserves failures from every cleanup stage.
+- Dynamic-module release now reports every connection-service, registration, and generated Manifest cleanup failure after completing all owners.
+- Server shutdown now preserves failures from every drained dynamic module instead of exposing only the first failed module.
+- Server-wide service cleanup now preserves dynamic-module, static/provider, admission-controller, and Runtime Context failures together.
+
+### Compatibility and validation
+
+- Public APIs, Protocol v2, and generated Manifest versions are unchanged; cleanup operations can now surface `AggregateException` when multiple owners fail.
+- Release build, Generator 83/83, Unit 379/379, Integration 228/228, package smoke, and same-machine A/B passed.
+- Normal anonymous-pipe offer allocation/disposal remained statistically flat at 2.590 → 2.592 µs with overlapping 99.9% confidence intervals and unchanged 2.13 KB allocation.
+
 ## [0.8.7] - 2026-07-27
 
 ### Fixed

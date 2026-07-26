@@ -1,4 +1,10 @@
+using System.Collections.Frozen;
+using System.Collections.Generic;
+using System.Net;
+using System.Reflection;
+using System.Reflection.Emit;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using SharpLink.Server;
 using System.Threading;
 
@@ -97,6 +103,90 @@ public class ServiceRegistrationTests
             "server cleanup must retain the owned provider failure");
     }
 
+    [Test]
+    public async Task DynamicModuleReleaseShouldPreserveEveryServiceFailure()
+    {
+        var server = CreateServer([]);
+        var module = AddDynamicModule(server, "module-release",
+            CreateThrowingRegistration(typeof(object), "first module cleanup failed"),
+            CreateThrowingRegistration(typeof(string), "second module cleanup failed"));
+
+        try
+        {
+            module.TryBeginDraining();
+            var failure = await CaptureAsync(() => InvokePrivateAsync(
+                server,
+                "ReleaseModuleAsync",
+                module.Assembly,
+                module));
+
+            Ensure(ContainsMessage(failure, "first module cleanup failed"),
+                "module release must retain its first service failure");
+            Ensure(ContainsMessage(failure, "second module cleanup failed"),
+                "module release must retain its second service failure");
+        }
+        finally
+        {
+            await server.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task DynamicModuleShutdownShouldPreserveEveryModuleFailure()
+    {
+        var server = CreateServer([]);
+        AddDynamicModule(server, "first-module",
+            CreateThrowingRegistration(typeof(object), "first dynamic module failed"));
+        AddDynamicModule(server, "second-module",
+            CreateThrowingRegistration(typeof(string), "second dynamic module failed"));
+
+        try
+        {
+            var failure = await CaptureAsync(() => InvokePrivateAsync(
+                server,
+                "ReleaseDrainedDynamicModulesAsync"));
+
+            Ensure(ContainsMessage(failure, "first dynamic module failed"),
+                "dynamic shutdown must retain its first module failure");
+            Ensure(ContainsMessage(failure, "second dynamic module failed"),
+                "dynamic shutdown must retain its second module failure");
+        }
+        finally
+        {
+            await server.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task RegisteredServiceCleanupShouldPreserveDynamicAndStaticFailures()
+    {
+        var staticRegistration = CreateThrowingRegistration(
+            typeof(object),
+            "static ownership cleanup failed");
+        var server = CreateServer(new Dictionary<long, ServiceRegistration>
+        {
+            [1] = staticRegistration
+        });
+        AddDynamicModule(server, "dynamic-ownership",
+            CreateThrowingRegistration(typeof(string), "dynamic ownership cleanup failed"));
+
+        try
+        {
+            var failure = await CaptureAsync(() => InvokePrivateAsync(
+                server,
+                "DisposeRegisteredServicesAsync"));
+
+            Ensure(ContainsMessage(failure, "dynamic ownership cleanup failed"),
+                "server cleanup must retain its dynamic-module failure");
+            Ensure(ContainsMessage(failure, "static ownership cleanup failed"),
+                "server cleanup must retain its static-service failure");
+        }
+        finally
+        {
+            await server.DisposeAsync();
+        }
+    }
+
     private static async Task<Exception> CaptureAsync(Func<ValueTask> action)
     {
         try
@@ -109,6 +199,72 @@ public class ServiceRegistrationTests
             return exception;
         }
     }
+
+    private static async Task<Exception> CaptureAsync(Func<Task> action)
+    {
+        try
+        {
+            await action();
+            throw new Exception("expected operation to fail");
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static async Task InvokePrivateAsync(object target, string methodName, params object[] arguments)
+    {
+        var method = target.GetType().GetMethod(
+            methodName,
+            BindingFlags.Instance | BindingFlags.NonPublic) ??
+            throw new MissingMethodException(target.GetType().FullName, methodName);
+        await ((Task?)method.Invoke(target, arguments) ??
+            throw new InvalidOperationException($"{methodName} did not return a Task."));
+    }
+
+    private static SharpLinkServer CreateServer(IEnumerable<KeyValuePair<long, ServiceRegistration>> registrations)
+        => new(
+            new NoopListener(),
+            registrations.ToFrozenDictionary(),
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(1),
+            NullLoggerFactory.Instance,
+            serviceProvider: new EmptyServiceProvider());
+
+    private static SharpLinkDynamicModule AddDynamicModule(
+        SharpLinkServer server,
+        string name,
+        params ServiceRegistration[] registrations)
+    {
+        var assembly = AssemblyBuilder.DefineDynamicAssembly(
+            new AssemblyName($"SharpLink.UnitTests.{name}.{Guid.NewGuid():N}"),
+            AssemblyBuilderAccess.Run);
+        var manifest = new EmptyManifest(assembly);
+        var runtime = (SharpLinkRuntimeContext)GetPrivateField(server, "_runtimeContext");
+        var codecRegistration = runtime.PrepareGeneratedManifest(manifest);
+        runtime.AdoptGeneratedManifest(codecRegistration);
+        var module = new SharpLinkDynamicModule(assembly, manifest, codecRegistration);
+
+        var modules = (Dictionary<Assembly, SharpLinkDynamicModule>)GetPrivateField(server, "_dynamicModules");
+        modules.Add(assembly, module);
+        var detached = (Dictionary<SharpLinkDynamicModule, ServiceRegistration[]>)GetPrivateField(
+            server,
+            "_detachedModuleServices");
+        detached.Add(module, registrations);
+        return module;
+    }
+
+    private static object GetPrivateField(object target, string fieldName)
+        => target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(target) ??
+           throw new MissingFieldException(target.GetType().FullName, fieldName);
+
+    private static ServiceRegistration CreateThrowingRegistration(Type contractType, string message)
+        => ServiceRegistration.CreateSingleton(
+            contractType,
+            new StubMarker(),
+            new ThrowingAsyncDisposable(message),
+            ownsService: true);
 
     private static async Task<Exception> CaptureAsync<T>(Func<ValueTask<T>> action)
     {
@@ -169,6 +325,29 @@ public class ServiceRegistrationTests
     {
         public ValueTask DisposeAsync()
             => ValueTask.FromException(new InvalidOperationException(message));
+    }
+
+    private sealed class NoopListener : IServerTransportListener
+    {
+        public EndPoint? LocalEndPoint => null;
+
+        public ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class EmptyManifest(Assembly ownerAssembly) : ISharpLinkGeneratedAssemblyManifest
+    {
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "test";
+        public Assembly OwnerAssembly { get; } = ownerAssembly;
+        public string CompileTimeDescriptor => string.Empty;
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
+        public IReadOnlyList<string> Dependencies => [];
     }
 
     private sealed class StubMarker : IRpcStub

@@ -122,14 +122,33 @@ internal sealed class AnonymousPipeTransportConnection : ITransportConnection
 
     private async Task DisposeCoreAsync()
     {
-        await StreamTransportConnection.CompleteWriterAsync(Output).ConfigureAwait(false);
-        await StreamTransportConnection.CompleteReaderAsync(Input).ConfigureAwait(false);
+        Exception? cleanupException = null;
+        try
+        {
+            await StreamTransportConnection.CompleteWriterAsync(Output).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            cleanupException = exception;
+        }
+        try
+        {
+            await StreamTransportConnection.CompleteReaderAsync(Input).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(cleanupException, exception);
+        }
         try
         {
             await _outputStream.DisposeAsync().ConfigureAwait(false);
         }
         catch (Exception ex) when (StreamTransportConnection.IsExpectedDisposeException(ex))
         {
+        }
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(cleanupException, exception);
         }
 
         try
@@ -139,5 +158,12 @@ internal sealed class AnonymousPipeTransportConnection : ITransportConnection
         catch (Exception ex) when (StreamTransportConnection.IsExpectedDisposeException(ex))
         {
         }
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(cleanupException, exception);
+        }
+
+        if (cleanupException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
     }
 }

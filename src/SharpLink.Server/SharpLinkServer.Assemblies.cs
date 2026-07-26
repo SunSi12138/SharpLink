@@ -439,7 +439,7 @@ internal sealed partial class SharpLinkServer
             _registryGeneration++;
         }
 
-        Exception? firstException = null;
+        List<Exception>? failures = null;
         var connections = _connections.Values.Concat(_retiredConnections.Keys).Distinct().ToArray();
         foreach (var connection in connections)
         {
@@ -451,7 +451,7 @@ internal sealed partial class SharpLinkServer
                 }
                 catch (Exception exception)
                 {
-                    firstException ??= exception;
+                    (failures ??= []).Add(exception);
                 }
             }
         }
@@ -463,7 +463,7 @@ internal sealed partial class SharpLinkServer
             }
             catch (Exception exception)
             {
-                firstException ??= exception;
+                (failures ??= []).Add(exception);
             }
         }
         try
@@ -472,14 +472,16 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            firstException ??= exception;
+            (failures ??= []).Add(exception);
         }
         finally
         {
             module.MarkReleased();
         }
-        if (firstException is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
     }
 
     private RpcGeneratedCodecRegistration? FindReplacementCodec(
@@ -774,7 +776,7 @@ internal sealed partial class SharpLinkServer
         lock (_registryGate)
             modules = [.. _dynamicModules];
 
-        Exception? firstException = null;
+        List<Exception>? failures = null;
         for (var index = 0; index < modules.Length; index++)
         {
             var pair = modules[index];
@@ -786,12 +788,14 @@ internal sealed partial class SharpLinkServer
             }
             catch (Exception exception)
             {
-                firstException ??= exception;
+                (failures ??= []).Add(exception);
             }
         }
 
-        if (firstException is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
     }
 
     private bool IsAssemblyRegistered(Assembly assembly)
