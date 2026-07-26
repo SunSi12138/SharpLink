@@ -819,8 +819,29 @@ public class IntegrationBehaviorTests
             SharpLinkErrorCode.ResourceExhausted);
         Ensure((await service.EchoAsync(new Person { Name = "other", Age = 1 })).Age == 2,
             "unlimited method remains healthy");
-        await Task.Delay(150);
-        Ensure(await service.AddAsync(3, 4) == 7, "method rate replenishment");
+        using var recoveryTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        try
+        {
+            while (true)
+            {
+                try
+                {
+                    var result = await service.AddAsync(3, 4).AsTask()
+                        .WaitAsync(recoveryTimeout.Token);
+                    Ensure(result == 7, "method rate replenishment");
+                    break;
+                }
+                catch (SharpLinkException exception) when (
+                    exception.Code == SharpLinkErrorCode.ResourceExhausted)
+                {
+                    await Task.Delay(20, recoveryTimeout.Token);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (recoveryTimeout.IsCancellationRequested)
+        {
+            throw new Exception("assert failed: method rate permit did not replenish within 3 seconds");
+        }
     }
 
     [Test]

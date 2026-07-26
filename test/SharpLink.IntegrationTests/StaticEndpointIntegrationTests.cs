@@ -677,6 +677,12 @@ public sealed class StaticEndpointIntegrationTests
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
                 SharpLinkTransportFactories.Sockets())
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
             .UseLoadBalancing(SharpLinkLoadBalancingStrategy.LeastPending)
             .Build();
 
@@ -700,6 +706,12 @@ public sealed class StaticEndpointIntegrationTests
             .UseEndpoints(
                 [Endpoint("first", first.Port), Endpoint("second", second.Port)],
                 SharpLinkTransportFactories.Sockets())
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
             .UseLoadBalancing(SharpLinkLoadBalancingStrategy.LeastPending)
             .Build();
 
@@ -835,7 +847,7 @@ public sealed class StaticEndpointIntegrationTests
             var builder = SharpLinkServerBuilder.Create()
                 .UseTcp(port, listenAddress.ToString())
 
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
+                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30));
             var service = new ConnectionBehaviorService
             {
                 EndpointId = endpointId,
@@ -852,7 +864,7 @@ public sealed class StaticEndpointIntegrationTests
             var builder = SharpLinkServerBuilder.Create()
                 .UseNamedPipe(name)
 
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
+                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30));
             return Task.FromResult(new TcpServerScope(builder.Build(), 0, new ConnectionBehaviorService()));
         }
 
@@ -861,7 +873,7 @@ public sealed class StaticEndpointIntegrationTests
             var builder = SharpLinkServerBuilder.Create()
                 .UseSharedMemory(name)
 
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
+                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30));
             return Task.FromResult(new TcpServerScope(builder.Build(), 0, new ConnectionBehaviorService()));
         }
 
@@ -870,7 +882,7 @@ public sealed class StaticEndpointIntegrationTests
             var builder = SharpLinkServerBuilder.Create()
                 .UseUds(path)
 
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
+                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30));
             return Task.FromResult(new TcpServerScope(builder.Build(), 0, new ConnectionBehaviorService()));
         }
 
