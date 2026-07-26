@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.14] - 2026-07-27
+
+### Fixed
+
+- Unix named-pipe normalization now budgets the complete native path in UTF-8 bytes and never cuts a surrogate pair, so non-ASCII logical names remain within the kernel path limit.
+- Named-pipe listeners now reject server-instance limits outside `-1` or 1 through 254 during construction instead of failing when the server begins accepting.
+- Throwing client-stream producer cancellation callbacks are reported without escaping terminal pending-call completion or stranding the operation and pooled call.
+- Socket Client factories and `UseTcp` now reject remote port zero consistently with DNS and endpoint-address APIs.
+- Flow-control waiters blocked only by their own stream credit no longer stall independent streams that still have both stream and connection credit; connection-credit contention remains FIFO.
+
+### Compatibility and validation
+
+- Public signatures, Protocol v2, and generated Manifest versions are unchanged. Invalid named-pipe instance counts and Client TCP port zero now fail during configuration, and eligible streams may progress around a stream-local blocked waiter.
+- Non-incremental Release build, Generator 83/83, Unit 411/411, Integration 228/228, package smoke, and reversed same-machine A/B passed.
+- Uncontended flow-credit round trips stayed at 21.6-22.1 ns and 0 B/op. Normal producer completion and short ASCII named-pipe normalization retained 48 B/op and 272 B/op with process-order noise but no stable latency regression.
+
 ## [0.8.13] - 2026-07-27
 
 ### Fixed

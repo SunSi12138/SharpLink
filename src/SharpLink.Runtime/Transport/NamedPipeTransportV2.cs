@@ -65,6 +65,7 @@ public sealed class NamedPipeClientTransportFactory : IClientTransportFactory
 /// <summary>Accepts independent named-pipe server connections.</summary>
 public sealed class NamedPipeServerTransportListener : IServerTransportListener
 {
+    private const int MaximumServerInstances = 254;
     private readonly string _pipeName;
     private readonly int _maxServerInstances;
     private readonly PipeTransmissionMode _transmissionMode;
@@ -87,7 +88,11 @@ public sealed class NamedPipeServerTransportListener : IServerTransportListener
         PipeOptions pipeOptions = PipeOptions.Asynchronous)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
-        ArgumentOutOfRangeException.ThrowIfZero(maxServerInstances);
+        if (maxServerInstances != NamedPipeServerStream.MaxAllowedServerInstances &&
+            maxServerInstances is < 1 or > MaximumServerInstances)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxServerInstances));
+        }
         _pipeName = NamedPipeName.Normalize(pipeName);
         _maxServerInstances = maxServerInstances;
         _transmissionMode = transmissionMode;
@@ -227,19 +232,42 @@ internal static class NamedPipeName
             return pipeName;
 
         var tempPath = Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var maxPipeNameLength = UnixDomainSocketPathLengthLimit - tempPath.Length - 1 - UnixNamedPipePrefix.Length;
-        if (maxPipeNameLength <= 0)
+        var encoding = System.Text.Encoding.UTF8;
+        var fixedPathBytes = encoding.GetByteCount(tempPath) + 1 + UnixNamedPipePrefix.Length;
+        var maxPipeNameBytes = UnixDomainSocketPathLengthLimit - fixedPathBytes;
+        if (maxPipeNameBytes <= 0)
             throw new PlatformNotSupportedException("Current temporary directory leaves no room for Unix named pipe paths.");
-        if (pipeName.Length <= maxPipeNameLength)
+        if (encoding.GetByteCount(pipeName) <= maxPipeNameBytes)
             return pipeName;
 
         var hash = Convert.ToHexString(
-                System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(pipeName)))
+                System.Security.Cryptography.SHA256.HashData(encoding.GetBytes(pipeName)))
             .ToLowerInvariant();
-        var hashLength = Math.Min(hash.Length, maxPipeNameLength);
-        var prefixLength = Math.Max(0, maxPipeNameLength - hashLength - 1);
+        var hashLength = Math.Min(hash.Length, maxPipeNameBytes);
+        var prefixByteBudget = Math.Max(0, maxPipeNameBytes - hashLength - 1);
+        if (prefixByteBudget == 0)
+            return hash[..hashLength];
+
+        var prefixLength = GetUtf8PrefixLength(pipeName, prefixByteBudget);
         return prefixLength == 0
             ? hash[..hashLength]
             : $"{pipeName[..prefixLength]}-{hash[..hashLength]}";
+    }
+
+    private static int GetUtf8PrefixLength(string value, int maxBytes)
+    {
+        var low = 0;
+        var high = value.Length;
+        while (low < high)
+        {
+            var candidate = low + ((high - low + 1) / 2);
+            if (System.Text.Encoding.UTF8.GetByteCount(value.AsSpan(0, candidate)) <= maxBytes)
+                low = candidate;
+            else
+                high = candidate - 1;
+        }
+        if (low != 0 && char.IsHighSurrogate(value[low - 1]))
+            low--;
+        return low;
     }
 }

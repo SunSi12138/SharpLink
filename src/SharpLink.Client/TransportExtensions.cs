@@ -12,7 +12,7 @@ public static class TransportExtensions
 
         public SharpClientBuilder UseTcp(string ip, int port)
         {
-            if (port is < IPEndPoint.MinPort or > IPEndPoint.MaxPort)
+            if (port is < 1 or > IPEndPoint.MaxPort)
                 throw new ArgumentOutOfRangeException(nameof(port));
 
             var endPoint = new IPEndPoint(IPAddress.Parse(ip), port);
@@ -31,7 +31,7 @@ public static class TransportExtensions
             TimeSpan? tlsHandshakeTimeout = null)
         {
             ArgumentNullException.ThrowIfNull(tlsOptions);
-            if (port is < IPEndPoint.MinPort or > IPEndPoint.MaxPort)
+            if (port is < 1 or > IPEndPoint.MaxPort)
                 throw new ArgumentOutOfRangeException(nameof(port));
 
             var endPoint = new IPEndPoint(IPAddress.Parse(ip), port);

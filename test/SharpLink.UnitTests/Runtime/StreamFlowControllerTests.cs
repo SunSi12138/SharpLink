@@ -73,14 +73,15 @@ public class StreamFlowControllerTests
     }
 
     [Test]
-    public async Task CancelledFifoHeadShouldAdmitNextEligibleStream()
+    public async Task StreamCreditBlockedHeadShouldNotBlockAnEligibleStream()
     {
         var controller = new StreamFlowController(2, 4, 1024);
         await controller.AcquireSendCreditAsync(1, 0, 2, CancellationToken.None);
         using var cancellation = new CancellationTokenSource();
         var head = controller.AcquireSendCreditAsync(1, 0, 1, cancellation.Token);
         var next = controller.AcquireSendCreditAsync(2, 0, 1, CancellationToken.None);
-        Ensure(!next.IsCompleted, "FIFO order should initially hold the second waiter");
+        Ensure(next.IsCompletedSuccessfully,
+            "a stream-credit-blocked head must not stall an independent eligible stream");
 
         cancellation.Cancel();
         await ExpectCancellation(head);

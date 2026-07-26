@@ -69,6 +69,8 @@ public sealed class SocketClientTransportFactory : IClientTransportFactory
         TimeSpan? tlsHandshakeTimeout = null)
     {
         _remoteEndPoint = remoteEndPoint ?? throw new ArgumentNullException(nameof(remoteEndPoint));
+        if (remoteEndPoint is IPEndPoint { Port: 0 } or DnsEndPoint { Port: 0 })
+            throw new ArgumentOutOfRangeException(nameof(remoteEndPoint), "A client remote endpoint requires a non-zero port.");
         _options = (options ?? new SocketTransportOptions()).CloneValidated();
         _tlsOptions = TlsAuthenticationOptionsSnapshot.Clone(tlsOptions);
         _tlsHandshakeTimeout = TlsAuthenticationOptionsSnapshot.ValidateTimeout(tlsHandshakeTimeout);

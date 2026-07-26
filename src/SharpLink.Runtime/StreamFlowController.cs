@@ -54,12 +54,44 @@ internal sealed class StreamFlowController
         ValidateEncodedBytes(encodedBytes);
         cancellationToken.ThrowIfCancellationRequested();
 
-        CreditWaiter? waiter;
+        var key = new StreamKey(requestId, streamId);
+        SendState state;
         lock (_gate)
         {
             ThrowIfTerminated();
-            var key = new StreamKey(requestId, streamId);
-            var state = GetOrAddSendState(key);
+            state = GetOrAddSendState(key);
+            if (state.AbortException is { } abortException)
+                throw abortException;
+            if (state.Completed)
+                throw CreateStreamClosedException();
+            if (_waiters.Count == 0 && CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
+            {
+                Reserve(state, encodedBytes);
+                return ValueTask.CompletedTask;
+            }
+        }
+
+        return AcquireContendedSendCreditAsync(key, state, encodedBytes, cancellationToken);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private ValueTask AcquireContendedSendCreditAsync(
+        StreamKey key,
+        SendState expectedState,
+        int encodedBytes,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        CreditWaiter waiter;
+        List<CreditWaiter>? ready;
+        lock (_gate)
+        {
+            ThrowIfTerminated();
+            if (!_sendStates.TryGetValue(key, out var state) ||
+                !ReferenceEquals(state, expectedState))
+            {
+                throw CreateStreamClosedException();
+            }
             if (state.AbortException is { } abortException)
                 throw abortException;
             if (state.Completed)
@@ -72,8 +104,10 @@ internal sealed class StreamFlowController
 
             waiter = new CreditWaiter(this, key, encodedBytes);
             waiter.Node = _waiters.AddLast(waiter);
+            ready = AdmitWaiters();
         }
 
+        CompleteReadyWaiters(ready);
         return new ValueTask(waiter.WaitAsync(cancellationToken));
     }
 
@@ -401,28 +435,43 @@ internal sealed class StreamFlowController
     private List<CreditWaiter>? AdmitWaiters()
     {
         List<CreditWaiter>? ready = null;
-        while (_waiters.First is { } first)
+        var node = _waiters.First;
+        while (node is not null)
         {
-            var waiter = first.Value;
+            var next = node.Next;
+            var waiter = node.Value;
             if (!_sendStates.TryGetValue(waiter.Key, out var state) ||
                 state.Completed || state.AbortException is not null)
             {
-                _waiters.RemoveFirst();
+                _waiters.Remove(node);
                 waiter.Node = null;
                 waiter.Rejection = state?.AbortException ?? CreateStreamClosedException();
                 (ready ??= []).Add(waiter);
+                node = next;
                 continue;
             }
-            if (!CanReserve(state.Credit, _sendConnectionCredit, waiter.EncodedBytes))
+            if (!HasConnectionCredit(_sendConnectionCredit, waiter.EncodedBytes))
                 break;
+            if (!HasStreamCredit(state.Credit, waiter.EncodedBytes))
+            {
+                node = next;
+                continue;
+            }
 
             Reserve(state, waiter.EncodedBytes);
-            _waiters.RemoveFirst();
+            _waiters.Remove(node);
             waiter.Node = null;
             (ready ??= []).Add(waiter);
+            node = next;
         }
         return ready;
     }
+
+    private bool HasStreamCredit(long credit, int encodedBytes)
+        => encodedBytes <= credit || (encodedBytes > _streamWindow && credit == _streamWindow);
+
+    private bool HasConnectionCredit(long credit, int encodedBytes)
+        => encodedBytes <= credit || (encodedBytes > _connectionWindow && credit == _connectionWindow);
 
     private static void CompleteReadyWaiters(List<CreditWaiter>? ready)
     {

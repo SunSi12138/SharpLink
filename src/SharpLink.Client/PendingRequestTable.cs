@@ -35,6 +35,7 @@ internal interface IPendingCallOwner
 {
     void OnPendingCallRegistered();
     void OnPendingCallCompleted(in PendingCallCompletion completion);
+    void OnProducerCancellationCallbackFailed(Exception exception);
 }
 
 /// <summary>
@@ -542,7 +543,18 @@ internal sealed class PendingRequestTable : IDisposable
         ref ReadOnlySequence<byte> payload)
     {
         call.DisposeCancellationRegistration();
-        call.CancelProducer(reason);
+        var producerCancellationFailure = call.CancelProducer(reason);
+        if (producerCancellationFailure is not null)
+        {
+            try
+            {
+                _owner?.OnProducerCancellationCallbackFailed(producerCancellationFailure);
+            }
+            catch
+            {
+                // Diagnostics must never interrupt the terminal pending-call transition.
+            }
+        }
         var isResponse = reason is PendingCallCompletionReason.Response or PendingCallCompletionReason.LocalStreamComplete;
         if (isResponse && call.Operation is { } responseOperation)
         {
@@ -801,15 +813,38 @@ internal sealed class PendingRequestTable : IDisposable
                 spinner.SpinOnce();
         }
 
-        public void CancelProducer(PendingCallCompletionReason reason)
+        public Exception? CancelProducer(PendingCallCompletionReason reason)
         {
             var producerCancellation = _producerCancellation;
             if (producerCancellation is null)
-                return;
-            if (reason != PendingCallCompletionReason.LocalStreamComplete)
-                producerCancellation.Cancel();
-            producerCancellation.Dispose();
+                return null;
             _producerCancellation = null;
+            if (reason == PendingCallCompletionReason.LocalStreamComplete)
+            {
+                producerCancellation.Dispose();
+                return null;
+            }
+            return CancelAndDisposeProducer(producerCancellation);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static Exception? CancelAndDisposeProducer(
+            CancellationTokenSource producerCancellation)
+        {
+            Exception? callbackFailure = null;
+            try
+            {
+                producerCancellation.Cancel();
+            }
+            catch (Exception exception)
+            {
+                callbackFailure = exception;
+            }
+            finally
+            {
+                producerCancellation.Dispose();
+            }
+            return callbackFailure;
         }
 
         public void ReturnUnused()

@@ -250,6 +250,42 @@ public class PendingRequestTableTests
     }
 
     [Test]
+    public async Task ThrowingProducerCancellationCallbackShouldNotStrandCompletion()
+    {
+        var owner = new RecordingPendingCallOwner();
+        using var manager = new PendingRequestTable(8, owner: owner);
+        var lease = manager.RegisterOneWayClientStream(
+            deadlineTimestamp: 0,
+            CancellationToken.None);
+        using var callback = manager.GetProducerCancellationToken(lease.Id).Register(
+            static () => throw new InvalidOperationException("producer cancellation callback failed"));
+        var terminal = new SharpLinkException(
+            SharpLinkErrorCode.ConnectionClosed,
+            "producer connection closed");
+
+        Exception? completionFailure = null;
+        var completed = false;
+        try
+        {
+            completed = manager.TryComplete(
+                lease.Id,
+                PendingCallCompletionReason.ConnectionClosed,
+                terminal);
+        }
+        catch (Exception exception)
+        {
+            completionFailure = exception;
+        }
+
+        await Assert.That(completionFailure).IsNull();
+        await Assert.That(completed).IsTrue();
+        await Assert.That(manager.Count).IsEqualTo(0);
+        await Assert.That(owner.ProducerCancellationFailure).IsTypeOf<AggregateException>();
+        var observed = await CaptureExceptionAsync(lease.Operation.AsValueTask().AsTask());
+        await Assert.That(observed).IsSameReferenceAs(terminal);
+    }
+
+    [Test]
     public async Task MonotonicDeadlineScanShouldCompleteWithoutCompletionPathRemoval()
     {
         using var manager = new PendingRequestTable(8);
@@ -425,12 +461,32 @@ public class PendingRequestTableTests
             }
         }
 
+        public void OnProducerCancellationCallbackFailed(Exception exception)
+        {
+        }
+
         public void Dispose()
         {
             AllowRegistration.Set();
             RegistrationEntered.Dispose();
             AllowRegistration.Dispose();
         }
+    }
+
+    private sealed class RecordingPendingCallOwner : IPendingCallOwner
+    {
+        internal Exception? ProducerCancellationFailure { get; private set; }
+
+        public void OnPendingCallRegistered()
+        {
+        }
+
+        public void OnPendingCallCompleted(in PendingCallCompletion completion)
+        {
+        }
+
+        public void OnProducerCancellationCallbackFailed(Exception exception)
+            => ProducerCancellationFailure = exception;
     }
 
     private sealed class NoopStreamDispatcher : IStreamDispatcher

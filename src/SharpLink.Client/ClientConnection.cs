@@ -235,6 +235,9 @@ internal sealed class ClientConnection :
         ReleaseActiveCall();
     }
 
+    void IPendingCallOwner.OnProducerCancellationCallbackFailed(Exception exception)
+        => _client.ReportProducerCancellationCallbackFailure(exception);
+
     private async Task FinishCancellationAfterDispatchesAsync(
         ValueTask drain,
         long requestId,
@@ -305,6 +308,9 @@ internal sealed partial class SharpLinkClient
 {
     internal void ReportConnectionCancellationCallbackFailure(Exception exception)
         => _logger.LogError(exception, "SharpLink connection cancellation callback failed during teardown.");
+
+    internal void ReportProducerCancellationCallbackFailure(Exception exception)
+        => _logger.LogError(exception, "SharpLink client-stream producer cancellation callback failed.");
 }
 
 internal struct LateResponseLogLimiter
