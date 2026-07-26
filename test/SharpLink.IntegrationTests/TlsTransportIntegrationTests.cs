@@ -62,14 +62,15 @@ public class TlsTransportIntegrationTests
     }
 
     [Test]
-    public async Task MutualTlsShouldRequireAndAcceptClientCertificate()
+    public async Task MutualTlsShouldRejectMissingOrUnexpectedAndAcceptExpectedClientCertificate()
     {
         using var serverCertificate = CreateCertificate("localhost", serverAuthentication: true);
         using var clientCertificate = CreateCertificate("sharplink-client", serverAuthentication: false);
         var serverOptions = CreateServerOptions(serverCertificate);
         serverOptions.ClientCertificateRequired = true;
         serverOptions.EnabledSslProtocols = SslProtocols.Tls12;
-        serverOptions.RemoteCertificateValidationCallback = ValidateTestCertificate;
+        serverOptions.RemoteCertificateValidationCallback = (_, certificate, _, _) =>
+            ValidateExpectedCertificate(certificate, clientCertificate);
         await using var server = await StartServerAsync(0, serverOptions);
 
         var missingCertificateOptions = CreateClientOptions("localhost");
@@ -119,7 +120,8 @@ public class TlsTransportIntegrationTests
         var serverOptions = CreateServerOptions(serverCertificate);
         serverOptions.ClientCertificateRequired = true;
         serverOptions.EnabledSslProtocols = SslProtocols.Tls12;
-        serverOptions.RemoteCertificateValidationCallback = ValidateTestCertificate;
+        serverOptions.RemoteCertificateValidationCallback = (_, certificate, _, _) =>
+            ValidateExpectedCertificate(certificate, clientCertificate);
         await using var server = await StartServerAsync(0, serverOptions);
 
         var clientOptions = CreateClientOptions("localhost");
@@ -256,6 +258,18 @@ public class TlsTransportIntegrationTests
                 return false;
         }
         return true;
+    }
+
+    private static bool ValidateExpectedCertificate(
+        X509Certificate? certificate,
+        X509Certificate2 expected)
+    {
+        if (certificate is null)
+            return false;
+
+        return CryptographicOperations.FixedTimeEquals(
+            certificate.GetCertHash(HashAlgorithmName.SHA256),
+            expected.GetCertHash(HashAlgorithmName.SHA256));
     }
 
     private static X509Certificate2 CreateCertificate(
