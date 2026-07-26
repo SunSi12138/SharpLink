@@ -282,6 +282,55 @@ public class SharpLinkRuntimeContextTests
     }
 
     [Test]
+    public void ManifestPreparationRollbackShouldPreservePrimaryAndScopeCleanupFailures()
+    {
+        var failure = CaptureFailure(() =>
+        {
+            using var context = new SharpLinkRuntimeContextBuilder()
+                .Build(includeGeneratedAssemblyCatalog: false);
+            _ = context.PrepareGeneratedManifest(new TestManifest(
+                "manifest-rollback-failure",
+                new ConfigurableAdapterFactory<AdapterValue>(
+                    new NamedThrowingDisposeAdapter("a.throwing/v1", "candidate scope cleanup failed"),
+                    "a.throwing/v1",
+                    "throwing-wire/v1"),
+                new ConfigurableAdapterFactory<SecondAdapterValue>(
+                    new FailingScopeAdapter(new AdapterCounters(), returnNull: false),
+                    FailingScopeAdapter.Id,
+                    FailingScopeAdapter.Wire)));
+        });
+
+        Ensure(ContainsMessage(failure, "scope failure"),
+            "Manifest rollback must retain the Scope creation failure");
+        Ensure(ContainsMessage(failure, "candidate scope cleanup failed"),
+            "Manifest rollback must retain earlier Scope cleanup failure");
+    }
+
+    [Test]
+    public void ContextConstructionRollbackShouldPreserveManifestAndCleanupFailures()
+    {
+        var failure = CaptureFailure(() => _ = new SharpLinkRuntimeContextBuilder().Build([
+            new TestManifest(
+                "prepared-throwing-manifest",
+                new ConfigurableAdapterFactory<AdapterValue>(
+                    new NamedThrowingDisposeAdapter("a.prepared/v1", "prepared manifest cleanup failed"),
+                    "a.prepared/v1",
+                    "throwing-wire/v1")),
+            new TestManifest(
+                "failing-manifest",
+                new ConfigurableAdapterFactory<SecondAdapterValue>(
+                    new FailingScopeAdapter(new AdapterCounters(), returnNull: false),
+                    FailingScopeAdapter.Id,
+                    FailingScopeAdapter.Wire))
+        ]));
+
+        Ensure(ContainsMessage(failure, "scope failure"),
+            "Context rollback must retain the later Manifest failure");
+        Ensure(ContainsMessage(failure, "prepared manifest cleanup failed"),
+            "Context rollback must retain prepared Manifest cleanup failure");
+    }
+
+    [Test]
     public void AdapterIdentityMismatchShouldRejectAndDisposePreparedScopes()
     {
         var preparedCounters = new AdapterCounters();
@@ -1190,6 +1239,19 @@ public class SharpLinkRuntimeContextTests
             return false;
         }
         return exception.InnerException is { } nested && ContainsMessage(nested, message);
+    }
+
+    private static Exception CaptureFailure(Action action)
+    {
+        try
+        {
+            action();
+            throw new Exception("expected operation to fail");
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 
     private static void Ensure(bool condition, string message)

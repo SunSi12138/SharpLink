@@ -65,6 +65,22 @@ public class StaticEndpointBuilderTests
     }
 
     [Test]
+    public void SingleEndpointBuildRollbackShouldPreserveValidationAndCleanupFailures()
+    {
+        var factory = new TrackingFactory(throwOnDispose: true);
+
+        var failure = CaptureFailure(() => SharpClientBuilder.Create()
+            .UseEndpoint(Endpoint("one", 5001), _ => factory)
+            .UseConnectionPool(static options => options.MaxConnections = 0)
+            .Build());
+
+        Ensure(ContainsException<ArgumentOutOfRangeException>(failure),
+            "fixed-endpoint rollback must retain the build validation failure");
+        Ensure(ContainsMessage(failure, "test disposal failure"),
+            "fixed-endpoint rollback must retain the transport cleanup failure");
+    }
+
+    [Test]
     public async Task SingleEndpointAnonymousPipeFactoryShouldRejectExpandedConnectionPools()
     {
         await EnsureThrows<InvalidOperationException>(() =>
@@ -109,6 +125,35 @@ public class StaticEndpointBuilderTests
             return Task.CompletedTask;
         });
         Ensure(factory.DisposeCount == 1, "profile binding failure must release the newly created factory");
+    }
+
+    [Test]
+    public void ProfileBindingRollbackShouldPreserveBindingAndCleanupFailures()
+    {
+        var factory = new ProfileBindingFailureFactory(throwOnDispose: true);
+
+        var failure = CaptureFailure(() => SharpClientBuilder.Create()
+            .UseEndpoints([Endpoint("one", 5001), Endpoint("two", 5002)], _ => factory)
+            .Build());
+
+        Ensure(ContainsMessage(failure, "test profile binding failure"),
+            "profile rollback must retain the binding failure");
+        Ensure(ContainsMessage(failure, "profile cleanup failure"),
+            "profile rollback must retain the factory cleanup failure");
+    }
+
+    [Test]
+    public void ClientBuildRollbackShouldPreserveBuildAndRuntimeContextCleanupFailures()
+    {
+        var failure = CaptureFailure(() => SharpClientBuilder.Create()
+            .UseEndpoint(Endpoint("one", 5001), _ => new TrackingFactory())
+            .UseConnectionPool(static options => options.MaxConnections = 0)
+            .BuildCore([new ThrowingScopeManifest()]));
+
+        Ensure(ContainsException<ArgumentOutOfRangeException>(failure),
+            "Client rollback must retain the original build failure");
+        Ensure(ContainsMessage(failure, "runtime context cleanup failed"),
+            "Client rollback must retain Runtime Context cleanup failure");
     }
 
     [Test]
@@ -353,6 +398,37 @@ public class StaticEndpointBuilderTests
             throw new Exception(message);
     }
 
+    private static Exception CaptureFailure(Action action)
+    {
+        try
+        {
+            action();
+            throw new Exception("expected operation to fail");
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static bool ContainsMessage(Exception exception, string message)
+    {
+        if (exception.Message == message)
+            return true;
+        if (exception is AggregateException aggregate)
+            return aggregate.InnerExceptions.Any(inner => ContainsMessage(inner, message));
+        return exception.InnerException is { } nested && ContainsMessage(nested, message);
+    }
+
+    private static bool ContainsException<TException>(Exception exception) where TException : Exception
+    {
+        if (exception is TException)
+            return true;
+        if (exception is AggregateException aggregate)
+            return aggregate.InnerExceptions.Any(ContainsException<TException>);
+        return exception.InnerException is { } nested && ContainsException<TException>(nested);
+    }
+
     private sealed class TrackingFactory(bool throwOnDispose = false) : IClientTransportFactory
     {
         private int _disposeCount;
@@ -368,7 +444,8 @@ public class StaticEndpointBuilderTests
         }
     }
 
-    private sealed class ProfileBindingFailureFactory : IClientTransportFactory, IPerformanceProfileAwareTransport
+    private sealed class ProfileBindingFailureFactory(bool throwOnDispose = false)
+        : IClientTransportFactory, IPerformanceProfileAwareTransport
     {
         private int _disposeCount;
 
@@ -383,9 +460,57 @@ public class StaticEndpointBuilderTests
         public ValueTask DisposeAsync()
         {
             Interlocked.Increment(ref _disposeCount);
-            return ValueTask.CompletedTask;
+            return throwOnDispose
+                ? ValueTask.FromException(new InvalidOperationException("profile cleanup failure"))
+                : ValueTask.CompletedTask;
         }
     }
+
+    private sealed class ThrowingScopeManifest : ISharpLinkGeneratedAssemblyManifest
+    {
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "test";
+        public Assembly OwnerAssembly => typeof(ThrowingScopeManifest).Assembly;
+        public string CompileTimeDescriptor => "client-build-rollback";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } = [new ThrowingScopeCodecFactory()];
+        public IReadOnlyList<string> Dependencies => [];
+    }
+
+    private sealed class ThrowingScopeCodecFactory : IRpcGeneratedCodecFactory
+    {
+        public Type TargetType => typeof(BuilderValue);
+        public string SchemaId => "builder-value/v1";
+        public string WireFormatId => "builder-wire/v1";
+        public string AdapterId => "builder-adapter/v1";
+        public IRpcCodecAdapter Adapter { get; } = new ThrowingScopeAdapter();
+        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
+            => (adapterScope ?? throw new ArgumentNullException(nameof(adapterScope))).CreateCodec<BuilderValue>();
+        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<BuilderValue>;
+    }
+
+    private sealed class ThrowingScopeAdapter : IRpcCodecAdapter
+    {
+        public string AdapterId => "builder-adapter/v1";
+        public string WireFormatId => "builder-wire/v1";
+        public IRpcCodecAdapterScope CreateScope() => new ThrowingScope();
+    }
+
+    private sealed class ThrowingScope : IRpcCodecAdapterScope
+    {
+        public IRpcCodec<T> CreateCodec<T>() => new EmptyCodec<T>();
+        public void Dispose() => throw new InvalidOperationException("runtime context cleanup failed");
+    }
+
+    private sealed class EmptyCodec<T> : IRpcCodec<T>
+    {
+        public void Serialize(in T value, IBufferWriter<byte> buffer) { }
+        public T? Deserialize(in ReadOnlySequence<byte> buffer) => default;
+    }
+
+    private sealed class BuilderValue;
 
     private sealed class FirstSelector : ISharpLinkEndpointSelector
     {

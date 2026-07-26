@@ -378,10 +378,18 @@ public class SharpClientBuilder
         {
             return BuildWithRuntimeContext(runtimeContext, staticManifests, preflightEndpoints);
         }
-        catch
+        catch (Exception buildException)
         {
-            runtimeContext.Dispose();
-            throw;
+            try
+            {
+                runtimeContext.Dispose();
+            }
+            catch (Exception cleanupException)
+            {
+                throw new AggregateException(buildException, cleanupException);
+            }
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(buildException).Throw();
+            throw new System.Diagnostics.UnreachableException();
         }
     }
 
@@ -429,11 +437,18 @@ public class SharpClientBuilder
                         fixedEndpoint: endpoints[0],
                         staticManifests: staticManifests);
                 }
-                catch
+                catch (Exception buildException)
                 {
-                    try { transport.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
-                    catch { }
-                    throw;
+                    try
+                    {
+                        transport.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        throw new AggregateException(buildException, cleanupException);
+                    }
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(buildException).Throw();
+                    throw new System.Diagnostics.UnreachableException();
                 }
             }
 
@@ -593,11 +608,18 @@ public class SharpClientBuilder
             {
                 profileAware.BindPerformanceProfile(runtimeContext.Options.PerformanceProfile);
             }
-            catch
+            catch (Exception bindingException)
             {
-                try { transport.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
-                catch { }
-                throw;
+                try
+                {
+                    transport.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                }
+                catch (Exception cleanupException)
+                {
+                    throw new AggregateException(bindingException, cleanupException);
+                }
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(bindingException).Throw();
+                throw new System.Diagnostics.UnreachableException();
             }
         }
         return transport;

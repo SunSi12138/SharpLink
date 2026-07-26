@@ -45,17 +45,44 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
             foreach (var registration in prepared)
                 AdoptGeneratedManifest(registration);
         }
-        catch
+        catch (Exception preparationException)
         {
-            for (var index = prepared.Count - 1; index >= 0; index--)
-            {
-                try { prepared[index].Dispose(); }
-                catch { }
-            }
-            ((RpcCodecProvider)Codecs).Dispose();
-            throw;
+            ThrowAfterConstructionRollback(preparationException, prepared, (RpcCodecProvider)Codecs);
         }
         Buffers = new SharpLinkBufferWriterPool(bufferPool);
+    }
+
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ThrowAfterConstructionRollback(
+        Exception preparationException,
+        IReadOnlyList<RpcGeneratedManifestRegistration> prepared,
+        RpcCodecProvider codecProvider)
+    {
+        List<Exception>? cleanupFailures = null;
+        for (var index = prepared.Count - 1; index >= 0; index--)
+        {
+            try
+            {
+                prepared[index].Dispose();
+            }
+            catch (Exception cleanupException)
+            {
+                (cleanupFailures ??= []).Add(cleanupException);
+            }
+        }
+        try
+        {
+            codecProvider.Dispose();
+        }
+        catch (Exception cleanupException)
+        {
+            (cleanupFailures ??= []).Add(cleanupException);
+        }
+        if (cleanupFailures is null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(preparationException).Throw();
+        cleanupFailures!.Insert(0, preparationException);
+        throw new AggregateException(cleanupFailures);
     }
 
     /// <summary>Gets an isolated copy of the frozen runtime options.</summary>

@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.10] - 2026-07-27
+
+### Fixed
+
+- Fixed-endpoint Client build rollback now preserves the primary validation failure together with transport cleanup failure.
+- Endpoint transport profile-binding rollback now preserves both binding and factory cleanup failures.
+- Generated Manifest preparation now preserves its primary factory/Scope failure together with every candidate Scope rollback failure.
+- Runtime Context construction now preserves a later Manifest failure together with every previously prepared Manifest cleanup failure.
+- Client construction now preserves its original build failure together with Runtime Context cleanup failure.
+
+### Compatibility and validation
+
+- Public APIs, Protocol v2, and generated Manifest versions are unchanged; failed extension-point construction may now surface `AggregateException` with the primary cause first.
+- Release build, Generator 83/83, Unit 389/389, Integration 228/228, package smoke, and same-machine A/B passed.
+- Normal Runtime Context build/disposal measured 346.1 → 343.7 ns with unchanged 3.9 KB allocation after moving rollback aggregation to a no-inline cold path.
+
 ## [0.8.9] - 2026-07-27
 
 ### Fixed

@@ -349,14 +349,24 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
             ownerBox.Value = registration;
             return registration;
         }
-        catch
+        catch (Exception preparationException)
         {
+            List<Exception>? cleanupFailures = null;
             for (var index = scopes.Count - 1; index >= 0; index--)
             {
-                try { scopes[index].Dispose(); }
-                catch { }
+                try
+                {
+                    scopes[index].Dispose();
+                }
+                catch (Exception cleanupException)
+                {
+                    (cleanupFailures ??= []).Add(cleanupException);
+                }
             }
-            throw;
+            if (cleanupFailures is null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(preparationException).Throw();
+            cleanupFailures!.Insert(0, preparationException);
+            throw new AggregateException(cleanupFailures);
         }
     }
 
