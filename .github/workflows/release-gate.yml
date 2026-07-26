@@ -51,7 +51,6 @@ jobs:
           --junit-output-path artifacts/test-results/integration-${{ runner.os }}/junit.xml
           --diagnostic
           --diagnostic-verbosity Trace
-          --diagnostic-synchronous-write
           --diagnostic-output-directory artifacts/test-results/integration-${{ runner.os }}
 
       - name: Upload Integration Diagnostics
