@@ -1,7 +1,11 @@
 using DemoBase;
 using SharpLink.Sdk;
-using MemoryPack;
+using SharpPack;
 using SharpLink.Runtime;
+
+[assembly: RpcCodecAdapter(
+    typeof(ValueTuple<int, string>),
+    typeof(SharpPackRpcCodecAdapter))]
 
 var port = DemoStream.GetFreePort();
 using var cts = new CancellationTokenSource();
@@ -227,7 +231,7 @@ public class StreamingService : IStreamingService
     }
 }
 
-[MemoryPackable]
+[SharpPackable]
 public partial class BatchEnvelope
 {
     public int BatchId { get; set; }
@@ -235,7 +239,7 @@ public partial class BatchEnvelope
     public List<int>? Values { get; set; }
 }
 
-[MemoryPackable]
+[SharpPackable]
 public partial struct SamplePoint
 {
     public int X { get; init; }

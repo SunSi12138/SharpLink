@@ -15,7 +15,7 @@ public class IntegrationBehaviorTests
             {
                 throw new Exception($"Generated Codec unexpectedly fell through to resolver: {type}.");
             }
-            return MemoryPackCodec.Resolver?.Invoke(type);
+            return null;
         }
 
         await using var harness = await TestHarness.CreateAsync(
@@ -339,10 +339,8 @@ public class IntegrationBehaviorTests
     {
         var firstCodec = new MarkerPersonCodec(0xA1);
         var secondCodec = new MarkerPersonCodec(0xB2);
-        IRpcCodec? FirstResolver(Type type) => type == typeof(Person) ? firstCodec : MemoryPackCodec.Resolver?.Invoke(type);
-        IRpcCodec? SecondResolver(Type type) => type == typeof(Person) ? secondCodec : MemoryPackCodec.Resolver?.Invoke(type);
-        await using var first = await TestHarness.CreateAsync(codecResolver: FirstResolver);
-        await using var second = await TestHarness.CreateAsync(codecResolver: SecondResolver);
+        await using var first = await TestHarness.CreateAsync(personCodec: firstCodec);
+        await using var second = await TestHarness.CreateAsync(personCodec: secondCodec);
 
         var firstResult = await first.Client.Get<ITestService>()
             .EchoAsync(new Person { Name = "first", Age = 1, Tags = ["a"] });
@@ -1452,13 +1450,16 @@ public class IntegrationBehaviorTests
             bool useSharedMemory = false,
             Action<SharpLinkRuntimeOptions>? serverRuntimeConfigure = null,
             Action<SharpLinkRuntimeOptions>? clientRuntimeConfigure = null,
-            Action<SharpLinkServerBuilder>? serverConfigure = null)
+            Action<SharpLinkServerBuilder>? serverConfigure = null,
+            IRpcCodec<Person>? personCodec = null)
         {
-            codecResolver ??= MemoryPackCodec.Resolver;
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseSerializer(codecResolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
+            if (codecResolver is not null)
+                serverBuilder.UseSerializer(codecResolver);
+            if (personCodec is not null)
+                serverBuilder.UseCodec(personCodec);
             if (runtimeConfigure is not null)
                 serverBuilder.UseRuntime(runtimeConfigure);
             if (serverRuntimeConfigure is not null)
@@ -1497,8 +1498,11 @@ public class IntegrationBehaviorTests
             }, CancellationToken.None);
 
             var clientBuilder = SharpClientBuilder.Create()
-                .UseSerializer(codecResolver)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
+            if (codecResolver is not null)
+                clientBuilder.UseSerializer(codecResolver);
+            if (personCodec is not null)
+                clientBuilder.UseCodec(personCodec);
             if (useSharedMemory)
                 clientBuilder.UseSharedMemory(sharedMemoryName);
             else
@@ -1643,6 +1647,7 @@ public class IntegrationBehaviorTests
     private sealed class MarkerPersonCodec(byte marker) : IRpcCodec<Person>
     {
         private readonly byte _marker = marker;
+        private readonly IRpcCodec<Person> _inner = SharpPackRpcCodec.Create<Person>(new SharpPackSerializerContext());
         public int SerializeCount;
         public int DeserializeCount;
 
@@ -1651,7 +1656,7 @@ public class IntegrationBehaviorTests
             var markerSpan = buffer.GetSpan(1);
             markerSpan[0] = _marker;
             buffer.Advance(1);
-            MemoryPackCodec<Person>.Instance.Serialize(value, buffer);
+            _inner.Serialize(value, buffer);
             Interlocked.Increment(ref SerializeCount);
         }
 
@@ -1662,7 +1667,7 @@ public class IntegrationBehaviorTests
                 throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DTO codec marker mismatch.");
             Interlocked.Increment(ref DeserializeCount);
             var payload = buffer.Slice(reader.Position);
-            return MemoryPackCodec<Person>.Instance.Deserialize(payload);
+            return _inner.Deserialize(payload);
         }
     }
 }
@@ -1983,7 +1988,7 @@ public sealed class CompressionService : ICompressionService
         => new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
 
-[MemoryPackable]
+[SharpPackable]
 public partial class Person
 {
     public string Name { get; set; } = string.Empty;

@@ -18,7 +18,7 @@ public class TransportConnectionIntegrationTests
         using var serverCts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver);
+            ;
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = server.RunAsync(serverCts.Token).AsTask();
@@ -224,7 +224,7 @@ public class TransportConnectionIntegrationTests
         var port = GetFreePort();
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -244,7 +244,7 @@ public class TransportConnectionIntegrationTests
         var pipeName = $"sharplink-int-no-server-{Guid.NewGuid():N}";
         var client = SharpClientBuilder.Create()
             .UseNamedPipe(pipeName)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -270,7 +270,7 @@ public class TransportConnectionIntegrationTests
         var socketPath = GetUniqueUdsPath();
         var client = SharpClientBuilder.Create()
             .UseUds(socketPath)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -291,7 +291,7 @@ public class TransportConnectionIntegrationTests
         var port = GetFreePort();
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -329,7 +329,7 @@ public class TransportConnectionIntegrationTests
         }, CancellationToken.None);
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromMilliseconds(120))
             .Build();
 
@@ -371,7 +371,7 @@ public class TransportConnectionIntegrationTests
         }, CancellationToken.None);
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromSeconds(5))
             .Build();
 
@@ -398,7 +398,7 @@ public class TransportConnectionIntegrationTests
         using var serverCts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromMilliseconds(120));
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
@@ -453,7 +453,7 @@ public class TransportConnectionIntegrationTests
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -479,7 +479,7 @@ public class TransportConnectionIntegrationTests
         using var serverCts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver);
+            ;
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = server.RunAsync(serverCts.Token).AsTask();
@@ -592,7 +592,7 @@ public class TransportConnectionIntegrationTests
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseProtocol(static options => options.MaxFramePayloadBytes = maxFramePayloadBytes)
             .UseHeartbeat(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30))
             .Build();
@@ -629,7 +629,7 @@ public class TransportConnectionIntegrationTests
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
                 ? SharpLinkAuthenticationResult.Success
                 : SharpLinkAuthenticationResult.Reject()))
@@ -653,7 +653,7 @@ public class TransportConnectionIntegrationTests
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(CreateClientAuthenticator("expected-token"))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
@@ -680,7 +680,7 @@ public class TransportConnectionIntegrationTests
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
                 ? SharpLinkAuthenticationResult.Success
                 : SharpLinkAuthenticationResult.Reject()))
@@ -704,7 +704,7 @@ public class TransportConnectionIntegrationTests
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(CreateClientAuthenticator("unexpected-token"))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
@@ -731,7 +731,7 @@ public class TransportConnectionIntegrationTests
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
                 ? SharpLinkAuthenticationResult.Success
                 : SharpLinkAuthenticationResult.Reject(
@@ -757,7 +757,7 @@ public class TransportConnectionIntegrationTests
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(CreateClientAuthenticator("expired-token"))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
@@ -785,7 +785,7 @@ public class TransportConnectionIntegrationTests
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(SharpLinkAuthenticator.CreateServer(static (_, _) => ValueTask.FromResult(
                 SharpLinkAuthenticationResult.Authenticate(
                     new SharpLinkAuthenticationContext(expiresAt: DateTimeOffset.UtcNow.AddMinutes(-1))))))
@@ -797,7 +797,7 @@ public class TransportConnectionIntegrationTests
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .Build();
 
         try
@@ -823,7 +823,7 @@ public class TransportConnectionIntegrationTests
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseProtocol(static options => options.MaxMetadataBytes = maxAuthenticationBytes);
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
@@ -831,7 +831,7 @@ public class TransportConnectionIntegrationTests
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseProtocol(static options => options.MaxMetadataBytes = maxAuthenticationBytes)
             .UseAuthenticator(SharpLinkAuthenticator.CreateClient(static _ =>
                 ValueTask.FromResult<ReadOnlyMemory<byte>>(new byte[maxAuthenticationBytes + 1])))
@@ -860,7 +860,7 @@ public class TransportConnectionIntegrationTests
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
                 ? SharpLinkAuthenticationResult.Authenticate(
                     new SharpLinkAuthenticationContext(
@@ -893,7 +893,7 @@ public class TransportConnectionIntegrationTests
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(CreateClientAuthenticator("expected-token"))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
@@ -923,7 +923,7 @@ public class TransportConnectionIntegrationTests
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(CreateServerAuthenticator(static token =>
                 SharpLinkAuthenticationResult.Authenticate(
                     new SharpLinkAuthenticationContext(
@@ -939,12 +939,12 @@ public class TransportConnectionIntegrationTests
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
         var firstClient = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(CreateClientAuthenticator("connection-a"))
             .Build();
         var secondClient = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(CreateClientAuthenticator("connection-b"))
             .Build();
 
@@ -986,7 +986,7 @@ public class TransportConnectionIntegrationTests
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
                 ? SharpLinkAuthenticationResult.Authenticate(
                     new SharpLinkAuthenticationContext(
@@ -1019,7 +1019,7 @@ public class TransportConnectionIntegrationTests
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseAuthenticator(CreateClientAuthenticator("expected-token"))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
@@ -1062,7 +1062,7 @@ public class TransportConnectionIntegrationTests
     {
         var server = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -1083,7 +1083,7 @@ public class TransportConnectionIntegrationTests
         var pipeName = $"sharplink-start-cancel-{Guid.NewGuid():N}";
         var server = SharpLinkServerBuilder.Create()
             .UseNamedPipe(pipeName)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -1103,7 +1103,7 @@ public class TransportConnectionIntegrationTests
     {
         var server = SharpLinkServerBuilder.Create()
             .UseTransport(new ThrowingConnectTransport(new IOException("accept failed")))
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();
 
@@ -1292,7 +1292,7 @@ public class TransportConnectionIntegrationTests
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseProtocol(options => options.MaxFramePayloadBytes = serverLimit)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
@@ -1300,7 +1300,7 @@ public class TransportConnectionIntegrationTests
         var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseProtocol(options => options.MaxFramePayloadBytes = clientLimit)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
             .Build();
@@ -1332,7 +1332,7 @@ public class TransportConnectionIntegrationTests
     private static ISharpLinkClient BuildClientForEndpoint(TransportEndpoint endpoint)
     {
         var builder = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
         switch (endpoint.Kind)
@@ -1406,11 +1406,11 @@ public class TransportConnectionIntegrationTests
         {
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
             var clientBuilder = SharpClientBuilder.Create()
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
             Action cleanup = static () => { };

@@ -90,7 +90,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
                 .UseAnonymousPipe()
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
 
             var allocator = (IAnonymousPipeAllocator)serverBuilder.Transport!;
@@ -98,7 +98,7 @@ public class AnonymousPipeTransportConnectionIntegrationTests
 
             var client = SharpClientBuilder.Create()
                 .UseAnonymousPipe(inHandle, outHandle)
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
                 .Build();
 

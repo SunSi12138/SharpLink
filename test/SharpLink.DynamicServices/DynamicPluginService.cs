@@ -127,7 +127,9 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     }
 
     public ValueTask<int> UsePayloadAsync(DynamicPayload payload, CancellationToken cancellationToken)
-        => ValueTask.FromResult(payload.Value + payload.Label.Length);
+        => ValueTask.FromResult(
+            payload.Value + payload.Label.Length + payload.Values.Sum() +
+            (ReferenceEquals(payload, payload.Parent) ? 0 : 1000));
 
     public ValueTask DisposeAsync()
     {

@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using SharpPack;
 
 namespace SharpLink.UnitTests.Runtime;
 
@@ -141,9 +142,10 @@ public class CodecSafetyTests
     }
 
     [Test]
-    public void MemoryPackCodecShouldWrapMalformedPayloadAsDataLoss()
+    public void SharpPackCodecShouldWrapMalformedPayloadAsDataLoss()
     {
-        ExpectDataLoss(() => MemoryPackCodec<int>.Instance.Deserialize(new ReadOnlySequence<byte>(Array.Empty<byte>())));
+        var codec = SharpPackRpcCodec.Create<int>(new SharpPackSerializerContext());
+        ExpectDataLoss(() => codec.Deserialize(new ReadOnlySequence<byte>(Array.Empty<byte>())));
     }
 
     [Test]

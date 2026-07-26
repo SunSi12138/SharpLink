@@ -16,7 +16,7 @@
     <PackageVersion Include="System.Text.Json" Version="10.0.2" />
     <PackageVersion Include="System.Threading.RateLimiting" Version="10.0.2" />
     <!--  第三方依赖  -->
-    <PackageVersion Include="MemoryPack" Version="1.21.4" />
+    <PackageVersion Include="SharpPack" Version="1.0.1" />
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.2" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.2" />

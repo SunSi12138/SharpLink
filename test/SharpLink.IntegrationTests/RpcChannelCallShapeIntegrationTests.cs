@@ -225,7 +225,7 @@ public class RpcChannelCallShapeIntegrationTests
         {
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
 
             var sharedMemoryName = $"sharplink-call-shape-{Guid.NewGuid():N}";
@@ -260,7 +260,7 @@ public class RpcChannelCallShapeIntegrationTests
             }, CancellationToken.None);
 
             var clientBuilder = SharpClientBuilder.Create()
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseRequestTimeout(TimeSpan.FromSeconds(5));
             if (useSharedMemory)

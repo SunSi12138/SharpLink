@@ -5,6 +5,7 @@ using SharpLink.Client;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
 using SharpLink.Server;
+using SharpPack;
 
 namespace SharpLink.PackageSmoke;
 
@@ -18,12 +19,20 @@ public interface IPackageSmokeService : IService
     ValueTask<PackageSmokeEnvelope> EchoAsync(PackageSmokeEnvelope value);
 }
 
-public sealed record PackageSmokeAddress(string City, int PostalCode);
+[SharpPackable]
+public sealed partial class PackageSmokeAddress
+{
+    public string City { get; set; } = string.Empty;
+    public int PostalCode { get; set; }
+}
 
-public sealed record PackageSmokeEnvelope(
-    string Name,
-    PackageSmokeAddress Address,
-    List<int> Values);
+[SharpPackable]
+public sealed partial class PackageSmokeEnvelope
+{
+    public string Name { get; set; } = string.Empty;
+    public PackageSmokeAddress Address { get; set; } = new();
+    public List<int> Values { get; set; } = [];
+}
 
 [RpcService]
 public sealed class PackageSmokeService : IPackageSmokeService
@@ -80,13 +89,16 @@ public static class Program
             if (result != 42)
                 throw new InvalidOperationException($"Package smoke returned {result} instead of 42.");
 
-            var expected = new PackageSmokeEnvelope(
-                new string('p', 4096),
-                new PackageSmokeAddress("Shanghai", 200000),
-                [1, 2, 3]);
+            var expected = new PackageSmokeEnvelope
+            {
+                Name = new string('p', 4096),
+                Address = new PackageSmokeAddress { City = "Shanghai", PostalCode = 200000 },
+                Values = [1, 2, 3]
+            };
             var actual = await proxy.EchoAsync(expected);
             if (actual.Name != expected.Name ||
-                actual.Address != expected.Address ||
+                actual.Address.City != expected.Address.City ||
+                actual.Address.PostalCode != expected.Address.PostalCode ||
                 !actual.Values.SequenceEqual(expected.Values))
                 throw new InvalidOperationException("Package smoke generated DTO codec round-trip failed.");
         }

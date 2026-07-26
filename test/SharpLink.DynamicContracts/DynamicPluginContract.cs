@@ -1,9 +1,17 @@
 using System.Runtime.CompilerServices;
 using SharpLink.Sdk;
+using SharpPack;
 
 namespace SharpLink.DynamicPlugin;
 
-public sealed record DynamicPayload(int Value, string Label);
+[SharpPackable(GenerateType.CircularReference)]
+public sealed partial class DynamicPayload
+{
+    [SharpPackOrder(0)] public int Value { get; set; }
+    [SharpPackOrder(1)] public string Label { get; set; } = string.Empty;
+    [SharpPackOrder(2)] public DynamicPayload? Parent { get; set; }
+    [SharpPackOrder(3), SharpPackAllowSerialize] public List<int> Values { get; set; } = [];
+}
 
 [RpcContract]
 public interface IDynamicPluginService : IService

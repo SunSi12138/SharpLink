@@ -166,7 +166,7 @@ public static class Program
             for (var index = 0; index < servers.Length; index++)
             {
                 var builder = ConfigureServer(SharpLinkServerBuilder.Create(), options)
-                    .UseSerializer(MemoryPackCodec.Resolver)
+
                     .UseRuntime(runtime =>
                     {
                         runtime.PerformanceProfile = options.PerformanceProfile;
@@ -188,7 +188,7 @@ public static class Program
 
             await Task.Delay(200, serverCancellation.Token);
             var clientBuilder = SharpClientBuilder.Create()
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseRuntime(runtime =>
                 {
                     runtime.PerformanceProfile = options.PerformanceProfile;

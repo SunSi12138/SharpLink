@@ -220,7 +220,7 @@ public class EnterpriseHostingIntegrationTests
             var serverCts = new CancellationTokenSource();
             var builder = SharpLinkServerBuilder.Create()
                 .UseTcp(0, IPAddress.Loopback.ToString())
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
             configure(builder);
             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
@@ -228,7 +228,7 @@ public class EnterpriseHostingIntegrationTests
             var serverTask = Task.Run(() => server.RunAsync(serverCts.Token).AsTask());
             var client = SharpClientBuilder.Create()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
                 .Build();
             await client.ConnectAsync(serverCts.Token);

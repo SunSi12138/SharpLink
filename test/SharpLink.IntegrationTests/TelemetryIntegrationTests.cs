@@ -184,14 +184,14 @@ public class TelemetryIntegrationTests
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
                 .UseTcp(0, IPAddress.Loopback.ToString())
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
             var client = SharpClientBuilder.Create()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
-                .UseSerializer(MemoryPackCodec.Resolver)
+
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
                 .Build();
             await client.ConnectAsync(cts.Token);
