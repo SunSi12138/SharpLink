@@ -7,7 +7,7 @@ Chinese: [`../migration-0.7.11.md`](../migration-0.7.11.md)
 | Before | 0.7.11 |
 | --- | --- |
 | `SharpLink.Serializer.MemoryPack` | `SharpLink.Serializer.SharpPack` |
-| MemoryPack / `using MemoryPack` | SharpPack 1.0.1 / `using SharpPack` |
+| MemoryPack / `using MemoryPack` | SharpPack `[1.1.0]` / `using SharpPack` |
 | `[MemoryPackable]` | `[SharpPackable]` |
 | `[RpcExternalCodec]` | a serializer selector or `[RpcCodecAdapter(...)]` |
 | `MemoryPackCodec.Resolver` | remove; the Manifest Adapter is automatic |
@@ -29,6 +29,6 @@ builder.UseCodec(SharpPackRpcCodec.Create<ThirdPartyPayload>(context));
 
 Explicit Codecs override generated Adapters and are not disposed by SharpLink.
 
-Delete and regenerate development-time contract baselines. Every request, response, stream item, and DTO member must contain a non-empty `wireFormatId`; missing, null, empty, or whitespace values report `SHARPLINK024`. No legacy JSON inference or warning fallback is retained.
+Delete and regenerate development-time contract baselines. Every request, response, stream item, and DTO member must contain a non-empty `wireFormatId`, and the required top-level `codecs` inventory must cover all reachable closed Codecs. A missing inventory, null required collection or entry, or empty identity reports `SHARPLINK024`. This inventory also makes an Adapter wire change nested inside a native collection report `SHARPLINK030`. No legacy JSON inference or warning fallback is retained.
 
-The repository keeps MemoryPack 1.21.4 golden bytes only as fixed test fixtures. SharpPack 1.0.1 reads them and writes identical bytes for null, nullable/string/non-ASCII, arrays/lists/dictionaries, nested objects, empty collections, unions, and circular graphs.
+The repository keeps MemoryPack 1.21.4 golden bytes only as fixed test fixtures. SharpPack 1.1.0 reads them and writes identical bytes for null, nullable/string/non-ASCII, arrays/lists/dictionaries, nested objects, empty collections, unions, and circular graphs.

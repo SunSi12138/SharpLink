@@ -76,6 +76,29 @@ public class SharpPackCodecTests
     }
 
     [Test]
+    public void SharpPackAdapterScopesShouldOwnIsolatedFormatterGraphs()
+    {
+        using var firstScope = new SharpPackRpcCodecAdapter().CreateScope();
+        using var secondScope = new SharpPackRpcCodecAdapter().CreateScope();
+        var firstCodec = (SharpPackRpcCodec<SharpGoldenPayload>)firstScope.CreateCodec<SharpGoldenPayload>();
+        var sameScopeCodec = (SharpPackRpcCodec<SharpGoldenPayload>)firstScope.CreateCodec<SharpGoldenPayload>();
+        var secondCodec = (SharpPackRpcCodec<SharpGoldenPayload>)secondScope.CreateCodec<SharpGoldenPayload>();
+
+        var firstFormatter = firstCodec.Context.GetFormatter<SharpGoldenPayload>();
+        var sameScopeFormatter = sameScopeCodec.Context.GetFormatter<SharpGoldenPayload>();
+        var secondFormatter = secondCodec.Context.GetFormatter<SharpGoldenPayload>();
+
+        Ensure(ReferenceEquals(firstCodec.Context, sameScopeCodec.Context),
+            "Codecs from one Adapter Scope share one serializer Context");
+        Ensure(ReferenceEquals(firstFormatter, sameScopeFormatter),
+            "Codecs from one Adapter Scope share one formatter graph");
+        Ensure(!ReferenceEquals(firstCodec.Context, secondCodec.Context),
+            "different Adapter Scopes own different serializer Contexts");
+        Ensure(!ReferenceEquals(firstFormatter, secondFormatter),
+            "different Adapter Scopes do not fall back to one process-wide formatter slot");
+    }
+
+    [Test]
     public void SharpPackCodecShouldRoundTripSingleAndMultiSegmentPayloads()
     {
         var codec = SharpPackRpcCodec.Create<SharpGoldenPayload>(new SharpPackSerializerContext());
@@ -130,8 +153,53 @@ public class SharpPackCodecTests
             "OutOfMemoryException is not wrapped");
         Ensure(!SharpPackRpcCodec<SharpGoldenPayload>.ShouldWrap(new StackOverflowException()),
             "StackOverflowException is not wrapped");
+        Ensure(!SharpPackRpcCodec<SharpGoldenPayload>.ShouldWrap(
+                new InvalidOperationException("serializer wrapper", new OutOfMemoryException())),
+            "a serializer wrapper cannot hide a fatal inner exception as DataLoss");
+        Ensure(!SharpPackRpcCodec<SharpGoldenPayload>.ShouldWrap(
+                new InvalidOperationException("serializer wrapper", new OperationCanceledException())),
+            "a serializer wrapper cannot hide cancellation as DataLoss");
+        Ensure(!SharpPackRpcCodec<SharpGoldenPayload>.ShouldWrap(
+                new AggregateException(
+                    new InvalidOperationException("ordinary formatter failure"),
+                    new OutOfMemoryException())),
+            "a later AggregateException branch cannot hide a fatal exception as DataLoss");
         Ensure(SharpPackRpcCodec<SharpGoldenPayload>.ShouldWrap(new InvalidOperationException()),
             "ordinary formatter errors are mapped to DataLoss");
+    }
+
+    [Test]
+    public void SharpPackCodecShouldNotWrapAccessViolationException()
+    {
+        var expected = new AccessViolationException("process-corrupting failure");
+        var codec = SharpPackRpcCodec.Create<int>(new SharpPackSerializerContext());
+
+        try
+        {
+            codec.Serialize(42, new ThrowingBufferWriter(expected));
+            throw new Exception("expected AccessViolationException");
+        }
+        catch (AccessViolationException actual)
+        {
+            Ensure(ReferenceEquals(actual, expected), "fatal exception identity is preserved");
+        }
+    }
+
+    [Test]
+    public void SharpPackCodecShouldNotWrapCancellationException()
+    {
+        var expected = new OperationCanceledException("writer cancellation");
+        var codec = SharpPackRpcCodec.Create<int>(new SharpPackSerializerContext());
+
+        try
+        {
+            codec.Serialize(42, new ThrowingBufferWriter(expected));
+            throw new Exception("expected OperationCanceledException");
+        }
+        catch (OperationCanceledException actual)
+        {
+            Ensure(ReferenceEquals(actual, expected), "cancellation exception identity is preserved");
+        }
     }
 
     [Test]
@@ -259,6 +327,13 @@ public class SharpPackCodecTests
             Next = next;
             return next;
         }
+    }
+
+    private sealed class ThrowingBufferWriter(Exception exception) : IBufferWriter<byte>
+    {
+        public void Advance(int count) => throw exception;
+        public Memory<byte> GetMemory(int sizeHint = 0) => throw exception;
+        public Span<byte> GetSpan(int sizeHint = 0) => throw exception;
     }
 
     private static void Ensure(bool condition, string message)

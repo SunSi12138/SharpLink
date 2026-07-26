@@ -698,7 +698,7 @@ public partial class RpcGenerator
         }
 
         private static bool IsValidAdapterType(INamedTypeSymbol type)
-            => type.DeclaredAccessibility == Accessibility.Public &&
+            => IsEffectivelyPublic(type) &&
                type.IsSealed &&
                type.InstanceConstructors.Any(static constructor =>
                    constructor.DeclaredAccessibility == Accessibility.Public &&
@@ -706,6 +706,16 @@ public partial class RpcGenerator
                type.AllInterfaces.Any(static item =>
                    item.Name == "IRpcCodecAdapter" &&
                    item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions");
+
+        private static bool IsEffectivelyPublic(INamedTypeSymbol type)
+        {
+            for (var current = type; current is not null; current = current.ContainingType)
+            {
+                if (current.DeclaredAccessibility != Accessibility.Public)
+                    return false;
+            }
+            return true;
+        }
 
         private static bool InheritsFromAttribute(ITypeSymbol type)
         {

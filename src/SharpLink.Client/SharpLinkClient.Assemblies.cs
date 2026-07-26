@@ -522,8 +522,14 @@ internal sealed partial class SharpLinkClient
             _dynamicModules.Remove(assembly);
             _registryGeneration++;
         }
-        _runtimeContext.ReleaseGeneratedManifest(codecRegistration);
-        module.MarkReleased();
+        try
+        {
+            _runtimeContext.ReleaseGeneratedManifest(codecRegistration);
+        }
+        finally
+        {
+            module.MarkReleased();
+        }
     }
 
     private RpcGeneratedCodecRegistration? FindReplacementCodec(

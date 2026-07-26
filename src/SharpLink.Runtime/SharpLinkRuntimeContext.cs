@@ -47,8 +47,11 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
         }
         catch
         {
-            foreach (var registration in prepared)
-                registration.Dispose();
+            for (var index = prepared.Count - 1; index >= 0; index--)
+            {
+                try { prepared[index].Dispose(); }
+                catch { }
+            }
             ((RpcCodecProvider)Codecs).Dispose();
             throw;
         }
@@ -94,7 +97,10 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         lock (_registrationGate)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             _manifestRegistrations.Add(registration);
+        }
     }
 
     internal RpcGeneratedCodecRegistration? FindGeneratedCodec(
@@ -135,8 +141,20 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
             _manifestRegistrations.Clear();
         }
         ((RpcCodecProvider)Codecs).Dispose();
+        Exception? firstException = null;
         for (var index = registrations.Length - 1; index >= 0; index--)
-            registrations[index].Dispose();
+        {
+            try
+            {
+                registrations[index].Dispose();
+            }
+            catch (Exception exception)
+            {
+                firstException ??= exception;
+            }
+        }
+        if (firstException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
     }
 
     // This process-wide fallback is used only before an instance-owned Context is attached.

@@ -50,7 +50,7 @@ public sealed class SharpPackRpcCodecAdapter : IRpcCodecAdapter
 
 internal sealed class SharpPackRpcCodecAdapterScope : IRpcCodecAdapterScope
 {
-    private SharpPackSerializerContext? _context = new();
+    private SharpPackSerializerContext? _context = CreateIsolatedContext();
 
     public IRpcCodec<T> CreateCodec<
         [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(
@@ -62,19 +62,49 @@ internal sealed class SharpPackRpcCodecAdapterScope : IRpcCodecAdapterScope
     }
 
     public void Dispose() => Interlocked.Exchange(ref _context, null);
+
+    private static SharpPackSerializerContext CreateIsolatedContext()
+        => new SharpPackSerializerContextBuilder()
+            .Register<SharpPackScopeMarker>(new SharpPackScopeMarkerFormatter())
+            .Build();
+}
+
+internal sealed class SharpPackScopeMarker;
+
+internal sealed class SharpPackScopeMarkerFormatter : SharpPackFormatter<SharpPackScopeMarker>
+{
+    public override void Serialize<TBufferWriter>(
+        ref SharpPackWriter<TBufferWriter> writer,
+        scoped ref SharpPackScopeMarker? value)
+        => throw new NotSupportedException("The internal SharpPack Scope marker cannot be serialized.");
+
+    public override void Deserialize(
+        ref SharpPackReader reader,
+        scoped ref SharpPackScopeMarker? value)
+        => throw new NotSupportedException("The internal SharpPack Scope marker cannot be deserialized.");
 }
 
 internal sealed class SharpPackRpcCodec<
     [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(
-        System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All)] T>(
-    SharpPackSerializerContext context) : IRpcCodec<T>
+        System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All)] T> : IRpcCodec<T>
 {
+    private readonly SharpPackSerializerContext _context;
+
+    internal SharpPackRpcCodec(SharpPackSerializerContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        _context = context;
+    }
+
+    internal SharpPackSerializerContext Context => _context;
+
     public void Serialize(in T value, IBufferWriter<byte> writer)
     {
         ArgumentNullException.ThrowIfNull(writer);
         try
         {
-            SharpPackSerializer.Serialize(writer, value, context);
+            var bufferWriter = new SharpPackBufferWriter(writer);
+            SharpPackSerializer.Serialize(ref bufferWriter, value, _context);
         }
         catch (Exception exception) when (ShouldWrap(exception))
         {
@@ -90,7 +120,7 @@ internal sealed class SharpPackRpcCodec<
         try
         {
             T? value = default;
-            var consumed = SharpPackSerializer.Deserialize(in sequence, ref value, context);
+            var consumed = SharpPackSerializer.Deserialize(in sequence, ref value, _context);
             if (consumed != sequence.Length)
             {
                 throw new SharpLinkException(
@@ -108,6 +138,42 @@ internal sealed class SharpPackRpcCodec<
         }
     }
 
-    internal static bool ShouldWrap(Exception exception)
-        => exception is not SharpLinkException and not OutOfMemoryException and not StackOverflowException;
+    internal static bool ShouldWrap(Exception exception) => !ContainsNonWrappableException(exception);
+
+    private static bool ContainsNonWrappableException(Exception exception)
+    {
+        if (exception is SharpLinkException or
+            OperationCanceledException or
+            OutOfMemoryException or
+            StackOverflowException or
+            AccessViolationException)
+        {
+            return true;
+        }
+
+        if (exception is AggregateException aggregateException)
+        {
+            foreach (var innerException in aggregateException.InnerExceptions)
+            {
+                if (ContainsNonWrappableException(innerException))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return exception.InnerException is not null &&
+            ContainsNonWrappableException(exception.InnerException);
+    }
+}
+
+// Keep SharpPack's generic writer closure concrete for NativeAOT while forwarding
+// to the caller-owned writer without allocating a wrapper object.
+internal readonly struct SharpPackBufferWriter(IBufferWriter<byte> writer) : IBufferWriter<byte>
+{
+    public void Advance(int count) => writer.Advance(count);
+    public Memory<byte> GetMemory(int sizeHint = 0) => writer.GetMemory(sizeHint);
+    public Span<byte> GetSpan(int sizeHint = 0) => writer.GetSpan(sizeHint);
 }

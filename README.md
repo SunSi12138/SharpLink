@@ -22,7 +22,7 @@
 - `SharpLink.Server`：服务端 Builder、连接管理、Stub 分发、心跳与取消处理
 - `SharpLink.Hosting`：`IServiceCollection` 扩展与 HostedService 集成
 - `SharpLink.Generator`：契约/服务分析器与 `Proxy/Stub` 代码生成
-- `SharpLink.Serializer.SharpPack`：SharpPack 1.0.1 Codec Adapter（`memorypack-binary/v1`）
+- `SharpLink.Serializer.SharpPack`：精确依赖 SharpPack `[1.1.0]` 的 Codec Adapter（`memorypack-binary/v1`）
 
 示例（`demo/`）：
 
@@ -196,7 +196,7 @@ public partial class PluginGraph
 
 Client/Server 不需要 resolver 或手工注册自动 Adapter Codec。高级自定义 formatter 可由调用方创建 `SharpPackSerializerContext`，再通过 `SharpPackRpcCodec.Create<T>(context)` 显式 `UseCodec`；该 Codec 仍保持最高优先级且 Context 所有权属于调用方。
 
-每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。详细设计与迁移见 [`doc/architecture-0.7.11.md`](doc/architecture-0.7.11.md) 和 [`doc/migration-0.7.11.md`](doc/migration-0.7.11.md)。
+每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context；自动 Context 拥有独立 formatter graph，不使用进程级默认 formatter slot，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。详细设计与迁移见 [`doc/architecture-0.7.11.md`](doc/architecture-0.7.11.md) 和 [`doc/migration-0.7.11.md`](doc/migration-0.7.11.md)。
 
 ## 协商压缩
 

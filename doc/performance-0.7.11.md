@@ -5,7 +5,7 @@ English: [`en/performance-0.7.11.md`](en/performance-0.7.11.md)
 ## 环境与方法
 
 - 基线：`dev` / `2dd4e84870b2694640ecd4ba61bec51f461e7226` / 0.7.10 / MemoryPack 1.21.4。
-- 候选：0.7.11 / SharpPack 1.0.1 / manifest-scoped Codec Adapter。
+- 初始候选：0.7.11 / SharpPack 1.0.1 / manifest-scoped Codec Adapter。深审后的最终依赖为 SharpPack 1.1.0，见下方复测。
 - macOS Tahoe 26.4.1、Apple M4 arm64、10 cores。
 - .NET SDK 10.0.102、Runtime 10.0.2、Concurrent Workstation GC。
 - BenchmarkDotNet 0.15.8：4096 invocations、3 warmup、10 measurement iterations、1 launch。
@@ -26,6 +26,19 @@ English: [`en/performance-0.7.11.md`](en/performance-0.7.11.md)
 
 原始报告位于任务审计目录 `.audit/benchmarks/alternating/`。第一次候选发现命令因嵌套基线目录产生无效结果，未计入五轮；随后从各 benchmark 项目目录执行的 candidate-1 至 candidate-5 均有效。
 
+### 外部序列化器深审复测
+
+迁移到 SharpPack 1.1.0、隔离 Scope formatter graph，并为 NativeAOT 增加零分配具体 writer 转接后，以相同作业对 Adapter payload 和原生 array 串行复测五轮。该复测不替代上面的交替发布门禁，只检查最终审核修复是否回退；仍取 Mean 中位数。原始报告位于 `.audit/deep-review-benchmark-110/`。
+
+| 场景 | 深审修复后中位数 | 相对原 0.7.11 候选吞吐 | 相对 0.7.10 基线吞吐 | B/op |
+| --- | ---: | ---: | ---: | ---: |
+| Adapter payload, 16 | 51.24 μs | 104.94% | 103.04% | 1152 |
+| Adapter payload, 256 | 52.91 μs | 104.44% | 102.97% | 5952 |
+| Native array, 16 | 51.73 μs | 101.47% | 102.15% | 440 |
+| Native array, 256 | 52.01 μs | 101.92% | 101.35% | 1400 |
+
+四个点的中位数均未回退，分配与已接受候选完全一致。冻结的 Context-owned formatter graph 不增加稳态每调用分配。
+
 ## TCP QPS/P99
 
 BenchmarkDotNet 的 iteration 统计不等于真实 RPC P99，因此另外使用本地 TCP LoadTest。参数为 single connection、Balanced、request timeout disabled、`add`、c1/c128、1 秒 warmup、3 秒 measurement、五轮交替；十份报告 Failure 均为 0。
@@ -39,6 +52,6 @@ QPS 均不低于 97%，P99 均不高于 105%。原始 JSON 和日志位于 `.aud
 
 ## Wire payload 与结论
 
-MemoryPack 1.21.4 与 SharpPack 1.0.1 的固定 fixtures 对 null root、nullable/string/非 ASCII、array/list/dictionary、nested、empty collection、union/polymorphism 和 circular reference 均 byte-for-byte 相同，SharpPack 显式 Context 能读取旧 payload。因此扩展声明保留 `memorypack-binary/v1`。
+MemoryPack 1.21.4 与 SharpPack 1.0.1/1.1.0 的固定 fixtures 对 null root、nullable/string/非 ASCII、array/list/dictionary、nested、empty collection、union/polymorphism 和 circular reference 均 byte-for-byte 相同，SharpPack 1.1.0 显式 Context 能读取旧 payload。因此扩展声明保留 `memorypack-binary/v1`。
 
 本地证据通过 97%/105% 性能门禁。该结果只代表本机 macOS arm64；本任务未授权 push，因此 Windows/Linux 远程 CI 和正式长稳矩阵未运行。

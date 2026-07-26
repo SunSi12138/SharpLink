@@ -192,6 +192,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                     continue;
 
                 var adapter = factory.Adapter!;
+                ValidateAdapter(factory, adapter);
                 if (scopeByAdapterId.TryGetValue(factory.AdapterId, out var existing))
                 {
                     if (existing.Adapter.GetType() != adapter.GetType() ||
@@ -203,7 +204,6 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                     continue;
                 }
 
-                ValidateAdapter(factory, adapter);
                 var scope = adapter.CreateScope() ?? throw new InvalidOperationException(
                     $"Adapter '{factory.AdapterId}' returned a null scope.");
                 scopes.Add(scope);
@@ -288,8 +288,20 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
+        Exception? firstException = null;
         for (var index = _scopes.Length - 1; index >= 0; index--)
-            _scopes[index].Dispose();
+        {
+            try
+            {
+                _scopes[index].Dispose();
+            }
+            catch (Exception exception)
+            {
+                firstException ??= exception;
+            }
+        }
+        if (firstException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
     }
 
     private sealed record AdapterScopeRegistration(

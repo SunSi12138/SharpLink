@@ -263,6 +263,16 @@ public partial class RpcGenerator
             document.Dtos.Add(dto);
         }
 
+        foreach (var codec in codecs.OrderBy(static item => item.TypeName, StringComparer.Ordinal))
+        {
+            document.Codecs.Add(new ContractManifestCodec
+            {
+                Type = RemoveGlobalPrefix(codec.TypeName),
+                WireFormatId = codec.WireFormatId,
+                SourceLocation = codec.Location
+            });
+        }
+
         var enums = new Dictionary<string, ContractManifestEnum>(StringComparer.Ordinal);
         void AddEnum(string? name, string? underlying, Location? location)
         {
@@ -579,6 +589,31 @@ public partial class RpcGenerator
             }
         }
 
+        var directlyDescribedCodecTypes = new HashSet<string>(
+            baseline.Contracts
+                .SelectMany(static contract => contract.Methods)
+                .SelectMany(static method => method.Request.Append(method.Response))
+                .Select(static value => value.Type)
+                .Concat(baseline.Dtos.SelectMany(static dto => dto.Members).Select(static member => member.Type)),
+            StringComparer.Ordinal);
+        var currentCodecs = current.Codecs.ToDictionary(static codec => codec.Type, StringComparer.Ordinal);
+        foreach (var oldCodec in baseline.Codecs)
+        {
+            if (directlyDescribedCodecTypes.Contains(oldCodec.Type) ||
+                !currentCodecs.TryGetValue(oldCodec.Type, out var newCodec) ||
+                string.Equals(oldCodec.WireFormatId, newCodec.WireFormatId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            diagnostics.Add(Change(
+                ContractCompatibilityKind.WireType,
+                newCodec.SourceLocation,
+                oldCodec.Type,
+                $"nested Codec wire format changed from {oldCodec.WireFormatId} to {newCodec.WireFormatId}",
+                "restore the previous nested wire format or add a new RPC payload type"));
+        }
+
         var currentEnums = current.Enums.ToDictionary(static item => item.Name, StringComparer.Ordinal);
         foreach (var oldEnum in baseline.Enums)
         {
@@ -673,12 +708,35 @@ public partial class RpcGenerator
     }
 
     private static bool HasRequiredWireFormatIds(ContractManifestDocument manifest)
-        => manifest.Contracts.All(static contract =>
+        => manifest.Contracts is not null &&
+           manifest.Dtos is not null &&
+           manifest.Codecs is not null &&
+           manifest.Enums is not null &&
+           manifest.Unions is not null &&
+           manifest.Services is not null &&
+           manifest.Contracts.All(static contract =>
+               contract is not null &&
+               contract.Methods is not null &&
                contract.Methods.All(static method =>
-                   method.Request.All(static value => !string.IsNullOrWhiteSpace(value.WireFormatId)) &&
+                   method is not null &&
+                   method.Request is not null &&
+                   method.Response is not null &&
+                   method.Request.All(static value =>
+                       value is not null && !string.IsNullOrWhiteSpace(value.WireFormatId)) &&
                    !string.IsNullOrWhiteSpace(method.Response.WireFormatId))) &&
            manifest.Dtos.All(static dto =>
-               dto.Members.All(static member => !string.IsNullOrWhiteSpace(member.WireFormatId)));
+               dto is not null &&
+               dto.Members is not null &&
+               dto.Members.All(static member =>
+                   member is not null && !string.IsNullOrWhiteSpace(member.WireFormatId))) &&
+           manifest.Codecs.All(static codec =>
+               codec is not null &&
+               !string.IsNullOrWhiteSpace(codec.Type) &&
+               !string.IsNullOrWhiteSpace(codec.WireFormatId)) &&
+           manifest.Enums.All(static item => item is not null) &&
+           manifest.Unions.All(static union =>
+               union is not null && union.Cases is not null && union.Cases.All(static item => item is not null)) &&
+           manifest.Services.All(static service => service is not null);
 
     private static string GetWireFormatId(
         string typeName,
@@ -848,6 +906,8 @@ internal static class __SharpLinkContractManifest
         public string SchemaFingerprint { get; set; } = string.Empty;
         public List<ContractManifestContract> Contracts { get; set; } = [];
         public List<ContractManifestDto> Dtos { get; set; } = [];
+        [JsonRequired]
+        public List<ContractManifestCodec> Codecs { get; set; } = [];
         public List<ContractManifestEnum> Enums { get; set; } = [];
         public List<ContractManifestUnion> Unions { get; set; } = [];
         public List<ContractManifestService> Services { get; set; } = [];
@@ -889,6 +949,13 @@ internal static class __SharpLinkContractManifest
         public string Name { get; set; } = string.Empty;
         public string Fingerprint { get; set; } = string.Empty;
         public List<ContractManifestMember> Members { get; set; } = [];
+        [JsonIgnore] public Location? SourceLocation { get; set; }
+    }
+
+    private sealed class ContractManifestCodec
+    {
+        public string Type { get; set; } = string.Empty;
+        public string WireFormatId { get; set; } = string.Empty;
         [JsonIgnore] public Location? SourceLocation { get; set; }
     }
 

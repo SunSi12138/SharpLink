@@ -44,7 +44,7 @@
 - `0.7.8`（已完成）：endpoint admission SPI、Circuit Breaker、HalfOpen probe 与 generation isolation。
 - `0.7.9`（已完成）：组合验证、低基数 telemetry、迁移文档与 API freeze。
 - `0.7.10`（已完成）：多 cluster Client、编译期 route Manifest 与动态模块协调。
-- `0.7.11`（已完成）：通用 Codec Adapter、Manifest API v3、SharpPack 1.0.1、wire-format identity、collectible Scope 生命周期与 MemoryPack 扩展删除。
+- `0.7.11`（已完成）：通用 Codec Adapter、Manifest API v3、SharpPack 1.1.0、wire-format identity、collectible Scope 生命周期与 MemoryPack 扩展删除。
 - `0.8.0-rc`：Chaos、长稳、跨平台/AOT/Package/性能 Release Gate，只修复正确性、稳定性、性能回退和文档问题。
 - `1.0.0`：通过 RC 接受标准后发布稳定 API 与 Protocol v2。
 

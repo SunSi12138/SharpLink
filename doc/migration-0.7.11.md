@@ -9,7 +9,7 @@ English: [`en/migration-0.7.11.md`](en/migration-0.7.11.md)
 | 旧用法 | 0.7.11 |
 | --- | --- |
 | `SharpLink.Serializer.MemoryPack` | `SharpLink.Serializer.SharpPack` |
-| `MemoryPack` / `using MemoryPack` | SharpPack 1.0.1 / `using SharpPack` |
+| `MemoryPack` / `using MemoryPack` | SharpPack `[1.1.0]` / `using SharpPack` |
 | `[MemoryPackable]` | `[SharpPackable]` |
 | `[RpcExternalCodec]` | serializer selector 或 `[RpcCodecAdapter(...)]` |
 | `MemoryPackCodec.Resolver` | 删除；自动 Manifest Adapter |
@@ -73,9 +73,9 @@ serverBuilder.UseCodec(codec);
 
 ## Contract Manifest
 
-删除并重新生成所有开发期 contract baseline。0.7.11 要求每个 request、response、stream item 和 DTO member 都存在非空 `wireFormatId`；缺失、null、空或纯空白值报告 `SHARPLINK024`。不提供开发期 JSON 推断、warning 或迁移 fallback。
+删除并重新生成所有开发期 contract baseline。0.7.11 要求每个 request、response、stream item 和 DTO member 都存在非空 `wireFormatId`，并要求顶层 `codecs` 清单覆盖所有可达闭合 Codec。缺少该清单，或任一必填列表/条目/identity 为 null、空或纯空白时报告 `SHARPLINK024`。这使原生集合内部的 Adapter wire 变化也能报告 `SHARPLINK030`。不提供开发期 JSON 推断、warning 或迁移 fallback。
 
-MemoryPack→SharpPack 只有在固定 golden payload 验证后才保持 `memorypack-binary/v1`。仓库测试已覆盖 null、nullable/string/非 ASCII、array/list/dictionary、nested、empty、union/polymorphism 和 circular-reference，并验证 SharpPack 1.0.1 读旧字节和写出相同字节。
+MemoryPack→SharpPack 只有在固定 golden payload 验证后才保持 `memorypack-binary/v1`。仓库测试已覆盖 null、nullable/string/非 ASCII、array/list/dictionary、nested、empty、union/polymorphism 和 circular-reference，并验证 SharpPack 1.1.0 读旧字节和写出相同字节。
 
 ## 升级检查清单
 
@@ -83,6 +83,6 @@ MemoryPack→SharpPack 只有在固定 golden payload 验证后才保持 `memory
 2. 删除 resolver 与旧 Codec API。
 3. 为没有 selector 的闭合类型增加 `[RpcCodecAdapter]`。
 4. 重新编译全部 Contract、Service 和 Plugin。
-5. 重新生成并提交带必填 `wireFormatId` 的 Contract baseline。
+5. 重新生成并提交带必填 `wireFormatId` 和顶层 `codecs` 清单的 Contract baseline。
 6. 对业务已有 payload 保留自己的 golden fixtures。
 7. 运行 JIT、NativeAOT 和本地包消费测试。

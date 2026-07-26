@@ -55,7 +55,7 @@
 7. `0.7.8`（已完成）：endpoint admission SPI 与 generation-scoped Circuit Breaker。
 8. `0.7.9`（已完成）：组合验证、低基数 telemetry、迁移文档与 API freeze。
 9. `0.7.10`（已完成）：多 cluster Client、静态/动态 contract route 与 child lifecycle 隔离。
-10. `0.7.11`（已完成）：删除 MemoryPack 扩展与 `RpcExternalCodec`，引入 manifest-scoped Codec Adapter SPI，并迁移到 SharpPack 1.0.1。
+10. `0.7.11`（已完成）：删除 MemoryPack 扩展与 `RpcExternalCodec`，引入 manifest-scoped Codec Adapter SPI，并迁移到 SharpPack 1.1.0。
 
 ## 0.8.0-rc：发布门禁
 

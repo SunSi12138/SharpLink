@@ -6,7 +6,7 @@ English: [`en/architecture-0.7.11.md`](en/architecture-0.7.11.md)
 
 0.7.11 把第三方序列化从 SharpLink 核心中彻底解耦。Generator 只理解通用 Adapter 元数据，不识别 SharpPack、MemoryPack 或 NuGet 包名；Runtime 只管理 Adapter、Scope 和闭合 Codec 的生命周期。
 
-本版本同时删除 `SharpLink.Serializer.MemoryPack`、`MemoryPackCodec`、`MemoryPackCodec<T>`、`RpcExternalCodecAttribute` 和进程级 generated Codec registry。官方复杂对象图扩展改为 `SharpLink.Serializer.SharpPack`，固定使用 SharpPack 1.0.1。
+本版本同时删除 `SharpLink.Serializer.MemoryPack`、`MemoryPackCodec`、`MemoryPackCodec<T>`、`RpcExternalCodecAttribute` 和进程级 generated Codec registry。官方复杂对象图扩展改为 `SharpLink.Serializer.SharpPack`，NuGet 依赖使用精确版本范围 `[1.1.0]`。
 
 ## 公共 SPI
 
@@ -83,7 +83,7 @@ Adapter factory：
 
 旧 Manifest API 插件不能载入 0.7.11 Runtime，必须重新编译。
 
-Contract JSON 的 request、response、stream item 和 DTO member 都必须包含非空 `wireFormatId`。项目尚未 1.0，因此不保留开发期临时 JSON 的缺字段兼容：缺失、null、空或纯空白值统一使基线无效并报告 `SHARPLINK024`。
+Contract JSON 的 request、response、stream item 和 DTO member 都必须包含非空 `wireFormatId`。顶层必填 `codecs` 清单同时记录所有可达闭合 Codec 的类型和 wire identity，因此 `List<PluginGraph>` 等原生容器内部的 Adapter wire 变化也会报告 `SHARPLINK030`。项目尚未 1.0，因此不保留开发期临时 JSON 的缺字段兼容：缺少 `codecs`，或任一必填列表/条目/identity 为 null、空或纯空白，统一使基线无效并报告 `SHARPLINK024`。
 
 ## Scope 与事务发布
 
@@ -115,7 +115,7 @@ replace 先完整准备新 Manifest 和新 Scope，再原子发布。新调用�
 
 ## SharpPack 扩展
 
-`SharpPackRpcCodecAdapterScope` 构造时创建一个 Context，所有闭合 Codec 共享它。Codec 使用显式 Context 的 SharpPack API，并验证反序列化完整消费；截断、格式错误和 trailing bytes 映射为不含业务 payload 的 `SharpLinkException(DataLoss)`。已有 `SharpLinkException` 与致命异常不重复包装。
+`SharpPackRpcCodecAdapterScope` 构造时创建一个冻结且非空的 Context formatter graph，所有闭合 Codec 共享它。SharpPack 1.1.0 已修复 Context formatter 绑定与递归构造，但空 Context 对非 collectible 类型仍保留进程级默认 slot 快路径；非空 graph 因此继续保证自动 Scope 不回退到该 slot，不同 Runtime/Manifest/代际拥有独立 formatter 实例。Codec 使用显式 Context 的 SharpPack API；序列化时通过零分配值类型 writer 转接把 `IBufferWriter<byte>` 变成 NativeAOT 可见的具体泛型闭合类型，不关闭 IL scanner。反序列化验证完整消费；截断、格式错误和 trailing bytes 映射为不含业务 payload 的 `SharpLinkException(DataLoss)`。已有 `SharpLinkException`、取消、致命异常及包装或聚合中的这些异常不重复包装。
 
 高级 formatter 使用调用方 Context：
 

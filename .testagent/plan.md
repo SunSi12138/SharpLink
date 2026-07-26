@@ -37,3 +37,19 @@ fixed in `HasTypeParameter`; all 76 Generator tests now pass.
 P0 validation command:
 
 `dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj --configuration Release --no-restore`
+
+## External serializer deep-review plan
+
+1. Audit compile-time Adapter discovery, shape, selection, emission, and compatibility.
+2. Audit runtime factory identity, Scope ownership, rollback, disposal, and dynamic
+   module publication/release.
+3. Audit SharpPack 1.1.0 source behavior, exception classification, Context isolation,
+   dependency resolution, and MemoryPack-removal boundaries.
+4. Add failing regressions only for confirmed defects, fix production code, and retain
+   exact requirement evidence.
+5. Run warnings-as-errors build, Generator/Unit/Integration suites, local package JIT
+   smoke, NativeAOT publication, collectible ALC coverage, and performance regression
+   checks.
+6. Update architecture/migration/change evidence and perform a final diff audit.
+
+All six steps are complete.

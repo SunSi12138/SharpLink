@@ -1041,6 +1041,26 @@ public sealed class DoesNotImplementAdapter { }
     }
 
     [Test]
+    public Task AdapterNestedInNonPublicTypeShouldReportSharplink043()
+    {
+        var source = AddAssemblyAttribute(BuildSource("""
+internal static class HiddenContainer
+{
+    public sealed class NestedAdapter : SharpLink.Abstractions.IRpcCodecAdapter
+    {
+        public string AdapterId => "nested/v1";
+        public string WireFormatId => "wire/v1";
+        public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
+    }
+}
+"""),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(HiddenContainer.NestedAdapter), \"nested/v1\", \"wire/v1\")]");
+
+        EnsureHasRule(source, "SHARPLINK043");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task ConflictingSelectorRegistrationsShouldReportSharplink044()
     {
         var source = AddAssemblyAttributes(BuildSource("""

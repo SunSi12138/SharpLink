@@ -93,10 +93,10 @@
 
 - `dotnet restore Sharplink.slnx`: passed.
 - Release solution build with warnings as errors: passed with zero warnings and zero errors.
-- Tests: Unit 327/327, Generator 76/76, Integration 226/226.
+- Tests: Unit 333/333, Generator 80/80, Integration 226/226.
 - NativeAOT: TCP smoke, isolated local-package smoke, and SharedMemory smoke passed.
 - Local package smoke: all seven 0.7.11 packages restored and ran from an isolated cache;
-  the SDK contained the generator, SharpPack depended on SharpPack 1.0.1, and no
+  the SDK contained the generator, SharpPack depended exactly on SharpPack 1.1.0, and no
   MemoryPack package remained.
 - SharedMemory chaos: 120 seconds, 417,278 successful operations, 150,246 expected
   injected failures, zero unexpected failures, 11 restarts, and all final resource
@@ -106,3 +106,42 @@
   and 99.81% throughput at concurrency 1 and 128, while P99 latency was 102.86% and
   99.23% of baseline. These satisfy the 97% throughput and 105% P99 gates.
 - `git diff --check`: passed. No remote state was changed.
+
+## External serializer deep review
+
+- Status: confirmed defects fixed; final validation complete.
+- Open-generic probe removed because existing behavior already reports `SHARPLINK043`.
+- Different Adapter identities sharing a proven target/schema/wire contract were ruled
+  compatible by design; no implementation identity was added to wire compatibility.
+
+### Fixed regression evidence
+
+| Requirement | Evidence |
+| --- | --- |
+| Effective public Adapter type | `AdapterNestedInNonPublicTypeShouldReportSharplink043` |
+| Every factory instance matches generated identity | `EveryFactoryAdapterInstanceShouldMatchGeneratedIdentity` |
+| Throwing Scope does not skip later Scopes | `ScopeDisposeFailureShouldNotSkipRemainingAdapterScopes` |
+| Throwing registration does not skip later registrations | `ContextDisposeFailureShouldNotSkipRemainingManifestRegistrations` |
+| Automatic Scope owns an isolated formatter graph | `SharpPackAdapterScopesShouldOwnIsolatedFormatterGraphs` |
+| SharpPack interface writer remains NativeAOT-compatible | `SharpLink.AotSmoke` NativeAOT publish and TCP execution |
+| Fatal and cancellation exceptions are preserved | `SharpPackCodecShouldNotWrapSharpLinkOrFatalExceptions`; `SharpPackCodecShouldNotWrapAccessViolationException`; `SharpPackCodecShouldNotWrapCancellationException` |
+| Nested collection Adapter wire changes are rejected | `AdapterWireFormatChangeInsideNativeCollectionShouldBeRejected` |
+| Missing/null reachable Codec inventory is invalid | `BaselineWithoutReachableCodecWireInventoryShouldBeRejected`; `BaselineWithNullReachableCodecWireInventoryShouldBeRejected` |
+
+### Validation recorded so far
+
+- Restore passed.
+- Release solution build with warnings as errors passed with zero warnings/errors.
+- Generator: 80/80 passed.
+- Unit: 333/333 passed after the final exception-tree assertion rebuild.
+- Integration: 226/226 passed, including collectible ALC release coverage.
+- NativeAOT application publication and execution passed for `osx-arm64`.
+- Seven local 0.7.11 packages were produced; the serializer nuspec contains exact
+  `SharpPack [1.1.0]` and no MemoryPack package.
+- Isolated local-package JIT restore/build/run passed with both SharpLink and SharpPack
+  generated sources present; the final resolved graph contains SharpPack/Core/Generator
+  1.1.0 and no MemoryPack.
+- A local-package NativeAOT `osx-arm64` Mach-O executable published and ran.
+- Five post-review BenchmarkDotNet rounds retained 101.35%–103.04% of the 0.7.10
+  baseline throughput and 101.47%–104.94% of the original 0.7.11 candidate throughput;
+  median allocations remain 1152/5952 B for Adapter payloads and 440/1400 B for native arrays.

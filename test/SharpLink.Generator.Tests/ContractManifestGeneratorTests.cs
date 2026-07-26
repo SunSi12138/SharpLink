@@ -108,6 +108,32 @@ public sealed class HelloService : IHelloService
     }
 
     [Test]
+    public Task BaselineWithoutReachableCodecWireInventoryShouldBeRejected()
+    {
+        var source = AdapterContractSource();
+        var baseline = RemoveTopLevelProperty(RunContractGenerator(source).Json, "codecs");
+
+        var compared = RunContractGenerator(source, baseline);
+
+        Ensure(compared.Diagnostics.Count(static diagnostic => diagnostic.Id == "SHARPLINK024") == 1,
+            $"a baseline missing the reachable Codec wire inventory is invalid. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task BaselineWithNullReachableCodecWireInventoryShouldBeRejected()
+    {
+        var source = AdapterContractSource();
+        var baseline = SetTopLevelPropertyToNull(RunContractGenerator(source).Json, "codecs");
+
+        var compared = RunContractGenerator(source, baseline);
+
+        Ensure(compared.Diagnostics.Count(static diagnostic => diagnostic.Id == "SHARPLINK024") == 1,
+            $"a null reachable Codec wire inventory is invalid. Diagnostics: {FormatDiagnostics(compared.Diagnostics)}");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task ExplicitWireFormatChangeShouldBeRejected()
     {
         var baselineSource = AdapterContractSource();
@@ -118,6 +144,32 @@ public sealed class HelloService : IHelloService
 
         Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
             "an explicit wire-format identity change is incompatible");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task AdapterWireFormatChangeInsideNativeCollectionShouldBeRejected()
+    {
+        var baselineSource = AdapterContractSource().Replace(
+            "ValueTask<Graph> Echo(Graph value);",
+            "ValueTask<List<Graph>> Echo(List<Graph> value);",
+            StringComparison.Ordinal);
+        var baseline = RunContractGenerator(baselineSource).Json;
+        var baselineDocument = System.Text.Json.Nodes.JsonNode.Parse(baseline)!.AsObject();
+        var nestedCodec = baselineDocument["codecs"]!.AsArray()
+            .Select(static item => item!.AsObject())
+            .Single(static item => item["type"]!.GetValue<string>() == "Graph");
+        Ensure(nestedCodec["wireFormatId"]!.GetValue<string>() == "fake-wire/v1",
+            "the Manifest records the nested collection element Codec wire identity");
+        var changedSource = baselineSource.Replace(
+            "fake-wire/v1",
+            "other-wire/v1",
+            StringComparison.Ordinal);
+
+        var changed = RunContractGenerator(changedSource, baseline);
+
+        Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK030"),
+            "a nested Adapter wire-format change inside a native collection is incompatible");
         return Task.CompletedTask;
     }
 
@@ -618,6 +670,30 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
     {
         var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
         RemoveWireFormat(root, wireFormatId);
+        root["schemaFingerprint"] = string.Empty;
+        var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+        var canonical = root.ToJsonString(options);
+        var fingerprint = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical));
+        root["schemaFingerprint"] = Convert.ToHexStringLower(fingerprint);
+        return root.ToJsonString(options) + "\n";
+    }
+
+    private static string RemoveTopLevelProperty(string json, string propertyName)
+    {
+        var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+        root.Remove(propertyName);
+        root["schemaFingerprint"] = string.Empty;
+        var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+        var canonical = root.ToJsonString(options);
+        var fingerprint = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical));
+        root["schemaFingerprint"] = Convert.ToHexStringLower(fingerprint);
+        return root.ToJsonString(options) + "\n";
+    }
+
+    private static string SetTopLevelPropertyToNull(string json, string propertyName)
+    {
+        var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+        root[propertyName] = null;
         root["schemaFingerprint"] = string.Empty;
         var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
         var canonical = root.ToJsonString(options);

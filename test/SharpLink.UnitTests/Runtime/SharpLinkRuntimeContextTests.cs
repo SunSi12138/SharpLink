@@ -311,6 +311,45 @@ public class SharpLinkRuntimeContextTests
     }
 
     [Test]
+    public void EveryFactoryAdapterInstanceShouldMatchGeneratedIdentity()
+    {
+        var preparedCounters = new AdapterCounters();
+        var mismatchedCounters = new AdapterCounters();
+        try
+        {
+            using var _ = new SharpLinkRuntimeContextBuilder().Build([
+                new TestManifest(
+                    "per-factory-identity",
+                    new ConfigurableAdapterFactory<AdapterValue>(
+                        new InstanceIdentityAdapter(
+                            preparedCounters,
+                            InstanceIdentityAdapter.Id,
+                            InstanceIdentityAdapter.Wire),
+                        InstanceIdentityAdapter.Id,
+                        InstanceIdentityAdapter.Wire),
+                    new ConfigurableAdapterFactory<SecondAdapterValue>(
+                        new InstanceIdentityAdapter(
+                            mismatchedCounters,
+                            "mismatched-instance/v1",
+                            InstanceIdentityAdapter.Wire),
+                        InstanceIdentityAdapter.Id,
+                        InstanceIdentityAdapter.Wire))
+            ]);
+            throw new Exception("expected every factory Adapter instance to be validated");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message.Contains("runtime identity", StringComparison.Ordinal),
+                "a later same-type Adapter instance cannot bypass runtime identity validation");
+        }
+
+        Ensure(preparedCounters.ScopeCreateCount == 1, "the first valid Adapter Scope was prepared");
+        Ensure(preparedCounters.ScopeDisposeCount == 1, "the prepared Scope was rolled back");
+        Ensure(mismatchedCounters.ScopeCreateCount == 0,
+            "the mismatched later Adapter instance cannot create a Scope");
+    }
+
+    [Test]
     public void WrongTypedCodecShouldRejectAndDisposeCandidateScope()
     {
         var counters = new AdapterCounters();
@@ -382,6 +421,70 @@ public class SharpLinkRuntimeContextTests
 
         Ensure(firstCounters.ScopeDisposeCount == 1, "first Manifest Scope is rolled back");
         Ensure(secondCounters.ScopeDisposeCount == 1, "second Manifest Scope is rolled back");
+    }
+
+    [Test]
+    public void ScopeDisposeFailureShouldNotSkipRemainingAdapterScopes()
+    {
+        var remainingCounters = new AdapterCounters();
+        var throwingCounters = new AdapterCounters();
+        var context = new SharpLinkRuntimeContextBuilder().Build([
+            new TestManifest(
+                "dispose-failure",
+                new AdapterFactory<AdapterValue>(remainingCounters),
+                new ConfigurableAdapterFactory<SecondAdapterValue>(
+                    new ThrowingDisposeAdapter(throwingCounters),
+                    ThrowingDisposeAdapter.Id,
+                    ThrowingDisposeAdapter.Wire))
+        ]);
+
+        try
+        {
+            context.Dispose();
+            throw new Exception("expected Scope disposal failure to be reported");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message.Contains("scope dispose failure", StringComparison.Ordinal),
+                "original Scope disposal failure is preserved");
+        }
+
+        Ensure(throwingCounters.ScopeDisposeCount == 1, "throwing Scope is attempted once");
+        Ensure(remainingCounters.ScopeDisposeCount == 1,
+            "remaining Scope is disposed even after another Scope throws");
+    }
+
+    [Test]
+    public void ContextDisposeFailureShouldNotSkipRemainingManifestRegistrations()
+    {
+        var remainingCounters = new AdapterCounters();
+        var throwingCounters = new AdapterCounters();
+        var context = new SharpLinkRuntimeContextBuilder().Build([
+            new TestManifest(
+                "remaining-registration",
+                new AdapterFactory<AdapterValue>(remainingCounters)),
+            new TestManifest(
+                "throwing-registration",
+                new ConfigurableAdapterFactory<SecondAdapterValue>(
+                    new ThrowingDisposeAdapter(throwingCounters),
+                    ThrowingDisposeAdapter.Id,
+                    ThrowingDisposeAdapter.Wire))
+        ]);
+
+        try
+        {
+            context.Dispose();
+            throw new Exception("expected Scope disposal failure to be reported");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message.Contains("scope dispose failure", StringComparison.Ordinal),
+                "first disposal failure is preserved across Manifest cleanup");
+        }
+
+        Ensure(throwingCounters.ScopeDisposeCount == 1, "throwing registration is attempted once");
+        Ensure(remainingCounters.ScopeDisposeCount == 1,
+            "remaining Manifest registration is disposed after another registration throws");
     }
 
     [Test]
@@ -564,6 +667,62 @@ public class SharpLinkRuntimeContextTests
         }
     }
 
+    public sealed class InstanceIdentityAdapter : IRpcCodecAdapter
+    {
+        internal const string Id = "test.instance-identity/v1";
+        internal const string Wire = CountingAdapter.Wire;
+        private readonly AdapterCounters _counters;
+        private readonly string _adapterId;
+        private readonly string _wireFormatId;
+
+        public InstanceIdentityAdapter()
+            : this(new AdapterCounters(), Id, Wire)
+        {
+        }
+
+        internal InstanceIdentityAdapter(
+            AdapterCounters counters,
+            string adapterId,
+            string wireFormatId)
+        {
+            _counters = counters;
+            _adapterId = adapterId;
+            _wireFormatId = wireFormatId;
+        }
+
+        public string AdapterId => _adapterId;
+        public string WireFormatId => _wireFormatId;
+
+        public IRpcCodecAdapterScope CreateScope()
+        {
+            Interlocked.Increment(ref _counters.ScopeCreateCount);
+            return new CountingScope(_counters);
+        }
+    }
+
+    public sealed class ThrowingDisposeAdapter : IRpcCodecAdapter
+    {
+        internal const string Id = "z.test.throwing-dispose/v1";
+        internal const string Wire = "test-throwing-dispose-wire/v1";
+        private readonly AdapterCounters _counters;
+
+        public ThrowingDisposeAdapter()
+            : this(new AdapterCounters())
+        {
+        }
+
+        internal ThrowingDisposeAdapter(AdapterCounters counters) => _counters = counters;
+
+        public string AdapterId => Id;
+        public string WireFormatId => Wire;
+
+        public IRpcCodecAdapterScope CreateScope()
+        {
+            Interlocked.Increment(ref _counters.ScopeCreateCount);
+            return new ThrowingDisposeScope(_counters);
+        }
+    }
+
     public sealed class FailingScopeAdapter : IRpcCodecAdapter
     {
         internal const string Id = "z.test.failing-adapter/v1";
@@ -613,6 +772,28 @@ public class SharpLinkRuntimeContextTests
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 0)
                 Interlocked.Increment(ref counters.ScopeDisposeCount);
+        }
+    }
+
+    private sealed class ThrowingDisposeScope(AdapterCounters counters) : IRpcCodecAdapterScope
+    {
+        private int _disposed;
+
+        public IRpcCodec<T> CreateCodec<
+            [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(
+                System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All)] T>()
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            Interlocked.Increment(ref counters.CodecCreateCount);
+            return new AdapterCodec<T>();
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+            Interlocked.Increment(ref counters.ScopeDisposeCount);
+            throw new InvalidOperationException("scope dispose failure");
         }
     }
 
