@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-07-27
+
+### Fixed
+
+- Concurrent ClientConnection disposal now joins the owned RpcSession teardown instead of returning before physical transport cleanup.
+- Runtime Context and generated Adapter registration disposal now preserve every scope failure after completing all scopes.
+- Concurrent Hosted Server stop callers now await one shared shutdown operation.
+- Server connection close now preserves cancellation-callback and Session cleanup failures together.
+- Throwing connection-cancellation callbacks are logged but can no longer strand pending RPC calls or skip stream completion.
+
+### Compatibility and validation
+
+- Public APIs, Protocol v2, and generated Manifest versions are unchanged; multi-scope cleanup can now surface `AggregateException`.
+- Release build, Generator 83/83, Unit 374/374, Integration 228/228, package smoke, and same-machine A/B passed.
+- Normal ClientConnection disposal remained at 1.145 → 1.146 µs and 18.51 KB; two earlier allocating designs were rejected.
+
 ## [0.8.6] - 2026-07-27
 
 ### Fixed

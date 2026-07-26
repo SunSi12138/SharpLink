@@ -489,6 +489,33 @@ public class SharpLinkRuntimeContextTests
     }
 
     [Test]
+    public void ContextDisposeShouldPreserveEveryAdapterScopeFailure()
+    {
+        var context = new SharpLinkRuntimeContextBuilder().Build([
+            new TestManifest("first-throw", new ConfigurableAdapterFactory<AdapterValue>(
+                new NamedThrowingDisposeAdapter("throwing.first/v1", "first scope cleanup failed"),
+                "throwing.first/v1", "throwing-wire/v1")),
+            new TestManifest("second-throw", new ConfigurableAdapterFactory<SecondAdapterValue>(
+                new NamedThrowingDisposeAdapter("throwing.second/v1", "second scope cleanup failed"),
+                "throwing.second/v1", "throwing-wire/v1"))
+        ]);
+
+        Exception failure;
+        try
+        {
+            context.Dispose();
+            throw new Exception("expected Adapter scope cleanup failures");
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Ensure(ContainsMessage(failure, "first scope cleanup failed"), "first scope failure retained");
+        Ensure(ContainsMessage(failure, "second scope cleanup failed"), "second scope failure retained");
+    }
+
+    [Test]
     public async Task TenThousandCodecPublicationRacesShouldPreserveRegistrationIdentity()
     {
         var oldCounters = new AdapterCounters();
@@ -931,6 +958,19 @@ public class SharpLinkRuntimeContextTests
         }
     }
 
+    private sealed class NamedThrowingDisposeAdapter(string adapterId, string message) : IRpcCodecAdapter
+    {
+        public string AdapterId => adapterId;
+        public string WireFormatId => "throwing-wire/v1";
+        public IRpcCodecAdapterScope CreateScope() => new NamedThrowingDisposeScope(message);
+    }
+
+    private sealed class NamedThrowingDisposeScope(string message) : IRpcCodecAdapterScope
+    {
+        public IRpcCodec<T> CreateCodec<T>() => new AdapterCodec<T>();
+        public void Dispose() => throw new InvalidOperationException(message);
+    }
+
     private sealed class CountingScope(AdapterCounters counters) : IRpcCodecAdapterScope
     {
         private int _disposed;
@@ -1134,6 +1174,22 @@ public class SharpLinkRuntimeContextTests
         internal int CodecCreateCount;
         internal int ScopeDisposeCount;
         internal int FailOnCodecNumber;
+    }
+
+    private static bool ContainsMessage(Exception exception, string message)
+    {
+        if (exception.Message == message)
+            return true;
+        if (exception is AggregateException aggregate)
+        {
+            foreach (var inner in aggregate.InnerExceptions)
+            {
+                if (ContainsMessage(inner, message))
+                    return true;
+            }
+            return false;
+        }
+        return exception.InnerException is { } nested && ContainsMessage(nested, message);
     }
 
     private static void Ensure(bool condition, string message)

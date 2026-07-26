@@ -10,6 +10,8 @@ internal sealed class SharpLinkServerHostedService(
     private ISharpLinkServer? _server;
     private Task? _runTask;
     private CancellationTokenSource? _runCts;
+    private readonly Lock _stopGate = new();
+    private Task? _stopTask;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -65,7 +67,13 @@ internal sealed class SharpLinkServerHostedService(
         }
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken)
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        lock (_stopGate)
+            return _stopTask ??= StopCoreAsync(cancellationToken);
+    }
+
+    private async Task StopCoreAsync(CancellationToken cancellationToken)
     {
         var runCts = Interlocked.Exchange(ref _runCts, null);
         if (runCts is null)

@@ -141,7 +141,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
             _manifestRegistrations.Clear();
         }
         ((RpcCodecProvider)Codecs).Dispose();
-        Exception? firstException = null;
+        List<Exception>? failures = null;
         for (var index = registrations.Length - 1; index >= 0; index--)
         {
             try
@@ -150,11 +150,13 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
             }
             catch (Exception exception)
             {
-                firstException ??= exception;
+                (failures ??= []).Add(exception);
             }
         }
-        if (firstException is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
     }
 
     // This process-wide fallback is used only before an instance-owned Context is attached.

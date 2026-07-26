@@ -403,7 +403,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
-        Exception? firstException = null;
+        List<Exception>? failures = null;
         for (var index = _scopes.Length - 1; index >= 0; index--)
         {
             try
@@ -412,11 +412,13 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
             }
             catch (Exception exception)
             {
-                firstException ??= exception;
+                (failures ??= []).Add(exception);
             }
         }
-        if (firstException is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
     }
 
     private sealed record AdapterScopeRegistration(

@@ -318,6 +318,70 @@ public class SharpLinkClientLifecycleStateTests
     }
 
     [Test]
+    public async Task ConcurrentClientConnectionDisposersShouldAwaitPhysicalCleanup()
+    {
+        await using var owner = new SharpLinkClient(
+            new NonConnectingFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        var transport = new BlockingDisposeConnection();
+        var connection = new ClientConnection(
+            owner,
+            new RpcSession(transport),
+            new CancellationTokenSource(),
+            8,
+            context.Codecs);
+
+        var first = connection.DisposeAsync().AsTask();
+        await transport.DisposeStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var second = connection.DisposeAsync().AsTask();
+
+        Ensure(!second.IsCompleted, "concurrent disposal must await physical transport cleanup");
+        transport.ReleaseDispose();
+        await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public async Task CancellationCallbackFailureMustNotStrandPendingCalls()
+    {
+        await using var owner = new SharpLinkClient(
+            new NonConnectingFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        using var cancellation = new CancellationTokenSource();
+        using var callback = cancellation.Token.Register(
+            static () => throw new InvalidOperationException("connection cancellation callback failed"));
+        var connection = new ClientConnection(
+            owner,
+            new RpcSession(new TestTransportConnection()),
+            cancellation,
+            8,
+            context.Codecs);
+        var operation = connection.PendingCalls.Rent<int>(out _);
+        var terminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "connection failed");
+
+        try
+        {
+            connection.Fail(terminal);
+            try
+            {
+                _ = await operation.AsValueTask();
+                throw new Exception("expected pending call failure");
+            }
+            catch (SharpLinkException exception)
+            {
+                Ensure(ReferenceEquals(exception, terminal), "pending call must retain terminal failure");
+            }
+        }
+        finally
+        {
+            await connection.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task PowerOfTwoChoiceShouldSelectLowerActiveConnection()
     {
         await using var owner = new SharpLinkClient(
@@ -839,6 +903,30 @@ public class SharpLinkClientLifecycleStateTests
 
         public ValueTask DisposeAsync()
             => ValueTask.FromException(new InvalidOperationException("transport cleanup failed"));
+    }
+
+    private sealed class BlockingDisposeConnection : ITransportConnection
+    {
+        private readonly System.IO.Pipelines.Pipe _input = new();
+        private readonly System.IO.Pipelines.Pipe _output = new();
+        private readonly TaskCompletionSource _release =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource DisposeStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public string Id { get; } = "blocking-dispose";
+        public System.IO.Pipelines.PipeReader Input => _input.Reader;
+        public System.IO.Pipelines.PipeWriter Output => _output.Writer;
+        public System.Net.EndPoint? LocalEndPoint => null;
+        public System.Net.EndPoint? RemoteEndPoint => null;
+
+        public ValueTask DisposeAsync()
+        {
+            DisposeStarted.TrySetResult();
+            return new ValueTask(_release.Task);
+        }
+
+        internal void ReleaseDispose() => _release.TrySetResult();
     }
 
     private static ClientConnection? SelectClusterConnection(

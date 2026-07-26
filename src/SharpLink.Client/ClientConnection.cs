@@ -92,6 +92,7 @@ internal sealed class ClientConnection :
         if (previousState == (int)ClientConnectionState.Draining)
             SharpLinkTelemetry.AddClientRetiringConnections(-1);
 
+        Exception? cancellationException = null;
         try
         {
             _cancellation.Cancel();
@@ -99,8 +100,14 @@ internal sealed class ClientConnection :
         catch (ObjectDisposedException)
         {
         }
+        catch (Exception callbackException)
+        {
+            cancellationException = callbackException;
+        }
         PendingCalls.FailAllPendingRequests(exception);
         Session.StreamManager.CompleteAll(exception);
+        if (cancellationException is not null)
+            _client.ReportConnectionCancellationCallbackFailure(cancellationException);
     }
 
     public bool TryBeginUntrackedCall()
@@ -248,17 +255,17 @@ internal sealed class ClientConnection :
         }
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
+            return Session.DisposeAsync();
 
         Fail(new SharpLinkException(
             SharpLinkErrorCode.ConnectionClosed,
             "Client connection is disposed."));
         _cancellation.Dispose();
         PendingCalls.Dispose();
-        await Session.DisposeAsync().ConfigureAwait(false);
+        return Session.DisposeAsync();
     }
 
     private void ReleaseActiveCall()
@@ -292,6 +299,12 @@ internal sealed class ClientConnection :
         {
         }
     }
+}
+
+internal sealed partial class SharpLinkClient
+{
+    internal void ReportConnectionCancellationCallbackFailure(Exception exception)
+        => _logger.LogError(exception, "SharpLink connection cancellation callback failed during teardown.");
 }
 
 internal struct LateResponseLogLimiter

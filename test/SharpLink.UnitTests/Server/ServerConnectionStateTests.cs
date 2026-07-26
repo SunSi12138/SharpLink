@@ -133,6 +133,30 @@ public class ServerConnectionStateTests
             "one service failure must not skip later connection services");
     }
 
+    [Test]
+    public async Task CloseShouldPreserveCancellationAndSessionCleanupFailures()
+    {
+        var state = CreateState(static () => throw new InvalidOperationException("session cleanup failed"));
+        using var registration = state.ConnectionToken.Register(
+            static () => throw new InvalidOperationException("connection cancellation failed"));
+
+        Exception failure;
+        try
+        {
+            await state.CloseAsync();
+            throw new Exception("expected connection close failure");
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Ensure(ContainsMessage(failure, "connection cancellation failed"),
+            "connection close must retain cancellation callback failure");
+        Ensure(ContainsMessage(failure, "session cleanup failed"),
+            "connection close must retain Session cleanup failure");
+    }
+
     private static ServerConnectionState CreateState(
         Action disconnect,
         CancellationToken serverToken = default)

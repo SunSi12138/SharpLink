@@ -42,6 +42,29 @@ public class SharpLinkServerHostedServiceTests
     }
 
     [Test]
+    public async Task ConcurrentStopCallersShouldAwaitTheSameServerCleanup()
+    {
+        var transport = new DelayedDisposeTransport();
+        var builder = SharpLinkServerBuilder.Create().UseTransport(transport);
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var hosted = new SharpLinkServerHostedService(
+            builder,
+            NullLoggerFactory.Instance,
+            provider,
+            new SharpLinkServerReadiness(),
+            new TestHostApplicationLifetime());
+
+        await hosted.StartAsync(CancellationToken.None);
+        var first = hosted.StopAsync(CancellationToken.None);
+        await transport.DisposeStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var second = hosted.StopAsync(CancellationToken.None);
+
+        Ensure(!second.IsCompleted, "concurrent StopAsync must await the active server cleanup");
+        transport.ReleaseDispose();
+        await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
     public async Task AsynchronousRunFailureShouldStopTheHost()
     {
         var transport = new DeferredFailureTransport();
@@ -127,6 +150,9 @@ public class SharpLinkServerHostedServiceTests
         private readonly TaskCompletionSource<bool> _disposeRelease =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        internal TaskCompletionSource DisposeStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public System.Net.EndPoint? LocalEndPoint => null;
 
         public async ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
@@ -135,7 +161,11 @@ public class SharpLinkServerHostedServiceTests
             throw new InvalidOperationException("unreachable");
         }
 
-        public ValueTask DisposeAsync() => new(_disposeRelease.Task);
+        public ValueTask DisposeAsync()
+        {
+            DisposeStarted.TrySetResult();
+            return new(_disposeRelease.Task);
+        }
 
         public void ReleaseDispose() => _disposeRelease.TrySetResult(true);
     }

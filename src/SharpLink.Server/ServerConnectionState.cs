@@ -252,14 +252,14 @@ internal sealed class ServerConnectionState
     private async Task CloseCoreAsync()
     {
         MarkDraining();
-        Exception? firstException = null;
+        List<Exception>? failures = null;
         try
         {
             _connectionCancellation.Cancel();
         }
         catch (Exception exception)
         {
-            firstException = exception;
+            (failures ??= []).Add(exception);
         }
 
         try
@@ -268,7 +268,7 @@ internal sealed class ServerConnectionState
         }
         catch (Exception exception)
         {
-            firstException ??= exception;
+            (failures ??= []).Add(exception);
         }
         finally
         {
@@ -278,14 +278,18 @@ internal sealed class ServerConnectionState
             Volatile.Write(ref _authenticationContext, null);
             Volatile.Write(ref _defaultCallContext, null);
             _serviceCleanupTask = CleanupServicesWhenCallsDrainAsync();
-            if (firstException is null)
+            if (failures is null)
                 _sessionCompleted.TrySetResult();
+            else if (failures.Count == 1)
+                _sessionCompleted.TrySetException(failures[0]);
             else
-                _sessionCompleted.TrySetException(firstException);
+                _sessionCompleted.TrySetException(new AggregateException(failures));
         }
 
-        if (firstException is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
     }
 
     private async Task CleanupServicesWhenCallsDrainAsync()
