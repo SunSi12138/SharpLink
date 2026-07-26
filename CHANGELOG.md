@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.13] - 2026-07-27
+
+### Fixed
+
+- Shared-memory control disposal now joins its writer loop after stream closure instead of returning with a live background task.
+- Cancellation tokens now wake blocked shared-memory control waits without relying on an unrelated peer or local pulse.
+- A rejected concurrent PipeReader read can no longer replace the active read's cancellation registration.
+- A rejected concurrent PipeReader read can no longer clear the active read's peer-notification state and strand it after data arrives.
+- PipeWriter completion now converges with an active spill flush before releasing the spill buffer or returning.
+
+### Compatibility and validation
+
+- Public APIs, Protocol v2, and generated Manifest versions are unchanged; invalid concurrent PipeReader calls remain rejected but no longer alter the accepted read.
+- Non-incremental Release build, Generator 83/83, Unit 404/404, Integration 228/228, package smoke, and reversed same-machine A/B passed.
+- Available-data Reader read/advance and default-token control waits remained about 71–73 ns and 20 ns at zero allocation. Normal writer completion remained in the same band while allocation fell from 280 B to 256 B.
+
 ## [0.8.12] - 2026-07-27
 
 ### Fixed

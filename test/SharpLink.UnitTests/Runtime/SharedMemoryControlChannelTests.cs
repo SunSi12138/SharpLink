@@ -302,6 +302,57 @@ public class SharedMemoryControlChannelTests
         await Assert.That(ContainsMessage(failure, "control stream cleanup failed")).IsTrue();
     }
 
+    [Test]
+    public async Task CancellationTokenShouldWakeAControlWaitWithoutAnExternalPulse()
+    {
+        var pipeName = $"sc{Guid.NewGuid():N}"[..20];
+        await using var server = new NamedPipeServerStream(
+            pipeName,
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        await using var client = new NamedPipeClientStream(
+            ".",
+            pipeName,
+            PipeDirection.InOut,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+
+        var accept = server.WaitForConnectionAsync();
+        await client.ConnectAsync();
+        await accept;
+        await using var control = new SharedMemoryControlChannel(server);
+        using var cancellation = new CancellationTokenSource();
+        var wait = control.WaitForDataAsync(cancellation.Token).AsTask();
+
+        cancellation.Cancel();
+        await Task.Delay(50);
+        var completedWithoutPulse = wait.IsCompleted;
+        control.PulseDataWaiter();
+        var failure = await CaptureFailureAsync(wait);
+
+        await Assert.That(completedWithoutPulse).IsTrue();
+        await Assert.That(failure).IsAssignableTo<OperationCanceledException>();
+    }
+
+    [Test]
+    public async Task DisposeShouldJoinWriterAfterTheInitialCloseTimeout()
+    {
+        var stream = new ControlledWriterPipeStream();
+        var control = new SharedMemoryControlChannel(stream);
+        control.SignalDataAvailable();
+        await stream.WriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var dispose = control.DisposeAsync().AsTask();
+        await stream.DisposeStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(50);
+        var returnedBeforeWriterExited = dispose.IsCompleted;
+        stream.ReleaseWriter();
+        await dispose.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await Assert.That(returnedBeforeWriterExited).IsFalse();
+    }
+
     private static async Task<Exception> CaptureFailureAsync(Task operation)
     {
         try
@@ -356,5 +407,41 @@ public class SharedMemoryControlChannelTests
         }
 
         internal void ReleaseReader() => _readerRelease.TrySetResult(0);
+    }
+
+    private sealed class ControlledWriterPipeStream()
+        : PipeStream(PipeDirection.InOut, bufferSize: 1)
+    {
+        private readonly TaskCompletionSource<int> _readerRelease =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _writerRelease =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource WriteStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource DisposeStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+            => new(_readerRelease.Task);
+
+        public override ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            WriteStarted.TrySetResult();
+            return new ValueTask(_writerRelease.Task);
+        }
+
+        public override ValueTask DisposeAsync()
+        {
+            DisposeStarted.TrySetResult();
+            _readerRelease.TrySetResult(0);
+            return ValueTask.CompletedTask;
+        }
+
+        internal void ReleaseWriter() => _writerRelease.TrySetResult();
     }
 }

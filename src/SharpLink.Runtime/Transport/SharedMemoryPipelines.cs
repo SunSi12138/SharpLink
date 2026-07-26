@@ -15,11 +15,10 @@ internal sealed class SharedMemoryPipeReader : PipeReader
     private bool _currentIsStaging;
     private bool _stagingExaminedAll;
     private bool _hasOutstandingRead;
-    private CancellationToken _registeredReadCancellation;
-    private CancellationTokenRegistration _readCancellationRegistration;
     private TaskCompletionSource<bool>? _outstandingReadReleased;
     private int _peerWriterArmed;
     private int _cancelPending;
+    private int _readOperationPending;
     private int _completed;
 
     public SharedMemoryPipeReader(
@@ -119,7 +118,6 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         if (_direction.TakeWriterWaiting() | TakePeerWriterArmed())
             _control.SignalSpaceAvailable();
         _control.PulseDataWaiter();
-        _readCancellationRegistration.Dispose();
         if (!Volatile.Read(ref _hasOutstandingRead))
             DisposeStaging();
     }
@@ -139,68 +137,85 @@ internal sealed class SharedMemoryPipeReader : PipeReader
 
     public override bool TryRead(out ReadResult result)
     {
-        if (Volatile.Read(ref _hasOutstandingRead))
-            throw new InvalidOperationException("AdvanceTo must be called before reading again.");
-        if (Interlocked.Exchange(ref _cancelPending, 0) != 0)
+        if (Interlocked.CompareExchange(ref _readOperationPending, 1, 0) != 0)
+            throw new InvalidOperationException("Only one shared-memory read operation can be pending.");
+        try
         {
-            result = new ReadResult(default, isCanceled: true, isCompleted: false);
-            return true;
-        }
+            if (Volatile.Read(ref _hasOutstandingRead))
+                throw new InvalidOperationException("AdvanceTo must be called before reading again.");
+            if (Interlocked.Exchange(ref _cancelPending, 0) != 0)
+            {
+                result = new ReadResult(default, isCanceled: true, isCompleted: false);
+                return true;
+            }
 
-        if (TryCreateAvailableReadResult(_stagingExaminedAll, out result))
-            return true;
-        result = default;
-        return false;
+            if (TryCreateAvailableReadResult(_stagingExaminedAll, out result))
+                return true;
+            result = default;
+            return false;
+        }
+        finally
+        {
+            Volatile.Write(ref _readOperationPending, 0);
+        }
     }
 
     public override async ValueTask<ReadResult> ReadAsync(CancellationToken cancellationToken = default)
     {
-        if (Volatile.Read(ref _hasOutstandingRead))
-            throw new InvalidOperationException("AdvanceTo must be called before reading again.");
-
-        RegisterReadCancellation(cancellationToken);
-        while (true)
+        if (Interlocked.CompareExchange(ref _readOperationPending, 1, 0) != 0)
+            throw new InvalidOperationException("Only one shared-memory read operation can be pending.");
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (Interlocked.Exchange(ref _cancelPending, 0) != 0)
-                return new ReadResult(default, isCanceled: true, isCompleted: false);
-            if (TryCreateAvailableReadResult(_stagingExaminedAll, out var result))
-                return result;
+            if (Volatile.Read(ref _hasOutstandingRead))
+                throw new InvalidOperationException("AdvanceTo must be called before reading again.");
 
-            SpinBriefly();
-            if (TryCreateAvailableReadResult(_stagingExaminedAll, out result))
-                return result;
-
-            _direction.SetReaderWaiting();
-            if (TryCreateAvailableReadResult(_stagingExaminedAll, out result))
+            while (true)
             {
-                _direction.ClearReaderWaiting();
-                return result;
-            }
-            if (_control.IsClosed)
-            {
-                _direction.ClearReaderWaiting();
-                _control.ThrowIfFaulted();
-                return new ReadResult(default, isCanceled: false, isCompleted: true);
-            }
-
-            try
-            {
-                SharpLinkTelemetry.RecordSharedMemoryWait("reader");
-                _control.SignalDataWaiterArmed();
-                await _control.WaitForDataAsync(cancellationToken).ConfigureAwait(false);
-            }
-            catch (SharpLinkException exception) when (
-                _control.IsClosed && exception.Code == SharpLinkErrorCode.ConnectionClosed)
-            {
-                if (TryCreateAvailableReadResult(requireAdditionalStagingData: false, out result))
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Interlocked.Exchange(ref _cancelPending, 0) != 0)
+                    return new ReadResult(default, isCanceled: true, isCompleted: false);
+                if (TryCreateAvailableReadResult(_stagingExaminedAll, out var result))
                     return result;
-                return new ReadResult(default, isCanceled: false, isCompleted: true);
+
+                SpinBriefly();
+                if (TryCreateAvailableReadResult(_stagingExaminedAll, out result))
+                    return result;
+
+                _direction.SetReaderWaiting();
+                if (TryCreateAvailableReadResult(_stagingExaminedAll, out result))
+                {
+                    _direction.ClearReaderWaiting();
+                    return result;
+                }
+                if (_control.IsClosed)
+                {
+                    _direction.ClearReaderWaiting();
+                    _control.ThrowIfFaulted();
+                    return new ReadResult(default, isCanceled: false, isCompleted: true);
+                }
+
+                try
+                {
+                    SharpLinkTelemetry.RecordSharedMemoryWait("reader");
+                    _control.SignalDataWaiterArmed();
+                    await _control.WaitForDataAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (SharpLinkException exception) when (
+                    _control.IsClosed && exception.Code == SharpLinkErrorCode.ConnectionClosed)
+                {
+                    if (TryCreateAvailableReadResult(requireAdditionalStagingData: false, out result))
+                        return result;
+                    return new ReadResult(default, isCanceled: false, isCompleted: true);
+                }
+                finally
+                {
+                    _direction.ClearReaderWaiting();
+                }
             }
-            finally
-            {
-                _direction.ClearReaderWaiting();
-            }
+        }
+        finally
+        {
+            Volatile.Write(ref _readOperationPending, 0);
         }
     }
 
@@ -393,19 +408,6 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         SharpLinkTelemetry.RecordSharedMemoryCursorRefresh("reader_write");
         _cachedWritePosition = _direction.ReadWritePosition();
         return _cachedWritePosition;
-    }
-
-    private void RegisterReadCancellation(CancellationToken cancellationToken)
-    {
-        if (cancellationToken == _registeredReadCancellation)
-            return;
-        _readCancellationRegistration.Dispose();
-        _registeredReadCancellation = cancellationToken;
-        _readCancellationRegistration = cancellationToken.CanBeCanceled
-            ? cancellationToken.UnsafeRegister(
-                static state => ((SharedMemoryPipeReader)state!)._control.PulseDataWaiter(),
-                this)
-            : default;
     }
 
     private sealed class RingSequenceSegment : ReadOnlySequenceSegment<byte>
@@ -601,8 +603,6 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
     private SpillReason _lastSpillReason;
     private int _lastMemoryLength;
     private BufferKind _lastBufferKind;
-    private CancellationToken _registeredFlushCancellation;
-    private CancellationTokenRegistration _flushCancellationRegistration;
     private int _peerReaderArmed;
     private int _cancelPending;
     private int _completed;
@@ -699,10 +699,11 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
         if (_lastBufferKind != BufferKind.None)
             throw new InvalidOperationException("Advance must be called before FlushAsync.");
 
-        RegisterFlushCancellation(cancellationToken);
         await _flushGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (Volatile.Read(ref _completed) != 0)
+                return new FlushResult(isCanceled: false, isCompleted: true);
             if (Interlocked.Exchange(ref _cancelPending, 0) != 0)
                 return new FlushResult(isCanceled: true, isCompleted: false);
             if (_direction.IsReaderClosed || _control.IsClosed)
@@ -713,7 +714,10 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
 
             PublishDirectWrites();
             if (_spill is not null && !await DrainSpillAsync(cancellationToken).ConfigureAwait(false))
-                return new FlushResult(isCanceled: true, isCompleted: false);
+            {
+                var completed = Volatile.Read(ref _completed) != 0;
+                return new FlushResult(isCanceled: !completed, isCompleted: completed);
+            }
             if (_direction.IsReaderClosed || _control.IsClosed)
             {
                 _control.ThrowIfFaulted();
@@ -735,9 +739,31 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
         if (_direction.TakeReaderWaiting() | TakePeerReaderArmed())
             _control.SignalDataAvailable();
         _control.PulseSpaceWaiter();
-        _flushCancellationRegistration.Dispose();
-        _spill?.Dispose();
-        _spill = null;
+
+        if (_spill is not null)
+            CompleteSpill();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void CompleteSpill()
+    {
+        // A flush that has not acquired the gate yet observes _completed before it
+        // can touch the spill. Avoid semaphore traffic for an idle spill shutdown.
+        if (_flushGate.CurrentCount != 0)
+        {
+            CleanupSpill();
+            return;
+        }
+
+        _flushGate.Wait();
+        try
+        {
+            CleanupSpill();
+        }
+        finally
+        {
+            _flushGate.Release();
+        }
     }
 
     public override ValueTask CompleteAsync(Exception? exception = null)
@@ -788,10 +814,20 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
             _control.SignalDataAvailable();
     }
 
+    private void CleanupSpill()
+    {
+        _spill?.Dispose();
+        _spill = null;
+        _lastBufferKind = BufferKind.None;
+        _lastMemoryLength = 0;
+    }
+
     private async ValueTask<bool> DrainSpillAsync(CancellationToken cancellationToken)
     {
         while (_spill is not null && _spill.WrittenCount != 0)
         {
+            if (Volatile.Read(ref _completed) != 0)
+                return false;
             cancellationToken.ThrowIfCancellationRequested();
             if (Interlocked.Exchange(ref _cancelPending, 0) != 0)
                 return false;
@@ -917,19 +953,6 @@ internal sealed class SharedMemoryPipeWriter : PipeWriter
             SpillReason.Pending => "pending",
             _ => "unknown"
         };
-
-    private void RegisterFlushCancellation(CancellationToken cancellationToken)
-    {
-        if (cancellationToken == _registeredFlushCancellation)
-            return;
-        _flushCancellationRegistration.Dispose();
-        _registeredFlushCancellation = cancellationToken;
-        _flushCancellationRegistration = cancellationToken.CanBeCanceled
-            ? cancellationToken.UnsafeRegister(
-                static state => ((SharedMemoryPipeWriter)state!)._control.PulseSpaceWaiter(),
-                this)
-            : default;
-    }
 
     private enum BufferKind
     {

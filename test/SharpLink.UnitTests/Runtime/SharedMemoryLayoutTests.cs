@@ -115,12 +115,14 @@ public class SharedMemoryLayoutTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task CreatingMappingShouldRemoveExclusivelyOpenableStaleFiles()
     {
         var directory = SharedMemoryMapping.GetMappingDirectory();
         Directory.CreateDirectory(directory);
         var stalePath = Path.Combine(directory, $"{Guid.NewGuid():N}.shm");
         await File.WriteAllBytesAsync(stalePath, [1, 2, 3]);
+        File.SetLastWriteTimeUtc(stalePath, DateTime.UtcNow - TimeSpan.FromMinutes(5));
         var nonce = RandomNumberGenerator.GetBytes(SharedMemoryLayout.NonceBytes);
 
         await using var mapping = SharedMemoryMapping.CreateServer(64 * 1024, nonce, out _);

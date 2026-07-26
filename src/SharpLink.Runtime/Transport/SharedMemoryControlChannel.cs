@@ -90,16 +90,34 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     }
 
     public ValueTask WaitForDataAsync(CancellationToken cancellationToken)
-        => WaitAsync(_dataAvailable, cancellationToken);
+        => cancellationToken.CanBeCanceled
+            ? WaitWithCancellationAsync(_dataAvailable, cancellationToken)
+            : WaitWithoutCancellationAsync(_dataAvailable);
 
     public ValueTask WaitForSpaceAsync(CancellationToken cancellationToken)
-        => WaitAsync(_spaceAvailable, cancellationToken);
+        => cancellationToken.CanBeCanceled
+            ? WaitWithCancellationAsync(_spaceAvailable, cancellationToken)
+            : WaitWithoutCancellationAsync(_spaceAvailable);
 
-    private async ValueTask WaitAsync(SharedMemoryAsyncPulse pulse, CancellationToken cancellationToken)
+    private async ValueTask WaitWithoutCancellationAsync(SharedMemoryAsyncPulse pulse)
+    {
+        if (IsClosed)
+            ThrowClosed();
+        _ = await pulse.WaitAsync().ConfigureAwait(false);
+        if (IsClosed)
+            ThrowClosed();
+    }
+
+    private async ValueTask WaitWithCancellationAsync(
+        SharedMemoryAsyncPulse pulse,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (IsClosed)
             ThrowClosed();
+        using var cancellationRegistration = cancellationToken.UnsafeRegister(
+            static state => ((SharedMemoryAsyncPulse)state!).Pulse(),
+            pulse);
         _ = await pulse.WaitAsync().ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         if (IsClosed)
@@ -229,6 +247,19 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         try
         {
             await _readerTask.ConfigureAwait(false);
+        }
+        catch (Exception ex) when (IsExpectedControlClose(ex))
+        {
+        }
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(
+                cleanupException,
+                exception);
+        }
+        try
+        {
+            await _writerTask.ConfigureAwait(false);
         }
         catch (Exception ex) when (IsExpectedControlClose(ex))
         {
