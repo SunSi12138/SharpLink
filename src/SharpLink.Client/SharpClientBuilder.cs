@@ -371,18 +371,24 @@ public class SharpClientBuilder
         if (modeCount == 0)
             throw new InvalidOperationException("Transport, endpoint(s), or an endpoint resolver must be set before building the client.");
 
+        var directTransport = _transport;
+        var endpointResolver = _endpointResolver;
         var runtimeContext = staticManifests is null
             ? _runtimeContextBuilder.Build()
             : _runtimeContextBuilder.Build(staticManifests);
         try
         {
-            return BuildWithRuntimeContext(runtimeContext, staticManifests, preflightEndpoints);
+            var client = BuildWithRuntimeContext(runtimeContext, staticManifests, preflightEndpoints);
+            ReleaseTransferredBuilderResource(directTransport, endpointResolver);
+            return client;
         }
         catch (Exception buildException)
         {
+            ReleaseTransferredBuilderResource(directTransport, endpointResolver);
             ThrowAfterClientBuildRollback(
                 buildException,
-                _transport ?? (IAsyncDisposable?)_endpointResolver,
+                directTransport,
+                endpointResolver,
                 runtimeContext);
             throw new System.Diagnostics.UnreachableException();
         }
@@ -392,15 +398,27 @@ public class SharpClientBuilder
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void ThrowAfterClientBuildRollback(
         Exception buildException,
-        IAsyncDisposable? ownedResource,
+        IClientTransportFactory? directTransport,
+        ISharpLinkEndpointResolver? endpointResolver,
         SharpLinkRuntimeContext runtimeContext)
     {
         List<Exception>? cleanupFailures = null;
-        if (ownedResource is not null)
+        if (directTransport is not null)
         {
             try
             {
-                ownedResource.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                directTransport.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+            catch (Exception cleanupException)
+            {
+                (cleanupFailures ??= []).Add(cleanupException);
+            }
+        }
+        if (endpointResolver is not null && !ReferenceEquals(endpointResolver, directTransport))
+        {
+            try
+            {
+                endpointResolver.DisposeAsync().AsTask().GetAwaiter().GetResult();
             }
             catch (Exception cleanupException)
             {
@@ -419,6 +437,16 @@ public class SharpClientBuilder
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(buildException).Throw();
         cleanupFailures!.Insert(0, buildException);
         throw new AggregateException(cleanupFailures);
+    }
+
+    private void ReleaseTransferredBuilderResource(
+        IClientTransportFactory? directTransport,
+        ISharpLinkEndpointResolver? endpointResolver)
+    {
+        if (directTransport is not null)
+            _transport = null;
+        if (endpointResolver is not null)
+            _endpointResolver = null;
     }
 
     private ISharpLinkClient BuildWithRuntimeContext(

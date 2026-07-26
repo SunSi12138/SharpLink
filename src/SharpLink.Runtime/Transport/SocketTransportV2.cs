@@ -68,8 +68,9 @@ public sealed class SocketClientTransportFactory : IClientTransportFactory
         SslClientAuthenticationOptions? tlsOptions = null,
         TimeSpan? tlsHandshakeTimeout = null)
     {
-        _remoteEndPoint = remoteEndPoint ?? throw new ArgumentNullException(nameof(remoteEndPoint));
-        if (remoteEndPoint is IPEndPoint { Port: 0 } or DnsEndPoint { Port: 0 })
+        ArgumentNullException.ThrowIfNull(remoteEndPoint);
+        _remoteEndPoint = SocketTransportSocketFactory.Snapshot(remoteEndPoint);
+        if (_remoteEndPoint is IPEndPoint { Port: 0 } or DnsEndPoint { Port: 0 })
             throw new ArgumentOutOfRangeException(nameof(remoteEndPoint), "A client remote endpoint requires a non-zero port.");
         _options = (options ?? new SocketTransportOptions()).CloneValidated();
         _tlsOptions = TlsAuthenticationOptionsSnapshot.Clone(tlsOptions);
@@ -159,16 +160,21 @@ public sealed class SocketServerTransportListener : IServerTransportListener
         _listener = SocketTransportSocketFactory.Create(localEndPoint);
 
         string? unixPath = null;
+        string? boundUnixPath = null;
         try
         {
             if (localEndPoint is UnixDomainSocketEndPoint uds)
             {
                 unixPath = uds.ToString();
                 if (File.Exists(unixPath))
-                    File.Delete(unixPath);
+                {
+                    throw new IOException(
+                        $"Unix-domain socket path '{unixPath}' already exists and will not be replaced.");
+                }
             }
 
             _listener.Bind(localEndPoint);
+            boundUnixPath = unixPath;
             _listener.Listen(backlog);
             LocalEndPoint = _listener.LocalEndPoint;
             _ownedUnixSocketPath = unixPath;
@@ -176,6 +182,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
         catch
         {
             _listener.Dispose();
+            TryDeleteOwnedUnixSocketPath(boundUnixPath);
             throw;
         }
     }
@@ -218,25 +225,44 @@ public sealed class SocketServerTransportListener : IServerTransportListener
         _disposeCts.Cancel();
         _listener.Dispose();
         _disposeCts.Dispose();
-        if (_ownedUnixSocketPath is not null)
+        TryDeleteOwnedUnixSocketPath(_ownedUnixSocketPath);
+
+        return ValueTask.CompletedTask;
+    }
+
+    private static void TryDeleteOwnedUnixSocketPath(string? path)
+    {
+        if (path is not null)
         {
             try
             {
-                if (File.Exists(_ownedUnixSocketPath))
-                    File.Delete(_ownedUnixSocketPath);
+                if (File.Exists(path))
+                    File.Delete(path);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                Debug.WriteLine($"SharpLink could not remove Unix-domain socket path '{_ownedUnixSocketPath}': {ex.Message}");
+                Debug.WriteLine($"SharpLink could not remove Unix-domain socket path '{path}': {ex.Message}");
             }
         }
-
-        return ValueTask.CompletedTask;
     }
 }
 
 internal static class SocketTransportSocketFactory
 {
+    internal static EndPoint Snapshot(EndPoint endPoint)
+        => endPoint switch
+        {
+            IPEndPoint ip => new IPEndPoint(CloneAddress(ip.Address), ip.Port),
+            DnsEndPoint dns => new DnsEndPoint(dns.Host, dns.Port, dns.AddressFamily),
+            UnixDomainSocketEndPoint unix => new UnixDomainSocketEndPoint(unix.ToString()),
+            _ => endPoint
+        };
+
+    private static IPAddress CloneAddress(IPAddress address)
+        => address.AddressFamily == AddressFamily.InterNetworkV6
+            ? new IPAddress(address.GetAddressBytes(), address.ScopeId)
+            : new IPAddress(address.GetAddressBytes());
+
     public static Socket Create(EndPoint endPoint)
     {
         if (endPoint is DnsEndPoint)

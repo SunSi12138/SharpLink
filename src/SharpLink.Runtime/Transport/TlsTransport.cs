@@ -109,6 +109,7 @@ internal sealed class TlsStreamTransportConnection : StreamTransportConnection,
 internal static class TlsAuthenticationOptionsSnapshot
 {
     private static readonly TimeSpan SDefaultHandshakeTimeout = TimeSpan.FromSeconds(10);
+    private const string EndpointAuthorityPlaceholder = "sharplink.invalid";
 
     public static TimeSpan ValidateTimeout(TimeSpan? timeout)
     {
@@ -150,6 +151,19 @@ internal static class TlsAuthenticationOptionsSnapshot
             clone.AllowRsaPkcs1Padding = source.AllowRsaPkcs1Padding;
             clone.AllowRsaPssPadding = source.AllowRsaPssPadding;
         }
+        return clone;
+    }
+
+    internal static SslClientAuthenticationOptions CloneForEndpointFactory(
+        SslClientAuthenticationOptions source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var needsEndpointAuthority = string.IsNullOrWhiteSpace(source.TargetHost);
+        var clone = Clone(
+            source,
+            needsEndpointAuthority ? EndpointAuthorityPlaceholder : null)!;
+        if (needsEndpointAuthority)
+            clone.TargetHost = string.Empty;
         return clone;
     }
 

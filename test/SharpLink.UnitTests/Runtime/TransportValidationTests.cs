@@ -2,7 +2,9 @@ using System.IO.Pipes;
 using System.Linq;
 using System.Net;
 using System.Net.Security;
+using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Runtime;
@@ -76,6 +78,56 @@ public class TransportValidationTests
                 0,
                 new SslClientAuthenticationOptions()))
             .Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task UnixSocketListenerShouldNotDeleteAPreExistingFile()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var path = $"/tmp/sl-{Guid.NewGuid():N}.sock";
+        await File.WriteAllTextAsync(path, "caller-owned");
+        SocketServerTransportListener? listener = null;
+        Exception? failure = null;
+        try
+        {
+            try
+            {
+                listener = new SocketServerTransportListener(new UnixDomainSocketEndPoint(path));
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+
+            await Assert.That(failure).IsTypeOf<IOException>();
+            await Assert.That(await File.ReadAllTextAsync(path)).IsEqualTo("caller-owned");
+        }
+        finally
+        {
+            if (listener is not null)
+                await listener.DisposeAsync();
+            File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task SocketClientFactoryShouldSnapshotAMutableIpEndPoint()
+    {
+        await using var listener = new SocketServerTransportListener(
+            new IPEndPoint(IPAddress.Loopback, 0));
+        var port = ((IPEndPoint)listener.LocalEndPoint!).Port;
+        var supplied = new IPEndPoint(IPAddress.Loopback, port);
+        await using var factory = new SocketClientTransportFactory(supplied);
+        supplied.Port = 0;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var accepting = listener.AcceptAsync(timeout.Token);
+
+        await using var client = await factory.ConnectAsync(timeout.Token);
+        await using var server = await accepting;
+
+        await Assert.That(((IPEndPoint)client.RemoteEndPoint!).Port).IsEqualTo(port);
     }
 
     private static bool HasUnpairedSurrogate(string value)

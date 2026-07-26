@@ -100,8 +100,9 @@ public class BuilderOwnershipRollbackTests
         {
             WithRollbackManifest(() =>
             {
+                var transport = new TrackingServerTransport("Server transport cleanup failed");
                 var failure = Capture(() => SharpLinkServerBuilder.Create()
-                    .UseTransport(new NoopServerTransport())
+                    .UseTransport(transport)
                     .UseLoggerFactory(new ThrowingLoggerFactory("Server logger construction failed"))
                     .Build());
 
@@ -109,13 +110,30 @@ public class BuilderOwnershipRollbackTests
                     "Server build retains constructor failure");
                 Ensure(Contains(failure, "rollback Adapter scope cleanup failed"),
                     "Server constructor rollback retains Runtime Context cleanup failure");
+                Ensure(Contains(failure, "Server transport cleanup failed"),
+                    "Server constructor rollback retains transport cleanup failure");
                 Ensure(RollbackState.ScopeDisposeCount == 1, "Server constructor rollback disposes Context once");
+                Ensure(transport.DisposeCount == 1, "failed Server build disposes its listener once");
             });
         }
         finally
         {
             RollbackState.TestIsolation.Release();
         }
+    }
+
+    [Test]
+    public async Task ServerListenerShouldBeTransferredByOnlyOneBuild()
+    {
+        var transport = new TrackingServerTransport();
+        var builder = SharpLinkServerBuilder.Create().UseTransport(transport);
+        var first = builder.Build();
+
+        var failure = Capture(() => builder.Build());
+        Ensure(failure is InvalidOperationException, "a second build must require a replacement listener");
+
+        await first.DisposeAsync();
+        Ensure(transport.DisposeCount == 1, "one Server must own and dispose the listener");
     }
 
     private static void WithRollbackManifest(Action action)
@@ -194,6 +212,23 @@ public class BuilderOwnershipRollbackTests
         public ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
             => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class TrackingServerTransport(string? cleanupFailure = null) : IServerTransportListener
+    {
+        public int DisposeCount { get; private set; }
+        public EndPoint? LocalEndPoint => null;
+
+        public ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
+
+        public ValueTask DisposeAsync()
+        {
+            DisposeCount++;
+            return cleanupFailure is null
+                ? ValueTask.CompletedTask
+                : ValueTask.FromException(new InvalidOperationException(cleanupFailure));
+        }
     }
 
     private sealed class TrackingResolver(string cleanupFailure) : ISharpLinkEndpointResolver

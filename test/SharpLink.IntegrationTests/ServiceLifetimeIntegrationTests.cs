@@ -189,7 +189,8 @@ public sealed class ServiceLifetimeIntegrationTests
             Ensure(exception.Message.Contains(typeof(IMissingLifetimeProbe).FullName!, StringComparison.Ordinal),
                 "missing enabled service diagnostic");
         }
-        await missingBuilder.Transport!.DisposeAsync();
+        Ensure(missingBuilder.Transport is null,
+            "failed Build must consume and release its listener");
     }
 
     private static ISharpLinkClient CreateClient(int port)

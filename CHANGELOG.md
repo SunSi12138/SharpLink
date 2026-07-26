@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.15] - 2026-07-27
+
+### Fixed
+
+- Unix-domain socket listeners no longer delete a pre-existing filesystem entry; stale paths must be removed explicitly by their owner.
+- Socket Client factories now snapshot mutable IP endpoints, including IPv6 scope, at construction.
+- Built-in socket, TLS, and shared-memory endpoint delegates now freeze configuration when the delegate is created, so later caller mutations cannot split topology generations.
+- Direct Client transports and endpoint resolvers are transferred out of a builder after one build instead of being owned by multiple Clients.
+- Server listeners are transferred out of a builder after one build and are released during failed-build rollback while preserving every build and cleanup failure.
+
+### Compatibility and validation
+
+- Public signatures, Protocol v2, and generated Manifest versions are unchanged. Reusing a direct Client or Server builder now requires supplying a new transport/resolver; static endpoint builders remain reusable because they create fresh factories. A pre-existing Unix socket path is no longer removed automatically.
+- Non-incremental Release build, Generator 83/83, Unit 417/417, Integration 228/228, package smoke, and reversed same-machine A/B passed.
+- Unchanged flow-credit and pending-completion hot paths retained 0/48 B per operation with no latency regression. Safe configuration snapshots intentionally add about 104 B per known IP endpoint and 56 B once per built-in socket delegate.
+
 ## [0.8.14] - 2026-07-27
 
 ### Fixed

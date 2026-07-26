@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Security;
 using System.Reflection;
 using System.Threading;
 using SharpLink.Client;
@@ -8,6 +9,39 @@ namespace SharpLink.UnitTests.Client;
 
 public class StaticEndpointBuilderTests
 {
+    [Test]
+    public async Task BuiltInEndpointFactoriesShouldFreezeConfigurationAtCreation()
+    {
+        var socketOptions = new SocketTransportOptions { NoDelay = true };
+        var socketFactory = SharpLinkTransportFactories.Sockets(socketOptions);
+        socketOptions.NoDelay = false;
+        await using var socket = socketFactory(Endpoint("socket", 5001));
+        Ensure(ReadPrivate<SocketTransportOptions>(socket, "_options").NoDelay,
+            "socket options must be frozen before endpoint generations are created");
+
+        var tlsOptions = new SslClientAuthenticationOptions { TargetHost = "original.example" };
+        var tlsFactory = SharpLinkTransportFactories.Sockets(tlsOptions);
+        tlsOptions.TargetHost = "changed.example";
+        await using var tls = tlsFactory(Endpoint("tls", 5002));
+        Ensure(ReadPrivate<SslClientAuthenticationOptions>(tls, "_tlsOptions").TargetHost == "original.example",
+            "TLS options must be frozen before endpoint generations are created");
+
+        SharedMemoryTransportOptions? leaked = null;
+        var sharedMemoryFactory = SharpLinkTransportFactories.SharedMemory(options =>
+        {
+            options.SpinCount = 1;
+            leaked = options;
+        });
+        leaked!.SpinCount = 2;
+        await using var sharedMemory = sharedMemoryFactory(new SharpLinkEndpoint
+        {
+            Id = "memory",
+            Address = new SharpLinkSharedMemoryAddress("factory-snapshot")
+        });
+        Ensure(ReadPrivate<SharedMemoryTransportOptions>(sharedMemory, "_options").SpinCount == 1,
+            "shared-memory options must be frozen before endpoint generations are created");
+    }
+
     [Test]
     public async Task AddressValidationAndAnonymousPipeRedactionShouldBeStable()
     {
@@ -379,6 +413,10 @@ public class StaticEndpointBuilderTests
         Id = id,
         Address = new SharpLinkTcpAddress("127.0.0.1", port)
     };
+
+    private static T ReadPrivate<T>(object instance, string fieldName) where T : class
+        => instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(instance) as T
+           ?? throw new Exception($"cannot find {fieldName}");
 
     private static async Task EnsureThrows<TException>(Func<Task> action) where TException : Exception
     {
