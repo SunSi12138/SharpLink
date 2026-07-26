@@ -1,7 +1,7 @@
 namespace SharpLink.Client;
 
 public static class TransportExtensions
-{ 
+{
     extension(SharpClientBuilder builder)
     {
         public SharpClientBuilder UseNamedPipe(string name)
@@ -23,7 +23,7 @@ public static class TransportExtensions
         /// <param name="ip">The server IP address.</param>
         /// <param name="port">The server TCP port.</param>
         /// <param name="tlsOptions">TLS client authentication settings. Default certificate validation remains enabled when no callback is supplied.</param>
-        /// <param name="tlsHandshakeTimeout">Independent TLS handshake timeout. Defaults to 10 seconds.</param>
+        /// <param name="tlsHandshakeTimeout">Independent positive TLS handshake timeout, up to 2,147,483,647 milliseconds. Defaults to 10 seconds.</param>
         public SharpClientBuilder UseTcp(
             string ip,
             int port,

@@ -471,15 +471,7 @@ internal sealed partial class SharpLinkServer(
         var remaining = GetRemaining(deadline);
         if (remaining <= TimeSpan.Zero)
             return false;
-        try
-        {
-            await task.WaitAsync(remaining).ConfigureAwait(false);
-            return true;
-        }
-        catch (TimeoutException)
-        {
-            return false;
-        }
+        return await SharpLinkTimer.WaitAsync(task, remaining).ConfigureAwait(false);
     }
 
     private static long AddStopwatchDuration(long timestamp, TimeSpan duration)

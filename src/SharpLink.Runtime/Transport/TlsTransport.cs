@@ -115,6 +115,7 @@ internal static class TlsAuthenticationOptionsSnapshot
     {
         var value = timeout ?? SDefaultHandshakeTimeout;
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(value, SharpLinkTimer.MaximumDelay);
         return value;
     }
 

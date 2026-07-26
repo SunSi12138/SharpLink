@@ -283,6 +283,37 @@ public class ProtocolV2Tests
     }
 
     [Test]
+    public async Task GeneratedDtoStringShouldRejectInvalidUtf8()
+    {
+        var payload = new byte[]
+        {
+            2, 0, 0, 0,
+            0xC3, 0x28
+        };
+        var contiguousFailure = CaptureException(() =>
+        {
+            var reader = new SequenceReader<byte>(new ReadOnlySequence<byte>(payload));
+            _ = RpcGeneratedCodecWire.ReadString(ref reader);
+        });
+        var segmentedFailure = CaptureException(() =>
+        {
+            var reader = new SequenceReader<byte>(CreateSegmented(payload, 1));
+            _ = RpcGeneratedCodecWire.ReadString(ref reader);
+        });
+
+        Ensure(contiguousFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "contiguous generated string must reject invalid UTF-8");
+        Ensure(segmentedFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "segmented generated string must reject invalid UTF-8");
+
+        var validReplacementPayload = new byte[] { 3, 0, 0, 0, 0xEF, 0xBF, 0xBD };
+        var validReader = new SequenceReader<byte>(CreateSegmented(validReplacementPayload, 1));
+        Ensure(RpcGeneratedCodecWire.ReadString(ref validReader) == "\uFFFD",
+            "a canonically encoded replacement character must remain valid");
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task LengthVarintsShouldRejectOverlongEncodings()
     {
         await ExpectProtocolViolation(() => ProtocolV2PayloadCodec.ReadMetadata(

@@ -61,7 +61,7 @@ public sealed class SocketClientTransportFactory : IClientTransportFactory
     /// <param name="remoteEndPoint">The TCP or Unix-domain endpoint to connect.</param>
     /// <param name="options">Optional socket settings, copied during construction.</param>
     /// <param name="tlsOptions">Optional TLS settings. A null value keeps the socket plaintext.</param>
-    /// <param name="tlsHandshakeTimeout">Independent TLS handshake timeout. Defaults to 10 seconds.</param>
+    /// <param name="tlsHandshakeTimeout">Independent positive TLS handshake timeout, up to 2,147,483,647 milliseconds. Defaults to 10 seconds.</param>
     public SocketClientTransportFactory(
         EndPoint remoteEndPoint,
         SocketTransportOptions? options = null,
@@ -144,7 +144,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
     /// <param name="backlog">The operating-system accept backlog.</param>
     /// <param name="options">Optional accepted-socket settings, copied during construction.</param>
     /// <param name="tlsOptions">Optional TLS settings. A null value keeps accepted sockets plaintext.</param>
-    /// <param name="tlsHandshakeTimeout">Independent TLS handshake timeout. Defaults to 10 seconds.</param>
+    /// <param name="tlsHandshakeTimeout">Independent positive TLS handshake timeout, up to 2,147,483,647 milliseconds. Defaults to 10 seconds.</param>
     public SocketServerTransportListener(
         EndPoint localEndPoint,
         int backlog = 512,

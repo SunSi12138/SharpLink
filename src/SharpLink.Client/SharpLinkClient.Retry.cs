@@ -278,11 +278,10 @@ internal sealed partial class SharpLinkClient
                 var remaining = absoluteDeadline - DateTimeOffset.UtcNow;
                 if (remaining <= TimeSpan.Zero)
                     throw CreateDeadlineExceededException();
-                try
-                {
-                    await signal.WaitAsync(remaining, cancellationToken).ConfigureAwait(false);
-                }
-                catch (TimeoutException)
+                if (!await SharpLinkTimer.WaitAsync(
+                        signal,
+                        remaining,
+                        cancellationToken).ConfigureAwait(false))
                 {
                     throw CreateDeadlineExceededException();
                 }

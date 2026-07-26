@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
+using System.Reflection;
 using SharpLink.Hosting;
 using SharpLink.Server;
 using Microsoft.Extensions.DependencyInjection;
@@ -202,6 +203,27 @@ public class SharpLinkServerHostedServiceTests
 
         transport.ReleaseDispose();
         await runTask.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public async Task TimerRangeExceedingServerGracefulWaitShouldRemainPending()
+    {
+        var method = typeof(SharpLinkServer).GetMethod(
+            "WaitUntilAsync",
+            BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Server graceful wait helper");
+        var owner = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var wait = (Task<bool>)method.Invoke(null, [owner.Task, long.MaxValue])!;
+
+        await Task.Delay(50);
+        var completedBeforeOwner = wait.IsCompleted;
+        owner.TrySetResult(true);
+        var failure = await CaptureFailureAsync(wait);
+
+        Ensure(!completedBeforeOwner,
+            "a timer-range-exceeding graceful wait must not fail before its owner completes");
+        Ensure(failure is null, $"long graceful wait failed as {failure?.GetType().Name}");
     }
 
     private static void Ensure(bool condition, string message)

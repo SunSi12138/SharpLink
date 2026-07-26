@@ -20,7 +20,7 @@ public static class SharpLinkTransportFactories
     /// <summary>Creates a TLS socket factory for TCP and Unix-domain socket endpoint addresses.</summary>
     /// <param name="tlsOptions">TLS settings copied for every endpoint factory.</param>
     /// <param name="options">Optional socket settings copied by each created transport factory.</param>
-    /// <param name="tlsHandshakeTimeout">An optional positive TLS handshake timeout.</param>
+    /// <param name="tlsHandshakeTimeout">An optional positive TLS handshake timeout, up to 2,147,483,647 milliseconds.</param>
     /// <remarks>
     /// When the supplied TLS options omit <see cref="SslClientAuthenticationOptions.TargetHost"/>,
     /// the endpoint Authority is used; TCP endpoints then fall back to their Host.

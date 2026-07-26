@@ -188,6 +188,24 @@ public class PendingRequestTableTests
     }
 
     [Test]
+    public async Task FullTableFarFutureDeadlineShouldRemainCancellable()
+    {
+        using var manager = new PendingRequestTable(1);
+        var occupied = manager.Rent<int>(out _);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        var failure = await CaptureExceptionAsync(manager.RentAsync<int>(
+            waitForSlot: true,
+            DateTimeOffset.MaxValue,
+            cancellation.Token).AsTask());
+
+        Ensure(failure is OperationCanceledException,
+            $"far-future slot wait should remain cancellable, not fail as {failure?.GetType().Name}");
+        manager.FailAllPendingRequests(new IOException("cleanup"));
+        await EnsureThrows<IOException>(occupied.AsValueTask(), "cleanup");
+    }
+
+    [Test]
     public async Task CompletionRaceShouldHaveExactlyOneWinnerAndReleaseOneSlot()
     {
         var manager = new PendingRequestTable(1);

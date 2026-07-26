@@ -71,6 +71,28 @@ public class SharpLinkClientCallOptionsTests
     }
 
     [Test]
+    public async Task FarFutureWaitForReadyDeadlineShouldRemainCancellable()
+    {
+        await using var client = new SharpLinkClient(
+            new TestClientTransportFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        var failure = await CaptureException(ClientInvokerTestHelper.InvokeUnaryAsync(
+            client,
+            new SharpLinkCallOptions
+            {
+                Deadline = DateTimeOffset.MaxValue,
+                WaitForReady = true
+            },
+            cancellation.Token).AsTask());
+
+        Ensure(failure is OperationCanceledException,
+            $"far-future WaitForReady should remain cancellable, not fail as {failure?.GetType().Name}");
+    }
+
+    [Test]
     public async Task WaitForReadyShouldRetryZeroAdmissionDelayWithABoundedYield()
     {
         var transport = new TestClientTransportFactory();
@@ -383,6 +405,19 @@ public class SharpLinkClientCallOptionsTests
             throw new Exception("expected SharpLinkException");
         }
         catch (SharpLinkException exception)
+        {
+            return exception;
+        }
+    }
+
+    private static async Task<Exception?> CaptureException(Task invocation)
+    {
+        try
+        {
+            await invocation;
+            return null;
+        }
+        catch (Exception exception)
         {
             return exception;
         }

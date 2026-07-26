@@ -28,7 +28,7 @@ public static class TransportExtensions
         /// <param name="tlsOptions">TLS server authentication settings.</param>
         /// <param name="ip">The local IP address to bind.</param>
         /// <param name="backlog">The operating-system accept backlog.</param>
-        /// <param name="tlsHandshakeTimeout">Independent TLS handshake timeout. Defaults to 10 seconds.</param>
+        /// <param name="tlsHandshakeTimeout">Independent positive TLS handshake timeout, up to 2,147,483,647 milliseconds. Defaults to 10 seconds.</param>
         public SharpLinkServerBuilder UseTcp(
             int port,
             SslServerAuthenticationOptions tlsOptions,

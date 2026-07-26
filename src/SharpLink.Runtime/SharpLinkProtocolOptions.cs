@@ -38,7 +38,7 @@ public sealed class SharpLinkProtocolOptions
     /// <summary>Gets or sets the maximum remote error message size reserved for protocol v2.</summary>
     public int MaxErrorMessageBytes { get; set; } = DefaultMaxErrorMessageBytes;
 
-    /// <summary>Gets or sets the maximum time allowed for the RPC handshake.</summary>
+    /// <summary>Gets or sets the positive RPC handshake timeout, up to 2,147,483,647 milliseconds.</summary>
     public TimeSpan HandshakeTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary>Gets or sets the maximum pending requests on one connection.</summary>
@@ -60,6 +60,7 @@ public sealed class SharpLinkProtocolOptions
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxMetadataBytes);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxErrorMessageBytes);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(HandshakeTimeout, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(HandshakeTimeout, SharpLinkTimer.MaximumDelay);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxPendingRequestsPerConnection);
         if (MaxPendingRequestsPerConnection > MaximumPendingRequestsPerConnection)
         {

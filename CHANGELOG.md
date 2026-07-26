@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.20] - 2026-07-27
+
+### Fixed
+
+- RPC, TLS, and shared-memory handshake timeouts now reject values beyond the portable native timer range during configuration, before connection or transport ownership is acquired.
+- Far-future Client readiness deadlines now remain cancellable instead of failing immediately in `Task.WaitAsync`.
+- Far-future pending-request admission deadlines now remain cancellable instead of failing immediately in `SemaphoreSlim.WaitAsync`.
+- Server graceful Stop now slices timer-range-exceeding waits, preventing a saturated monotonic deadline from forcing an immediate stop.
+- Generated DTO string codecs now reject malformed UTF-8 as `DataLoss` instead of silently replacing invalid bytes with U+FFFD.
+
+### Compatibility and validation
+
+- Protocol v2 framing and generated Manifest versions are unchanged. RPC, TLS, and shared-memory handshake timeouts are now limited to 2,147,483,647 ms; other far-future deadlines remain supported through cancellable timer slices. Malformed generated string fields that were previously normalized are now rejected.
+- Non-incremental Release build, Generator 83/83, Unit 441/441, Integration 230/230, seven-package pack, and fresh-cache package smoke passed.
+- Valid contiguous generated-string decoding retained 64 B/op with overlapping baseline/candidate latency. Segmented decoding retained 112 B/op and adds about 3.5 ns (roughly 3%) for replacement-marker detection; an always-strict decoder and a separate full byte-validation pass were rejected after measuring roughly 8% and 10% regressions.
+
 ## [0.8.19] - 2026-07-27
 
 ### Fixed

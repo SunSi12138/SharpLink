@@ -19,7 +19,7 @@ public sealed class SharedMemoryTransportOptions
     /// </summary>
     public int? SpinCount { get; set; }
 
-    /// <summary>Gets or sets the independent shared-memory transport handshake timeout.</summary>
+    /// <summary>Gets or sets the positive shared-memory transport handshake timeout, up to 2,147,483,647 milliseconds.</summary>
     public TimeSpan HandshakeTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary>Validates explicitly configured values.</summary>
@@ -30,6 +30,7 @@ public sealed class SharedMemoryTransportOptions
         if (SpinCount is < 0 or > MaxSpinCount)
             throw new ArgumentOutOfRangeException(nameof(SpinCount));
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(HandshakeTimeout, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(HandshakeTimeout, SharpLinkTimer.MaximumDelay);
     }
 
     internal SharedMemoryTransportOptions CloneValidated()

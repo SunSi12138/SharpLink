@@ -1,27 +1,28 @@
-# 0.8.19 regression-test research
+# 0.8.20 regression-test research
 
 ## Target inventory and evidence candidates
 
-- `SharpLinkAuthenticationResult` has a public positional constructor, but the Server accepts any result whose `IsAuthenticated` bit is true. A custom provider can therefore return an authenticated result carrying a rejection code and bypass the authentication failure path.
-- Client and Server interceptor pipelines share one mutable continuation index. Calling `next` twice advances beyond the configured chain and invokes a non-idempotent terminal RPC or service method a second time; concurrent duplicate calls can also bypass an interceptor stage.
-- Client background-task tracking removes completed faulted tasks without observing or logging their exception. A cleanup task that faults before Stop snapshots the set becomes invisible to both Stop and diagnostics.
-- Generic Host Server Stop performs Server disposal in a `finally` without preserving a prior caller-cancellation or Stop failure. A later listener cleanup failure can replace the first failure instead of retaining both causes.
-- Public endpoint polling and heartbeat intervals can exceed the native timer range and fail immediately instead of waiting; Server admission accepts the same oversized queue delay and defers the failure until a call is already queued.
+- RPC, TLS, and shared-memory handshake timeouts accept durations beyond the portable native timer range, then construct `CancellationTokenSource(timeout)` only after transport ownership and handshake work begin.
+- A disconnected `WaitForReady` call with a far-future absolute deadline passes the full remaining duration to `Task.WaitAsync`, which fails immediately outside the native timer range instead of remaining cancellable.
+- A full pending-request table uses the same unbounded absolute-deadline duration for `SemaphoreSlim.WaitAsync`, so a valid far-future call faults before a slot or caller cancellation can win.
+- Server graceful Stop saturates its monotonic deadline but passes the resulting multi-year duration to `Task.WaitAsync`; `StopAsync(TimeSpan.MaxValue)` can turn a requested long drain into an immediate fault/forced stop.
+- Generated DTO strings use the replacement-fallback `Encoding.UTF8` decoder. Non-canonical invalid UTF-8 is silently changed to U+FFFD instead of being rejected as untrusted `DataLoss`.
 
 ## Acceptance checklist
 
-- Authenticated provider results are accepted only with the success sentinel error code; malformed success is converted to a structured authentication rejection.
-- Every interceptor receives a single-use continuation on Client and Server, and duplicate `next` calls cannot execute or bypass the terminal operation.
-- Every faulted tracked Client background task is observed and logged after removal; cancellation remains non-error completion.
-- Hosted Server Stop completes all owner cleanup and preserves primary and disposal failures in order.
-- Long endpoint polling and heartbeat intervals wait in cancellable timer slices, while an admission queue delay beyond the portable timer range fails during configuration.
+- Every handshake timeout is rejected during configuration when it exceeds the shared portable timer maximum; no connection owner is acquired first.
+- Far-future Client readiness and pending-slot deadlines stay pending and respond to caller cancellation.
+- Server graceful waits slice long monotonic durations without changing normal timeout behavior.
+- Generated DTO string decoding is strict for contiguous and segmented payloads and maps invalid UTF-8 to `SharpLinkErrorCode.DataLoss`.
 
 ## Audit guardrails
 
-The batch is limited to independently reproducible security, side-effect duplication, timer, ownership, and failure-observability defects. A topology-lifecycle callback candidate was discarded because its interface is internal and its only production implementation cannot throw in the proposed way. Public constructor removal, interceptor fast-path changes when no interceptor is configured, and unrelated cold-path syntax cleanup are excluded unless evidence shows material value.
+This batch closes timer-range failures only where public configuration or call deadlines currently trigger runtime faults, plus one independent wire-integrity defect. Cosmetic async cleanup and unrealistic capacity-only proposals are excluded without allocation or failure evidence.
 
 ## Regression and performance evidence
 
-- The complete pre-fix Integration run retained 228 existing passes and failed the two new authentication/interceptor tests. Unit probes independently observed the missing background log and lost Hosted cancellation cause; the timer-stage full run retained 434 passes and failed exactly the two new timer tests.
-- Post-fix Unit passes 436/436 and Integration passes 230/230.
-- Counterbalanced, tiering-disabled TCP unary A/B retained about 320.01 B/op without interceptors and overlapping latency ranges. One Client plus one Server interceptor changes from 1552.01 B/op to 1584.01 B/op; the deliberate 32 B is two per-stage single-use guards, while medians remain in the same roughly 40–41 microsecond band.
+The complete pre-fix Unit run contained 441 tests: all 436 existing tests passed and exactly the five new probes failed. The deadline probes observed immediate `ArgumentOutOfRangeException`; the Server wait completed or faulted before its owner; timeout validation accepted every over-range value; and both contiguous and segmented invalid UTF-8 were decoded without `DataLoss`.
+
+After the focused fixes, Generator 83/83, Unit 441/441, and Integration 230/230 pass. Assertion review covers cancellation rather than only task state, every public timeout family, segmented and contiguous wire paths, and the exact `DataLoss` code. Pseudo-mutations (removing the upper-bound checks, restoring either native unbounded wait, returning early from the Server wait, or using replacement decoding) each make its corresponding probe fail.
+
+Against 0.8.19 commit `2d7cd95`, valid contiguous string decoding retained 64 B/op and overlapping latency. Segmented decoding retained 112 B/op and added about 3.5 ns (roughly 3%) for the output replacement-marker scan. Always-strict decoding and pre-validating every byte measured about 8% and 10% slower and were rejected; the final path performs strict byte validation only for strings whose normal decoding actually contains U+FFFD.

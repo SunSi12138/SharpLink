@@ -82,6 +82,25 @@ public class TransportValidationTests
     }
 
     [Test]
+    public async Task HandshakeTimeoutsBeyondThePortableTimerRangeShouldFailDuringConfiguration()
+    {
+        var protocolFailure = CaptureFailure(() => new SharpLinkProtocolOptions
+        {
+            HandshakeTimeout = TimeSpan.MaxValue
+        }.Validate());
+        var tlsFailure = CaptureFailure(() =>
+            _ = TlsAuthenticationOptionsSnapshot.ValidateTimeout(TimeSpan.MaxValue));
+        var sharedMemoryFailure = CaptureFailure(() => new SharedMemoryTransportOptions
+        {
+            HandshakeTimeout = TimeSpan.MaxValue
+        }.Validate());
+
+        await Assert.That(protocolFailure).IsTypeOf<ArgumentOutOfRangeException>();
+        await Assert.That(tlsFailure).IsTypeOf<ArgumentOutOfRangeException>();
+        await Assert.That(sharedMemoryFailure).IsTypeOf<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
     public async Task UnixSocketListenerShouldNotDeleteAPreExistingFile()
     {
         if (OperatingSystem.IsWindows())
@@ -192,5 +211,18 @@ public class TransportValidationTests
             }
         }
         return false;
+    }
+
+    private static Exception? CaptureFailure(Action action)
+    {
+        try
+        {
+            action();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 }

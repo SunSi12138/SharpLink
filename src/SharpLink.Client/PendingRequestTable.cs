@@ -207,11 +207,10 @@ internal sealed class PendingRequestTable : IDisposable
                     var remaining = absoluteDeadline - DateTimeOffset.UtcNow;
                     if (remaining <= TimeSpan.Zero)
                         throw CreateDeadlineExceededException();
-                    try
-                    {
-                        await _slotAvailable.WaitAsync(remaining, cancellationToken).ConfigureAwait(false);
-                    }
-                    catch (TimeoutException)
+                    if (!await SharpLinkTimer.WaitAsync(
+                            _slotAvailable,
+                            remaining,
+                            cancellationToken).ConfigureAwait(false))
                     {
                         throw CreateDeadlineExceededException();
                     }

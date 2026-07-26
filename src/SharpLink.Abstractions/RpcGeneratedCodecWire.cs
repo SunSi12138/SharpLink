@@ -29,6 +29,8 @@ public readonly record struct RpcGeneratedLengthToken(int Offset);
 /// <summary>Provides allocation-free primitives used only by source-generated Codecs.</summary>
 public static class RpcGeneratedCodecWire
 {
+    private static readonly UTF8Encoding SStrictUtf8 = new(false, true);
+
     /// <summary>The hard maximum number of items allocated by one generated collection Codec.</summary>
     public const int MaximumCollectionItems = 1_048_576;
 
@@ -157,8 +159,27 @@ public static class RpcGeneratedCodecWire
     {
         var payload = ReadLengthDelimited(ref reader);
         if (payload.IsSingleSegment)
-            return Encoding.UTF8.GetString(payload.FirstSpan);
-        return Encoding.UTF8.GetString(payload.ToArray());
+            return DecodeUtf8(payload.FirstSpan);
+        return DecodeUtf8(payload.ToArray());
+    }
+
+    private static string DecodeUtf8(ReadOnlySpan<byte> payload)
+    {
+        var value = Encoding.UTF8.GetString(payload);
+        if (!value.AsSpan().Contains('\uFFFD'))
+            return value;
+        try
+        {
+            _ = SStrictUtf8.GetCharCount(payload);
+            return value;
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.DataLoss,
+                "Generated string payload is not valid UTF-8.",
+                exception);
+        }
     }
 
     /// <summary>Reserves a UInt32 length prefix in a contiguous SharpLink packet writer.</summary>
