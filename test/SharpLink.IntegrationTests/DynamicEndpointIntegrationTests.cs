@@ -219,14 +219,15 @@ public sealed class DynamicEndpointIntegrationTests
         try
         {
             var first = await CaptureSharpLinkException(client.ConnectAsync().AsTask());
-            using var recoveryCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+            using var recoveryCancellation = new CancellationTokenSource();
             var recovery = client.ConnectAsync(recoveryCancellation.Token).AsTask();
             await Task.Delay(20);
 
             Ensure(first.Code == SharpLinkErrorCode.Unavailable, "initial failed dynamic topology error");
             Ensure(!recovery.IsCompleted,
                 "failed initial dynamic topology must wait for recovery instead of replaying the stale failure");
-            await CaptureCancellation(recovery);
+            recoveryCancellation.Cancel();
+            await CaptureCancellation(recovery.WaitAsync(TimeSpan.FromSeconds(5)));
             Ensure(factory.ConnectCount != 0, "resolved endpoint connection must have been attempted");
         }
         finally

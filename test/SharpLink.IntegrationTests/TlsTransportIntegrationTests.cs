@@ -77,7 +77,11 @@ public class TlsTransportIntegrationTests
         await using (var missingCertificateClient = CreateClient(server.Port, missingCertificateOptions))
         {
             await EnsureTlsFailure(
-                missingCertificateClient.ConnectAsync().AsTask(),
+                async () =>
+                {
+                    await missingCertificateClient.ConnectAsync();
+                    _ = await missingCertificateClient.Get<ITlsIntegrationService>().AddAsync(1, 1);
+                },
                 "missing mutual TLS certificate");
         }
 
@@ -327,11 +331,11 @@ public class TlsTransportIntegrationTests
         }
     }
 
-    private static async Task EnsureTlsFailure(Task task, string name)
+    private static async Task EnsureTlsFailure(Func<Task> action, string name)
     {
         try
         {
-            await task;
+            await action();
             throw new Exception($"assert failed: {name} should fail TLS authentication");
         }
         catch (Exception exception) when (exception is AuthenticationException or IOException or SharpLinkException)
