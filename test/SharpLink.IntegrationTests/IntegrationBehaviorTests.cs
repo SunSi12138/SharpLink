@@ -690,22 +690,59 @@ public class IntegrationBehaviorTests
                 options.Global.UseConcurrency(1);
                 options.MaxQueuedCalls = 1;
                 options.MaxQueuedBytes = 64 * 1024;
-                options.MaxQueueDelay = TimeSpan.FromSeconds(2);
+                options.MaxQueueDelay = TimeSpan.FromSeconds(10);
             }));
         var service = harness.Client.Get<ITestService>();
 
-        var active = service.SlowAddWithoutTimeoutAsync(20, 1).AsTask();
-        await Task.Delay(75);
-        var queued = service.SlowAddWithoutTimeoutAsync(20, 2).AsTask();
-        await Task.Delay(75);
-        await EnsureThrowsSharpLinkFast(
-            service.AddAsync(20, 3).AsTask(),
-            "admission queue count",
-            SharpLinkErrorCode.ResourceExhausted);
+        TestService.ResetBlockingAdd();
+        var active = service.BlockingAddAsync(20, 1).AsTask();
+        const int contenderCount = 8;
+        var contenders = new List<Task<int>>(capacity: contenderCount);
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            for (var index = 0; index < contenderCount; index++)
+                contenders.Add(service.AddAsync(20, index).AsTask());
 
-        Ensure(await active.WaitAsync(TimeSpan.FromSeconds(2)) == 21, "active admitted call");
-        Ensure(await queued.WaitAsync(TimeSpan.FromSeconds(2)) == 22, "queued admitted call");
-        Ensure(await service.AddAsync(20, 4) == 24, "connection recovers after overload");
+            await WaitUntilAsync(() => contenders.Count(static task => task.IsCompleted) >= contenders.Count - 1);
+            Ensure(contenders.Count(static task => task.IsCompleted) == contenders.Count - 1,
+                "admission queue must retain exactly one call before permit release");
+            var queuedIndex = -1;
+            for (var index = 0; index < contenders.Count; index++)
+            {
+                if (contenders[index].IsCompleted)
+                {
+                    await EnsureThrowsSharpLinkFast(
+                        contenders[index],
+                        "admission queue count",
+                        SharpLinkErrorCode.ResourceExhausted);
+                }
+                else
+                {
+                    Ensure(queuedIndex < 0, "admission queue must retain exactly one call");
+                    queuedIndex = index;
+                }
+            }
+
+            Ensure(queuedIndex >= 0, "admission queue must retain one call");
+            TestService.ReleaseBlockingAdd();
+            Ensure(await active.WaitAsync(TimeSpan.FromSeconds(2)) == 21, "active admitted call");
+            Ensure(await contenders[queuedIndex].WaitAsync(TimeSpan.FromSeconds(2)) == 20 + queuedIndex,
+                "queued admitted call");
+            Ensure(await service.AddAsync(20, 4) == 24, "connection recovers after overload");
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+            try
+            {
+                await Task.WhenAll(contenders).WaitAsync(TimeSpan.FromSeconds(2));
+            }
+            catch (Exception)
+            {
+                _ = contenders.Count(static task => task.Exception is not null);
+            }
+        }
     }
 
     [Test]
@@ -1703,6 +1740,8 @@ public interface ITestService : IService
     [NonCancellable]
     ValueTask<int> SlowAddWithoutTimeoutAsync(int left, int right);
     [NonCancellable]
+    ValueTask<int> BlockingAddAsync(int left, int right);
+    [NonCancellable]
     ValueTask<int> SlowThrowWithoutTimeoutAsync();
     [NonCancellable]
     ValueTask ThrowCancellationAsync();
@@ -1739,6 +1778,8 @@ public class TestService : ITestService
 {
     private static TaskCompletionSource s_nonCancellableCompletion = CreateCompletionSource();
     private static TaskCompletionSource s_nonCancellableFailure = CreateCompletionSource();
+    private static TaskCompletionSource s_blockingAddStarted = CreateCompletionSource();
+    private static TaskCompletionSource s_blockingAddRelease = CreateCompletionSource();
     private static TaskCompletionSource s_downloadDisposed = CreateCompletionSource();
     private static int s_activeUploads;
     private static int s_malformedUploadInvocations;
@@ -1778,6 +1819,18 @@ public class TestService : ITestService
     internal static Task WaitForNonCancellableFailureAsync()
         => Volatile.Read(ref s_nonCancellableFailure).Task;
 
+    internal static void ResetBlockingAdd()
+    {
+        Interlocked.Exchange(ref s_blockingAddStarted, CreateCompletionSource());
+        Interlocked.Exchange(ref s_blockingAddRelease, CreateCompletionSource());
+    }
+
+    internal static Task WaitForBlockingAddStartedAsync()
+        => Volatile.Read(ref s_blockingAddStarted).Task;
+
+    internal static void ReleaseBlockingAdd()
+        => Volatile.Read(ref s_blockingAddRelease).TrySetResult();
+
     internal static void ResetDownloadDisposed()
         => Interlocked.Exchange(ref s_downloadDisposed, CreateCompletionSource());
 
@@ -1796,6 +1849,14 @@ public class TestService : ITestService
     {
         await Task.Delay(TimeSpan.FromMilliseconds(300));
         Volatile.Read(ref s_nonCancellableCompletion).TrySetResult();
+        return left + right;
+    }
+
+    public async ValueTask<int> BlockingAddAsync(int left, int right)
+    {
+        var release = Volatile.Read(ref s_blockingAddRelease);
+        Volatile.Read(ref s_blockingAddStarted).TrySetResult();
+        await release.Task;
         return left + right;
     }
 

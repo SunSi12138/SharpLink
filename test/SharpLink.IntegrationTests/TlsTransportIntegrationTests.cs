@@ -94,6 +94,22 @@ public class TlsTransportIntegrationTests
     }
 
     [Test]
+    public void CertificateValidationShouldRejectMissingCertificateRegardlessOfPlatformErrors()
+    {
+        using var chain = new X509Chain();
+        Ensure(!ValidateTestCertificate(this, null, null, SslPolicyErrors.None),
+            "missing certificate without a chain");
+        Ensure(!ValidateTestCertificate(this, null, chain, SslPolicyErrors.None),
+            "missing certificate with a chain");
+        Ensure(!ValidateTestCertificate(
+                this,
+                null,
+                null,
+                SslPolicyErrors.RemoteCertificateNotAvailable),
+            "missing certificate policy error");
+    }
+
+    [Test]
     public async Task MutualTlsShouldPreserveClientCertificateContext()
     {
         using var serverCertificate = CreateCertificate("localhost", serverAuthentication: true);
@@ -220,6 +236,8 @@ public class TlsTransportIntegrationTests
         X509Chain? chain,
         SslPolicyErrors errors)
     {
+        if (certificate is null)
+            return false;
         if ((errors & SslPolicyErrors.RemoteCertificateNameMismatch) != 0 ||
             (errors & SslPolicyErrors.RemoteCertificateNotAvailable) != 0)
         {
