@@ -21,7 +21,9 @@ internal sealed partial class SharpLinkClient
             if (_connectTask is not { IsCompleted: false })
             {
                 TransitionTo(SharpLinkConnectionState.Connecting);
-                _connectTask = ConnectInitialAsync(cancellationToken);
+                // The initialization attempt belongs to the client. A caller may cancel only its
+                // WaitAsync below; shutdown remains the operation's lifetime boundary.
+                _connectTask = ConnectInitialAsync(CancellationToken.None);
             }
             connectTask = _connectTask;
         }
@@ -70,34 +72,7 @@ internal sealed partial class SharpLinkClient
             session.SetTelemetrySide("client");
             session.BindRuntimeContext(_runtimeContext);
 
-            using var handshakeTimeoutCts = new CancellationTokenSource(_protocolOptions.HandshakeTimeout);
-            using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(
-                attemptCts.Token,
-                handshakeTimeoutCts.Token);
-            Exception? handshakeException;
-            try
-            {
-                handshakeException = await ProcessHandshakeAsync(session, handshakeCts.Token);
-            }
-            catch (OperationCanceledException) when (handshakeCts.IsCancellationRequested)
-            {
-                handshakeException = new OperationCanceledException(handshakeCts.Token);
-            }
-            if (handshakeException is OperationCanceledException)
-            {
-                if (cancellationToken.IsCancellationRequested)
-                    throw new OperationCanceledException(cancellationToken);
-                if (handshakeTimeoutCts.IsCancellationRequested)
-                {
-                    throw new SharpLinkException(
-                        SharpLinkErrorCode.Unavailable,
-                        $"RPC handshake timed out after {_protocolOptions.HandshakeTimeout}.");
-                }
-                throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Client stopped during handshake.");
-            }
-
-            if (handshakeException is not null)
-                throw handshakeException;
+            await CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken).ConfigureAwait(false);
 
             var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(_shutdownCts.Token);
             var clientConnection = new ClientConnection(
@@ -150,6 +125,42 @@ internal sealed partial class SharpLinkClient
                 await session.DisposeAsync().ConfigureAwait(false);
             throw;
         }
+    }
+
+    private async Task CompleteHandshakeAsync(
+        RpcSession session,
+        CancellationToken operationCancellation,
+        CancellationToken propagatedCancellation)
+    {
+        using var handshakeTimeout = new CancellationTokenSource(_protocolOptions.HandshakeTimeout);
+        using var handshakeCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            operationCancellation,
+            handshakeTimeout.Token);
+        Exception? handshakeException;
+        try
+        {
+            handshakeException = await ProcessHandshakeAsync(session, handshakeCancellation.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (handshakeCancellation.IsCancellationRequested)
+        {
+            handshakeException = new OperationCanceledException(handshakeCancellation.Token);
+        }
+
+        if (handshakeException is OperationCanceledException)
+        {
+            if (propagatedCancellation.IsCancellationRequested)
+                throw new OperationCanceledException(propagatedCancellation);
+            if (handshakeTimeout.IsCancellationRequested)
+            {
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.Unavailable,
+                    $"RPC handshake timed out after {_protocolOptions.HandshakeTimeout}.");
+            }
+            throw CreateConnectionClosedException("Client stopped during handshake.");
+        }
+        if (handshakeException is not null)
+            throw handshakeException;
     }
 
     private void PublishReadyState()

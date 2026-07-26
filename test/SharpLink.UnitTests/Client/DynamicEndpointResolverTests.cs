@@ -94,6 +94,32 @@ public sealed class DynamicEndpointResolverTests
     }
 
     [Test]
+    public async Task DnsResolverShouldNotHideUnexpectedQueryFailuresBehindLastGood()
+    {
+        var query = new TestDnsQuery { Addresses = [IPAddress.Loopback] };
+        await using var resolver = new SharpLinkDnsEndpointResolver(
+            "service.example",
+            5001,
+            new SharpLinkDnsResolverOptions
+            {
+                RefreshInterval = TimeSpan.FromMilliseconds(1),
+                MinimumRefreshInterval = TimeSpan.FromMilliseconds(1),
+                MaximumRefreshInterval = TimeSpan.FromMilliseconds(1),
+                JitterRatio = 0
+            },
+            query);
+        _ = await resolver.ResolveAsync(CancellationToken.None);
+        query.Exception = new InvalidOperationException("query implementation failed");
+
+        await EnsureThrows<InvalidOperationException>(async () =>
+            _ = await resolver.ResolveAsync(CancellationToken.None));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        await using var watch = resolver.WatchAsync(timeout.Token).GetAsyncEnumerator(timeout.Token);
+        await EnsureThrows<InvalidOperationException>(async () =>
+            _ = await watch.MoveNextAsync());
+    }
+
+    [Test]
     public void EndpointSnapshotShouldNotExposeItsMutableBackingArray()
     {
         var original = new SharpLinkEndpoint
@@ -247,9 +273,12 @@ public sealed class DynamicEndpointResolverTests
     {
         public IPAddress[] Addresses { get; set; } = [];
         public bool Throw { get; set; }
+        public Exception? Exception { get; set; }
 
         public ValueTask<IPAddress[]> QueryAsync(string host, CancellationToken cancellationToken)
         {
+            if (Exception is { } exception)
+                return ValueTask.FromException<IPAddress[]>(exception);
             if (Throw)
                 return ValueTask.FromException<IPAddress[]>(new SocketException());
             return ValueTask.FromResult(Addresses);

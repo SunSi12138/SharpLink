@@ -407,11 +407,8 @@ internal sealed partial class SharpLinkClient
                 session.SetTelemetrySide("client");
                 session.BindRuntimeContext(_client._runtimeContext);
 
-                using var handshakeTimeout = new CancellationTokenSource(_client._protocolOptions.HandshakeTimeout);
-                using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(attemptCts.Token, handshakeTimeout.Token);
-                var handshakeException = await _client.ProcessHandshakeAsync(session, handshakeCts.Token).ConfigureAwait(false);
-                if (handshakeException is not null)
-                    throw handshakeException;
+                await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken)
+                    .ConfigureAwait(false);
 
                 var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(_client._shutdownCts.Token);
                 var createdConnection = new ClientConnection(

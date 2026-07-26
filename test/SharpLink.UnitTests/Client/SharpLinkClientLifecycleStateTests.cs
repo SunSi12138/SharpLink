@@ -31,6 +31,64 @@ public class SharpLinkClientLifecycleStateTests
     }
 
     [Test]
+    public async Task SharedFixedConnectShouldSurviveFirstWaiterCancellation()
+    {
+        var transport = new BlockingInitialTransportFactory();
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        using var cancellation = new CancellationTokenSource();
+
+        var cancelledWaiter = client.ConnectAsync(cancellation.Token).AsTask();
+        await transport.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var survivingWaiter = client.ConnectAsync().AsTask();
+        cancellation.Cancel();
+
+        await EnsureCancelledAsync(cancelledWaiter);
+        Ensure(!survivingWaiter.IsCompleted,
+            "one caller cancelling its wait must not cancel the shared client-owned connect attempt");
+
+        transport.ReleaseConnect();
+        await survivingWaiter.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(client.State == SharpLinkConnectionState.Ready,
+            "the shared fixed connect should still publish a ready connection");
+    }
+
+    [Test]
+    public async Task EndpointClusterHandshakeTimeoutsShouldRetainStructuredCause()
+    {
+        var staticFactories = new List<HangingHandshakeTransportFactory>();
+        await using (var staticClient = SharpClientBuilder.Create()
+            .UseEndpoints(
+                [CreateEndpoint("first", 5001), CreateEndpoint("second", 5002)],
+                _ =>
+                {
+                    var factory = new HangingHandshakeTransportFactory();
+                    staticFactories.Add(factory);
+                    return factory;
+                })
+            .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromMilliseconds(20))
+            .Build())
+        {
+            var exception = await CaptureSharpLinkExceptionAsync(staticClient.ConnectAsync().AsTask());
+            Ensure(ContainsHandshakeTimeout(exception),
+                "static endpoint clusters must preserve the structured handshake-timeout cause");
+        }
+
+        var dynamicFactory = new HangingHandshakeTransportFactory();
+        await using var dynamicClient = SharpClientBuilder.Create()
+            .UseEndpointResolver(
+                new FixedSnapshotResolver(new SharpLinkEndpointSnapshot(1, [CreateEndpoint("dynamic", 5003)])),
+                _ => dynamicFactory)
+            .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromMilliseconds(20))
+            .Build();
+        var dynamicException = await CaptureSharpLinkExceptionAsync(dynamicClient.ConnectAsync().AsTask());
+        Ensure(ContainsHandshakeTimeout(dynamicException),
+            "dynamic endpoint clusters must preserve the structured handshake-timeout cause");
+    }
+
+    [Test]
     public async Task StopShouldBeIdempotentAndRejectLaterConnects()
     {
         var transport = new TestClientTransportFactory();
@@ -355,6 +413,50 @@ public class SharpLinkClientLifecycleStateTests
         }
     }
 
+    private static async Task EnsureCancelledAsync(Task operation)
+    {
+        try
+        {
+            await operation;
+            throw new Exception("expected the caller wait to be cancelled");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private static async Task<SharpLinkException> CaptureSharpLinkExceptionAsync(Task operation)
+    {
+        try
+        {
+            await operation;
+            throw new Exception("expected a SharpLinkException");
+        }
+        catch (SharpLinkException exception)
+        {
+            return exception;
+        }
+    }
+
+    private static bool ContainsHandshakeTimeout(Exception exception)
+    {
+        if (exception is SharpLinkException { Code: SharpLinkErrorCode.Unavailable } sharpLink &&
+            sharpLink.Message.Contains("handshake timed out", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        if (exception is AggregateException aggregate)
+        {
+            foreach (var innerException in aggregate.InnerExceptions)
+            {
+                if (ContainsHandshakeTimeout(innerException))
+                    return true;
+            }
+            return false;
+        }
+        return exception.InnerException is { } inner && ContainsHandshakeTimeout(inner);
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
@@ -471,6 +573,75 @@ public class SharpLinkClientLifecycleStateTests
             for (var index = 0; index < connections.Length; index++)
                 await connections[index].DisposeAsync();
         }
+    }
+
+    private sealed class BlockingInitialTransportFactory : IClientTransportFactory
+    {
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TestTransportConnection? _connection;
+
+        internal TaskCompletionSource ConnectStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            ConnectStarted.TrySetResult();
+            await _release.Task.WaitAsync(cancellationToken);
+            var connection = new TestTransportConnection();
+            var payload = new PooledByteBufferWriter();
+            ProtocolV2PayloadCodec.WriteHandshakeResponse(payload, new ProtocolV2HandshakeResponse(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.None,
+                4 * 1024 * 1024,
+                1024 * 1024,
+                16 * 1024 * 1024));
+            await connection.InjectFrameAsync(
+                ProtocolV2FrameType.HandshakeResponse,
+                ProtocolV2FrameFlags.None,
+                0,
+                payload.WrittenMemory,
+                cancellationToken);
+            _connection = connection;
+            return connection;
+        }
+
+        internal void ReleaseConnect() => _release.TrySetResult();
+
+        public ValueTask DisposeAsync()
+            => _connection?.DisposeAsync() ?? ValueTask.CompletedTask;
+    }
+
+    private sealed class HangingHandshakeTransportFactory : IClientTransportFactory
+    {
+        private readonly List<TestTransportConnection> _connections = [];
+
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            var connection = new TestTransportConnection();
+            _connections.Add(connection);
+            return ValueTask.FromResult<ITransportConnection>(connection);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            foreach (var connection in _connections)
+                await connection.DisposeAsync();
+        }
+    }
+
+    private sealed class FixedSnapshotResolver(SharpLinkEndpointSnapshot snapshot) : ISharpLinkEndpointResolver
+    {
+        public ValueTask<SharpLinkEndpointSnapshot> ResolveAsync(CancellationToken cancellationToken)
+            => ValueTask.FromResult(snapshot);
+
+        public async IAsyncEnumerable<SharpLinkEndpointSnapshot> WatchAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private static ClientConnection? SelectClusterConnection(

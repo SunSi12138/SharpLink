@@ -1,25 +1,8 @@
-# 0.8.1 regression-test research
+# 0.8.2 regression-test research
 
-## Scope
-
-- Authentication and topology immutability boundaries.
-- Generated manifest and built-in request Codec integrity.
-- Built-in endpoint-resolver cancellation lifecycle.
-- Native `List<T>` decode allocation/copy cost.
-
-## Confirmed candidates
-
-- `SharpLinkAuthenticationContext.Scopes` exposes mutable `HashSet` instances, including one process-wide shared empty set.
-- `SharpLinkEndpointSnapshot.Endpoints` and generated manifest collections expose arrays behind read-only interfaces.
-- Both built-in endpoint resolvers cancel but never dispose their owned `CancellationTokenSource`; synchronous cancellation also violates their async disposal surface.
-- Generated inline requests bypass validating built-in Codecs for Boolean and semantic value types.
-- `BlitListCodec<T>` materializes an intermediate array and then copies it into a second List-owned array. The frozen 0.8.0 RPC baseline is 560 B/op for 16 integers and 2480 B/op for 256 integers.
-
-## Acceptance checklist
-
-- [x] Authorization scopes cannot be mutated or shared-contaminated by callers.
-- [x] Endpoint and generated manifest collections cannot be cast back to writable arrays/lists.
-- [x] Resolver disposal is idempotent, asynchronous, and disposes the owned cancellation source.
-- [x] Semantic fixed request parameters use validating built-in Codecs; raw numeric hot-path parameters remain inline.
-- [x] List decoding writes directly into the List-owned storage and reduces allocations without throughput regression.
-- [ ] Release, Generator, Unit, Integration, focused benchmarks, and pseudo-mutation review pass.
+- Fixed-client initialization used the first public caller token, unlike the already-correct static/dynamic/multi-cluster ownership model.
+- Static and dynamic endpoint dials duplicated only part of fixed-client handshake cancellation classification and leaked timeout cancellation as an unstructured inner exception.
+- BCL DNS lookup failure is represented by `SocketException`; a catch-all after last-good also concealed bugs in a custom/internal query implementation and prevented the supervised outer loop from observing them.
+- The writer always emits shortest-form VarUInt32, but the reader accepted a zero terminal group after continuation bytes.
+- Error text used `Encoding.UTF8`, while metadata already used the strict `UTF8Encoding(false, true)` instance.
+- The protocol parser performance gate uses an unchanged no-metadata request as a host-frequency control and keeps the affected path at 0 B/op.

@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-07-26
+
+### Fixed
+
+- Fixed-endpoint `ConnectAsync` now owns its shared initialization independently of individual waiters, so cancellation by the first caller no longer cancels concurrent callers or faults the client-wide attempt.
+- Fixed, static-cluster, and dynamic-cluster connections now share one handshake-timeout classifier. Endpoint clusters retain a structured `Unavailable` timeout cause instead of burying a linked-token `OperationCanceledException`.
+- DNS last-good fallback now catches transient `SocketException` failures only. Unexpected resolver implementation failures propagate to callers or the supervised watch loop instead of being silently hidden forever.
+- Protocol v2 length fields reject overlong VarUInt32 representations, restoring a single canonical wire encoding for metadata and error lengths.
+- Binary error payloads are validated with strict UTF-8 across contiguous and segmented frames; malformed peer text now terminates the frame as `ProtocolViolation` instead of being lossily replaced.
+
+### Compatibility and validation
+
+- Valid Protocol v2 payloads and generated RPC layouts are unchanged. Peers that emitted overlong VarUInt32 values or invalid UTF-8 error text are now rejected and must emit the canonical writer format.
+- Release build, Generator 83/83, Unit 344/344, Integration 227/227, five pre-fix failure probes, and three-launch frame-parser benchmarks passed.
+- The metadata parser changed from 42.67 ns to 39.60 ns while the same-run control changed from 39.32 ns to 40.23 ns; both remained 0 B/op. Because host variance was high, the result is treated as a no-regression signal rather than an improvement claim.
+
 ## [0.8.1] - 2026-07-26
 
 ### Fixed

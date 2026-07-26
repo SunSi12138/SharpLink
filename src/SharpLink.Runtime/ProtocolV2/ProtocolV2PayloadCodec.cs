@@ -343,7 +343,7 @@ public static class ProtocolV2PayloadCodec
             throw ProtocolV2FrameParser.Violation($"Unknown error code {unchecked((ushort)codeBits)}.");
         var message = messageLength == 0
             ? string.Empty
-            : Encoding.UTF8.GetString(reader.Sequence.Slice(reader.Position, messageLength));
+            : DecodeStrictUtf8(reader.Sequence.Slice(reader.Position, messageLength), "Binary error message");
         return new ProtocolV2Error(code, message, (flags & ProtocolV2FrameFlags.Truncated) != 0);
     }
 
@@ -362,6 +362,7 @@ public static class ProtocolV2PayloadCodec
             throw ProtocolV2FrameParser.Violation("Binary error message length does not match the frame.");
         if (!IsDefinedErrorCode((SharpLinkErrorCode)unchecked((ushort)codeBits)))
             throw ProtocolV2FrameParser.Violation($"Unknown error code {unchecked((ushort)codeBits)}.");
+        ValidateStrictUtf8(reader.Sequence.Slice(reader.Position, messageLength), "Binary error message");
     }
 
     internal static int GetMetadataPayloadLength(SharpLinkMetadata metadata)
@@ -438,9 +439,62 @@ public static class ProtocolV2PayloadCodec
                 return false;
             value |= (uint)(current & 0x7F) << (index * 7);
             if ((current & 0x80) == 0)
-                return true;
+                return index == 0 || current != 0;
         }
         return false;
+    }
+
+    private static string DecodeStrictUtf8(ReadOnlySequence<byte> bytes, string field)
+    {
+        try
+        {
+            return SStrictUtf8.GetString(bytes);
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.ProtocolViolation,
+                $"{field} is not valid UTF-8.",
+                exception);
+        }
+    }
+
+    private static void ValidateStrictUtf8(ReadOnlySequence<byte> bytes, string field)
+    {
+        try
+        {
+            var decoder = SStrictUtf8.GetDecoder();
+            Span<char> characters = stackalloc char[256];
+            foreach (var segment in bytes)
+            {
+                var remaining = segment.Span;
+                while (!remaining.IsEmpty)
+                {
+                    decoder.Convert(
+                        remaining,
+                        characters,
+                        flush: false,
+                        out var bytesUsed,
+                        out _,
+                        out _);
+                    remaining = remaining[bytesUsed..];
+                }
+            }
+            decoder.Convert(
+                ReadOnlySpan<byte>.Empty,
+                characters,
+                flush: true,
+                out _,
+                out _,
+                out _);
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.ProtocolViolation,
+                $"{field} is not valid UTF-8.",
+                exception);
+        }
     }
 
     private static int GetVarUInt32Length(uint value)

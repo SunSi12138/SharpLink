@@ -207,6 +207,45 @@ public class ProtocolV2Tests
     }
 
     [Test]
+    public async Task BinaryErrorShouldRejectInvalidUtf8()
+    {
+        var payload = new byte[]
+        {
+            (byte)SharpLinkErrorCode.Unavailable,
+            0,
+            2,
+            0xC3,
+            0x28
+        };
+
+        await ExpectProtocolViolation(() => ProtocolV2PayloadCodec.ReadError(
+            CreateSegmented(payload, 1),
+            ProtocolV2FrameFlags.Error,
+            Limits.MaxErrorMessageBytes));
+        await ExpectProtocolViolation(CreateFrame(
+            ProtocolV2FrameType.Response,
+            ProtocolV2FrameFlags.Error,
+            1,
+            payload));
+    }
+
+    [Test]
+    public async Task LengthVarintsShouldRejectOverlongEncodings()
+    {
+        await ExpectProtocolViolation(() => ProtocolV2PayloadCodec.ReadMetadata(
+            new ReadOnlySequence<byte>(new byte[] { 0x80, 0x00 })));
+
+        var requestPayload = new byte[ProtocolV2Constants.RequestPrefixBytes + 2];
+        requestPayload[^2] = 0x80;
+        requestPayload[^1] = 0x00;
+        await ExpectProtocolViolation(CreateFrame(
+            ProtocolV2FrameType.Request,
+            ProtocolV2FrameFlags.HasMetadata,
+            1,
+            requestPayload));
+    }
+
+    [Test]
     public async Task RequestMetadataMustBeBoundedBeforeSlice()
     {
         var payload = new PooledByteBufferWriter();

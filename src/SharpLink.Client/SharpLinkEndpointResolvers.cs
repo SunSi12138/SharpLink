@@ -229,7 +229,7 @@ public sealed class SharpLinkDnsEndpointResolver : ISharpLinkEndpointResolver
         {
             throw;
         }
-        catch when (TryGetLastSnapshot(out var lastSnapshot))
+        catch (SocketException) when (TryGetLastSnapshot(out var lastSnapshot))
         {
             return lastSnapshot;
         }
@@ -254,7 +254,7 @@ public sealed class SharpLinkDnsEndpointResolver : ISharpLinkEndpointResolver
             {
                 yield break;
             }
-            catch
+            catch (SocketException)
             {
                 // DNS failure intentionally retains the last successful topology until the next refresh.
             }
