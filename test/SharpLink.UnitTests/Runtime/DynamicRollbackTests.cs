@@ -14,126 +14,167 @@ public class DynamicRollbackTests
     [Test]
     public async Task ClientRegistrationRollbackShouldPreserveConflictAndAdapterCleanupFailure()
     {
-        var client = SharpClientBuilder.Create().UseTransport(new NoopClientTransport()).Build();
-        using var loaded = LoadPlugin("client-registration");
+        await RollbackState.TestIsolation.WaitAsync();
         try
         {
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "first-schema");
-            Ensure(client.RegisterAssembly(typeof(RollbackMarker).Assembly).Succeeded, "first Client registration");
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "second-schema");
+            var client = SharpClientBuilder.Create().UseTransport(new NoopClientTransport()).Build();
+            using var loaded = LoadPlugin("client-registration");
+            try
+            {
+                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "first-schema");
+                Ensure(client.RegisterAssembly(typeof(RollbackMarker).Assembly).Succeeded, "first Client registration");
+                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "second-schema");
 
-            var failure = Capture(() => client.RegisterAssembly(loaded.Assembly));
+                var failure = Capture(() => client.RegisterAssembly(loaded.Assembly));
 
-            Ensure(Contains(failure, "Codec conflict"), "Client rollback retains the structured conflict");
-            Ensure(Contains(failure, "rollback Adapter scope cleanup failed"), "Client rollback retains Adapter cleanup failure");
+                Ensure(Contains(failure, "Codec conflict"), "Client rollback retains the structured conflict");
+                Ensure(Contains(failure, "rollback Adapter scope cleanup failed"), "Client rollback retains Adapter cleanup failure");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", null);
+                try { await client.DisposeAsync(); } catch { }
+            }
         }
         finally
         {
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", null);
-            try { await client.DisposeAsync(); } catch { }
+            RollbackState.TestIsolation.Release();
         }
     }
 
     [Test]
     public async Task ServerRegistrationRollbackShouldPreserveConflictAndAdapterCleanupFailure()
     {
-        var server = SharpLinkServerBuilder.Create().UseTransport(new NoopServerTransport()).Build();
-        using var loaded = LoadPlugin("server-registration");
+        await RollbackState.TestIsolation.WaitAsync();
         try
         {
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "first-schema");
-            Ensure(server.RegisterAssembly(typeof(RollbackMarker).Assembly).Succeeded, "first Server registration");
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "second-schema");
+            var server = SharpLinkServerBuilder.Create().UseTransport(new NoopServerTransport()).Build();
+            using var loaded = LoadPlugin("server-registration");
+            try
+            {
+                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "first-schema");
+                Ensure(server.RegisterAssembly(typeof(RollbackMarker).Assembly).Succeeded, "first Server registration");
+                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "second-schema");
 
-            var failure = Capture(() => server.RegisterAssembly(loaded.Assembly));
+                var failure = Capture(() => server.RegisterAssembly(loaded.Assembly));
 
-            Ensure(Contains(failure, "Codec conflict"), "Server rollback retains the structured conflict");
-            Ensure(Contains(failure, "rollback Adapter scope cleanup failed"), "Server rollback retains Adapter cleanup failure");
+                Ensure(Contains(failure, "Codec conflict"), "Server rollback retains the structured conflict");
+                Ensure(Contains(failure, "rollback Adapter scope cleanup failed"), "Server rollback retains Adapter cleanup failure");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", null);
+                try { await server.DisposeAsync(); } catch { }
+            }
         }
         finally
         {
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", null);
-            try { await server.DisposeAsync(); } catch { }
+            RollbackState.TestIsolation.Release();
         }
     }
 
     [Test]
     public async Task ClientReplacementRollbackShouldPreserveConflictAndAdapterCleanupFailure()
     {
-        var client = SharpClientBuilder.Create().UseTransport(new NoopClientTransport()).Build();
-        using var oldPlugin = LoadPlugin("client-old");
-        using var newPlugin = LoadPlugin("client-new");
+        await RollbackState.TestIsolation.WaitAsync();
         try
         {
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "retained-schema");
-            Ensure(client.RegisterAssembly(typeof(RollbackMarker).Assembly).Succeeded, "retained Client registration");
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
-            Ensure(client.RegisterAssembly(oldPlugin.Assembly).Succeeded, "old Client registration");
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", null);
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "incoming-schema");
+            var client = SharpClientBuilder.Create().UseTransport(new NoopClientTransport()).Build();
+            using var oldPlugin = LoadPlugin("client-old");
+            using var newPlugin = LoadPlugin("client-new");
+            try
+            {
+                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "retained-schema");
+                Ensure(client.RegisterAssembly(typeof(RollbackMarker).Assembly).Succeeded, "retained Client registration");
+                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
+                Ensure(client.RegisterAssembly(oldPlugin.Assembly).Succeeded, "old Client registration");
+                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", null);
+                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "incoming-schema");
 
-            var failure = Capture(() => client.ReplaceAssemblyAsync(
-                oldPlugin.Assembly, newPlugin.Assembly, TimeSpan.Zero).AsTask().GetAwaiter().GetResult());
+                var failure = Capture(() => client.ReplaceAssemblyAsync(
+                    oldPlugin.Assembly, newPlugin.Assembly, TimeSpan.Zero).AsTask().GetAwaiter().GetResult());
 
-            Ensure(Contains(failure, "Codec conflict"), "Client replacement retains the structured conflict");
-            Ensure(Contains(failure, "rollback Adapter scope cleanup failed"), "Client replacement retains Adapter cleanup failure");
+                Ensure(Contains(failure, "Codec conflict"), "Client replacement retains the structured conflict");
+                Ensure(Contains(failure, "rollback Adapter scope cleanup failed"), "Client replacement retains Adapter cleanup failure");
+            }
+            finally
+            {
+                ClearEnvironment();
+                try { await client.DisposeAsync(); } catch { }
+            }
         }
         finally
         {
-            ClearEnvironment();
-            try { await client.DisposeAsync(); } catch { }
+            RollbackState.TestIsolation.Release();
         }
     }
 
     [Test]
     public async Task ServerReplacementRollbackShouldPreserveConflictAndAdapterCleanupFailure()
     {
-        var server = SharpLinkServerBuilder.Create().UseTransport(new NoopServerTransport()).Build();
-        using var oldPlugin = LoadPlugin("server-old");
-        using var newPlugin = LoadPlugin("server-new");
+        await RollbackState.TestIsolation.WaitAsync();
         try
         {
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "retained-schema");
-            Ensure(server.RegisterAssembly(typeof(RollbackMarker).Assembly).Succeeded, "retained Server registration");
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
-            Ensure(server.RegisterAssembly(oldPlugin.Assembly).Succeeded, "old Server registration");
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", null);
-            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "incoming-schema");
+            var server = SharpLinkServerBuilder.Create().UseTransport(new NoopServerTransport()).Build();
+            using var oldPlugin = LoadPlugin("server-old");
+            using var newPlugin = LoadPlugin("server-new");
+            try
+            {
+                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "retained-schema");
+                Ensure(server.RegisterAssembly(typeof(RollbackMarker).Assembly).Succeeded, "retained Server registration");
+                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
+                Ensure(server.RegisterAssembly(oldPlugin.Assembly).Succeeded, "old Server registration");
+                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", null);
+                Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "incoming-schema");
 
-            var failure = Capture(() => server.ReplaceAssemblyAsync(
-                oldPlugin.Assembly, newPlugin.Assembly, TimeSpan.Zero).AsTask().GetAwaiter().GetResult());
+                var failure = Capture(() => server.ReplaceAssemblyAsync(
+                    oldPlugin.Assembly, newPlugin.Assembly, TimeSpan.Zero).AsTask().GetAwaiter().GetResult());
 
-            Ensure(Contains(failure, "Codec conflict"), "Server replacement retains the structured conflict");
-            Ensure(Contains(failure, "rollback Adapter scope cleanup failed"), "Server replacement retains Adapter cleanup failure");
+                Ensure(Contains(failure, "Codec conflict"), "Server replacement retains the structured conflict");
+                Ensure(Contains(failure, "rollback Adapter scope cleanup failed"), "Server replacement retains Adapter cleanup failure");
+            }
+            finally
+            {
+                ClearEnvironment();
+                try { await server.DisposeAsync(); } catch { }
+            }
         }
         finally
         {
-            ClearEnvironment();
-            try { await server.DisposeAsync(); } catch { }
+            RollbackState.TestIsolation.Release();
         }
     }
 
     [Test]
     public void ServerProfileBindingFailureShouldDisposeRuntimeContextAndPreserveBothFailures()
     {
-        Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "server-build-schema");
-        RollbackState.ScopeDisposeCount = 0;
-        var manifest = new RollbackManifest();
-        SharpLinkGeneratedAssemblyCatalog.Register(manifest);
+        RollbackState.TestIsolation.Wait();
         try
         {
-            var failure = Capture(() => SharpLinkServerBuilder.Create()
-                .UseTransport(new ThrowingProfileServerTransport())
-                .Build());
+            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "server-build-schema");
+            RollbackState.ScopeDisposeCount = 0;
+            var manifest = new RollbackManifest();
+            SharpLinkGeneratedAssemblyCatalog.Register(manifest);
+            try
+            {
+                var failure = Capture(() => SharpLinkServerBuilder.Create()
+                    .UseTransport(new ThrowingProfileServerTransport())
+                    .Build());
 
-            Ensure(Contains(failure, "server profile binding failed"), "Server build retains profile failure");
-            Ensure(Contains(failure, "rollback Adapter scope cleanup failed"), "Server build retains Context cleanup failure");
-            Ensure(RollbackState.ScopeDisposeCount == 1, "Server build disposes Runtime Context once");
+                Ensure(Contains(failure, "server profile binding failed"), "Server build retains profile failure");
+                Ensure(Contains(failure, "rollback Adapter scope cleanup failed"), "Server build retains Context cleanup failure");
+                Ensure(RollbackState.ScopeDisposeCount == 1, "Server build disposes Runtime Context once");
+            }
+            finally
+            {
+                RollbackTestIsolation.RemoveManifestFromCatalog(manifest);
+                ClearEnvironment();
+                GC.KeepAlive(manifest);
+            }
         }
         finally
         {
-            ClearEnvironment();
-            GC.KeepAlive(manifest);
+            RollbackState.TestIsolation.Release();
         }
     }
 

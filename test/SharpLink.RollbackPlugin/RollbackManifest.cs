@@ -14,6 +14,7 @@ public sealed class RollbackMarker;
 public static class RollbackState
 {
     public static int ScopeDisposeCount;
+    public static SemaphoreSlim TestIsolation { get; } = new(1, 1);
 }
 
 public sealed class RollbackManifest : ISharpLinkGeneratedAssemblyManifest

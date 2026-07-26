@@ -380,17 +380,45 @@ public class SharpClientBuilder
         }
         catch (Exception buildException)
         {
+            ThrowAfterClientBuildRollback(
+                buildException,
+                _transport ?? (IAsyncDisposable?)_endpointResolver,
+                runtimeContext);
+            throw new System.Diagnostics.UnreachableException();
+        }
+    }
+
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void ThrowAfterClientBuildRollback(
+        Exception buildException,
+        IAsyncDisposable? ownedResource,
+        SharpLinkRuntimeContext runtimeContext)
+    {
+        List<Exception>? cleanupFailures = null;
+        if (ownedResource is not null)
+        {
             try
             {
-                runtimeContext.Dispose();
+                ownedResource.DisposeAsync().AsTask().GetAwaiter().GetResult();
             }
             catch (Exception cleanupException)
             {
-                throw new AggregateException(buildException, cleanupException);
+                (cleanupFailures ??= []).Add(cleanupException);
             }
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(buildException).Throw();
-            throw new System.Diagnostics.UnreachableException();
         }
+        try
+        {
+            runtimeContext.Dispose();
+        }
+        catch (Exception cleanupException)
+        {
+            (cleanupFailures ??= []).Add(cleanupException);
+        }
+        if (cleanupFailures is null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(buildException).Throw();
+        cleanupFailures!.Insert(0, buildException);
+        throw new AggregateException(cleanupFailures);
     }
 
     private ISharpLinkClient BuildWithRuntimeContext(

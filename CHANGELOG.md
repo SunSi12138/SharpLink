@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.12] - 2026-07-27
+
+### Fixed
+
+- Direct Client transport profile-binding rollback now disposes the Client-owned transport and preserves binding, transport, and Runtime Context cleanup failures.
+- Direct Client construction rollback now releases its transport when later logger or option construction fails.
+- Dynamic endpoint Client construction now releases its Client-owned resolver when validation or construction fails.
+- Server service-definition validation rollback now preserves the primary validation failure together with every Runtime Context cleanup failure.
+- Server construction rollback now covers logger and constructor failures, releases all created registrations and internal owners, and retains every cleanup failure.
+
+### Compatibility and validation
+
+- Public APIs, Protocol v2, and generated Manifest versions are unchanged; failed builder transactions may now surface `AggregateException` when an owned extension also fails during rollback.
+- Non-incremental Release build, Generator 83/83, Unit 399/399, Integration 228/228, package smoke, and alternating same-machine A/B passed.
+- Direct and dynamic Client Build/Dispose retained 6.37/7.38 KB and showed no stable sub-1% latency regression across reversed runs; Server retained or improved latency and allocation fell from 12.94 to 12.88 KB.
+
 ## [0.8.11] - 2026-07-27
 
 ### Fixed
