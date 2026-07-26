@@ -211,6 +211,51 @@ public class RpcSessionLifecycleTests
         await input.Writer.CompleteAsync();
     }
 
+    [Test]
+    public async Task ThrowingStreamCompletionShouldNotStrandSessionCleanup()
+    {
+        var input = new Pipe();
+        var output = new Pipe();
+        var disconnectCount = 0;
+        var session = new RpcSession(
+            "throwing-stream-completion",
+            input.Reader,
+            output.Writer,
+            () => Interlocked.Increment(ref disconnectCount),
+            static () => true);
+        var sibling = new TrackingCompletionDispatcher();
+        session.StreamManager.Register(1, new ThrowingCompletionDispatcher());
+        session.StreamManager.Register(1, 1, sibling);
+
+        var failure = await CaptureExceptionAsync(session.DisposeAsync().AsTask());
+        if (failure is not null)
+        {
+            try { await session.DisposeAsync(); } catch { }
+        }
+        await output.Reader.CompleteAsync();
+        await input.Writer.CompleteAsync();
+
+        Ensure(failure is null,
+            "dispatcher cleanup exceptions must not interrupt Session disposal");
+        Ensure(sibling.CompletionCount == 1,
+            "a throwing dispatcher must not strand sibling stream completion");
+        Ensure(disconnectCount == 1,
+            "a throwing dispatcher must not skip transport disposal");
+    }
+
+    private static async Task<Exception?> CaptureExceptionAsync(Task task)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
     private static SharpLinkException CaptureSendException(RpcSession session)
     {
         try
@@ -264,6 +309,26 @@ public class RpcSessionLifecycleTests
             _requestId = requestId;
             _streamId = streamId;
         }
+    }
+
+    private sealed class ThrowingCompletionDispatcher : IStreamDispatcher
+    {
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload) => ValueTask.CompletedTask;
+        public void Complete(bool isError, string? errorMessage)
+            => throw new InvalidOperationException("dispatcher completion failed");
+        public void Complete(Exception? exception)
+            => throw new InvalidOperationException("dispatcher completion failed");
+    }
+
+    private sealed class TrackingCompletionDispatcher : IStreamDispatcher
+    {
+        private int _completionCount;
+        internal int CompletionCount => Volatile.Read(ref _completionCount);
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload) => ValueTask.CompletedTask;
+        public void Complete(bool isError, string? errorMessage)
+            => Interlocked.Increment(ref _completionCount);
+        public void Complete(Exception? exception)
+            => Interlocked.Increment(ref _completionCount);
     }
 
     private static void Ensure(bool condition, string message)

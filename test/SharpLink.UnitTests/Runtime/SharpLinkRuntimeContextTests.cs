@@ -190,6 +190,18 @@ public class SharpLinkRuntimeContextTests
     }
 
     [Test]
+    public void ServerCallConcurrencyShouldBoundDeadlineScanMemory()
+    {
+        var failure = CaptureFailure(new SharpLinkFlowControlOptions
+        {
+            MaxConcurrentCallsPerConnection = int.MaxValue
+        }.Validate);
+
+        Ensure(failure is ArgumentOutOfRangeException,
+            "Server call concurrency must bound its per-deadline-scan snapshot");
+    }
+
+    [Test]
     public async Task BuildingOneHundredContextsInParallelShouldNotCrossContaminate()
     {
         var tasks = new Task<SharpLinkRuntimeContext>[100];

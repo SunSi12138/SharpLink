@@ -161,6 +161,42 @@ public class SharpLinkClientAccessorTests
             "concurrent hosted stop callers must join the same client cleanup");
     }
 
+    [Test]
+    public async Task CancelledHostedStopShouldStillDisposeTransferredClient()
+    {
+        var service = new SharpLinkClientHostedService(
+            SharpClientBuilder.Create().UseTransport(new ThrowingLifecycleTransportFactory()),
+            new SharpLinkClientAccessor(),
+            NullLoggerFactory.Instance);
+        var client = new CancellationSensitiveClient();
+        typeof(SharpLinkClientHostedService)
+            .GetField("_client", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(service, client);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var stopFailure = await CaptureExceptionAsync(service.StopAsync(cancellation.Token));
+        _ = await CaptureExceptionAsync(service.DisposeAsync().AsTask());
+
+        Ensure(stopFailure is OperationCanceledException,
+            "hosted Stop must preserve caller cancellation");
+        Ensure(client.DisposeCount == 1,
+            "hosted Stop cancellation must not lose the transferred Client owner");
+    }
+
+    private static async Task<Exception?> CaptureExceptionAsync(Task task)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
     private static bool ContainsMessage(Exception exception, string message)
     {
         if (exception.Message == message)
@@ -268,5 +304,41 @@ public class SharpLinkClientAccessorTests
         public ValueTask DisposeAsync() => StopAsync();
 
         internal void ReleaseStop() => _release.TrySetResult();
+    }
+
+    private sealed class CancellationSensitiveClient : ISharpLinkClient
+    {
+        private int _disposeCount;
+
+        internal int DisposeCount => Volatile.Read(ref _disposeCount);
+        public SharpLinkConnectionState State => SharpLinkConnectionState.Draining;
+        public ValueTask ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.CompletedTask;
+        public ValueTask StopAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+        public ValueTask DisposeAsync()
+        {
+            Interlocked.Increment(ref _disposeCount);
+            return ValueTask.CompletedTask;
+        }
+        public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Draining));
+        public T Get<T>() where T : IService => throw new NotSupportedException();
+        public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly) => default;
+        public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
+            Assembly assembly,
+            TimeSpan gracefulTimeout,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+        public ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
+            Assembly oldAssembly,
+            Assembly newAssembly,
+            TimeSpan gracefulTimeout,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
     }
 }

@@ -16,6 +16,9 @@ public enum SharpLinkPerformanceProfile
 /// <summary>Configures bounded buffering and call concurrency for one runtime context.</summary>
 public sealed class SharpLinkFlowControlOptions
 {
+    /// <summary>The hard maximum active Server calls on one physical connection.</summary>
+    public const int MaximumConcurrentCallsPerConnection = 1024 * 1024;
+
     /// <summary>Gets or sets the maximum queued outbound bytes.</summary>
     public int MaxSendQueueBytes { get; set; } = 8 * 1024 * 1024;
 
@@ -34,7 +37,12 @@ public sealed class SharpLinkFlowControlOptions
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxSendQueueBytes);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(StreamReceiveWindowBytes);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ConnectionReceiveWindowBytes);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxConcurrentCallsPerConnection);
+        if (MaxConcurrentCallsPerConnection is < 1 or > MaximumConcurrentCallsPerConnection)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxConcurrentCallsPerConnection),
+                $"MaxConcurrentCallsPerConnection must be between 1 and {MaximumConcurrentCallsPerConnection}.");
+        }
         if (ConnectionReceiveWindowBytes < StreamReceiveWindowBytes)
             throw new ArgumentException("ConnectionReceiveWindowBytes cannot be smaller than StreamReceiveWindowBytes.");
     }

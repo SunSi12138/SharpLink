@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.18] - 2026-07-27
+
+### Fixed
+
+- Hosted single- and multi-cluster Clients now remain owned through cancellation or failure of token-bound Stop and are always disposed, with Stop and disposal failures preserved together.
+- Dynamic Client and Server assembly drains now slice timer-range-exceeding graceful timeouts instead of faulting after the module has entered Draining.
+- Timed send batching now saturates monotonic deadline conversion and slices native timer waits, so huge positive flush latencies cannot become immediate flushes or pump faults.
+- Server active-call concurrency now has a 1,048,576-per-connection hard maximum enforced by both public flow-control validation and the deadline scheduler.
+- Terminal stream cleanup now detaches every dispatcher outside the request lock before surfacing completion failures; RpcSession terminal cleanup cannot be interrupted by a user dispatcher.
+
+### Compatibility and validation
+
+- Protocol v2 wire formats and generated Manifest versions are unchanged. Hosted Client Stop now also calls `DisposeAsync` on its transferred owner. Direct `StreamManager.CompleteAll` still surfaces completion failures after all entries are drained, while RpcSession suppresses them to finish transport cleanup. `MaxConcurrentCallsPerConnection` values above 1,048,576 are rejected.
+- Non-incremental Release build, Generator 83/83, Unit 432/432, Integration 228/228, seven-package pack, and fresh-cache package smoke passed.
+- Buffer-pool, pending, and flow-control hot-path allocations remained 0/48/0 B per operation with no stable latency regression. Robust two-stream terminal draining intentionally adds one 32 B shutdown snapshot; empty Session, Runtime Context, and Server lifecycle allocations are unchanged.
+
 ## [0.8.17] - 2026-07-27
 
 ### Fixed

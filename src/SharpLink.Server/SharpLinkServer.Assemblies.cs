@@ -383,8 +383,9 @@ internal sealed partial class SharpLinkServer
         var drainTask = module.WaitForDrainAsync();
         if (!drainTask.IsCompleted)
         {
-            var timeoutTask = Task.Delay(gracefulTimeout);
-            if (!ReferenceEquals(await Task.WhenAny(drainTask, timeoutTask).ConfigureAwait(false), drainTask))
+            if (!await SharpLinkDynamicModule.WaitForDrainAsync(
+                    drainTask,
+                    gracefulTimeout).ConfigureAwait(false))
             {
                 module.CancelRemainingCalls();
                 await Task.Yield();

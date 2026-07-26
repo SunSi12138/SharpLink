@@ -431,7 +431,7 @@ public sealed partial class RpcSession : IRpcSession
         _cts.Cancel();
         Volatile.Read(ref _streamFlowControl)?.Complete(structured);
         Volatile.Read(ref _pump)?.Stop();
-        StreamManager.CompleteAll(structured);
+        CompleteReceiveStreams(structured);
         _ = StartTransportDispose();
         try
         {
@@ -451,7 +451,7 @@ public sealed partial class RpcSession : IRpcSession
         {
             RecordTelemetryConnectionClosed();
             Volatile.Read(ref _streamFlowControl)?.Complete(stopping.Exception);
-            StreamManager.CompleteAll(stopping.Exception);
+            CompleteReceiveStreams(stopping.Exception);
             try
             {
                 OnDisconnected?.Invoke(stopping.Exception);
@@ -540,6 +540,18 @@ public sealed partial class RpcSession : IRpcSession
 
     private static Exception CombineCleanupExceptions(Exception? first, Exception next)
         => first is null ? next : new AggregateException(first, next);
+
+    private void CompleteReceiveStreams(Exception exception)
+    {
+        try
+        {
+            StreamManager.CompleteAll(exception);
+        }
+        catch
+        {
+            // A user dispatcher cleanup failure cannot interrupt terminal transport cleanup.
+        }
+    }
 
     private void RecordTelemetryConnectionClosed()
     {

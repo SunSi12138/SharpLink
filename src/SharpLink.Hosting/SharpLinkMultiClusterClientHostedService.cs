@@ -51,8 +51,30 @@ internal sealed class SharpLinkMultiClusterClientHostedService(
     private async Task StopCoreAsync(CancellationToken cancellationToken)
     {
         var client = Interlocked.Exchange(ref _client, null);
-        if (client is not null)
+        if (client is null)
+            return;
+
+        Exception? stopException = null;
+        try
+        {
             await client.StopAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            stopException = exception;
+        }
+        try
+        {
+            await client.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception cleanupException)
+        {
+            if (stopException is not null)
+                throw new AggregateException(stopException, cleanupException);
+            throw;
+        }
+        if (stopException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(stopException).Throw();
     }
 
     public ValueTask DisposeAsync()

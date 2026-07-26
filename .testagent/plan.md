@@ -1,10 +1,10 @@
-# 0.8.17 regression-test plan
+# 0.8.18 regression-test plan
 
-1. [x] Prove concurrent multi-cluster unregister callers share the original rejected child operation.
-2. [x] Prove Client and Server TLS snapshots preserve isolated chain-policy and RSA-padding settings.
-3. [x] Prove inconsistent request and unknown response capability sets are rejected.
-4. [x] Prove partition admission configuration is frozen before runtime use.
-5. [x] Prove state-store and writer-pool aggregate sizing has hard validation bounds.
+1. [x] Prove cancelled Hosted Client Stop still disposes every transferred Client owner.
+2. [x] Prove a timer-range-exceeding dynamic-module drain timeout remains pending and completes after the lease drains.
+3. [x] Prove a huge configured send-flush latency does not overflow into an immediate flush or pump fault.
+4. [x] Prove Server call concurrency rejects a deadline-scan snapshot beyond the hard bound.
+5. [x] Prove a throwing stream dispatcher cannot strand sibling streams or transport disposal.
 6. [x] Run the complete pre-fix Unit probe and record the exact failure set.
 7. [x] Implement only proven fixes, review assertions/pseudo-mutations, and run performance A/B.
-8. [x] Complete release gates and documentation; prepare the local 0.8.17 commit.
+8. [x] Complete release gates and documentation; prepare the local 0.8.18 commit.

@@ -2,6 +2,7 @@ using System.Net;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Threading;
+using System.Collections.Generic;
 using SharpLink.Client;
 using SharpLink.RollbackPlugin;
 using SharpLink.Server;
@@ -11,6 +12,55 @@ namespace SharpLink.UnitTests.Runtime;
 [NotInParallel]
 public class DynamicRollbackTests
 {
+    [Test]
+    public async Task HugeDynamicDrainTimeoutShouldRemainPendingUntilLeaseRelease()
+    {
+        await RollbackState.TestIsolation.WaitAsync();
+        Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
+        var client = SharpClientBuilder.Create().UseTransport(new NoopClientTransport()).Build();
+        SharpLinkDynamicModuleLease lease = default;
+        var leaseReleased = false;
+        try
+        {
+            var assembly = typeof(RollbackMarker).Assembly;
+            Ensure(client.RegisterAssembly(assembly).Succeeded, "dynamic Client registration");
+            var modules = (Dictionary<Assembly, SharpLinkDynamicModule>)(typeof(SharpLinkClient)
+                .GetField("_dynamicModules", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(client)!);
+            var module = modules[assembly];
+            Ensure(module.TryAcquire(stream: false, out lease), "dynamic module lease");
+
+            var unregister = client.UnregisterAssemblyAsync(assembly, TimeSpan.MaxValue).AsTask();
+            await Task.Delay(50);
+            var completedBeforeDrain = unregister.IsCompleted;
+            lease.Dispose();
+            leaseReleased = true;
+            Exception? failure = null;
+            SharpLinkAssemblyUnregisterResult? result = null;
+            try
+            {
+                result = await unregister.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+
+            Ensure(!completedBeforeDrain,
+                "a huge positive graceful timeout must not overflow the native delay range");
+            Ensure(failure is null && result is { ReferencesReleased: true },
+                "the unregister operation must complete after its active lease drains");
+        }
+        finally
+        {
+            if (!leaseReleased && lease.IsAcquired)
+                lease.Dispose();
+            try { await client.DisposeAsync(); } catch { }
+            ClearEnvironment();
+            RollbackState.TestIsolation.Release();
+        }
+    }
+
     [Test]
     public async Task ClientRegistrationRollbackShouldPreserveConflictAndAdapterCleanupFailure()
     {

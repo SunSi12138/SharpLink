@@ -4,6 +4,8 @@ public sealed partial class RpcSession
 {
     private sealed class SendPump
     {
+        private static readonly TimeSpan MaximumTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue);
+        private static readonly long MaximumTimerStopwatchTicks = ToStopwatchTicks(MaximumTimerDelay);
         private enum FlushMode
         {
             LowLatency,
@@ -204,21 +206,26 @@ public sealed partial class RpcSession
 
         private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchStart)
         {
-            var remainingTicks = _maxLatencyTicks - (Stopwatch.GetTimestamp() - batchStart);
-            if (remainingTicks <= 0)
-                return false;
+            while (true)
+            {
+                var remainingTicks = _maxLatencyTicks - (Stopwatch.GetTimestamp() - batchStart);
+                if (remainingTicks <= 0)
+                    return false;
 
-            var remaining = TimeSpan.FromSeconds((double)remainingTicks / Stopwatch.Frequency);
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCancellation);
-            timeoutCts.CancelAfter(remaining);
-            try
-            {
-                return await _queue.Reader.WaitToReadAsync(timeoutCts.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (
-                timeoutCts.IsCancellationRequested && !_sessionCancellation.IsCancellationRequested)
-            {
-                return false;
+                var timerTicks = Math.Min(remainingTicks, MaximumTimerStopwatchTicks);
+                var delay = TimeSpan.FromSeconds((double)timerTicks / Stopwatch.Frequency);
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCancellation);
+                timeoutCts.CancelAfter(delay);
+                try
+                {
+                    return await _queue.Reader.WaitToReadAsync(timeoutCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (
+                    timeoutCts.IsCancellationRequested && !_sessionCancellation.IsCancellationRequested)
+                {
+                    if (remainingTicks <= MaximumTimerStopwatchTicks)
+                        return false;
+                }
             }
         }
 
@@ -347,7 +354,12 @@ public sealed partial class RpcSession
         }
 
         private static long ToStopwatchTicks(TimeSpan value)
-            => Math.Max(1L, (long)(value.TotalSeconds * Stopwatch.Frequency));
+        {
+            var ticks = value.TotalSeconds * Stopwatch.Frequency;
+            return ticks >= long.MaxValue
+                ? long.MaxValue
+                : Math.Max(1L, (long)Math.Ceiling(ticks));
+        }
 
         private static SharpLinkException NormalizeTransportException(Exception exception)
             => exception as SharpLinkException ??

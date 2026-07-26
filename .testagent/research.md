@@ -1,29 +1,37 @@
-# 0.8.17 regression-test research
+# 0.8.18 regression-test research
 
 ## Target inventory and evidence candidates
 
-- `SharpLinkMultiClusterClient.UnregisterAssemblyAsync`: concurrent callers create independent coordinator operations over the same shared child operation. If the child rejects, both restore routes and one replaces the real failure with a route-conflict exception.
-- `TlsAuthenticationOptionsSnapshot`: Client chain policy is retained by reference, while Server chain policy is dropped entirely; Server RSA signature-padding settings are also omitted on supported platforms.
-- Protocol v2 handshake capability parsing: a request may require capabilities it did not advertise as supported, and a response may negotiate unknown capability bits.
-- `AdmissionPartitionPool`: the live pool retains the mutable `SharpLinkPartitionAdmissionOptions` passed through the builder, so leaked callback state can alter limits and new partition runtimes after Build.
-- `RuntimeConcurrencyOptions` and `BufferWriterPoolOptions`: valid-looking values can request unbounded stripe objects, aggregate map capacity, or retained writer memory.
+- `SharpLinkClientHostedService` and its multi-cluster sibling exchange away their Client before awaiting token-bound Stop. If that wait is cancelled, the memoized stop task prevents later `DisposeAsync` from recovering ownership, so the Host leaks the transferred Client.
+- Client and Server dynamic-module unregister use `Task.Delay(gracefulTimeout)` after marking the module Draining. A positive timeout beyond the portable timer range throws and leaves the module in a non-running state instead of continuing the requested drain.
+- `SendPump.ToStopwatchTicks` converts huge `RpcSessionFlushOptions.MaxLatency` without saturation. Overflow turns the documented positive latency into an immediate deadline or faults the pump when the timer is armed.
+- `SharpLinkFlowControlOptions.MaxConcurrentCallsPerConnection` accepts `int.MaxValue`; the first Server deadline scan rents a snapshot sized to that configured maximum, creating an avoidable multi-gigabyte allocation request.
+- `StreamManager.CompleteAll` invokes dispatcher completion inline and stops at the first exception. Sibling streams remain attached, counters remain elevated, and `RpcSession` can skip its later transport cleanup.
 
 ## Acceptance checklist
 
-- Concurrent coordinator unregister callers await one operation and observe the same original result or failure.
-- TLS snapshots deep-clone chain policy, preserve Server chain policy, and retain supported RSA-padding settings.
-- Handshake payload codecs reject inconsistent required/supported sets and unknown negotiated response bits before session state changes.
-- Admission partition runtime owns a deep validated snapshot unaffected by later caller mutation.
-- State-store and writer-pool validation enforce documented aggregate memory limits before allocation.
+- Hosted Stop always disposes the transferred Client after success, cancellation, or failure and preserves both primary and cleanup failures.
+- Dynamic-module drain waits slice timer-range-exceeding durations without changing short timeout behavior.
+- Send-pump deadline conversion saturates and timer waits are sliced, while normal configured batching remains unchanged.
+- Server call concurrency has a documented hard maximum enforced before the deadline scheduler can allocate its snapshot.
+- Stream completion drains every dispatcher before surfacing errors, and Session terminal paths cannot be interrupted by user dispatcher cleanup.
+
+## Performance scan execution checklist
+
+- Critical string recipes: `IndexOf` 0, `Substring` 7, literal `StartsWith`/`EndsWith` 1, literal `Contains` 3. All hits are generator/build-time paths after context review.
+- Async recipes: `async void` 0; five `.Result`/`.Wait` hits are guarded completed `ValueTask` reads or the intentional synchronous PipeWriter completion convergence path.
+- Memory recipes: parameter arrays 2, parameterless `ToLower`/`ToUpper` 0, three-deep `Replace` chains 0, char LINQ 0, stackalloc 59 with no stackalloc-in-loop finding.
+- Collection recipes: static mutable dictionaries 0, static frozen dictionary declarations 0, `new List` 45, `new Dictionary` 40, LINQ-chain hits 140, and `CurrentCulture` comparer hits 0. Runtime hits are configuration, topology publication, shutdown, or contended-path snapshots rather than steady-state hot paths.
+- I/O/serialization recipes: per-call `HttpClient` 0, per-call `JsonSerializerOptions` 0, Regex signals 0.
+- Structural inverse: 19 unsealed declaration lines versus 238 sealed declaration lines; the unsealed set consists of required inheritance surfaces, exception/builder extension points, or partial generator declarations.
 
 ## Audit guardrails
 
-The batch focuses on real concurrency, security configuration, protocol integrity, and bounded memory. The legacy process-wide generated registries and anonymous-pipe cross-process handle-transfer redesign remain separate compatibility topics rather than being mixed into this patch.
+This batch addresses lost resource ownership, timer-range correctness, bounded Server memory, and terminal stream cleanup. Generator substring cleanup, public sealing changes, and cold-path LINQ rewrites are excluded because they lack measured runtime value or would trade compatibility for cosmetic consistency.
 
 ## Regression and performance evidence
 
-- The complete pre-fix Unit run had exactly five focused failures among 427 tests; the post-fix run passes 427/427.
-- The unregister test controls the rejected child operation and proves both callers receive the same original exception while only one child unregister is issued.
-- TLS assertions cover both preservation and independence, capability probes exercise outbound and inbound malformed sets, admission assertions mutate nested source limits after construction, and sizing probes cross each aggregate hard limit.
-- Four counterbalanced nine-sample A/B pairs with tiered compilation disabled retained identical allocations on all hot controls. Median timing ranges overlap for buffer-pool rent/return, pending completion, flow credit, handshake round trips, runtime-context lifecycle, and server lifecycle.
-- Deep TLS policy cloning intentionally changes the cold snapshot from 96 B to 184 B and roughly 13 ns to 83 ns. Deep admission configuration cloning intentionally changes controller creation from 1,152 B to 1,224 B with low-single-digit-percent timing noise. Both costs occur at configuration/lifecycle boundaries and prevent mutable security or resource policy from leaking into live runtime state.
+- The complete pre-fix Unit run had exactly five focused failures among 432 tests; the post-fix run passes 432/432.
+- Each probe independently fails if its owner-disposal, delay slicing, stopwatch saturation/timer slicing, concurrency limit, all-entry drain, or Session suppression guard is removed.
+- Four counterbalanced nine-sample A/B pairs with tiered compilation disabled retained identical allocations on buffer-pool rent/return (0 B), pending completion (48 B), flow-credit round trips (0 B), empty Session disposal (17,904 B), Runtime Context lifecycle (4,048.13 B), and Server lifecycle (13,224.81 B). Timing ranges overlap without a stable regression.
+- Completing one request with two streams changes from 1,280 B to 1,312 B because the terminal path snapshots entries before invoking user callbacks outside the lock. Median pairs remain in the roughly 0.25 microsecond band with process-order noise; the fixed 32 B cost occurs only once per terminal two-stream drain and prevents one callback from stranding all later owners.
