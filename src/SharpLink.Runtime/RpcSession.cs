@@ -353,11 +353,51 @@ public sealed partial class RpcSession : IRpcSession
     internal ValueTask SendPacketWithBackpressureAsync(
         IRpcByteBufferWriter packet,
         CancellationToken cancellationToken = default)
-        => SendPacketAsync(
-            packet,
-            waitForCapacity: true,
-            forceFlush: false,
-            cancellationToken);
+    {
+        try
+        {
+            ArgumentNullException.ThrowIfNull(packet);
+            if (Volatile.Read(ref _terminal) is { } terminal)
+            {
+                RuntimeContext.Buffers.Return(packet);
+                throw terminal.Exception;
+            }
+
+            try
+            {
+                packet = PrepareOutboundPacket(packet, cancellationToken);
+            }
+            catch
+            {
+                RuntimeContext.Buffers.Return(packet);
+                throw;
+            }
+            ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
+
+            var frame = new OwnedFrame(packet, forceFlush: false, flushCompletion: null);
+            var pump = GetOrCreatePump();
+            var result = pump.TryEnqueueForBackpressure(frame);
+            if (result == SendEnqueueResult.Accepted)
+                return ValueTask.CompletedTask;
+            if (result == SendEnqueueResult.Closed)
+                throw GetTerminalException();
+            return AwaitBackpressureEnqueueAsync(pump, frame, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            return ValueTask.FromException(exception);
+        }
+    }
+
+    private async ValueTask AwaitBackpressureEnqueueAsync(
+        SendPump pump,
+        OwnedFrame frame,
+        CancellationToken cancellationToken)
+    {
+        var result = await pump.EnqueueAsync(frame, cancellationToken).ConfigureAwait(false);
+        if (result == SendEnqueueResult.Closed)
+            throw GetTerminalException();
+    }
 
     private void ValidateOutboundPacketOrReturn(IRpcByteBufferWriter packet, bool allowEmpty)
     {
