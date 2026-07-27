@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.22] - 2026-07-27
+
+### Fixed
+
+- Generated DTO Boolean fields now reject non-canonical payload bytes instead of materializing invalid Boolean bit patterns.
+- Generated DTO Rune fields now reject values outside the Unicode scalar range.
+- Generated DTO decimal fields now reject invalid flags layouts.
+- Generated DTO DateOnly, DateTime, and TimeOnly fields now reject values outside their supported ranges.
+- Generated DTO DateTimeOffset fields now validate UTC ticks and offsets and clear native-layout padding before transmission.
+
+### Compatibility and validation
+
+- Protocol v2 framing, generated field IDs, fixed wire types, payload sizes, and Manifest versions are unchanged. New readers accept valid prior payloads, while new DateTimeOffset writers canonicalize six padding bytes to zero.
+- Non-incremental Release build, Generator 84/84, Unit 445/445, Integration 236/236, seven-package pack, and fresh-cache package smoke passed.
+- Boolean and semantic DTO paths retained their allocation profiles. The final fixed-wire validation adds only about 1–2 ns to a six-field semantic decode; a length-delimited Codec design measured 66/109 ns for serialize/deserialize and was rejected.
+
 ## [0.8.21] - 2026-07-27
 
 ### Fixed

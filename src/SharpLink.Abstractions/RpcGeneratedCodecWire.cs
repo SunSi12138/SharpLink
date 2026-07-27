@@ -106,6 +106,131 @@ public static class RpcGeneratedCodecWire
         return value;
     }
 
+    /// <summary>Writes one canonical Boolean marker.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void WriteBoolean(IBufferWriter<byte> writer, bool value)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        var span = writer.GetSpan(1);
+        span[0] = value ? (byte)1 : (byte)0;
+        writer.Advance(1);
+    }
+
+    /// <summary>Reads one canonical Boolean marker.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool ReadBoolean(ref SequenceReader<byte> reader)
+    {
+        if (!reader.TryRead(out var marker) || marker is not (0 or 1))
+            throw DataLoss("Generated Boolean payload is missing or non-canonical.");
+        return marker == 1;
+    }
+
+    /// <summary>Writes one Rune using its fixed native representation.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void WriteRune(IBufferWriter<byte> writer, Rune value) => WriteUnmanaged(writer, value);
+
+    /// <summary>Reads and validates one Rune.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static Rune ReadRune(ref SequenceReader<byte> reader)
+    {
+        var value = ReadUnmanaged<Rune>(ref reader);
+        if (!Rune.IsValid(value.Value))
+            throw DataLoss("Generated Rune payload is not a valid Unicode scalar.");
+        return value;
+    }
+
+    /// <summary>Writes one decimal using its fixed native representation.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void WriteDecimal(IBufferWriter<byte> writer, decimal value) => WriteUnmanaged(writer, value);
+
+    /// <summary>Reads and validates one decimal.</summary>
+    public static decimal ReadDecimal(ref SequenceReader<byte> reader)
+    {
+        var value = ReadUnmanaged<decimal>(ref reader);
+        try
+        {
+            Span<int> bits = stackalloc int[4];
+            decimal.GetBits(value, bits);
+            return new decimal(bits);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Generated decimal payload is invalid.", exception);
+        }
+    }
+
+    /// <summary>Writes one DateOnly using its fixed native representation.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void WriteDateOnly(IBufferWriter<byte> writer, DateOnly value) => WriteUnmanaged(writer, value);
+
+    /// <summary>Reads and validates one DateOnly.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static DateOnly ReadDateOnly(ref SequenceReader<byte> reader)
+    {
+        var value = ReadUnmanaged<DateOnly>(ref reader);
+        if ((uint)value.DayNumber > (uint)DateOnly.MaxValue.DayNumber)
+            throw DataLoss("Generated DateOnly payload is outside the supported calendar range.");
+        return value;
+    }
+
+    /// <summary>Writes one DateTime using its fixed native representation.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void WriteDateTime(IBufferWriter<byte> writer, DateTime value) => WriteUnmanaged(writer, value);
+
+    /// <summary>Reads and validates one DateTime.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static DateTime ReadDateTime(ref SequenceReader<byte> reader)
+    {
+        var value = ReadUnmanaged<DateTime>(ref reader);
+        if ((ulong)value.Ticks > (ulong)DateTime.MaxValue.Ticks)
+            throw DataLoss("Generated DateTime payload is outside the supported calendar range.");
+        return value;
+    }
+
+    /// <summary>Writes one TimeOnly using its fixed native representation.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void WriteTimeOnly(IBufferWriter<byte> writer, TimeOnly value) => WriteUnmanaged(writer, value);
+
+    /// <summary>Reads and validates one TimeOnly.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static TimeOnly ReadTimeOnly(ref SequenceReader<byte> reader)
+    {
+        var value = ReadUnmanaged<TimeOnly>(ref reader);
+        if ((ulong)value.Ticks >= TimeSpan.TicksPerDay)
+            throw DataLoss("Generated TimeOnly payload is outside one day.");
+        return value;
+    }
+
+    /// <summary>Writes one DateTimeOffset while clearing its native-layout padding.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void WriteDateTimeOffset(IBufferWriter<byte> writer, DateTimeOffset value)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        const int size = 16;
+        var span = writer.GetSpan(size);
+        Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(span), value);
+        span[sizeof(short)..sizeof(long)].Clear();
+        writer.Advance(size);
+    }
+
+    /// <summary>Reads and validates one DateTimeOffset native representation.</summary>
+    public static DateTimeOffset ReadDateTimeOffset(ref SequenceReader<byte> reader)
+    {
+        var value = ReadUnmanaged<DateTimeOffset>(ref reader);
+        ref var start = ref Unsafe.As<DateTimeOffset, byte>(ref value);
+        var offsetMinutes = Unsafe.ReadUnaligned<short>(ref start);
+        var utcTicks = Unsafe.ReadUnaligned<long>(ref Unsafe.Add(ref start, sizeof(long)));
+        if ((ulong)utcTicks > (ulong)DateTime.MaxValue.Ticks || offsetMinutes is < -840 or > 840)
+            throw DataLoss("Generated DateTimeOffset payload contains invalid UTC ticks or offset.");
+        var offsetTicks = (long)offsetMinutes * TimeSpan.TicksPerMinute;
+        if (offsetTicks > 0 && utcTicks > DateTime.MaxValue.Ticks - offsetTicks ||
+            offsetTicks < 0 && utcTicks < -offsetTicks)
+        {
+            throw DataLoss("Generated DateTimeOffset payload is outside the supported clock range.");
+        }
+        return new DateTimeOffset(utcTicks + offsetTicks, TimeSpan.FromMinutes(offsetMinutes));
+    }
+
     /// <summary>Returns the fixed wire type for a supported unmanaged size.</summary>
     public static RpcGeneratedWireType GetFixedWireType(int size) => size switch
     {

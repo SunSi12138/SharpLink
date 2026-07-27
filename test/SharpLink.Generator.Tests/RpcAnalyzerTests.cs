@@ -364,6 +364,60 @@ public interface IHelloService : SharpLink.Sdk.IService
     }
 
     [Test]
+    public Task SemanticDtoMembersShouldUseValidatedCodecs()
+    {
+        var source = BuildSource("""
+public sealed record SemanticPayload(
+    [property: SharpLink.Sdk.RpcMember(1)] bool Boolean,
+    [property: SharpLink.Sdk.RpcMember(2)] System.Text.Rune Rune,
+    [property: SharpLink.Sdk.RpcMember(3)] decimal Decimal,
+    [property: SharpLink.Sdk.RpcMember(4)] System.DateOnly DateOnly,
+    [property: SharpLink.Sdk.RpcMember(5)] System.DateTime DateTime,
+    [property: SharpLink.Sdk.RpcMember(6)] System.TimeOnly TimeOnly,
+    [property: SharpLink.Sdk.RpcMember(7)] System.DateTimeOffset DateTimeOffset,
+    [property: SharpLink.Sdk.RpcMember(8)] bool? NullableBoolean,
+    [property: SharpLink.Sdk.RpcMember(9)] System.Text.Rune? NullableRune,
+    [property: SharpLink.Sdk.RpcMember(10)] decimal? NullableDecimal,
+    [property: SharpLink.Sdk.RpcMember(11)] System.DateOnly? NullableDateOnly,
+    [property: SharpLink.Sdk.RpcMember(12)] System.DateTime? NullableDateTime,
+    [property: SharpLink.Sdk.RpcMember(13)] System.TimeOnly? NullableTimeOnly,
+    [property: SharpLink.Sdk.RpcMember(14)] System.DateTimeOffset? NullableDateTimeOffset);
+
+[SharpLink.Sdk.RpcContract]
+public interface ISemanticService : SharpLink.Sdk.IService
+{
+    ValueTask<SemanticPayload> Echo(SemanticPayload value);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains("RpcGeneratedCodecWire.WriteBoolean(writer, value.Boolean)", StringComparison.Ordinal),
+            "generated Boolean encoder must emit its canonical marker");
+        Ensure(generated.Contains("RpcGeneratedCodecWire.ReadBoolean(ref reader)", StringComparison.Ordinal),
+            "generated Boolean decoder must validate its marker");
+        Ensure(generated.Contains("RpcGeneratedCodecWire.ReadRune(ref reader)", StringComparison.Ordinal),
+            "Rune member must use its validated fixed reader");
+        Ensure(generated.Contains("RpcGeneratedCodecWire.ReadDecimal(ref reader)", StringComparison.Ordinal),
+            "decimal member must use its validated fixed reader");
+        Ensure(generated.Contains("RpcGeneratedCodecWire.ReadDateOnly(ref reader)", StringComparison.Ordinal) &&
+               generated.Contains("RpcGeneratedCodecWire.ReadDateTime(ref reader)", StringComparison.Ordinal) &&
+               generated.Contains("RpcGeneratedCodecWire.ReadTimeOnly(ref reader)", StringComparison.Ordinal),
+            "temporal members must use their validated fixed readers");
+        Ensure(generated.Contains("RpcGeneratedCodecWire.WriteDateTimeOffset(writer, value.DateTimeOffset)", StringComparison.Ordinal) &&
+               generated.Contains("RpcGeneratedCodecWire.ReadDateTimeOffset(ref reader)", StringComparison.Ordinal),
+            "DateTimeOffset member must use its canonical fixed writer and validated reader");
+        Ensure(CountOccurrences(generated, "RpcGeneratedCodecWire.ReadBoolean(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadRune(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDecimal(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateOnly(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateTime(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadTimeOnly(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateTimeOffset(ref reader)") == 2,
+            "nullable semantic members must use the same validated readers");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task CodecOnlyManifestShouldBeOwnedByTheGeneratedAssembly()
     {
         var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSdkSource());
