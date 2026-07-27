@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-28
+
+### Documentation
+
+- Every public API in the published framework source now has compiler-validated XML documentation; CS1591 is an error for `src/` projects while tests, demos, and generated test contracts remain outside the product API gate.
+- All seven runtime NuGet packages now include their matching XML documentation file for IDE IntelliSense. Generator and SDK APIs are covered by the same source-build gate.
+- Corrected invalid existing XML parameter references and documented protocol values, error identities, authentication/authorization contracts, builders, transports, streaming lifecycle, sessions, and hosting accessors with behavior-specific guidance.
+
+### Compatibility and validation
+
+- Runtime behavior, public signatures, Protocol v2 bytes, generated identifiers, and hot paths are unchanged; this checkpoint changes comments and build/package policy only.
+- The compiler-backed pre-fix witness contained 266 unique missing public members across published source projects; the final count is zero with a non-incremental Release build at zero warnings and zero errors.
+- Generator 121/121, Unit 503/503, and Integration 252/252 passed. All seven `0.9.0` packages were inspected and contain their corresponding `lib/net10.0/*.xml` documentation file.
+
 ## [0.8.44] - 2026-07-28
 
 ### Fixed

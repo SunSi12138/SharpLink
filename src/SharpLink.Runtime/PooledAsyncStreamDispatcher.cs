@@ -1,5 +1,8 @@
 namespace SharpLink.Runtime;
 
+/// <summary>Decodes a single-consumer RPC stream into a pooled asynchronous enumerator.</summary>
+/// <typeparam name="T">The decoded stream item type.</typeparam>
+/// <remarks>Dispose the enumerator to release buffered items and return the dispatcher to its pool.</remarks>
 public sealed class PooledAsyncStreamDispatcher<T> :
     IStreamConsumptionAwareDispatcher,
     IStreamDispatchLease,
@@ -77,11 +80,20 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _producerSegment = _firstSegment;
     }
 
+    /// <summary>Rents a dispatcher using a codec from the supplied or default runtime context.</summary>
+    /// <param name="enumerationToken">Cancels local stream consumption.</param>
+    /// <param name="codecProvider">The codec provider, or <see langword="null"/> for the default runtime provider.</param>
+    /// <returns>A reset dispatcher that must be asynchronously disposed.</returns>
     public static PooledAsyncStreamDispatcher<T> Rent(
         CancellationToken enumerationToken = default,
         IRpcCodecProvider? codecProvider = null)
         => Rent(enumerationToken, codecProvider, payloadNullable: false);
 
+    /// <summary>Rents a dispatcher using a codec provider and explicit payload nullability.</summary>
+    /// <param name="enumerationToken">Cancels local stream consumption.</param>
+    /// <param name="codecProvider">The codec provider, or <see langword="null"/> for the default runtime provider.</param>
+    /// <param name="payloadNullable">Whether the wire contract permits a null item.</param>
+    /// <returns>A reset dispatcher that must be asynchronously disposed.</returns>
     public static PooledAsyncStreamDispatcher<T> Rent(
         CancellationToken enumerationToken,
         IRpcCodecProvider? codecProvider,
@@ -91,11 +103,20 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             (codecProvider ?? SharpLinkRuntimeContext.Default.Codecs).GetCodec<T>(),
             payloadNullable);
 
+    /// <summary>Rents a dispatcher using a specific item codec.</summary>
+    /// <param name="enumerationToken">Cancels local stream consumption.</param>
+    /// <param name="codec">The item codec.</param>
+    /// <returns>A reset dispatcher that must be asynchronously disposed.</returns>
     public static PooledAsyncStreamDispatcher<T> Rent(
         CancellationToken enumerationToken,
         IRpcCodec<T> codec)
         => Rent(enumerationToken, codec, payloadNullable: false);
 
+    /// <summary>Rents a dispatcher using a specific item codec and explicit payload nullability.</summary>
+    /// <param name="enumerationToken">Cancels local stream consumption.</param>
+    /// <param name="codec">The item codec.</param>
+    /// <param name="payloadNullable">Whether the wire contract permits a null item.</param>
+    /// <returns>A reset dispatcher that must be asynchronously disposed.</returns>
     public static PooledAsyncStreamDispatcher<T> Rent(
         CancellationToken enumerationToken,
         IRpcCodec<T> codec,
@@ -159,9 +180,11 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         Volatile.Write(ref _consumerTerminal, 0);
     }
 
+    /// <inheritdoc />
     public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
         => DispatchAsync(payload, checked((int)payload.Length));
 
+    /// <inheritdoc />
     public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
     {
         if (!TryAcquireDispatch())
@@ -280,6 +303,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 #endif
     }
 
+    /// <inheritdoc />
     public void SetBytesConsumedCallback(
         Action<long, ushort, int>? callback,
         long requestId,
@@ -290,12 +314,16 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _flowControlStreamId = streamId;
     }
 
+    /// <summary>Registers a callback that cancels the remote request when the consumer abandons the stream.</summary>
+    /// <param name="callback">The abandonment callback, or <see langword="null"/> to disable notification.</param>
+    /// <param name="requestId">The request identifier passed to the callback.</param>
     public void SetConsumerAbandonedCallback(Action<long>? callback, long requestId)
     {
         _consumerAbandoned = callback;
         _consumerAbandonedRequestId = requestId;
     }
 
+    /// <inheritdoc />
     public void Complete(bool isError, string? errorMessage)
     {
         var message = string.IsNullOrWhiteSpace(errorMessage) ? "Remote Error" : errorMessage;
@@ -304,6 +332,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             : null);
     }
 
+    /// <inheritdoc />
     public void Complete(Exception? exception)
     {
         if (Interlocked.CompareExchange(ref _consumerTerminal, 1, 0) != 0)
@@ -314,6 +343,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         Signal();
     }
 
+    /// <inheritdoc />
     public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
     {
         // 审核 #4：原子防御，避免极端并发双进入
@@ -338,8 +368,10 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         return this;
     }
 
+    /// <inheritdoc />
     public T Current => _current!;
 
+    /// <inheritdoc />
     public async ValueTask<bool> MoveNextAsync()
     {
         while (true)
@@ -381,6 +413,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         }
     }
 
+    /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
@@ -464,12 +497,15 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         TryReturnToPool();
     }
 
+    /// <inheritdoc />
     public bool GetResult(short token) => _waitSource.GetResult(token);
     bool IValueTaskSource<bool>.GetResult(short token) => _waitSource.GetResult(token);
 
+    /// <inheritdoc />
     public ValueTaskSourceStatus GetStatus(short token) => _waitSource.GetStatus(token);
     ValueTaskSourceStatus IValueTaskSource<bool>.GetStatus(short token) => _waitSource.GetStatus(token);
 
+    /// <inheritdoc />
     public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags)
         => _waitSource.OnCompleted(continuation, state, token, flags);
 

@@ -57,8 +57,10 @@
 - `0.8.42`（已完成）：修复 Throughput SendPump 进程崩溃、Codec 规范 null、Protocol writer 错误域与 DTO member nullability schema identity。
 - `0.8.43`（已完成）：修复共享内存创建竞态、流控空队列锁、连接关闭错误身份、提前流释放遥测与动态准入状态退役。
 - `0.8.44`（已完成）：修复 shutdown join 异常丢失、Server 终态响应失败后的 call admission 泄漏，以及 terminal stream frame 失败后的 flow-control slot 泄漏。
-- `0.8.x`（进行中）：按独立、高价值工程根因记录和推进，不以数量凑版本；同一根因跨组件只计一次，极端理论竞态不计入 P2。连续三轮完整审核无新高价值改进后结束，并对全部历史发现按独立根因重新聚类。
-- `0.8.x-rc`：上述审核收敛后执行 Chaos、长稳、跨平台/AOT/Package/性能 Release Gate，只修复正确性、稳定性、性能回退和文档问题。
+- `0.8.x`（已完成）：完整系列已通过 PR #19 合并到 `dev`；后续历史问题按独立工程根因聚类，不再以逐版本报告作为用户文档。
+- `0.9.0`（已完成）：发布源码公开 API XML 注释缺口由 266 降至 0，所有运行时 NuGet 包携带 IntelliSense XML。
+- `0.9.x`（进行中）：以当前实现重建特性/限制文档与 runnable demo matrix，删除 0.x 开发期逐版本报告并验证文档、包、AOT 与测试。
+- `1.0.0-rc1`：文档确认后冻结精确候选提交，执行 Chaos、长稳、跨平台/AOT/Package 与最终场景/负载性能基线；只修复严重且独立的高价值问题。
 - `1.0.0`：通过 RC 接受标准后发布稳定 API 与 Protocol v2。
 
 ## 提交规则

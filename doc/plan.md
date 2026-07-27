@@ -57,7 +57,7 @@
 9. `0.7.10`（已完成）：多 cluster Client、静态/动态 contract route 与 child lifecycle 隔离。
 10. `0.7.11`（已完成）：删除 MemoryPack 扩展与 `RpcExternalCodec`，引入 manifest-scoped Codec Adapter SPI，并迁移到 SharpPack 1.1.0。
 
-## 0.8.x：证据驱动的框架深度审核（进行中）
+## 0.8.x：证据驱动的框架深度审核（已完成）
 
 - `0.8.0`：修复原生 Codec 非精确消费/非规范标记、跨 stream connection credit 滞留、继承接口 RPC 遗漏，以及 unmanaged Adapter 请求绕过 Codec；详见 [`audit-0.8.0.md`](audit-0.8.0.md)。
 - `0.8.1`：修复认证与 Manifest 可变快照、Resolver 释放、语义请求校验和 `List<T>` 双数组解码；详见 [`audit-0.8.1.md`](audit-0.8.1.md)。
@@ -74,7 +74,14 @@
 - 后续按独立、高价值工程根因推进：跨组件或调用点的同根因只计一次，极端理论竞态、纯防御修改和语法现代化不计入 P2，也不为凑数量延迟或拆分版本。
 - 每批必须通过 Release、Generator、Unit、Integration 和相关性能门禁；连续三轮无新改进点后转入 RC。
 
-## 0.8.x-rc：发布门禁
+## 0.9.x：文档、示例与 RC 收口（进行中）
+
+- `0.9.0`：发布源码公开 API 的 XML 文档完整性由编译器强制，所有运行时 NuGet 包携带 IntelliSense XML。
+- 以当前实现为唯一事实来源，重组特性用法、约束、部署与故障排查文档，并为主要特性补充可运行示例。
+- 删除 0.x 开发期逐版本 audit、migration 与 performance 报告；保留合并后的当前迁移指南、架构、协议与性能基线。
+- 文档、示例、包、AOT 与测试全部通过后冻结 `1.0.0-rc1`，再以该精确提交完成场景与负载性能矩阵。
+
+## 1.0.0-rc：发布门禁
 
 - Unit、Generator、Integration、AOT、Package、Load、StreamLoad、Benchmark 与 Chaos 分层测试。
 - Windows/Linux/macOS Transport matrix，Linux/Windows 72 小时长稳与固定 runner 性能基线。

@@ -20,6 +20,7 @@ public interface IRpcGeneratedCodecFactory
 
     /// <summary>Creates a Codec whose dependencies are resolved from the target Context.</summary>
     /// <param name="provider">The target Context Codec provider.</param>
+    /// <param name="adapterScope">The context-owned adapter scope, or <see langword="null"/> for native codecs.</param>
     IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope);
 
     /// <summary>Checks the closed Codec interface without runtime type construction or scanning.</summary>

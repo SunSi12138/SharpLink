@@ -1,7 +1,7 @@
 namespace SharpLink.Sdk;
 
 /// <summary>
-/// Declares that an RPC method intentionally does not accept a <see cref="CancellationToken"/>.
+/// Declares that an RPC method intentionally does not accept a <see cref="System.Threading.CancellationToken"/>.
 /// </summary>
 /// <remarks>
 /// Client cancellation and deadlines still stop the caller from waiting. The server observes the

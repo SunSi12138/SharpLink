@@ -2,18 +2,23 @@
 
 namespace SharpLink.Runtime;
 
+/// <summary>Owns protocol state, buffering, flow control, and lifecycle for one RPC transport connection.</summary>
 public sealed partial class RpcSession : IRpcSession
 {
+    /// <inheritdoc />
     public string Id { get; }
+    /// <summary>Gets the instance-owned runtime services used by this session.</summary>
     public SharpLinkRuntimeContext RuntimeContext { get; private set; } = SharpLinkRuntimeContext.Default;
     internal ProtocolV2Capabilities NegotiatedCapabilities { get; set; }
     private int _negotiatedMaxFramePayloadBytes = SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes;
     internal int NegotiatedMaxFramePayloadBytes => Volatile.Read(ref _negotiatedMaxFramePayloadBytes);
     IRpcRuntimeContext IRpcSession.RuntimeContext => RuntimeContext;
     private long _lastActiveTimestamp = Stopwatch.GetTimestamp();
+    /// <inheritdoc />
     public DateTime LastActive { get; set; } = DateTime.UtcNow;
     internal TimeSpan TimeSinceLastActivity
         => Stopwatch.GetElapsedTime(Volatile.Read(ref _lastActiveTimestamp));
+    /// <inheritdoc />
     public PipeReader Input { get; }
     private PipeWriter Output { get; }
 
@@ -28,7 +33,9 @@ public sealed partial class RpcSession : IRpcSession
     private readonly Lock _transportDisposeGate = new();
     private Task? _transportDisposeTask;
 
+    /// <inheritdoc />
     public IStreamManager StreamManager { get; private set; } = new StreamManager();
+    /// <inheritdoc />
     public bool IsConnected => Volatile.Read(ref _terminal) is null &&
                                (_transportConnection is not null || _isConnected());
     private readonly Action _disconnect;
@@ -83,6 +90,13 @@ public sealed partial class RpcSession : IRpcSession
             exception);
     }
 
+    /// <summary>Creates a session over caller-owned pipelines and connection lifecycle callbacks.</summary>
+    /// <param name="id">The non-empty diagnostic session identifier.</param>
+    /// <param name="reader">The transport input reader.</param>
+    /// <param name="writer">The transport output writer.</param>
+    /// <param name="disconnect">The callback that closes the underlying connection.</param>
+    /// <param name="isConnected">The callback that reports underlying connection state.</param>
+    /// <param name="flushOptions">Optional session flush policy.</param>
     public RpcSession(
         string id,
         PipeReader reader,
@@ -406,7 +420,9 @@ public sealed partial class RpcSession : IRpcSession
     internal void MarkDraining()
         => Volatile.Write(ref _draining, 1);
 
+    /// <inheritdoc />
     public event Action? OnConnected;
+    /// <inheritdoc />
     public void NotifyConnected()
     {
         if (Volatile.Read(ref _terminal) is not null ||
@@ -426,7 +442,9 @@ public sealed partial class RpcSession : IRpcSession
         }
         OnConnected?.Invoke();
     }
+    /// <inheritdoc />
     public event Action<Exception?>? OnDisconnected;
+    /// <inheritdoc />
     public void NotifyDisconnected(Exception? exception = null)
         => Fault(exception ?? new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Transport closed."));
 
@@ -453,6 +471,7 @@ public sealed partial class RpcSession : IRpcSession
         }
     }
 
+    /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
         var stopping = new SessionTerminal(

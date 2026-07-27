@@ -1,11 +1,14 @@
 namespace SharpLink.Server;
 
+/// <summary>Configures transports, services, security, limits, and runtime behavior for a SharpLink server.</summary>
 public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 {
+    /// <summary>Creates a server builder with safe runtime and heartbeat defaults.</summary>
     public static SharpLinkServerBuilder Create() => new();
 
     private IServerTransportListener? _transport;
-    public IServerTransportListener? Transport=>_transport;
+    /// <summary>Gets the currently configured server transport listener.</summary>
+    public IServerTransportListener? Transport => _transport;
     private readonly SharpLinkRuntimeContextBuilder _runtimeContextBuilder = new();
     private TimeSpan _heartbeatCheckInterval = TimeSpan.FromSeconds(10);
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
@@ -66,6 +69,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
+    /// <summary>Sets a fallback codec resolver scoped to servers built by this builder.</summary>
+    /// <param name="codecResolver">Returns a codec for a requested type, or <see langword="null"/> when unresolved.</param>
     public SharpLinkServerBuilder UseSerializer(Func<Type,IRpcCodec?>? codecResolver)
     {
         _runtimeContextBuilder.UseCodecResolver(codecResolver);
@@ -101,6 +106,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
+    /// <summary>Uses the supplied application-owned logger factory.</summary>
     public SharpLinkServerBuilder UseLoggerFactory(ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
@@ -108,24 +114,28 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
+    /// <summary>Configures the instance-owned outbound buffer pool.</summary>
     public SharpLinkServerBuilder UseBufferWriterPool(Action<BufferWriterPoolOptions> configure)
     {
         _runtimeContextBuilder.ConfigureBufferPool(configure);
         return this;
     }
 
+    /// <summary>Configures striped state-store concurrency for this server.</summary>
     public SharpLinkServerBuilder UseStateStoreConcurrency(Action<RuntimeConcurrencyOptions> configure)
     {
         _runtimeContextBuilder.ConfigureStateStores(configure);
         return this;
     }
 
+    /// <summary>Sets an application-owned logger factory only when none was explicitly configured.</summary>
     public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _loggerFactory ??= loggerFactory;
     }
 
+    /// <summary>Configures the heartbeat inspection interval and peer-inactivity timeout.</summary>
     public SharpLinkServerBuilder UseHeartbeat(TimeSpan checkInterval, TimeSpan timeout)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(checkInterval, TimeSpan.Zero);
@@ -139,6 +149,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
+    /// <summary>Configures how often the server checks sessions for heartbeat timeout.</summary>
     public SharpLinkServerBuilder UseHeartbeatCheckInterval(TimeSpan checkInterval)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(checkInterval, TimeSpan.Zero);
@@ -149,6 +160,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
+    /// <summary>Configures how long peer inactivity is allowed before a session is closed.</summary>
     public SharpLinkServerBuilder UseHeartbeatTimeout(TimeSpan timeout)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
@@ -159,6 +171,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
+    /// <summary>Enables bounded send coalescing by byte threshold and maximum latency.</summary>
     public SharpLinkServerBuilder UseRpcSessionFlush(int flushSizeThreshold, TimeSpan maxLatency)
     {
         _rpcSessionFlushOptions = RpcSessionFlushOptions.Create(flushSizeThreshold, maxLatency);
@@ -236,6 +249,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
+    /// <inheritdoc />
     public ISharpLinkServer Build()
     {
         var transport = _transport;

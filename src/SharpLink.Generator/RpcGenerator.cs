@@ -1,5 +1,9 @@
 namespace SharpLink.Generator;
 
+/// <summary>
+/// Generates SharpLink RPC proxies, stubs, DTO codecs, and assembly manifests and reports
+/// compile-time contract diagnostics.
+/// </summary>
 [Generator]
 public partial class RpcGenerator : IIncrementalGenerator
 {
@@ -15,6 +19,8 @@ public partial class RpcGenerator : IIncrementalGenerator
     private const string ClusterContractAssemblyAttributeMetadataName =
         "SharpLink.Sdk.SharpLinkClusterContractAssemblyAttribute";
 
+    /// <summary>Registers the incremental analysis and source-emission pipelines.</summary>
+    /// <param name="context">The Roslyn initialization context for this generator instance.</param>
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var interfaces = context.SyntaxProvider.ForAttributeWithMetadataName(

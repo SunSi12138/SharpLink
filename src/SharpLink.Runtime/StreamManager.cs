@@ -1,5 +1,6 @@
 namespace SharpLink.Runtime;
 
+/// <summary>Provides concurrent request-scoped routing for active RPC streams.</summary>
 public class StreamManager : IStreamManager
 {
     private readonly StripedLongMap<RequestDispatchers> _dispatchersByRequestId;
@@ -10,10 +11,13 @@ public class StreamManager : IStreamManager
     private int _activeStreamCount;
     private Termination? _termination;
 
+    /// <summary>Creates a stream manager with default concurrency settings.</summary>
     public StreamManager() : this(new RuntimeConcurrencyOptions())
     {
     }
 
+    /// <summary>Creates a stream manager with explicit concurrency settings.</summary>
+    /// <param name="concurrencyOptions">The stripe and sizing policy for active stream lookup.</param>
     public StreamManager(RuntimeConcurrencyOptions concurrencyOptions)
         : this(concurrencyOptions, null, null, null)
     {
@@ -31,8 +35,10 @@ public class StreamManager : IStreamManager
         _streamCompleted = streamCompleted;
     }
 
+    /// <inheritdoc />
     public void Register(long requestId, IStreamDispatcher dispatcher) => Register(requestId, 0, dispatcher);
 
+    /// <inheritdoc />
     public void Register(long requestId, ushort streamId, IStreamDispatcher dispatcher)
         => Register(requestId, streamId, dispatcher, ignoreExisting: false);
 
@@ -86,8 +92,10 @@ public class StreamManager : IStreamManager
         }
     }
 
+    /// <inheritdoc />
     public void Unregister(long requestId) => Unregister(requestId, 0);
 
+    /// <inheritdoc />
     public void Unregister(long requestId, ushort streamId)
     {
         if (!_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
@@ -112,9 +120,11 @@ public class StreamManager : IStreamManager
         }
     }
 
+    /// <inheritdoc />
     public ValueTask DispatchChunkAsync(long requestId, ReadOnlySequence<byte> payload)
         => DispatchChunkAsync(requestId, 0, payload);
 
+    /// <inheritdoc />
     public ValueTask DispatchChunkAsync(long requestId, ushort streamId, ReadOnlySequence<byte> payload)
     {
         if (_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
@@ -173,26 +183,31 @@ public class StreamManager : IStreamManager
         }
     }
 
+    /// <inheritdoc />
     public void CompleteStream(long requestId, bool isError, string? msg)
     {
         CompleteStream(requestId, 0, CreateCompletionException(isError, msg));
     }
 
+    /// <inheritdoc />
     public void CompleteStream(long requestId, ushort streamId, bool isError, string? msg)
     {
         CompleteStream(requestId, streamId, CreateCompletionException(isError, msg));
     }
 
+    /// <inheritdoc />
     public void CompleteAll(bool isError, string? msg)
     {
         CompleteAll(CreateCompletionException(isError, msg));
     }
 
+    /// <inheritdoc />
     public void CompleteStream(long requestId, Exception? exception)
     {
         CompleteStream(requestId, 0, exception);
     }
 
+    /// <inheritdoc />
     public void CompleteStream(long requestId, ushort streamId, Exception? exception)
     {
         if (!_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
@@ -289,6 +304,7 @@ public class StreamManager : IStreamManager
         }
     }
 
+    /// <inheritdoc />
     public void CompleteAll(Exception? exception)
     {
         var termination = new Termination(exception);

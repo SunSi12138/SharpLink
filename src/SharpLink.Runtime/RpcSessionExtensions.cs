@@ -1,9 +1,11 @@
 namespace SharpLink.Runtime;
 
+/// <summary>Writes Protocol v2 control, response, and streaming frames through an RPC session.</summary>
 public static class RpcSessionExtensions
 {
     extension(IRpcSession session)
     {
+        /// <summary>Sends and flushes a client handshake request.</summary>
         public async ValueTask SendHandshakeRequestAndFlushAsync(
             ProtocolV2HandshakeRequest request,
             SharpLinkProtocolOptions limits,
@@ -29,6 +31,7 @@ public static class RpcSessionExtensions
             }
         }
 
+        /// <summary>Sends and flushes a successful server handshake response.</summary>
         public async ValueTask SendHandshakeResponseAndFlushAsync(
             ProtocolV2HandshakeResponse response,
             CancellationToken cancellationToken = default)
@@ -53,6 +56,7 @@ public static class RpcSessionExtensions
             }
         }
 
+        /// <summary>Sends and flushes a bounded handshake rejection.</summary>
         public ValueTask SendHandshakeErrorAndFlushAsync(
             SharpLinkErrorCode code,
             string? message,
@@ -67,6 +71,7 @@ public static class RpcSessionExtensions
                 maxMessageBytes,
                 cancellationToken);
 
+        /// <summary>Queues a payload-free protocol frame for sending.</summary>
         public void SendPacketAsync(ProtocolV2FrameType frameType, ProtocolV2FrameFlags flags, long requestId)
         {
             var writer = GetRuntimeSession(session).RentFrameWriter();
@@ -84,6 +89,7 @@ public static class RpcSessionExtensions
             }
         }
 
+        /// <summary>Maps and sends a bounded RPC response error.</summary>
         public void SendRpcErrorAsync(long requestId, Exception exception)
         {
             ArgumentNullException.ThrowIfNull(exception);
@@ -156,14 +162,16 @@ public static class RpcSessionExtensions
             return ProtocolV2PayloadCodec.ReadCancelReason(payload);
         }
 
+        /// <summary>Sends a ping containing the current monotonic timestamp.</summary>
         public void SendPingAsync()
             => SendTimestampFrame(session, ProtocolV2FrameType.Ping, Stopwatch.GetTimestamp());
 
+        /// <summary>Sends a pong that echoes a received ping timestamp.</summary>
+        /// <param name="timestamp">The monotonic timestamp from the ping frame.</param>
         public void SendPongAsync(long timestamp)
             => SendTimestampFrame(session, ProtocolV2FrameType.Pong, timestamp);
 
         /// <summary>Sends a protocol-level health request on a negotiated session.</summary>
-        /// <param name="session">The negotiated session that owns the send queue.</param>
         /// <param name="requestId">The non-zero health request identifier.</param>
         public void SendHealthCheck(long requestId)
             => session.SendPacketAsync(
@@ -172,7 +180,6 @@ public static class RpcSessionExtensions
                 requestId);
 
         /// <summary>Sends a fixed-width protocol health response.</summary>
-        /// <param name="session">The negotiated session that owns the send queue.</param>
         /// <param name="requestId">The request identifier being answered.</param>
         /// <param name="status">The current server readiness state.</param>
         public void SendHealthResponse(long requestId, SharpLinkHealthStatus status)
@@ -198,6 +205,8 @@ public static class RpcSessionExtensions
             }
         }
 
+        /// <summary>Serializes and sends one flow-controlled stream item.</summary>
+        /// <typeparam name="T">The stream item type.</typeparam>
         public async ValueTask SendStreamChunkAsync<T>(
             long requestId,
             ushort streamId,
@@ -245,6 +254,7 @@ public static class RpcSessionExtensions
             }
         }
 
+        /// <summary>Sends successful completion for one request stream.</summary>
         public void SendStreamCompleteAsync(long requestId, ushort streamId)
         {
             var writer = GetRuntimeSession(session).RentFrameWriter();
@@ -278,6 +288,7 @@ public static class RpcSessionExtensions
             }
         }
 
+        /// <summary>Maps and sends terminal failure for one request stream.</summary>
         public void SendStreamErrorAsync(
             long requestId,
             ushort streamId,
@@ -326,6 +337,7 @@ public static class RpcSessionExtensions
             }
         }
 
+        /// <summary>Sends and flushes a connection-drain frame with the last accepted request.</summary>
         public async ValueTask SendGoAwayAsync(
             long lastAcceptedRequestId,
             SharpLinkErrorCode code,
