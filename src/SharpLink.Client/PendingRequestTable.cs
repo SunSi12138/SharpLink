@@ -629,6 +629,9 @@ internal sealed class PendingRequestTable : IDisposable
                 "Request deadline exceeded."),
             PendingCallCompletionReason.ConsumerAbandoned => new OperationCanceledException(
                 "The response stream consumer stopped before remote completion."),
+            PendingCallCompletionReason.ConnectionClosed => new SharpLinkException(
+                SharpLinkErrorCode.ConnectionClosed,
+                "The owning RPC connection closed."),
             _ => null
         };
 

@@ -333,10 +333,22 @@ internal sealed class StreamFlowController
 
     public bool TryTakeConsumedCreditUpdate(out long requestId, out ushort streamId, out int credit)
     {
+        // Connection-threshold flushes are rare. Avoid taking the flow-control gate after every
+        // ordinary stream item when there are no cross-stream updates to drain.
+        if (Volatile.Read(ref _consumedCreditUpdates) is null)
+        {
+            requestId = 0;
+            streamId = 0;
+            credit = 0;
+            return false;
+        }
+
         lock (_gate)
         {
-            if (_consumedCreditUpdates is null || !_consumedCreditUpdates.TryDequeue(out var update))
+            var updates = _consumedCreditUpdates;
+            if (updates is null || !updates.TryDequeue(out var update))
             {
+                _consumedCreditUpdates = null;
                 requestId = 0;
                 streamId = 0;
                 credit = 0;
@@ -346,6 +358,8 @@ internal sealed class StreamFlowController
             requestId = update.Key.RequestId;
             streamId = update.Key.StreamId;
             credit = update.Credit;
+            if (updates.Count == 0)
+                _consumedCreditUpdates = null;
             return true;
         }
     }
@@ -387,6 +401,7 @@ internal sealed class StreamFlowController
             _sendStates.Clear();
             _receiveStates.Clear();
             _consumedCreditUpdates?.Clear();
+            _consumedCreditUpdates = null;
         }
 
         for (var index = 0; index < waiters.Length; index++)

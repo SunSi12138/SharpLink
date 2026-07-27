@@ -123,7 +123,8 @@ internal sealed partial class SharpLinkClient
                     excluded |= 1UL << selectedIndex;
                     continue;
                 }
-                var connection = SelectConnection(endpoints[selectedIndex]);
+                var endpoint = endpoints[selectedIndex];
+                var connection = SelectConnection(endpoint);
                 retrySelection?.Exclude(snapshot, selectedIndex);
                 if (connection is not null)
                 {
@@ -135,6 +136,7 @@ internal sealed partial class SharpLinkClient
                 attemptOutcome?.CompleteWithoutPending(
                     PendingCallCompletionReason.ConnectionClosed,
                     CreateConnectionClosedException("The selected dynamic endpoint connection is no longer ready."));
+                RetireAdmissionStateIfReleased(endpoint, candidate);
                 excluded |= 1UL << selectedIndex;
             }
 
@@ -1116,6 +1118,25 @@ internal sealed partial class SharpLinkClient
 
         private void ScheduleRetiredStateRelease(EndpointState endpoint)
             => _client.TrackBackgroundTask(ReleaseRetiredStateAsync(endpoint));
+
+        private void RetireAdmissionStateIfReleased(
+            EndpointState endpoint,
+            in SharpLinkEndpointCandidate candidate)
+        {
+            if (_client._endpointAdmissionPolicy is not ISharpLinkEndpointAdmissionLifecycle lifecycle)
+                return;
+
+            lock (_gate)
+            {
+                if (!endpoint.FactoryReleased)
+                    return;
+            }
+
+            // A selector can retain a published snapshot while topology retirement releases the
+            // generation. Its later admission attempt may recreate lazy policy state, so close
+            // that stale acquisition after the connection lookup proves the snapshot unusable.
+            lifecycle.Retire(candidate);
+        }
 
         private async Task ReleaseRetiredStateAsync(EndpointState endpoint)
         {

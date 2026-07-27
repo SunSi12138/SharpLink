@@ -1,4 +1,7 @@
+using System.Collections.Concurrent;
+using System.Linq;
 using System.Security.Cryptography;
+using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
 
@@ -28,6 +31,40 @@ public class SharedMemoryLayoutTests
 
         await Assert.That(() => SharedMemoryLayout.Validate(mapping, 64 * 1024, wrongNonce))
             .Throws<SharpLinkException>();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ConcurrentMappingCreationShouldNotUnlinkLivePeers()
+    {
+        const int capacity = 64 * 1024;
+        for (var round = 0; round < 64; round++)
+        {
+            using var start = new ManualResetEventSlim(initialState: false);
+            var mappings = new ConcurrentBag<(SharedMemoryMapping Mapping, string Path, byte[] Nonce)>();
+            var creators = Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
+            {
+                var nonce = RandomNumberGenerator.GetBytes(SharedMemoryLayout.NonceBytes);
+                start.Wait();
+                var mapping = SharedMemoryMapping.CreateServer(capacity, nonce, out var path);
+                mappings.Add((mapping, path, nonce));
+            })).ToArray();
+            start.Set();
+            try
+            {
+                await Task.WhenAll(creators);
+                foreach (var item in mappings)
+                {
+                    await Assert.That(File.Exists(item.Path)).IsTrue();
+                    await using var client = SharedMemoryMapping.OpenClient(item.Path, capacity, item.Nonce);
+                }
+            }
+            finally
+            {
+                foreach (var item in mappings)
+                    await item.Mapping.DisposeAsync();
+            }
+        }
     }
 
     [Test]
@@ -128,5 +165,25 @@ public class SharedMemoryLayoutTests
         await using var mapping = SharedMemoryMapping.CreateServer(64 * 1024, nonce, out _);
 
         await Assert.That(File.Exists(stalePath)).IsFalse();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task CreatingMappingShouldPreserveFreshPeerFiles()
+    {
+        var directory = SharedMemoryMapping.GetMappingDirectory();
+        Directory.CreateDirectory(directory);
+        var freshPath = Path.Combine(directory, $"{Guid.NewGuid():N}.shm");
+        await File.WriteAllBytesAsync(freshPath, [1, 2, 3]);
+        var nonce = RandomNumberGenerator.GetBytes(SharedMemoryLayout.NonceBytes);
+        try
+        {
+            await using var mapping = SharedMemoryMapping.CreateServer(64 * 1024, nonce, out _);
+            await Assert.That(File.Exists(freshPath)).IsTrue();
+        }
+        finally
+        {
+            File.Delete(freshPath);
+        }
     }
 }

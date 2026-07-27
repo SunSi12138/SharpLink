@@ -437,6 +437,20 @@ public class PendingRequestTableTests
     }
 
     [Test]
+    public async Task ConnectionClosedCompletionWithoutAnExplicitExceptionShouldKeepItsWireCode()
+    {
+        using var manager = new PendingRequestTable(1);
+        var operation = manager.Rent<int>(out var requestId);
+
+        Ensure(manager.TryComplete(requestId, PendingCallCompletionReason.ConnectionClosed),
+            "the pending call should accept connection closure");
+
+        var failure = await CaptureExceptionAsync(operation.AsValueTask().AsTask());
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed },
+            "implicit connection closure must not be rewritten as Internal");
+    }
+
+    [Test]
     public async Task MonotonicDeadlineScanShouldCompleteWithoutCompletionPathRemoval()
     {
         using var manager = new PendingRequestTable(8);

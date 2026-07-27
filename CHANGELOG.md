@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.43] - 2026-07-27
+
+### Fixed
+
+- Shared-memory mapping creation serializes local cleanup/initialization and preserves fresh peer files, preventing concurrent creators from unlinking a live mapping while retaining cleanup of abandoned files.
+- Streaming receive-credit draining bypasses the flow-control gate when no cross-stream update exists and returns an emptied queue to the null fast path, removing a redundant lock per received item.
+- Pending calls completed as `ConnectionClosed` without an explicit exception retain that structured error code instead of falling back to `Internal`.
+- Disposing a Client response stream before its terminal result marks the call activity as Error and records `consumer_abandoned` instead of reporting successful completion.
+- A stale dynamic endpoint selection that resumes after generation release re-retires any lazily recreated admission-policy state, preventing per-generation circuit-breaker state from accumulating during topology churn.
+
+### Compatibility and validation
+
+- Public API, valid Protocol v2 bytes, method/field IDs, payload layouts, and normal endpoint selection are unchanged. Shared-memory cleanup now requires a file to be at least one minute old; explicitly stale files remain reclaimable.
+- Non-incremental Release built with zero warnings/errors; Generator 121/121, Unit 496/496, Integration 252/252, 120-second shared-memory Chaos, and NativeAOT TCP passed. The seven-package pack and fresh-cache TCP/shared-memory package smoke are part of the final local gate.
+- Three alternating exact-0.8.42/candidate Balanced stream pairs completed with zero failures. Paired-median throughput changed by +1.5% c2s, -1.8% s2c, and +4.0% duplex; the unary control changed by -0.6%, with no material latency regression. The isolated 0.7.11/current investigation localized the historical duplex loss to the redundant flow-control lock and measured +6.7% causal median recovery.
+
 ## [0.8.42] - 2026-07-27
 
 ### Fixed

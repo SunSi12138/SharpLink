@@ -6,6 +6,44 @@ namespace SharpLink.IntegrationTests;
 public class TelemetryIntegrationTests
 {
     [Test]
+    public async Task EarlyClientStreamDisposalShouldNotReportSuccessfulCompletion()
+    {
+        var activities = new ConcurrentQueue<ActivitySnapshot>();
+        using var activityListener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "SharpLink.Client",
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => activities.Enqueue(new ActivitySnapshot(
+                activity.Source.Name,
+                activity.Status,
+                activity.TagObjects.ToDictionary(
+                    static pair => pair.Key,
+                    static pair => pair.Value?.ToString())))
+        };
+        ActivitySource.AddActivityListener(activityListener);
+
+        await using var harness = await TelemetryHarness.CreateAsync();
+        await using (var stream = harness.Client.Get<IInterceptorTestService>()
+                         .FailStreamAsync()
+                         .GetAsyncEnumerator())
+        {
+            Ensure(await stream.MoveNextAsync() && stream.Current == 1,
+                "early-disposal telemetry stream item");
+        }
+
+        var streamingActivity = activities.SingleOrDefault(static activity =>
+            activity.Source == "SharpLink.Client" &&
+            activity.Tags.TryGetValue("rpc.sharplink.method_kind", out var kind) &&
+            kind == nameof(RpcMethodKind.ServerStreaming));
+        Ensure(streamingActivity.Status == ActivityStatusCode.Error,
+            "consumer-abandoned Client stream activity must not report success");
+        Ensure(streamingActivity.Tags.TryGetValue("error.type", out var errorType) &&
+               errorType == typeof(OperationCanceledException).FullName,
+            "consumer-abandoned Client stream activity should retain cancellation identity");
+    }
+
+    [Test]
     public async Task RpcShouldPublishActivitiesAndRequiredMetrics()
     {
         var activities = new ConcurrentQueue<ActivitySnapshot>();
