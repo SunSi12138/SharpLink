@@ -95,6 +95,11 @@ internal sealed partial class SharpLinkServer
     private static bool IsExpectedCancellation(Exception ex, CancellationToken ct)
         => ex is OperationCanceledException && ct.IsCancellationRequested;
 
+    private static bool IsExpectedConnectionTermination(Exception ex, CancellationToken ct)
+        => IsExpectedCancellation(ex, ct) ||
+            ex is System.IO.IOException or ObjectDisposedException or System.Net.Sockets.SocketException or
+            SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed };
+
     private async Task HandleAcceptedConnectionAsync(
         ITransportConnection acceptedConnection,
         CancellationToken cancellationToken)
@@ -208,7 +213,7 @@ internal sealed partial class SharpLinkServer
             LogClientConnected(_logger);
             await ProcessRequestLoop(connection);
         }
-        catch (Exception ex) when (IsExpectedCancellation(ex, ct))
+        catch (Exception ex) when (IsExpectedConnectionTermination(ex, ct))
         {
         }
         catch (Exception ex)
@@ -667,7 +672,6 @@ internal sealed partial class SharpLinkServer
                                     ProtocolV2PayloadCodec.ReadWindowUpdate(payload));
                                 break;
                             case ProtocolV2FrameType.GoAway:
-                                await session.DisposeAsync();
                                 return;
                             case ProtocolV2FrameType.HealthCheck:
                                 if ((((RpcSession)session).NegotiatedCapabilities &
@@ -688,8 +692,7 @@ internal sealed partial class SharpLinkServer
                                 default:
                                 {
                                     SharpLinkTelemetry.RecordProtocolFailure("server");
-                                    await session.DisposeAsync();
-                                    break;
+                                    return;
                                 }
                             }
                         }

@@ -1,33 +1,33 @@
-# 0.8.34 regression-test research
+# 0.8.35 regression-test research
 
-## Bounded target inventory
+## Proven target inventory
 
-- A clean 0.8.33 120-second shared-memory Chaos run at commit `35c8cd2` completed 419,817 calls and 11 restarts but captured two `NullReferenceException` failures from `SharedMemoryPipeReader.ReadAsync`. `CompleteAsync` waits only for an outstanding returned buffer, not `_readOperationPending`; completion can therefore dispose `_staging` in the interval between a read's field check and publication and can release the mapping before that operation exits.
-- The same Chaos report was marked `Passed` with `UnexpectedFailures=0` even though `ClientErrors` contained both NREs. `ChaosLoggerFactory` captures only Error-or-higher events, but the final gate ignores its snapshot and restart `Clear()` calls can erase earlier evidence.
-- `GetContractMethods` collapses inherited methods by CLR-like parameter signature. It does not compare `[Oneway]`, so a fire-and-forget route and a response-bearing route are selected by base-interface name ordering.
-- The same collapse ignores `[Timeout]` and `[Idempotent]`, allowing retry/deadline behavior to depend on the arbitrary selected inherited declaration.
-- Parameter names and nullable annotations participate in SharpLink request schema fingerprints but are also ignored by inherited collapse, so compatibility identity can depend on base-interface ordering.
-- Once the Chaos Error oracle was fixed, its three-second TCP self-test exposed two additional client background errors: normal transport teardown completed a `StreamPipeReader` while the request loop still held its returned buffer, and the loop promoted the expected `AdvanceTo` race to an Error. The server loop has the same unguarded terminal `AdvanceTo` pattern.
-- The final 120-second shared-memory rerun then exposed a recoverable pool-expansion handshake interruption as `BackgroundLoopUnhandledException`. Fixed, static-cluster, and dynamic-cluster expansion/reconnect loops all used the same Error event for connection failures they catch and retry; this made a normal restart fail the corrected release oracle.
-- Repeated full-suite execution exposed a GC assertion that kept the last awaited dispatcher alive through an async state-machine/JIT temporary. The production pool count remained capped at 1,024; moving burst construction and synchronous completed disposal behind a non-inlined helper made the weak-reference proof deterministic.
+- Dynamic Resolver failures are caught and retried but were emitted as unhandled-background Error `6002`.
+- Chaos connected only a Client logger; an injected Server Error exited 0 with `Passed`.
+- An explicitly unwritable `--json-output` printed stderr but exited 0.
+- Server and Client protocol-terminal paths could await session disposal while retaining an active `PipeReader.ReadResult`; a completion-joining reader deterministically exposed the ordering deadlock.
+- Internal Build/session code read only `Options.PerformanceProfile`, causing a defensive deep clone of Protocol, FlowControl, and Compression per access.
+- Real TCP restart showed an ordinary reset converted to disconnect/reconnect after first being logged as Client Error.
+- Enabling the Server oracle showed rolling-stop response races throwing structured `ConnectionClosed` and being logged as Server Error.
 
-## Existing conventions
+## Pre-fix evidence
 
-- Runtime lifecycle probes belong in `SharpLink.UnitTests`, use TUnit `[Test]`, explicit bounded waits, and direct state assertions.
-- Generator probes build isolated Roslyn sources and count stable `SHARPLINK057` diagnostics.
-- The Chaos executable is itself a release gate; an opt-in deterministic injected Error is validated by its process exit/report rather than by duplicating its oracle in another project.
-- All new probes are run against production 0.8.33 before production fixes. Generator/Unit use Microsoft Testing Platform with minimum expected counts.
+- Unit 479 total: all 478 existing tests passed; only `RetriedResolverFailureShouldNotBeAnUnhandledBackgroundError` failed.
+- Integration 239 total: all 238 existing tests passed; only `ServerProtocolViolationShouldReleaseItsReadBeforeCompletingTheReader` failed.
+- Shared-memory Server injection report exited 0/Passed with one injected Server Error.
+- `/dev/null/report.json` emitted `CHAOS_REPORT_WRITE_FAILED` and exited 0.
+- TCP rolling restart captured Client `BackgroundLoopUnhandledException` for connection reset.
+- Once the Server logger was connected, rolling restart captured `ConnectionClosed: Session is stopping` as Server `BackgroundLoopUnhandledException`.
+- Exact `044598c` allocation baseline was 6,536 B per Client Build.
 
-## Acceptance checklist
+## Acceptance boundary
 
-- Reader completion remains incomplete while either a read operation or a returned ReadResult is active, then releases staging after both are clear.
-- Any captured client Error makes Chaos exit non-zero, survives restart-generation clearing in aggregate evidence, and remains visible in the final report.
-- Conflicting inherited Oneway shape reports one `SHARPLINK057` and emits no contract artifacts.
-- Conflicting inherited timeout/idempotency policy reports one `SHARPLINK057`.
-- Conflicting inherited request parameter name/nullability schema reports one `SHARPLINK057`.
-- Terminal StreamPipeReader completion during client or server teardown does not produce a background Error, while a non-terminal invalid `AdvanceTo` remains a failure.
-- Recoverable expansion/reconnect failures use a distinct Warning event, while truly unhandled background-task failures retain the Error event.
+Handled failures remain observable without weakening genuine background Errors. Both sides of Chaos use bounded aggregate evidence and monotonic counts. Requested report failure must be non-recursive and non-zero. Terminal protocol handling must release the current read before disposal joins completion. Public options keep defensive-copy semantics; only friend-assembly reads use the frozen profile.
 
-## Engineering boundary
+## Assertion and pseudo-mutation review
 
-Do not serialize the shared-memory read hot path with a lock. Extend its existing terminal-release handshake to cover `_readOperationPending` and retain synchronous completion when no activity exists. Keep Chaos error accounting monotonic while preserving bounded per-generation recovery diagnostics. Extend the existing inherited-signature diagnostic instead of adding multiple overlapping rule IDs; compatible duplicate declarations and explicit derived redeclarations must continue generating normally. Keep recoverable connection failures observable at Warning without weakening the Error gate for unhandled work.
+- Changing Resolver Warning back to Error, changing event `6102`, dropping the original exception, or removing retry observability fails the new test.
+- Reintroducing `await session.DisposeAsync()` before the loop finally makes the completion-order test observe an outstanding read or time out.
+- Removing either Client or Server Error gate makes its injected real-process probe falsely pass; omitting `ServerErrors` loses report evidence.
+- Swallowing report-write failure restores exit 0 for the unwritable-path process probe.
+- Restoring public `Options` reads restores the exact 368 B/Build allocation delta.

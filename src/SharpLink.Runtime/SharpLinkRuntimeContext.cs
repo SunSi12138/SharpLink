@@ -104,6 +104,8 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
 
     internal SharpLinkCompressionOptions Compression => _options.Compression;
 
+    internal SharpLinkPerformanceProfile PerformanceProfile => _options.PerformanceProfile;
+
     internal RpcGeneratedManifestRegistration PrepareGeneratedManifest(
         ISharpLinkGeneratedAssemblyManifest manifest)
     {

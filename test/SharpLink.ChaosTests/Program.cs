@@ -53,11 +53,14 @@ public static class Program
         long unexpectedFailures = 0;
         long faultGeneration = 0;
         long maxRecoveryMilliseconds = 0;
+        long reportWriteFailures = 0;
+        string? reportWriteFailure = null;
         var restartCount = 0;
         ChaosDiagnosticArtifact? diagnosticArtifact = null;
         Task<ChaosDiagnosticArtifact>? diagnosticCaptureTask = null;
         var diagnosticGate = new Lock();
         using var clientLogs = new ChaosLoggerFactory();
+        using var serverLogs = new ChaosLoggerFactory();
 
         UnhandledExceptionEventHandler unhandledHandler = (_, eventArgs) =>
         {
@@ -77,7 +80,8 @@ public static class Program
         var server = await ChaosServer.StartAsync(
             options.Transport,
             options.SharedMemoryName,
-            port: 0).ConfigureAwait(false);
+            port: 0,
+            loggerFactory: serverLogs).ConfigureAwait(false);
         var port = server.Port;
         var clientBuilder = SharpClientBuilder.Create()
             .UseHeartbeat(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5))
@@ -141,7 +145,9 @@ public static class Program
         var orderedMemorySamples = memorySamples.OrderBy(static sample => sample.ElapsedSeconds).ToArray();
         var lastSixHoursGrowthPercent = CalculateWindowGrowth(orderedMemorySamples, TimeSpan.FromHours(6));
         if (options.InjectClientError)
-            clientLogs.InjectErrorForGateProbe();
+            clientLogs.InjectErrorForGateProbe("client");
+        if (options.InjectServerError)
+            serverLogs.InjectErrorForGateProbe("server");
         Task<ChaosDiagnosticArtifact>? activeDiagnosticCapture;
         lock (diagnosticGate)
             activeDiagnosticCapture = diagnosticCaptureTask;
@@ -175,6 +181,22 @@ public static class Program
                 $"Chaos captured {clientLogs.ErrorCount} client Error log(s).",
                 string.Join(Environment.NewLine, clientLogs.AllSnapshot()));
         }
+        else if (serverLogs.ErrorCount != 0)
+        {
+            exitCode = 2;
+            terminalFailure = new ChaosFailure(
+                "ServerErrorLogs",
+                $"Chaos captured {serverLogs.ErrorCount} server Error log(s).",
+                string.Join(Environment.NewLine, serverLogs.AllSnapshot()));
+        }
+        else if (Volatile.Read(ref reportWriteFailures) != 0)
+        {
+            exitCode = 6;
+            terminalFailure = new ChaosFailure(
+                "ReportWriteFailure",
+                $"Chaos failed to write its requested report {Volatile.Read(ref reportWriteFailures)} time(s).",
+                Volatile.Read(ref reportWriteFailure));
+        }
         else if (success == 0 || restartCount == 0)
         {
             exitCode = 3;
@@ -193,18 +215,30 @@ public static class Program
         }
 
         phase = exitCode == 0 ? "Completed" : "FailedGate";
-        TryWriteReport(
+        var finalReportWritten = TryWriteReport(
             exitCode == 0 ? "Passed" : "Failed",
             phase,
             exitCode,
             terminalFailure,
             drain,
             isFinal: true);
+        if (!finalReportWritten && exitCode == 0)
+        {
+            exitCode = 6;
+            phase = "FailedGate";
+            terminalFailure = new ChaosFailure(
+                "ReportWriteFailure",
+                "Chaos failed to write its requested final report.",
+                Volatile.Read(ref reportWriteFailure));
+        }
         AppDomain.CurrentDomain.UnhandledException -= unhandledHandler;
 
         Console.WriteLine(
             $"CHAOS_RESULT success={success} injected={expectedFailures} unexpected={unexpectedFailures} " +
-            $"restarts={restartCount} retained={startedMemory}->{endedMemory} ({memoryGrowthPercent:F2}%)");
+            $"restarts={restartCount} clientErrors={clientLogs.ErrorCount} serverErrors={serverLogs.ErrorCount} " +
+            $"retained={startedMemory}->{endedMemory} ({memoryGrowthPercent:F2}%)");
+        foreach (var error in serverLogs.AllSnapshot())
+            Console.WriteLine($"CHAOS_SERVER_ERROR {error}");
         return exitCode;
 
         async Task RestartLoopAsync()
@@ -215,6 +249,7 @@ public static class Program
                 {
                     await Task.Delay(options.RestartInterval, duration.Token).ConfigureAwait(false);
                     clientLogs.Clear();
+                    serverLogs.Clear();
                     Interlocked.Increment(ref faultGeneration);
                     var recoveryStarted = Stopwatch.GetTimestamp();
                     using var recoveryTimeout = new CancellationTokenSource(RecoveryTimeout);
@@ -225,6 +260,7 @@ public static class Program
                                 options.Transport,
                                 options.SharedMemoryName,
                                 port,
+                                serverLogs,
                                 recoveryTimeout.Token)
                             .ConfigureAwait(false);
                     }
@@ -359,10 +395,11 @@ public static class Program
                     .ToDictionary(static item => item.Key, static item => item.Value),
                 [.. failureSamples],
                 clientLogs.AllSnapshot(),
+                serverLogs.AllSnapshot(),
                 [.. serverStops]);
         }
 
-        void TryWriteReport(
+        bool TryWriteReport(
             string status,
             string currentPhase,
             int? currentExitCode,
@@ -371,7 +408,7 @@ public static class Program
             bool isFinal)
         {
             if (string.IsNullOrWhiteSpace(options.JsonOutputPath))
-                return;
+                return true;
             try
             {
                 lock (reportGate)
@@ -380,11 +417,15 @@ public static class Program
                         options.JsonOutputPath,
                         CreateReport(status, currentPhase, currentExitCode, failure, drain, isFinal));
                 }
+                return true;
             }
             catch (Exception exception)
             {
+                Interlocked.Increment(ref reportWriteFailures);
+                Interlocked.CompareExchange(ref reportWriteFailure, exception.ToString(), null);
                 Console.Error.WriteLine(
                     $"CHAOS_REPORT_WRITE_FAILED type={exception.GetType().FullName} message={exception.Message}");
+                return false;
             }
         }
     }
@@ -793,6 +834,7 @@ public static class Program
         Console.WriteLine("  --dump-on-failure true");
         Console.WriteLine("  --stop-on-unexpected true");
         Console.WriteLine("  --inject-client-error false      (release-gate self-test)");
+        Console.WriteLine("  --inject-server-error false      (release-gate self-test)");
         Console.WriteLine("  --json-output artifacts/chaos/report.json");
     }
 }
@@ -804,9 +846,11 @@ internal sealed class ChaosServer(SharpLinkServer server, Task runTask, int port
     internal static Task<ChaosServer> StartAsync(
         ChaosTransport transport,
         string sharedMemoryName,
-        int port)
+        int port,
+        ILoggerFactory loggerFactory)
     {
         var builder = SharpLinkServerBuilder.Create()
+            .UseLoggerFactory(loggerFactory)
             .UseHeartbeat(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
         if (transport == ChaosTransport.SharedMemory)
             builder.UseSharedMemory(sharedMemoryName);
@@ -824,6 +868,7 @@ internal sealed class ChaosServer(SharpLinkServer server, Task runTask, int port
         ChaosTransport transport,
         string sharedMemoryName,
         int port,
+        ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
         Exception? lastException = null;
@@ -832,7 +877,7 @@ internal sealed class ChaosServer(SharpLinkServer server, Task runTask, int port
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                return await StartAsync(transport, sharedMemoryName, port).ConfigureAwait(false);
+                return await StartAsync(transport, sharedMemoryName, port, loggerFactory).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is SocketException or IOException)
             {
@@ -1040,8 +1085,8 @@ internal sealed class ChaosLoggerFactory : ILoggerFactory, ILogger
 
     internal IReadOnlyList<string> AllSnapshot() => [.. _allErrors];
 
-    internal void InjectErrorForGateProbe()
-        => RecordError("Injected client Error for the Chaos release-gate self-test.");
+    internal void InjectErrorForGateProbe(string owner)
+        => RecordError($"Injected {owner} Error for the Chaos release-gate self-test.");
 
     private void RecordError(string error)
     {
@@ -1086,6 +1131,7 @@ internal sealed class ChaosOptions
     internal bool DumpOnFailure { get; private init; } = true;
     internal bool StopOnUnexpectedFailure { get; private init; } = true;
     internal bool InjectClientError { get; private init; }
+    internal bool InjectServerError { get; private init; }
     internal ChaosTransport Transport { get; private init; } = ChaosTransport.Tcp;
     internal string SharedMemoryName { get; private init; } = "sharplink-chaos";
     internal string? JsonOutputPath { get; private init; }
@@ -1134,6 +1180,7 @@ internal sealed class ChaosOptions
             DumpOnFailure = ParseBoolean(values, "dump-on-failure", fallback: true),
             StopOnUnexpectedFailure = ParseBoolean(values, "stop-on-unexpected", fallback: true),
             InjectClientError = ParseBoolean(values, "inject-client-error", fallback: false),
+            InjectServerError = ParseBoolean(values, "inject-server-error", fallback: false),
             Transport = transport,
             SharedMemoryName = values.GetValueOrDefault("shm-name", "sharplink-chaos"),
             JsonOutputPath = values.GetValueOrDefault("json-output")
@@ -1251,6 +1298,7 @@ internal sealed record ChaosReport(
     IReadOnlyDictionary<string, long> Failures,
     IReadOnlyList<string> FailureSamples,
     IReadOnlyList<string> ClientErrors,
+    IReadOnlyList<string> ServerErrors,
     IReadOnlyList<ChaosServerStopObservation> ServerStops);
 
 internal sealed record ChaosFailure(string Type, string Message, string? Details)

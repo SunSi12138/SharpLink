@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+## [0.8.35] - 2026-07-27
+
+### Fixed
+
+- Dynamic endpoint resolver failures owned by the retry state machine now use dedicated Warning event `6102` instead of unhandled-background Error `6002`; cleanup failures remain Errors.
+- Client and Server loops classify ordinary transport/session termination during rolling restart as expected disconnects without hiding protocol or internal failures.
+- Client and Server protocol termination releases the active `PipeReader` result before connection disposal can join reader completion, preventing teardown self-deadlock.
+- The Chaos release gate captures bounded Server as well as Client Error evidence, exposes an injected Server-error self-test, and fails when either side emits an Error.
+- An explicitly requested Chaos JSON report that cannot be written now produces exit code 6 instead of a false successful release result.
+- Internal runtime profile reads use the frozen context snapshot directly instead of deep-cloning public options during Client Build, Server Build, and session send-pump creation.
+
+### Compatibility and validation
+
+- Protocol v2, route hashes, and valid payloads are unchanged. `LogEvents.Client.ResolverUpdateFailed` is an additive event ID; `ChaosReport.ServerErrors` is an additive diagnostic field.
+- Non-incremental Release build, Generator, Unit, Integration, shared-memory/TCP Chaos, NativeAOT, seven-package pack, and fresh-cache package smoke passed.
+- Client Build allocation improved from 6,536 to 6,168 B/op (−368 B, −5.6%); all three candidate latency medians were below the three exact-baseline medians.
+
 ## [0.8.34] - 2026-07-27
 
 ### Fixed

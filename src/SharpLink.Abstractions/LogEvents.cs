@@ -78,5 +78,6 @@ public static class LogEvents
         public const int UnknownOrTimedOutResponse = 6001;
         public const int BackgroundLoopUnhandledException = 6002;
         public const int ConnectionAttemptFailed = 6101;
+        public const int ResolverUpdateFailed = 6102;
     }
 }

@@ -242,7 +242,8 @@ internal sealed partial class SharpLinkClient
         => ex is OperationCanceledException && ct.IsCancellationRequested;
 
     private static bool IsTransportFault(Exception ex)
-        => ex is IOException or ObjectDisposedException or SocketException;
+        => ex is IOException or ObjectDisposedException or SocketException or
+            SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed };
 
     private async Task RunHeartbeatSendLoopAsync(ClientConnection connection, CancellationToken ct)
     {
@@ -257,7 +258,8 @@ internal sealed partial class SharpLinkClient
         catch (Exception ex)
         {
             using var sessionScope = BeginSessionLogScope(_logger, session.Id);
-            LogClientBackgroundLoopUnhandledException(_logger, nameof(HeartbeatSendLoop), ex);
+            if (!IsTransportFault(ex))
+                LogClientBackgroundLoopUnhandledException(_logger, nameof(HeartbeatSendLoop), ex);
             HandleDisconnected(connection, IsTransportFault(ex)
                 ? CreateConnectionClosedException("Transport closed.", ex)
                 : ex);
@@ -279,7 +281,8 @@ internal sealed partial class SharpLinkClient
             if (ex is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation })
                 SharpLinkTelemetry.RecordProtocolFailure("client");
             using var sessionScope = BeginSessionLogScope(_logger, session.Id);
-            LogClientBackgroundLoopUnhandledException(_logger, nameof(ProcessRequestLoop), ex);
+            if (!IsTransportFault(ex))
+                LogClientBackgroundLoopUnhandledException(_logger, nameof(ProcessRequestLoop), ex);
             HandleDisconnected(connection, IsTransportFault(ex)
                 ? CreateConnectionClosedException("Transport closed.", ex)
                 : ex);
@@ -541,7 +544,6 @@ internal sealed partial class SharpLinkClient
                         case ProtocolV2FrameType.HealthCheck:
                             default:
                                 SharpLinkTelemetry.RecordProtocolFailure("client");
-                                await session.DisposeAsync();
                                 HandleDisconnected(connection, CreateProtocolViolationException("Received unexpected packet from server."));
                                 return;
                         }

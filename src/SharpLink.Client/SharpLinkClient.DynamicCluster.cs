@@ -317,7 +317,7 @@ internal sealed partial class SharpLinkClient
                     catch (Exception exception)
                     {
                         SharpLinkTelemetry.RecordClientResolverFailure();
-                        LogClientBackgroundLoopUnhandledException(_client._logger, nameof(RunResolverWorkerAsync), exception);
+                        LogClientResolverUpdateFailed(_client._logger, nameof(RunResolverWorkerAsync), exception);
                         await DelayResolverRetryAsync(delayMilliseconds).ConfigureAwait(false);
                         delayMilliseconds = Math.Min(delayMilliseconds * 2, 30_000);
                         continue;
@@ -345,7 +345,7 @@ internal sealed partial class SharpLinkClient
                 catch (Exception exception)
                 {
                     SharpLinkTelemetry.RecordClientResolverFailure();
-                    LogClientBackgroundLoopUnhandledException(_client._logger, nameof(RunResolverWorkerAsync), exception);
+                    LogClientResolverUpdateFailed(_client._logger, nameof(RunResolverWorkerAsync), exception);
                     mustResolve = true;
                 }
 
@@ -376,7 +376,7 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception)
             {
                 SharpLinkTelemetry.RecordClientResolverFailure();
-                LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ApplySnapshotAsync), exception);
+                LogClientResolverUpdateFailed(_client._logger, nameof(ApplySnapshotAsync), exception);
                 return false;
             }
 
@@ -415,7 +415,7 @@ internal sealed partial class SharpLinkClient
                     ownedFactories.UnionWith(GetOwnedFactoriesLocked());
                 await DisposeCreatedFactoriesAsync(created.Values, ownedFactories).ConfigureAwait(false);
                 SharpLinkTelemetry.RecordClientResolverFailure();
-                LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ApplySnapshotAsync), exception);
+                LogClientResolverUpdateFailed(_client._logger, nameof(ApplySnapshotAsync), exception);
                 return false;
             }
 
@@ -486,7 +486,7 @@ internal sealed partial class SharpLinkClient
                 if (rejectedForFactoryOwnership)
                 {
                     SharpLinkTelemetry.RecordClientResolverFailure();
-                    LogClientBackgroundLoopUnhandledException(
+                    LogClientResolverUpdateFailed(
                         _client._logger,
                         nameof(ApplySnapshotAsync),
                         new InvalidOperationException(

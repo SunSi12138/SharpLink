@@ -593,7 +593,7 @@ public sealed partial class RpcSession : IRpcSession
 
             pump = new SendPump(
                 Output,
-                RuntimeContext.Options.PerformanceProfile,
+                RuntimeContext.PerformanceProfile,
                 RuntimeContext.FlowControl.MaxSendQueueBytes,
                 _flushOptions,
                 _cts.Token,

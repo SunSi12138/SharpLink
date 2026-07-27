@@ -45,6 +45,9 @@ internal sealed partial class SharpLinkClient
     [LoggerMessage(EventId = LogEvents.Client.ConnectionAttemptFailed, Level = LogLevel.Warning, Message = "Client connection attempt in {LoopName} failed.")]
     private static partial void LogClientConnectionAttemptFailed(ILogger logger, string loopName, Exception exception);
 
+    [LoggerMessage(EventId = LogEvents.Client.ResolverUpdateFailed, Level = LogLevel.Warning, Message = "Endpoint resolver update in {OperationName} failed and will be retried.")]
+    private static partial void LogClientResolverUpdateFailed(ILogger logger, string operationName, Exception exception);
+
     [LoggerMessage(EventId = LogEvents.Transport.TlsEstablished, Level = LogLevel.Information, Message = "TLS established using {Protocol} and {CipherSuite}.")]
     private static partial void LogTlsEstablished(ILogger logger, SslProtocols protocol, TlsCipherSuite cipherSuite);
 }

@@ -1,0 +1,11 @@
+# SharpLink 0.8.35 deep audit
+
+Chinese: [`../audit-0.8.35.md`](../audit-0.8.35.md)
+
+Using exact 0.8.34 commit `044598c`, this batch proved five version-advancing P2 findings and two follow-up P2 findings. Retried resolver failures were mislabeled as unhandled Errors; Chaos could neither observe Server Errors nor fail on an unwritable requested report; protocol teardown could join reader completion while retaining the active `ReadResult`; internal profile reads deep-cloned the public options snapshot; and ordinary Client/Server connection termination during rolling restart was logged as an unhandled Error.
+
+Resolver recovery now uses additive Warning event `6102`. Chaos retains bounded aggregate Client and Server Error evidence, has deterministic injection probes, and returns exit 6 for report-write failure. Protocol loops release their active read before outer lifecycle disposal. Existing friend assemblies read the frozen internal profile directly while public `Options` keeps its isolated-copy contract. Expected transport/session termination is separated from protocol and internal failures.
+
+Before the fixes, all 478 existing Unit tests and 238 existing Integration tests passed while only the new resolver and completion-order probes failed. Real Chaos processes proved both false-success gates and the two rolling-restart logging defects. Assertion and pseudo-mutation review covers exact log severity/event/exception, absence of Error, reader completion ordering, both log oracles, report contents, and process exit codes.
+
+The final 120-second shared-memory Chaos run completed 818,793 successful calls, 302,335 expected injected failures, and 11 restarts with zero unexpected failures, zero Client/Server Errors, successful drain, and all five active metrics at zero. Client and Server Error injections each exited 2, the unwritable-report probe exited 6, and independent NativeAOT printed `AOT_SMOKE_PASS transport=tcp`. The final non-incremental Release build has zero warnings/errors; Generator is 108/108, Unit 479/479, and Integration 239/239. See [`../performance-0.8.35.md`](../performance-0.8.35.md) and [`../migration-0.8.35.md`](../migration-0.8.35.md). This round found new improvements, so consecutive clean audit rounds remain 0/3.

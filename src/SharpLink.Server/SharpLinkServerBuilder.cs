@@ -251,7 +251,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         try
         {
             if (transport is IPerformanceProfileAwareTransport profileAwareTransport)
-                profileAwareTransport.BindPerformanceProfile(runtimeContext.Options.PerformanceProfile);
+                profileAwareTransport.BindPerformanceProfile(runtimeContext.PerformanceProfile);
 
             var protocolOptions = runtimeContext.Protocol;
             var serviceProvider = _serviceProvider;

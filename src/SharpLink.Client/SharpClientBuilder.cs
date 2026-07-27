@@ -551,7 +551,7 @@ public class SharpClientBuilder
 
         var fixedTransport = _transport!;
         if (fixedTransport is IPerformanceProfileAwareTransport profileAwareTransport)
-            profileAwareTransport.BindPerformanceProfile(runtimeContext.Options.PerformanceProfile);
+            profileAwareTransport.BindPerformanceProfile(runtimeContext.PerformanceProfile);
         var connectionPool = CreateConnectionPoolSnapshot(runtimeContext);
         if (fixedTransport is AnonymousPipeClientTransportFactory && connectionPool.MaxConnections != 1)
             throw new InvalidOperationException("Anonymous-pipe handle offers support exactly one client connection.");
@@ -662,7 +662,7 @@ public class SharpClientBuilder
         {
             try
             {
-                profileAware.BindPerformanceProfile(runtimeContext.Options.PerformanceProfile);
+                profileAware.BindPerformanceProfile(runtimeContext.PerformanceProfile);
             }
             catch (Exception bindingException)
             {
@@ -729,7 +729,7 @@ public class SharpClientBuilder
         if (_connectionPoolConfigured)
             return _connectionPool.CloneValidated();
 
-        var maxConnections = runtimeContext.Options.PerformanceProfile == SharpLinkPerformanceProfile.Throughput
+        var maxConnections = runtimeContext.PerformanceProfile == SharpLinkPerformanceProfile.Throughput
             ? Math.Min(Environment.ProcessorCount, 4)
             : 1;
         return new SharpLinkConnectionPoolOptions
@@ -745,7 +745,7 @@ public class SharpClientBuilder
             return _connectionPool.CloneValidated().MaxConnections;
 
         using var runtimeContext = _runtimeContextBuilder.Build(includeGeneratedAssemblyCatalog: false);
-        return runtimeContext.Options.PerformanceProfile == SharpLinkPerformanceProfile.Throughput
+        return runtimeContext.PerformanceProfile == SharpLinkPerformanceProfile.Throughput
             ? Math.Max(1, Math.Min(Environment.ProcessorCount, 4))
             : 1;
     }

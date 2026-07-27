@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Client;
@@ -303,6 +304,31 @@ public sealed class DynamicEndpointResolverTests
         }
     }
 
+    [Test]
+    public async Task RetriedResolverFailureShouldNotBeAnUnhandledBackgroundError()
+    {
+        var loggerFactory = new CaptureLoggerFactory();
+        await using var client = SharpClientBuilder.Create()
+            .UseLoggerFactory(loggerFactory)
+            .UseEndpointResolver(new FailingWatchResolver(), _ => new TrackingFactory())
+            .Build();
+
+        await client.ConnectAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (!loggerFactory.HasEntry(static entry =>
+                   entry.Level == LogLevel.Error || entry.EventId.Id == 6102))
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        Ensure(!loggerFactory.HasEntry(static entry => entry.Level == LogLevel.Error),
+            "a resolver failure owned by the retry worker must not be reported as unhandled");
+        Ensure(loggerFactory.HasEntry(static entry =>
+                entry is { Level: LogLevel.Warning, EventId.Id: 6102,
+                    Exception: InvalidOperationException { Message: "watch failed" } }),
+            "the retried resolver failure should remain observable through its warning event");
+    }
+
     private static async Task EnsureThrows<TException>(Func<Task> action) where TException : Exception
     {
         try
@@ -403,6 +429,64 @@ public sealed class DynamicEndpointResolverTests
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
+
+    private sealed class FailingWatchResolver : ISharpLinkEndpointResolver
+    {
+        public ValueTask<SharpLinkEndpointSnapshot> ResolveAsync(CancellationToken cancellationToken)
+            => ValueTask.FromResult(new SharpLinkEndpointSnapshot(0, []));
+
+        public async IAsyncEnumerable<SharpLinkEndpointSnapshot> WatchAsync(
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Yield();
+            yield return await ValueTask.FromException<SharpLinkEndpointSnapshot>(
+                new InvalidOperationException("watch failed"));
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class CaptureLoggerFactory : ILoggerFactory
+    {
+        private readonly Lock _gate = new();
+        private readonly List<LogEntry> _entries = [];
+
+        public ILogger CreateLogger(string categoryName) => new CaptureLogger(this);
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
+        internal bool HasEntry(Func<LogEntry, bool> predicate)
+        {
+            lock (_gate)
+                return _entries.Exists(entry => predicate(entry));
+        }
+
+        private sealed class CaptureLogger(CaptureLoggerFactory owner) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                lock (owner._gate)
+                    owner._entries.Add(new LogEntry(logLevel, eventId, exception));
+            }
+        }
+    }
+
+    private readonly record struct LogEntry(LogLevel Level, EventId EventId, Exception? Exception);
 
     private sealed class TrackingFactory : IClientTransportFactory
     {
