@@ -500,6 +500,119 @@ public class StreamManagerTests
     }
 
     [Test]
+    public async Task PreAdmissionAttachShouldNotBlockOnAsynchronousReplay()
+    {
+        var manager = new StreamManager();
+        var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
+        manager.ReservePreAdmissionStreams(
+            57,
+            1,
+            buffers,
+            _ => true,
+            _ => { },
+            () => throw new InvalidOperationException("Capacity should not be exhausted."));
+        await manager.DispatchChunkAsync(
+            57,
+            1,
+            new ReadOnlySequence<byte>(new byte[] { 1 }));
+        var dispatcher = new OrderedReplayDispatcher();
+
+        var registration = Task.Run(() => manager.Register(57, 1, dispatcher));
+        await dispatcher.FirstEntered.WaitAsync(TimeSpan.FromSeconds(1));
+        var returnedBeforeRelease = false;
+        try
+        {
+            await registration.WaitAsync(TimeSpan.FromMilliseconds(200));
+            returnedBeforeRelease = true;
+        }
+        catch (TimeoutException)
+        {
+        }
+
+        ValueTask liveDispatch = default;
+        if (returnedBeforeRelease)
+        {
+            liveDispatch = manager.DispatchChunkAsync(
+                57,
+                1,
+                new ReadOnlySequence<byte>(new byte[] { 2 }));
+            Ensure(liveDispatch.IsCompletedSuccessfully,
+                "a live frame is retained without blocking the transport reader");
+            Ensure(dispatcher.EnteredValues.SequenceEqual([(byte)1]),
+                "a live frame must not overtake retained replay");
+        }
+        dispatcher.ReleaseFirst();
+        await registration.WaitAsync(TimeSpan.FromSeconds(1));
+        if (returnedBeforeRelease)
+            await dispatcher.SecondEntered.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Ensure(returnedBeforeRelease,
+            "dispatcher registration must not synchronously wait for asynchronous replay");
+        Ensure(dispatcher.EnteredValues.SequenceEqual([(byte)1, (byte)2]),
+            "retained and live frames preserve wire order");
+        manager.CompleteStream(57, 1, exception: null);
+    }
+
+    [Test]
+    public async Task PreAdmissionAttachCallbacksShouldRunOutsideRequestRegistryLock()
+    {
+        const long requestId = 58;
+        var manager = new StreamManager();
+        var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
+        manager.ReservePreAdmissionStreams(
+            requestId,
+            1,
+            buffers,
+            _ => true,
+            _ => { },
+            () => throw new InvalidOperationException("Capacity should not be exhausted."));
+        var dispatcher = new ReentrantConfigurationDispatcher(manager, requestId);
+
+        await Task.Run(() => manager.Register(requestId, 1, dispatcher))
+            .WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(!dispatcher.RegistryLockWasHeld,
+            "dispatcher callbacks must execute without the request registry lock");
+        manager.CompleteRequestStreams(requestId, exception: null);
+    }
+
+    [Test]
+    public async Task CompletionDuringAsynchronousReplayShouldFollowRetainedFrames()
+    {
+        var released = 0;
+        var manager = new StreamManager();
+        var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
+        manager.ReservePreAdmissionStreams(
+            59,
+            1,
+            buffers,
+            _ => true,
+            bytes => released += bytes,
+            () => throw new InvalidOperationException("Capacity should not be exhausted."));
+        await manager.DispatchChunkAsync(
+            59,
+            1,
+            new ReadOnlySequence<byte>(new byte[] { 1 }));
+        var dispatcher = new OrderedReplayDispatcher();
+
+        manager.Register(59, 1, dispatcher);
+        await dispatcher.FirstEntered.WaitAsync(TimeSpan.FromSeconds(1));
+        manager.CompleteStream(59, 1, exception: null);
+
+        Ensure(dispatcher.CompleteCount == 0,
+            "completion must wait until retained replay exits");
+        Ensure(manager.ActiveStreamCount == 0,
+            "the completed registry entry retires while replay owns its lease");
+        dispatcher.ReleaseFirst();
+        await dispatcher.Completed.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Ensure(dispatcher.CompleteCount == 1,
+            "completion is forwarded once after replay");
+        Ensure(released == 1,
+            "retained storage is released before completion finishes");
+    }
+
+    [Test]
     public async Task LocalCancellationShouldFlushOnlyAfterAcquiredDispatchesDrain()
     {
         var events = new List<string>();
@@ -634,6 +747,90 @@ public class StreamManagerTests
             _bytesConsumed = callback;
             _requestId = requestId;
             _streamId = streamId;
+        }
+    }
+
+    private sealed class OrderedReplayDispatcher : IStreamDispatcher
+    {
+        private readonly TaskCompletionSource _firstEntered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseFirst =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _secondEntered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _completed =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _dispatchCount;
+        private int _completeCount;
+
+        internal Task FirstEntered => _firstEntered.Task;
+        internal Task SecondEntered => _secondEntered.Task;
+        internal Task Completed => _completed.Task;
+        internal List<byte> EnteredValues { get; } = [];
+        internal int CompleteCount => Volatile.Read(ref _completeCount);
+
+        public async ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+        {
+            var value = payload.FirstSpan[0];
+            EnteredValues.Add(value);
+            var dispatchCount = Interlocked.Increment(ref _dispatchCount);
+            if (dispatchCount == 1)
+            {
+                _firstEntered.TrySetResult();
+                await _releaseFirst.Task.ConfigureAwait(false);
+            }
+            else if (dispatchCount == 2)
+            {
+                _secondEntered.TrySetResult();
+            }
+        }
+
+        public void Complete(bool isError, string? errorMessage)
+        {
+            Complete(isError ? new Exception(errorMessage) : null);
+        }
+
+        public void Complete(Exception? exception)
+        {
+            _ = exception;
+            Interlocked.Increment(ref _completeCount);
+            _completed.TrySetResult();
+        }
+
+        internal void ReleaseFirst() => _releaseFirst.TrySetResult();
+    }
+
+    private sealed class ReentrantConfigurationDispatcher(
+        StreamManager manager,
+        long requestId) : IStreamConsumptionAwareDispatcher
+    {
+        internal bool RegistryLockWasHeld { get; private set; }
+
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+            => ValueTask.CompletedTask;
+
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
+            => ValueTask.CompletedTask;
+
+        public void Complete(bool isError, string? errorMessage)
+        {
+        }
+
+        public void Complete(Exception? exception)
+        {
+        }
+
+        public void SetBytesConsumedCallback(
+            Action<long, ushort, int>? callback,
+            long attachedRequestId,
+            ushort streamId)
+        {
+            _ = callback;
+            _ = attachedRequestId;
+            _ = streamId;
+            var nestedRegistration = Task.Run(() =>
+                manager.Register(requestId, 2, new RecordingDispatcher()));
+            RegistryLockWasHeld = !nestedRegistration.Wait(TimeSpan.FromMilliseconds(200));
         }
     }
 }

@@ -1,4 +1,6 @@
-﻿namespace SharpLink.Runtime;
+﻿using System.Diagnostics;
+
+namespace SharpLink.Runtime;
 
 public sealed partial class RpcSession : IRpcSession
 {
@@ -8,7 +10,10 @@ public sealed partial class RpcSession : IRpcSession
     private int _negotiatedMaxFramePayloadBytes = SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes;
     internal int NegotiatedMaxFramePayloadBytes => Volatile.Read(ref _negotiatedMaxFramePayloadBytes);
     IRpcRuntimeContext IRpcSession.RuntimeContext => RuntimeContext;
+    private long _lastActiveTimestamp = Stopwatch.GetTimestamp();
     public DateTime LastActive { get; set; } = DateTime.UtcNow;
+    internal TimeSpan TimeSinceLastActivity
+        => Stopwatch.GetElapsedTime(Volatile.Read(ref _lastActiveTimestamp));
     public PipeReader Input { get; }
     private PipeWriter Output { get; }
 
@@ -41,6 +46,12 @@ public sealed partial class RpcSession : IRpcSession
     private const int TelemetryOpened = 1;
     private const int TelemetryClosed = 2;
     internal Func<long, long, long, Exception, SharpLinkException>? ServiceExceptionMapper { get; set; }
+
+    internal void MarkActive()
+    {
+        Volatile.Write(ref _lastActiveTimestamp, Stopwatch.GetTimestamp());
+        LastActive = DateTime.UtcNow;
+    }
 
     internal void SetTelemetrySide(string side)
     {
@@ -200,6 +211,7 @@ public sealed partial class RpcSession : IRpcSession
         var credit = controller?.RecordConsumed(requestId, streamId, encodedBytes) ?? 0;
         if (credit != 0)
             TrySendWindowUpdate(requestId, streamId, credit);
+        DrainConsumedCreditUpdates(controller);
     }
 
     private void OnReceiveStreamCompleted(long requestId, ushort streamId)
@@ -207,6 +219,15 @@ public sealed partial class RpcSession : IRpcSession
         var controller = Volatile.Read(ref _streamFlowControl);
         var credit = controller?.FlushConsumed(requestId, streamId) ?? 0;
         if (credit != 0)
+            TrySendWindowUpdate(requestId, streamId, credit);
+        DrainConsumedCreditUpdates(controller);
+    }
+
+    private void DrainConsumedCreditUpdates(StreamFlowController? controller)
+    {
+        if (controller is null)
+            return;
+        while (controller.TryTakeConsumedCreditUpdate(out var requestId, out var streamId, out var credit))
             TrySendWindowUpdate(requestId, streamId, credit);
     }
 
@@ -421,7 +442,7 @@ public sealed partial class RpcSession : IRpcSession
         _cts.Cancel();
         Volatile.Read(ref _streamFlowControl)?.Complete(structured);
         Volatile.Read(ref _pump)?.Stop();
-        StreamManager.CompleteAll(structured);
+        CompleteReceiveStreams(structured);
         _ = StartTransportDispose();
         try
         {
@@ -441,7 +462,7 @@ public sealed partial class RpcSession : IRpcSession
         {
             RecordTelemetryConnectionClosed();
             Volatile.Read(ref _streamFlowControl)?.Complete(stopping.Exception);
-            StreamManager.CompleteAll(stopping.Exception);
+            CompleteReceiveStreams(stopping.Exception);
             try
             {
                 OnDisconnected?.Invoke(stopping.Exception);
@@ -457,14 +478,29 @@ public sealed partial class RpcSession : IRpcSession
             return;
         }
 
+        Exception? cleanupException = null;
         try
         {
-            _cts.Cancel();
+            try
+            {
+                _cts.Cancel();
+            }
+            catch (Exception exception)
+            {
+                cleanupException = exception;
+            }
 
             var pump = Volatile.Read(ref _pump);
-            pump?.Stop();
-            if (pump is not null)
-                await pump.WaitForStopAsync().ConfigureAwait(false);
+            try
+            {
+                pump?.Stop();
+                if (pump is not null)
+                    await pump.WaitForStopAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                cleanupException = CombineCleanupExceptions(cleanupException, exception);
+            }
 
             try
             {
@@ -472,6 +508,10 @@ public sealed partial class RpcSession : IRpcSession
             }
             catch (Exception ex) when (ex is ObjectDisposedException or IOException or InvalidOperationException or ArgumentNullException)
             {
+            }
+            catch (Exception exception)
+            {
+                cleanupException = CombineCleanupExceptions(cleanupException, exception);
             }
 
             try
@@ -481,14 +521,46 @@ public sealed partial class RpcSession : IRpcSession
             catch (Exception ex) when (ex is ObjectDisposedException or IOException or InvalidOperationException)
             {
             }
+            catch (Exception exception)
+            {
+                cleanupException = CombineCleanupExceptions(cleanupException, exception);
+            }
 
-            await StartTransportDispose().ConfigureAwait(false);
+            try
+            {
+                await StartTransportDispose().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                cleanupException = CombineCleanupExceptions(cleanupException, exception);
+            }
         }
         finally
         {
             Volatile.Write(ref _stopped, 1);
             _cts.Dispose();
-            _stoppedTcs.TrySetResult(true);
+            if (cleanupException is null)
+                _stoppedTcs.TrySetResult(true);
+            else
+                _stoppedTcs.TrySetException(cleanupException);
+        }
+
+        if (cleanupException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
+    }
+
+    private static Exception CombineCleanupExceptions(Exception? first, Exception next)
+        => first is null ? next : new AggregateException(first, next);
+
+    private void CompleteReceiveStreams(Exception exception)
+    {
+        try
+        {
+            StreamManager.CompleteAll(exception);
+        }
+        catch
+        {
+            // A user dispatcher cleanup failure cannot interrupt terminal transport cleanup.
         }
     }
 
@@ -521,7 +593,7 @@ public sealed partial class RpcSession : IRpcSession
 
             pump = new SendPump(
                 Output,
-                RuntimeContext.Options.PerformanceProfile,
+                RuntimeContext.PerformanceProfile,
                 RuntimeContext.FlowControl.MaxSendQueueBytes,
                 _flushOptions,
                 _cts.Token,

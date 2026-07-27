@@ -4,6 +4,8 @@ public sealed partial class RpcSession
 {
     private sealed class SendPump
     {
+        private static readonly TimeSpan MaximumTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue);
+        private static readonly long MaximumTimerStopwatchTicks = ToStopwatchTicks(MaximumTimerDelay);
         private enum FlushMode
         {
             LowLatency,
@@ -23,6 +25,7 @@ public sealed partial class RpcSession
         private readonly Lock _admissionGate = new();
         private readonly Task _pumpTask;
         private TaskCompletionSource<bool>? _capacityChanged;
+        private Task<bool>? _pendingReadWait;
         private long _queuedBytes;
         private int _stopped;
         private int _faulted;
@@ -132,7 +135,7 @@ public sealed partial class RpcSession
 
             try
             {
-                while (await _queue.Reader.WaitToReadAsync(_sessionCancellation).ConfigureAwait(false))
+                while (await WaitToReadAsync().ConfigureAwait(false))
                 {
                     while (_queue.Reader.TryRead(out var frame))
                     {
@@ -204,22 +207,42 @@ public sealed partial class RpcSession
 
         private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchStart)
         {
-            var remainingTicks = _maxLatencyTicks - (Stopwatch.GetTimestamp() - batchStart);
-            if (remainingTicks <= 0)
-                return false;
+            var waitToRead = _queue.Reader.WaitToReadAsync(_sessionCancellation);
+            if (waitToRead.IsCompletedSuccessfully)
+                return waitToRead.Result;
 
-            var remaining = TimeSpan.FromSeconds((double)remainingTicks / Stopwatch.Frequency);
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCancellation);
-            timeoutCts.CancelAfter(remaining);
-            try
+            var pendingRead = waitToRead.AsTask();
+            _pendingReadWait = pendingRead;
+            while (true)
             {
-                return await _queue.Reader.WaitToReadAsync(timeoutCts.Token).ConfigureAwait(false);
+                var remainingTicks = _maxLatencyTicks - (Stopwatch.GetTimestamp() - batchStart);
+                if (remainingTicks <= 0)
+                    return false;
+
+                var timerTicks = Math.Min(remainingTicks, MaximumTimerStopwatchTicks);
+                var delay = TimeSpan.FromSeconds((double)timerTicks / Stopwatch.Frequency);
+                using var delayCancellation = new CancellationTokenSource();
+                var delayTask = Task.Delay(delay, delayCancellation.Token);
+                if (await Task.WhenAny(pendingRead, delayTask).ConfigureAwait(false) == pendingRead)
+                {
+                    _pendingReadWait = null;
+                    await delayCancellation.CancelAsync().ConfigureAwait(false);
+                    return await pendingRead.ConfigureAwait(false);
+                }
+
+                if (remainingTicks <= MaximumTimerStopwatchTicks)
+                    return false;
             }
-            catch (OperationCanceledException) when (
-                timeoutCts.IsCancellationRequested && !_sessionCancellation.IsCancellationRequested)
-            {
-                return false;
-            }
+        }
+
+        private ValueTask<bool> WaitToReadAsync()
+        {
+            var pendingRead = _pendingReadWait;
+            if (pendingRead is null)
+                return _queue.Reader.WaitToReadAsync(_sessionCancellation);
+
+            _pendingReadWait = null;
+            return new ValueTask<bool>(pendingRead);
         }
 
         private bool TryReserve(int bytes)
@@ -347,7 +370,12 @@ public sealed partial class RpcSession
         }
 
         private static long ToStopwatchTicks(TimeSpan value)
-            => Math.Max(1L, (long)(value.TotalSeconds * Stopwatch.Frequency));
+        {
+            var ticks = value.TotalSeconds * Stopwatch.Frequency;
+            return ticks >= long.MaxValue
+                ? long.MaxValue
+                : Math.Max(1L, (long)Math.Ceiling(ticks));
+        }
 
         private static SharpLinkException NormalizeTransportException(Exception exception)
             => exception as SharpLinkException ??

@@ -54,10 +54,10 @@ public sealed record SharpLinkUnixDomainSocketAddress : SharpLinkTransportAddres
 public sealed record SharpLinkNamedPipeAddress : SharpLinkTransportAddress
 {
     /// <summary>Initializes a named-pipe address.</summary>
-    /// <exception cref="ArgumentException"><paramref name="pipeName"/> or <paramref name="serverName"/> is null, empty, or whitespace.</exception>
+    /// <exception cref="ArgumentException"><paramref name="pipeName"/> is empty or contains path syntax, or <paramref name="serverName"/> is empty.</exception>
     public SharpLinkNamedPipeAddress(string pipeName, string serverName = ".")
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
+        SharpLinkLogicalPipeName.Validate(pipeName, nameof(pipeName));
         ArgumentException.ThrowIfNullOrWhiteSpace(serverName);
         PipeName = pipeName;
         ServerName = serverName;
@@ -75,10 +75,10 @@ public sealed record SharpLinkNamedPipeAddress : SharpLinkTransportAddress
 public sealed record SharpLinkSharedMemoryAddress : SharpLinkTransportAddress
 {
     /// <summary>Initializes a shared-memory address.</summary>
-    /// <exception cref="ArgumentException"><paramref name="name"/> is null, empty, or whitespace.</exception>
+    /// <exception cref="ArgumentException"><paramref name="name"/> is empty or contains path syntax.</exception>
     public SharpLinkSharedMemoryAddress(string name)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        SharpLinkLogicalPipeName.Validate(name, nameof(name));
         Name = name;
     }
 

@@ -8,7 +8,7 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
     private readonly Func<Type, IRpcCodec?>? _resolver;
     private readonly ConcurrentDictionary<Type, ResolvedCodec> _resolvedCodecs = new();
     private readonly HashSet<Type> _explicitCodecTypes;
-    private IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> _generatedRegistrations;
+    private GeneratedRegistrationSnapshot _generatedRegistrationSnapshot;
     private int _disposed;
 
     internal RpcCodecProvider(
@@ -19,7 +19,8 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
         foreach (var pair in explicitCodecs)
             _resolvedCodecs.TryAdd(pair.Key, ResolvedCodec.Explicit(pair.Value));
         _explicitCodecTypes = [.. explicitCodecs.Keys];
-        _generatedRegistrations = new Dictionary<Type, RpcGeneratedCodecRegistration>();
+        _generatedRegistrationSnapshot = new GeneratedRegistrationSnapshot(
+            new Dictionary<Type, RpcGeneratedCodecRegistration>());
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -31,25 +32,65 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
             return shared;
 
         var targetType = typeof(T);
+        if (_resolvedCodecs.TryGetValue(targetType, out var fastCached))
+        {
+            if (fastCached.IsExplicit)
+                return Cast<T>(fastCached.Codec);
+            var fastSnapshot = Volatile.Read(ref _generatedRegistrationSnapshot);
+            if (ReferenceEquals(fastCached.SnapshotIdentity, fastSnapshot.Identity))
+                return Cast<T>(fastCached.Codec);
+        }
+
+        return ResolveCodec<T>(targetType);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private IRpcCodec<T> ResolveCodec<T>(Type targetType)
+    {
         while (true)
         {
-            var registrations = Volatile.Read(ref _generatedRegistrations);
-            registrations.TryGetValue(targetType, out var currentRegistration);
+            ThrowIfDisposed();
+            var snapshot = Volatile.Read(ref _generatedRegistrationSnapshot);
+            snapshot.Registrations.TryGetValue(targetType, out var currentRegistration);
 
             if (_resolvedCodecs.TryGetValue(targetType, out var cached))
             {
-                if (cached.IsExplicit || ReferenceEquals(cached.Registration, currentRegistration))
+                if (cached.IsExplicit ||
+                    ReferenceEquals(cached.SnapshotIdentity, snapshot.Identity))
                     return Cast<T>(cached.Codec);
+
+                if (ReferenceEquals(cached.Registration, currentRegistration))
+                {
+                    var refreshed = cached.WithSnapshot(snapshot.Identity);
+                    if (_resolvedCodecs.TryUpdate(targetType, refreshed, cached))
+                    {
+                        if (ReferenceEquals(
+                            Volatile.Read(ref _generatedRegistrationSnapshot), snapshot))
+                        {
+                            return Cast<T>(refreshed.Codec);
+                        }
+                        RemoveResolvedCodec(targetType, refreshed);
+                    }
+                    continue;
+                }
 
                 if (currentRegistration is not null)
                 {
                     var replacement = new ResolvedCodec(
                         currentRegistration.GetCodec(this),
                         currentRegistration,
+                        snapshot.Identity,
                         isExplicit: false,
                         isFallback: false);
+                    ThrowIfDisposed();
+                    if (!IsCurrentRegistration(targetType, currentRegistration))
+                        continue;
                     if (_resolvedCodecs.TryUpdate(targetType, replacement, cached))
-                        return Cast<T>(replacement.Codec);
+                    {
+                        if (IsCurrentRegistration(targetType, currentRegistration))
+                            return Cast<T>(replacement.Codec);
+                        RemoveResolvedCodec(targetType, replacement);
+                    }
                     continue;
                 }
 
@@ -65,20 +106,48 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
                 var generated = new ResolvedCodec(
                     currentRegistration.GetCodec(this),
                     currentRegistration,
+                    snapshot.Identity,
                     isExplicit: false,
                     isFallback: false);
+                ThrowIfDisposed();
+                if (!IsCurrentRegistration(targetType, currentRegistration))
+                    continue;
                 var selected = _resolvedCodecs.GetOrAdd(targetType, generated);
-                if (ReferenceEquals(selected.Registration, currentRegistration) || selected.IsExplicit)
+                RemoveCandidateAndThrowIfDisposed(targetType, generated, selected);
+                if (selected.IsExplicit)
                     return Cast<T>(selected.Codec);
+                if (ReferenceEquals(selected.Registration, currentRegistration) &&
+                    IsCurrentRegistration(targetType, currentRegistration))
+                {
+                    return Cast<T>(selected.Codec);
+                }
+                if (ReferenceEquals(selected, generated))
+                    RemoveResolvedCodec(targetType, generated);
                 continue;
             }
 
             var resolved = _resolver?.Invoke(targetType);
+            ThrowIfDisposed();
+            if (!IsCurrentRegistration(targetType, registration: null))
+                continue;
             if (resolved is not null)
             {
                 var typed = Cast<T>(resolved);
-                var fallback = new ResolvedCodec(typed, null, isExplicit: false, isFallback: true);
-                return Cast<T>(_resolvedCodecs.GetOrAdd(targetType, fallback).Codec);
+                var fallback = new ResolvedCodec(
+                    typed,
+                    registration: null,
+                    snapshot.Identity,
+                    isExplicit: false,
+                    isFallback: true);
+                var selected = _resolvedCodecs.GetOrAdd(targetType, fallback);
+                RemoveCandidateAndThrowIfDisposed(targetType, fallback, selected);
+                if (selected.IsExplicit)
+                    return Cast<T>(selected.Codec);
+                if (selected.IsFallback && IsCurrentRegistration(targetType, registration: null))
+                    return Cast<T>(selected.Codec);
+                if (ReferenceEquals(selected, fallback))
+                    RemoveResolvedCodec(targetType, fallback);
+                continue;
             }
 
             if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
@@ -89,18 +158,49 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void ThrowIfDisposed()
+        => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
+    private bool IsCurrentRegistration(
+        Type targetType,
+        RpcGeneratedCodecRegistration? registration)
+    {
+        var snapshot = Volatile.Read(ref _generatedRegistrationSnapshot);
+        snapshot.Registrations.TryGetValue(targetType, out var current);
+        return ReferenceEquals(current, registration);
+    }
+
+    private void RemoveResolvedCodec(Type targetType, ResolvedCodec codec)
+        => ((ICollection<KeyValuePair<Type, ResolvedCodec>>)_resolvedCodecs)
+            .Remove(new KeyValuePair<Type, ResolvedCodec>(targetType, codec));
+
+    private void RemoveCandidateAndThrowIfDisposed(
+        Type targetType,
+        ResolvedCodec candidate,
+        ResolvedCodec selected)
+    {
+        if (Volatile.Read(ref _disposed) == 0)
+            return;
+        if (ReferenceEquals(candidate, selected))
+            RemoveResolvedCodec(targetType, candidate);
+        ObjectDisposedException.ThrowIf(true, this);
+    }
+
     private static IRpcCodec<T> Cast<T>(IRpcCodec codec)
         => codec as IRpcCodec<T> ?? throw new InvalidOperationException(
             $"The codec registered for '{typeof(T).FullName}' implements an incompatible codec interface.");
 
     internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> CreateGeneratedRegistrationSnapshot()
-        => Volatile.Read(ref _generatedRegistrations);
+        => Volatile.Read(ref _generatedRegistrationSnapshot).Registrations;
 
     internal void PublishGeneratedRegistrations(
         IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        Volatile.Write(ref _generatedRegistrations, registrations);
+        Volatile.Write(
+            ref _generatedRegistrationSnapshot,
+            new GeneratedRegistrationSnapshot(registrations));
         foreach (var pair in registrations)
         {
             while (_resolvedCodecs.TryGetValue(pair.Key, out var cached) &&
@@ -132,24 +232,39 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
-        Volatile.Write(ref _generatedRegistrations,
-            new Dictionary<Type, RpcGeneratedCodecRegistration>());
+        Volatile.Write(
+            ref _generatedRegistrationSnapshot,
+            new GeneratedRegistrationSnapshot(
+                new Dictionary<Type, RpcGeneratedCodecRegistration>()));
         _resolvedCodecs.Clear();
     }
 
     private sealed class ResolvedCodec(
         IRpcCodec codec,
         RpcGeneratedCodecRegistration? registration,
+        object? snapshotIdentity,
         bool isExplicit,
         bool isFallback)
     {
         internal IRpcCodec Codec { get; } = codec;
         internal RpcGeneratedCodecRegistration? Registration { get; } = registration;
+        internal object? SnapshotIdentity { get; } = snapshotIdentity;
         internal bool IsExplicit { get; } = isExplicit;
         internal bool IsFallback { get; } = isFallback;
 
         internal static ResolvedCodec Explicit(IRpcCodec codec)
-            => new(codec, null, isExplicit: true, isFallback: false);
+            => new(codec, null, snapshotIdentity: null, isExplicit: true, isFallback: false);
+
+        internal ResolvedCodec WithSnapshot(object snapshotIdentity)
+            => new(Codec, Registration, snapshotIdentity, IsExplicit, IsFallback);
+    }
+
+    private sealed class GeneratedRegistrationSnapshot(
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)
+    {
+        internal object Identity { get; } = new();
+        internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> Registrations { get; } =
+            registrations;
     }
 }
 
@@ -234,14 +349,24 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
             ownerBox.Value = registration;
             return registration;
         }
-        catch
+        catch (Exception preparationException)
         {
+            List<Exception>? cleanupFailures = null;
             for (var index = scopes.Count - 1; index >= 0; index--)
             {
-                try { scopes[index].Dispose(); }
-                catch { }
+                try
+                {
+                    scopes[index].Dispose();
+                }
+                catch (Exception cleanupException)
+                {
+                    (cleanupFailures ??= []).Add(cleanupException);
+                }
             }
-            throw;
+            if (cleanupFailures is null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(preparationException).Throw();
+            cleanupFailures!.Insert(0, preparationException);
+            throw new AggregateException(cleanupFailures);
         }
     }
 
@@ -288,7 +413,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
-        Exception? firstException = null;
+        List<Exception>? failures = null;
         for (var index = _scopes.Length - 1; index >= 0; index--)
         {
             try
@@ -297,11 +422,13 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
             }
             catch (Exception exception)
             {
-                firstException ??= exception;
+                (failures ??= []).Add(exception);
             }
         }
-        if (firstException is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
     }
 
     private sealed record AdapterScopeRegistration(
@@ -393,7 +520,12 @@ internal static class BuiltinRpcCodecs
         AddBlitCollections<Rune>(codecs); AddBlitCollections<long>(codecs);
         AddBlitCollections<ulong>(codecs); AddBlitCollections<double>(codecs);
         AddBlitCollections<Guid>(codecs); AddBlitCollections<decimal>(codecs);
-        AddBlitCollections<DateTimeOffset>(codecs); AddBlitCollections<DateTime>(codecs);
+        Add(codecs, DateTimeOffsetArrayCodec.Instance);
+        Add(codecs, DateTimeOffsetListCodec.Instance);
+        Add(codecs, DateTimeOffsetMemoryCodec.Instance);
+        Add(codecs, DateTimeOffsetReadOnlyMemoryCodec.Instance);
+        Add(codecs, DateTimeOffsetImmutableArrayCodec.Instance);
+        AddBlitCollections<DateTime>(codecs);
         AddBlitCollections<DateOnly>(codecs); AddBlitCollections<TimeOnly>(codecs);
         AddBlitCollections<TimeSpan>(codecs); AddBlitCollections<Int128>(codecs);
         AddBlitCollections<UInt128>(codecs); AddBlitCollections<Index>(codecs);

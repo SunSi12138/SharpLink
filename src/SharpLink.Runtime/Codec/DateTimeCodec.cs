@@ -18,7 +18,7 @@ internal sealed class DateTimeCodec : IRpcCodec<DateTime>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public DateTime Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        CodecHelpers.EnsureAvailable(buffer, Size);
+        CodecHelpers.EnsureExactSize(buffer, Size);
         long binaryData;
 
         if (buffer.FirstSpan.Length >= Size)
@@ -74,12 +74,12 @@ internal sealed class NullableDateTimeCodec : IRpcCodec<DateTime?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public DateTime? Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        CodecHelpers.EnsureAvailable(buffer, Size);
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
             
-            if (start == 0) return null;
+            if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
             
             var data = Unsafe.ReadUnaligned<long>(ref Unsafe.Add(ref start, 1));
             return CodecHelpers.CreateDateTime(data);
@@ -90,7 +90,7 @@ internal sealed class NullableDateTimeCodec : IRpcCodec<DateTime?>
 
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         
-        if (tempStart == 0) return null;
+        if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
         
         var stackData = Unsafe.ReadUnaligned<long>(ref Unsafe.Add(ref tempStart, 1));
         return CodecHelpers.CreateDateTime(stackData);

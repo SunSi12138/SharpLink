@@ -150,6 +150,56 @@ BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 仍均为 832 B
 
 0.7.11 的 SharpPack Adapter、原生热路径和五轮 TCP QPS/P99 结果见 [`performance-0.7.11.md`](performance-0.7.11.md)。
 
+0.8.0 第一批深度审核的同机运行时热路径对照见 [`performance-0.8.0.md`](performance-0.8.0.md)。
+
+0.8.1 的三轮交替 `List<T>` RPC 分配与吞吐门禁见 [`performance-0.8.1.md`](performance-0.8.1.md)。
+
+0.8.2 的三启动 frame parser 控制/候选门禁见 [`performance-0.8.2.md`](performance-0.8.2.md)。
+
+0.8.3 的三启动 metadata 构造/解码分配门禁见 [`performance-0.8.3.md`](performance-0.8.3.md)。
+
+0.8.24 的大规模 Generator timeout/union 分析门禁见 [`performance-0.8.24.md`](performance-0.8.24.md)。
+
+0.8.25 的契约表面与生成标识 Generator 门禁见 [`performance-0.8.25.md`](performance-0.8.25.md)。
+
+0.8.26 的 Oneway、DTO、字典与契约成员 Generator 门禁见 [`performance-0.8.26.md`](performance-0.8.26.md)。
+
+0.8.27 的响应、stream token 与 writer pool 运行时门禁见 [`performance-0.8.27.md`](performance-0.8.27.md)。
+
+0.8.28 的配置边界、错误帧写出与交替运行时 A/B 门禁见 [`performance-0.8.28.md`](performance-0.8.28.md)。
+
+0.8.29 的 pending disposal、单调心跳与多集群状态读取 A/B 门禁见 [`performance-0.8.29.md`](performance-0.8.29.md)。
+
+0.8.30 的 Generator 任务形状与本地健康探测分配门禁见 [`performance-0.8.30.md`](performance-0.8.30.md)。
+
+0.8.31 的原始 frame writer 同时段基线与 API 边界门禁见 [`performance-0.8.31.md`](performance-0.8.31.md)。
+
+0.8.32 的 server admission 延迟/分配对照与被拒池化方案见 [`performance-0.8.32.md`](performance-0.8.32.md)。
+
+0.8.33 的 400 枚举方法 Generator 压力门禁见 [`performance-0.8.33.md`](performance-0.8.33.md)。
+
+0.8.34 的共享内存 reader 与继承契约 Generator 交替 A/B 门禁见 [`performance-0.8.34.md`](performance-0.8.34.md)。
+
+0.8.35 的 Runtime Context profile 读取与 Client Build 分配门禁见 [`performance-0.8.35.md`](performance-0.8.35.md)。
+
+0.8.36 的 Server 准入/释放精确基线与候选门禁见 [`performance-0.8.36.md`](performance-0.8.36.md)。
+
+0.8.37 的 Generator 类型边界与非增量 HostApplication 构建 A/B 门禁见 [`performance-0.8.37.md`](performance-0.8.37.md)。
+
+0.8.39 的 interceptor 调用边界与真实 TCP 运行时 A/B 门禁见 [`performance-0.8.39.md`](performance-0.8.39.md)。
+
+0.8.40 的 interceptor continuation、descriptor 布局与真实 TCP 运行时 A/B 门禁见 [`performance-0.8.40.md`](performance-0.8.40.md)。
+
+0.8.41 的 scalar nullability TCP 与 required-reference stream dispatcher 精确基线门禁见 [`performance-0.8.41.md`](performance-0.8.41.md)。
+
+0.8.42 的 Throughput SendPump 稳定性、nullable Codec 与真实 TCP 精确基线门禁见 [`performance-0.8.42.md`](performance-0.8.42.md)。
+
+0.8.43 的 Balanced 流式锁竞争归因与 exact 0.8.42/candidate 交替门禁见 [`performance-0.8.43.md`](performance-0.8.43.md)。
+
+0.8.44 的 shutdown/terminal cleanup 与 exact 0.8.43/candidate 交错流式门禁见 [`performance-0.8.44.md`](performance-0.8.44.md)。
+
+0.8.38 的 Generator 构造边界、HostApplication 构建与 interceptor 运行时 A/B 门禁见 [`performance-0.8.38.md`](performance-0.8.38.md)。
+
 ## 0.5.5 Stream/Connection 字节流控回归（2026-07-17，同一 runner）
 
 Protocol v2 握手现在协商 `FlowControl` capability。每个 stream 与 connection 同时维护有界 byte credit；正常发送快路径无 Task 分配，额度耗尽时才创建 FIFO waiter。dispatcher 在消费者实际取得 item 后按 encoded byte count 归还额度，取消、deadline 和 session fault 会完成全部等待者。一字节窗口的真实 client/server stream Integration 已验证暂停与恢复，单个合法大 item 使用一次临时借用。

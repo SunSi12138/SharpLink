@@ -238,30 +238,32 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
     public ISharpLinkServer Build()
     {
-        if (_transport == null)
+        var transport = _transport;
+        if (transport == null)
             throw new InvalidOperationException("Transport must be set before building the server.");
         if (_authenticationRequired && _authenticator is null)
             throw new InvalidOperationException("RequireAuthentication needs an ISharpLinkServerAuthenticator.");
 
         var runtimeContext = _runtimeContextBuilder.Build();
-        if (_transport is IPerformanceProfileAwareTransport profileAwareTransport)
-            profileAwareTransport.BindPerformanceProfile(runtimeContext.Options.PerformanceProfile);
-        var protocolOptions = runtimeContext.Protocol;
-        var serviceProvider = _serviceProvider;
         IAsyncDisposable? ownedServiceProvider = null;
-        if (serviceProvider is null)
-        {
-            var internalProvider = new ServiceCollection().BuildServiceProvider(
-                new ServiceProviderOptions { ValidateScopes = true });
-            serviceProvider = internalProvider;
-            ownedServiceProvider = internalProvider;
-        }
-
-        var manifests = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
         SharpLinkAdmissionController? admissionController = null;
-        FrozenDictionary<long, ServiceRegistration> registrations;
+        List<ServiceRegistration>? registrations = null;
         try
         {
+            if (transport is IPerformanceProfileAwareTransport profileAwareTransport)
+                profileAwareTransport.BindPerformanceProfile(runtimeContext.PerformanceProfile);
+
+            var protocolOptions = runtimeContext.Protocol;
+            var serviceProvider = _serviceProvider;
+            if (serviceProvider is null)
+            {
+                var internalProvider = new ServiceCollection().BuildServiceProvider(
+                    new ServiceProviderOptions { ValidateScopes = true });
+                serviceProvider = internalProvider;
+                ownedServiceProvider = internalProvider;
+            }
+
+            var manifests = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
             if (_admissionControlOptions is not null)
             {
                 admissionController = SharpLinkAdmissionController.Create(
@@ -269,38 +271,117 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                     manifests);
             }
             var definitions = BuildServiceDefinitions(manifests, serviceProvider);
-            registrations = definitions.ToDictionary(
-                    static pair => pair.Key,
-                    pair => pair.Value.Build(serviceProvider))
-                .ToFrozenDictionary();
+            registrations = new List<ServiceRegistration>(definitions.Count);
+            var registrationsByContract = new Dictionary<long, ServiceRegistration>(definitions.Count);
+            foreach (var pair in definitions)
+            {
+                var registration = pair.Value.Build(serviceProvider);
+                registrations.Add(registration);
+                registrationsByContract.Add(pair.Key, registration);
+            }
+
+            var server = new SharpLinkServer(
+                transport,
+                registrationsByContract.ToFrozenDictionary(),
+                _heartbeatCheckInterval,
+                _heartbeatTimeout,
+                _loggerFactory ?? NullLoggerFactory.Instance,
+                _authenticator,
+                _authenticationRequired,
+                protocolOptions,
+                runtimeContext,
+                _rpcSessionFlushOptions,
+                _interceptors.ToArray(),
+                _exceptionMapper ?? new DefaultRpcExceptionMapper(_includeExceptionDetails),
+                ownedServiceProvider,
+                serviceProvider,
+                manifests,
+                admissionController);
+            _transport = null;
+            return server;
         }
-        catch
+        catch (Exception buildException)
         {
-            if (admissionController is not null)
-                admissionController.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            if (ownedServiceProvider is IDisposable disposable)
-                disposable.Dispose();
+            _transport = null;
+            ThrowAfterBuildRollback(
+                buildException,
+                registrations,
+                admissionController,
+                ownedServiceProvider,
+                runtimeContext,
+                transport);
+            throw new System.Diagnostics.UnreachableException();
+        }
+    }
+
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void ThrowAfterBuildRollback(
+        Exception buildException,
+        IReadOnlyList<ServiceRegistration>? registrations,
+        SharpLinkAdmissionController? admissionController,
+        IAsyncDisposable? ownedServiceProvider,
+        SharpLinkRuntimeContext runtimeContext,
+        IServerTransportListener transport)
+    {
+        List<Exception>? cleanupFailures = null;
+        if (registrations is not null)
+        {
+            for (var index = registrations.Count - 1; index >= 0; index--)
+            {
+                try
+                {
+                    SharpLinkAsyncCleanup.DisposeSynchronously(registrations[index]);
+                }
+                catch (Exception cleanupException)
+                {
+                    (cleanupFailures ??= []).Add(cleanupException);
+                }
+            }
+        }
+        if (admissionController is not null)
+        {
+            try
+            {
+                SharpLinkAsyncCleanup.DisposeSynchronously(admissionController);
+            }
+            catch (Exception cleanupException)
+            {
+                (cleanupFailures ??= []).Add(cleanupException);
+            }
+        }
+        if (ownedServiceProvider is not null)
+        {
+            try
+            {
+                SharpLinkAsyncCleanup.DisposeSynchronously(ownedServiceProvider);
+            }
+            catch (Exception cleanupException)
+            {
+                (cleanupFailures ??= []).Add(cleanupException);
+            }
+        }
+        try
+        {
             runtimeContext.Dispose();
-            throw;
+        }
+        catch (Exception cleanupException)
+        {
+            (cleanupFailures ??= []).Add(cleanupException);
+        }
+        try
+        {
+            SharpLinkAsyncCleanup.DisposeSynchronously(transport);
+        }
+        catch (Exception cleanupException)
+        {
+            (cleanupFailures ??= []).Add(cleanupException);
         }
 
-        return new SharpLinkServer(
-            _transport,
-            registrations,
-            _heartbeatCheckInterval,
-            _heartbeatTimeout,
-            _loggerFactory ?? NullLoggerFactory.Instance,
-            _authenticator,
-            _authenticationRequired,
-            protocolOptions,
-            runtimeContext,
-            _rpcSessionFlushOptions,
-            _interceptors.ToArray(),
-            _exceptionMapper ?? new DefaultRpcExceptionMapper(_includeExceptionDetails),
-            ownedServiceProvider,
-            serviceProvider,
-            manifests,
-            admissionController);
+        if (cleanupFailures is null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(buildException).Throw();
+        cleanupFailures!.Insert(0, buildException);
+        throw new AggregateException(cleanupFailures);
     }
 
     private Dictionary<long, ServiceRegistrationDefinition> BuildServiceDefinitions(

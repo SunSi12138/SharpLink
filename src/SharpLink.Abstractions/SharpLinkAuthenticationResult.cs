@@ -21,6 +21,8 @@ public readonly record struct SharpLinkAuthenticationResult(
     {
         if (errorCode == SharpLinkErrorCode.Unknown)
             throw new ArgumentException("Authentication rejection must use a concrete error code.", nameof(errorCode));
+        if (!Enum.IsDefined(errorCode))
+            throw new ArgumentOutOfRangeException(nameof(errorCode));
 
         return new SharpLinkAuthenticationResult(
             IsAuthenticated: false,

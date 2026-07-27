@@ -11,6 +11,8 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
     private FrozenDictionary<SharpLinkClusterKey, SharpLinkClusterSlot> _clusters;
     private FrozenDictionary<Type, SharpLinkClusterRouteRegistration> _routes;
     private readonly List<DynamicAssemblyRegistration> _dynamicRegistrations = [];
+    private readonly Dictionary<DynamicAssemblyRegistration, Task<SharpLinkAssemblyUnregisterResult>>
+        _unregisterOperations = new(ReferenceEqualityComparer.Instance);
     private Task? _connectTask;
     private Task? _stopTask;
     private int _state = (int)SharpLinkMultiClusterState.Created;
@@ -38,7 +40,12 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
             var slots = Volatile.Read(ref _clusters);
             if (slots.Count == 0)
                 return state;
-            var ready = slots.Values.Count(static slot => slot.Client.State == SharpLinkConnectionState.Ready);
+            var ready = 0;
+            foreach (var pair in slots)
+            {
+                if (pair.Value.Client.State == SharpLinkConnectionState.Ready)
+                    ready++;
+            }
             return ready == slots.Count ? SharpLinkMultiClusterState.Ready : SharpLinkMultiClusterState.Degraded;
         }
     }
@@ -203,17 +210,27 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
                 ReferenceEquals(candidate.Slot, slot) && ReferenceEquals(candidate.Assembly, assembly));
             if (registration is null)
                 return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
+            if (_unregisterOperations.TryGetValue(registration, out var activeOperation))
+                return WaitForOperationAsync(activeOperation, cancellationToken);
 
             var nextRoutes = Volatile.Read(ref _routes)
                 .Where(pair => !ReferenceEquals(pair.Value.OwnerAssembly, assembly))
                 .ToDictionary(static pair => pair.Key, static pair => pair.Value)
                 .ToFrozenDictionary();
             Volatile.Write(ref _routes, nextRoutes);
-        }
 
-        var operation = CompleteUnregisterAsync(slot, registration!, gracefulTimeout);
-        ObserveBackgroundFailure(operation);
-        return WaitForOperationAsync(operation, cancellationToken);
+            var completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var operation = completion.Task;
+            _unregisterOperations.Add(registration, operation);
+            _ = CompleteSharedUnregisterAsync(
+                slot,
+                registration,
+                gracefulTimeout,
+                completion);
+            ObserveBackgroundFailure(operation);
+            return WaitForOperationAsync(operation, cancellationToken);
+        }
     }
 
     public ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
@@ -315,15 +332,17 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
     private async Task StopCoreAsync()
     {
         Volatile.Write(ref _state, (int)SharpLinkMultiClusterState.Draining);
-        _shutdown.Cancel();
         var slots = Volatile.Read(ref _clusters).Values.ToArray();
         var failures = new List<Exception>();
+        try { await _shutdown.CancelAsync().ConfigureAwait(false); }
+        catch (Exception exception) { failures.Add(exception); }
         await StopSlotsAsync(slots, failures).ConfigureAwait(false);
         lock (_gate)
         {
             Volatile.Write(ref _routes, FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty);
             Volatile.Write(ref _clusters, FrozenDictionary<SharpLinkClusterKey, SharpLinkClusterSlot>.Empty);
             _dynamicRegistrations.Clear();
+            _unregisterOperations.Clear();
         }
         _shutdown.Dispose();
         Volatile.Write(ref _state, (int)SharpLinkMultiClusterState.Stopped);
@@ -368,6 +387,30 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
             ObserveBackgroundFailure(CompleteDeferredUnregisterAsync(slot, registration));
         }
         return result;
+    }
+
+    private async Task CompleteSharedUnregisterAsync(
+        SharpLinkClusterSlot slot,
+        DynamicAssemblyRegistration registration,
+        TimeSpan gracefulTimeout,
+        TaskCompletionSource<SharpLinkAssemblyUnregisterResult> completion)
+    {
+        try
+        {
+            completion.TrySetResult(await CompleteUnregisterAsync(
+                slot,
+                registration,
+                gracefulTimeout).ConfigureAwait(false));
+        }
+        catch (Exception exception)
+        {
+            completion.TrySetException(exception);
+        }
+        finally
+        {
+            lock (_gate)
+                _unregisterOperations.Remove(registration);
+        }
     }
 
     private void RestoreRoutesAfterRejectedUnregister(DynamicAssemblyRegistration registration)
@@ -456,18 +499,38 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
         var childOperation = slot.Client.ReplaceAssemblyAsync(
             registration.Assembly, newAssembly, gracefulTimeout);
 
-        if (childOperation.IsCompleted)
+        try
         {
-            var completedResult = await childOperation.ConfigureAwait(false);
-            if (completedResult.Succeeded)
-                PublishReplacement(registration, newAssembly, newManifest);
-            return completedResult;
-        }
+            if (childOperation.IsCompleted)
+            {
+                var completedResult = await childOperation.ConfigureAwait(false);
+                if (completedResult.Succeeded)
+                    PublishReplacement(registration, newAssembly, newManifest);
+                return completedResult;
+            }
 
-        // SharpLinkClient publishes the replacement before returning its pending drain operation.
-        // Keep the coordinator route in the same state while old calls drain.
-        PublishReplacement(registration, newAssembly, newManifest);
-        return await childOperation.ConfigureAwait(false);
+            // SharpLinkClient publishes the replacement before returning its pending drain operation.
+            // Keep the coordinator route in the same state while old calls drain.
+            PublishReplacement(registration, newAssembly, newManifest);
+            return await childOperation.ConfigureAwait(false);
+        }
+        catch (Exception childException)
+        {
+            try
+            {
+                if (slot.Client is IDynamicAssemblyRegistrationInspector inspector &&
+                    inspector.IsDynamicAssemblyRegistered(newAssembly))
+                {
+                    PublishReplacement(registration, newAssembly, newManifest);
+                }
+            }
+            catch (Exception reconciliationException)
+            {
+                throw new AggregateException(childException, reconciliationException);
+            }
+            ExceptionDispatchInfo.Capture(childException).Throw();
+            throw;
+        }
     }
 
     private void PublishReplacement(
@@ -483,7 +546,8 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
             if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped)
                 return;
 
-            _dynamicRegistrations.Remove(registration);
+            if (!_dynamicRegistrations.Remove(registration))
+                return;
             _dynamicRegistrations.Add(new DynamicAssemblyRegistration(registration.Slot, newAssembly, newManifest));
             var nextRoutes = Volatile.Read(ref _routes).ToDictionary(static pair => pair.Key, static pair => pair.Value);
             foreach (var contract in registration.Manifest.Contracts)

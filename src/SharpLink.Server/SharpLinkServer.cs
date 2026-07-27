@@ -120,6 +120,7 @@ internal sealed partial class SharpLinkServer(
         var gracefulDeadline = AddStopwatchDuration(started, gracefulTimeout);
         var finalDeadline = AddStopwatchDuration(gracefulDeadline, TimeSpan.FromSeconds(cleanupBudgetSeconds));
         var faulted = false;
+        List<Exception>? stopFailures = null;
 
         lock (_registryGate)
             TransitionTo(ServerState.Draining);
@@ -171,6 +172,7 @@ internal sealed partial class SharpLinkServer(
                 faulted = true;
                 frameworkCleanupCompleted = true;
                 LogDeferredCleanupFailed(_logger, "Framework", exception);
+                AddTaskFailures(ref stopFailures, frameworkCleanupTask, exception);
             }
 
             if (!frameworkCleanupCompleted)
@@ -192,13 +194,22 @@ internal sealed partial class SharpLinkServer(
             if (unfinishedCalls == 0)
             {
                 var serviceCleanupTask = DisposeRegisteredServicesAsync();
-                if (!await WaitUntilAsync(serviceCleanupTask, finalDeadline).ConfigureAwait(false))
+                try
+                {
+                    if (!await WaitUntilAsync(serviceCleanupTask, finalDeadline).ConfigureAwait(false))
+                    {
+                        faulted = true;
+                        _serviceCleanupObserver = ObserveCleanupFailureAsync(
+                            serviceCleanupTask,
+                            _logger,
+                            "Services");
+                    }
+                }
+                catch (Exception exception)
                 {
                     faulted = true;
-                    _serviceCleanupObserver = ObserveCleanupFailureAsync(
-                        serviceCleanupTask,
-                        _logger,
-                        "Services");
+                    LogDeferredCleanupFailed(_logger, "Services", exception);
+                    AddTaskFailures(ref stopFailures, serviceCleanupTask, exception);
                 }
             }
         }
@@ -206,9 +217,35 @@ internal sealed partial class SharpLinkServer(
         {
             faulted = true;
             LogDeferredCleanupFailed(_logger, "Stop", exception);
+            (stopFailures ??= []).Add(exception);
         }
 
         TransitionTo(faulted ? ServerState.Faulted : ServerState.Stopped);
+        ThrowStopFailures(stopFailures);
+    }
+
+    private static void AddTaskFailures(
+        ref List<Exception>? failures,
+        Task task,
+        Exception fallback)
+    {
+        if (task.Exception is not { } aggregate)
+        {
+            (failures ??= []).Add(fallback);
+            return;
+        }
+
+        foreach (var exception in aggregate.Flatten().InnerExceptions)
+            (failures ??= []).Add(exception);
+    }
+
+    private static void ThrowStopFailures(List<Exception>? failures)
+    {
+        if (failures is null)
+            return;
+        if (failures.Count == 1)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        throw new AggregateException(failures);
     }
 
     private async Task CleanupAfterRunFailureAsync()
@@ -395,11 +432,36 @@ internal sealed partial class SharpLinkServer(
         {
             await Task.WhenAll(tasks).ConfigureAwait(false);
         }
-        catch (Exception exception) when (
-            exception is OperationCanceledException or ObjectDisposedException or
-                System.IO.IOException or SocketException or SharpLinkException)
+        catch
         {
+            ThrowUnexpectedShutdownTaskFailures(tasks);
         }
+    }
+
+    private static bool IsExpectedSessionShutdownException(Exception exception)
+        => exception is OperationCanceledException or ObjectDisposedException or
+            System.IO.IOException or SocketException or
+            SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed };
+
+    private static void ThrowUnexpectedShutdownTaskFailures(Task[] tasks)
+    {
+        List<Exception>? unexpected = null;
+        for (var taskIndex = 0; taskIndex < tasks.Length; taskIndex++)
+        {
+            if (tasks[taskIndex].Exception is not { } aggregate)
+                continue;
+            foreach (var exception in aggregate.Flatten().InnerExceptions)
+            {
+                if (IsExpectedSessionShutdownException(exception))
+                    continue;
+                (unexpected ??= []).Add(exception);
+            }
+        }
+
+        if (unexpected is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(unexpected[0]).Throw();
+        if (unexpected is not null)
+            throw new AggregateException(unexpected);
     }
 
     private async Task WaitForFrameworkTasksAsync()
@@ -417,8 +479,9 @@ internal sealed partial class SharpLinkServer(
             {
                 await Task.WhenAll(tasks).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or System.IO.IOException or SocketException)
+            catch
             {
+                ThrowUnexpectedShutdownTaskFailures(tasks);
             }
         }
     }
@@ -434,15 +497,7 @@ internal sealed partial class SharpLinkServer(
         var remaining = GetRemaining(deadline);
         if (remaining <= TimeSpan.Zero)
             return false;
-        try
-        {
-            await task.WaitAsync(remaining).ConfigureAwait(false);
-            return true;
-        }
-        catch (TimeoutException)
-        {
-            return false;
-        }
+        return await SharpLinkTimer.WaitAsync(task, remaining).ConfigureAwait(false);
     }
 
     private static long AddStopwatchDuration(long timestamp, TimeSpan duration)
@@ -476,14 +531,14 @@ internal sealed partial class SharpLinkServer(
 
     private async Task DisposeRegisteredServicesAsync()
     {
-        Exception? firstException = null;
+        List<Exception>? failures = null;
         try
         {
             await ReleaseDrainedDynamicModulesAsync().ConfigureAwait(false);
         }
         catch (Exception exception)
         {
-            firstException = exception;
+            (failures ??= []).Add(exception);
         }
 
         try
@@ -492,7 +547,7 @@ internal sealed partial class SharpLinkServer(
         }
         catch (Exception exception)
         {
-            firstException ??= exception;
+            (failures ??= []).Add(exception);
         }
 
         if (_admissionController is not null)
@@ -503,7 +558,7 @@ internal sealed partial class SharpLinkServer(
             }
             catch (Exception exception)
             {
-                firstException ??= exception;
+                (failures ??= []).Add(exception);
             }
         }
 
@@ -513,11 +568,13 @@ internal sealed partial class SharpLinkServer(
         }
         catch (Exception exception)
         {
-            firstException ??= exception;
+            (failures ??= []).Add(exception);
         }
 
-        if (firstException is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
     }
 
     private static async Task ObserveShutdownAndDisposeTokensAsync(
@@ -628,18 +685,18 @@ internal sealed partial class SharpLinkServer(
                 : ServerCallAdmissionResult.Unavailable;
         }
 
-        if (CurrentState != ServerState.Running)
+        if (Interlocked.Increment(ref _globalActiveCalls) > _globalMaxConcurrentCalls)
         {
+            Interlocked.Decrement(ref _globalActiveCalls);
             connection.ReleaseCall();
-            return ServerCallAdmissionResult.Unavailable;
+            return ServerCallAdmissionResult.CapacityExhausted;
         }
 
-        if (Interlocked.Increment(ref _globalActiveCalls) <= _globalMaxConcurrentCalls)
+        if (CurrentState == ServerState.Running)
             return ServerCallAdmissionResult.Acquired;
 
-        Interlocked.Decrement(ref _globalActiveCalls);
-        connection.ReleaseCall();
-        return ServerCallAdmissionResult.CapacityExhausted;
+        ReleaseCall(connection);
+        return ServerCallAdmissionResult.Unavailable;
     }
 
     private bool TryAcceptRequest(ServerConnectionState connection, long requestId)

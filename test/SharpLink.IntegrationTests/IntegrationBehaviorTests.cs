@@ -3,6 +3,149 @@ namespace SharpLink.IntegrationTests;
 public class IntegrationBehaviorTests
 {
     [Test]
+    public void GeneratedBooleanMemberShouldRejectNonCanonicalPayload()
+    {
+        var failure = DeserializeMutatedGeneratedSemantic(1, static (payload, offset, _) => payload[offset] = 2);
+
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "generated Boolean member must reject a marker other than zero or one");
+    }
+
+    [Test]
+    public void GeneratedRuneMemberShouldRejectInvalidScalar()
+    {
+        var failure = DeserializeMutatedGeneratedSemantic(2, static (payload, offset, _) =>
+            BinaryPrimitives.WriteInt32LittleEndian(payload.AsSpan(offset), 0x11_0000));
+
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "generated Rune member must reject a scalar above the Unicode maximum");
+    }
+
+    [Test]
+    public void GeneratedDecimalMemberShouldRejectInvalidLayout()
+    {
+        var failure = DeserializeMutatedGeneratedSemantic(3, static (payload, offset, length) =>
+            payload.AsSpan(offset, length).Fill(0xFF));
+
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "generated decimal member must reject an invalid flags layout");
+    }
+
+    [Test]
+    public void GeneratedTemporalMembersShouldRejectInvalidValues()
+    {
+        var dateOnlyFailure = DeserializeMutatedGeneratedSemantic(4, static (payload, offset, _) =>
+            BinaryPrimitives.WriteInt32LittleEndian(payload.AsSpan(offset), int.MaxValue));
+        var dateTimeFailure = DeserializeMutatedGeneratedSemantic(5, static (payload, offset, _) =>
+            BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(offset), DateTime.MaxValue.Ticks + 1));
+        var timeOnlyFailure = DeserializeMutatedGeneratedSemantic(6, static (payload, offset, _) =>
+            BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(offset), long.MaxValue));
+
+        Ensure(dateOnlyFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss } &&
+               dateTimeFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss } &&
+               timeOnlyFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "generated DateOnly, DateTime, and TimeOnly members must reject invalid values");
+    }
+
+    [Test]
+    public void GeneratedDateTimeOffsetMemberShouldUseCanonicalValidatedPayload()
+    {
+        var serialized = SerializeGeneratedSemantic();
+        var field = FindGeneratedSemanticField(serialized, 7);
+        var malformedFailure = DeserializeMutatedGeneratedSemantic(7, static (payload, offset, _) =>
+            BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(offset + sizeof(long)), long.MaxValue));
+
+        var paddingIsCanonical = field.WireType == RpcGeneratedWireType.Fixed16 && field.Length == 16 &&
+                                 field.Offset + field.Length <= serialized.Length &&
+                                 serialized.AsSpan(field.Offset + sizeof(short), 6).IndexOfAnyExcept((byte)0) < 0;
+        Ensure(paddingIsCanonical &&
+               malformedFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "generated DateTimeOffset must clear native padding and reject invalid ticks");
+    }
+
+    [Test]
+    public void GeneratedNullCollectionShouldRejectTrailingBytes()
+    {
+        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        var codec = context.Codecs.GetCodec<List<string>>();
+        var failure = CaptureException(() => codec.Deserialize(
+            new ReadOnlySequence<byte>(new byte[] { 0, 0xA5 })));
+
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "null generated collection must reject trailing bytes");
+    }
+
+    private static Exception? DeserializeMutatedGeneratedSemantic(
+        uint fieldId,
+        Action<byte[], int, int> mutate)
+    {
+        var payload = SerializeGeneratedSemantic();
+        var field = FindGeneratedSemanticField(payload, fieldId);
+        mutate(payload, field.Offset, field.Length);
+        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        var codec = context.Codecs.GetCodec<GeneratedSemanticEnvelope>();
+        return CaptureException(() => codec.Deserialize(new ReadOnlySequence<byte>(payload)));
+    }
+
+    private static byte[] SerializeGeneratedSemantic()
+    {
+        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        var codec = context.Codecs.GetCodec<GeneratedSemanticEnvelope>();
+        using var writer = new PooledByteBufferWriter();
+        codec.Serialize(new GeneratedSemanticEnvelope(
+            true,
+            new System.Text.Rune('A'),
+            123.45m,
+            new DateOnly(2026, 7, 27),
+            new DateTime(2026, 7, 27, 12, 34, 56, DateTimeKind.Utc),
+            new TimeOnly(12, 34, 56),
+            CreateDateTimeOffsetWithPoisonedPadding()), writer);
+        return writer.WrittenMemory.ToArray();
+    }
+
+    private static DateTimeOffset CreateDateTimeOffsetWithPoisonedPadding()
+    {
+        var value = new DateTimeOffset(2026, 7, 27, 12, 34, 56, TimeSpan.FromHours(8));
+        Span<byte> bytes = stackalloc byte[16];
+        bytes.Fill(0xA5);
+        BinaryPrimitives.WriteInt16LittleEndian(bytes, checked((short)value.Offset.TotalMinutes));
+        BinaryPrimitives.WriteInt64LittleEndian(bytes[sizeof(long)..], value.UtcTicks);
+        return System.Runtime.InteropServices.MemoryMarshal.Read<DateTimeOffset>(bytes);
+    }
+
+    private static (int Offset, int Length, RpcGeneratedWireType WireType) FindGeneratedSemanticField(
+        byte[] payload,
+        uint targetFieldId)
+    {
+        var reader = new SequenceReader<byte>(new ReadOnlySequence<byte>(payload));
+        Ensure(RpcGeneratedCodecWire.ReadPresence(ref reader), "generated semantic envelope presence");
+        while (RpcGeneratedCodecWire.TryReadField(ref reader, out var fieldId, out var wireType))
+        {
+            var fixedLength = wireType switch
+            {
+                RpcGeneratedWireType.Fixed1 => 1,
+                RpcGeneratedWireType.Fixed2 => 2,
+                RpcGeneratedWireType.Fixed4 => 4,
+                RpcGeneratedWireType.Fixed8 => 8,
+                RpcGeneratedWireType.Fixed16 => 16,
+                _ => 0
+            };
+            if (wireType == RpcGeneratedWireType.LengthDelimited)
+            {
+                var before = checked((int)reader.Consumed);
+                var value = RpcGeneratedCodecWire.ReadLengthDelimited(ref reader);
+                if (fieldId == targetFieldId)
+                    return (before + sizeof(uint), checked((int)value.Length), wireType);
+                continue;
+            }
+            if (fieldId == targetFieldId)
+                return (checked((int)reader.Consumed), fixedLength, wireType);
+            RpcGeneratedCodecWire.SkipField(ref reader, wireType);
+        }
+        throw new Exception($"generated semantic field {targetFieldId} was not found");
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task BasicRpcAndStreamingShouldWork(bool useSharedMemory)
@@ -1446,6 +1589,19 @@ public class IntegrationBehaviorTests
             throw new Exception($"assert failed: {name}");
     }
 
+    private static Exception? CaptureException(Action action)
+    {
+        try
+        {
+            action();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
     private static int GetFreePort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -2104,3 +2260,19 @@ public sealed record GeneratedEnvelope(
     int Age,
     GeneratedAddress Address,
     List<string> Tags);
+
+[RpcContract]
+public interface IGeneratedSemanticContract : IService
+{
+    [NonCancellable]
+    ValueTask<GeneratedSemanticEnvelope> EchoAsync(GeneratedSemanticEnvelope value);
+}
+
+public sealed record GeneratedSemanticEnvelope(
+    [property: RpcMember(1)] bool Boolean,
+    [property: RpcMember(2)] System.Text.Rune Rune,
+    [property: RpcMember(3)] decimal Decimal,
+    [property: RpcMember(4)] DateOnly DateOnly,
+    [property: RpcMember(5)] DateTime DateTime,
+    [property: RpcMember(6)] TimeOnly TimeOnly,
+    [property: RpcMember(7)] DateTimeOffset DateTimeOffset);

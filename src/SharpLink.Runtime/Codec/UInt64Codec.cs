@@ -15,7 +15,7 @@ internal sealed class UInt64Codec : IRpcCodec<ulong>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ulong Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        CodecHelpers.EnsureAvailable(buffer, Size);
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             return Unsafe.ReadUnaligned<ulong>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
@@ -51,11 +51,11 @@ internal sealed class NullableUInt64Codec : IRpcCodec<ulong?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ulong? Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        CodecHelpers.EnsureAvailable(buffer, Size);
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
-            if (start == 0) return null;
+            if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
             return Unsafe.ReadUnaligned<ulong>(ref Unsafe.Add(ref start, 1));
         }
 
@@ -63,7 +63,7 @@ internal sealed class NullableUInt64Codec : IRpcCodec<ulong?>
         buffer.CopyTo(temp);
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         
-        if (tempStart == 0) return null;
+        if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
         return Unsafe.ReadUnaligned<ulong>(ref Unsafe.Add(ref tempStart, 1));
     }
 }

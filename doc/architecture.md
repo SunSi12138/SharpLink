@@ -95,6 +95,8 @@ SharpLink.Serializer.SharpPack
 - 只有当前候选已有在途请求时才合并触发一个扩容 worker，不能按每次调用创建连接。
 - `GoAway` 将单条 session 标为 draining 并立即从选择快照移除；已有请求完成后释放该连接，池在后台恢复最小连接数。
 - Client Stop 取消并等待 connect、reconnect、expand、heartbeat 与 read-loop worker，再释放所有 session 和 transport factory。
+- Client/Server 收到完整帧时同时维护诊断用 UTC `LastActive` 与内部单调时间戳；heartbeat timeout 只按单调 elapsed time 判定，不受系统墙钟校时或调用方修改诊断属性影响。
+- Generic Host 的 Server Stop 是终态屏障：Stop 开始后的 Run 结束（成功或失败）不再反向触发应用停止，Stop 完成后也不能重新 Start 同一 hosted service 实例。
 
 ## 0.7.x endpoint 拓扑与韧性
 
@@ -146,6 +148,7 @@ SharpLink.Serializer.SharpPack
 - Unix/macOS 上 `NamedPipe` 由 .NET 映射到 Unix Domain Socket 路径
 - 当前运行时会对过长的 pipe name 做确定性缩短，避免触发路径长度限制
 - `AnonymousPipe` 适合本机协同进程，不适合跨主机场景
+- `IAnonymousPipeAllocator` 返回的一次性 offer 拥有 Server 端的本地 client-handle 副本。外部子进程继承两个 handle 后，宿主必须调用 `CompleteHandleTransfer()` 或释放 offer；此动作幂等，并关闭两个父进程副本，使 Server 能观察子进程最终断连。句柄不会出现在 offer 的诊断字符串中。
 - `SharedMemory` 只支持同机同用户。命名管道是权限边界和控制通道；数据不经过控制通道。
 - 每条共享内存连接拥有一个 4 KiB 版本化小端头部和两个 SPSC 环。读写游标、等待标志与关闭位按 128 字节隔离；文件映射只在双方 nonce、版本、容量和长度全部校验后开放。
 - Unix/macOS 在双方确认映射后 unlink 文件；Windows 使用 delete sharing 与 `DeleteOnClose`。新建映射前只清理能够独占打开的遗留 `.shm` 文件，不删除活跃连接资源。
@@ -175,6 +178,7 @@ SharpLink.Serializer.SharpPack
 - provider 返回的 `SharpLinkAuthenticationContext` 归属 session，并在每次调用创建 `SharpLinkCallContextSnapshot` 时传递。
 - handshake 自动拒绝已过期 context；每次业务调用会再次拒绝已过期身份，Server Interceptor 和 `SharpLinkAuthorization` 可执行更细粒度的 scope/tenant 策略。
 - provider 未映射异常记录无 payload 的结构化日志，并向客户端返回不含内部细节的 `AuthenticationRejected`。
+- provider 返回的未定义错误码会在 Server 信任边界归一化为 `AuthenticationRejected`；握手编码器不会接收未定义 wire error code。
 
 ## 调用拦截与异常边界
 
@@ -201,8 +205,8 @@ SharpLink.Serializer.SharpPack
 - Generator 以稳定顺序输出 JSON 契约 Manifest；可选 `SharpLinkContractBaseline` 只在编译期执行一次完整差异分析，运行时替换仅验证生成 Manifest、route identity 与 registration ownership，不复制源码级兼容规则。
 - `ReplaceService` 实例始终由调用方持有且是 Singleton；factory 产物由 SharpLink 释放。激活失败也会释放已经创建的 Scope。
 - Protocol minor 1 引入 health-check capability，minor 2 引入带原因 Cancel，minor 3 在握手中协商唯一压缩 Provider；`HealthCheck/HealthResponse` 使用非零 correlation ID 和固定一字节状态，不进入业务 stub、interceptor 或服务并发额度。
-- 压缩在 Generated Codec 序列化之后、SendPump 之前运行；候选无收益即归还。接收端先验证未压缩 envelope 和原始长度，再租借精确有界 owner，调用/stream dispatch 完成后归还。未启用时 Session 热路径只增加一个可预测的空引用分支，SendPump、静态路由和 Codec 热路径不增加锁。
-- 主动 admission 默认关闭，并在 Service/Scope/Codec/interceptor 之前累计取得 Global、Contract、Method 与可选 Partition permit；同步 AttemptAcquire 是启用态快路径。异步等待同时受总 call/byte 预算、deadline、取消、断连和 Draining 约束；客户端流以生成的 `ClientStreamCount` 预留 stream ID，压缩 frame 按 wire bytes spool，permit 到达后才解压和 dispatch。
+- 压缩在 Generated Codec 序列化之后、SendPump 之前运行；候选无收益即归还。每个自定义 provider 的 wire profile 在 Runtime Context Build 时与 provider 实例成对冻结，后续协商、查找和诊断不重读可变属性。接收端先验证未压缩 envelope 和原始长度，再租借精确有界 owner，调用/stream dispatch 完成后归还。未启用时 Session 热路径只增加一个可预测的空引用分支，SendPump、静态路由和 Codec 热路径不增加锁。
+- 主动 admission 默认关闭，并在 Service/Scope/Codec/interceptor 之前累计取得 Global、Contract、Method 与可选 Partition permit；同步 AttemptAcquire 是启用态快路径。常见的单 concurrency limiter 使用精确 slot 和单 lease，不创建 retained/acquired 数组；组合规则与排队路径仍保留逐级 lease 所有权。异步等待同时受总 call/byte 预算、deadline、取消、断连和 Draining 约束；客户端流以生成的 `ClientStreamCount` 预留 stream ID，压缩 frame 按 wire bytes spool，permit 到达后才解压和 dispatch。
 - 分区池只在 miss/release 时机会式回收，无清理线程；持有 permit、waiter 或 stream spool 的 entry 不可回收。所有 lease 都挂在既有 ServerCallCancellationState 上，沿 Unary、OneWay 和完整 Streaming 生命周期一次释放；未启用时只读取空 controller 引用，不创建 Task、状态机、TagList 或每调用对象。
 - Server 状态映射为 Starting/Stopped/Faulted=`Unhealthy`、Running=`Ready`、Draining=`Draining`。Hosted readiness 直接读取 Server 原子状态，Client accessor 只在至少一条连接 Ready 后发布。
 - Stop 先进入 Draining，再停止 accept 并发送强制 flush 的 GoAway；grace 内等待 active calls，超时后取消 session 调用，最后等待后台任务并释放 service/provider。

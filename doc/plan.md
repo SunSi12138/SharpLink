@@ -57,7 +57,24 @@
 9. `0.7.10`（已完成）：多 cluster Client、静态/动态 contract route 与 child lifecycle 隔离。
 10. `0.7.11`（已完成）：删除 MemoryPack 扩展与 `RpcExternalCodec`，引入 manifest-scoped Codec Adapter SPI，并迁移到 SharpPack 1.1.0。
 
-## 0.8.0-rc：发布门禁
+## 0.8.x：证据驱动的框架深度审核（进行中）
+
+- `0.8.0`：修复原生 Codec 非精确消费/非规范标记、跨 stream connection credit 滞留、继承接口 RPC 遗漏，以及 unmanaged Adapter 请求绕过 Codec；详见 [`audit-0.8.0.md`](audit-0.8.0.md)。
+- `0.8.1`：修复认证与 Manifest 可变快照、Resolver 释放、语义请求校验和 `List<T>` 双数组解码；详见 [`audit-0.8.1.md`](audit-0.8.1.md)。
+- `0.8.2`：修复共享 Connect 取消传播、cluster 握手超时、DNS 异常吞噬、非规范 VarUInt32 与非法 UTF-8 error payload；详见 [`audit-0.8.2.md`](audit-0.8.2.md)。
+- `0.8.3`：修复 endpoint nested attributes、async shutdown callback、连接与 Hosting cleanup 异常遮蔽，并删除 metadata decode 二次复制；详见 [`audit-0.8.3.md`](audit-0.8.3.md)。
+- `0.8.37`：修复 generated service/DTO 可达性、keyword DTO 标识符、record/ref-like DTO 与 static abstract contract 边界；详见 [`audit-0.8.37.md`](audit-0.8.37.md)。
+- `0.8.38`：修复 generated service/DTO 构造计划、pointer/function-pointer 产物与 interceptor 结构化取消状态；详见 [`audit-0.8.38.md`](audit-0.8.38.md)。
+- `0.8.39`：修复 interceptor 终端状态/continuation/结果边界、client stream context capture 与 malformed request DataLoss 分类；详见 [`audit-0.8.39.md`](audit-0.8.39.md)。
+- `0.8.40`：修复 interceptor 异步 continuation 所有权、结构化错误 code 与 generated response nullability 边界；详见 [`audit-0.8.40.md`](audit-0.8.40.md)。
+- `0.8.41`：修复 scalar/stream 解码 nullability、runtime response fingerprint 与 reserved `Unknown` wire code 边界；详见 [`audit-0.8.41.md`](audit-0.8.41.md)。
+- `0.8.42`：修复 Throughput SendPump、Codec 规范 null、Protocol writer 本地错误分类与 DTO member nullability schema identity；详见 [`audit-0.8.42.md`](audit-0.8.42.md)。
+- `0.8.43`：修复共享内存创建竞态、流控空队列锁、连接关闭错误身份、提前流释放遥测与动态准入状态退役；详见 [`audit-0.8.43.md`](audit-0.8.43.md)。
+- `0.8.44`：修复 shutdown join 异常丢失、Server call admission 终态清理与 send-stream flow-control 终态清理；详见 [`audit-0.8.44.md`](audit-0.8.44.md)。
+- 后续按独立、高价值工程根因推进：跨组件或调用点的同根因只计一次，极端理论竞态、纯防御修改和语法现代化不计入 P2，也不为凑数量延迟或拆分版本。
+- 每批必须通过 Release、Generator、Unit、Integration 和相关性能门禁；连续三轮无新改进点后转入 RC。
+
+## 0.8.x-rc：发布门禁
 
 - Unit、Generator、Integration、AOT、Package、Load、StreamLoad、Benchmark 与 Chaos 分层测试。
 - Windows/Linux/macOS Transport matrix，Linux/Windows 72 小时长稳与固定 runner 性能基线。

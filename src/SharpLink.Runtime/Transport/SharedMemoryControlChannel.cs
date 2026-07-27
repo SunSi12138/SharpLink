@@ -29,7 +29,7 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     private int _pendingPeerSpaceWaiterArmed;
     private int _waiterHandlersRegistered;
     private int _closed;
-    private int _disposed;
+    private Task? _disposeTask;
 
     public SharedMemoryControlChannel(PipeStream stream)
     {
@@ -90,16 +90,34 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
     }
 
     public ValueTask WaitForDataAsync(CancellationToken cancellationToken)
-        => WaitAsync(_dataAvailable, cancellationToken);
+        => cancellationToken.CanBeCanceled
+            ? WaitWithCancellationAsync(_dataAvailable, cancellationToken)
+            : WaitWithoutCancellationAsync(_dataAvailable);
 
     public ValueTask WaitForSpaceAsync(CancellationToken cancellationToken)
-        => WaitAsync(_spaceAvailable, cancellationToken);
+        => cancellationToken.CanBeCanceled
+            ? WaitWithCancellationAsync(_spaceAvailable, cancellationToken)
+            : WaitWithoutCancellationAsync(_spaceAvailable);
 
-    private async ValueTask WaitAsync(SharedMemoryAsyncPulse pulse, CancellationToken cancellationToken)
+    private async ValueTask WaitWithoutCancellationAsync(SharedMemoryAsyncPulse pulse)
+    {
+        if (IsClosed)
+            ThrowClosed();
+        _ = await pulse.WaitAsync().ConfigureAwait(false);
+        if (IsClosed)
+            ThrowClosed();
+    }
+
+    private async ValueTask WaitWithCancellationAsync(
+        SharedMemoryAsyncPulse pulse,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (IsClosed)
             ThrowClosed();
+        using var cancellationRegistration = cancellationToken.UnsafeRegister(
+            static state => ((SharedMemoryAsyncPulse)state!).Pulse(),
+            pulse);
         _ = await pulse.WaitAsync().ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         if (IsClosed)
@@ -194,11 +212,14 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         }
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
+        lock (_outboundWake)
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+    }
 
+    private async Task DisposeCoreAsync()
+    {
         if (!IsClosed)
             QueueSignal(CloseBit, kind: null);
         _outboundWake.Complete();
@@ -211,12 +232,17 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         }
 
         MarkClosed();
+        Exception? cleanupException = null;
         try
         {
             await _stream.DisposeAsync().ConfigureAwait(false);
         }
         catch (Exception ex) when (IsExpectedControlClose(ex))
         {
+        }
+        catch (Exception exception)
+        {
+            cleanupException = exception;
         }
         try
         {
@@ -225,6 +251,28 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         catch (Exception ex) when (IsExpectedControlClose(ex))
         {
         }
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(
+                cleanupException,
+                exception);
+        }
+        try
+        {
+            await _writerTask.ConfigureAwait(false);
+        }
+        catch (Exception ex) when (IsExpectedControlClose(ex))
+        {
+        }
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(
+                cleanupException,
+                exception);
+        }
+
+        if (cleanupException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
     }
 
     private void MarkClosed()

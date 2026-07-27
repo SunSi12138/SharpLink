@@ -25,10 +25,13 @@ internal record RpcInterfaceModel(
 internal record RpcMethodModel(
     string Name,
     string ReturnType,
+    string DisplayReturnType,
     bool IsGenericTask,
     bool IsStreamReturn,
     string? StreamItemType,
+    string? DisplayStreamItemType,
     string? GenericArgumentType,
+    string? DisplayGenericArgumentType,
     bool IsVoid,
     bool IsOneWay,
     bool HasCancellationToken,
@@ -44,13 +47,20 @@ internal record RpcMethodModel(
     bool ResponseNullable,
     string? ResponseEnumUnderlyingType,
     string? StreamItemEnumUnderlyingType,
-    Location? Location);
+    Location? Location)
+{
+    internal bool ReturnsValueTask => ReturnType.StartsWith(
+        "global::System.Threading.Tasks.ValueTask",
+        StringComparison.Ordinal);
+}
 
 internal record RpcParameterModel(
     string Name,
     string Type,
+    string DisplayType,
     bool IsStream,
     string? StreamItemType,
+    string? DisplayStreamItemType,
     bool IsBlittable,
     bool IsValueType,
     bool IsNullableReference,
@@ -61,7 +71,21 @@ internal record RpcParameterModel(
     string? StreamItemEnumUnderlyingType,
     Location? Location);
 
-internal readonly record struct InvalidRpcMethodModel(string MethodName, string ReturnType, Location? Location);
+internal readonly record struct InvalidRpcMethodModel(
+    InvalidRpcMethodKind Kind,
+    string MethodName,
+    string Detail,
+    Location? Location);
+internal enum InvalidRpcMethodKind
+{
+    ReturnType,
+    Timeout,
+    ByReference,
+    Static,
+    ContractMember,
+    OnewayReturn,
+    InheritedSignatureConflict
+}
 internal readonly record struct InvalidCancellationTokenMethodModel(string MethodName, Location? Location);
 internal readonly record struct InvalidCallOptionsMethodModel(string MethodName, Location? Location);
 internal readonly record struct InvalidControlParameterOrderModel(string MethodName, Location? Location);
@@ -70,7 +94,15 @@ internal readonly record struct NonCancellableRpcMethodModel(string MethodName, 
 internal readonly record struct StreamingWithoutCancellationModel(string MethodName, Location? Location);
 internal readonly record struct ConflictingCancellationContractModel(string MethodName, Location? Location);
 internal readonly record struct InvalidGenericUsageModel(string SymbolName, string TypeName, Location? Location);
-internal readonly record struct InvalidRpcContractInheritanceModel(string InterfaceName, Location? Location);
+internal readonly record struct RpcContractDiagnosticModel(
+    RpcContractDiagnosticKind Kind,
+    string InterfaceName,
+    Location? Location);
+internal enum RpcContractDiagnosticKind
+{
+    Inheritance,
+    Accessibility
+}
 internal readonly record struct RpcServiceDiagnosticModel(
     RpcServiceDiagnosticKind Kind,
     string ServiceName,
@@ -102,6 +134,7 @@ internal sealed record RpcUnionModel(
 internal sealed record RpcUnionCaseModel(
     int Tag,
     string TypeName,
+    string? InvalidDetail,
     Location? Location);
 
 internal enum StaticRouteConflictKind
@@ -303,6 +336,9 @@ internal static class Hashing
     {
         return (long)Hash(iName.Replace("global::", "").Replace(" ", ""));
     }
+
+    public static string GetIdentifierHash(string value)
+        => Hash(value).ToString("x16", CultureInfo.InvariantCulture);
 
     public static string GetSha256(string value)
     {

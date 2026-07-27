@@ -1,6 +1,8 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
+using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Runtime;
 
@@ -61,6 +63,22 @@ public class SharpLinkRuntimeContextTests
     }
 
     [Test]
+    public void PerformanceProfilesShouldPreserveAnExplicitDefaultValuedQueue()
+    {
+        const int explicitlyConfiguredQueueBytes = 8 * 1024 * 1024;
+        var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options =>
+            {
+                options.PerformanceProfile = SharpLinkPerformanceProfile.Throughput;
+                options.FlowControl.MaxSendQueueBytes = explicitlyConfiguredQueueBytes;
+            })
+            .Build();
+
+        Ensure(context.Options.FlowControl.MaxSendQueueBytes == explicitlyConfiguredQueueBytes,
+            "an explicit queue value must take precedence over a profile default even when it equals the nominal default");
+    }
+
+    [Test]
     public void BuiltInCodecShouldBeImmutable()
     {
         try
@@ -100,6 +118,103 @@ public class SharpLinkRuntimeContextTests
         var leakedCopy = first.Options;
         leakedCopy.Protocol.MaxFramePayloadBytes = 8192;
         Ensure(first.Options.Protocol.MaxFramePayloadBytes == 2048, "returned options must be isolated copies");
+    }
+
+    [Test]
+    public void ContextDisposalShouldDrainAndCloseItsWriterPool()
+    {
+        var context = new SharpLinkRuntimeContextBuilder()
+            .ConfigureBufferPool(options =>
+            {
+                options.InitialCapacity = 1024;
+                options.MaxPooledWriters = 2;
+                options.MaxRetainedCapacityBytes = 64 * 1024;
+            })
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var idle = (PooledByteBufferWriter)context.Buffers.Rent();
+        var active = (PooledByteBufferWriter)context.Buffers.Rent();
+        _ = idle.GetSpan(32 * 1024);
+        _ = active.GetSpan(32 * 1024);
+        context.Buffers.Return(idle);
+
+        context.Dispose();
+        var retainedAfterDispose = ReadPrivate<int>(context.Buffers, "_pooledCount");
+        Exception? rentFailure = null;
+        try
+        {
+            context.Buffers.Rent().Dispose();
+        }
+        catch (Exception exception)
+        {
+            rentFailure = exception;
+        }
+        context.Buffers.Return(active);
+        var activeBuffer = ReadPrivate<byte[]?>(active, "_buffer");
+
+        Ensure(retainedAfterDispose == 0, "Context disposal must drain idle writer buffers");
+        Ensure(rentFailure is ObjectDisposedException, "a disposed Context pool must reject new rents");
+        Ensure(activeBuffer is null, "an active writer returned after Context disposal must release its array");
+    }
+
+    [Test]
+    public void PendingRequestCapacityShouldHaveAHardMemoryBound()
+    {
+        const int oversizedCapacity = 2 * 1024 * 1024;
+        var options = new SharpLinkProtocolOptions
+        {
+            MaxPendingRequestsPerConnection = oversizedCapacity
+        };
+
+        var optionFailure = CaptureFailure(options.Validate);
+        var tableFailure = CaptureFailure(() =>
+        {
+            using var table = new PendingRequestTable(oversizedCapacity);
+        });
+
+        Ensure(optionFailure is ArgumentOutOfRangeException,
+            "public protocol validation must reject an oversized pending table");
+        Ensure(tableFailure is ArgumentOutOfRangeException,
+            "the internal table constructor must independently enforce the hard bound");
+    }
+
+    [Test]
+    public void RuntimeSizingShouldRejectUnboundedAggregateMemory()
+    {
+        var stripeFailure = CaptureFailure(new RuntimeConcurrencyOptions
+        {
+            StripeCount = 2048,
+            InitialMapCapacityPerStripe = 0
+        }.Validate);
+        var mapCapacityFailure = CaptureFailure(new RuntimeConcurrencyOptions
+        {
+            StripeCount = 1024,
+            InitialMapCapacityPerStripe = 2048
+        }.Validate);
+        var retainedWriterFailure = CaptureFailure(new BufferWriterPoolOptions
+        {
+            InitialCapacity = 1024,
+            MaxPooledWriters = 2048,
+            MaxRetainedCapacityBytes = 64 * 1024
+        }.Validate);
+
+        Ensure(stripeFailure is ArgumentOutOfRangeException,
+            "stripe objects must have a hard count bound");
+        Ensure(mapCapacityFailure is ArgumentOutOfRangeException,
+            "aggregate initial map entries must have a hard bound");
+        Ensure(retainedWriterFailure is ArgumentOutOfRangeException,
+            "aggregate retained writer bytes must have a hard bound");
+    }
+
+    [Test]
+    public void ServerCallConcurrencyShouldBoundDeadlineScanMemory()
+    {
+        var failure = CaptureFailure(new SharpLinkFlowControlOptions
+        {
+            MaxConcurrentCallsPerConnection = int.MaxValue
+        }.Validate);
+
+        Ensure(failure is ArgumentOutOfRangeException,
+            "Server call concurrency must bound its per-deadline-scan snapshot");
     }
 
     [Test]
@@ -278,6 +393,55 @@ public class SharpLinkRuntimeContextTests
         Ensure(preparedCounters.ScopeCreateCount == 1, "the first Scope was prepared");
         Ensure(preparedCounters.ScopeDisposeCount == 1, "the first Scope was rolled back");
         Ensure(failingCounters.ScopeCreateCount == 1, "the failing Adapter was invoked exactly once");
+    }
+
+    [Test]
+    public void ManifestPreparationRollbackShouldPreservePrimaryAndScopeCleanupFailures()
+    {
+        var failure = CaptureFailure(() =>
+        {
+            using var context = new SharpLinkRuntimeContextBuilder()
+                .Build(includeGeneratedAssemblyCatalog: false);
+            _ = context.PrepareGeneratedManifest(new TestManifest(
+                "manifest-rollback-failure",
+                new ConfigurableAdapterFactory<AdapterValue>(
+                    new NamedThrowingDisposeAdapter("a.throwing/v1", "candidate scope cleanup failed"),
+                    "a.throwing/v1",
+                    "throwing-wire/v1"),
+                new ConfigurableAdapterFactory<SecondAdapterValue>(
+                    new FailingScopeAdapter(new AdapterCounters(), returnNull: false),
+                    FailingScopeAdapter.Id,
+                    FailingScopeAdapter.Wire)));
+        });
+
+        Ensure(ContainsMessage(failure, "scope failure"),
+            "Manifest rollback must retain the Scope creation failure");
+        Ensure(ContainsMessage(failure, "candidate scope cleanup failed"),
+            "Manifest rollback must retain earlier Scope cleanup failure");
+    }
+
+    [Test]
+    public void ContextConstructionRollbackShouldPreserveManifestAndCleanupFailures()
+    {
+        var failure = CaptureFailure(() => _ = new SharpLinkRuntimeContextBuilder().Build([
+            new TestManifest(
+                "prepared-throwing-manifest",
+                new ConfigurableAdapterFactory<AdapterValue>(
+                    new NamedThrowingDisposeAdapter("a.prepared/v1", "prepared manifest cleanup failed"),
+                    "a.prepared/v1",
+                    "throwing-wire/v1")),
+            new TestManifest(
+                "failing-manifest",
+                new ConfigurableAdapterFactory<SecondAdapterValue>(
+                    new FailingScopeAdapter(new AdapterCounters(), returnNull: false),
+                    FailingScopeAdapter.Id,
+                    FailingScopeAdapter.Wire))
+        ]));
+
+        Ensure(ContainsMessage(failure, "scope failure"),
+            "Context rollback must retain the later Manifest failure");
+        Ensure(ContainsMessage(failure, "prepared manifest cleanup failed"),
+            "Context rollback must retain prepared Manifest cleanup failure");
     }
 
     [Test]
@@ -488,6 +652,33 @@ public class SharpLinkRuntimeContextTests
     }
 
     [Test]
+    public void ContextDisposeShouldPreserveEveryAdapterScopeFailure()
+    {
+        var context = new SharpLinkRuntimeContextBuilder().Build([
+            new TestManifest("first-throw", new ConfigurableAdapterFactory<AdapterValue>(
+                new NamedThrowingDisposeAdapter("throwing.first/v1", "first scope cleanup failed"),
+                "throwing.first/v1", "throwing-wire/v1")),
+            new TestManifest("second-throw", new ConfigurableAdapterFactory<SecondAdapterValue>(
+                new NamedThrowingDisposeAdapter("throwing.second/v1", "second scope cleanup failed"),
+                "throwing.second/v1", "throwing-wire/v1"))
+        ]);
+
+        Exception failure;
+        try
+        {
+            context.Dispose();
+            throw new Exception("expected Adapter scope cleanup failures");
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Ensure(ContainsMessage(failure, "first scope cleanup failed"), "first scope failure retained");
+        Ensure(ContainsMessage(failure, "second scope cleanup failed"), "second scope failure retained");
+    }
+
+    [Test]
     public async Task TenThousandCodecPublicationRacesShouldPreserveRegistrationIdentity()
     {
         var oldCounters = new AdapterCounters();
@@ -540,6 +731,183 @@ public class SharpLinkRuntimeContextTests
         context.Dispose();
         context.Dispose();
         Ensure(newCounters.ScopeDisposeCount == 1, "new generation Scope is disposed exactly once");
+    }
+
+    [Test]
+    public async Task GeneratedCodecResolutionCrossingPublicationShouldUseCurrentGeneration()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var oldRegistration = context.PrepareGeneratedManifest(new TestManifest(
+            "blocking-old-generation",
+            new BlockingNativeFactory<ThirdAdapterValue>(
+                new TaggedThirdAdapterValueCodec(1), entered, release)));
+        var newRegistration = context.PrepareGeneratedManifest(new TestManifest(
+            "new-generation",
+            new FixedNativeFactory<ThirdAdapterValue>(new TaggedThirdAdapterValueCodec(2))));
+        context.AdoptGeneratedManifest(oldRegistration);
+        context.AdoptGeneratedManifest(newRegistration);
+        context.PublishGeneratedCodecs(oldRegistration.Codecs);
+
+        var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        context.PublishGeneratedCodecs(newRegistration.Codecs);
+        release.TrySetResult();
+
+        var resolved = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+        Ensure(resolved is TaggedThirdAdapterValueCodec { Tag: 2 },
+            "a Codec resolution returning after publication must use the current generation");
+    }
+
+    [Test]
+    public async Task FallbackCodecResolutionCrossingPublicationShouldUseGeneratedCodec()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseCodecResolver(type =>
+            {
+                if (type != typeof(ThirdAdapterValue))
+                    return null;
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+                return new TaggedThirdAdapterValueCodec(1);
+            })
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var registration = context.PrepareGeneratedManifest(new TestManifest(
+            "generated-during-fallback",
+            new FixedNativeFactory<ThirdAdapterValue>(new TaggedThirdAdapterValueCodec(2))));
+        context.AdoptGeneratedManifest(registration);
+
+        var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        context.PublishGeneratedCodecs(registration.Codecs);
+        release.TrySetResult();
+
+        var resolved = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+        Ensure(resolved is TaggedThirdAdapterValueCodec { Tag: 2 },
+            "a fallback resolution must not cross a generated publication boundary");
+    }
+
+    [Test]
+    public async Task NullFallbackResolutionCrossingPublicationShouldUseGeneratedCodec()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseCodecResolver(type =>
+            {
+                if (type != typeof(ThirdAdapterValue))
+                    return null;
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+                return null;
+            })
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var registration = context.PrepareGeneratedManifest(new TestManifest(
+            "generated-during-null-fallback",
+            new FixedNativeFactory<ThirdAdapterValue>(new TaggedThirdAdapterValueCodec(2))));
+        context.AdoptGeneratedManifest(registration);
+
+        var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        context.PublishGeneratedCodecs(registration.Codecs);
+        release.TrySetResult();
+
+        var resolved = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+        Ensure(resolved is TaggedThirdAdapterValueCodec { Tag: 2 },
+            "a null fallback result must recheck generated publication");
+    }
+
+    [Test]
+    public async Task CodecResolutionCrossingContextDisposalShouldFail()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var context = new SharpLinkRuntimeContextBuilder()
+            .UseCodecResolver(type =>
+            {
+                if (type != typeof(ThirdAdapterValue))
+                    return null;
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+                return new TaggedThirdAdapterValueCodec(1);
+            })
+            .Build(includeGeneratedAssemblyCatalog: false);
+
+        var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        context.Dispose();
+        release.TrySetResult();
+
+        try
+        {
+            _ = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+            throw new Exception("expected in-flight Codec resolution to observe Context disposal");
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    [Test]
+    public async Task NullCodecResolutionCrossingContextDisposalShouldFailAsDisposed()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var context = new SharpLinkRuntimeContextBuilder()
+            .UseCodecResolver(type =>
+            {
+                if (type != typeof(ThirdAdapterValue))
+                    return null;
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+                return null;
+            })
+            .Build(includeGeneratedAssemblyCatalog: false);
+
+        var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        context.Dispose();
+        release.TrySetResult();
+
+        try
+        {
+            _ = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+            throw new Exception("expected null Codec resolution to observe Context disposal");
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    [Test]
+    public void UnchangedCodecShouldRefreshAcrossAnUnrelatedSnapshotRemoval()
+    {
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var stableRegistration = context.PrepareGeneratedManifest(new TestManifest(
+            "stable-codec",
+            new FixedNativeFactory<ThirdAdapterValue>(new TaggedThirdAdapterValueCodec(3))));
+        var removedRegistration = context.PrepareGeneratedManifest(new TestManifest(
+            "removed-codec",
+            new FixedNativeFactory<SecondAdapterValue>(new AdapterCodec<SecondAdapterValue>())));
+        context.AdoptGeneratedManifest(stableRegistration);
+        context.AdoptGeneratedManifest(removedRegistration);
+        var combined = stableRegistration.Codecs
+            .Concat(removedRegistration.Codecs)
+            .ToDictionary(static pair => pair.Key, static pair => pair.Value);
+        context.PublishGeneratedCodecs(combined);
+        var before = context.Codecs.GetCodec<ThirdAdapterValue>();
+
+        context.PublishGeneratedCodecs(stableRegistration.Codecs);
+        var after = context.Codecs.GetCodec<ThirdAdapterValue>();
+
+        Ensure(ReferenceEquals(before, after),
+            "an unchanged registration refreshes its snapshot identity without recreating its Codec");
+        context.ReleaseGeneratedManifest(removedRegistration);
     }
 
     [Test]
@@ -753,6 +1121,19 @@ public class SharpLinkRuntimeContextTests
         }
     }
 
+    private sealed class NamedThrowingDisposeAdapter(string adapterId, string message) : IRpcCodecAdapter
+    {
+        public string AdapterId => adapterId;
+        public string WireFormatId => "throwing-wire/v1";
+        public IRpcCodecAdapterScope CreateScope() => new NamedThrowingDisposeScope(message);
+    }
+
+    private sealed class NamedThrowingDisposeScope(string message) : IRpcCodecAdapterScope
+    {
+        public IRpcCodec<T> CreateCodec<T>() => new AdapterCodec<T>();
+        public void Dispose() => throw new InvalidOperationException(message);
+    }
+
     private sealed class CountingScope(AdapterCounters counters) : IRpcCodecAdapterScope
     {
         private int _disposed;
@@ -815,6 +1196,54 @@ public class SharpLinkRuntimeContextTests
         }
 
         public AdapterValue Deserialize(in ReadOnlySequence<byte> buffer) => new();
+    }
+
+    private sealed class TaggedThirdAdapterValueCodec(int tag) : IRpcCodec<ThirdAdapterValue>
+    {
+        internal int Tag { get; } = tag;
+
+        public void Serialize(in ThirdAdapterValue value, IBufferWriter<byte> buffer)
+        {
+        }
+
+        public ThirdAdapterValue Deserialize(in ReadOnlySequence<byte> buffer) => new();
+    }
+
+    private sealed class FixedNativeFactory<T>(IRpcCodec<T> codec) : IRpcGeneratedCodecFactory
+    {
+        public Type TargetType => typeof(T);
+        public string SchemaId => $"native:{typeof(T).FullName}";
+        public string WireFormatId => "sharplink-native/v1";
+        public string? AdapterId => null;
+        public IRpcCodecAdapter? Adapter => null;
+        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
+            => adapterScope is null
+                ? codec
+                : throw new ArgumentException("Native factory does not accept an Adapter Scope.", nameof(adapterScope));
+        public bool IsCompatibleCodec(IRpcCodec candidate) => candidate is IRpcCodec<T>;
+    }
+
+    private sealed class BlockingNativeFactory<T>(
+        IRpcCodec<T> codec,
+        TaskCompletionSource entered,
+        TaskCompletionSource release) : IRpcGeneratedCodecFactory
+    {
+        public Type TargetType => typeof(T);
+        public string SchemaId => $"blocking-native:{typeof(T).FullName}";
+        public string WireFormatId => "sharplink-native/v1";
+        public string? AdapterId => null;
+        public IRpcCodecAdapter? Adapter => null;
+
+        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
+        {
+            if (adapterScope is not null)
+                throw new ArgumentException("Native factory does not accept an Adapter Scope.", nameof(adapterScope));
+            entered.TrySetResult();
+            release.Task.GetAwaiter().GetResult();
+            return codec;
+        }
+
+        public bool IsCompatibleCodec(IRpcCodec candidate) => candidate is IRpcCodec<T>;
     }
 
     private sealed class AdapterFactory<T>(AdapterCounters counters) : IRpcGeneratedCodecFactory
@@ -908,6 +1337,42 @@ public class SharpLinkRuntimeContextTests
         internal int CodecCreateCount;
         internal int ScopeDisposeCount;
         internal int FailOnCodecNumber;
+    }
+
+    private static bool ContainsMessage(Exception exception, string message)
+    {
+        if (exception.Message == message)
+            return true;
+        if (exception is AggregateException aggregate)
+        {
+            foreach (var inner in aggregate.InnerExceptions)
+            {
+                if (ContainsMessage(inner, message))
+                    return true;
+            }
+            return false;
+        }
+        return exception.InnerException is { } nested && ContainsMessage(nested, message);
+    }
+
+    private static Exception CaptureFailure(Action action)
+    {
+        try
+        {
+            action();
+            throw new Exception("expected operation to fail");
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static T ReadPrivate<T>(object instance, string fieldName)
+    {
+        var field = instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception($"cannot find {fieldName}");
+        return (T)field.GetValue(instance)!;
     }
 
     private static void Ensure(bool condition, string message)

@@ -184,7 +184,7 @@ public partial class RpcGenerator
             {
                 var member = initializerMembers[index];
                 var suffix = index == initializerMembers.Length - 1 ? string.Empty : ",";
-                sb.AppendLine($"            {member.Identifier} = local_{member.Identifier}{suffix}");
+                sb.AppendLine($"            {EscapeIdentifier(member.Identifier)} = local_{member.Identifier}{suffix}");
             }
             sb.Append("        }");
         }
@@ -200,13 +200,13 @@ public partial class RpcGenerator
         GeneratedMemberModel member,
         Dictionary<string, int> complexIndexes)
     {
-        var value = $"value.{member.Identifier}";
+        var value = $"value.{EscapeIdentifier(member.Identifier)}";
         var fieldId = member.FieldId.ToString(InvariantCulture) + "U";
         switch (member.Kind)
         {
             case GeneratedMemberKind.Fixed:
                 sb.AppendLine($"        RpcGeneratedCodecWire.WriteFieldKey(writer, {fieldId}, {GetWireType(member.FixedSize)});");
-                sb.AppendLine($"        RpcGeneratedCodecWire.WriteUnmanaged<{member.TypeName}>(writer, {value});");
+                sb.AppendLine(GetFixedWriteExpression(member.TypeName, value, 8));
                 break;
             case GeneratedMemberKind.NullableFixed:
                 sb.AppendLine($"        if (!{value}.HasValue)");
@@ -214,7 +214,7 @@ public partial class RpcGenerator
                 sb.AppendLine("        else");
                 sb.AppendLine("        {");
                 sb.AppendLine($"            RpcGeneratedCodecWire.WriteFieldKey(writer, {fieldId}, {GetWireType(member.FixedSize)});");
-                sb.AppendLine($"            RpcGeneratedCodecWire.WriteUnmanaged<{member.FixedTypeName}>(writer, {value}.Value);");
+                sb.AppendLine(GetFixedWriteExpression(member.FixedTypeName!, value + ".Value", 12));
                 sb.AppendLine("        }");
                 break;
             case GeneratedMemberKind.String:
@@ -248,7 +248,7 @@ public partial class RpcGenerator
         {
             case GeneratedMemberKind.Fixed:
                 sb.AppendLine($"                    RpcGeneratedCodecWire.EnsureWireType(wireType, {GetWireType(member.FixedSize)});");
-                sb.AppendLine($"                    local_{member.Identifier} = RpcGeneratedCodecWire.ReadUnmanaged<{member.TypeName}>(ref reader);");
+                sb.AppendLine(GetFixedReadExpression(member.TypeName, $"local_{member.Identifier}", 20));
                 break;
             case GeneratedMemberKind.NullableFixed:
                 sb.AppendLine("                    if (wireType == RpcGeneratedWireType.Null)");
@@ -256,7 +256,7 @@ public partial class RpcGenerator
                 sb.AppendLine("                    else");
                 sb.AppendLine("                    {");
                 sb.AppendLine($"                        RpcGeneratedCodecWire.EnsureWireType(wireType, {GetWireType(member.FixedSize)});");
-                sb.AppendLine($"                        local_{member.Identifier} = RpcGeneratedCodecWire.ReadUnmanaged<{member.FixedTypeName}>(ref reader);");
+                sb.AppendLine(GetFixedReadExpression(member.FixedTypeName!, $"local_{member.Identifier}", 24));
                 sb.AppendLine("                    }");
                 break;
             case GeneratedMemberKind.String:
@@ -276,6 +276,40 @@ public partial class RpcGenerator
         }
         sb.AppendLine("                    break;");
     }
+
+    private static string GetFixedWriteExpression(string typeName, string value, int spaces)
+    {
+        var indent = new string(' ', spaces);
+        if (IsBooleanType(typeName))
+            return $"{indent}RpcGeneratedCodecWire.WriteBoolean(writer, {value});";
+        var semanticMethod = GetSemanticFixedMethod(typeName);
+        return semanticMethod is null
+            ? $"{indent}RpcGeneratedCodecWire.WriteUnmanaged<{typeName}>(writer, {value});"
+            : $"{indent}RpcGeneratedCodecWire.Write{semanticMethod}(writer, {value});";
+    }
+
+    private static string GetFixedReadExpression(string typeName, string target, int spaces)
+    {
+        var indent = new string(' ', spaces);
+        if (IsBooleanType(typeName))
+            return $"{indent}{target} = RpcGeneratedCodecWire.ReadBoolean(ref reader);";
+        var semanticMethod = GetSemanticFixedMethod(typeName);
+        return semanticMethod is null
+            ? $"{indent}{target} = RpcGeneratedCodecWire.ReadUnmanaged<{typeName}>(ref reader);"
+            : $"{indent}{target} = RpcGeneratedCodecWire.Read{semanticMethod}(ref reader);";
+    }
+
+    private static string? GetSemanticFixedMethod(string typeName)
+        => typeName.Replace("global::", string.Empty) switch
+        {
+            "System.Text.Rune" => "Rune",
+            "decimal" or "System.Decimal" => "Decimal",
+            "System.DateOnly" => "DateOnly",
+            "System.DateTime" => "DateTime",
+            "System.TimeOnly" => "TimeOnly",
+            "System.DateTimeOffset" => "DateTimeOffset",
+            _ => null
+        };
 
     private static void AppendCollectionCodec(StringBuilder sb, GeneratedCodecModel model)
     {
@@ -406,6 +440,7 @@ public partial class RpcGenerator
         sb.AppendLine("        var count = RpcGeneratedCodecWire.ReadCollectionCount(ref reader);");
         sb.AppendLine("        if (count < 0)");
         sb.AppendLine("        {");
+        sb.AppendLine("            RpcGeneratedCodecWire.EnsureFullyConsumed(reader);");
         if (model.Kind is GeneratedCodecKind.Array or GeneratedCodecKind.List or GeneratedCodecKind.Dictionary)
             sb.AppendLine("            return null;");
         else
@@ -419,6 +454,8 @@ public partial class RpcGenerator
             sb.AppendLine("        {");
             sb.AppendLine("            var key = __keyCodec.Deserialize(RpcGeneratedCodecWire.ReadLengthDelimited(ref reader));");
             sb.AppendLine("            var value = __valueCodec.Deserialize(RpcGeneratedCodecWire.ReadLengthDelimited(ref reader));");
+            sb.AppendLine("            if (key is null)");
+            sb.AppendLine("                throw RpcGeneratedCodecWire.DataLoss(\"Generated dictionary contains a null key.\");");
             sb.AppendLine("            if (!result.TryAdd(key!, value!))");
             sb.AppendLine("                throw RpcGeneratedCodecWire.DataLoss(\"Generated dictionary contains a duplicate key.\");");
             sb.AppendLine("        }");

@@ -45,7 +45,20 @@
 - `0.7.9`（已完成）：组合验证、低基数 telemetry、迁移文档与 API freeze。
 - `0.7.10`（已完成）：多 cluster Client、编译期 route Manifest 与动态模块协调。
 - `0.7.11`（已完成）：通用 Codec Adapter、Manifest API v3、SharpPack 1.1.0、wire-format identity、collectible Scope 生命周期与 MemoryPack 扩展删除。
-- `0.8.0-rc`：Chaos、长稳、跨平台/AOT/Package/性能 Release Gate，只修复正确性、稳定性、性能回退和文档问题。
+- `0.8.0`（已完成）：深度审核第一批五项 P2 修复——Codec 精确消费与规范标记、跨 stream connection credit、继承契约方法、unmanaged Adapter 请求布局；保留回归与性能实证。
+- `0.8.1`（已完成）：冻结认证/拓扑/生成 Manifest 集合，收敛 Resolver 异步释放，恢复语义值 Codec 校验，并删除 `List<T>` 解码的中间数组。
+- `0.8.2`（已完成）：隔离共享连接等待取消，统一 endpoint-cluster 握手超时，收窄 DNS last-good，并拒绝非规范长度与非法 UTF-8 错误帧。
+- `0.8.3`（已完成）：深冻结 endpoint snapshot，异步化 shutdown cancellation，保留连接/Hosting 主失败，并消除 metadata 解码二次数组。
+- `0.8.37`（已完成）：收紧 generated type 可达性、keyword DTO 标识符、sealed record/ref-like DTO 与 static abstract contract 边界。
+- `0.8.38`（已完成）：收紧 generated service/DTO 构造计划、pointer/function-pointer 工件与 interceptor 结构化取消状态。
+- `0.8.39`（已完成）：收紧 interceptor 终端状态、continuation 和结果类型边界，消除 client stream context capture，并统一 malformed request DataLoss 分类。
+- `0.8.40`（已完成）：收紧 interceptor 异步 continuation 所有权、结构化错误 code 与 generated response nullability 边界。
+- `0.8.41`（已完成）：在 scalar/双向 stream 解码、runtime fingerprint 与 Protocol v2 reserved error code 上闭合 nullability/错误身份边界。
+- `0.8.42`（已完成）：修复 Throughput SendPump 进程崩溃、Codec 规范 null、Protocol writer 错误域与 DTO member nullability schema identity。
+- `0.8.43`（已完成）：修复共享内存创建竞态、流控空队列锁、连接关闭错误身份、提前流释放遥测与动态准入状态退役。
+- `0.8.44`（已完成）：修复 shutdown join 异常丢失、Server 终态响应失败后的 call admission 泄漏，以及 terminal stream frame 失败后的 flow-control slot 泄漏。
+- `0.8.x`（进行中）：按独立、高价值工程根因记录和推进，不以数量凑版本；同一根因跨组件只计一次，极端理论竞态不计入 P2。连续三轮完整审核无新高价值改进后结束，并对全部历史发现按独立根因重新聚类。
+- `0.8.x-rc`：上述审核收敛后执行 Chaos、长稳、跨平台/AOT/Package/性能 Release Gate，只修复正确性、稳定性、性能回退和文档问题。
 - `1.0.0`：通过 RC 接受标准后发布稳定 API 与 Protocol v2。
 
 ## 提交规则

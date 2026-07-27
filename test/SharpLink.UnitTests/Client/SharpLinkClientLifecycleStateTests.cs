@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Threading;
+using Microsoft.Extensions.Logging;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Client;
@@ -31,6 +32,197 @@ public class SharpLinkClientLifecycleStateTests
     }
 
     [Test]
+    public async Task FutureWallClockActivityShouldNotSuppressHeartbeatTimeout()
+    {
+        var transport = new TestClientTransportFactory();
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromMilliseconds(10),
+            TimeSpan.FromMilliseconds(30));
+        await client.ConnectAsync();
+        var readyConnectionsField = typeof(SharpLinkClient).GetField(
+            "_readyConnections",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find ready connection field");
+        var connection = ((ClientConnection[])readyConnectionsField.GetValue(client)!)[0];
+
+        connection.Session.LastActive = DateTime.UtcNow.AddDays(1);
+
+        await WaitUntilAsync(
+            () => connection.State == ClientConnectionState.Closed,
+            () => $"heartbeat did not close the silent connection; state={connection.State}");
+    }
+
+    [Test]
+    public async Task SharedFixedConnectShouldSurviveFirstWaiterCancellation()
+    {
+        var transport = new BlockingInitialTransportFactory();
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        using var cancellation = new CancellationTokenSource();
+
+        var cancelledWaiter = client.ConnectAsync(cancellation.Token).AsTask();
+        await transport.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var survivingWaiter = client.ConnectAsync().AsTask();
+        cancellation.Cancel();
+
+        await EnsureCancelledAsync(cancelledWaiter);
+        Ensure(!survivingWaiter.IsCompleted,
+            "one caller cancelling its wait must not cancel the shared client-owned connect attempt");
+
+        transport.ReleaseConnect();
+        await survivingWaiter.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(client.State == SharpLinkConnectionState.Ready,
+            "the shared fixed connect should still publish a ready connection");
+    }
+
+    [Test]
+    public async Task EndpointClusterHandshakeTimeoutsShouldRetainStructuredCause()
+    {
+        var staticFactories = new List<HangingHandshakeTransportFactory>();
+        await using (var staticClient = SharpClientBuilder.Create()
+            .UseEndpoints(
+                [CreateEndpoint("first", 5001), CreateEndpoint("second", 5002)],
+                _ =>
+                {
+                    var factory = new HangingHandshakeTransportFactory();
+                    staticFactories.Add(factory);
+                    return factory;
+                })
+            .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromMilliseconds(20))
+            .Build())
+        {
+            var exception = await CaptureSharpLinkExceptionAsync(staticClient.ConnectAsync().AsTask());
+            Ensure(ContainsHandshakeTimeout(exception),
+                "static endpoint clusters must preserve the structured handshake-timeout cause");
+        }
+
+        var dynamicFactory = new HangingHandshakeTransportFactory();
+        await using var dynamicClient = SharpClientBuilder.Create()
+            .UseEndpointResolver(
+                new FixedSnapshotResolver(new SharpLinkEndpointSnapshot(1, [CreateEndpoint("dynamic", 5003)])),
+                _ => dynamicFactory)
+            .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromMilliseconds(20))
+            .Build();
+        var dynamicException = await CaptureSharpLinkExceptionAsync(dynamicClient.ConnectAsync().AsTask());
+        Ensure(ContainsHandshakeTimeout(dynamicException),
+            "dynamic endpoint clusters must preserve the structured handshake-timeout cause");
+    }
+
+    [Test]
+    public async Task StopAsyncShouldNotRunShutdownCallbacksBeforeReturning()
+    {
+        var client = new SharpLinkClient(
+            new TestClientTransportFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        var shutdownField = typeof(SharpLinkClient).GetField(
+            "_shutdownCts",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find client shutdown source");
+        var shutdown = (CancellationTokenSource)shutdownField.GetValue(client)!;
+        var callbackStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCallback = new ManualResetEventSlim();
+        using var registration = shutdown.Token.Register(() =>
+        {
+            callbackStarted.TrySetResult();
+            releaseCallback.Wait();
+        });
+        var stopReturned = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var invocation = Task.Run(() =>
+        {
+            var stop = client.StopAsync().AsTask();
+            stopReturned.TrySetResult(stop);
+        });
+        await callbackStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        try
+        {
+            Ensure(stopReturned.Task.IsCompleted,
+                "an async StopAsync call must return before a blocking cancellation callback finishes");
+        }
+        finally
+        {
+            releaseCallback.Set();
+        }
+
+        await invocation.WaitAsync(TimeSpan.FromSeconds(2));
+        await (await stopReturned.Task).WaitAsync(TimeSpan.FromSeconds(2));
+        releaseCallback.Dispose();
+    }
+
+    [Test]
+    public async Task FailedConnectShouldPreservePrimaryAndCleanupFailures()
+    {
+        await using var client = new SharpLinkClient(
+            new CleanupFailingHandshakeTransportFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+
+        Exception failure;
+        try
+        {
+            await client.ConnectAsync();
+            throw new Exception("expected connect failure");
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Ensure(ContainsException(failure, static exception =>
+                exception is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed }),
+            "connect failure must retain the primary handshake/connection error");
+        Ensure(ContainsException(failure, static exception =>
+                exception is InvalidOperationException { Message: "transport cleanup failed" }),
+            "connect failure must retain the cleanup error");
+    }
+
+    [Test]
+    public async Task InitialPoolRollbackShouldPreserveConnectAndCleanupFailures()
+    {
+        var client = new SharpLinkClient(
+            new InitialPoolRollbackFailingTransportFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            connectionPoolOptions: new SharpLinkConnectionPoolOptions
+            {
+                MinConnections = 2,
+                MaxConnections = 2
+            });
+
+        Exception failure;
+        try
+        {
+            await client.ConnectAsync();
+            throw new Exception("expected initial pool connection failure");
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Ensure(ContainsException(failure, static exception =>
+                exception is InvalidOperationException { Message: "second connection failed" }),
+            "initial pool rollback must retain the connection failure");
+        Ensure(ContainsException(failure, static exception =>
+                exception is InvalidOperationException { Message: "ready connection cleanup failed" }),
+            "initial pool rollback must retain the ready connection cleanup failure");
+        Ensure(client.State == SharpLinkConnectionState.Faulted,
+            "cleanup failure must not strand the client in Connecting state");
+
+        try
+        {
+            await client.StopAsync();
+        }
+        catch
+        {
+        }
+    }
+
+    [Test]
     public async Task StopShouldBeIdempotentAndRejectLaterConnects()
     {
         var transport = new TestClientTransportFactory();
@@ -54,6 +246,128 @@ public class SharpLinkClientLifecycleStateTests
         {
             Ensure(exception.Code == SharpLinkErrorCode.ConnectionClosed, "connect-after-stop error code");
         }
+    }
+
+    [Test]
+    public async Task StopShouldPreserveAnUnexpectedCompletedReconnectFailure()
+    {
+        var client = new SharpLinkClient(
+            new NonConnectingFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        var reconnectTaskField = typeof(SharpLinkClient).GetField(
+            "_reconnectTask",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find client reconnect task");
+        reconnectTaskField.SetValue(
+            client,
+            Task.FromException(new InvalidOperationException("unexpected reconnect cleanup failure")));
+
+        Exception failure;
+        try
+        {
+            await client.StopAsync();
+            throw new Exception("expected stop failure");
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Ensure(ContainsException(failure, static exception =>
+                exception is InvalidOperationException { Message: "unexpected reconnect cleanup failure" }),
+            "shutdown cancellation must not hide an unexpected completed reconnect failure");
+        Ensure(client.State == SharpLinkConnectionState.Stopped,
+            "client cleanup must still reach the stopped state when it reports the failure");
+    }
+
+    [Test]
+    public async Task BackgroundJoinShouldNotHideAnUnexpectedNestedFailure()
+    {
+        await using var client = new SharpLinkClient(
+            new NonConnectingFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        var expected = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var unexpected = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var mixed = Task.WhenAll(expected.Task, unexpected.Task);
+        typeof(SharpLinkClient).GetMethod(
+                "TrackBackgroundTask",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(client, [mixed]);
+        var wait = typeof(SharpLinkClient).GetMethod(
+            "WaitForBackgroundTasksAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Client background task join");
+        var joined = (Task)wait.Invoke(client, null)!;
+        await Task.Yield();
+        expected.TrySetException(new IOException("expected background transport closure"));
+        unexpected.TrySetException(new InvalidOperationException("unexpected background nested failure"));
+
+        Exception? failure = null;
+        try
+        {
+            await joined;
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Ensure(failure is not null && ContainsException(failure, static exception =>
+                exception is InvalidOperationException { Message: "unexpected background nested failure" }),
+            "an expected background close must not hide an unexpected nested task failure");
+    }
+
+    [Test]
+    public async Task StaticClusterWorkerJoinShouldNotHideAnUnexpectedNestedFailure()
+    {
+        await using var client = (SharpLinkClient)SharpClientBuilder.Create()
+            .UseEndpoints(
+                [CreateEndpoint("first", 5001), CreateEndpoint("second", 5002)],
+                _ => new NonConnectingFactory())
+            .Build();
+        var cluster = typeof(SharpLinkClient).GetField(
+                "_cluster",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(client)
+            ?? throw new Exception("cannot find static cluster runtime");
+        var endpoints = (Array)(cluster.GetType().GetField(
+                "_endpoints",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(cluster)
+            ?? throw new Exception("cannot find static cluster endpoints"));
+        var firstEndpoint = endpoints.GetValue(0)
+            ?? throw new Exception("cannot find first static endpoint state");
+        var reconnectTask = firstEndpoint.GetType().GetProperty("ReconnectTask")
+            ?? throw new Exception("cannot find static reconnect worker");
+        var expected = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var unexpected = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        reconnectTask.SetValue(firstEndpoint, Task.WhenAll(expected.Task, unexpected.Task));
+        var failures = new List<Exception>();
+        var wait = cluster.GetType().GetMethod(
+            "WaitForWorkersAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find static cluster worker join");
+        var joined = (Task)wait.Invoke(cluster, [failures])!;
+        await Task.Yield();
+        expected.TrySetException(new IOException("expected static worker transport closure"));
+        unexpected.TrySetException(new InvalidOperationException("unexpected static worker nested failure"));
+
+        await joined;
+
+        var retainedUnexpected = false;
+        for (var index = 0; index < failures.Count; index++)
+        {
+            retainedUnexpected |= ContainsException(failures[index], static exception =>
+                exception is InvalidOperationException { Message: "unexpected static worker nested failure" });
+        }
+        Ensure(retainedUnexpected,
+            "an expected static worker close must not hide an unexpected nested task failure");
     }
 
     [Test]
@@ -101,10 +415,12 @@ public class SharpLinkClientLifecycleStateTests
     public async Task FailedExpansionShouldHandZeroReadyPoolToReconnectWorker()
     {
         var transport = new SequenceClientTransportFactory(failedConnectsAfterInitial: 1);
+        var loggerFactory = new CaptureLoggerFactory();
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            loggerFactory,
             connectionPoolOptions: new SharpLinkConnectionPoolOptions
             {
                 MinConnections = 1,
@@ -127,6 +443,12 @@ public class SharpLinkClientLifecycleStateTests
                   client.State == SharpLinkConnectionState.Ready,
             () => $"failed expansion stranded the client after {transport.ConnectCount} attempts " +
                   $"in state {client.State} with {client.ReadyConnectionCount} ready connections");
+        Ensure(loggerFactory.Entries.FindIndex(static entry => entry.Level == LogLevel.Error) < 0,
+            "a recoverable expansion failure must not be reported as an unhandled background error");
+        Ensure(loggerFactory.Entries.FindIndex(static entry =>
+                entry is { Level: LogLevel.Warning, EventId.Id: LogEvents.Client.ConnectionAttemptFailed,
+                    Exception: SocketException }) >= 0,
+            "the recoverable expansion failure should remain observable through its warning event");
     }
 
     [Test]
@@ -146,6 +468,70 @@ public class SharpLinkClientLifecycleStateTests
         await client.ConnectAsync();
         Ensure(transport.ConnectCount == 2, "minimum pool should be ready when ConnectAsync returns");
         Ensure(client.ReadyConnectionCount == 2, "ready pool size");
+    }
+
+    [Test]
+    public async Task ConcurrentClientConnectionDisposersShouldAwaitPhysicalCleanup()
+    {
+        await using var owner = new SharpLinkClient(
+            new NonConnectingFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        var transport = new BlockingDisposeConnection();
+        var connection = new ClientConnection(
+            owner,
+            new RpcSession(transport),
+            new CancellationTokenSource(),
+            8,
+            context.Codecs);
+
+        var first = connection.DisposeAsync().AsTask();
+        await transport.DisposeStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var second = connection.DisposeAsync().AsTask();
+
+        Ensure(!second.IsCompleted, "concurrent disposal must await physical transport cleanup");
+        transport.ReleaseDispose();
+        await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public async Task CancellationCallbackFailureMustNotStrandPendingCalls()
+    {
+        await using var owner = new SharpLinkClient(
+            new NonConnectingFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        using var cancellation = new CancellationTokenSource();
+        using var callback = cancellation.Token.Register(
+            static () => throw new InvalidOperationException("connection cancellation callback failed"));
+        var connection = new ClientConnection(
+            owner,
+            new RpcSession(new TestTransportConnection()),
+            cancellation,
+            8,
+            context.Codecs);
+        var operation = connection.PendingCalls.Rent<int>(out _);
+        var terminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "connection failed");
+
+        try
+        {
+            connection.Fail(terminal);
+            try
+            {
+                _ = await operation.AsValueTask();
+                throw new Exception("expected pending call failure");
+            }
+            catch (SharpLinkException exception)
+            {
+                Ensure(ReferenceEquals(exception, terminal), "pending call must retain terminal failure");
+            }
+        }
+        finally
+        {
+            await connection.DisposeAsync();
+        }
     }
 
     [Test]
@@ -355,6 +741,66 @@ public class SharpLinkClientLifecycleStateTests
         }
     }
 
+    private static async Task EnsureCancelledAsync(Task operation)
+    {
+        try
+        {
+            await operation;
+            throw new Exception("expected the caller wait to be cancelled");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private static async Task<SharpLinkException> CaptureSharpLinkExceptionAsync(Task operation)
+    {
+        try
+        {
+            await operation;
+            throw new Exception("expected a SharpLinkException");
+        }
+        catch (SharpLinkException exception)
+        {
+            return exception;
+        }
+    }
+
+    private static bool ContainsHandshakeTimeout(Exception exception)
+    {
+        if (exception is SharpLinkException { Code: SharpLinkErrorCode.Unavailable } sharpLink &&
+            sharpLink.Message.Contains("handshake timed out", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        if (exception is AggregateException aggregate)
+        {
+            foreach (var innerException in aggregate.InnerExceptions)
+            {
+                if (ContainsHandshakeTimeout(innerException))
+                    return true;
+            }
+            return false;
+        }
+        return exception.InnerException is { } inner && ContainsHandshakeTimeout(inner);
+    }
+
+    private static bool ContainsException(Exception exception, Func<Exception, bool> predicate)
+    {
+        if (predicate(exception))
+            return true;
+        if (exception is AggregateException aggregate)
+        {
+            foreach (var innerException in aggregate.InnerExceptions)
+            {
+                if (ContainsException(innerException, predicate))
+                    return true;
+            }
+            return false;
+        }
+        return exception.InnerException is { } inner && ContainsException(inner, predicate);
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
@@ -471,6 +917,206 @@ public class SharpLinkClientLifecycleStateTests
             for (var index = 0; index < connections.Length; index++)
                 await connections[index].DisposeAsync();
         }
+    }
+
+    private sealed class CaptureLoggerFactory : ILoggerFactory
+    {
+        private readonly Lock _gate = new();
+
+        internal List<LogEntry> Entries { get; } = [];
+
+        public ILogger CreateLogger(string categoryName) => new CaptureLogger(this);
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class CaptureLogger(CaptureLoggerFactory owner) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                lock (owner._gate)
+                    owner.Entries.Add(new LogEntry(logLevel, eventId, exception));
+            }
+        }
+    }
+
+    private readonly record struct LogEntry(LogLevel Level, EventId EventId, Exception? Exception);
+
+    private sealed class BlockingInitialTransportFactory : IClientTransportFactory
+    {
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TestTransportConnection? _connection;
+
+        internal TaskCompletionSource ConnectStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            ConnectStarted.TrySetResult();
+            await _release.Task.WaitAsync(cancellationToken);
+            var connection = new TestTransportConnection();
+            var payload = new PooledByteBufferWriter();
+            ProtocolV2PayloadCodec.WriteHandshakeResponse(payload, new ProtocolV2HandshakeResponse(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.None,
+                4 * 1024 * 1024,
+                1024 * 1024,
+                16 * 1024 * 1024));
+            await connection.InjectFrameAsync(
+                ProtocolV2FrameType.HandshakeResponse,
+                ProtocolV2FrameFlags.None,
+                0,
+                payload.WrittenMemory,
+                cancellationToken);
+            _connection = connection;
+            return connection;
+        }
+
+        internal void ReleaseConnect() => _release.TrySetResult();
+
+        public ValueTask DisposeAsync()
+            => _connection?.DisposeAsync() ?? ValueTask.CompletedTask;
+    }
+
+    private sealed class HangingHandshakeTransportFactory : IClientTransportFactory
+    {
+        private readonly List<TestTransportConnection> _connections = [];
+
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            var connection = new TestTransportConnection();
+            _connections.Add(connection);
+            return ValueTask.FromResult<ITransportConnection>(connection);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            foreach (var connection in _connections)
+                await connection.DisposeAsync();
+        }
+    }
+
+    private sealed class FixedSnapshotResolver(SharpLinkEndpointSnapshot snapshot) : ISharpLinkEndpointResolver
+    {
+        public ValueTask<SharpLinkEndpointSnapshot> ResolveAsync(CancellationToken cancellationToken)
+            => ValueTask.FromResult(snapshot);
+
+        public async IAsyncEnumerable<SharpLinkEndpointSnapshot> WatchAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class CleanupFailingHandshakeTransportFactory : IClientTransportFactory
+    {
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<ITransportConnection>(new CleanupFailingConnection());
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class InitialPoolRollbackFailingTransportFactory : IClientTransportFactory
+    {
+        private int _connectCount;
+
+        public async ValueTask<ITransportConnection> ConnectAsync(
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _connectCount) != 1)
+                throw new InvalidOperationException("second connection failed");
+
+            var connection = new TestTransportConnection();
+            var payload = new PooledByteBufferWriter();
+            ProtocolV2PayloadCodec.WriteHandshakeResponse(payload, new ProtocolV2HandshakeResponse(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.None,
+                4 * 1024 * 1024,
+                1024 * 1024,
+                16 * 1024 * 1024));
+            await connection.InjectFrameAsync(
+                ProtocolV2FrameType.HandshakeResponse,
+                ProtocolV2FrameFlags.None,
+                0,
+                payload.WrittenMemory,
+                cancellationToken);
+            return new CleanupFailingReadyConnection(connection);
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class CleanupFailingReadyConnection(TestTransportConnection inner) : ITransportConnection
+    {
+        public string Id => inner.Id;
+        public System.IO.Pipelines.PipeReader Input => inner.Input;
+        public System.IO.Pipelines.PipeWriter Output => inner.Output;
+        public System.Net.EndPoint? LocalEndPoint => inner.LocalEndPoint;
+        public System.Net.EndPoint? RemoteEndPoint => inner.RemoteEndPoint;
+
+        public async ValueTask DisposeAsync()
+        {
+            await inner.DisposeAsync();
+            throw new InvalidOperationException("ready connection cleanup failed");
+        }
+    }
+
+    private sealed class CleanupFailingConnection : ITransportConnection
+    {
+        private readonly System.IO.Pipelines.Pipe _input = new();
+        private readonly System.IO.Pipelines.Pipe _output = new();
+
+        internal CleanupFailingConnection() => _input.Writer.Complete();
+
+        public string Id { get; } = "cleanup-failing";
+        public System.IO.Pipelines.PipeReader Input => _input.Reader;
+        public System.IO.Pipelines.PipeWriter Output => _output.Writer;
+        public System.Net.EndPoint? LocalEndPoint => null;
+        public System.Net.EndPoint? RemoteEndPoint => null;
+
+        public ValueTask DisposeAsync()
+            => ValueTask.FromException(new InvalidOperationException("transport cleanup failed"));
+    }
+
+    private sealed class BlockingDisposeConnection : ITransportConnection
+    {
+        private readonly System.IO.Pipelines.Pipe _input = new();
+        private readonly System.IO.Pipelines.Pipe _output = new();
+        private readonly TaskCompletionSource _release =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource DisposeStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public string Id { get; } = "blocking-dispose";
+        public System.IO.Pipelines.PipeReader Input => _input.Reader;
+        public System.IO.Pipelines.PipeWriter Output => _output.Writer;
+        public System.Net.EndPoint? LocalEndPoint => null;
+        public System.Net.EndPoint? RemoteEndPoint => null;
+
+        public ValueTask DisposeAsync()
+        {
+            DisposeStarted.TrySetResult();
+            return new ValueTask(_release.Task);
+        }
+
+        internal void ReleaseDispose() => _release.TrySetResult();
     }
 
     private static ClientConnection? SelectClusterConnection(

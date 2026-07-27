@@ -396,6 +396,7 @@ internal sealed partial class SharpLinkClient
             RpcSession? session = null;
             ITransportConnection? transport = null;
             ClientConnection? connection = null;
+            Exception? connectFailure = null;
             try
             {
                 using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _client._shutdownCts.Token);
@@ -407,11 +408,8 @@ internal sealed partial class SharpLinkClient
                 session.SetTelemetrySide("client");
                 session.BindRuntimeContext(_client._runtimeContext);
 
-                using var handshakeTimeout = new CancellationTokenSource(_client._protocolOptions.HandshakeTimeout);
-                using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(attemptCts.Token, handshakeTimeout.Token);
-                var handshakeException = await _client.ProcessHandshakeAsync(session, handshakeCts.Token).ConfigureAwait(false);
-                if (handshakeException is not null)
-                    throw handshakeException;
+                await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken)
+                    .ConfigureAwait(false);
 
                 var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(_client._shutdownCts.Token);
                 var createdConnection = new ClientConnection(
@@ -442,17 +440,18 @@ internal sealed partial class SharpLinkClient
                 PublishClientReadiness();
                 EnsureMinimumReadyEndpoints();
             }
+            catch (Exception exception)
+            {
+                connectFailure = exception;
+            }
             finally
             {
                 lock (_gate)
                     endpoint.ConnectingCount--;
-                if (transport is not null)
-                    await transport.DisposeAsync().ConfigureAwait(false);
-                if (connection is not null)
-                    await connection.DisposeAsync().ConfigureAwait(false);
-                else if (session is not null)
-                    await session.DisposeAsync().ConfigureAwait(false);
             }
+            if (connectFailure is not null)
+                await RethrowAfterFailedConnectionCleanupAsync(connectFailure, transport, connection, session)
+                    .ConfigureAwait(false);
         }
 
         private void HandleDisconnected(EndpointState endpoint, ClientConnection connection, Exception exception)
@@ -553,7 +552,7 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
-                LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ExpandAsync), exception);
+                LogClientConnectionAttemptFailed(_client._logger, nameof(ExpandAsync), exception);
                 if (endpoint.ReadyConnections.Length == 0)
                     EnsureReconnect(endpoint);
             }
@@ -585,7 +584,7 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
-                LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ReconnectAsync), exception);
+                LogClientConnectionAttemptFailed(_client._logger, nameof(ReconnectAsync), exception);
                 lock (_gate)
                     endpoint.ReconnectDelayMilliseconds = NextReconnectDelay(delayMilliseconds);
             }
@@ -853,9 +852,25 @@ internal sealed partial class SharpLinkClient
                 if (workers.Length == 0)
                     return;
 
-                try { await Task.WhenAll(workers).ConfigureAwait(false); }
-                catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested) { }
-                catch (Exception exception) { cleanupFailures.Add(exception); }
+                try
+                {
+                    await Task.WhenAll(workers).ConfigureAwait(false);
+                }
+                catch
+                {
+                    for (var index = 0; index < workers.Length; index++)
+                    {
+                        var worker = workers[index];
+                        if (worker.Exception is { } aggregate)
+                        {
+                            cleanupFailures.AddRange(aggregate.Flatten().InnerExceptions);
+                        }
+                        else if (worker.IsCanceled && !_client._shutdownCts.IsCancellationRequested)
+                        {
+                            cleanupFailures.Add(new TaskCanceledException(worker));
+                        }
+                    }
+                }
             }
         }
 

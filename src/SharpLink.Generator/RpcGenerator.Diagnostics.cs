@@ -150,7 +150,7 @@ public partial class RpcGenerator
 
     private static readonly DiagnosticDescriptor RpcServiceConstructorRule = new(
         id: "SHARPLINK019",
-        title: "RPC Service Constructor Is Ambiguous",
+        title: "RPC Service Constructor Cannot Be Activated",
         messageFormat: "RPC service '{0}' is invalid: {1}",
         category: "SharpLink.Generator",
         defaultSeverity: DiagnosticSeverity.Error,
@@ -290,6 +290,70 @@ public partial class RpcGenerator
 
     private static readonly DiagnosticDescriptor BuiltinAdapterOverrideRule = AdapterRule(
         "SHARPLINK049", "Built-in Codec Cannot Be Rebound");
+
+    private static readonly DiagnosticDescriptor InvalidTimeoutRule = new(
+        id: "SHARPLINK050",
+        title: "RPC Timeout Is Invalid",
+        messageFormat: "RPC method '{0}' has an invalid Timeout: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor InvalidUnionCaseRule = new(
+        id: "SHARPLINK051",
+        title: "RPC Union Case Is Invalid",
+        messageFormat: "RPC union '{0}' is invalid: {1}. Suggested fix: {2}.",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor ByReferenceRpcSignatureRule = new(
+        id: "SHARPLINK052",
+        title: "By-Reference RPC Signature Is Unsupported",
+        messageFormat: "RPC method '{0}' is invalid: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor StaticRpcMethodRule = new(
+        id: "SHARPLINK053",
+        title: "Static RPC Method Is Unsupported",
+        messageFormat: "RPC method '{0}' is invalid: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor UnsupportedContractMemberRule = new(
+        id: "SHARPLINK054",
+        title: "RPC Contract Member Is Unsupported",
+        messageFormat: "RPC contract member '{0}' is invalid: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor RpcContractAccessibilityRule = new(
+        id: "SHARPLINK055",
+        title: "RPC Contract Must Be Publicly Reachable",
+        messageFormat: "RPC contract interface '{0}' and every containing type must be public",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor InvalidOnewayReturnRule = new(
+        id: "SHARPLINK056",
+        title: "Oneway RPC Return Type Is Invalid",
+        messageFormat: "Oneway RPC method '{0}' is invalid: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor ConflictingInheritedRpcSignatureRule = new(
+        id: "SHARPLINK057",
+        title: "Inherited RPC Signatures Conflict",
+        messageFormat: "RPC method '{0}' is invalid: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
 
     private static DiagnosticDescriptor AdapterRule(string id, string title)
         => new(

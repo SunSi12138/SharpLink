@@ -1,5 +1,6 @@
 using System.Net;
 using System.IO.Pipelines;
+using System.Buffers.Binary;
 using System.Threading;
 using System.Threading.Channels;
 
@@ -67,6 +68,21 @@ internal sealed class TestTransportConnection : ITransportConnection
         long requestId,
         CancellationToken cancellationToken = default)
         => InjectFrameAsync(type, flags, unchecked((ulong)requestId), ReadOnlyMemory<byte>.Empty, cancellationToken);
+
+    public Task InjectInt32ResponseAsync(
+        long requestId,
+        int value = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var payload = new byte[sizeof(int)];
+        BinaryPrimitives.WriteInt32LittleEndian(payload, value);
+        return InjectFrameAsync(
+            ProtocolV2FrameType.Response,
+            ProtocolV2FrameFlags.None,
+            unchecked((ulong)requestId),
+            payload,
+            cancellationToken);
+    }
 
     public async Task InjectFrameAsync(
         ProtocolV2FrameType type,

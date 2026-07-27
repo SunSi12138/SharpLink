@@ -17,7 +17,7 @@ public sealed class SharpLinkTokenBucketLimitOptions
     public int TokenLimit { get; set; }
     /// <summary>Gets or sets the tokens added per replenishment period.</summary>
     public int TokensPerPeriod { get; set; }
-    /// <summary>Gets or sets the automatic replenishment period.</summary>
+    /// <summary>Gets or sets the automatic replenishment period, up to 2,147,483,647 milliseconds.</summary>
     public TimeSpan ReplenishmentPeriod { get; set; } = TimeSpan.FromSeconds(1);
 
     internal void Validate()
@@ -25,6 +25,7 @@ public sealed class SharpLinkTokenBucketLimitOptions
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(TokenLimit);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(TokensPerPeriod);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(ReplenishmentPeriod, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(ReplenishmentPeriod, SharpLinkTimer.MaximumDelay);
     }
 }
 
@@ -33,13 +34,14 @@ public sealed class SharpLinkFixedWindowLimitOptions
 {
     /// <summary>Gets or sets the maximum calls admitted during one window.</summary>
     public int PermitLimit { get; set; }
-    /// <summary>Gets or sets the fixed window duration.</summary>
+    /// <summary>Gets or sets the fixed window duration, up to 2,147,483,647 milliseconds.</summary>
     public TimeSpan Window { get; set; } = TimeSpan.FromSeconds(1);
 
     internal void Validate()
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(PermitLimit);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(Window, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(Window, SharpLinkTimer.MaximumDelay);
     }
 }
 
@@ -48,7 +50,7 @@ public sealed class SharpLinkSlidingWindowLimitOptions
 {
     /// <summary>Gets or sets the maximum calls admitted during one sliding window.</summary>
     public int PermitLimit { get; set; }
-    /// <summary>Gets or sets the complete sliding window duration.</summary>
+    /// <summary>Gets or sets the complete sliding window duration, up to 2,147,483,647 milliseconds.</summary>
     public TimeSpan Window { get; set; } = TimeSpan.FromSeconds(1);
     /// <summary>Gets or sets the number of replenishment segments in each window.</summary>
     public int SegmentsPerWindow { get; set; } = 4;
@@ -57,7 +59,14 @@ public sealed class SharpLinkSlidingWindowLimitOptions
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(PermitLimit);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(Window, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(Window, SharpLinkTimer.MaximumDelay);
         ArgumentOutOfRangeException.ThrowIfLessThan(SegmentsPerWindow, 2);
+        if (Window.Ticks < SegmentsPerWindow)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(SegmentsPerWindow),
+                "Each sliding-window segment must span at least one TimeSpan tick.");
+        }
     }
 }
 
@@ -99,6 +108,34 @@ public class SharpLinkAdmissionRuleOptions
         => SetRateLimit(configure, static () => new SharpLinkSlidingWindowLimitOptions());
 
     internal bool HasLimit => Concurrency is not null || RateLimit is not null;
+
+    private protected void CopyLimitsTo(SharpLinkAdmissionRuleOptions destination)
+    {
+        destination.Concurrency = Concurrency is null
+            ? null
+            : new SharpLinkConcurrencyLimitOptions { PermitLimit = Concurrency.PermitLimit };
+        destination.RateLimit = RateLimit switch
+        {
+            SharpLinkTokenBucketLimitOptions source => new SharpLinkTokenBucketLimitOptions
+            {
+                TokenLimit = source.TokenLimit,
+                TokensPerPeriod = source.TokensPerPeriod,
+                ReplenishmentPeriod = source.ReplenishmentPeriod
+            },
+            SharpLinkFixedWindowLimitOptions source => new SharpLinkFixedWindowLimitOptions
+            {
+                PermitLimit = source.PermitLimit,
+                Window = source.Window
+            },
+            SharpLinkSlidingWindowLimitOptions source => new SharpLinkSlidingWindowLimitOptions
+            {
+                PermitLimit = source.PermitLimit,
+                Window = source.Window,
+                SegmentsPerWindow = source.SegmentsPerWindow
+            },
+            _ => null
+        };
+    }
 
     internal void Validate()
     {
@@ -146,6 +183,18 @@ public sealed class SharpLinkPartitionAdmissionOptions : SharpLinkAdmissionRuleO
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(IdleTimeout, TimeSpan.Zero);
         if (!HasLimit)
             throw new InvalidOperationException("A partition selector requires at least one partition limit.");
+    }
+
+    internal SharpLinkPartitionAdmissionOptions CloneValidated()
+    {
+        Validate();
+        var clone = new SharpLinkPartitionAdmissionOptions
+        {
+            MaxPartitions = MaxPartitions,
+            IdleTimeout = IdleTimeout
+        };
+        CopyLimitsTo(clone);
+        return clone;
     }
 }
 
@@ -217,7 +266,10 @@ public sealed class SharpLinkAdmissionControlOptions
     public int MaxQueuedCalls { get; set; }
     /// <summary>Gets or sets the maximum total bytes retained by queued calls. Zero disables waiting.</summary>
     public long MaxQueuedBytes { get; set; }
-    /// <summary>Gets or sets the maximum time one call may remain queued. Zero disables waiting.</summary>
+    /// <summary>
+    /// Gets or sets the maximum time one call may remain queued, up to 2,147,483,647 milliseconds.
+    /// Zero disables waiting.
+    /// </summary>
     public TimeSpan MaxQueueDelay { get; set; }
     /// <summary>Gets or sets whether OneWay calls may wait instead of being dropped immediately.</summary>
     public bool QueueOneWayCalls { get; set; }
@@ -297,6 +349,7 @@ public sealed class SharpLinkAdmissionControlOptions
         ArgumentOutOfRangeException.ThrowIfNegative(MaxQueuedCalls);
         ArgumentOutOfRangeException.ThrowIfNegative(MaxQueuedBytes);
         ArgumentOutOfRangeException.ThrowIfLessThan(MaxQueueDelay, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(MaxQueueDelay, SharpLinkTimer.MaximumDelay);
         Global.Validate();
         foreach (var registration in _rules)
             registration.Rule.Validate();

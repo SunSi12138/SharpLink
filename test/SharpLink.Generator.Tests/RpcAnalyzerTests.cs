@@ -12,6 +12,373 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
     [Test]
+    public Task SemanticFixedRequestValuesShouldUseValidatedBuiltInCodecs()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IValidatedValueService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Validate(
+        bool enabled,
+        decimal amount,
+        DateOnly day,
+        DateTime timestamp,
+        DateTimeOffset offset,
+        TimeOnly time,
+        System.Text.Rune rune,
+        CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(CountOccurrences(generated, "marker_enabled is not (0 or 1)") == 2,
+            "proxy and stub request decoders must reject non-canonical Boolean markers");
+        Ensure(generated.Contains("value.enabled ? (byte)1 : (byte)0", StringComparison.Ordinal),
+            "the request encoder must canonicalize Boolean values");
+        foreach (var type in new[]
+                 {
+                     "decimal", "global::System.DateOnly", "global::System.DateTime",
+                     "global::System.DateTimeOffset", "global::System.TimeOnly", "global::System.Text.Rune"
+                 })
+        {
+            Ensure(generated.Contains($"codecs.GetCodec<{type}>()", StringComparison.Ordinal),
+                $"request value {type} must use its validating built-in Codec");
+        }
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task RpcContractShouldGenerateInheritedBaseMethods()
+    {
+        var source = BuildSource("""
+public interface IBaseOperations
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+    ValueTask<int> Ping(int value, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IDerivedService : SharpLink.Sdk.IService, IBaseOperations
+{
+    new ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+    ValueTask<int> Add(int left, int right, CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains("public global::System.Threading.Tasks.ValueTask<int> Ping(", StringComparison.Ordinal),
+            "proxy should implement an inherited-only RPC method");
+        Ensure(generated.Contains("impl.Ping(", StringComparison.Ordinal),
+            "stub should dispatch an inherited-only RPC method");
+        Ensure(CountOccurrences(generated, "public global::System.Threading.Tasks.ValueTask<int> Echo(") == 1,
+            "a directly redeclared base method should be generated exactly once");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task IncompatibleInheritedRpcRoutesShouldReportASpecificDiagnostic()
+    {
+        var source = BuildSource("""
+public interface INumericBase
+{
+    ValueTask<int> Resolve(CancellationToken cancellationToken);
+}
+
+public interface ITextBase
+{
+    ValueTask<string> Resolve(CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IConflictingContract : SharpLink.Sdk.IService, INumericBase, ITextBase
+{
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK057", 1);
+        Ensure(!string.Join("\n", RunGeneratorAndGetSources(source)).Contains(
+                "IConflictingContractProxy",
+                StringComparison.Ordinal),
+            "a conflicting inherited contract must not emit a broken Proxy");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ConflictingInheritedOnewayShapesShouldReportASpecificDiagnostic()
+    {
+        var source = BuildSource("""
+public interface IFireAndForgetBase
+{
+    [SharpLink.Sdk.Oneway]
+    ValueTask Notify(CancellationToken cancellationToken);
+}
+
+public interface IAcknowledgedBase
+{
+    ValueTask Notify(CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IConflictingOnewayContract : SharpLink.Sdk.IService, IFireAndForgetBase, IAcknowledgedBase
+{
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK057", 1);
+        Ensure(!string.Join("\n", RunGeneratorAndGetSources(source)).Contains(
+                "IConflictingOnewayContractProxy",
+                StringComparison.Ordinal),
+            "a conflicting inherited Oneway shape must not emit contract artifacts");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ConflictingInheritedRpcPoliciesShouldReportASpecificDiagnostic()
+    {
+        var source = BuildSource("""
+public interface IRetryingBase
+{
+    [SharpLink.Sdk.Timeout(1)]
+    [SharpLink.Sdk.Idempotent]
+    ValueTask<int> Resolve(int value, CancellationToken cancellationToken);
+}
+
+public interface INonRetryingBase
+{
+    [SharpLink.Sdk.Timeout(2)]
+    ValueTask<int> Resolve(int value, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IConflictingPolicyContract : SharpLink.Sdk.IService, IRetryingBase, INonRetryingBase
+{
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK057", 1);
+        Ensure(!string.Join("\n", RunGeneratorAndGetSources(source)).Contains(
+                "IConflictingPolicyContractProxy",
+                StringComparison.Ordinal),
+            "conflicting inherited RPC policies must not emit contract artifacts");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ConflictingInheritedRequestSchemasShouldReportASpecificDiagnostic()
+    {
+        var nameAndTopLevelNullability = BuildSource("""
+#nullable enable
+public interface IRequiredNameBase
+{
+    ValueTask<int> Resolve(string requiredName, CancellationToken cancellationToken);
+}
+
+public interface IOptionalAliasBase
+{
+    ValueTask<int> Resolve(string? optionalAlias, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IConflictingRequestSchemaContract : SharpLink.Sdk.IService, IRequiredNameBase, IOptionalAliasBase
+{
+}
+""");
+
+        EnsureRuleCount(nameAndTopLevelNullability, "SHARPLINK057", 1);
+        Ensure(!string.Join("\n", RunGeneratorAndGetSources(nameAndTopLevelNullability)).Contains(
+                "IConflictingRequestSchemaContractProxy",
+                StringComparison.Ordinal),
+            "conflicting inherited request schemas must not emit contract artifacts");
+
+        var nestedNullability = BuildSource("""
+#nullable enable
+public interface IRequiredItemsBase
+{
+    ValueTask<int> Resolve(List<string> items, CancellationToken cancellationToken);
+}
+
+public interface IOptionalItemsBase
+{
+    ValueTask<int> Resolve(List<string?> items, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IConflictingNestedSchemaContract : SharpLink.Sdk.IService, IRequiredItemsBase, IOptionalItemsBase
+{
+}
+""");
+        EnsureRuleCount(nestedNullability, "SHARPLINK057", 1);
+
+        var parameterNameOnly = BuildSource("""
+public interface IPrimaryNameBase
+{
+    ValueTask<int> Resolve(string primaryName, CancellationToken cancellationToken);
+}
+
+public interface IAliasNameBase
+{
+    ValueTask<int> Resolve(string aliasName, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IConflictingNameSchemaContract : SharpLink.Sdk.IService, IPrimaryNameBase, IAliasNameBase
+{
+}
+""");
+        EnsureRuleCount(parameterNameOnly, "SHARPLINK057", 1);
+
+        var controlParameterNames = BuildSource("""
+public interface IFirstControlBase
+{
+    ValueTask<int> Resolve(string value, CancellationToken firstToken);
+}
+
+public interface ISecondControlBase
+{
+    ValueTask<int> Resolve(string value, CancellationToken secondToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface ICompatibleControlNamesContract : SharpLink.Sdk.IService, IFirstControlBase, ISecondControlBase
+{
+}
+""");
+        EnsureDoesNotHaveRule(controlParameterNames, "SHARPLINK057");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ResponseNullabilityMustParticipateInGeneratedMethodFingerprint()
+    {
+        var required = BuildSource("""
+#nullable enable
+[SharpLink.Sdk.RpcContract]
+public interface IResponseFingerprintContract : SharpLink.Sdk.IService
+{
+    ValueTask<string> Resolve(CancellationToken cancellationToken);
+}
+""");
+
+        var optional = BuildSource("""
+#nullable enable
+[SharpLink.Sdk.RpcContract]
+public interface IResponseFingerprintContract : SharpLink.Sdk.IService
+{
+    ValueTask<string?> Resolve(CancellationToken cancellationToken);
+}
+""");
+
+        var requiredFingerprint = GetFirstGeneratedMethodFingerprint(required);
+        var optionalFingerprint = GetFirstGeneratedMethodFingerprint(optional);
+
+        Ensure(!string.Equals(requiredFingerprint, optionalFingerprint, StringComparison.Ordinal),
+            "required and nullable responses must not publish the same runtime method fingerprint");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task DtoMemberNullabilityMustParticipateInRuntimeCodecSchemaIdentity()
+    {
+        var required = BuildSource("""
+#nullable enable
+[SharpLink.Sdk.RpcContract]
+public interface IDtoSchemaContract : SharpLink.Sdk.IService
+{
+    ValueTask<Payload> Resolve(CancellationToken cancellationToken);
+}
+public sealed class Payload { public string Name { get; set; } = string.Empty; }
+""");
+        var optional = BuildSource("""
+#nullable enable
+[SharpLink.Sdk.RpcContract]
+public interface IDtoSchemaContract : SharpLink.Sdk.IService
+{
+    ValueTask<Payload> Resolve(CancellationToken cancellationToken);
+}
+public sealed class Payload { public string? Name { get; set; } }
+""");
+
+        var requiredSchema = GetFirstGeneratedCodecSchema(required);
+        var optionalSchema = GetFirstGeneratedCodecSchema(optional);
+        Ensure(!string.Equals(requiredSchema, optionalSchema, StringComparison.Ordinal),
+            "required and nullable DTO members must not publish the same runtime Codec schema");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task DirectRedeclarationShouldCanonicalizeInheritedRpcSemantics()
+    {
+        var source = BuildSource("""
+public interface IFireAndForgetBase
+{
+    [SharpLink.Sdk.Oneway]
+    ValueTask Notify(CancellationToken cancellationToken);
+}
+
+public interface IAcknowledgedBase
+{
+    ValueTask Notify(CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface ICanonicalContract : SharpLink.Sdk.IService, IFireAndForgetBase, IAcknowledgedBase
+{
+    new ValueTask Notify(CancellationToken cancellationToken);
+}
+""");
+
+        EnsureDoesNotHaveRule(source, "SHARPLINK057");
+        Ensure(string.Join("\n", RunGeneratorAndGetSources(source)).Contains(
+                "ICanonicalContract_Proxy",
+                StringComparison.Ordinal),
+            "an explicit derived declaration must remain the canonical generated route");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task GeneratedStubSizeFieldsShouldRemainUniqueForSanitizedEnumNames()
+    {
+        var source = BuildSource("""
+namespace A
+{
+    public static class B_C
+    {
+        public enum State : short { None }
+    }
+}
+
+namespace A_B
+{
+    public static class C
+    {
+        public enum State : short { None }
+    }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IEnumCollisionContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Resolve(
+        A.B_C.State first,
+        A_B.C.State second,
+        CancellationToken cancellationToken);
+}
+""");
+
+        var sizeFields = string.Join("\n", RunGeneratorAndGetSources(source))
+            .Split('\n')
+            .Select(static line => line.Trim())
+            .Where(static line => line.StartsWith(
+                "private static readonly int __size_type_", StringComparison.Ordinal))
+            .Select(static line => line[..line.IndexOf(" =", StringComparison.Ordinal)])
+            .ToArray();
+        Ensure(sizeFields.Length == 2, "both enum sizes must be cached by the generated Stub");
+        Ensure(sizeFields.Distinct(StringComparer.Ordinal).Count() == sizeFields.Length,
+            "distinct enum types must not emit duplicate generated size fields");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task InvalidReturnTypeShouldReportSharplink001()
     {
         var source = BuildSource("""
@@ -23,6 +390,41 @@ public interface IHelloService : SharpLink.Sdk.IService
         source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
 
         EnsureHasRule(source, "SHARPLINK001");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task TaskPayloadNamedValueTaskShouldKeepOuterTaskSemantics()
+    {
+        var source = BuildSource("""
+public sealed class ValueTaskPayload
+{
+    public int Value { get; set; }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface ITaskPayloadContract : SharpLink.Sdk.IService
+{
+    Task<ValueTaskPayload> Echo(ValueTaskPayload value, CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        var proxyStart = generated.IndexOf(
+            "public global::System.Threading.Tasks.Task<global::ValueTaskPayload> Echo(",
+            StringComparison.Ordinal);
+        var proxyEnd = proxyStart < 0
+            ? -1
+            : generated.IndexOf("\n    }", proxyStart, StringComparison.Ordinal);
+        Ensure(proxyStart >= 0 && proxyEnd > proxyStart &&
+               generated.AsSpan(proxyStart, proxyEnd - proxyStart).Contains(".AsTask();", StringComparison.Ordinal),
+            "Task<T> Proxy emission must convert the channel ValueTask using outer Task semantics");
+        Ensure(generated.Contains("__SerializeResponse(pending.GetAwaiter().GetResult(), false, session, output)", StringComparison.Ordinal),
+            "Task<T> Stub emission must use Task result semantics even when T contains 'ValueTask'");
+        Ensure(generated.Contains("return __AwaitTaskResultAsync(pending, false, session, output);", StringComparison.Ordinal),
+            "Task<T> Stub emission must await the outer Task type");
+        Ensure(!generated.Contains("Serialize(pending.Result, output)", StringComparison.Ordinal),
+            "Task<T> must not use the ValueTask-only Result path");
         return Task.CompletedTask;
     }
 
@@ -247,11 +649,11 @@ public sealed class HelloService : IHelloService
         Ensure(allGenerated.Contains("public bool SupportsCancellation(long methodHash)"),
             "streaming stubs must publish framework cancellation support");
         Ensure(allGenerated.Contains(
-                "RpcMethodKind.ClientStreaming, true, true, false, null, false, 1)",
+                "RpcMethodKind.ClientStreaming, true, true, false, null, false, 1, false)",
                 StringComparison.Ordinal),
             "single client-stream count must be generated deterministically");
         Ensure(allGenerated.Contains(
-                "RpcMethodKind.ClientStreaming, true, true, false, null, false, 2)",
+                "RpcMethodKind.ClientStreaming, true, true, false, null, false, 2, false)",
                 StringComparison.Ordinal),
             "multiple client-stream count must be generated deterministically");
         var supportsCancellationCases = allGenerated.Split("=> true", StringSplitOptions.None).Length - 1;
@@ -296,6 +698,60 @@ public interface IHelloService : SharpLink.Sdk.IService
         Ensure(manifest.Contains(".Factory()"), "codec factories belong to the assembly manifest");
         Ensure(codecs.Contains("case 7U:"), "explicit field ID");
         Ensure(codecs.Contains("Missing required RPC member 'Name'"), "required member validation");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task SemanticDtoMembersShouldUseValidatedCodecs()
+    {
+        var source = BuildSource("""
+public sealed record SemanticPayload(
+    [property: SharpLink.Sdk.RpcMember(1)] bool Boolean,
+    [property: SharpLink.Sdk.RpcMember(2)] System.Text.Rune Rune,
+    [property: SharpLink.Sdk.RpcMember(3)] decimal Decimal,
+    [property: SharpLink.Sdk.RpcMember(4)] System.DateOnly DateOnly,
+    [property: SharpLink.Sdk.RpcMember(5)] System.DateTime DateTime,
+    [property: SharpLink.Sdk.RpcMember(6)] System.TimeOnly TimeOnly,
+    [property: SharpLink.Sdk.RpcMember(7)] System.DateTimeOffset DateTimeOffset,
+    [property: SharpLink.Sdk.RpcMember(8)] bool? NullableBoolean,
+    [property: SharpLink.Sdk.RpcMember(9)] System.Text.Rune? NullableRune,
+    [property: SharpLink.Sdk.RpcMember(10)] decimal? NullableDecimal,
+    [property: SharpLink.Sdk.RpcMember(11)] System.DateOnly? NullableDateOnly,
+    [property: SharpLink.Sdk.RpcMember(12)] System.DateTime? NullableDateTime,
+    [property: SharpLink.Sdk.RpcMember(13)] System.TimeOnly? NullableTimeOnly,
+    [property: SharpLink.Sdk.RpcMember(14)] System.DateTimeOffset? NullableDateTimeOffset);
+
+[SharpLink.Sdk.RpcContract]
+public interface ISemanticService : SharpLink.Sdk.IService
+{
+    ValueTask<SemanticPayload> Echo(SemanticPayload value);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains("RpcGeneratedCodecWire.WriteBoolean(writer, value.Boolean)", StringComparison.Ordinal),
+            "generated Boolean encoder must emit its canonical marker");
+        Ensure(generated.Contains("RpcGeneratedCodecWire.ReadBoolean(ref reader)", StringComparison.Ordinal),
+            "generated Boolean decoder must validate its marker");
+        Ensure(generated.Contains("RpcGeneratedCodecWire.ReadRune(ref reader)", StringComparison.Ordinal),
+            "Rune member must use its validated fixed reader");
+        Ensure(generated.Contains("RpcGeneratedCodecWire.ReadDecimal(ref reader)", StringComparison.Ordinal),
+            "decimal member must use its validated fixed reader");
+        Ensure(generated.Contains("RpcGeneratedCodecWire.ReadDateOnly(ref reader)", StringComparison.Ordinal) &&
+               generated.Contains("RpcGeneratedCodecWire.ReadDateTime(ref reader)", StringComparison.Ordinal) &&
+               generated.Contains("RpcGeneratedCodecWire.ReadTimeOnly(ref reader)", StringComparison.Ordinal),
+            "temporal members must use their validated fixed readers");
+        Ensure(generated.Contains("RpcGeneratedCodecWire.WriteDateTimeOffset(writer, value.DateTimeOffset)", StringComparison.Ordinal) &&
+               generated.Contains("RpcGeneratedCodecWire.ReadDateTimeOffset(ref reader)", StringComparison.Ordinal),
+            "DateTimeOffset member must use its canonical fixed writer and validated reader");
+        Ensure(CountOccurrences(generated, "RpcGeneratedCodecWire.ReadBoolean(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadRune(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDecimal(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateOnly(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateTime(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadTimeOnly(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateTimeOffset(ref reader)") == 2,
+            "nullable semantic members must use the same validated readers");
         return Task.CompletedTask;
     }
 
@@ -650,6 +1106,367 @@ public sealed class InaccessibleConstructorService : IInaccessibleContract
     }
 
     [Test]
+    public Task ExplicitEmptyContractAssemblyFilterShouldDisableReferencedContractScanning()
+    {
+        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSdkSource());
+        var first = CreateMetadataReference("ContractOwnerA", BuildReferencedContractSource("ValueTask<int> Echo(int value);"), sdk);
+        var second = CreateMetadataReference("ContractOwnerB", BuildReferencedContractSource("ValueTask<string> Echo(int value);"), sdk);
+
+        var diagnostics = RunGenerator(
+            "[assembly: SharpLink.Sdk.SharpLinkRpcContracts()]\n" +
+            "namespace Consumer { public sealed class Marker; }",
+            sdk,
+            first,
+            second);
+        Ensure(!diagnostics.Any(static diagnostic =>
+                diagnostic.Id is "SHARPLINK021" or "SHARPLINK022" or "SHARPLINK023"),
+            $"An explicit empty contract filter must not fall back to automatic reference scanning. Actual: {FormatDiagnostics(diagnostics)}");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task SanitizedHintNamesShouldRemainUnique()
+    {
+        var source = BuildSource("""
+namespace A.B
+{
+    [SharpLink.Sdk.RpcContract]
+    public interface IC : SharpLink.Sdk.IService
+    {
+        ValueTask<int> Invoke(CancellationToken cancellationToken);
+    }
+}
+
+namespace A
+{
+    [SharpLink.Sdk.RpcContract]
+    public interface B_IC : SharpLink.Sdk.IService
+    {
+        ValueTask<int> Invoke(CancellationToken cancellationToken);
+    }
+}
+""");
+
+        var diagnostics = RunGenerator(source);
+        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id == "CS8785"),
+            $"Distinct fully-qualified contracts must not collide after hint-name sanitization. Actual: {FormatDiagnostics(diagnostics)}");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task NestedContractsShouldReceiveUniqueGeneratedPeerNames()
+    {
+        var source = BuildSource("""
+namespace Nested
+{
+    public sealed class First
+    {
+        [SharpLink.Sdk.RpcContract]
+        public interface IInner : SharpLink.Sdk.IService
+        {
+            ValueTask<int> Invoke(CancellationToken cancellationToken);
+        }
+    }
+
+    public sealed class Second
+    {
+        [SharpLink.Sdk.RpcContract]
+        public interface IInner : SharpLink.Sdk.IService
+        {
+            ValueTask<int> Invoke(CancellationToken cancellationToken);
+        }
+    }
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(CountOccurrences(generated, "public sealed class IInner_Proxy") == 0,
+            "nested contracts with the same simple name must not emit colliding top-level Proxy types");
+        Ensure(generated.Contains(" : global::Nested.First.IInner", StringComparison.Ordinal) &&
+               generated.Contains(" : global::Nested.Second.IInner", StringComparison.Ordinal),
+            "both nested contracts must retain generated peers");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task KeywordRpcIdentifiersShouldEmitValidCSharpSyntax()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IKeywordContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> @class(int @event, SharpLink.Sdk.SharpLinkCallOptions @params, CancellationToken @default);
+}
+""");
+
+        var generated = RunGeneratorAndGetSources(source);
+        var syntaxErrors = generated
+            .SelectMany(static text => CSharpSyntaxTree.ParseText(text).GetDiagnostics())
+            .Where(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
+            .ToArray();
+        Ensure(syntaxErrors.Length == 0,
+            $"Keyword RPC identifiers must remain escaped in generated source. Actual: {FormatDiagnostics(syntaxErrors)}");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ByRefRpcSignaturesShouldReportSharplink052()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IByRefContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Ref(ref int value, CancellationToken cancellationToken);
+    ValueTask<int> Out(out int value, CancellationToken cancellationToken);
+    ValueTask<int> In(in int value, CancellationToken cancellationToken);
+    ref ValueTask<int> RefReturn(CancellationToken cancellationToken);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK052", 4);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task StaticAbstractRpcMethodsShouldReportSharplink053()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IStaticContract : SharpLink.Sdk.IService
+{
+    static abstract ValueTask<int> Invoke(int value, CancellationToken cancellationToken);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK053", 1);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task AbstractNonMethodContractMembersShouldReportSharplink054()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IMemberContract : SharpLink.Sdk.IService
+{
+    int Version { get; }
+    string this[int index] { get; }
+    event Action Changed;
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK054", 3);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task InaccessibleAndOpenNestedContractsShouldBeRejected()
+    {
+        var inaccessible = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+interface IInternalContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Invoke(CancellationToken cancellationToken);
+}
+
+public sealed class Container
+{
+    [SharpLink.Sdk.RpcContract]
+    private interface IPrivateContract : SharpLink.Sdk.IService
+    {
+        ValueTask<int> Invoke(CancellationToken cancellationToken);
+    }
+}
+""");
+        EnsureRuleCount(inaccessible, "SHARPLINK055", 2);
+
+        var openNested = BuildSource("""
+public sealed class GenericContainer<T>
+{
+    [SharpLink.Sdk.RpcContract]
+    public interface IOpenContract : SharpLink.Sdk.IService
+    {
+        ValueTask<int> Invoke(CancellationToken cancellationToken);
+    }
+}
+""");
+        EnsureRuleCount(openNested, "SHARPLINK005", 1);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task DefaultInterfaceMembersShouldNotBeRejectedAsRpcRoutes()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IDefaultMemberContract : SharpLink.Sdk.IService
+{
+    int Version => 1;
+    event Action Changed { add { } remove { } }
+    ValueTask<int> Invoke(CancellationToken cancellationToken);
+}
+""");
+
+        EnsureDoesNotHaveRule(source, "SHARPLINK054");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task InvalidOnewayReturnShapesShouldReportSharplink056()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IInvalidOnewayContract : SharpLink.Sdk.IService
+{
+    [SharpLink.Sdk.Oneway]
+    Task<int> TaskResult(CancellationToken cancellationToken);
+
+    [SharpLink.Sdk.Oneway]
+    ValueTask<int> ValueTaskResult(CancellationToken cancellationToken);
+
+    [SharpLink.Sdk.Oneway]
+    IAsyncEnumerable<int> StreamResult(CancellationToken cancellationToken);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK056", 3);
+
+        var valid = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IValidOnewayContract : SharpLink.Sdk.IService
+{
+    [SharpLink.Sdk.Oneway]
+    Task Fire(CancellationToken cancellationToken);
+
+    [SharpLink.Sdk.Oneway]
+    ValueTask Send(CancellationToken cancellationToken);
+}
+""");
+        EnsureDoesNotHaveRule(valid, "SHARPLINK056");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task GeneratedProxyLocalsShouldNotCollideWithUserParameters()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface ILocalNameContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Invoke(
+        int __request,
+        int __request_,
+        IAsyncEnumerable<int> __streams,
+        IAsyncEnumerable<int> __streams_,
+        CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(!generated.Contains("        var __request =", StringComparison.Ordinal),
+            "generated request local must not shadow a user parameter");
+        Ensure(!generated.Contains("        var __request_ =", StringComparison.Ordinal),
+            "generated request local must skip chained user collisions");
+        Ensure(!generated.Contains("        var __streams =", StringComparison.Ordinal),
+            "generated streams local must not shadow a user parameter");
+        Ensure(!generated.Contains("        var __streams_ =", StringComparison.Ordinal),
+            "generated streams local must skip chained user collisions");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task CaseInsensitiveDtoMemberAmbiguityShouldReportSharplink012()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class AmbiguousCaseDto
+{
+    public string Name { get; set; } = string.Empty;
+    public string name { get; set; } = string.Empty;
+}
+""");
+
+        var diagnostics = RunGenerator(source);
+        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id == "CS8785"),
+            $"case-insensitive member names must not crash the Generator. Actual: {FormatDiagnostics(diagnostics)}");
+        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK012"),
+            $"an assignable DTO with case-distinct members should remain supported. Actual: {FormatDiagnostics(diagnostics)}");
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains("value.Name", StringComparison.Ordinal) &&
+               generated.Contains("value.name", StringComparison.Ordinal),
+            "both case-distinct members must remain in the generated Codec");
+
+        var ambiguousConstructor = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class AmbiguousConstructorDto
+{
+    public string Name { get; }
+    public string name { get; }
+
+    public AmbiguousConstructorDto(string NAME)
+    {
+        Name = NAME;
+        name = NAME;
+    }
+}
+""");
+        var constructorDiagnostics = RunGenerator(ambiguousConstructor);
+        Ensure(!constructorDiagnostics.Any(static diagnostic => diagnostic.Id == "CS8785"),
+            $"ambiguous constructor mapping must not crash the Generator. Actual: {FormatDiagnostics(constructorDiagnostics)}");
+        EnsureRuleCount(ambiguousConstructor, "SHARPLINK012", 1);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task GeneratedDictionaryReaderShouldRejectNullKeysAsDataLoss()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IDictionaryContract : SharpLink.Sdk.IService
+{
+    ValueTask<Dictionary<string, string>> Echo(
+        Dictionary<string, string> values,
+        CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains("Generated dictionary contains a null key.", StringComparison.Ordinal),
+            "generated dictionary readers must reject null keys before Dictionary.TryAdd");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task NonPublicDefaultInterfaceHelpersShouldNotBecomeRpcRoutes()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IHelperContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Invoke(int value, CancellationToken cancellationToken);
+
+    private ValueTask<int> Normalize(int value) => new(value);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(!generated.Contains(" Normalize(", StringComparison.Ordinal) &&
+               !generated.Contains(".Normalize(", StringComparison.Ordinal) &&
+               !generated.Contains("\"Normalize\"", StringComparison.Ordinal),
+            "non-public default interface helpers must not become generated routes");
+
+        var nonPublicAbstract = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface INonPublicAbstractContract : SharpLink.Sdk.IService
+{
+    protected abstract ValueTask<int> Hidden(int value, CancellationToken cancellationToken);
+}
+""");
+        EnsureRuleCount(nonPublicAbstract, "SHARPLINK054", 1);
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task ConflictingStaticMethodDescriptorsShouldReportSharplink022()
     {
         var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSdkSource());
@@ -751,6 +1568,8 @@ public interface IOrdersService : SharpLink.Sdk.IService
             "cluster route should preserve the declared key");
         Ensure(route.Contains("SharpLinkGeneratedClusterRouteCatalog.Register", StringComparison.Ordinal),
             "cluster route manifest should register from a module initializer");
+        Ensure(route.Contains("System.Array.AsReadOnly(__routes)", StringComparison.Ordinal),
+            "cluster route manifest must not expose its generated array");
         return Task.CompletedTask;
     }
 
@@ -963,6 +1782,10 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("CreateCodec<global::Point>()", StringComparison.Ordinal),
             "a selected Adapter must win for an unmanaged user-defined struct");
+        Ensure(generated.Contains("__codec_value = codecs.GetCodec<global::Point>();", StringComparison.Ordinal),
+            "an unmanaged request must resolve the selected Adapter Codec");
+        Ensure(generated.Contains("__codec_value.Serialize(value.value, writer);", StringComparison.Ordinal),
+            "an unmanaged request must be length-delimited through the selected Adapter Codec");
         return Task.CompletedTask;
     }
 
@@ -1455,6 +2278,388 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task InaccessibleGeneratedServiceAndDtoTypesShouldReportSharpLinkDiagnostics()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IHiddenArtifactContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+
+public static class HiddenArtifactContainer
+{
+    [SharpLink.Sdk.RpcService]
+    private sealed class HiddenService : IHiddenArtifactContract
+    {
+        public ValueTask<int> Echo(int value, CancellationToken cancellationToken) => new(value);
+    }
+
+    [SharpLink.Sdk.RpcSerializable]
+    private sealed class HiddenDto
+    {
+        public int Value { get; set; }
+    }
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK018", 1);
+        EnsureRuleCount(source, "SHARPLINK009", 1);
+
+        var allowed = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IAllowedArtifactContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+
+public class AllowedArtifactContainer
+{
+    [SharpLink.Sdk.RpcService]
+    protected internal sealed class AllowedService : IAllowedArtifactContract
+    {
+        public AllowedService() { }
+        public ValueTask<int> Echo(int value, CancellationToken cancellationToken) => new(value);
+    }
+}
+
+[SharpLink.Sdk.RpcSerializable]
+internal sealed class InternalDto
+{
+    public int Value { get; set; }
+}
+""");
+        EnsureDoesNotHaveRule(allowed, "SHARPLINK018");
+        EnsureDoesNotHaveRule(allowed, "SHARPLINK009");
+        var generated = string.Join("\n", RunGeneratorAndGetSources(allowed));
+        Ensure(generated.Contains("global::AllowedArtifactContainer.AllowedService", StringComparison.Ordinal),
+            "protected-internal services must remain accessible to sibling generated code");
+        Ensure(generated.Contains("global::InternalDto", StringComparison.Ordinal),
+            "internal DTOs must remain accessible to sibling generated code");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task KeywordDtoMembersShouldUseSafeGeneratedLocalNames()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class KeywordDto
+{
+    [SharpLink.Sdk.RpcRequired]
+    public int @class { get; set; }
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(!generated.Contains("local_@class", StringComparison.Ordinal),
+            "escaped member syntax must not be embedded inside a generated local identifier");
+        Ensure(!generated.Contains("seen_@class", StringComparison.Ordinal),
+            "escaped member syntax must not be embedded inside a generated presence identifier");
+        Ensure(generated.Contains("local_class", StringComparison.Ordinal) &&
+               generated.Contains("seen_class", StringComparison.Ordinal) &&
+               generated.Contains("value.@class", StringComparison.Ordinal),
+            "generated locals and escaped member access must remain distinct");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task UnsealedRecordDtoShouldBeRejectedBeforeDerivedStateCanBeSliced()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public record BasePayload(int Value);
+
+public sealed record DerivedPayload(int Value, int Extra) : BasePayload(Value);
+""");
+
+        EnsureRuleCount(source, "SHARPLINK009", 1);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task RefLikeDtoShouldBeRejectedWithoutEmittingBrokenContractArtifacts()
+    {
+        var source = AddAssemblyAttribute(BuildSource("""
+[SharpLink.Sdk.RpcCodecAdapter(typeof(RefPayloadAdapter))]
+[SharpLink.Sdk.RpcSerializable]
+public ref struct RefPayload
+{
+    public int Value;
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IRefPayloadContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Send(RefPayload payload, CancellationToken cancellationToken);
+}
+
+public sealed class RefPayloadAdapter : SharpLink.Abstractions.IRpcCodecAdapter
+{
+    public string AdapterId => "ref.adapter/v1";
+    public string WireFormatId => "ref-wire/v1";
+    public SharpLink.Abstractions.IRpcCodecAdapterScope CreateScope() => throw new NotImplementedException();
+}
+"""),
+            "[assembly: SharpLink.Sdk.RpcCodecAdapterRegistration(typeof(RefPayloadAdapter), \"ref.adapter/v1\", \"ref-wire/v1\")]");
+
+        EnsureRuleCount(source, "SHARPLINK009", 1);
+        Ensure(!string.Join("\n", RunGeneratorAndGetSources(source)).Contains(
+                "IRefPayloadContract_Proxy",
+                StringComparison.Ordinal),
+            "a ref-like payload must suppress contract artifacts that cannot use it as a generic argument");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task StaticAbstractOperatorsShouldRejectRpcContractGeneration()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IOperatorContract : SharpLink.Sdk.IService
+{
+    static abstract IOperatorContract operator +(IOperatorContract left, IOperatorContract right);
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK054", 1);
+        Ensure(!string.Join("\n", RunGeneratorAndGetSources(source)).Contains(
+                "IOperatorContract_Proxy",
+                StringComparison.Ordinal),
+            "a contract with an unimplementable static abstract operator must not emit a Proxy");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ServiceConstructorsMustBeRepresentableByGeneratedDiActivation()
+    {
+        var source = BuildSource("""
+public sealed class Dependency;
+public ref struct StackDependency;
+
+[SharpLink.Sdk.RpcContract]
+public interface IRefConstructorService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class RefConstructorService : IRefConstructorService
+{
+    public RefConstructorService(ref Dependency dependency) { }
+    public ValueTask<int> Echo(int value, CancellationToken cancellationToken) => new(value);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IStackConstructorService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class StackConstructorService : IStackConstructorService
+{
+    public StackConstructorService(StackDependency dependency) { }
+    public ValueTask<int> Echo(int value, CancellationToken cancellationToken) => new(value);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IPointerConstructorService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class PointerConstructorService : IPointerConstructorService
+{
+    public unsafe PointerConstructorService(int* dependency) { }
+    public ValueTask<int> Echo(int value, CancellationToken cancellationToken) => new(value);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IRefReadonlyConstructorService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class RefReadonlyConstructorService : IRefReadonlyConstructorService
+{
+    public RefReadonlyConstructorService(ref readonly Dependency dependency) { }
+    public ValueTask<int> Echo(int value, CancellationToken cancellationToken) => new(value);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK019", 4);
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(!generated.Contains("typeof(global::RefConstructorService)", StringComparison.Ordinal),
+            "a ref dependency must suppress its generated service descriptor");
+        Ensure(!generated.Contains("typeof(global::StackConstructorService)", StringComparison.Ordinal),
+            "a ref-like dependency must suppress its generated service descriptor");
+        Ensure(!generated.Contains("typeof(global::PointerConstructorService)", StringComparison.Ordinal),
+            "a pointer dependency must suppress its generated service descriptor");
+        Ensure(!generated.Contains("typeof(global::RefReadonlyConstructorService)", StringComparison.Ordinal),
+            "a ref-readonly dependency must suppress a generated call that requires addressable storage");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task IgnoredRequiredDtoMembersNeedACompilerValidConstructionPlan()
+    {
+        var invalid = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class IgnoredRequiredDto
+{
+    public int Value { get; set; }
+
+    [SharpLink.Sdk.RpcIgnore]
+    public required string Secret { get; init; }
+}
+""");
+
+        EnsureRuleCount(invalid, "SHARPLINK012", 1);
+
+        var valid = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class RequiredMembersSatisfiedDto
+{
+    public int Value { get; set; }
+
+    [SharpLink.Sdk.RpcIgnore]
+    public required string Secret { get; init; }
+
+    [System.Diagnostics.CodeAnalysis.SetsRequiredMembers]
+    public RequiredMembersSatisfiedDto() => Secret = string.Empty;
+}
+""");
+        EnsureDoesNotHaveRule(valid, "SHARPLINK012");
+
+        var requiredField = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class RequiredFieldDto
+{
+    public required int Value;
+
+    public RequiredFieldDto(int value) => Value = value;
+}
+""");
+        EnsureDoesNotHaveRule(requiredField, "SHARPLINK012");
+        Ensure(string.Join("\n", RunGeneratorAndGetSources(requiredField)).Contains(
+                "Value = local_Value",
+                StringComparison.Ordinal),
+            "a compiler-required field must remain in the generated object initializer even when constructor-bound");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ByReferenceDtoConstructorsMustNotBeSelectedForGeneratedCalls()
+    {
+        var invalid = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class RefConstructorDto
+{
+    public int Value { get; }
+
+    public RefConstructorDto(ref int value) => Value = value;
+}
+
+[SharpLink.Sdk.RpcSerializable]
+public sealed class RefReadonlyConstructorDto
+{
+    public int Value { get; }
+
+    public RefReadonlyConstructorDto(ref readonly int value) => Value = value;
+}
+""");
+        EnsureRuleCount(invalid, "SHARPLINK012", 2);
+
+        var validFallback = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class FallbackConstructorDto
+{
+    public int Value { get; }
+
+    public FallbackConstructorDto(ref int value) => Value = value;
+    public FallbackConstructorDto(int value) => Value = value;
+}
+""");
+        EnsureDoesNotHaveRule(validFallback, "SHARPLINK012");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task PointerPayloadDiagnosticsMustSuppressBrokenContractArtifacts()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public unsafe interface IPointerPayloadContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> SendPointer(int* value, CancellationToken cancellationToken);
+    ValueTask<int> SendFunction(delegate*<int, int> callback, CancellationToken cancellationToken);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK009", 2);
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(!generated.Contains("IPointerPayloadContract_Proxy", StringComparison.Ordinal),
+            "pointer payloads must suppress a Proxy that cannot represent them");
+        Ensure(!generated.Contains("IPointerPayloadContract_Stub", StringComparison.Ordinal),
+            "pointer payloads must suppress a Stub that cannot represent them");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task GeneratedRequestWireFailuresMustUseStructuredDataLoss()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IRequestDataLossContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Validate(
+        bool enabled,
+        string name,
+        CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(!generated.Contains("throw new InvalidDataException", StringComparison.Ordinal),
+            "peer-controlled generated request wire failures must not leak unstructured InvalidDataException");
+        Ensure(CountOccurrences(generated, "throw RpcGeneratedCodecWire.DataLoss(") >= 8,
+            "request Codec and Stub must classify marker, truncation, length, null, and trailing failures as DataLoss");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task EmptyInvocationCategoriesMustUseStructuredUnimplemented()
+    {
+        var responseOnly = string.Join("\n", RunGeneratorAndGetSources(BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IResponseOnlyContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Get(CancellationToken cancellationToken);
+}
+""")));
+        var noResponseOnly = string.Join("\n", RunGeneratorAndGetSources(BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface INoResponseOnlyContract : SharpLink.Sdk.IService
+{
+    [SharpLink.Sdk.Oneway]
+    ValueTask Notify(CancellationToken cancellationToken);
+}
+""")));
+
+        Ensure(!responseOnly.Contains("RpcException", StringComparison.Ordinal) &&
+               !noResponseOnly.Contains("RpcException", StringComparison.Ordinal),
+            "empty invocation categories must not emit the legacy unstructured exception");
+        Ensure(responseOnly.Contains("SharpLinkErrorCode.Unimplemented", StringComparison.Ordinal) &&
+               noResponseOnly.Contains("SharpLinkErrorCode.Unimplemented", StringComparison.Ordinal),
+            "both empty invocation categories must return structured Unimplemented");
+        return Task.CompletedTask;
+    }
+
     private static string BuildSource(string contract)
     {
         return $$"""
@@ -1666,6 +2871,32 @@ namespace SharpLink.Abstractions
         return generated.FirstOrDefault(static text => text.Contains("__SharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal))
             ?? throw new Exception("Expected generated assembly manifest source.");
     }
+
+    private static string GetFirstGeneratedMethodFingerprint(string source)
+    {
+        var manifest = GetGeneratedManifest(source);
+        const string marker = "new SharpLinkGeneratedMethodDescriptor(";
+        var start = manifest.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0)
+            throw new Exception("Expected generated method descriptor.");
+        var end = manifest.IndexOf("),", start, StringComparison.Ordinal);
+        if (end < 0)
+            throw new Exception("Expected generated method descriptor terminator.");
+        var quotedLines = manifest[start..end]
+            .Split('\n')
+            .Select(static line => line.Trim())
+            .Where(static line => line.StartsWith("\"", StringComparison.Ordinal))
+            .ToArray();
+        if (quotedLines.Length < 4)
+            throw new Exception("Expected generated method fingerprint line.");
+        return quotedLines[^1].TrimEnd(',').Trim('"');
+    }
+
+    private static string GetFirstGeneratedCodecSchema(string source)
+        => string.Join("\n", RunGeneratorAndGetSources(source))
+            .Split('\n')
+            .Select(static line => line.Trim())
+            .First(static line => line.StartsWith("public string SchemaId =>", StringComparison.Ordinal));
 
     private static MetadataReference CreateMetadataReference(
         string assemblyName,

@@ -123,7 +123,8 @@ internal sealed partial class SharpLinkClient
                     excluded |= 1UL << selectedIndex;
                     continue;
                 }
-                var connection = SelectConnection(endpoints[selectedIndex]);
+                var endpoint = endpoints[selectedIndex];
+                var connection = SelectConnection(endpoint);
                 retrySelection?.Exclude(snapshot, selectedIndex);
                 if (connection is not null)
                 {
@@ -135,6 +136,7 @@ internal sealed partial class SharpLinkClient
                 attemptOutcome?.CompleteWithoutPending(
                     PendingCallCompletionReason.ConnectionClosed,
                     CreateConnectionClosedException("The selected dynamic endpoint connection is no longer ready."));
+                RetireAdmissionStateIfReleased(endpoint, candidate);
                 excluded |= 1UL << selectedIndex;
             }
 
@@ -317,7 +319,7 @@ internal sealed partial class SharpLinkClient
                     catch (Exception exception)
                     {
                         SharpLinkTelemetry.RecordClientResolverFailure();
-                        LogClientBackgroundLoopUnhandledException(_client._logger, nameof(RunResolverWorkerAsync), exception);
+                        LogClientResolverUpdateFailed(_client._logger, nameof(RunResolverWorkerAsync), exception);
                         await DelayResolverRetryAsync(delayMilliseconds).ConfigureAwait(false);
                         delayMilliseconds = Math.Min(delayMilliseconds * 2, 30_000);
                         continue;
@@ -345,7 +347,7 @@ internal sealed partial class SharpLinkClient
                 catch (Exception exception)
                 {
                     SharpLinkTelemetry.RecordClientResolverFailure();
-                    LogClientBackgroundLoopUnhandledException(_client._logger, nameof(RunResolverWorkerAsync), exception);
+                    LogClientResolverUpdateFailed(_client._logger, nameof(RunResolverWorkerAsync), exception);
                     mustResolve = true;
                 }
 
@@ -376,7 +378,7 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception)
             {
                 SharpLinkTelemetry.RecordClientResolverFailure();
-                LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ApplySnapshotAsync), exception);
+                LogClientResolverUpdateFailed(_client._logger, nameof(ApplySnapshotAsync), exception);
                 return false;
             }
 
@@ -415,7 +417,7 @@ internal sealed partial class SharpLinkClient
                     ownedFactories.UnionWith(GetOwnedFactoriesLocked());
                 await DisposeCreatedFactoriesAsync(created.Values, ownedFactories).ConfigureAwait(false);
                 SharpLinkTelemetry.RecordClientResolverFailure();
-                LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ApplySnapshotAsync), exception);
+                LogClientResolverUpdateFailed(_client._logger, nameof(ApplySnapshotAsync), exception);
                 return false;
             }
 
@@ -486,7 +488,7 @@ internal sealed partial class SharpLinkClient
                 if (rejectedForFactoryOwnership)
                 {
                     SharpLinkTelemetry.RecordClientResolverFailure();
-                    LogClientBackgroundLoopUnhandledException(
+                    LogClientResolverUpdateFailed(
                         _client._logger,
                         nameof(ApplySnapshotAsync),
                         new InvalidOperationException(
@@ -714,6 +716,7 @@ internal sealed partial class SharpLinkClient
             RpcSession? session = null;
             ITransportConnection? transport = null;
             ClientConnection? connection = null;
+            Exception? connectFailure = null;
             try
             {
                 using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _client._shutdownCts.Token);
@@ -725,11 +728,8 @@ internal sealed partial class SharpLinkClient
                 session.SetTelemetrySide("client");
                 session.BindRuntimeContext(_client._runtimeContext);
 
-                using var handshakeTimeout = new CancellationTokenSource(_client._protocolOptions.HandshakeTimeout);
-                using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(attemptCts.Token, handshakeTimeout.Token);
-                var handshakeException = await _client.ProcessHandshakeAsync(session, handshakeCts.Token).ConfigureAwait(false);
-                if (handshakeException is not null)
-                    throw handshakeException;
+                await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken)
+                    .ConfigureAwait(false);
 
                 var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(_client._shutdownCts.Token);
                 var createdConnection = new ClientConnection(
@@ -762,6 +762,10 @@ internal sealed partial class SharpLinkClient
                 UpdateClientReadiness();
                 EnsureMinimumReadyEndpoints();
             }
+            catch (Exception exception)
+            {
+                connectFailure = exception;
+            }
             finally
             {
                 var release = false;
@@ -772,13 +776,10 @@ internal sealed partial class SharpLinkClient
                 }
                 if (release)
                     ScheduleRetiredStateRelease(endpoint);
-                if (transport is not null)
-                    await transport.DisposeAsync().ConfigureAwait(false);
-                if (connection is not null)
-                    await connection.DisposeAsync().ConfigureAwait(false);
-                else if (session is not null)
-                    await session.DisposeAsync().ConfigureAwait(false);
             }
+            if (connectFailure is not null)
+                await RethrowAfterFailedConnectionCleanupAsync(connectFailure, transport, connection, session)
+                    .ConfigureAwait(false);
         }
 
         private void HandleDisconnected(EndpointState endpoint, ClientConnection connection, Exception exception)
@@ -888,7 +889,7 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
-                LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ExpandAsync), exception);
+                LogClientConnectionAttemptFailed(_client._logger, nameof(ExpandAsync), exception);
                 if (endpoint.ReadyConnections.Length == 0)
                     EnsureReconnect(endpoint);
             }
@@ -920,7 +921,7 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
-                LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ReconnectAsync), exception);
+                LogClientConnectionAttemptFailed(_client._logger, nameof(ReconnectAsync), exception);
                 lock (_gate)
                     endpoint.ReconnectDelayMilliseconds = NextReconnectDelay(delayMilliseconds);
             }
@@ -1117,6 +1118,25 @@ internal sealed partial class SharpLinkClient
 
         private void ScheduleRetiredStateRelease(EndpointState endpoint)
             => _client.TrackBackgroundTask(ReleaseRetiredStateAsync(endpoint));
+
+        private void RetireAdmissionStateIfReleased(
+            EndpointState endpoint,
+            in SharpLinkEndpointCandidate candidate)
+        {
+            if (_client._endpointAdmissionPolicy is not ISharpLinkEndpointAdmissionLifecycle lifecycle)
+                return;
+
+            lock (_gate)
+            {
+                if (!endpoint.FactoryReleased)
+                    return;
+            }
+
+            // A selector can retain a published snapshot while topology retirement releases the
+            // generation. Its later admission attempt may recreate lazy policy state, so close
+            // that stale acquisition after the connection lookup proves the snapshot unusable.
+            lifecycle.Retire(candidate);
+        }
 
         private async Task ReleaseRetiredStateAsync(EndpointState endpoint)
         {

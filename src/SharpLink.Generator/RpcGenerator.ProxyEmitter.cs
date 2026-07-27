@@ -72,7 +72,7 @@ public partial class RpcGenerator
             ? $"TimeSpan.FromSeconds({seconds.ToString("R", InvariantCulture)}d)"
             : "null";
         sb.AppendLine(
-            $"    private static readonly RpcMethodDescriptor __method_{suffix} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount});");
+            $"    private static readonly RpcMethodDescriptor __method_{suffix} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")});");
 
         if (GetPayloadParameters(method).Length != 0)
             sb.AppendLine($"    private readonly IRpcCodec<{GetRequestType(model, method)}> __requestCodec_{suffix};");
@@ -83,52 +83,75 @@ public partial class RpcGenerator
     private static void AppendProxyMethod(StringBuilder sb, RpcInterfaceModel model, RpcMethodModel method)
     {
         var suffix = GetMethodSuffix(method);
-        var parameterList = string.Join(", ", method.Parameters.Select(static parameter => $"{parameter.Type} {parameter.Name}"));
+        var parameterList = string.Join(", ", method.Parameters.Select(parameter => $"{parameter.DisplayType} {EscapeIdentifier(parameter.Name)}"));
         var payloadParameters = GetPayloadParameters(method);
         var streamParameters = GetStreamParameters(method);
         var requestType = payloadParameters.Length == 0 ? "RpcEmptyRequest" : GetRequestType(model, method);
         var requestCodec = payloadParameters.Length == 0 ? "RpcEmptyRequestCodec.Instance" : $"__requestCodec_{suffix}";
         var requestValue = payloadParameters.Length == 0
             ? "default(RpcEmptyRequest)"
-            : $"new {requestType}({string.Join(", ", payloadParameters.Select(static parameter => parameter.Name))})";
+            : $"new {requestType}({string.Join(", ", payloadParameters.Select(static parameter => EscapeIdentifier(parameter.Name)))})";
         var streamsType = streamParameters.Length == 0 ? "RpcNoClientStreams" : GetStreamsType(model, method);
         var streamsValue = streamParameters.Length == 0
             ? "default(RpcNoClientStreams)"
-            : $"new {streamsType}({string.Join(", ", streamParameters.Select(static parameter => parameter.Name))})";
-        var cancellationToken = method.Parameters.FirstOrDefault(static parameter => parameter.IsCancellationToken)?.Name ?? "default";
-        var options = method.Parameters.FirstOrDefault(static parameter => parameter.IsCallOptions)?.Name ?? "default";
+            : $"new {streamsType}({string.Join(", ", streamParameters.Select(static parameter => EscapeIdentifier(parameter.Name)))})";
+        var cancellationParameter = method.Parameters.FirstOrDefault(static parameter => parameter.IsCancellationToken);
+        var optionsParameter = method.Parameters.FirstOrDefault(static parameter => parameter.IsCallOptions);
+        var cancellationToken = cancellationParameter is null ? "default" : EscapeIdentifier(cancellationParameter.Name);
+        var options = optionsParameter is null ? "default" : EscapeIdentifier(optionsParameter.Name);
+        var requestLocal = GetUniqueGeneratedLocalName(method, "__request");
+        var streamsLocal = GetUniqueGeneratedLocalName(method, "__streams");
 
-        sb.AppendLine($"    public {method.ReturnType} {method.Name}({parameterList})");
+        sb.AppendLine($"    public {method.DisplayReturnType} {EscapeIdentifier(method.Name)}({parameterList})");
         sb.AppendLine("    {");
-        sb.AppendLine($"        var __request = {requestValue};");
+        sb.AppendLine($"        var {requestLocal} = {requestValue};");
         if (streamParameters.Length != 0 || method.IsOneWay)
-            sb.AppendLine($"        var __streams = {streamsValue};");
+            sb.AppendLine($"        var {streamsLocal} = {streamsValue};");
 
         string invocation;
         if (method.IsStreamReturn)
         {
             invocation = streamParameters.Length == 0
-                ? $"_channel.InvokeServerStreamingAsync(__method_{suffix}, in __request, {requestCodec}, __responseCodec_{suffix}, {options}, {cancellationToken})"
-                : $"_channel.InvokeDuplexStreamingAsync(__method_{suffix}, in __request, {requestCodec}, __responseCodec_{suffix}, in __streams, {options}, {cancellationToken})";
+                ? $"_channel.InvokeServerStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, {options}, {cancellationToken})"
+                : $"_channel.InvokeDuplexStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, {options}, {cancellationToken})";
             sb.AppendLine($"        return {invocation};");
         }
         else if (method.IsOneWay)
         {
-            invocation = $"_channel.InvokeOneWayAsync(__method_{suffix}, in __request, {requestCodec}, in __streams, {options}, {cancellationToken})";
+            invocation = $"_channel.InvokeOneWayAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, in {streamsLocal}, {options}, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: false);
         }
         else if (streamParameters.Length != 0)
         {
-            invocation = $"_channel.InvokeClientStreamingAsync(__method_{suffix}, in __request, {requestCodec}, __responseCodec_{suffix}, in __streams, {options}, {cancellationToken})";
+            invocation = $"_channel.InvokeClientStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, {options}, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: !method.IsVoid);
         }
         else
         {
-            invocation = $"_channel.InvokeUnaryAsync(__method_{suffix}, in __request, {requestCodec}, __responseCodec_{suffix}, {options}, {cancellationToken})";
+            invocation = $"_channel.InvokeUnaryAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, {options}, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: !method.IsVoid);
         }
 
         sb.AppendLine("    }");
+    }
+
+    private static string GetUniqueGeneratedLocalName(RpcMethodModel method, string preferred)
+    {
+        var candidate = preferred;
+        while (true)
+        {
+            var collision = false;
+            foreach (var parameter in method.Parameters)
+            {
+                if (!string.Equals(parameter.Name, candidate, StringComparison.Ordinal))
+                    continue;
+                collision = true;
+                break;
+            }
+            if (!collision)
+                return candidate;
+            candidate += "_";
+        }
     }
 
     private static void AppendTaskLikeReturn(
@@ -137,7 +160,7 @@ public partial class RpcGenerator
         string invocation,
         bool hasResult)
     {
-        var returnsValueTask = method.ReturnType.Contains("ValueTask");
+        var returnsValueTask = method.ReturnsValueTask;
         if (hasResult)
         {
             sb.AppendLine(returnsValueTask
@@ -165,23 +188,23 @@ public partial class RpcGenerator
         sb.AppendLine($"internal readonly struct {requestType}");
         sb.AppendLine("{");
         foreach (var parameter in parameters)
-            sb.AppendLine($"    internal readonly {parameter.Type} {parameter.Name};");
-        sb.AppendLine($"    internal {requestType}({string.Join(", ", parameters.Select(static parameter => $"{parameter.Type} {parameter.Name}"))})");
+            sb.AppendLine($"    internal readonly {parameter.DisplayType} {EscapeIdentifier(parameter.Name)};");
+        sb.AppendLine($"    internal {requestType}({string.Join(", ", parameters.Select(static parameter => $"{parameter.DisplayType} {EscapeIdentifier(parameter.Name)}"))})");
         sb.AppendLine("    {");
         foreach (var parameter in parameters)
-            sb.AppendLine($"        this.{parameter.Name} = {parameter.Name};");
+            sb.AppendLine($"        this.{EscapeIdentifier(parameter.Name)} = {EscapeIdentifier(parameter.Name)};");
         sb.AppendLine("    }");
         sb.AppendLine("}");
 
         sb.AppendLine($"internal sealed class {codecType} : IRpcCodec<{requestType}>");
         sb.AppendLine("{");
         foreach (var parameter in complex)
-            sb.AppendLine($"    private readonly IRpcCodec<{parameter.Type}> __codec_{parameter.Name};");
+            sb.AppendLine($"    private readonly IRpcCodec<{parameter.DisplayType}> __codec_{parameter.Name};");
         sb.AppendLine($"    internal {codecType}(IRpcCodecProvider codecs)");
         sb.AppendLine("    {");
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(codecs);");
         foreach (var parameter in complex)
-            sb.AppendLine($"        __codec_{parameter.Name} = codecs.GetCodec<{parameter.Type}>();");
+            sb.AppendLine($"        __codec_{parameter.Name} = codecs.GetCodec<{parameter.DisplayType}>();");
         sb.AppendLine("    }");
 
         sb.AppendLine($"    public void Serialize(in {requestType} value, IBufferWriter<byte> writer)");
@@ -195,7 +218,10 @@ public partial class RpcGenerator
             foreach (var parameter in blittable)
             {
                 var size = GetInlineSizeToken(parameter.Type);
-                sb.AppendLine($"        Unsafe.WriteUnaligned(ref System.Runtime.InteropServices.MemoryMarshal.GetReference(fixedSpan.Slice(fixedOffset, {size})), value.{parameter.Name});");
+                if (IsBooleanType(parameter.Type))
+                    sb.AppendLine($"        fixedSpan[fixedOffset] = value.{EscapeIdentifier(parameter.Name)} ? (byte)1 : (byte)0;");
+                else
+                    sb.AppendLine($"        Unsafe.WriteUnaligned(ref System.Runtime.InteropServices.MemoryMarshal.GetReference(fixedSpan.Slice(fixedOffset, {size})), value.{EscapeIdentifier(parameter.Name)});");
                 sb.AppendLine($"        fixedOffset += {size};");
             }
             sb.AppendLine("        writer.Advance(fixedSize);");
@@ -208,7 +234,7 @@ public partial class RpcGenerator
             sb.AppendLine($"        var lengthOffset_{index} = rpcWriter.WrittenCount;");
             sb.AppendLine("        writer.Advance(sizeof(int));");
             sb.AppendLine($"        var start_{index} = rpcWriter.WrittenCount;");
-            sb.AppendLine($"        __codec_{parameter.Name}.Serialize(value.{parameter.Name}, writer);");
+            sb.AppendLine($"        __codec_{parameter.Name}.Serialize(value.{EscapeIdentifier(parameter.Name)}, writer);");
             sb.AppendLine($"        var length_{index} = rpcWriter.WrittenCount - start_{index};");
             sb.AppendLine($"        var written_{index} = rpcWriter.WrittenSpan;");
             sb.AppendLine($"        BinaryPrimitives.WriteInt32LittleEndian(written_{index}.Slice(lengthOffset_{index}, sizeof(int)), length_{index});");
@@ -221,14 +247,21 @@ public partial class RpcGenerator
         foreach (var parameter in blittable)
         {
             var size = GetInlineSizeToken(parameter.Type);
-            sb.AppendLine($"        if (reader.Remaining < {size}) throw new InvalidDataException(\"Request field '{parameter.Name}' is truncated.\");");
+            if (IsBooleanType(parameter.Type))
+            {
+                sb.AppendLine($"        if (!reader.TryRead(out var marker_{parameter.Name}) || marker_{parameter.Name} is not (0 or 1))");
+                sb.AppendLine($"            throw RpcGeneratedCodecWire.DataLoss(\"Request field '{parameter.Name}' has an invalid Boolean marker.\");");
+                sb.AppendLine($"        var value_{parameter.Name} = marker_{parameter.Name} == 1;");
+                continue;
+            }
+            sb.AppendLine($"        if (reader.Remaining < {size}) throw RpcGeneratedCodecWire.DataLoss(\"Request field '{parameter.Name}' is truncated.\");");
             sb.AppendLine($"        {parameter.Type} value_{parameter.Name};");
             sb.AppendLine($"        if (reader.UnreadSpan.Length >= {size})");
             sb.AppendLine($"            value_{parameter.Name} = Unsafe.ReadUnaligned<{parameter.Type}>(in System.Runtime.InteropServices.MemoryMarshal.GetReference(reader.UnreadSpan));");
             sb.AppendLine("        else");
             sb.AppendLine("        {");
             sb.AppendLine($"            Span<byte> temporary_{parameter.Name} = stackalloc byte[{size}];");
-            sb.AppendLine($"            if (!reader.TryCopyTo(temporary_{parameter.Name})) throw new InvalidDataException(\"Request field is truncated.\");");
+            sb.AppendLine($"            if (!reader.TryCopyTo(temporary_{parameter.Name})) throw RpcGeneratedCodecWire.DataLoss(\"Request field is truncated.\");");
             sb.AppendLine($"            value_{parameter.Name} = Unsafe.ReadUnaligned<{parameter.Type}>(in System.Runtime.InteropServices.MemoryMarshal.GetReference(temporary_{parameter.Name}));");
             sb.AppendLine("        }");
             sb.AppendLine($"        reader.Advance({size});");
@@ -236,15 +269,15 @@ public partial class RpcGenerator
         foreach (var parameter in complex)
         {
             sb.AppendLine($"        if (!reader.TryReadLittleEndian(out int length_{parameter.Name}) || length_{parameter.Name} < 0 || reader.Remaining < length_{parameter.Name})");
-            sb.AppendLine($"            throw new InvalidDataException(\"Request field '{parameter.Name}' has an invalid length.\");");
+            sb.AppendLine($"            throw RpcGeneratedCodecWire.DataLoss(\"Request field '{parameter.Name}' has an invalid length.\");");
             sb.AppendLine($"        var payload_{parameter.Name} = reader.UnreadSequence.Slice(0, length_{parameter.Name});");
             var nullGuard = parameter.IsValueType || parameter.IsNullableReference
                 ? ""
-                : $" ?? throw new InvalidDataException(\"Request field '{parameter.Name}' is null.\")";
+                : $" ?? throw RpcGeneratedCodecWire.DataLoss(\"Request field '{parameter.Name}' is null.\")";
             sb.AppendLine($"        var value_{parameter.Name} = __codec_{parameter.Name}.Deserialize(payload_{parameter.Name}){nullGuard};");
             sb.AppendLine($"        reader.Advance(length_{parameter.Name});");
         }
-        sb.AppendLine("        if (reader.Remaining != 0) throw new InvalidDataException(\"Request contains trailing data.\");");
+        sb.AppendLine("        if (reader.Remaining != 0) throw RpcGeneratedCodecWire.DataLoss(\"Request contains trailing data.\");");
         sb.AppendLine($"        return new {requestType}({string.Join(", ", parameters.Select(static parameter => $"value_{parameter.Name}"))});");
         sb.AppendLine("    }");
         sb.AppendLine("}");
@@ -257,11 +290,11 @@ public partial class RpcGenerator
         sb.AppendLine($"internal readonly struct {streamsType} : IRpcClientStreamWriter");
         sb.AppendLine("{");
         foreach (var stream in streams)
-            sb.AppendLine($"    private readonly {stream.Type} _{stream.Name};");
-        sb.AppendLine($"    internal {streamsType}({string.Join(", ", streams.Select(static stream => $"{stream.Type} {stream.Name}"))})");
+            sb.AppendLine($"    private readonly {stream.DisplayType} _{stream.Name};");
+        sb.AppendLine($"    internal {streamsType}({string.Join(", ", streams.Select(static stream => $"{stream.DisplayType} {EscapeIdentifier(stream.Name)}"))})");
         sb.AppendLine("    {");
         foreach (var stream in streams)
-            sb.AppendLine($"        _{stream.Name} = {stream.Name};");
+            sb.AppendLine($"        _{stream.Name} = {EscapeIdentifier(stream.Name)};");
         sb.AppendLine("    }");
 
         if (streams.Length == 1)
@@ -292,7 +325,7 @@ public partial class RpcGenerator
         => method.Parameters.Where(static parameter => parameter.IsStream).ToArray();
 
     private static string GetResponseType(RpcMethodModel method)
-        => method.IsStreamReturn ? method.StreamItemType! : method.IsVoid ? "byte" : method.GenericArgumentType!;
+        => method.IsStreamReturn ? method.DisplayStreamItemType! : method.IsVoid ? "byte" : method.DisplayGenericArgumentType!;
 
     private static string GetMethodKind(RpcMethodModel method)
     {

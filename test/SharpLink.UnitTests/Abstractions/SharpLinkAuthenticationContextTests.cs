@@ -42,6 +42,44 @@ public class SharpLinkAuthenticationContextTests
         }
     }
 
+    [Test]
+    public void ScopesShouldNotExposeMutableAuthorizationState()
+    {
+        var context = new SharpLinkAuthenticationContext(scopes: ["rpc.read"]);
+        var injected = false;
+        if (context.Scopes is ISet<string> mutable)
+        {
+            try
+            {
+                mutable.Add("rpc.admin");
+                injected = context.HasScope("rpc.admin");
+                mutable.Remove("rpc.admin");
+            }
+            catch (NotSupportedException)
+            {
+            }
+        }
+
+        Ensure(!injected, "callers must not be able to inject an authorization scope");
+
+        var empty = new SharpLinkAuthenticationContext();
+        var contaminated = false;
+        if (empty.Scopes is ISet<string> sharedMutable)
+        {
+            try
+            {
+                sharedMutable.Add("rpc.shared-admin");
+                contaminated = new SharpLinkAuthenticationContext().HasScope("rpc.shared-admin");
+                sharedMutable.Remove("rpc.shared-admin");
+            }
+            catch (NotSupportedException)
+            {
+            }
+        }
+
+        Ensure(!contaminated, "one empty context must not mutate the process-wide empty scope set");
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)

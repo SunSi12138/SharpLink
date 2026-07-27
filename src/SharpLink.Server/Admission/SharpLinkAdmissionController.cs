@@ -207,13 +207,17 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         SharpLinkAdmissionContext context,
         AdmissionPartitionLease? partitionLease)
     {
-        var slots = new AdmissionLimiterSlot[8];
-        var count = 0;
+        _contracts.TryGetValue(context.ContractId, out var contract);
+        _methods.TryGetValue((context.ContractId, context.MethodId), out var method);
+        var count = (_global?.SlotCount ?? 0) +
+                    (contract?.SlotCount ?? 0) +
+                    (method?.SlotCount ?? 0) +
+                    (partitionLease?.Runtime.SlotCount ?? 0);
+        var slots = new AdmissionLimiterSlot[count];
+        count = 0;
         _global?.AppendTo(slots, ref count);
-        if (_contracts.TryGetValue(context.ContractId, out var contract))
-            contract.AppendTo(slots, ref count);
-        if (_methods.TryGetValue((context.ContractId, context.MethodId), out var method))
-            method.AppendTo(slots, ref count);
+        contract?.AppendTo(slots, ref count);
+        method?.AppendTo(slots, ref count);
         partitionLease?.Runtime.AppendTo(slots, ref count);
         return new AdmissionRequest(slots, count, partitionLease);
     }
@@ -464,8 +468,20 @@ internal readonly record struct AdmissionDecision(
 internal sealed class AdmissionLease : IDisposable
 {
     private SharpLinkAdmissionController? _owner;
+    private RateLimitLease? _singleLease;
     private RateLimitLease[]? _leases;
     private AdmissionPartitionLease? _partition;
+
+    internal AdmissionLease(
+        SharpLinkAdmissionController owner,
+        RateLimitLease singleLease,
+        AdmissionPartitionLease? partition)
+    {
+        _owner = owner;
+        _singleLease = singleLease;
+        _partition = partition;
+        owner.OnLeaseCreated();
+    }
 
     internal AdmissionLease(
         SharpLinkAdmissionController owner,
@@ -483,6 +499,7 @@ internal sealed class AdmissionLease : IDisposable
         var owner = Interlocked.Exchange(ref _owner, null);
         if (owner is null)
             return;
+        Interlocked.Exchange(ref _singleLease, null)?.Dispose();
         var leases = Interlocked.Exchange(ref _leases, null);
         if (leases is not null)
         {
@@ -500,7 +517,8 @@ internal sealed class AdmissionRequest(
     AdmissionPartitionLease? partition) : IDisposable
 {
     private AdmissionPartitionLease? _partition = partition;
-    private readonly RateLimitLease?[] _retainedLeases = new RateLimitLease?[slotCount];
+    private readonly RateLimitLease?[]? _retainedLeases =
+        HasRetainedSlot(slots, slotCount) ? new RateLimitLease?[slotCount] : null;
 
     internal bool TryAcquire(
         SharpLinkAdmissionController owner,
@@ -528,6 +546,25 @@ internal sealed class AdmissionRequest(
         out AdmissionLease? admissionLease,
         out AdmissionLimiterSlot failedSlot)
     {
+        if (slotCount == 1 && _retainedLeases is null && suppliedLease is null)
+        {
+            var singleLease = slots[0].Limiter.AttemptAcquire(1);
+            if (!singleLease.IsAcquired)
+            {
+                singleLease.Dispose();
+                admissionLease = null;
+                failedSlot = slots[0];
+                return false;
+            }
+            admissionLease = new AdmissionLease(
+                owner,
+                singleLease,
+                Interlocked.Exchange(ref _partition, null));
+            failedSlot = default;
+            return true;
+        }
+
+        var retainedLeases = _retainedLeases;
         var leases = new RateLimitLease[slotCount];
         var suppliedIndex = -1;
         if (suppliedLease is not null)
@@ -538,7 +575,7 @@ internal sealed class AdmissionRequest(
                     continue;
                 suppliedIndex = index;
                 if (slots[index].RetainOnFailure)
-                    _retainedLeases[index] = suppliedLease;
+                    retainedLeases![index] = suppliedLease;
                 break;
             }
             if (suppliedIndex < 0)
@@ -550,7 +587,7 @@ internal sealed class AdmissionRequest(
 
         for (var index = 0; index < slotCount; index++)
         {
-            var lease = _retainedLeases[index] ??
+            var lease = retainedLeases?[index] ??
                 (index == suppliedIndex
                     ? suppliedLease!
                     : slots[index].Limiter.AttemptAcquire(1));
@@ -559,12 +596,12 @@ internal sealed class AdmissionRequest(
                 lease.Dispose();
                 for (var acquired = index - 1; acquired >= 0; acquired--)
                 {
-                    if (!ReferenceEquals(_retainedLeases[acquired], leases[acquired]))
+                    if (!ReferenceEquals(retainedLeases?[acquired], leases[acquired]))
                         leases[acquired].Dispose();
                 }
                 if (suppliedLease is not null &&
                     suppliedIndex > index &&
-                    !ReferenceEquals(_retainedLeases[suppliedIndex], suppliedLease))
+                    !ReferenceEquals(retainedLeases?[suppliedIndex], suppliedLease))
                 {
                     suppliedLease.Dispose();
                 }
@@ -573,12 +610,12 @@ internal sealed class AdmissionRequest(
                 return false;
             }
             if (slots[index].RetainOnFailure)
-                _retainedLeases[index] = lease;
+                retainedLeases![index] = lease;
             leases[index] = lease;
         }
 
-        for (var index = 0; index < slotCount; index++)
-            _retainedLeases[index] = null;
+        if (retainedLeases is not null)
+            Array.Clear(retainedLeases, 0, slotCount);
         var ownedPartition = Interlocked.Exchange(ref _partition, null);
         admissionLease = new AdmissionLease(owner, leases, ownedPartition);
         failedSlot = default;
@@ -587,9 +624,18 @@ internal sealed class AdmissionRequest(
 
     public void Dispose()
     {
-        for (var index = _retainedLeases.Length - 1; index >= 0; index--)
-            Interlocked.Exchange(ref _retainedLeases[index], null)?.Dispose();
+        if (_retainedLeases is not null)
+            for (var index = _retainedLeases.Length - 1; index >= 0; index--)
+                Interlocked.Exchange(ref _retainedLeases[index], null)?.Dispose();
         Interlocked.Exchange(ref _partition, null)?.Dispose();
+    }
+
+    private static bool HasRetainedSlot(AdmissionLimiterSlot[] slots, int slotCount)
+    {
+        for (var index = 0; index < slotCount; index++)
+            if (slots[index].RetainOnFailure)
+                return true;
+        return false;
     }
 }
 
@@ -604,6 +650,8 @@ internal sealed class AdmissionRuleRuntime : IDisposable
     private readonly AdmissionLimiterSlot[] _slots;
 
     private AdmissionRuleRuntime(AdmissionLimiterSlot[] slots) => _slots = slots;
+
+    internal int SlotCount => _slots.Length;
 
     internal static AdmissionRuleRuntime Create(
         SharpLinkAdmissionRuleOptions options,
@@ -691,7 +739,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
         int queueLimit)
     {
         _selector = selector;
-        _options = options;
+        _options = options.CloneValidated();
         _queueLimit = queueLimit;
     }
 

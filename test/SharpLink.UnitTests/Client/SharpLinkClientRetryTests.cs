@@ -19,8 +19,7 @@ public class SharpLinkClientRetryTests
         var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(transport, first, SharpLinkErrorCode.Unavailable);
         var second = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
-        await transport.Connection.InjectPacketAsync(
-            ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((long)second.RequestId));
+        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)second.RequestId));
 
         Ensure(await invocation == 0, "second attempt result");
         Ensure(policy.Count == 1, "policy invocation count");
@@ -214,8 +213,7 @@ public class SharpLinkClientRetryTests
         var secondAttempt = await second.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(second, secondAttempt, SharpLinkErrorCode.Unavailable);
         var thirdAttempt = await first.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
-        await first.Connection.InjectPacketAsync(
-            ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((long)thirdAttempt.RequestId));
+        await first.Connection.InjectInt32ResponseAsync(unchecked((long)thirdAttempt.RequestId));
 
         Ensure(await invocation == 0, "candidate reset third attempt result");
     }
@@ -244,8 +242,7 @@ public class SharpLinkClientRetryTests
 
         var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var request = await second.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
-        await second.Connection.InjectPacketAsync(
-            ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((long)request.RequestId));
+        await second.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
 
         Ensure(await invocation == 0, "admitted endpoint response");
         Ensure(policy.AcquireCount == 2, "both candidates evaluated");
@@ -275,8 +272,7 @@ public class SharpLinkClientRetryTests
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         Ensure(Stopwatch.GetElapsedTime(started) >= TimeSpan.FromMilliseconds(75),
             "retry must wait for the admission retry delay rather than consume the next attempt immediately");
-        await transport.Connection.InjectPacketAsync(
-            ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((long)request.RequestId));
+        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
 
         Ensure(await invocation == 0, "admitted retry result");
         Ensure(admission.AcquireCount == 2, "admission should be retried once after its requested delay");
@@ -341,8 +337,7 @@ public class SharpLinkClientRetryTests
         await InjectErrorAsync(second, secondRequest, SharpLinkErrorCode.Unavailable);
         var thirdRequest = await third.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
             .WaitAsync(TimeSpan.FromSeconds(5));
-        await third.Connection.InjectPacketAsync(
-            ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((long)thirdRequest.RequestId));
+        await third.Connection.InjectInt32ResponseAsync(unchecked((long)thirdRequest.RequestId));
 
         Ensure(await invocation == 0, "untried endpoint retry response");
     }

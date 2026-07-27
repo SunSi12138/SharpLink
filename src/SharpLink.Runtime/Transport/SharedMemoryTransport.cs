@@ -41,6 +41,7 @@ public sealed class SharedMemoryClientTransportFactory : IClientTransportFactory
             PipeDirection.InOut,
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
         SharedMemoryMapping? mapping = null;
+        var serverResponseReceived = false;
         try
         {
             await pipe.ConnectAsync(connectCts.Token).ConfigureAwait(false);
@@ -55,6 +56,7 @@ public sealed class SharedMemoryClientTransportFactory : IClientTransportFactory
                 pipe,
                 nonce,
                 connectCts.Token).ConfigureAwait(false);
+            serverResponseReceived = true;
             if (response.Capacity > resolved.CapacityPerDirectionBytes)
             {
                 throw new SharpLinkException(
@@ -88,6 +90,13 @@ public sealed class SharedMemoryClientTransportFactory : IClientTransportFactory
             throw new SharpLinkException(
                 SharpLinkErrorCode.PermissionDenied,
                 "Shared-memory transport could not access the same-user mapping.",
+                exception);
+        }
+        catch (IOException exception) when (!serverResponseReceived)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.Unavailable,
+                "Shared-memory server closed the transport handshake before it completed.",
                 exception);
         }
         finally
@@ -126,6 +135,7 @@ public sealed class SharedMemoryServerTransportListener : IServerTransportListen
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Lock _gate = new();
     private readonly HashSet<NamedPipeServerStream> _pendingAccepts = [];
+    private Task? _disposeTask;
     private SharpLinkPerformanceProfile _profile = SharpLinkPerformanceProfile.Balanced;
     private int _started;
     private int _disposed;
@@ -266,11 +276,35 @@ public sealed class SharedMemoryServerTransportListener : IServerTransportListen
     }
 
     /// <inheritdoc />
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
-        _disposeCts.Cancel();
+        lock (_pendingAccepts)
+        {
+            if (_disposeTask is not null)
+                return new ValueTask(_disposeTask);
+            if (Volatile.Read(ref _disposed) != 0)
+                return ValueTask.CompletedTask;
+
+            var operation = DisposeCoreAsync();
+            if (operation.IsCompletedSuccessfully)
+                return operation;
+            _disposeTask = operation.AsTask();
+            return new ValueTask(_disposeTask);
+        }
+    }
+
+    private async ValueTask DisposeCoreAsync()
+    {
+        Interlocked.Exchange(ref _disposed, 1);
+        Exception? cleanupException = null;
+        try
+        {
+            _disposeCts.Cancel();
+        }
+        catch (Exception exception)
+        {
+            cleanupException = exception;
+        }
         NamedPipeServerStream[] pending;
         lock (_gate)
         {
@@ -286,8 +320,26 @@ public sealed class SharedMemoryServerTransportListener : IServerTransportListen
             catch (Exception ex) when (StreamTransportConnection.IsExpectedDisposeException(ex))
             {
             }
+            catch (Exception exception)
+            {
+                cleanupException = StreamTransportConnection.CombineCleanupExceptions(
+                    cleanupException,
+                    exception);
+            }
         }
-        _disposeCts.Dispose();
+        try
+        {
+            _disposeCts.Dispose();
+        }
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(
+                cleanupException,
+                exception);
+        }
+
+        if (cleanupException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
     }
 
     private bool TryRegisterPending(NamedPipeServerStream pipe)
@@ -375,12 +427,17 @@ internal sealed class SharedMemoryTransportConnection : ITransportConnection
 
     private async Task DisposeCoreAsync()
     {
+        Exception? cleanupException = null;
         try
         {
             Output.Complete();
         }
         catch (Exception ex) when (StreamTransportConnection.IsExpectedDisposeException(ex) || ex is SharpLinkException)
         {
+        }
+        catch (Exception exception)
+        {
+            cleanupException = exception;
         }
         try
         {
@@ -389,13 +446,35 @@ internal sealed class SharedMemoryTransportConnection : ITransportConnection
         catch (Exception ex) when (StreamTransportConnection.IsExpectedDisposeException(ex) || ex is SharpLinkException)
         {
         }
-        await _control.DisposeAsync().ConfigureAwait(false);
-        await _mapping.DisposeAsync().ConfigureAwait(false);
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(cleanupException, exception);
+        }
+        try
+        {
+            await _control.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(cleanupException, exception);
+        }
+        try
+        {
+            await _mapping.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(cleanupException, exception);
+        }
+
+        if (cleanupException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
     }
 }
 
 internal static class SharedMemoryHandshake
 {
+    private static readonly Encoding SStrictUtf8 = new UTF8Encoding(false, true);
     private const int Magic = 0x53484D31;
     private const int Version = 3;
     private const int ClientHelloBytes = 4 + 4 + 4 + 4 + SharedMemoryLayout.NonceBytes;
@@ -492,7 +571,18 @@ internal static class SharedMemoryHandshake
 
         var pathBytes = new byte[pathLength];
         await stream.ReadExactlyAsync(pathBytes, cancellationToken).ConfigureAwait(false);
-        var path = Encoding.UTF8.GetString(pathBytes);
+        string path;
+        try
+        {
+            path = SStrictUtf8.GetString(pathBytes);
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.FailedPrecondition,
+                "Shared-memory mapping path is not valid UTF-8.",
+                exception);
+        }
         SharedMemoryMapping.ValidateMappingPath(path);
         return new SharedMemoryServerResponse(capacity, processId, path);
     }

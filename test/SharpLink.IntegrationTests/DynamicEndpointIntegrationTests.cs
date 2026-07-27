@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Threading.Channels;
 
 namespace SharpLink.IntegrationTests;
@@ -126,6 +127,45 @@ public sealed class DynamicEndpointIntegrationTests
         Ensure(await stream.MoveNextAsync() && stream.Current == 1, "draining stream second item");
         Ensure(await stream.MoveNextAsync() && stream.Current == 2, "draining stream third item");
         Ensure(!await stream.MoveNextAsync(), "draining stream completion");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task StaleDynamicSelectionShouldNotRecreateRetiredAdmissionState()
+    {
+        await using var server = await TcpServerScope.StartAsync("retiring");
+        var resolver = new ControllableResolver(
+            new SharpLinkEndpointSnapshot(1, [Endpoint("retiring", server.Port, "blue")]));
+        using var selector = new PausingSelector();
+        var admission = new TrackingLifecycleAdmissionPolicy();
+        await using var client = SharpClientBuilder.Create()
+            .UseEndpointResolver(resolver, SharpLinkTransportFactories.Sockets())
+            .UseEndpointSelector(selector)
+            .UseEndpointAdmission(admission)
+            .Build();
+
+        await client.ConnectAsync();
+        var call = Task.Run(async () =>
+            await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync());
+        await selector.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+
+        try
+        {
+            resolver.Publish(new SharpLinkEndpointSnapshot(2, []));
+            await WaitUntilAsync(
+                () => admission.RetireCount == 1 && ((SharpLinkClient)client).ReadyConnectionCount == 0,
+                TimeSpan.FromSeconds(3));
+
+            selector.Release();
+            var exception = await CaptureSharpLinkException(call.WaitAsync(TimeSpan.FromSeconds(3)));
+            Ensure(exception.Code == SharpLinkErrorCode.Unavailable, "stale selection failure code");
+            Ensure(admission.ActiveGenerationCount == 0,
+                "a stale selection must not recreate state after its endpoint generation has retired");
+        }
+        finally
+        {
+            selector.Release();
+        }
     }
 
     [Test]
@@ -956,6 +996,55 @@ public sealed class DynamicEndpointIntegrationTests
                 if ((context.ExcludedMask & (1UL << index)) == 0)
                     return index;
             return -1;
+        }
+    }
+
+    private sealed class PausingSelector : ISharpLinkEndpointSelector, IDisposable
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ManualResetEventSlim _release = new(initialState: false);
+
+        public Task Entered => _entered.Task;
+
+        public int Select(in SharpLinkEndpointSelectionContext context)
+        {
+            _entered.TrySetResult();
+            if (!_release.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("The paused endpoint selection was not released.");
+            return 0;
+        }
+
+        public void Release() => _release.Set();
+
+        public void Dispose() => _release.Dispose();
+    }
+
+    private sealed class TrackingLifecycleAdmissionPolicy :
+        ISharpLinkEndpointAdmissionPolicy,
+        ISharpLinkEndpointAdmissionLifecycle
+    {
+        private readonly ConcurrentDictionary<(string Id, long Generation), byte> _active = new();
+        private int _retireCount;
+
+        public int ActiveGenerationCount => _active.Count;
+        public int RetireCount => Volatile.Read(ref _retireCount);
+
+        public SharpLinkEndpointAdmissionDecision TryAcquire(
+            in SharpLinkEndpointCandidate endpoint,
+            in RpcMethodDescriptor method)
+        {
+            _active.TryAdd((endpoint.Endpoint.Id, endpoint.Generation), 0);
+            return new SharpLinkEndpointAdmissionDecision(true, Token: 1, RetryAfter: null);
+        }
+
+        public void Report(in SharpLinkEndpointOutcome outcome, long token)
+        {
+        }
+
+        public void Retire(in SharpLinkEndpointCandidate endpoint)
+        {
+            _active.TryRemove((endpoint.Endpoint.Id, endpoint.Generation), out _);
+            Interlocked.Increment(ref _retireCount);
         }
     }
 

@@ -205,7 +205,8 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
         var cleanupFailures = new List<Exception>();
         lock (_registryGate)
             TransitionTo(SharpLinkConnectionState.Draining);
-        _shutdownCts.Cancel();
+        try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
         Volatile.Read(ref _readySignal).TrySetResult(true);
 
         var stoppingException = CreateConnectionClosedException("Client is stopping.");
@@ -233,7 +234,9 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
             reconnectTask = _reconnectTask;
             expansionTask = _expansionTask;
         }
-        try { await IgnoreExpectedStopExceptionAsync(connectTask).ConfigureAwait(false); }
+        // ConnectAsync exposes the initial attempt directly to its caller. Do not report that
+        // same already-observable failure a second time from DisposeAsync/StopAsync.
+        try { await IgnoreExpectedStopExceptionAsync(connectTask, ignoreUnexpected: true).ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         if (!ReferenceEquals(reconnectTask, connectTask))
         {
@@ -274,7 +277,8 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
         var cleanupFailures = new List<Exception>();
         lock (_registryGate)
             TransitionTo(SharpLinkConnectionState.Draining);
-        _shutdownCts.Cancel();
+        try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
         Volatile.Read(ref _readySignal).TrySetResult(true);
         try { await _cluster!.StopAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
@@ -309,7 +313,9 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
         throw new AggregateException(failures);
     }
 
-    private async Task IgnoreExpectedStopExceptionAsync(Task? task)
+    private async Task IgnoreExpectedStopExceptionAsync(
+        Task? task,
+        bool ignoreUnexpected = false)
     {
         if (task is null)
             return;
@@ -317,10 +323,32 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
         {
             await task.ConfigureAwait(false);
         }
-        catch (Exception) when (_shutdownCts.IsCancellationRequested)
+        catch (Exception exception) when (_shutdownCts.IsCancellationRequested)
         {
+            if (ignoreUnexpected)
+                return;
+            var failures = exception is AggregateException aggregate
+                ? aggregate.Flatten().InnerExceptions
+                : [exception];
+            List<Exception>? unexpected = null;
+            for (var index = 0; index < failures.Count; index++)
+            {
+                var failure = failures[index];
+                if (IsExpectedStopException(failure))
+                    continue;
+                (unexpected ??= []).Add(failure);
+            }
+
+            if (unexpected is { Count: 1 })
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(unexpected[0]).Throw();
+            if (unexpected is not null)
+                throw new AggregateException(unexpected);
         }
     }
+
+    private static bool IsExpectedStopException(Exception exception)
+        => exception is OperationCanceledException or ObjectDisposedException or IOException or SocketException or
+            SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed or SharpLinkErrorCode.Unavailable };
 
     internal void TrackBackgroundTask(Task task)
     {
@@ -333,6 +361,14 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
                 var client = (SharpLinkClient)state!;
                 lock (client._backgroundTasksGate)
                     client._backgroundTasks.Remove(completedTask);
+
+                if (completedTask.Exception is { } exception)
+                {
+                    LogClientBackgroundLoopUnhandledException(
+                        client._logger,
+                        "BackgroundTask",
+                        exception.GetBaseException());
+                }
             },
             this,
             CancellationToken.None,
@@ -355,8 +391,25 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
             {
                 await Task.WhenAll(tasks).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
+            catch
             {
+                List<Exception>? unexpected = null;
+                for (var taskIndex = 0; taskIndex < tasks.Length; taskIndex++)
+                {
+                    if (tasks[taskIndex].Exception is not { } aggregate)
+                        continue;
+                    foreach (var exception in aggregate.Flatten().InnerExceptions)
+                    {
+                        if (IsExpectedStopException(exception))
+                            continue;
+                        (unexpected ??= []).Add(exception);
+                    }
+                }
+
+                if (unexpected is { Count: 1 })
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(unexpected[0]).Throw();
+                if (unexpected is not null)
+                    throw new AggregateException(unexpected);
             }
         }
     }

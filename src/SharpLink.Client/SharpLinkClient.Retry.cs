@@ -167,7 +167,9 @@ internal sealed partial class SharpLinkClient
                 control.DeadlineTimestamp,
                 cancellationToken,
                 out var requestId,
-                outcome);
+                outcome,
+                hasResponsePayload: hasResponsePayload,
+                responseNullable: method.ResponseNullable);
             return StartUnaryCall(
                 connection,
                 contractId,
@@ -212,7 +214,9 @@ internal sealed partial class SharpLinkClient
                 waitForSlot: true,
                 control.Deadline,
                 cancellationToken,
-                outcome).ConfigureAwait(false);
+                outcome,
+                hasResponsePayload: hasResponsePayload,
+                responseNullable: method.ResponseNullable).ConfigureAwait(false);
             return await StartUnaryCall(
                 connection,
                 contractId,
@@ -278,11 +282,10 @@ internal sealed partial class SharpLinkClient
                 var remaining = absoluteDeadline - DateTimeOffset.UtcNow;
                 if (remaining <= TimeSpan.Zero)
                     throw CreateDeadlineExceededException();
-                try
-                {
-                    await signal.WaitAsync(remaining, cancellationToken).ConfigureAwait(false);
-                }
-                catch (TimeoutException)
+                if (!await SharpLinkTimer.WaitAsync(
+                        signal,
+                        remaining,
+                        cancellationToken).ConfigureAwait(false))
                 {
                     throw CreateDeadlineExceededException();
                 }

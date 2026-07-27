@@ -49,9 +49,12 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
     private CancellationToken _enumerationToken;
     private CancellationTokenRegistration _enumerationCancellationRegistration;
+    private CancellationToken _additionalEnumerationToken;
+    private CancellationTokenRegistration _additionalEnumerationCancellationRegistration;
 
     private T? _current;
     private IRpcCodec<T>? _codec;
+    private bool _payloadNullable;
     private Action<long, ushort, int>? _bytesConsumed;
     private Action<long>? _consumerAbandoned;
     private long _flowControlRequestId;
@@ -77,13 +80,26 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     public static PooledAsyncStreamDispatcher<T> Rent(
         CancellationToken enumerationToken = default,
         IRpcCodecProvider? codecProvider = null)
+        => Rent(enumerationToken, codecProvider, payloadNullable: false);
+
+    public static PooledAsyncStreamDispatcher<T> Rent(
+        CancellationToken enumerationToken,
+        IRpcCodecProvider? codecProvider,
+        bool payloadNullable)
         => Rent(
             enumerationToken,
-            (codecProvider ?? SharpLinkRuntimeContext.Default.Codecs).GetCodec<T>());
+            (codecProvider ?? SharpLinkRuntimeContext.Default.Codecs).GetCodec<T>(),
+            payloadNullable);
 
     public static PooledAsyncStreamDispatcher<T> Rent(
         CancellationToken enumerationToken,
         IRpcCodec<T> codec)
+        => Rent(enumerationToken, codec, payloadNullable: false);
+
+    public static PooledAsyncStreamDispatcher<T> Rent(
+        CancellationToken enumerationToken,
+        IRpcCodec<T> codec,
+        bool payloadNullable)
     {
         ArgumentNullException.ThrowIfNull(codec);
         if (!Pool.TryPop(out var dispatcher))
@@ -91,16 +107,24 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         else
             Interlocked.Decrement(ref s_retainedCount);
 
-        dispatcher.Reset(enumerationToken, codec);
+        dispatcher.Reset(enumerationToken, codec, payloadNullable);
         return dispatcher;
     }
 
-    private void Reset(CancellationToken enumerationToken, IRpcCodec<T> codec)
+    private void Reset(
+        CancellationToken enumerationToken,
+        IRpcCodec<T> codec,
+        bool payloadNullable)
     {
         _enumerationCancellationRegistration.Dispose();
+        _enumerationCancellationRegistration = default;
+        _additionalEnumerationCancellationRegistration.Dispose();
+        _additionalEnumerationCancellationRegistration = default;
 
         _enumerationToken = enumerationToken;
+        _additionalEnumerationToken = default;
         _codec = codec;
+        _payloadNullable = payloadNullable;
 
         _waitSource = new ManualResetValueTaskSourceCore<bool>
         {
@@ -166,6 +190,12 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             // 反序列化可能很重：尽量让队列/锁不要挡它（这里本来就无锁）
             item = (_codec ?? throw new InvalidOperationException("Stream dispatcher has no codec."))
                 .Deserialize(payload);
+            if (!_payloadNullable && default(T) is null && item is null)
+            {
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.DataLoss,
+                    "A non-nullable RPC stream item was null.");
+            }
         }
         catch
         {
@@ -291,10 +321,18 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             throw new InvalidOperationException("Only single consumer is supported.");
 
         if (cancellationToken.CanBeCanceled)
-            _enumerationToken = cancellationToken;
+        {
+            if (!_enumerationToken.CanBeCanceled)
+                _enumerationToken = cancellationToken;
+            else if (_enumerationToken != cancellationToken)
+                _additionalEnumerationToken = cancellationToken;
+        }
 
         _enumerationCancellationRegistration = _enumerationToken.CanBeCanceled
             ? _enumerationToken.UnsafeRegister(static state => ((PooledAsyncStreamDispatcher<T>)state!).Signal(), this)
+            : default;
+        _additionalEnumerationCancellationRegistration = _additionalEnumerationToken.CanBeCanceled
+            ? _additionalEnumerationToken.UnsafeRegister(static state => ((PooledAsyncStreamDispatcher<T>)state!).Signal(), this)
             : default;
 
         return this;
@@ -306,7 +344,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     {
         while (true)
         {
-            _enumerationToken.ThrowIfCancellationRequested();
+            ThrowIfEnumerationCanceled();
 
             if (TryDequeue(out var value, out var encodedByteCount))
             {
@@ -338,7 +376,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
                 return false;
             }
 
-            _enumerationToken.ThrowIfCancellationRequested();
+            ThrowIfEnumerationCanceled();
             await WaitForDataAsync().ConfigureAwait(false);
         }
     }
@@ -592,9 +630,13 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
         _enumerationCancellationRegistration.Dispose();
         _enumerationCancellationRegistration = default;
+        _additionalEnumerationCancellationRegistration.Dispose();
+        _additionalEnumerationCancellationRegistration = default;
         _enumerationToken = default;
+        _additionalEnumerationToken = default;
         _error = null;
         _codec = null;
+        _payloadNullable = false;
         _bytesConsumed = null;
         _consumerAbandoned = null;
         _flowControlRequestId = 0;
@@ -659,7 +701,9 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         {
             if (_codec is not null || _bytesConsumed is not null || _consumerAbandoned is not null ||
                 _current is not null || _enumerationToken.CanBeCanceled ||
-                !_enumerationCancellationRegistration.Equals(default))
+                _additionalEnumerationToken.CanBeCanceled ||
+                !_enumerationCancellationRegistration.Equals(default) ||
+                !_additionalEnumerationCancellationRegistration.Equals(default))
             {
                 return true;
             }
@@ -696,6 +740,14 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void NotifyBytesConsumed(int encodedByteCount)
         => _bytesConsumed?.Invoke(_flowControlRequestId, _flowControlStreamId, encodedByteCount);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void ThrowIfEnumerationCanceled()
+    {
+        _enumerationToken.ThrowIfCancellationRequested();
+        if (_additionalEnumerationToken.CanBeCanceled)
+            _additionalEnumerationToken.ThrowIfCancellationRequested();
+    }
 
     private sealed class BufferSegment(int capacity)
     {

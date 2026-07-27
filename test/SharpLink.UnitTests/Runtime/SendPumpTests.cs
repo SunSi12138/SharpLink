@@ -8,6 +8,37 @@ namespace SharpLink.UnitTests.Runtime;
 public class SendPumpTests
 {
     [Test]
+    public async Task HugeFlushLatencyShouldNotOverflowIntoImmediateFlush()
+    {
+        var input = new Pipe();
+        var output = new Pipe();
+        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        var session = new RpcSession(
+            "huge-flush-latency",
+            input.Reader,
+            output.Writer,
+            static () => { },
+            static () => true,
+            new RpcSessionFlushOptions(1024 * 1024, TimeSpan.MaxValue));
+        session.BindRuntimeContext(context);
+        var frame = CreateFrame(session, 32, requestId: 1);
+
+        session.SendPacket(frame);
+        await Task.Delay(100);
+        var connectedBeforeCleanup = session.IsConnected;
+        var queuedBeforeCleanup = session.QueuedSendBytes;
+
+        await session.DisposeAsync();
+        await output.Reader.CompleteAsync();
+        await input.Writer.CompleteAsync();
+        Ensure(connectedBeforeCleanup,
+            "a huge configured batching latency must not fault the send pump");
+        Ensure(queuedBeforeCleanup > 0,
+            "a huge configured batching latency must not overflow into an immediate flush");
+        EnsureReturned(frame, "dispose should return the long-batched frame owner");
+    }
+
+    [Test]
     public async Task FullByteQueueShouldFailFastWithoutClosingHealthySession()
     {
         var input = new Pipe();

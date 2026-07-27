@@ -118,8 +118,7 @@ public partial class RpcGenerator
             INamedTypeSymbol contract,
             Dictionary<string, ITypeSymbol> roots)
         {
-            foreach (var method in contract.GetMembers().OfType<IMethodSymbol>()
-                         .Where(static method => method.MethodKind == MethodKind.Ordinary))
+            foreach (var method in GetContractMethods(contract))
             {
                 foreach (var parameter in method.Parameters)
                 {
@@ -293,6 +292,30 @@ public partial class RpcGenerator
             var typeName = GetTypeName(type);
             if (_models.ContainsKey(typeName) || _failed.Contains(typeName))
                 return;
+            if (type is INamedTypeSymbol namedArtifact)
+            {
+                if (namedArtifact.IsRefLikeType)
+                {
+                    Report(DtoDiagnosticKind.Unsupported, type,
+                        "ref-like DTOs cannot be used by generated Codec or RPC artifacts");
+                    _failed.Add(typeName);
+                    return;
+                }
+                if (!IsAccessibleFromGeneratedCode(namedArtifact))
+                {
+                    Report(DtoDiagnosticKind.Unsupported, type,
+                        "the DTO type and every containing type must be accessible from generated code");
+                    _failed.Add(typeName);
+                    return;
+                }
+            }
+            if (type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer)
+            {
+                Report(DtoDiagnosticKind.Unsupported, type,
+                    "pointer and function-pointer values cannot be represented by generated Codec or RPC artifacts");
+                _failed.Add(typeName);
+                return;
+            }
             if (TrySelectAdapter(type, out var adapter))
             {
                 if (adapter is not null)
@@ -325,7 +348,7 @@ public partial class RpcGenerator
                 return;
             }
             if (type.SpecialType == SpecialType.System_Object ||
-                type.TypeKind is TypeKind.Delegate or TypeKind.Dynamic or TypeKind.Pointer or TypeKind.FunctionPointer)
+                type.TypeKind is TypeKind.Delegate or TypeKind.Dynamic)
             {
                 Report(DtoDiagnosticKind.Unsupported, type, "object, delegate, dynamic, pointer, and function-pointer values require an explicit typed Codec");
                 _failed.Add(typeName);
@@ -403,7 +426,7 @@ public partial class RpcGenerator
                 _failed.Add(typeName);
                 return;
             }
-            if (named.TypeKind == TypeKind.Class && !named.IsSealed && !named.IsRecord)
+            if (named.TypeKind == TypeKind.Class && !named.IsSealed)
             {
                 Report(DtoDiagnosticKind.Unsupported, type,
                     "classes must be sealed; add an installed serializer selector Attribute or [RpcCodecAdapter(typeof(...))] for polymorphic graphs");
@@ -477,7 +500,7 @@ public partial class RpcGenerator
                 .OrderBy(static member => member.FieldId)
                 .Select(member => new GeneratedMemberModel(
                     member.Symbol.Name,
-                    EscapeIdentifier(member.Symbol.Name),
+                    member.Symbol.Name,
                     GetTypeName(member.Type),
                     member.FieldId,
                     member.Kind,
@@ -495,7 +518,12 @@ public partial class RpcGenerator
 
             var schema = new StringBuilder(typeName);
             foreach (var member in generatedMembers)
-                schema.Append('|').Append(member.FieldId).Append(':').Append(member.TypeName).Append(':').Append(member.Required);
+            {
+                schema.Append('|').Append(member.FieldId).Append(':').Append(member.TypeName)
+                    .Append(':').Append(member.Required);
+                if (member.Nullable)
+                    schema.Append(":nullable");
+            }
             var dependencyTypes = new List<ITypeSymbol>(analyzedMembers.Count + 1) { type };
             dependencyTypes.AddRange(analyzedMembers.Select(static member => member.Type));
             _models[typeName] = new GeneratedCodecModel(
@@ -596,14 +624,16 @@ public partial class RpcGenerator
             if (type.TypeKind == TypeKind.Struct && members.All(static member => member.Assignable))
             {
                 constructorMembers = [];
-                return true;
+                return CompilerRequiredMembersAreSatisfied(type, members, setsRequiredMembers: false);
             }
 
             var memberByName = members.ToDictionary(
                 static member => member.Symbol.Name,
-                StringComparer.OrdinalIgnoreCase);
+                StringComparer.Ordinal);
             foreach (var constructor in type.InstanceConstructors
                          .Where(IsConstructorAccessible)
+                         .Where(static constructor => constructor.Parameters.All(static parameter =>
+                             parameter.RefKind is not (RefKind.Ref or RefKind.Out or RefKind.RefReadOnlyParameter)))
                          .OrderBy(static constructor => constructor.Parameters.Length)
                          .ThenBy(static constructor => constructor.ToDisplayString(), StringComparer.Ordinal))
             {
@@ -612,7 +642,7 @@ public partial class RpcGenerator
                 foreach (var parameter in constructor.Parameters)
                 {
                     if (parameter.Name is null ||
-                        !memberByName.TryGetValue(parameter.Name, out var member) ||
+                        !TryGetConstructorMember(parameter.Name, out var member) ||
                         !SymbolEqualityComparer.Default.Equals(parameter.Type, member.Type))
                     {
                         valid = false;
@@ -625,12 +655,59 @@ public partial class RpcGenerator
                 var mappedSet = new HashSet<string>(mapped, StringComparer.Ordinal);
                 if (members.Any(member => !member.Assignable && !mappedSet.Contains(member.Symbol.Name)))
                     continue;
+                if (!CompilerRequiredMembersAreSatisfied(
+                        type,
+                        members,
+                        HasAttribute(
+                            constructor,
+                            "System.Diagnostics.CodeAnalysis",
+                            "SetsRequiredMembersAttribute")))
+                {
+                    continue;
+                }
                 constructorMembers = mapped;
                 return true;
             }
 
             constructorMembers = [];
             return false;
+
+            bool TryGetConstructorMember(string parameterName, out AnalyzedMember member)
+            {
+                if (memberByName.TryGetValue(parameterName, out member!))
+                    return true;
+
+                AnalyzedMember? candidate = null;
+                foreach (var current in members)
+                {
+                    if (!string.Equals(current.Symbol.Name, parameterName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (candidate is not null)
+                    {
+                        member = null!;
+                        return false;
+                    }
+                    candidate = current;
+                }
+                member = candidate!;
+                return candidate is not null;
+            }
+        }
+
+        private static bool CompilerRequiredMembersAreSatisfied(
+            INamedTypeSymbol type,
+            List<AnalyzedMember> members,
+            bool setsRequiredMembers)
+        {
+            if (setsRequiredMembers)
+                return true;
+
+            var serializedMembers = new HashSet<ISymbol>(
+                members.Where(static member => member.Assignable).Select(static member => member.Symbol),
+                SymbolEqualityComparer.Default);
+            return type.GetMembers()
+                .Where(IsCompilerRequired)
+                .All(serializedMembers.Contains);
         }
 
         private bool IsConstructorAccessible(IMethodSymbol constructor)
@@ -931,7 +1008,11 @@ public partial class RpcGenerator
 
         private static bool IsRequired(ISymbol member)
             => HasAttribute(member, "SharpLink.Sdk", "RpcRequiredAttribute") ||
-               member is IPropertySymbol { IsRequired: true };
+               IsCompilerRequired(member);
+
+        private static bool IsCompilerRequired(ISymbol member)
+            => member is IFieldSymbol { IsRequired: true } or
+               IPropertySymbol { IsRequired: true };
 
         private static bool IsNonNullableReference(ISymbol member, ITypeSymbol type)
         {

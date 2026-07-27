@@ -27,13 +27,15 @@ public partial class RpcGenerator
             return null;
 
         var contracts = symbol.AllInterfaces.Where(HasRpcContractAttribute).ToArray();
-        if (contracts.Length != 1 || symbol.IsAbstract || symbol.IsGenericType)
+        if (contracts.Length != 1 || symbol.IsAbstract || symbol.IsGenericType ||
+            !IsAccessibleFromGeneratedCode(symbol))
             return null;
         var interfaceSymbol = contracts[0];
         if (HasInvalidRpcMethod(interfaceSymbol)) return null;
 
         var constructor = SelectServiceConstructor(symbol);
-        if (constructor is null)
+        if (constructor is null ||
+            !IsServiceConstructorSupported(constructor, out var ignoredConstructorDetail))
             return null;
 
         var lifetime = GetServiceLifetime(symbol, out var validLifetime);
@@ -80,6 +82,31 @@ public partial class RpcGenerator
             : constructors.Length == 1 ? constructors[0] : null;
     }
 
+    private static bool IsServiceConstructorSupported(
+        IMethodSymbol constructor,
+        out string invalidDetail)
+    {
+        foreach (var parameter in constructor.Parameters)
+        {
+            if (parameter.RefKind is RefKind.Ref or RefKind.Out or RefKind.RefReadOnlyParameter)
+            {
+                invalidDetail =
+                    $"constructor dependency '{parameter.Name}' requires by-reference storage and cannot be supplied by IServiceProvider";
+                return false;
+            }
+            if (parameter.Type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer ||
+                ContainsRefLikeType(parameter.Type))
+            {
+                invalidDetail =
+                    $"constructor dependency '{parameter.Name}' has type '{parameter.Type.ToDisplayString()}', which cannot round-trip through IServiceProvider";
+                return false;
+            }
+        }
+
+        invalidDetail = string.Empty;
+        return true;
+    }
+
     private static RpcServiceDiagnosticModel? GetRpcServiceDiagnosticOrNull(
         GeneratorAttributeSyntaxContext context,
         CancellationToken _)
@@ -105,12 +132,16 @@ public partial class RpcGenerator
                 $"the service implements {contracts.Length} RPC contracts; exactly one is supported",
                 location);
         }
-        if (symbol.IsAbstract || symbol.IsGenericType)
+        if (symbol.IsAbstract || symbol.IsGenericType || !IsAccessibleFromGeneratedCode(symbol))
         {
             return new RpcServiceDiagnosticModel(
                 RpcServiceDiagnosticKind.InvalidType,
                 symbol.Name,
-                symbol.IsAbstract ? "abstract RPC services are not supported" : "open generic RPC services are not supported",
+                symbol.IsAbstract
+                    ? "abstract RPC services are not supported"
+                    : symbol.IsGenericType
+                        ? "open generic RPC services are not supported"
+                        : "the service type and every containing type must be accessible from generated code",
                 location);
         }
 
@@ -140,6 +171,18 @@ public partial class RpcGenerator
                 constructors.Length == 0
                     ? "no public constructor can be called by the generated activator"
                     : "constructor selection is ambiguous; expose one public constructor or mark exactly one with [ActivatorUtilitiesConstructor]",
+                location);
+        }
+
+        var selectedConstructor = markedConstructors.Length == 1
+            ? markedConstructors[0]
+            : constructors[0];
+        if (!IsServiceConstructorSupported(selectedConstructor, out var invalidConstructorDetail))
+        {
+            return new RpcServiceDiagnosticModel(
+                RpcServiceDiagnosticKind.InvalidConstructor,
+                symbol.Name,
+                invalidConstructorDetail,
                 location);
         }
 
@@ -180,16 +223,68 @@ public partial class RpcGenerator
             return ImmutableArray<InvalidRpcMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidRpcMethodModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetConflictingInheritedRpcSignatures(symbol))
         {
-            if (IsSupportedRpcReturnType(method.ReturnType))
-                continue;
-
             list.Add(new InvalidRpcMethodModel(
+                InvalidRpcMethodKind.InheritedSignatureConflict,
                 method.Name,
-                method.ReturnType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
-                method.Locations.FirstOrDefault()));
+                "inherited declarations with the same CLR signature must agree on return type, call shape, execution policy, and request schema",
+                method.Locations.FirstOrDefault() ?? symbol.Locations.FirstOrDefault()));
         }
+        foreach (var method in GetContractMethods(symbol))
+        {
+            var isOneWay = false;
+            if (method.IsStatic)
+            {
+                list.Add(new InvalidRpcMethodModel(
+                    InvalidRpcMethodKind.Static,
+                    method.Name,
+                    "RPC routes must be instance methods",
+                    method.Locations.FirstOrDefault()));
+            }
+            if (HasByReferenceSignature(method))
+            {
+                list.Add(new InvalidRpcMethodModel(
+                    InvalidRpcMethodKind.ByReference,
+                    method.Name,
+                    "ref, ref readonly, in, and out values have no supported RPC wire model",
+                    method.Locations.FirstOrDefault()));
+            }
+            if (!IsSupportedRpcReturnType(method.ReturnType))
+            {
+                list.Add(new InvalidRpcMethodModel(
+                    InvalidRpcMethodKind.ReturnType,
+                    method.Name,
+                    method.ReturnType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+                    method.Locations.FirstOrDefault()));
+            }
+            foreach (var attribute in method.GetAttributes())
+            {
+                if (IsOnewayAttribute(attribute))
+                    isOneWay = true;
+                if (!IsTimeoutAttribute(attribute))
+                    continue;
+                if (TryGetTimeoutSeconds(attribute, out var seconds) &&
+                    !TryValidateTimeoutSeconds(seconds, out var detail))
+                {
+                    list.Add(new InvalidRpcMethodModel(
+                        InvalidRpcMethodKind.Timeout,
+                        method.Name,
+                        detail,
+                        attribute.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? method.Locations.FirstOrDefault()));
+                }
+            }
+            if (isOneWay && !IsValidOnewayReturnType(method.ReturnType))
+            {
+                list.Add(new InvalidRpcMethodModel(
+                    InvalidRpcMethodKind.OnewayReturn,
+                    method.Name,
+                    "only non-generic Task or ValueTask returns are supported",
+                    method.Locations.FirstOrDefault()));
+            }
+        }
+
+        AddUnsupportedContractMemberDiagnostics(symbol, list);
 
         return list.ToImmutable();
     }
@@ -202,7 +297,7 @@ public partial class RpcGenerator
             return ImmutableArray<InvalidCancellationTokenMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidCancellationTokenMethodModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             var cancellationTokenCount = method.Parameters.Count(IsCancellationTokenParameter);
             if (cancellationTokenCount <= 1)
@@ -224,7 +319,7 @@ public partial class RpcGenerator
             return ImmutableArray<InvalidStreamCountMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidStreamCountMethodModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             var streamCount = method.Parameters.Count(p => IsAsyncEnumerable(p.Type, out var _));
             if (streamCount <= sbyte.MaxValue)
@@ -250,7 +345,7 @@ public partial class RpcGenerator
         }
 
         var list = ImmutableArray.CreateBuilder<NonCancellableRpcMethodModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             if (method.Parameters.Any(IsCancellationTokenParameter) ||
                 method.GetAttributes().Any(IsNonCancellableAttribute) ||
@@ -275,7 +370,7 @@ public partial class RpcGenerator
         }
 
         var list = ImmutableArray.CreateBuilder<StreamingWithoutCancellationModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             if (!IsStreamingMethod(method) ||
                 method.Parameters.Any(IsCancellationTokenParameter) ||
@@ -300,7 +395,7 @@ public partial class RpcGenerator
         }
 
         var list = ImmutableArray.CreateBuilder<ConflictingCancellationContractModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             if (!method.Parameters.Any(IsCancellationTokenParameter) ||
                 !method.GetAttributes().Any(IsNonCancellableAttribute))
@@ -326,7 +421,7 @@ public partial class RpcGenerator
             return ImmutableArray<InvalidCallOptionsMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidCallOptionsMethodModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             if (method.Parameters.Count(IsCallOptionsParameter) <= 1)
                 continue;
@@ -344,7 +439,7 @@ public partial class RpcGenerator
             return ImmutableArray<InvalidControlParameterOrderModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidControlParameterOrderModel>();
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             var optionsIndex = -1;
             var cancellationIndex = -1;
@@ -375,7 +470,7 @@ public partial class RpcGenerator
             return ImmutableArray<InvalidGenericUsageModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidGenericUsageModel>();
-        if (symbol.Arity > 0)
+        if (symbol.Arity > 0 || HasGenericContainingType(symbol))
         {
             list.Add(new InvalidGenericUsageModel(
                 symbol.Name,
@@ -383,7 +478,7 @@ public partial class RpcGenerator
                 symbol.Locations.FirstOrDefault()));
         }
 
-        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>().Where(m => m.MethodKind == MethodKind.Ordinary))
+        foreach (var method in GetContractMethods(symbol))
         {
             var hasGenericUsage = method.IsGenericMethod ||
                                   HasTypeParameter(method.ReturnType) ||
@@ -400,30 +495,46 @@ public partial class RpcGenerator
         return list.ToImmutable();
     }
 
-    private static InvalidRpcContractInheritanceModel? GetInvalidRpcContractInheritance(
+    private static RpcContractDiagnosticModel? GetRpcContractDiagnosticOrNull(
         GeneratorAttributeSyntaxContext context,
         CancellationToken _)
     {
         if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface)
             return null;
-        if (InheritsIService(symbol))
-            return null;
-
-        return new InvalidRpcContractInheritanceModel(
-            symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
-            symbol.Locations.FirstOrDefault());
+        if (!InheritsIService(symbol))
+        {
+            return new RpcContractDiagnosticModel(
+                RpcContractDiagnosticKind.Inheritance,
+                symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+                symbol.Locations.FirstOrDefault());
+        }
+        if (!IsPubliclyReachableContract(symbol))
+        {
+            return new RpcContractDiagnosticModel(
+                RpcContractDiagnosticKind.Accessibility,
+                symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+                symbol.Locations.FirstOrDefault());
+        }
+        return null;
     }
 
     private static bool HasInvalidRpcMethod(INamedTypeSymbol interfaceSymbol)
     {
-        if (interfaceSymbol.Arity > 0)
+        if (interfaceSymbol.Arity > 0 || HasGenericContainingType(interfaceSymbol) ||
+            !IsPubliclyReachableContract(interfaceSymbol) ||
+            HasUnsupportedContractMember(interfaceSymbol) ||
+            GetConflictingInheritedRpcSignatures(interfaceSymbol).Any())
             return true;
 
-        return interfaceSymbol.GetMembers()
-            .OfType<IMethodSymbol>()
-            .Where(m => m.MethodKind == MethodKind.Ordinary)
+        return GetContractMethods(interfaceSymbol)
             .Any(m =>
                 !IsSupportedRpcReturnType(m.ReturnType) ||
+                m.IsStatic ||
+                HasByReferenceSignature(m) ||
+                ContainsRefLikeType(m.ReturnType) ||
+                m.Parameters.Any(static parameter => ContainsRefLikeType(parameter.Type)) ||
+                ContainsPointerOrFunctionPointer(m.ReturnType) ||
+                m.Parameters.Any(static parameter => ContainsPointerOrFunctionPointer(parameter.Type)) ||
                 m.IsGenericMethod ||
                 HasTypeParameter(m.ReturnType) ||
                 m.Parameters.Any(p => HasTypeParameter(p.Type)) ||
@@ -431,7 +542,135 @@ public partial class RpcGenerator
                 m.Parameters.Count(IsCallOptionsParameter) > 1 ||
                 !HasValidControlParameterOrder(m) ||
                 m.Parameters.Count(p => IsAsyncEnumerable(p.Type, out _)) > sbyte.MaxValue ||
-                false);
+                HasInvalidMethodAttributes(m));
+    }
+
+    private static bool IsValidOnewayReturnType(ITypeSymbol type)
+    {
+        if (type is not INamedTypeSymbol { Arity: 0 } named ||
+            named.ContainingNamespace.ToDisplayString() != "System.Threading.Tasks")
+        {
+            return false;
+        }
+        return named.Name is "Task" or "ValueTask";
+    }
+
+    private static bool HasByReferenceSignature(IMethodSymbol method)
+        => method.ReturnsByRef || method.ReturnsByRefReadonly ||
+           method.Parameters.Any(static parameter => parameter.RefKind != RefKind.None);
+
+    private static void AddUnsupportedContractMemberDiagnostics(
+        INamedTypeSymbol symbol,
+        ImmutableArray<InvalidRpcMethodModel>.Builder diagnostics)
+    {
+        HashSet<ISymbol>? seen = null;
+        AddFrom(symbol);
+        foreach (var contract in symbol.AllInterfaces)
+        {
+            if (!IsIService(contract))
+                AddFrom(contract);
+        }
+        return;
+
+        void AddFrom(INamedTypeSymbol contract)
+        {
+            foreach (var member in contract.GetMembers())
+            {
+                if (!IsUnsupportedAbstractContractMember(member) ||
+                    !(seen ??= new HashSet<ISymbol>(SymbolEqualityComparer.Default)).Add(member.OriginalDefinition))
+                {
+                    continue;
+                }
+                diagnostics.Add(new InvalidRpcMethodModel(
+                    InvalidRpcMethodKind.ContractMember,
+                    GetContractMemberName(member),
+                    member switch
+                    {
+                        IEventSymbol => "abstract events cannot be implemented by an RPC proxy",
+                        IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator or MethodKind.Conversion } =>
+                            "static abstract operators and conversions cannot be implemented by an RPC proxy",
+                        IMethodSymbol => "non-public abstract methods cannot be exposed as RPC routes",
+                        _ => "abstract properties and indexers cannot be represented as RPC routes"
+                    },
+                    member.Locations.FirstOrDefault()));
+            }
+        }
+    }
+
+    private static bool HasUnsupportedContractMember(INamedTypeSymbol symbol)
+    {
+        if (HasUnsupportedContractMemberDirect(symbol))
+            return true;
+        foreach (var contract in symbol.AllInterfaces)
+        {
+            if (!IsIService(contract) && HasUnsupportedContractMemberDirect(contract))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool HasUnsupportedContractMemberDirect(INamedTypeSymbol contract)
+    {
+        foreach (var member in contract.GetMembers())
+        {
+            if (IsUnsupportedAbstractContractMember(member))
+                return true;
+        }
+        return false;
+    }
+
+    private static string GetContractMemberName(ISymbol member)
+        => member is IPropertySymbol { IsIndexer: true } ? "this[]" : member.Name;
+
+    private static bool IsUnsupportedAbstractContractMember(ISymbol member)
+        => member is IPropertySymbol { IsAbstract: true } or IEventSymbol { IsAbstract: true } ||
+           member is IMethodSymbol
+           {
+               IsAbstract: true,
+               MethodKind: MethodKind.UserDefinedOperator or MethodKind.Conversion
+           } ||
+           member is IMethodSymbol
+           {
+               MethodKind: MethodKind.Ordinary,
+               IsAbstract: true,
+               DeclaredAccessibility: not Accessibility.Public
+           };
+
+    private static bool HasGenericContainingType(INamedTypeSymbol symbol)
+    {
+        for (var current = symbol.ContainingType; current is not null; current = current.ContainingType)
+        {
+            if (current.Arity != 0)
+                return true;
+        }
+        return false;
+    }
+
+    private static bool IsPubliclyReachableContract(INamedTypeSymbol symbol)
+    {
+        for (var current = symbol; current is not null; current = current.ContainingType)
+        {
+            if (current.DeclaredAccessibility != Accessibility.Public)
+                return false;
+        }
+        return true;
+    }
+
+    private static bool HasInvalidMethodAttributes(IMethodSymbol method)
+    {
+        var isOneWay = false;
+        foreach (var attribute in method.GetAttributes())
+        {
+            if (IsOnewayAttribute(attribute))
+                isOneWay = true;
+            else if (IsTimeoutAttribute(attribute) &&
+                TryGetTimeoutSeconds(attribute, out var seconds) &&
+                !TryValidateTimeoutSeconds(seconds, out _))
+            {
+                return true;
+            }
+        }
+        return isOneWay && !IsValidOnewayReturnType(method.ReturnType);
     }
 
     private static bool HasTypeParameter(ITypeSymbol type)
@@ -447,6 +686,41 @@ public partial class RpcGenerator
                                          namedType.TypeArguments.Any(HasTypeParameter),
             _ => false
         };
+    }
+
+    private static bool ContainsRefLikeType(ITypeSymbol type)
+        => type switch
+        {
+            INamedTypeSymbol { IsRefLikeType: true } => true,
+            IArrayTypeSymbol arrayType => ContainsRefLikeType(arrayType.ElementType),
+            IPointerTypeSymbol pointerType => ContainsRefLikeType(pointerType.PointedAtType),
+            INamedTypeSymbol namedType => namedType.TypeArguments.Any(ContainsRefLikeType),
+            _ => false
+        };
+
+    private static bool ContainsPointerOrFunctionPointer(ITypeSymbol type)
+        => type switch
+        {
+            IPointerTypeSymbol => true,
+            IFunctionPointerTypeSymbol => true,
+            IArrayTypeSymbol arrayType => ContainsPointerOrFunctionPointer(arrayType.ElementType),
+            INamedTypeSymbol namedType => namedType.TypeArguments.Any(ContainsPointerOrFunctionPointer),
+            _ => false
+        };
+
+    private static bool IsAccessibleFromGeneratedCode(INamedTypeSymbol symbol)
+    {
+        for (var current = symbol; current is not null; current = current.ContainingType)
+        {
+            if (current.IsFileLocal ||
+                current.DeclaredAccessibility is Accessibility.Private or
+                    Accessibility.Protected or
+                    Accessibility.ProtectedAndInternal)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static bool IsCancellationTokenParameter(IParameterSymbol parameter)
@@ -472,6 +746,199 @@ public partial class RpcGenerator
 
     private static bool InheritsIService(INamedTypeSymbol symbol)
         => symbol.AllInterfaces.Any(IsIService);
+
+    private static IEnumerable<IMethodSymbol> GetContractMethods(INamedTypeSymbol symbol)
+    {
+        var methods = new List<IMethodSymbol>();
+        foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>()
+                     .Where(static method => method.MethodKind == MethodKind.Ordinary &&
+                                             method.DeclaredAccessibility == Accessibility.Public))
+        {
+            methods.Add(method);
+        }
+
+        foreach (var method in symbol.AllInterfaces
+                     .Where(static contract => !IsIService(contract))
+                     .OrderBy(static contract => contract.ToDisplayString(), StringComparer.Ordinal)
+                     .SelectMany(static contract => contract.GetMembers()
+                         .OfType<IMethodSymbol>()
+                         .Where(static method => method.MethodKind == MethodKind.Ordinary &&
+                                                 method.DeclaredAccessibility == Accessibility.Public)))
+        {
+            if (!methods.Any(existing => HasSameContractSignature(existing, method)))
+                methods.Add(method);
+        }
+
+        return methods;
+    }
+
+    private static bool HasSameContractSignature(IMethodSymbol left, IMethodSymbol right)
+    {
+        if (!string.Equals(left.Name, right.Name, StringComparison.Ordinal) ||
+            left.Arity != right.Arity ||
+            left.Parameters.Length != right.Parameters.Length)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < left.Parameters.Length; index++)
+        {
+            var leftParameter = left.Parameters[index];
+            var rightParameter = right.Parameters[index];
+            if (leftParameter.RefKind != rightParameter.RefKind ||
+                !SymbolEqualityComparer.Default.Equals(leftParameter.Type, rightParameter.Type))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static IEnumerable<IMethodSymbol> GetConflictingInheritedRpcSignatures(INamedTypeSymbol symbol)
+    {
+        if (!symbol.AllInterfaces.Any(static contract => !IsIService(contract)))
+            yield break;
+
+        var directMethods = symbol.GetMembers().OfType<IMethodSymbol>()
+            .Where(static method => method.MethodKind == MethodKind.Ordinary &&
+                                    method.DeclaredAccessibility == Accessibility.Public)
+            .ToArray();
+        var methods = directMethods
+            .Concat(symbol.AllInterfaces
+                .Where(static contract => !IsIService(contract))
+                .SelectMany(static contract => contract.GetMembers().OfType<IMethodSymbol>()))
+            .Where(static method => method.MethodKind == MethodKind.Ordinary &&
+                                    method.DeclaredAccessibility == Accessibility.Public)
+            .ToArray();
+        var groups = new List<InheritedRpcSignatureGroup>();
+        for (var methodIndex = 0; methodIndex < methods.Length; methodIndex++)
+        {
+            var method = methods[methodIndex];
+            var groupIndex = -1;
+            for (var candidateIndex = 0; candidateIndex < groups.Count; candidateIndex++)
+            {
+                if (!HasSameContractSignature(groups[candidateIndex].Representative, method))
+                    continue;
+                groupIndex = candidateIndex;
+                break;
+            }
+            if (groupIndex < 0)
+            {
+                var hasDirectDeclaration = methodIndex < directMethods.Length;
+                groups.Add(new InheritedRpcSignatureGroup(
+                    method,
+                    hasDirectDeclaration ? default : GetInheritedRpcPolicy(method),
+                    hasDirectDeclaration,
+                    Reported: false));
+                continue;
+            }
+
+            var group = groups[groupIndex];
+            if (group.Reported)
+                continue;
+            if (SymbolEqualityComparer.IncludeNullability.Equals(
+                    group.Representative.ReturnType,
+                    method.ReturnType) &&
+                (group.HasDirectDeclaration || HasCompatibleInheritedRpcSemantics(
+                    group.Representative,
+                    method,
+                    group.Policy,
+                    GetInheritedRpcPolicy(method))))
+            {
+                continue;
+            }
+
+            groups[groupIndex] = group with { Reported = true };
+            yield return group.Representative;
+        }
+    }
+
+    private static bool HasCompatibleInheritedRpcSemantics(
+        IMethodSymbol left,
+        IMethodSymbol right,
+        InheritedRpcPolicy leftPolicy,
+        InheritedRpcPolicy rightPolicy)
+    {
+        for (var index = 0; index < left.Parameters.Length; index++)
+        {
+            var leftParameter = left.Parameters[index];
+            var rightParameter = right.Parameters[index];
+            if (IsCancellationTokenParameter(leftParameter) ||
+                IsCallOptionsParameter(leftParameter))
+            {
+                continue;
+            }
+            if (!string.Equals(leftParameter.Name, rightParameter.Name, StringComparison.Ordinal) ||
+                !SymbolEqualityComparer.IncludeNullability.Equals(
+                    leftParameter.Type,
+                    rightParameter.Type))
+            {
+                return false;
+            }
+        }
+
+        return leftPolicy == rightPolicy;
+    }
+
+    private static InheritedRpcPolicy GetInheritedRpcPolicy(IMethodSymbol method)
+    {
+        var isOneway = false;
+        var isIdempotent = false;
+        var isNonCancellable = false;
+        var hasTimeout = false;
+        double? timeoutSeconds = null;
+        foreach (var attribute in method.GetAttributes())
+        {
+            var attributeClass = attribute.AttributeClass;
+            if (attributeClass is null)
+                continue;
+            var attributeNamespace = attributeClass.ContainingNamespace;
+            if (attributeNamespace.ContainingNamespace is not { Name: "SharpLink" } root ||
+                !root.ContainingNamespace.IsGlobalNamespace ||
+                attributeNamespace.Name is not ("Sdk" or "Abstractions"))
+            {
+                continue;
+            }
+
+            switch (attributeClass.Name)
+            {
+                case "OnewayAttribute":
+                    isOneway = true;
+                    break;
+                case "IdempotentAttribute":
+                    isIdempotent = true;
+                    break;
+                case "NonCancellableAttribute":
+                    isNonCancellable = true;
+                    break;
+                case "TimeoutAttribute":
+                    hasTimeout = true;
+                    if (TryGetTimeoutSeconds(attribute, out var seconds))
+                        timeoutSeconds = seconds;
+                    break;
+            }
+        }
+        return new InheritedRpcPolicy(
+            isOneway,
+            isIdempotent,
+            isNonCancellable,
+            hasTimeout,
+            timeoutSeconds);
+    }
+
+    private readonly record struct InheritedRpcPolicy(
+        bool IsOneway,
+        bool IsIdempotent,
+        bool IsNonCancellable,
+        bool HasTimeout,
+        double? TimeoutSeconds);
+
+    private readonly record struct InheritedRpcSignatureGroup(
+        IMethodSymbol Representative,
+        InheritedRpcPolicy Policy,
+        bool HasDirectDeclaration,
+        bool Reported);
 
     private static bool IsIService(INamedTypeSymbol symbol)
         => string.Equals(symbol.Name, "IService", StringComparison.Ordinal) &&
@@ -519,21 +986,69 @@ public partial class RpcGenerator
             if (attribute.ConstructorArguments.Length == 0)
                 return null;
 
-            var argument = attribute.ConstructorArguments[0];
-            if (argument.Value is null)
-                return null;
-
-            return argument.Value switch
-            {
-                double value => value,
-                float value => value,
-                int value => value,
-                long value => value,
-                _ => null
-            };
+            return TryGetTimeoutSeconds(attribute, out var seconds) &&
+                   TryValidateTimeoutSeconds(seconds, out _)
+                ? seconds
+                : null;
         }
 
         return null;
+    }
+
+    private static bool TryGetTimeoutSeconds(AttributeData attribute, out double seconds)
+    {
+        seconds = default;
+        if (attribute.ConstructorArguments.Length == 0 || attribute.ConstructorArguments[0].Value is null)
+            return false;
+
+        switch (attribute.ConstructorArguments[0].Value)
+        {
+            case double value:
+                seconds = value;
+                return true;
+            case float value:
+                seconds = value;
+                return true;
+            case int value:
+                seconds = value;
+                return true;
+            case long value:
+                seconds = value;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryValidateTimeoutSeconds(double seconds, out string detail)
+    {
+        if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds <= 0)
+        {
+            detail = "seconds must be a finite number greater than zero";
+            return false;
+        }
+
+        try
+        {
+            if (TimeSpan.FromSeconds(seconds) <= TimeSpan.Zero)
+            {
+                detail = "seconds is too small to produce a positive TimeSpan";
+                return false;
+            }
+        }
+        catch (OverflowException)
+        {
+            detail = "seconds exceeds the supported TimeSpan range";
+            return false;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            detail = "seconds exceeds the supported TimeSpan range";
+            return false;
+        }
+
+        detail = string.Empty;
+        return true;
     }
 
     private static bool IsSupportedRpcReturnType(ITypeSymbol type)
@@ -557,15 +1072,18 @@ public partial class RpcGenerator
     {
         var ns = symbol.ContainingNamespace.IsGlobalNamespace ? "" : symbol.ContainingNamespace.ToDisplayString();
 
-        var methods = symbol.GetMembers().OfType<IMethodSymbol>()
-            .Where(m => m.MethodKind == MethodKind.Ordinary)
+        var methods = GetContractMethods(symbol)
             .Select(m =>
             {
                 var returnType = m.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                var displayReturnType = m.ReturnType.ToDisplayString(FullyQualifiedNullableFormat);
                 var isGenericTask = m.ReturnType is INamedTypeSymbol { IsGenericType: true } &&
                                     m.ReturnType.ToDisplayString().StartsWith("System.Threading.Tasks");
                 var genericArg = isGenericTask
                     ? ((INamedTypeSymbol)m.ReturnType).TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                    : null;
+                var displayGenericArg = isGenericTask
+                    ? ((INamedTypeSymbol)m.ReturnType).TypeArguments[0].ToDisplayString(FullyQualifiedNullableFormat)
                     : null;
 
                 var isNonGenericTaskLike = m.ReturnType.ToDisplayString() is "System.Threading.Tasks.Task" or "System.Threading.Tasks.ValueTask";
@@ -575,17 +1093,21 @@ public partial class RpcGenerator
 
                 var isStreamReturn = false;
                 string? streamItemType = null;
+                string? displayStreamItemType = null;
                 if (IsAsyncEnumerable(m.ReturnType, out var itemTypeSymbol))
                 {
                     isStreamReturn = true;
                     streamItemType = itemTypeSymbol!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    displayStreamItemType = itemTypeSymbol.ToDisplayString(FullyQualifiedNullableFormat);
                     isGenericTask = false;
                     genericArg = null;
+                    displayGenericArg = null;
                 }
 
                 var paramArray = m.Parameters.Select(p =>
                 {
                     var pType = p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    var displayPType = p.Type.ToDisplayString(FullyQualifiedNullableFormat);
                     var isStream = IsAsyncEnumerable(p.Type, out var pItemType);
                     var isValueType = p.Type.IsValueType;
                     var isNullableReference = !isValueType && p.NullableAnnotation == NullableAnnotation.Annotated;
@@ -595,9 +1117,11 @@ public partial class RpcGenerator
                     return new RpcParameterModel(
                         p.Name,
                         pType,
+                        displayPType,
                         isStream,
                         isStream ? pItemType!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) : null,
-                        p.Type.IsUnmanagedType,
+                        isStream ? pItemType!.ToDisplayString(FullyQualifiedNullableFormat) : null,
+                        IsInlineFixedRpcType(p.Type),
                         isValueType,
                         isNullableReference,
                         IsNullablePayload(payloadType),
@@ -608,9 +1132,11 @@ public partial class RpcGenerator
                         p.Locations.FirstOrDefault());
                 }).ToImmutableArray();
 
-                var paramTypes = paramArray
-                    .Where(p => !p.IsCancellationToken && !p.IsCallOptions)
-                    .Select(p => p.Type)
+                var paramTypes = m.Parameters
+                    .Where(static parameter =>
+                        !IsCancellationTokenParameter(parameter) &&
+                        !IsCallOptionsParameter(parameter))
+                    .Select(p => p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
                     .ToArray();
                 var methodHash = Hashing.GetMethodHash(m.Name, paramTypes);
 
@@ -618,24 +1144,30 @@ public partial class RpcGenerator
                     .Where(static parameter => !parameter.IsCancellationToken && !parameter.IsCallOptions)
                     .Select(static parameter =>
                         $"{parameter.Name}:{parameter.Type}:{(parameter.IsStream ? "stream" : "value")}:{(parameter.PayloadNullable ? "nullable" : "required")}"));
+                var responsePayload = isGenericTask
+                    ? ((INamedTypeSymbol)m.ReturnType).TypeArguments[0]
+                    : itemTypeSymbol;
+                var responseNullable = responsePayload is not null && IsNullablePayload(responsePayload);
                 var responseSchema = isStreamReturn
                     ? $"stream:{streamItemType}"
                     : $"value:{returnType}";
+                if (responseNullable)
+                    responseSchema += ":nullable";
                 var kind = isOneWay ? "OneWay" : isStreamReturn
                     ? (paramArray.Any(static parameter => parameter.IsStream) ? "DuplexStreaming" : "ServerStreaming")
                     : paramArray.Any(static parameter => parameter.IsStream) ? "ClientStreaming" : "Unary";
                 var canonical = $"{m.Name}|{methodHash}|{kind}|{requestSchema}|{responseSchema}|cancel={paramArray.Any(static parameter => parameter.IsCancellationToken)}|timeout={hasTimeoutAttribute}:{timeoutSeconds?.ToString("R", CultureInfo.InvariantCulture)}|idempotent={isIdempotent}";
-                var responsePayload = isGenericTask
-                    ? ((INamedTypeSymbol)m.ReturnType).TypeArguments[0]
-                    : itemTypeSymbol;
 
                 return new RpcMethodModel(
                     Name: m.Name,
                     ReturnType: returnType,
+                    DisplayReturnType: displayReturnType,
                     IsGenericTask: isGenericTask,
                     IsStreamReturn: isStreamReturn,
                     StreamItemType: streamItemType,
+                    DisplayStreamItemType: displayStreamItemType,
                     GenericArgumentType: genericArg,
+                    DisplayGenericArgumentType: displayGenericArg,
                     IsVoid: m.ReturnsVoid || isNonGenericTaskLike,
                     IsOneWay: isOneWay,
                     HasCancellationToken: paramArray.Any(p => p.IsCancellationToken),
@@ -648,7 +1180,7 @@ public partial class RpcGenerator
                     RequestSchema: requestSchema,
                     ResponseSchema: responseSchema,
                     Fingerprint: Hashing.GetSha256(canonical),
-                    ResponseNullable: responsePayload is not null && IsNullablePayload(responsePayload),
+                    ResponseNullable: responseNullable,
                     ResponseEnumUnderlyingType: responsePayload is null ? null : GetEnumUnderlyingType(responsePayload),
                     StreamItemEnumUnderlyingType: itemTypeSymbol is null ? null : GetEnumUnderlyingType(itemTypeSymbol),
                     Location: m.Locations.FirstOrDefault());
@@ -659,12 +1191,11 @@ public partial class RpcGenerator
         var canonicalContract = $"{fullname}|{interfaceHash}|" + string.Join("|", methods
             .OrderBy(static method => method.Hash)
             .Select(static method => method.Fingerprint));
-        var dependencyTypes = symbol.GetMembers().OfType<IMethodSymbol>()
-            .Where(static method => method.MethodKind == MethodKind.Ordinary)
+        var dependencyTypes = GetContractMethods(symbol)
             .SelectMany(static method => method.Parameters.Select(static parameter => parameter.Type)
                 .Append(method.ReturnType));
         return new RpcInterfaceModel(
-            symbol.Name,
+            GetGeneratedContractName(symbol),
             ns,
             fullname,
             interfaceHash,
@@ -678,6 +1209,23 @@ public partial class RpcGenerator
         => type is INamedTypeSymbol { TypeKind: TypeKind.Enum, EnumUnderlyingType: { } underlying }
             ? underlying.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
             : null;
+
+    private static bool IsInlineFixedRpcType(ITypeSymbol type)
+    {
+        if (type.TypeKind == TypeKind.Enum)
+            return true;
+        if (type.SpecialType is SpecialType.System_Boolean or SpecialType.System_Byte or SpecialType.System_SByte or
+            SpecialType.System_Int16 or SpecialType.System_UInt16 or
+            SpecialType.System_Char or SpecialType.System_Int32 or SpecialType.System_UInt32 or
+            SpecialType.System_Single or SpecialType.System_Int64 or SpecialType.System_UInt64 or
+            SpecialType.System_Double)
+        {
+            return true;
+        }
+
+        return type.ToDisplayString() is "System.Half" or "System.Guid" or
+            "System.TimeSpan" or "System.Int128" or "System.UInt128";
+    }
 
     private static bool IsNullablePayload(ITypeSymbol type)
         => type.NullableAnnotation == NullableAnnotation.Annotated ||
@@ -893,6 +1441,7 @@ public partial class RpcGenerator
             var rpcContracts = type.AllInterfaces.Where(HasRpcContractAttribute).ToArray();
             var constructor = SelectServiceConstructor(type);
             if (rpcContracts.Length == 1 && constructor is not null &&
+                IsServiceConstructorSupported(constructor, out _) &&
                 !HasInvalidRpcMethod(rpcContracts[0]))
             {
                 var serviceNamespace = type.ContainingNamespace.IsGlobalNamespace
@@ -945,6 +1494,8 @@ public partial class RpcGenerator
             if (!IsAttribute(attribute, "SharpLink.Sdk", "SharpLinkRpcContractsAttribute"))
                 continue;
 
+            assemblyNames ??= new HashSet<string>(StringComparer.Ordinal);
+
             if (attribute.ConstructorArguments.Length == 0)
                 continue;
 
@@ -956,7 +1507,6 @@ public partial class RpcGenerator
             {
                 if (item.Value is INamedTypeSymbol type && type.ContainingAssembly is { } containingAssembly)
                 {
-                    assemblyNames ??= new HashSet<string>(StringComparer.Ordinal);
                     assemblyNames.Add(containingAssembly.Identity.Name);
                 }
             }
@@ -1043,26 +1593,26 @@ public partial class RpcGenerator
             var interfaceSymbol = FindRpcContractInterface(typeSymbol);
             if (interfaceSymbol is not null && !HasInvalidRpcMethod(interfaceSymbol))
             {
-                var fullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                if (seen.Add(fullName))
+                var constructor = SelectServiceConstructor(typeSymbol);
+                if (constructor is not null && IsServiceConstructorSupported(constructor, out _))
                 {
-                    var ns = typeSymbol.ContainingNamespace.IsGlobalNamespace ? "" : typeSymbol.ContainingNamespace.ToDisplayString();
-                    var constructor = typeSymbol.InstanceConstructors.FirstOrDefault(static candidate =>
-                        candidate.DeclaredAccessibility == Accessibility.Public);
-                    var parameters = constructor is null
-                        ? ImmutableArray<RpcConstructorParameterModel>.Empty
-                        : constructor.Parameters.Select(static parameter => new RpcConstructorParameterModel(
+                    var fullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    if (seen.Add(fullName))
+                    {
+                        var ns = typeSymbol.ContainingNamespace.IsGlobalNamespace ? "" : typeSymbol.ContainingNamespace.ToDisplayString();
+                        var parameters = constructor.Parameters.Select(static parameter => new RpcConstructorParameterModel(
                             parameter.Name,
                             parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))).ToImmutableArray();
-                    models.Add(new RpcServiceModel(
-                        typeSymbol.Name,
-                        ns,
-                        fullName,
-                        CreateInterfaceModel(interfaceSymbol),
-                        GetServiceLifetime(typeSymbol, out _),
-                        parameters,
-                        ImmutableArray.Create(interfaceSymbol.ContainingAssembly.Identity.ToString()),
-                        typeSymbol.Locations.FirstOrDefault()));
+                        models.Add(new RpcServiceModel(
+                            typeSymbol.Name,
+                            ns,
+                            fullName,
+                            CreateInterfaceModel(interfaceSymbol),
+                            GetServiceLifetime(typeSymbol, out _),
+                            parameters,
+                            ImmutableArray.Create(interfaceSymbol.ContainingAssembly.Identity.ToString()),
+                            typeSymbol.Locations.FirstOrDefault()));
+                    }
                 }
             }
         }
@@ -1100,7 +1650,7 @@ public partial class RpcGenerator
         var name = new StringBuilder(fullName.Length + 16);
         foreach (var ch in fullName)
             name.Append(char.IsLetterOrDigit(ch) ? ch : '_');
-        name.Append("_Proxy.g.cs");
+        name.Append('_').Append(unchecked((ulong)model.Hash).ToString("X16", InvariantCulture)).Append("_Proxy.g.cs");
         return name.ToString();
     }
 
@@ -1112,8 +1662,25 @@ public partial class RpcGenerator
         var name = new StringBuilder(fullName.Length + 16);
         foreach (var ch in fullName)
             name.Append(char.IsLetterOrDigit(ch) ? ch : '_');
-        name.Append("_Stub.g.cs");
+        name.Append('_').Append(unchecked((ulong)model.Hash).ToString("X16", InvariantCulture)).Append("_Stub.g.cs");
         return name.ToString();
     }
+
+    private static string GetGeneratedContractName(INamedTypeSymbol symbol)
+    {
+        if (symbol.ContainingType is null)
+            return symbol.Name;
+
+        var parts = new Stack<string>();
+        for (var current = symbol; current is not null; current = current.ContainingType)
+            parts.Push(current.Name);
+        var fullName = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        return string.Join("_", parts) + "_" + Hashing.GetSha256(fullName).Substring(0, 8);
+    }
+
+    private static string EscapeIdentifier(string identifier)
+        => Microsoft.CodeAnalysis.CSharp.SyntaxFacts.GetKeywordKind(identifier) != Microsoft.CodeAnalysis.CSharp.SyntaxKind.None
+            ? "@" + identifier
+            : identifier;
 
 }

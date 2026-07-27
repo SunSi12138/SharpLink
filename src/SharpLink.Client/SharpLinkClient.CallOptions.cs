@@ -16,13 +16,6 @@ internal sealed partial class SharpLinkClient
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(optionTimeout, TimeSpan.Zero);
         if (methodTimeout is { } configuredMethodTimeout)
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(configuredMethodTimeout, TimeSpan.Zero);
-        if (options.EnableCompression)
-        {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.Unimplemented,
-                "Request compression is not available until a compression capability is registered.");
-        }
-
         var now = DateTimeOffset.UtcNow;
         DateTimeOffset? deadline = null;
         AddDeadlineCandidate(ref deadline, options.Deadline);
@@ -97,11 +90,10 @@ internal sealed partial class SharpLinkClient
             var remaining = absoluteDeadline - DateTimeOffset.UtcNow;
             if (remaining <= TimeSpan.Zero)
                 throw CreateDeadlineExceededException();
-            try
-            {
-                await signal.WaitAsync(remaining, cancellationToken).ConfigureAwait(false);
-            }
-            catch (TimeoutException)
+            if (!await SharpLinkTimer.WaitAsync(
+                    signal,
+                    remaining,
+                    cancellationToken).ConfigureAwait(false))
             {
                 throw CreateDeadlineExceededException();
             }
@@ -144,14 +136,8 @@ internal sealed partial class SharpLinkClient
 
     private static DateTimeOffset AddTimeout(DateTimeOffset now, TimeSpan timeout)
     {
-        try
-        {
-            return now.Add(timeout);
-        }
-        catch (ArgumentOutOfRangeException exception)
-        {
-            throw new ArgumentOutOfRangeException(nameof(timeout), timeout, exception.Message);
-        }
+        var maximum = DateTimeOffset.MaxValue - now;
+        return timeout >= maximum ? DateTimeOffset.MaxValue : now.Add(timeout);
     }
 
     private static SharpLinkException CreateDeadlineExceededException()

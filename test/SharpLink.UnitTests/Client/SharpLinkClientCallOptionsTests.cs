@@ -43,12 +43,9 @@ public class SharpLinkClientCallOptionsTests
         Ensure(!invocation.IsCompleted, "call should wait while no connection is ready");
         await client.ConnectAsync();
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
-        await transport.Connection.InjectPacketAsync(
-            ProtocolV2FrameType.Response,
-            ProtocolV2FrameFlags.None,
-            unchecked((long)request.RequestId));
+        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
 
-        Ensure(await invocation == 0, "empty response should deserialize to default(int)");
+        Ensure(await invocation == 0, "zero-valued Int32 response");
     }
 
     [Test]
@@ -71,6 +68,50 @@ public class SharpLinkClientCallOptionsTests
     }
 
     [Test]
+    public async Task FarFutureWaitForReadyDeadlineShouldRemainCancellable()
+    {
+        await using var client = new SharpLinkClient(
+            new TestClientTransportFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        var failure = await CaptureException(ClientInvokerTestHelper.InvokeUnaryAsync(
+            client,
+            new SharpLinkCallOptions
+            {
+                Deadline = DateTimeOffset.MaxValue,
+                WaitForReady = true
+            },
+            cancellation.Token).AsTask());
+
+        Ensure(failure is OperationCanceledException,
+            $"far-future WaitForReady should remain cancellable, not fail as {failure?.GetType().Name}");
+    }
+
+    [Test]
+    public async Task MaximumPositiveDefaultTimeoutShouldSaturateAndSendTheRequest()
+    {
+        var transport = new TestClientTransportFactory();
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            requestTimeout: TimeSpan.MaxValue);
+        await client.ConnectAsync();
+
+        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var request = await transport.Connection
+            .WaitForSentPacket(ProtocolV2FrameType.Request)
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
+
+        Ensure(await invocation == 0, "maximum positive timeout should not fail before send");
+        Ensure((request.Flags & ProtocolV2FrameFlags.HasDeadline) != 0,
+            "saturated timeout should retain an explicit far-future deadline");
+    }
+
+    [Test]
     public async Task WaitForReadyShouldRetryZeroAdmissionDelayWithABoundedYield()
     {
         var transport = new TestClientTransportFactory();
@@ -87,10 +128,7 @@ public class SharpLinkClientCallOptionsTests
             client,
             new SharpLinkCallOptions { WaitForReady = true }).AsTask();
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
-        await transport.Connection.InjectPacketAsync(
-            ProtocolV2FrameType.Response,
-            ProtocolV2FrameFlags.None,
-            unchecked((long)request.RequestId));
+        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
 
         Ensure(await invocation == 0, "zero-delay admission rejection should retry");
         Ensure(policy.AcquireCount >= 2, "admission should be retried after the bounded yield");
@@ -160,10 +198,7 @@ public class SharpLinkClientCallOptionsTests
 
         var request = await first.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
             .WaitAsync(TimeSpan.FromSeconds(5));
-        await first.Connection.InjectPacketAsync(
-            ProtocolV2FrameType.Response,
-            ProtocolV2FrameFlags.None,
-            unchecked((long)request.RequestId));
+        await first.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
 
         Ensure(await invocation == 0, "a granted endpoint disconnect must not retain a previous rejection delay");
         Ensure(Stopwatch.GetElapsedTime(releasedAt) >= freshRejectionDelay - TimeSpan.FromMilliseconds(25),
@@ -193,10 +228,7 @@ public class SharpLinkClientCallOptionsTests
         await Task.Delay(200);
         await client.ConnectAsync();
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
-        await transport.Connection.InjectPacketAsync(
-            ProtocolV2FrameType.Response,
-            ProtocolV2FrameFlags.None,
-            unchecked((long)request.RequestId));
+        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
 
         Ensure(await invocation == 0, "wait-for-ready response");
         var measuredEndpointInterval = Stopwatch.GetElapsedTime(policy.LastAdmissionTimestamp, policy.LastReportTimestamp);
@@ -298,10 +330,7 @@ public class SharpLinkClientCallOptionsTests
         Ensure(policy.ReportCount == 2, "both pre-registration failures must report their admission permits");
         Ensure(policy.Outcomes.TrueForAll(static outcome => outcome.Kind == SharpLinkEndpointOutcomeKind.SendFailure),
             "pre-registration failures must report send failure outcomes");
-        await transport.Connection.InjectPacketAsync(
-            ProtocolV2FrameType.Response,
-            ProtocolV2FrameFlags.None,
-            unchecked((long)occupiedRequest.RequestId));
+        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)occupiedRequest.RequestId));
         Ensure(await occupied == 0, "occupied pending call completion");
     }
 
@@ -383,6 +412,19 @@ public class SharpLinkClientCallOptionsTests
             throw new Exception("expected SharpLinkException");
         }
         catch (SharpLinkException exception)
+        {
+            return exception;
+        }
+    }
+
+    private static async Task<Exception?> CaptureException(Task invocation)
+    {
+        try
+        {
+            await invocation;
+            return null;
+        }
+        catch (Exception exception)
         {
             return exception;
         }

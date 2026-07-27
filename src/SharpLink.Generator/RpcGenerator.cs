@@ -4,6 +4,12 @@ namespace SharpLink.Generator;
 public partial class RpcGenerator : IIncrementalGenerator
 {
     private static readonly CultureInfo InvariantCulture = CultureInfo.InvariantCulture;
+    private static readonly SymbolDisplayFormat FullyQualifiedNullableFormat =
+        SymbolDisplayFormat.FullyQualifiedFormat.WithMiscellaneousOptions(
+            SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions |
+            SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+    private static readonly string ExecutingGeneratorVersion =
+        typeof(RpcGenerator).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
     private const string RpcContractAttributeMetadataName = "SharpLink.Sdk.RpcContractAttribute";
     private const string RpcServiceAttributeMetadataName = "SharpLink.Sdk.RpcServiceAttribute";
     private const string ClusterContractAssemblyAttributeMetadataName =
@@ -89,18 +95,28 @@ public partial class RpcGenerator : IIncrementalGenerator
         var invalidRpcContractInheritance = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcContractAttributeMetadataName,
                 static (node, _) => node is InterfaceDeclarationSyntax,
-                static (attributeContext, ct) => GetInvalidRpcContractInheritance(attributeContext, ct))
+                static (attributeContext, ct) => GetRpcContractDiagnosticOrNull(attributeContext, ct))
             .Where(static x => x is not null);
 
         context.RegisterSourceOutput(invalidMethods, static (spc, methods) =>
         {
             foreach (var method in methods)
             {
+                var descriptor = method.Kind switch
+                {
+                    InvalidRpcMethodKind.Timeout => InvalidTimeoutRule,
+                    InvalidRpcMethodKind.ByReference => ByReferenceRpcSignatureRule,
+                    InvalidRpcMethodKind.Static => StaticRpcMethodRule,
+                    InvalidRpcMethodKind.ContractMember => UnsupportedContractMemberRule,
+                    InvalidRpcMethodKind.OnewayReturn => InvalidOnewayReturnRule,
+                    InvalidRpcMethodKind.InheritedSignatureConflict => ConflictingInheritedRpcSignatureRule,
+                    _ => InvalidReturnTypeRule
+                };
                 var diagnostic = Diagnostic.Create(
-                    InvalidReturnTypeRule,
+                    descriptor,
                     method.Location,
                     method.MethodName,
-                    method.ReturnType);
+                    method.Detail);
                 spc.ReportDiagnostic(diagnostic);
             }
         });
@@ -172,9 +188,12 @@ public partial class RpcGenerator : IIncrementalGenerator
         });
         context.RegisterSourceOutput(invalidRpcContractInheritance, static (spc, model) =>
         {
+            var descriptor = model!.Value.Kind == RpcContractDiagnosticKind.Accessibility
+                ? RpcContractAccessibilityRule
+                : RpcContractMustInheritIServiceRule;
             var diagnostic = Diagnostic.Create(
-                RpcContractMustInheritIServiceRule,
-                model!.Value.Location,
+                descriptor,
+                model.Value.Location,
                 model.Value.InterfaceName);
             spc.ReportDiagnostic(diagnostic);
         });
@@ -326,6 +345,7 @@ public partial class RpcGenerator : IIncrementalGenerator
                     ContractCompatibilityKind.Required => RequiredMemberCompatibilityRule,
                     ContractCompatibilityKind.EnumUnderlyingType => EnumCompatibilityRule,
                     ContractCompatibilityKind.UnionTag => UnionTagCompatibilityRule,
+                    ContractCompatibilityKind.UnionDeclaration => InvalidUnionCaseRule,
                     ContractCompatibilityKind.MethodRemoved => MethodRemovedCompatibilityRule,
                     ContractCompatibilityKind.ContractRemoved => ContractRemovedCompatibilityRule,
                     ContractCompatibilityKind.ServiceRouteRemoved => ServiceRouteRemovedCompatibilityRule,

@@ -20,7 +20,7 @@
  SHARPLINK016 | SharpLink.Generator | Error    | RpcService does not implement an RpcContract
  SHARPLINK017 | SharpLink.Generator | Error    | RpcService implements multiple RpcContracts
  SHARPLINK018 | SharpLink.Generator | Error    | RpcService type is abstract or open generic
- SHARPLINK019 | SharpLink.Generator | Error    | RpcService constructor cannot be selected
+ SHARPLINK019 | SharpLink.Generator | Error    | RpcService constructor cannot be selected or activated
  SHARPLINK020 | SharpLink.Generator | Error    | RpcService lifetime is invalid
  SHARPLINK021 | SharpLink.Generator | Error    | Static contract route ownership conflict
  SHARPLINK022 | SharpLink.Generator | Error    | Static method descriptor conflict
@@ -51,3 +51,11 @@
  SHARPLINK047 | SharpLink.Generator | Error | Codec Adapter target is open or unsupported
  SHARPLINK048 | SharpLink.Generator | Error | Codec Adapter or Wire Format identity conflicts
  SHARPLINK049 | SharpLink.Generator | Error | Codec Adapter attempts to replace a built-in Codec
+ SHARPLINK050 | SharpLink.Generator | Error | RPC timeout is invalid
+ SHARPLINK051 | SharpLink.Generator | Error | RPC union case is invalid
+ SHARPLINK052 | SharpLink.Generator | Error | By-reference RPC signature is unsupported
+ SHARPLINK053 | SharpLink.Generator | Error | Static RPC method is unsupported
+ SHARPLINK054 | SharpLink.Generator | Error | RPC contract member is unsupported
+ SHARPLINK055 | SharpLink.Generator | Error | RPC contract must be publicly reachable
+ SHARPLINK056 | SharpLink.Generator | Error | Oneway RPC return type is invalid
+ SHARPLINK057 | SharpLink.Generator | Error | Inherited RPC signatures have incompatible return types

@@ -7,17 +7,20 @@ public static class SharpLinkTransportFactories
     /// <param name="options">Optional socket settings copied by each created transport factory.</param>
     /// <returns>An endpoint factory that accepts <see cref="SharpLinkTcpAddress"/> and <see cref="SharpLinkUnixDomainSocketAddress"/>.</returns>
     public static SharpLinkEndpointTransportFactory Sockets(SocketTransportOptions? options = null)
-        => endpoint => endpoint.Address switch
+    {
+        var snapshot = (options ?? new SocketTransportOptions()).CloneValidated();
+        return endpoint => endpoint.Address switch
         {
-            SharpLinkTcpAddress tcp => new SocketClientTransportFactory(CreateTcpEndPoint(tcp), options),
-            SharpLinkUnixDomainSocketAddress uds => new SocketClientTransportFactory(new UnixDomainSocketEndPoint(uds.Path), options),
+            SharpLinkTcpAddress tcp => new SocketClientTransportFactory(CreateTcpEndPoint(tcp), snapshot),
+            SharpLinkUnixDomainSocketAddress uds => new SocketClientTransportFactory(new UnixDomainSocketEndPoint(uds.Path), snapshot),
             _ => throw new ArgumentException("Sockets require a TCP or Unix-domain socket endpoint address.", nameof(endpoint))
         };
+    }
 
     /// <summary>Creates a TLS socket factory for TCP and Unix-domain socket endpoint addresses.</summary>
     /// <param name="tlsOptions">TLS settings copied for every endpoint factory.</param>
     /// <param name="options">Optional socket settings copied by each created transport factory.</param>
-    /// <param name="tlsHandshakeTimeout">An optional positive TLS handshake timeout.</param>
+    /// <param name="tlsHandshakeTimeout">An optional positive TLS handshake timeout, up to 2,147,483,647 milliseconds.</param>
     /// <remarks>
     /// When the supplied TLS options omit <see cref="SslClientAuthenticationOptions.TargetHost"/>,
     /// the endpoint Authority is used; TCP endpoints then fall back to their Host.
@@ -28,12 +31,15 @@ public static class SharpLinkTransportFactories
         TimeSpan? tlsHandshakeTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(tlsOptions);
+        var socketSnapshot = (options ?? new SocketTransportOptions()).CloneValidated();
+        var tlsSnapshot = TlsAuthenticationOptionsSnapshot.CloneForEndpointFactory(tlsOptions);
+        var handshakeTimeoutSnapshot = TlsAuthenticationOptionsSnapshot.ValidateTimeout(tlsHandshakeTimeout);
         return endpoint => endpoint.Address switch
         {
             SharpLinkTcpAddress tcp => new SocketClientTransportFactory(
-                CreateTcpEndPoint(tcp), options, CreateTlsOptions(tlsOptions, endpoint.Authority ?? tcp.Host), tlsHandshakeTimeout),
+                CreateTcpEndPoint(tcp), socketSnapshot, CreateTlsOptions(tlsSnapshot, endpoint.Authority ?? tcp.Host), handshakeTimeoutSnapshot),
             SharpLinkUnixDomainSocketAddress uds => new SocketClientTransportFactory(
-                new UnixDomainSocketEndPoint(uds.Path), options, CreateTlsOptions(tlsOptions, endpoint.Authority), tlsHandshakeTimeout),
+                new UnixDomainSocketEndPoint(uds.Path), socketSnapshot, CreateTlsOptions(tlsSnapshot, endpoint.Authority), handshakeTimeoutSnapshot),
             _ => throw new ArgumentException("Sockets require a TCP or Unix-domain socket endpoint address.", nameof(endpoint))
         };
     }
@@ -52,9 +58,9 @@ public static class SharpLinkTransportFactories
     {
         var options = new SharedMemoryTransportOptions();
         configure?.Invoke(options);
-        options.Validate();
+        var snapshot = options.CloneValidated();
         return endpoint => endpoint.Address is SharpLinkSharedMemoryAddress memory
-            ? new SharedMemoryClientTransportFactory(memory.Name, options)
+            ? new SharedMemoryClientTransportFactory(memory.Name, snapshot)
             : throw new ArgumentException("Shared memory requires a shared-memory endpoint address.", nameof(endpoint));
     }
 

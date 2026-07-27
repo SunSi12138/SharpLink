@@ -20,6 +20,93 @@ public sealed class AdmissionControlTests
     }
 
     [Test]
+    public void QueueDelayBeyondThePortableTimerRangeShouldFailDuringValidation()
+    {
+        var options = new SharpLinkAdmissionControlOptions
+        {
+            MaxQueuedCalls = 1,
+            MaxQueuedBytes = 1024,
+            MaxQueueDelay = TimeSpan.MaxValue
+        };
+        options.Global.UseConcurrency(1);
+
+        EnsureThrows<ArgumentOutOfRangeException>(options.Validate);
+    }
+
+    [Test]
+    public void RatePolicyDurationsBeyondThePortableTimerRangeShouldFailDuringConfiguration()
+    {
+        new SharpLinkTokenBucketLimitOptions
+        {
+            TokenLimit = 1,
+            TokensPerPeriod = 1,
+            ReplenishmentPeriod = SharpLinkTimer.MaximumDelay
+        }.Validate();
+        new SharpLinkFixedWindowLimitOptions
+        {
+            PermitLimit = 1,
+            Window = SharpLinkTimer.MaximumDelay
+        }.Validate();
+        new SharpLinkSlidingWindowLimitOptions
+        {
+            PermitLimit = 1,
+            Window = SharpLinkTimer.MaximumDelay,
+            SegmentsPerWindow = 2
+        }.Validate();
+        var aboveMaximum = SharpLinkTimer.MaximumDelay.Add(TimeSpan.FromTicks(1));
+        var failures = new Exception?[]
+        {
+            CaptureFailure(() => new SharpLinkTokenBucketLimitOptions
+            {
+                TokenLimit = 1,
+                TokensPerPeriod = 1,
+                ReplenishmentPeriod = aboveMaximum
+            }.Validate()),
+            CaptureFailure(() => new SharpLinkFixedWindowLimitOptions
+            {
+                PermitLimit = 1,
+                Window = aboveMaximum
+            }.Validate()),
+            CaptureFailure(() => new SharpLinkSlidingWindowLimitOptions
+            {
+                PermitLimit = 1,
+                Window = aboveMaximum,
+                SegmentsPerWindow = 2
+            }.Validate())
+        };
+
+        var rejectedCount = 0;
+        foreach (var failure in failures)
+            if (failure is ArgumentOutOfRangeException)
+                rejectedCount++;
+
+        Ensure(rejectedCount == failures.Length,
+            $"all timer-backed rate policies must reject the oversized duration; observed " +
+            $"{failures[0]?.GetType().Name ?? "none"}, " +
+            $"{failures[1]?.GetType().Name ?? "none"}, " +
+            $"{failures[2]?.GetType().Name ?? "none"}");
+    }
+
+    [Test]
+    public void SlidingWindowShouldRejectAZeroTickSegmentDuration()
+    {
+        new SharpLinkSlidingWindowLimitOptions
+        {
+            PermitLimit = 1,
+            Window = TimeSpan.FromTicks(2),
+            SegmentsPerWindow = 2
+        }.Validate();
+        var options = new SharpLinkSlidingWindowLimitOptions
+        {
+            PermitLimit = 1,
+            Window = TimeSpan.FromTicks(1),
+            SegmentsPerWindow = 2
+        };
+
+        EnsureThrows<ArgumentOutOfRangeException>(options.Validate);
+    }
+
+    [Test]
     public void RuleMustRejectMultipleRatePolicies()
     {
         var rule = new SharpLinkAdmissionRuleOptions();
@@ -61,6 +148,35 @@ public sealed class AdmissionControlTests
     }
 
     [Test]
+    public async Task ImmediateAdmissionShouldNotAllocateThreeTransientArraysPerCall()
+    {
+        var options = new SharpLinkAdmissionControlOptions();
+        options.Global.UseConcurrency(1);
+        await using var controller = SharpLinkAdmissionController.Create(options, []);
+        var context = CreateContext();
+        for (var index = 0; index < 2_000; index++)
+        {
+            var warmup = await controller.AcquireAsync(
+                context, 1, allowQueue: false, CancellationToken.None);
+            warmup.Lease!.Dispose();
+        }
+
+        const int iterations = 20_000;
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < iterations; index++)
+        {
+            var decision = await controller.AcquireAsync(
+                context, 1, allowQueue: false, CancellationToken.None);
+            decision.Lease!.Dispose();
+        }
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        var bytesPerCall = allocated / iterations;
+
+        Ensure(bytesPerCall <= 320,
+            $"immediate admission allocated {bytesPerCall} B/call after warm-up");
+    }
+
+    [Test]
     public async Task PartitionCapacityShouldProtectActiveEntryAndReclaimIdleEntry()
     {
         var key = "first";
@@ -85,6 +201,41 @@ public sealed class AdmissionControlTests
         var reclaimed = await controller.AcquireAsync(CreateContext(), 1, false, CancellationToken.None);
         Ensure(reclaimed.IsAcquired && controller.ActivePartitions == 1, "idle partition reclaimed");
         reclaimed.Lease!.Dispose();
+    }
+
+    [Test]
+    public async Task PartitionRuntimeShouldFreezeConfigurationAtCreation()
+    {
+        var key = "first";
+        SharpLinkPartitionAdmissionOptions? leaked = null;
+        var options = new SharpLinkAdmissionControlOptions();
+        options.UsePartition(
+            _ => key,
+            partition =>
+            {
+                partition.MaxPartitions = 1;
+                partition.UseConcurrency(1);
+                leaked = partition;
+            });
+        await using var controller = SharpLinkAdmissionController.Create(options, []);
+        leaked!.MaxPartitions = 2;
+        leaked.Concurrency!.PermitLimit = 2;
+
+        var first = await controller.AcquireAsync(CreateContext(), 1, false, CancellationToken.None);
+        var samePartition = await controller.AcquireAsync(
+            CreateContext(), 1, false, CancellationToken.None);
+        key = "second";
+        var secondPartition = await controller.AcquireAsync(
+            CreateContext(), 1, false, CancellationToken.None);
+
+        first.Lease?.Dispose();
+        samePartition.Lease?.Dispose();
+        secondPartition.Lease?.Dispose();
+        Ensure(first.IsAcquired, "first frozen partition permit");
+        Ensure(!samePartition.IsAcquired && samePartition.Reason == "concurrency",
+            "later concurrency mutation must not alter a new partition runtime");
+        Ensure(!secondPartition.IsAcquired && secondPartition.Reason == "partition_capacity",
+            "later capacity mutation must not enlarge the live partition pool");
     }
 
     [Test]
@@ -369,6 +520,19 @@ public sealed class AdmissionControlTests
     {
         if (!condition)
             throw new Exception($"assert failed: {message}");
+    }
+
+    private static Exception? CaptureFailure(Action action)
+    {
+        try
+        {
+            action();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 
     private static void EnsureThrows<TException>(Action action)

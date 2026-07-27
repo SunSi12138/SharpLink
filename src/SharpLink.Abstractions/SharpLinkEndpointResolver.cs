@@ -1,3 +1,6 @@
+using System.Collections.ObjectModel;
+using System.Collections.Frozen;
+
 namespace SharpLink.Abstractions;
 
 /// <summary>Represents one versioned endpoint topology supplied by a resolver.</summary>
@@ -7,7 +10,7 @@ namespace SharpLink.Abstractions;
 /// </remarks>
 public sealed class SharpLinkEndpointSnapshot
 {
-    private readonly SharpLinkEndpoint[] _endpoints;
+    private readonly ReadOnlyCollection<SharpLinkEndpoint> _endpoints;
 
     /// <summary>Initializes a versioned endpoint snapshot.</summary>
     /// <param name="version">A resolver-assigned, non-negative topology version.</param>
@@ -21,10 +24,24 @@ public sealed class SharpLinkEndpointSnapshot
         ArgumentNullException.ThrowIfNull(endpoints);
 
         Version = version;
-        _endpoints = new SharpLinkEndpoint[endpoints.Count];
+        var snapshot = new SharpLinkEndpoint[endpoints.Count];
         for (var index = 0; index < endpoints.Count; index++)
-            _endpoints[index] = endpoints[index] ?? throw new ArgumentException(
+        {
+            var endpoint = endpoints[index] ?? throw new ArgumentException(
                 "Endpoint snapshots cannot contain null endpoints.", nameof(endpoints));
+            var attributes = endpoint.Attributes ?? throw new ArgumentException(
+                "Endpoint snapshot attributes cannot be null.", nameof(endpoints));
+            snapshot[index] = new SharpLinkEndpoint
+            {
+                Id = endpoint.Id,
+                Address = endpoint.Address,
+                Authority = endpoint.Authority,
+                Attributes = attributes.Count == 0
+                    ? FrozenDictionary<string, string>.Empty
+                    : attributes.ToFrozenDictionary(StringComparer.Ordinal)
+            };
+        }
+        _endpoints = Array.AsReadOnly(snapshot);
     }
 
     /// <summary>Gets the resolver-assigned version for this complete topology.</summary>

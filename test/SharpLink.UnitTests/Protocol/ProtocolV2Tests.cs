@@ -28,6 +28,13 @@ public class ProtocolV2Tests
     }
 
     [Test]
+    public async Task RawFrameWriterAndTokenShouldRemainInternalImplementationDetails()
+    {
+        await Assert.That(typeof(ProtocolV2FrameWriter).IsPublic).IsFalse();
+        await Assert.That(typeof(ProtocolV2FrameToken).IsPublic).IsFalse();
+    }
+
+    [Test]
     public void ZeroThroughFourteenHeaderBytesShouldRemainPartial()
     {
         var writer = new PooledByteBufferWriter();
@@ -117,7 +124,7 @@ public class ProtocolV2Tests
         var responsePayload = new PooledByteBufferWriter();
         var response = new ProtocolV2HandshakeResponse(
             0,
-            ProtocolV2Capabilities.FlowControl,
+            ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.Compression,
             1024 * 1024,
             512 * 1024,
             8 * 1024 * 1024,
@@ -126,6 +133,163 @@ public class ProtocolV2Tests
         var decodedResponse = ProtocolV2PayloadCodec.ReadHandshakeResponse(
             new ReadOnlySequence<byte>(responsePayload.WrittenMemory), Limits);
         Ensure(decodedResponse == response, "handshake response round-trip");
+    }
+
+    [Test]
+    public void HandshakeResponseShouldRequireCompressionCapabilityAndProfileTogether()
+    {
+        var withoutCapability = new ProtocolV2HandshakeResponse(
+            ProtocolV2Constants.MinorVersion,
+            ProtocolV2Capabilities.FlowControl,
+            4 * 1024 * 1024,
+            1024 * 1024,
+            16 * 1024 * 1024,
+            "brotli");
+        var withoutProfile = withoutCapability with
+        {
+            NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.Compression,
+            CompressionProfile = null
+        };
+
+        var writeProfileWithoutCapability = CaptureException(() =>
+            ProtocolV2PayloadCodec.WriteHandshakeResponse(new PooledByteBufferWriter(), withoutCapability));
+        var writeCapabilityWithoutProfile = CaptureException(() =>
+            ProtocolV2PayloadCodec.WriteHandshakeResponse(new PooledByteBufferWriter(), withoutProfile));
+
+        var coherentPayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeResponse(
+            coherentPayload,
+            withoutCapability with
+            {
+                NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.Compression
+            });
+        var profileWithoutCapabilityBytes = coherentPayload.WrittenMemory.ToArray();
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            profileWithoutCapabilityBytes.AsSpan(sizeof(ushort), sizeof(ulong)),
+            (ulong)ProtocolV2Capabilities.FlowControl);
+        var readProfileWithoutCapability = CaptureException(() =>
+            ProtocolV2PayloadCodec.ReadHandshakeResponse(
+                new ReadOnlySequence<byte>(profileWithoutCapabilityBytes), Limits));
+
+        var capabilityWithoutProfilePayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeResponse(
+            capabilityWithoutProfilePayload,
+            withoutCapability with
+            {
+                NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl,
+                CompressionProfile = null
+            });
+        var capabilityWithoutProfileBytes = capabilityWithoutProfilePayload.WrittenMemory.ToArray();
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            capabilityWithoutProfileBytes.AsSpan(sizeof(ushort), sizeof(ulong)),
+            (ulong)(ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.Compression));
+        var readCapabilityWithoutProfile = CaptureException(() =>
+            ProtocolV2PayloadCodec.ReadHandshakeResponse(
+                new ReadOnlySequence<byte>(capabilityWithoutProfileBytes), Limits));
+
+        Ensure(writeProfileWithoutCapability is ArgumentException,
+            "the writer must reject a compression profile without the negotiated capability");
+        Ensure(writeCapabilityWithoutProfile is ArgumentException,
+            "the writer must reject negotiated compression without a selected profile");
+        Ensure(readProfileWithoutCapability is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation },
+            "the reader must reject a compression profile without the negotiated capability");
+        Ensure(readCapabilityWithoutProfile is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation },
+            "the reader must reject negotiated compression without a selected profile");
+    }
+
+    [Test]
+    public void HandshakeCapabilitiesShouldRejectInconsistentOrUnknownSets()
+    {
+        var inconsistent = new ProtocolV2HandshakeRequest(
+            ProtocolV2Constants.MinorVersion,
+            ProtocolV2Capabilities.Metadata,
+            ProtocolV2Capabilities.FlowControl,
+            4 * 1024 * 1024,
+            1024 * 1024,
+            16 * 1024 * 1024,
+            ReadOnlyMemory<byte>.Empty);
+        var writeFailure = CaptureException(() =>
+            ProtocolV2PayloadCodec.WriteHandshakeRequest(
+                new PooledByteBufferWriter(), inconsistent, Limits));
+
+        var requestPayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeRequest(
+            requestPayload,
+            inconsistent with { RequiredCapabilities = ProtocolV2Capabilities.None },
+            Limits);
+        var requestBytes = requestPayload.WrittenMemory.ToArray();
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            requestBytes.AsSpan(sizeof(ushort) + sizeof(ulong), sizeof(ulong)),
+            (ulong)ProtocolV2Capabilities.FlowControl);
+        var readRequestFailure = CaptureException(() =>
+            ProtocolV2PayloadCodec.ReadHandshakeRequest(
+                new ReadOnlySequence<byte>(requestBytes), Limits));
+
+        var responsePayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeResponse(
+            responsePayload,
+            new ProtocolV2HandshakeResponse(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.None,
+                4 * 1024 * 1024,
+                1024 * 1024,
+                16 * 1024 * 1024));
+        var responseBytes = responsePayload.WrittenMemory.ToArray();
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            responseBytes.AsSpan(sizeof(ushort), sizeof(ulong)),
+            1UL << 63);
+        var readResponseFailure = CaptureException(() =>
+            ProtocolV2PayloadCodec.ReadHandshakeResponse(
+                new ReadOnlySequence<byte>(responseBytes), Limits));
+
+        Ensure(writeFailure is ArgumentException,
+            "outbound required capabilities must be a subset of supported capabilities");
+        Ensure(readRequestFailure is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation },
+            "inbound inconsistent request capabilities must be a protocol violation");
+        Ensure(readResponseFailure is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation },
+            "an unknown negotiated response capability must be a protocol violation");
+    }
+
+    [Test]
+    public async Task ControlWritersShouldClassifyInvalidLocalEnumsAsArgumentsWithoutPartialOutput()
+    {
+        using var writer = new PooledByteBufferWriter();
+        var cancel = CaptureException(() => ProtocolV2PayloadCodec.WriteCancelReason(
+            writer, (ProtocolV2CancelReason)byte.MaxValue));
+        var health = CaptureException(() => ProtocolV2PayloadCodec.WriteHealthResponse(
+            writer, (SharpLinkHealthStatus)byte.MaxValue));
+        await Assert.That(cancel).IsTypeOf<ArgumentOutOfRangeException>();
+        await Assert.That(health).IsTypeOf<ArgumentOutOfRangeException>();
+        await Assert.That(writer.WrittenCount).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task HandshakeWritersShouldClassifyInvalidLocalLimitsAsArgumentsWithoutPartialOutput()
+    {
+        using var writer = new PooledByteBufferWriter();
+        var requestFailure = CaptureException(() => ProtocolV2PayloadCodec.WriteHandshakeRequest(
+            writer,
+            new ProtocolV2HandshakeRequest(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.None,
+                ProtocolV2Capabilities.None,
+                MaxFramePayloadBytes: 1,
+                StreamReceiveWindowBytes: 1,
+                ConnectionReceiveWindowBytes: 1,
+                ReadOnlyMemory<byte>.Empty),
+            Limits));
+        var responseFailure = CaptureException(() => ProtocolV2PayloadCodec.WriteHandshakeResponse(
+            writer,
+            new ProtocolV2HandshakeResponse(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.None,
+                MaxFramePayloadBytes: 1,
+                StreamReceiveWindowBytes: 1,
+                ConnectionReceiveWindowBytes: 1)));
+
+        await Assert.That(requestFailure).IsAssignableTo<ArgumentException>();
+        await Assert.That(responseFailure).IsAssignableTo<ArgumentException>();
+        await Assert.That(writer.WrittenCount).IsEqualTo(0);
     }
 
     [Test]
@@ -204,6 +368,118 @@ public class ProtocolV2Tests
         Ensure(error.Code == SharpLinkErrorCode.ResourceExhausted, "error code");
         Ensure(error.IsTruncated, "truncated flag");
         Ensure(System.Text.Encoding.UTF8.GetByteCount(error.Message) <= 12, "bounded UTF-8 message");
+    }
+
+    [Test]
+    public void BinaryErrorWriterShouldRejectUndefinedErrorCodes()
+    {
+        using var payload = new PooledByteBufferWriter();
+        try
+        {
+            ProtocolV2PayloadCodec.WriteError(
+                payload,
+                (SharpLinkErrorCode)22,
+                "undefined",
+                Limits.MaxErrorMessageBytes,
+                out _);
+            throw new Exception("expected undefined error-code rejection");
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+        }
+        Ensure(payload.WrittenCount == 0, "undefined error codes must not write a partial payload");
+    }
+
+    [Test]
+    public async Task BinaryErrorShouldRejectReservedUnknownCodeInBothDirections()
+    {
+        using var payload = new PooledByteBufferWriter();
+        var writeFailure = CaptureException(() => ProtocolV2PayloadCodec.WriteError(
+            payload,
+            SharpLinkErrorCode.Unknown,
+            "reserved",
+            Limits.MaxErrorMessageBytes,
+            out _));
+        var readFailure = CaptureException(() => ProtocolV2PayloadCodec.ReadError(
+            new ReadOnlySequence<byte>(new byte[] { 0, 0, 0 }),
+            ProtocolV2FrameFlags.Error,
+            Limits.MaxErrorMessageBytes));
+
+        await Assert.That(writeFailure).IsTypeOf<ArgumentOutOfRangeException>();
+        await Assert.That(payload.WrittenCount).IsEqualTo(0);
+        await Assert.That(readFailure).IsAssignableTo<SharpLinkException>();
+        await Assert.That((readFailure as SharpLinkException)?.Code)
+            .IsEqualTo(SharpLinkErrorCode.ProtocolViolation);
+    }
+
+    [Test]
+    public async Task BinaryErrorShouldRejectInvalidUtf8()
+    {
+        var payload = new byte[]
+        {
+            (byte)SharpLinkErrorCode.Unavailable,
+            0,
+            2,
+            0xC3,
+            0x28
+        };
+
+        await ExpectProtocolViolation(() => ProtocolV2PayloadCodec.ReadError(
+            CreateSegmented(payload, 1),
+            ProtocolV2FrameFlags.Error,
+            Limits.MaxErrorMessageBytes));
+        await ExpectProtocolViolation(CreateFrame(
+            ProtocolV2FrameType.Response,
+            ProtocolV2FrameFlags.Error,
+            1,
+            payload));
+    }
+
+    [Test]
+    public async Task GeneratedDtoStringShouldRejectInvalidUtf8()
+    {
+        var payload = new byte[]
+        {
+            2, 0, 0, 0,
+            0xC3, 0x28
+        };
+        var contiguousFailure = CaptureException(() =>
+        {
+            var reader = new SequenceReader<byte>(new ReadOnlySequence<byte>(payload));
+            _ = RpcGeneratedCodecWire.ReadString(ref reader);
+        });
+        var segmentedFailure = CaptureException(() =>
+        {
+            var reader = new SequenceReader<byte>(CreateSegmented(payload, 1));
+            _ = RpcGeneratedCodecWire.ReadString(ref reader);
+        });
+
+        Ensure(contiguousFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "contiguous generated string must reject invalid UTF-8");
+        Ensure(segmentedFailure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "segmented generated string must reject invalid UTF-8");
+
+        var validReplacementPayload = new byte[] { 3, 0, 0, 0, 0xEF, 0xBF, 0xBD };
+        var validReader = new SequenceReader<byte>(CreateSegmented(validReplacementPayload, 1));
+        Ensure(RpcGeneratedCodecWire.ReadString(ref validReader) == "\uFFFD",
+            "a canonically encoded replacement character must remain valid");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task LengthVarintsShouldRejectOverlongEncodings()
+    {
+        await ExpectProtocolViolation(() => ProtocolV2PayloadCodec.ReadMetadata(
+            new ReadOnlySequence<byte>(new byte[] { 0x80, 0x00 })));
+
+        var requestPayload = new byte[ProtocolV2Constants.RequestPrefixBytes + 2];
+        requestPayload[^2] = 0x80;
+        requestPayload[^1] = 0x00;
+        await ExpectProtocolViolation(CreateFrame(
+            ProtocolV2FrameType.Request,
+            ProtocolV2FrameFlags.HasMetadata,
+            1,
+            requestPayload));
     }
 
     [Test]
@@ -407,6 +683,19 @@ public class ProtocolV2Tests
         catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
         {
             await Task.CompletedTask;
+        }
+    }
+
+    private static Exception? CaptureException(Action action)
+    {
+        try
+        {
+            action();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
         }
     }
 

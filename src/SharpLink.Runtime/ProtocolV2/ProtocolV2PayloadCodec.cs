@@ -5,6 +5,12 @@ namespace SharpLink.Runtime;
 /// <summary>Encodes and decodes Protocol v2 control and error payloads.</summary>
 public static class ProtocolV2PayloadCodec
 {
+    private const ProtocolV2Capabilities KnownCapabilities =
+        ProtocolV2Capabilities.Metadata |
+        ProtocolV2Capabilities.Compression |
+        ProtocolV2Capabilities.FlowControl |
+        ProtocolV2Capabilities.HealthCheck |
+        ProtocolV2Capabilities.CancellationReason;
     private static readonly Encoding SStrictUtf8 = new UTF8Encoding(false, true);
     private const int HandshakeRequestFixedBytes =
         sizeof(ushort) + sizeof(ulong) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int);
@@ -19,7 +25,13 @@ public static class ProtocolV2PayloadCodec
     {
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(limits);
-        ValidatePeerLimits(request.MaxFramePayloadBytes, request.StreamReceiveWindowBytes,
+        if ((request.RequiredCapabilities & ~request.SupportedCapabilities) != 0)
+        {
+            throw new ArgumentException(
+                "Required handshake capabilities must also be advertised as supported.",
+                nameof(request));
+        }
+        ValidateLocalLimits(request.MaxFramePayloadBytes, request.StreamReceiveWindowBytes,
             request.ConnectionReceiveWindowBytes);
         if (request.AuthenticationPayload.Length > limits.MaxMetadataBytes)
         {
@@ -70,10 +82,17 @@ public static class ProtocolV2PayloadCodec
         var auth = authLength == 0
             ? ReadOnlyMemory<byte>.Empty
             : reader.Sequence.Slice(reader.Position, authLength).ToArray();
+        var supportedCapabilities = (ProtocolV2Capabilities)unchecked((ulong)supportedBits);
+        var requiredCapabilities = (ProtocolV2Capabilities)unchecked((ulong)requiredBits);
+        if ((requiredCapabilities & ~supportedCapabilities) != 0)
+        {
+            throw ProtocolV2FrameParser.Violation(
+                "Required handshake capabilities were not included in the supported capability set.");
+        }
         return new ProtocolV2HandshakeRequest(
             unchecked((ushort)minorBits),
-            (ProtocolV2Capabilities)unchecked((ulong)supportedBits),
-            (ProtocolV2Capabilities)unchecked((ulong)requiredBits),
+            supportedCapabilities,
+            requiredCapabilities,
             maxFrame,
             streamWindow,
             connectionWindow,
@@ -87,7 +106,9 @@ public static class ProtocolV2PayloadCodec
         in ProtocolV2HandshakeResponse response)
     {
         ArgumentNullException.ThrowIfNull(writer);
-        ValidatePeerLimits(response.MaxFramePayloadBytes, response.StreamReceiveWindowBytes,
+        ValidateKnownCapabilities(response.NegotiatedCapabilities, nameof(response));
+        ValidateOutboundCompressionSelection(response);
+        ValidateLocalLimits(response.MaxFramePayloadBytes, response.StreamReceiveWindowBytes,
             response.ConnectionReceiveWindowBytes);
         WriteUInt16(writer, response.MinorVersion);
         WriteUInt64(writer, (ulong)response.NegotiatedCapabilities);
@@ -129,13 +150,49 @@ public static class ProtocolV2PayloadCodec
             throw ProtocolV2FrameParser.Violation("HandshakeResponse compression token length does not match the frame.");
         var profile = profileLength == 0 ? null : ReadCompressionProfile(ref reader, profileLength);
         ValidatePeerLimits(maxFrame, streamWindow, connectionWindow);
-        return new ProtocolV2HandshakeResponse(
+        var negotiatedCapabilities = (ProtocolV2Capabilities)unchecked((ulong)capabilitiesBits);
+        if ((negotiatedCapabilities & ~KnownCapabilities) != 0)
+            throw ProtocolV2FrameParser.Violation("HandshakeResponse negotiated unknown capabilities.");
+        var response = new ProtocolV2HandshakeResponse(
             unchecked((ushort)minorBits),
-            (ProtocolV2Capabilities)unchecked((ulong)capabilitiesBits),
+            negotiatedCapabilities,
             maxFrame,
             streamWindow,
             connectionWindow,
             profile);
+        ValidateInboundCompressionSelection(response);
+        return response;
+    }
+
+    private static void ValidateKnownCapabilities(
+        ProtocolV2Capabilities capabilities,
+        string parameterName)
+    {
+        if ((capabilities & ~KnownCapabilities) != 0)
+            throw new ArgumentOutOfRangeException(parameterName, "Handshake capabilities contain unknown bits.");
+    }
+
+    private static void ValidateOutboundCompressionSelection(
+        in ProtocolV2HandshakeResponse response)
+    {
+        var negotiated =
+            (response.NegotiatedCapabilities & ProtocolV2Capabilities.Compression) != 0;
+        if (negotiated == (response.CompressionProfile is not null))
+            return;
+        throw new ArgumentException(
+            "Negotiated compression and its selected profile must either both be present or both be absent.",
+            nameof(response));
+    }
+
+    private static void ValidateInboundCompressionSelection(
+        in ProtocolV2HandshakeResponse response)
+    {
+        var negotiated =
+            (response.NegotiatedCapabilities & ProtocolV2Capabilities.Compression) != 0;
+        if (negotiated == (response.CompressionProfile is not null))
+            return;
+        throw ProtocolV2FrameParser.Violation(
+            "HandshakeResponse compression capability and selected profile are inconsistent.");
     }
 
     private static void ValidateCompressionProfiles(ReadOnlySpan<string> profiles)
@@ -250,7 +307,13 @@ public static class ProtocolV2PayloadCodec
         ProtocolV2CancelReason reason)
     {
         ArgumentNullException.ThrowIfNull(writer);
-        ValidateCancelReason(reason);
+        if (reason is not ProtocolV2CancelReason.Unspecified and
+            not ProtocolV2CancelReason.UserCancellation and
+            not ProtocolV2CancelReason.DeadlineExceeded and
+            not ProtocolV2CancelReason.ConsumerAbandoned)
+        {
+            throw new ArgumentOutOfRangeException(nameof(reason));
+        }
         var span = writer.GetSpan(1);
         span[0] = (byte)reason;
         writer.Advance(1);
@@ -275,7 +338,12 @@ public static class ProtocolV2PayloadCodec
         SharpLinkHealthStatus status)
     {
         ArgumentNullException.ThrowIfNull(writer);
-        ValidateHealthStatus(status);
+        if (status is not SharpLinkHealthStatus.Ready and
+            not SharpLinkHealthStatus.Draining and
+            not SharpLinkHealthStatus.Unhealthy)
+        {
+            throw new ArgumentOutOfRangeException(nameof(status));
+        }
         var span = writer.GetSpan(1);
         span[0] = (byte)status;
         writer.Advance(1);
@@ -304,6 +372,8 @@ public static class ProtocolV2PayloadCodec
     {
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentOutOfRangeException.ThrowIfNegative(maxMessageBytes);
+        if (!IsDefinedErrorCode(code))
+            throw new ArgumentOutOfRangeException(nameof(code), "Error code must be a defined SharpLinkErrorCode value.");
         message ??= string.Empty;
         var charCount = message.Length;
         var byteCount = Encoding.UTF8.GetByteCount(message);
@@ -343,7 +413,7 @@ public static class ProtocolV2PayloadCodec
             throw ProtocolV2FrameParser.Violation($"Unknown error code {unchecked((ushort)codeBits)}.");
         var message = messageLength == 0
             ? string.Empty
-            : Encoding.UTF8.GetString(reader.Sequence.Slice(reader.Position, messageLength));
+            : DecodeStrictUtf8(reader.Sequence.Slice(reader.Position, messageLength), "Binary error message");
         return new ProtocolV2Error(code, message, (flags & ProtocolV2FrameFlags.Truncated) != 0);
     }
 
@@ -362,6 +432,7 @@ public static class ProtocolV2PayloadCodec
             throw ProtocolV2FrameParser.Violation("Binary error message length does not match the frame.");
         if (!IsDefinedErrorCode((SharpLinkErrorCode)unchecked((ushort)codeBits)))
             throw ProtocolV2FrameParser.Violation($"Unknown error code {unchecked((ushort)codeBits)}.");
+        ValidateStrictUtf8(reader.Sequence.Slice(reader.Position, messageLength), "Binary error message");
     }
 
     internal static int GetMetadataPayloadLength(SharpLinkMetadata metadata)
@@ -371,8 +442,8 @@ public static class ProtocolV2PayloadCodec
         for (var index = 0; index < metadata.Count; index++)
         {
             var entry = metadata[index];
-            var keyBytes = Encoding.UTF8.GetByteCount(entry.Key);
-            var valueBytes = Encoding.UTF8.GetByteCount(entry.Value);
+            var keyBytes = SStrictUtf8.GetByteCount(entry.Key);
+            var valueBytes = SStrictUtf8.GetByteCount(entry.Value);
             length = checked(length + GetVarUInt32Length(checked((uint)keyBytes)) + keyBytes);
             length = checked(length + GetVarUInt32Length(checked((uint)valueBytes)) + valueBytes);
         }
@@ -411,7 +482,7 @@ public static class ProtocolV2PayloadCodec
         }
         if (reader.Remaining != 0)
             throw ProtocolV2FrameParser.Violation("Request metadata has trailing bytes.");
-        return new SharpLinkMetadata(entries);
+        return SharpLinkMetadata.FromValidatedEntries(entries);
     }
 
     internal static void WriteVarUInt32(IBufferWriter<byte> writer, uint value)
@@ -438,9 +509,62 @@ public static class ProtocolV2PayloadCodec
                 return false;
             value |= (uint)(current & 0x7F) << (index * 7);
             if ((current & 0x80) == 0)
-                return true;
+                return index == 0 || current != 0;
         }
         return false;
+    }
+
+    private static string DecodeStrictUtf8(ReadOnlySequence<byte> bytes, string field)
+    {
+        try
+        {
+            return SStrictUtf8.GetString(bytes);
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.ProtocolViolation,
+                $"{field} is not valid UTF-8.",
+                exception);
+        }
+    }
+
+    private static void ValidateStrictUtf8(ReadOnlySequence<byte> bytes, string field)
+    {
+        try
+        {
+            var decoder = SStrictUtf8.GetDecoder();
+            Span<char> characters = stackalloc char[256];
+            foreach (var segment in bytes)
+            {
+                var remaining = segment.Span;
+                while (!remaining.IsEmpty)
+                {
+                    decoder.Convert(
+                        remaining,
+                        characters,
+                        flush: false,
+                        out var bytesUsed,
+                        out _,
+                        out _);
+                    remaining = remaining[bytesUsed..];
+                }
+            }
+            decoder.Convert(
+                ReadOnlySpan<byte>.Empty,
+                characters,
+                flush: true,
+                out _,
+                out _,
+                out _);
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.ProtocolViolation,
+                $"{field} is not valid UTF-8.",
+                exception);
+        }
     }
 
     private static int GetVarUInt32Length(uint value)
@@ -456,12 +580,12 @@ public static class ProtocolV2PayloadCodec
 
     private static void WriteUtf8(IBufferWriter<byte> writer, string value)
     {
-        var byteCount = Encoding.UTF8.GetByteCount(value);
+        var byteCount = SStrictUtf8.GetByteCount(value);
         WriteVarUInt32(writer, checked((uint)byteCount));
         if (byteCount == 0)
             return;
         var destination = writer.GetSpan(byteCount);
-        var written = Encoding.UTF8.GetBytes(value.AsSpan(), destination);
+        var written = SStrictUtf8.GetBytes(value.AsSpan(), destination);
         writer.Advance(written);
     }
 
@@ -523,6 +647,21 @@ public static class ProtocolV2PayloadCodec
             throw ProtocolV2FrameParser.Violation("Peer receive windows are invalid.");
     }
 
+    private static void ValidateLocalLimits(int maxFrame, int streamWindow, int connectionWindow)
+    {
+        if (maxFrame < SharpLinkProtocolOptions.MinMaxFramePayloadBytes ||
+            maxFrame > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxFrame),
+                $"Frame limit must be between {SharpLinkProtocolOptions.MinMaxFramePayloadBytes} and {SharpLinkProtocolOptions.MaxMaxFramePayloadBytes} bytes.");
+        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(streamWindow);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(connectionWindow);
+        if (connectionWindow < streamWindow)
+            throw new ArgumentException("Connection receive window cannot be smaller than stream receive window.");
+    }
+
     private static void ValidateHealthStatus(SharpLinkHealthStatus status)
     {
         if (status is not SharpLinkHealthStatus.Ready and
@@ -544,9 +683,8 @@ public static class ProtocolV2PayloadCodec
         }
     }
 
-    private static bool IsDefinedErrorCode(SharpLinkErrorCode code) => code switch
+    internal static bool IsDefinedErrorCode(SharpLinkErrorCode code) => code switch
     {
-        SharpLinkErrorCode.Unknown or
         SharpLinkErrorCode.RemoteError or
         SharpLinkErrorCode.AuthenticationRejected or
         SharpLinkErrorCode.AuthenticationExpired or

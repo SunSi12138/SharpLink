@@ -1,0 +1,11 @@
+# SharpLink 0.8.34 deep audit
+
+Chinese: [`../audit-0.8.34.md`](../audit-0.8.34.md)
+
+Using 0.8.33 commit `35c8cd2`, this batch proved five version-advancing P2 findings plus two follow-up P2 findings. Shared-memory completion could release staging while a read was still constructing its result; Chaos ignored and generation-cleared captured Errors; inherited signatures silently collapsed conflicting Oneway, execution-policy, and request-schema semantics; terminal `AdvanceTo` races became background Errors; and handled expansion/reconnect failures were mislabeled as unhandled Errors.
+
+Completion now waits for both in-progress reads and returned buffers without locking the read path. Chaos keeps bounded generation and aggregate Error evidence and gates on a monotonic count. `SHARPLINK057` compares return/call shape/policy/serialized parameter name/full nullability while excluding control-parameter names and allowing an explicit derived redeclaration to canonicalize semantics. Teardown accepts terminal cursor release only after close/cancellation. Recoverable connection attempts use additive Warning event `6101`, while true unhandled work retains Error `6002`.
+
+Pre-fix Generator preserved all 104 existing passes and failed only three new probes out of 107; Unit preserved all 477 existing passes and failed only the new pending-read probe out of 478. A later strengthened existing lifecycle test deterministically proved the Error-classification defect. Assertion and pseudo-mutation review covers exact diagnostics, artifact suppression, canonical redeclaration, nested nullability, both reader ownership states, real Chaos process exit/report, and Warning/Error separation.
+
+The final 120-second shared-memory Chaos run completed 863,299 successful calls, 310,349 injected expected failures, and 11 restarts with zero unexpected failures, zero client Errors, a successful drain, and all five active metrics at zero. Independent-process NativeAOT reported `AOT_SMOKE_CLIENT_PASS`. The final non-incremental Release build has zero warnings/errors; Generator is 108/108, Unit 478/478, Integration 238/238, and seven-package plus fresh-cache smoke pass. See [`../performance-0.8.34.md`](../performance-0.8.34.md) and [`../migration-0.8.34.md`](../migration-0.8.34.md). Consecutive clean audit rounds are 0/3.

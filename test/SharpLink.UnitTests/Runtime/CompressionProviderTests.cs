@@ -152,6 +152,25 @@ public class CompressionProviderTests
         EnsureThrows<ArgumentOutOfRangeException>(ratio.Validate, "invalid savings ratio");
     }
 
+    [Test]
+    public void RuntimeSnapshotShouldFreezeAProvidersValidatedWireProfile()
+    {
+        var provider = new MutableTokenProvider("test.mutable/v1");
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options => options.Compression.Providers.Add(provider))
+            .Build();
+
+        Ensure(provider.ProfileReads == 1,
+            "Runtime Build must validate a provider's wire identity exactly once");
+        provider.WireProfile = "test.mutable/v2";
+
+        Ensure(ReferenceEquals(
+                context.Compression.FindProvider("test.mutable/v1"), provider),
+            "runtime lookup must retain the profile validated during Build");
+        Ensure(context.Compression.FindProvider("test.mutable/v2") is null,
+            "post-Build provider mutation must not change negotiation identity");
+    }
+
     private static void RoundTrip(
         ISharpLinkCompressionProvider provider,
         byte[] source,
@@ -236,6 +255,31 @@ public class CompressionProviderTests
         public SharpLinkCompressionResult Compress(
             ReadOnlySequence<byte> input, IBufferWriter<byte> output, int maxOutputBytes,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public SharpLinkCompressionResult Decompress(
+            ReadOnlySequence<byte> input, IBufferWriter<byte> output, int maxOutputBytes,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    private sealed class MutableTokenProvider(string wireProfile) : ISharpLinkCompressionProvider
+    {
+        private string _wireProfile = wireProfile;
+
+        public int ProfileReads { get; private set; }
+
+        public string WireProfile
+        {
+            get
+            {
+                ProfileReads++;
+                return _wireProfile;
+            }
+            set => _wireProfile = value;
+        }
+
+        public SharpLinkCompressionResult Compress(
+            ReadOnlySequence<byte> input, IBufferWriter<byte> output, int maxOutputBytes,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         public SharpLinkCompressionResult Decompress(
             ReadOnlySequence<byte> input, IBufferWriter<byte> output, int maxOutputBytes,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();

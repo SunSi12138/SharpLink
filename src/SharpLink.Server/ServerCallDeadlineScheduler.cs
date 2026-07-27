@@ -23,7 +23,8 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         int maxCalls)
     {
         _calls = calls ?? throw new ArgumentNullException(nameof(calls));
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxCalls);
+        if (maxCalls is < 1 or > SharpLinkFlowControlOptions.MaximumConcurrentCallsPerConnection)
+            throw new ArgumentOutOfRangeException(nameof(maxCalls));
         _maxCalls = maxCalls;
         _timer = new Timer(
             static state => ((ServerCallDeadlineScheduler)state!).ScanExpiredDeadlines(),

@@ -295,12 +295,13 @@ public class StreamManager : IStreamManager
         if (Interlocked.CompareExchange(ref _termination, termination, null) is not null)
             return;
 
+        List<Exception>? failures = null;
+        var completed = 0;
         foreach (var requestDispatchers in _dispatchersByRequestId.DrainValues())
-        {
-            var completed = requestDispatchers.CompleteAll(exception);
-            SharpLinkTelemetry.AddActiveStreams(-completed);
-            Interlocked.Add(ref _activeStreamCount, -completed);
-        }
+            completed += requestDispatchers.CompleteAll(exception, ref failures);
+        SharpLinkTelemetry.AddActiveStreams(-completed);
+        Interlocked.Add(ref _activeStreamCount, -completed);
+        ThrowCompletionFailures(failures);
     }
 
     internal void CompleteRequestStreams(long requestId, Exception? exception)
@@ -308,9 +309,19 @@ public class StreamManager : IStreamManager
         if (!_dispatchersByRequestId.TryRemove(requestId, out var requestDispatchers))
             return;
 
-        var completed = requestDispatchers.CompleteAll(exception);
+        List<Exception>? failures = null;
+        var completed = requestDispatchers.CompleteAll(exception, ref failures);
         SharpLinkTelemetry.AddActiveStreams(-completed);
         Interlocked.Add(ref _activeStreamCount, -completed);
+        ThrowCompletionFailures(failures);
+    }
+
+    private static void ThrowCompletionFailures(List<Exception>? failures)
+    {
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
     }
 
     internal void ReservePreAdmissionStreams(
@@ -453,25 +464,51 @@ public class StreamManager : IStreamManager
             alreadyCompleted = false;
             if (streamId == 0)
             {
-                if (Volatile.Read(ref _defaultDispatcher)?.Dispatcher is not
-                    PreAdmissionStreamDispatcher preAdmission || preAdmission.IsAttached)
+                var entry = Volatile.Read(ref _defaultDispatcher);
+                if (entry?.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
+                    !entry.TryAcquire())
                 {
                     return false;
                 }
-                alreadyCompleted = preAdmission.Attach(dispatcher);
-                return true;
+                try
+                {
+                    if (!preAdmission.TryBeginAttach(dispatcher, out alreadyCompleted))
+                        return false;
+                    preAdmission.FinishAttach(dispatcher);
+                    return true;
+                }
+                finally
+                {
+                    entry.Release();
+                }
             }
 
+            DispatcherEntry? acquiredEntry;
+            PreAdmissionStreamDispatcher? acquiredPreAdmission;
             lock (_gate)
             {
                 if (!_byStreamId.TryGetValue(streamId, out var entry) ||
                     entry.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
-                    preAdmission.IsAttached)
+                    !entry.TryAcquire())
                 {
                     return false;
                 }
-                alreadyCompleted = preAdmission.Attach(dispatcher);
+                if (!preAdmission.TryBeginAttach(dispatcher, out alreadyCompleted))
+                {
+                    entry.Release();
+                    return false;
+                }
+                acquiredEntry = entry;
+                acquiredPreAdmission = preAdmission;
+            }
+            try
+            {
+                acquiredPreAdmission.FinishAttach(dispatcher);
                 return true;
+            }
+            finally
+            {
+                acquiredEntry.Release();
             }
         }
 
@@ -596,41 +633,52 @@ public class StreamManager : IStreamManager
             }
         }
 
-        public int CompleteAll(Exception? exception)
+        public int CompleteAll(Exception? exception, ref List<Exception>? failures)
         {
             var defaultDispatcher = Interlocked.Exchange(ref _defaultDispatcher, null);
             if (defaultDispatcher is not null)
             {
                 defaultDispatcher.Close();
-                try
-                {
-                    defaultDispatcher.Dispatcher.Complete(exception);
-                }
-                finally
-                {
-                    defaultDispatcher.Detach();
-                }
+                CompleteEntry(defaultDispatcher, exception, ref failures);
             }
             var count = defaultDispatcher is null ? 0 : 1;
 
+            DispatcherEntry[] entries;
             lock (_gate)
             {
                 count += _byStreamId.Count;
-                foreach (var entry in _byStreamId.Values)
-                {
-                    entry.Close();
-                    try
-                    {
-                        entry.Dispatcher.Complete(exception);
-                    }
-                    finally
-                    {
-                        entry.Detach();
-                    }
-                }
+                entries = [.. _byStreamId.Values];
                 _byStreamId.Clear();
             }
+            for (var index = 0; index < entries.Length; index++)
+            {
+                entries[index].Close();
+                CompleteEntry(entries[index], exception, ref failures);
+            }
             return count;
+        }
+
+        private static void CompleteEntry(
+            DispatcherEntry entry,
+            Exception? exception,
+            ref List<Exception>? failures)
+        {
+            try
+            {
+                entry.Dispatcher.Complete(exception);
+            }
+            catch (Exception completionException)
+            {
+                (failures ??= []).Add(completionException);
+            }
+            try
+            {
+                entry.Detach();
+            }
+            catch (Exception detachException)
+            {
+                (failures ??= []).Add(detachException);
+            }
         }
 
         public bool IsEmpty

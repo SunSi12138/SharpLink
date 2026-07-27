@@ -19,6 +19,48 @@ internal static class CodecHelpers
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void EnsureExactSize(in ReadOnlySequence<byte> buffer, long requiredBytes)
+    {
+        if (requiredBytes < 0 || buffer.Length != requiredBytes)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.DataLoss,
+                $"Codec input length is invalid: required exactly {requiredBytes} bytes, received {buffer.Length} bytes.");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool ReadNullablePresence(ref byte marker, int valueBytes)
+    {
+        if (marker == 1)
+            return true;
+        if (marker != 0)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.DataLoss,
+                $"Nullable Codec presence marker {marker} is invalid.");
+        }
+        ref var value = ref Unsafe.Add(ref marker, 1);
+        var hasNonZeroValue = valueBytes switch
+        {
+            1 => value != 0,
+            2 => Unsafe.ReadUnaligned<ushort>(ref value) != 0,
+            4 => Unsafe.ReadUnaligned<uint>(ref value) != 0,
+            8 => Unsafe.ReadUnaligned<ulong>(ref value) != 0,
+            16 => (Unsafe.ReadUnaligned<ulong>(ref value) |
+                   Unsafe.ReadUnaligned<ulong>(ref Unsafe.Add(ref value, sizeof(ulong)))) != 0,
+            _ => MemoryMarshal.CreateReadOnlySpan(ref value, valueBytes).IndexOfAnyExcept((byte)0) >= 0
+        };
+        if (hasNonZeroValue)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.DataLoss,
+                "Nullable Codec null payload contains non-canonical value bytes.");
+        }
+        return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int ReadInt32(in ReadOnlySequence<byte> buffer)
     {
         EnsureAvailable(buffer, sizeof(int));
@@ -37,7 +79,7 @@ internal static class CodecHelpers
         if (size > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes)
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, $"Codec value size {size} exceeds the protocol maximum.");
 
-        EnsureAvailable(buffer, size);
+        EnsureExactSize(buffer, size);
         if (buffer.FirstSpan.Length >= size)
             return Unsafe.ReadUnaligned<T>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
 
@@ -69,7 +111,10 @@ internal static class CodecHelpers
         if (length < -1)
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, $"Invalid collection length {length}.");
         if (length <= 0)
+        {
+            EnsureExactSize(buffer, sizeof(int));
             return 0;
+        }
 
         int byteCount;
         try
@@ -84,7 +129,7 @@ internal static class CodecHelpers
         if (byteCount > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes - sizeof(int))
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Collection payload exceeds the protocol maximum.");
 
-        EnsureAvailable(buffer, (long)sizeof(int) + byteCount);
+        EnsureExactSize(buffer, (long)sizeof(int) + byteCount);
         return byteCount;
     }
 
@@ -157,45 +202,108 @@ internal static class CodecHelpers
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Invalid Decimal payload.", ex);
         }
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void ValidateBlitElements<T>(ReadOnlySpan<T> values) where T : unmanaged
+    {
+        if (typeof(T) == typeof(bool))
+        {
+            var bytes = MemoryMarshal.AsBytes(values);
+            for (var index = 0; index < bytes.Length; index++)
+                if (bytes[index] > 1)
+                    throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Boolean collection contains a non-canonical element.");
+            return;
+        }
+        if (typeof(T) == typeof(Rune))
+        {
+            var typed = MemoryMarshal.Cast<T, Rune>(values);
+            for (var index = 0; index < typed.Length; index++)
+                _ = ValidateRune(typed[index]);
+            return;
+        }
+        if (typeof(T) == typeof(decimal))
+        {
+            var typed = MemoryMarshal.Cast<T, decimal>(values);
+            for (var index = 0; index < typed.Length; index++)
+                _ = ValidateDecimal(typed[index]);
+            return;
+        }
+        if (typeof(T) == typeof(DateOnly))
+        {
+            var typed = MemoryMarshal.Cast<T, DateOnly>(values);
+            for (var index = 0; index < typed.Length; index++)
+                _ = CreateDateOnly(typed[index].DayNumber);
+            return;
+        }
+        if (typeof(T) == typeof(DateTime))
+        {
+            var typed = MemoryMarshal.Cast<T, DateTime>(values);
+            for (var index = 0; index < typed.Length; index++)
+            {
+                var value = typed[index];
+                _ = CreateDateTime(Unsafe.As<DateTime, long>(ref value));
+            }
+            return;
+        }
+        if (typeof(T) == typeof(TimeOnly))
+        {
+            var typed = MemoryMarshal.Cast<T, TimeOnly>(values);
+            for (var index = 0; index < typed.Length; index++)
+                _ = ValidateTimeOnly(typed[index]);
+            return;
+        }
+        if (typeof(T) == typeof(DateTimeOffset))
+            ValidateDateTimeOffsetElements(MemoryMarshal.AsBytes(values));
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void NormalizeDateTimeOffsetBlitPayload(Span<byte> payload)
+    {
+        const int size = 16;
+        for (var offset = 0; offset < payload.Length; offset += size)
+            payload.Slice(offset + sizeof(short), 6).Clear();
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void WriteDateTimeOffsetBlitPayload(
+        ReadOnlySpan<DateTimeOffset> values,
+        IBufferWriter<byte> writer)
+    {
+        if (values.IsEmpty)
+            return;
+        var source = MemoryMarshal.AsBytes(values);
+        EnsureSerializablePayloadLength(source.Length, nameof(values));
+        var destination = writer.GetSpan(source.Length)[..source.Length];
+        source.CopyTo(destination);
+        NormalizeDateTimeOffsetBlitPayload(destination);
+        writer.Advance(source.Length);
+    }
+
+    private static void ValidateDateTimeOffsetElements(ReadOnlySpan<byte> payload)
+    {
+        const int size = 16;
+        for (var offset = 0; offset < payload.Length; offset += size)
+        {
+            var element = payload[offset..];
+            var offsetMinutes = Unsafe.ReadUnaligned<short>(ref MemoryMarshal.GetReference(element));
+            var utcTicks = Unsafe.ReadUnaligned<long>(ref Unsafe.Add(
+                ref MemoryMarshal.GetReference(element), sizeof(long)));
+            if ((ulong)utcTicks > (ulong)DateTime.MaxValue.Ticks || offsetMinutes is < -840 or > 840)
+                throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DateTimeOffset collection contains invalid UTC ticks or offset.");
+            var offsetTicks = (long)offsetMinutes * TimeSpan.TicksPerMinute;
+            if (offsetTicks > 0 && utcTicks > DateTime.MaxValue.Ticks - offsetTicks ||
+                offsetTicks < 0 && utcTicks < -offsetTicks)
+            {
+                throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DateTimeOffset collection contains a value outside the supported clock range.");
+            }
+        }
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void WriteInt32(IBufferWriter<byte> writer, in int value)
     {
         var span = writer.GetSpan(4);
         BinaryPrimitives.WriteInt32LittleEndian(span, value);
         writer.Advance(Size);
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static int BitmapLen(int count) => (count + 7) >> 3;
-
-    public static void Serialize(in ReadOnlySpan<short?> src, IBufferWriter<byte> writer)
-    {
-        var count = src.Length;
-        WriteInt32(writer, count);
-        if (count == 0) return;
-
-        // pass1: count non-null
-        var nonNull = 0;
-        for (var i = 0; i < count; i++)
-            if (src[i].HasValue) nonNull++;
-
-        var bmLen = BitmapLen(count);
-        var payloadLen = checked(bmLen + nonNull * 2);
-
-        var dst = writer.GetSpan(payloadLen);
-        dst[..bmLen].Clear();
-
-        var valueOffset = bmLen;
-        for (var i = 0; i < count; i++)
-        {
-            var v = src[i];
-            if (!v.HasValue) continue;
-
-            dst[i >> 3] |= (byte)(1 << (i & 7));
-            BinaryPrimitives.WriteInt16LittleEndian(dst.Slice(valueOffset, 2), v.Value);
-            valueOffset += 2;
-        }
-
-        writer.Advance(payloadLen);
     }
 }

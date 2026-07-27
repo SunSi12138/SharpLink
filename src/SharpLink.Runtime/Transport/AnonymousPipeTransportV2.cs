@@ -8,7 +8,7 @@ public sealed class AnonymousPipeClientTransportFactory : IClientTransportFactor
     private int _connectStarted;
     private int _disposed;
 
-    /// <summary>Creates a factory for one pair of inherited anonymous-pipe handles.</summary>
+    /// <summary>Creates a one-shot factory for one pair of inherited anonymous-pipe handles.</summary>
     /// <param name="inHandle">The handle from which the client reads.</param>
     /// <param name="outHandle">The handle to which the client writes.</param>
     public AnonymousPipeClientTransportFactory(string inHandle, string outHandle)
@@ -20,6 +20,7 @@ public sealed class AnonymousPipeClientTransportFactory : IClientTransportFactor
     }
 
     /// <inheritdoc />
+    /// <remarks>The offer is consumed when the first connection attempt begins, even if that attempt fails.</remarks>
     public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -44,7 +45,6 @@ public sealed class AnonymousPipeClientTransportFactory : IClientTransportFactor
                 await input.DisposeAsync().ConfigureAwait(false);
             if (output is not null)
                 await output.DisposeAsync().ConfigureAwait(false);
-            Volatile.Write(ref _connectStarted, 0);
             throw;
         }
     }
@@ -64,6 +64,7 @@ public sealed class AnonymousPipeServerTransportListener : IServerTransportListe
     private readonly Channel<ITransportConnection> _offers;
     private readonly int _offerQueueCapacity;
     private readonly CancellationTokenSource _disposeCts = new();
+    private Task? _disposeTask;
     private int _disposed;
 
     /// <summary>Creates an anonymous-pipe listener.</summary>
@@ -114,7 +115,8 @@ public sealed class AnonymousPipeServerTransportListener : IServerTransportListe
             output = new AnonymousPipeServerStream(PipeDirection.Out, HandleInheritability.Inheritable);
             var offer = new AnonymousPipeOffer(
                 output.GetClientHandleAsString(),
-                input.GetClientHandleAsString());
+                input.GetClientHandleAsString(),
+                new AnonymousPipeHandleTransfer(input, output));
             connection = new AnonymousPipeTransportConnection(input, output);
             input = null;
             output = null;
@@ -143,15 +145,61 @@ public sealed class AnonymousPipeServerTransportListener : IServerTransportListe
     }
 
     /// <inheritdoc />
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
+        lock (_offers)
+        {
+            if (_disposeTask is not null)
+                return new ValueTask(_disposeTask);
+            if (Volatile.Read(ref _disposed) != 0)
+                return ValueTask.CompletedTask;
 
-        _disposeCts.Cancel();
+            var operation = DisposeCoreAsync();
+            if (operation.IsCompletedSuccessfully)
+                return operation;
+            _disposeTask = operation.AsTask();
+            return new ValueTask(_disposeTask);
+        }
+    }
+
+    private async ValueTask DisposeCoreAsync()
+    {
+        Interlocked.Exchange(ref _disposed, 1);
+        Exception? cleanupException = null;
+        try
+        {
+            _disposeCts.Cancel();
+        }
+        catch (Exception exception)
+        {
+            cleanupException = exception;
+        }
         _offers.Writer.TryComplete();
         while (_offers.Reader.TryRead(out var connection))
-            await connection.DisposeAsync().ConfigureAwait(false);
-        _disposeCts.Dispose();
+        {
+            try
+            {
+                await connection.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                cleanupException = StreamTransportConnection.CombineCleanupExceptions(
+                    cleanupException,
+                    exception);
+            }
+        }
+        try
+        {
+            _disposeCts.Dispose();
+        }
+        catch (Exception exception)
+        {
+            cleanupException = StreamTransportConnection.CombineCleanupExceptions(
+                cleanupException,
+                exception);
+        }
+
+        if (cleanupException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
     }
 }

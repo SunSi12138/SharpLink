@@ -17,7 +17,7 @@ internal sealed class ServerServiceCleanup(
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        Exception? firstException = null;
+        List<Exception>? failures = null;
         for (var index = 0; index < _registrations.Length; index++)
         {
             try
@@ -26,7 +26,7 @@ internal sealed class ServerServiceCleanup(
             }
             catch (Exception exception)
             {
-                firstException ??= exception;
+                (failures ??= []).Add(exception);
             }
         }
 
@@ -37,10 +37,12 @@ internal sealed class ServerServiceCleanup(
         }
         catch (Exception exception)
         {
-            firstException ??= exception;
+            (failures ??= []).Add(exception);
         }
 
-        if (firstException is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
     }
 }

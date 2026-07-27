@@ -15,8 +15,15 @@ internal sealed class BoolCodec : IRpcCodec<bool>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        CodecHelpers.EnsureAvailable(buffer, Size);
-        return CodecHelpers.ReadUnmanaged<byte>(buffer) != 0;
+        CodecHelpers.EnsureExactSize(buffer, Size);
+        return CodecHelpers.ReadUnmanaged<byte>(buffer) switch
+        {
+            0 => false,
+            1 => true,
+            var marker => throw new SharpLinkException(
+                SharpLinkErrorCode.DataLoss,
+                $"Boolean Codec marker {marker} is invalid.")
+        };
     }
 }
 
@@ -51,9 +58,16 @@ internal sealed class NullableBoolCodec : IRpcCodec<bool?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool? Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        CodecHelpers.EnsureAvailable(buffer, Size);
+        CodecHelpers.EnsureExactSize(buffer, Size);
         var val = CodecHelpers.ReadUnmanaged<byte>(buffer);
         if (val == NullTag) return null;
-        return val != 0;
+        return val switch
+        {
+            0 => false,
+            1 => true,
+            _ => throw new SharpLinkException(
+                SharpLinkErrorCode.DataLoss,
+                $"Nullable Boolean Codec marker {val} is invalid.")
+        };
     }
 }

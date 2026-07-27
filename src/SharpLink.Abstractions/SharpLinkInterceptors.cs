@@ -63,7 +63,7 @@ public readonly record struct SharpLinkClientInvocationResult(object? Value)
     }
 }
 
-/// <summary>Continues a client interceptor pipeline.</summary>
+/// <summary>Continues a client interceptor pipeline. Each delegate instance may be invoked once.</summary>
 public delegate ValueTask<SharpLinkClientInvocationResult> SharpLinkClientInvocationDelegate(
     SharpLinkClientInvocationContext context);
 
@@ -120,13 +120,16 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
     public TimeSpan Elapsed { get; internal set; }
 }
 
-/// <summary>Continues a server interceptor pipeline.</summary>
+/// <summary>Continues a server interceptor pipeline. Each delegate instance may be invoked once.</summary>
 public delegate ValueTask SharpLinkServerInvocationDelegate(SharpLinkServerInvocationContext context);
 
 /// <summary>Intercepts a server call for authorization, limiting, auditing, or exception policy.</summary>
 public interface ISharpLinkServerInterceptor
 {
-    /// <summary>Invokes this interceptor. Throw a <see cref="SharpLinkException"/> to reject a call.</summary>
+    /// <summary>
+    /// Invokes this interceptor. Response-bearing calls must invoke <paramref name="next"/>;
+    /// throw a <see cref="SharpLinkException"/> to reject a call. One-way calls may return directly.
+    /// </summary>
     ValueTask InvokeAsync(
         SharpLinkServerInvocationContext context,
         SharpLinkServerInvocationDelegate next);

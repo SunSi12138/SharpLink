@@ -109,11 +109,13 @@ internal sealed class TlsStreamTransportConnection : StreamTransportConnection,
 internal static class TlsAuthenticationOptionsSnapshot
 {
     private static readonly TimeSpan SDefaultHandshakeTimeout = TimeSpan.FromSeconds(10);
+    private const string EndpointAuthorityPlaceholder = "sharplink.invalid";
 
     public static TimeSpan ValidateTimeout(TimeSpan? timeout)
     {
         var value = timeout ?? SDefaultHandshakeTimeout;
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(value, SharpLinkTimer.MaximumDelay);
         return value;
     }
 
@@ -143,13 +145,26 @@ internal static class TlsAuthenticationOptionsSnapshot
             AllowRenegotiation = source.AllowRenegotiation,
             AllowTlsResume = source.AllowTlsResume,
             CipherSuitesPolicy = source.CipherSuitesPolicy,
-            CertificateChainPolicy = source.CertificateChainPolicy
+            CertificateChainPolicy = source.CertificateChainPolicy?.Clone()
         };
         if (OperatingSystem.IsLinux() || OperatingSystem.IsWindows())
         {
             clone.AllowRsaPkcs1Padding = source.AllowRsaPkcs1Padding;
             clone.AllowRsaPssPadding = source.AllowRsaPssPadding;
         }
+        return clone;
+    }
+
+    internal static SslClientAuthenticationOptions CloneForEndpointFactory(
+        SslClientAuthenticationOptions source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var needsEndpointAuthority = string.IsNullOrWhiteSpace(source.TargetHost);
+        var clone = Clone(
+            source,
+            needsEndpointAuthority ? EndpointAuthorityPlaceholder : null)!;
+        if (needsEndpointAuthority)
+            clone.TargetHost = string.Empty;
         return clone;
     }
 
@@ -165,7 +180,7 @@ internal static class TlsAuthenticationOptionsSnapshot
                 nameof(source));
         }
 
-        return new SslServerAuthenticationOptions
+        var clone = new SslServerAuthenticationOptions
         {
             ServerCertificate = source.ServerCertificate,
             ServerCertificateContext = source.ServerCertificateContext,
@@ -180,7 +195,14 @@ internal static class TlsAuthenticationOptionsSnapshot
                 : new List<SslApplicationProtocol>(source.ApplicationProtocols),
             AllowRenegotiation = source.AllowRenegotiation,
             AllowTlsResume = source.AllowTlsResume,
-            CipherSuitesPolicy = source.CipherSuitesPolicy
+            CipherSuitesPolicy = source.CipherSuitesPolicy,
+            CertificateChainPolicy = source.CertificateChainPolicy?.Clone()
         };
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsWindows())
+        {
+            clone.AllowRsaPkcs1Padding = source.AllowRsaPkcs1Padding;
+            clone.AllowRsaPssPadding = source.AllowRsaPssPadding;
+        }
+        return clone;
     }
 }

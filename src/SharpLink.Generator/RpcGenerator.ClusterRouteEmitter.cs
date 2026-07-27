@@ -23,7 +23,6 @@ public partial class RpcGenerator
         sb.AppendLine($"    public static readonly {typeName} Instance = new();");
         sb.AppendLine($"    public {typeName}() {{ }}");
         sb.AppendLine($"    public Assembly OwnerAssembly => typeof({typeName}).Assembly;");
-        sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedClusterAssemblyRoute> Routes => __routes;");
         sb.AppendLine("    private static readonly SharpLinkGeneratedClusterAssemblyRoute[] __routes = new SharpLinkGeneratedClusterAssemblyRoute[]");
         sb.AppendLine("    {");
         foreach (var route in routes)
@@ -34,6 +33,8 @@ public partial class RpcGenerator
             sb.AppendLine($"            \"{EscapeString(route.AssemblyIdentity)}\"),");
         }
         sb.AppendLine("    };");
+        sb.AppendLine("    private static readonly IReadOnlyList<SharpLinkGeneratedClusterAssemblyRoute> __readOnlyRoutes = System.Array.AsReadOnly(__routes);");
+        sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedClusterAssemblyRoute> Routes => __readOnlyRoutes;");
         sb.AppendLine("}");
         sb.AppendLine();
         sb.AppendLine($"internal static class {typeName}Initializer");

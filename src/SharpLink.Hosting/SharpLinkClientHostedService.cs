@@ -5,37 +5,97 @@ internal sealed class SharpLinkClientHostedService(
     SharpLinkClientAccessor accessor,
     ILoggerFactory loggerFactory) : IHostedService, IAsyncDisposable
 {
+    private readonly Lock _lifecycleGate = new();
     private ISharpLinkClient? _client;
+    private Task? _stopTask;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         try
         {
-            builder.UseLoggerFactoryIfUnset(loggerFactory);
-            _client = builder.Build();
-            await _client.ConnectAsync(cancellationToken);
-            accessor.SetClient(_client);
+            ISharpLinkClient client;
+            lock (_lifecycleGate)
+            {
+                if (_stopTask is not null)
+                    throw new InvalidOperationException("The SharpLink client host has already stopped.");
+                if (_client is not null)
+                    throw new DuplicateStartException();
+                builder.UseLoggerFactoryIfUnset(loggerFactory);
+                client = builder.Build();
+                _client = client;
+            }
+            await client.ConnectAsync(cancellationToken);
+            accessor.SetClient(client);
+        }
+        catch (DuplicateStartException exception)
+        {
+            throw new InvalidOperationException("The SharpLink client host has already started.", exception);
         }
         catch (Exception ex)
         {
             accessor.Fail(ex);
-            await DisposeAsync();
-            throw;
+            try
+            {
+                await DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception cleanupException)
+            {
+                throw new AggregateException(ex, cleanupException);
+            }
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex).Throw();
+            throw new System.Diagnostics.UnreachableException();
         }
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken)
+    public Task StopAsync(CancellationToken cancellationToken)
     {
         accessor.Stop();
-        var client = Interlocked.Exchange(ref _client, null);
-        if (client is not null)
-            await client.StopAsync(cancellationToken);
+        lock (_lifecycleGate)
+            return _stopTask ??= StopCoreAsync(cancellationToken);
     }
 
-    public async ValueTask DisposeAsync()
+    private async Task StopCoreAsync(CancellationToken cancellationToken)
+    {
+        var client = Interlocked.Exchange(ref _client, null);
+        if (client is null)
+            return;
+
+        Exception? stopException = null;
+        try
+        {
+            await client.StopAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            stopException = exception;
+        }
+        try
+        {
+            await client.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception cleanupException)
+        {
+            if (stopException is not null)
+                throw new AggregateException(stopException, cleanupException);
+            throw;
+        }
+        if (stopException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(stopException).Throw();
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        accessor.Stop();
+        lock (_lifecycleGate)
+            return new ValueTask(_stopTask ??= DisposeCoreAsync());
+    }
+
+    private async Task DisposeCoreAsync()
     {
         var client = Interlocked.Exchange(ref _client, null);
         if (client is not null)
             await client.DisposeAsync();
     }
+
+    private sealed class DuplicateStartException : Exception;
 }

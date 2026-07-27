@@ -126,6 +126,45 @@ public class SharedMemoryTransportConnectionIntegrationTests
     }
 
     [Test]
+    public async Task SharedMemoryTruncatedServerResponseShouldMapToUnavailable()
+    {
+        var name = $"tr{Guid.NewGuid():N}"[..20];
+        await using var server = new NamedPipeServerStream(
+            $"shm-{name}",
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            PipeStreamOptions.Asynchronous | PipeStreamOptions.CurrentUserOnly);
+        var peer = Task.Run(async () =>
+        {
+            await server.WaitForConnectionAsync();
+            var hello = new byte[48];
+            await server.ReadExactlyAsync(hello);
+            await server.WriteAsync(new byte[] { 0x31, 0x4D, 0x48, 0x53 });
+            await server.FlushAsync();
+            await server.DisposeAsync();
+        });
+
+        await using var factory = new SharedMemoryClientTransportFactory(name);
+        Exception? failure = null;
+        try
+        {
+            await factory.ConnectAsync();
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+        await peer.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(failure is SharpLinkException
+        {
+            Code: SharpLinkErrorCode.Unavailable,
+            InnerException: EndOfStreamException
+        }, "truncated shared-memory response error normalization");
+    }
+
+    [Test]
     public async Task SharedMemoryCallerCancellationShouldRemainOperationCanceledException()
     {
         await using var factory = new SharedMemoryClientTransportFactory(

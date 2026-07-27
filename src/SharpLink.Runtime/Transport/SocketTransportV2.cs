@@ -3,16 +3,19 @@ namespace SharpLink.Runtime;
 /// <summary>Configures sockets created by SharpLink transport factories and listeners.</summary>
 public sealed class SocketTransportOptions
 {
+    private static readonly TimeSpan SMaximumKeepAliveDuration =
+        TimeSpan.FromSeconds(int.MaxValue);
+
     /// <summary>Gets or sets whether TCP disables Nagle buffering.</summary>
     public bool NoDelay { get; set; } = true;
 
     /// <summary>Gets or sets whether TCP keep-alive probes are enabled.</summary>
     public bool KeepAlive { get; set; } = true;
 
-    /// <summary>Gets or sets the idle time before TCP keep-alive probes begin.</summary>
+    /// <summary>Gets or sets the idle time before TCP keep-alive probes begin, up to 2,147,483,647 seconds.</summary>
     public TimeSpan KeepAliveTime { get; set; } = TimeSpan.FromSeconds(30);
 
-    /// <summary>Gets or sets the interval between TCP keep-alive probes.</summary>
+    /// <summary>Gets or sets the interval between TCP keep-alive probes, up to 2,147,483,647 seconds.</summary>
     public TimeSpan KeepAliveInterval { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary>Gets or sets the number of failed TCP keep-alive probes before disconnect.</summary>
@@ -28,6 +31,8 @@ public sealed class SocketTransportOptions
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(KeepAliveTime, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(KeepAliveInterval, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(KeepAliveTime, SMaximumKeepAliveDuration);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(KeepAliveInterval, SMaximumKeepAliveDuration);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(KeepAliveRetryCount);
         if (SendBufferBytes is { } sendBytes)
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sendBytes);
@@ -61,14 +66,17 @@ public sealed class SocketClientTransportFactory : IClientTransportFactory
     /// <param name="remoteEndPoint">The TCP or Unix-domain endpoint to connect.</param>
     /// <param name="options">Optional socket settings, copied during construction.</param>
     /// <param name="tlsOptions">Optional TLS settings. A null value keeps the socket plaintext.</param>
-    /// <param name="tlsHandshakeTimeout">Independent TLS handshake timeout. Defaults to 10 seconds.</param>
+    /// <param name="tlsHandshakeTimeout">Independent positive TLS handshake timeout, up to 2,147,483,647 milliseconds. Defaults to 10 seconds.</param>
     public SocketClientTransportFactory(
         EndPoint remoteEndPoint,
         SocketTransportOptions? options = null,
         SslClientAuthenticationOptions? tlsOptions = null,
         TimeSpan? tlsHandshakeTimeout = null)
     {
-        _remoteEndPoint = remoteEndPoint ?? throw new ArgumentNullException(nameof(remoteEndPoint));
+        ArgumentNullException.ThrowIfNull(remoteEndPoint);
+        _remoteEndPoint = SocketTransportSocketFactory.Snapshot(remoteEndPoint);
+        if (_remoteEndPoint is IPEndPoint { Port: 0 } or DnsEndPoint { Port: 0 })
+            throw new ArgumentOutOfRangeException(nameof(remoteEndPoint), "A client remote endpoint requires a non-zero port.");
         _options = (options ?? new SocketTransportOptions()).CloneValidated();
         _tlsOptions = TlsAuthenticationOptionsSnapshot.Clone(tlsOptions);
         _tlsHandshakeTimeout = TlsAuthenticationOptionsSnapshot.ValidateTimeout(tlsHandshakeTimeout);
@@ -134,6 +142,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
     private readonly TimeSpan _tlsHandshakeTimeout;
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly string? _ownedUnixSocketPath;
+    private readonly UnixSocketPathIdentity? _ownedUnixSocketIdentity;
     private int _disposed;
 
     /// <summary>Creates, binds, and starts a socket listener.</summary>
@@ -141,7 +150,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
     /// <param name="backlog">The operating-system accept backlog.</param>
     /// <param name="options">Optional accepted-socket settings, copied during construction.</param>
     /// <param name="tlsOptions">Optional TLS settings. A null value keeps accepted sockets plaintext.</param>
-    /// <param name="tlsHandshakeTimeout">Independent TLS handshake timeout. Defaults to 10 seconds.</param>
+    /// <param name="tlsHandshakeTimeout">Independent positive TLS handshake timeout, up to 2,147,483,647 milliseconds. Defaults to 10 seconds.</param>
     public SocketServerTransportListener(
         EndPoint localEndPoint,
         int backlog = 512,
@@ -157,23 +166,36 @@ public sealed class SocketServerTransportListener : IServerTransportListener
         _listener = SocketTransportSocketFactory.Create(localEndPoint);
 
         string? unixPath = null;
+        string? boundUnixPath = null;
+        UnixSocketPathIdentity? boundUnixIdentity = null;
         try
         {
             if (localEndPoint is UnixDomainSocketEndPoint uds)
             {
-                unixPath = uds.ToString();
+                unixPath = SocketTransportSocketFactory.GetFileSystemPath(uds);
                 if (File.Exists(unixPath))
-                    File.Delete(unixPath);
+                {
+                    throw new IOException(
+                        $"Unix-domain socket path '{unixPath}' already exists and will not be replaced.");
+                }
             }
 
             _listener.Bind(localEndPoint);
+            boundUnixPath = unixPath;
+            if (unixPath is not null)
+                boundUnixIdentity = UnixSocketPathIdentity.Capture(unixPath);
             _listener.Listen(backlog);
             LocalEndPoint = _listener.LocalEndPoint;
             _ownedUnixSocketPath = unixPath;
+            _ownedUnixSocketIdentity = boundUnixIdentity;
         }
         catch
         {
-            _listener.Dispose();
+            DisposeListenerPreservingPathReplacement(
+                _listener,
+                boundUnixPath,
+                boundUnixIdentity);
+            TryDeleteOwnedUnixSocketPath(boundUnixPath, boundUnixIdentity);
             throw;
         }
     }
@@ -214,27 +236,100 @@ public sealed class SocketServerTransportListener : IServerTransportListener
             return ValueTask.CompletedTask;
 
         _disposeCts.Cancel();
-        _listener.Dispose();
+        DisposeListenerPreservingPathReplacement(
+            _listener,
+            _ownedUnixSocketPath,
+            _ownedUnixSocketIdentity);
         _disposeCts.Dispose();
-        if (_ownedUnixSocketPath is not null)
+        TryDeleteOwnedUnixSocketPath(_ownedUnixSocketPath, _ownedUnixSocketIdentity);
+
+        return ValueTask.CompletedTask;
+    }
+
+    private static void DisposeListenerPreservingPathReplacement(
+        Socket listener,
+        string? path,
+        UnixSocketPathIdentity? identity)
+    {
+        var preservation = UnixSocketPathIdentity.PreserveReplacement(path, identity);
+        try
+        {
+            listener.Dispose();
+        }
+        finally
+        {
+            preservation?.Restore();
+        }
+    }
+
+    private static void TryDeleteOwnedUnixSocketPath(
+        string? path,
+        UnixSocketPathIdentity? identity)
+    {
+        if (path is not null)
         {
             try
             {
-                if (File.Exists(_ownedUnixSocketPath))
-                    File.Delete(_ownedUnixSocketPath);
+                if (!OperatingSystem.IsWindows() &&
+                    (identity is null || !identity.Value.Matches(path)))
+                {
+                    return;
+                }
+                if (File.Exists(path))
+                    File.Delete(path);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                Debug.WriteLine($"SharpLink could not remove Unix-domain socket path '{_ownedUnixSocketPath}': {ex.Message}");
+                Debug.WriteLine($"SharpLink could not remove Unix-domain socket path '{path}': {ex.Message}");
             }
         }
-
-        return ValueTask.CompletedTask;
     }
 }
 
 internal static class SocketTransportSocketFactory
 {
+    internal static EndPoint Snapshot(EndPoint endPoint)
+        => endPoint switch
+        {
+            IPEndPoint ip => new IPEndPoint(CloneAddress(ip.Address), ip.Port),
+            DnsEndPoint dns => new DnsEndPoint(dns.Host, dns.Port, dns.AddressFamily),
+            UnixDomainSocketEndPoint unix => unix.Create(unix.Serialize()),
+            _ => SnapshotCustom(endPoint)
+        };
+
+    private static EndPoint SnapshotCustom(EndPoint endPoint)
+    {
+        try
+        {
+            var snapshot = endPoint.Create(endPoint.Serialize());
+            if (ReferenceEquals(snapshot, endPoint))
+            {
+                throw new InvalidOperationException(
+                    "The endpoint Create method returned its mutable source instance.");
+            }
+            return snapshot;
+        }
+        catch (Exception exception) when (
+            exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            throw new ArgumentException(
+                "Custom socket endpoints must support an independent Create(Serialize()) snapshot.",
+                nameof(endPoint),
+                exception);
+        }
+    }
+
+    internal static string? GetFileSystemPath(UnixDomainSocketEndPoint endPoint)
+    {
+        var address = endPoint.Serialize();
+        return address.Size > 2 && address[2] == 0 ? null : endPoint.ToString();
+    }
+
+    private static IPAddress CloneAddress(IPAddress address)
+        => address.AddressFamily == AddressFamily.InterNetworkV6
+            ? new IPAddress(address.GetAddressBytes(), address.ScopeId)
+            : new IPAddress(address.GetAddressBytes());
+
     public static Socket Create(EndPoint endPoint)
     {
         if (endPoint is DnsEndPoint)
@@ -300,5 +395,117 @@ internal static class SocketTransportSocketFactory
         {
             Debug.WriteLine($"SharpLink skipped unsupported socket option {option}: {ex.Message}");
         }
+    }
+}
+
+internal readonly record struct UnixSocketPathIdentity(long Device, long Inode)
+{
+    private const int FileTypeMask = 0xF000;
+    private const int DirectoryFileType = 0x4000;
+    private const int SocketFileType = 0xC000;
+
+    internal static UnixSocketPathIdentity? Capture(string path)
+    {
+        if (OperatingSystem.IsWindows())
+            return null;
+        if (LStat(path, out var status) != 0)
+        {
+            throw new IOException(
+                $"Could not identify Unix-domain socket path '{path}'.",
+                new System.ComponentModel.Win32Exception(
+                    System.Runtime.InteropServices.Marshal.GetLastPInvokeError()));
+        }
+        if ((status.Mode & FileTypeMask) != SocketFileType)
+            throw new IOException($"Unix-domain socket path '{path}' is not a socket node.");
+        return new UnixSocketPathIdentity(status.Device, status.Inode);
+    }
+
+    internal bool Matches(string path)
+        => LStat(path, out var status) == 0 &&
+           (status.Mode & FileTypeMask) == SocketFileType &&
+           status.Device == Device &&
+           status.Inode == Inode;
+
+    internal static UnixSocketPathPreservation? PreserveReplacement(
+        string? path,
+        UnixSocketPathIdentity? identity)
+    {
+        if (OperatingSystem.IsWindows() || path is null ||
+            identity is { } captured && captured.Matches(path) ||
+            LStat(path, out var status) != 0)
+        {
+            return null;
+        }
+
+        var directory = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(directory))
+            directory = Directory.GetCurrentDirectory();
+        var backupPath = Path.Combine(
+            directory,
+            $".sharplink-preserve-{Guid.NewGuid():N}");
+        var isDirectory = (status.Mode & FileTypeMask) == DirectoryFileType;
+        if (isDirectory)
+            Directory.Move(path, backupPath);
+        else
+            File.Move(path, backupPath);
+        return new UnixSocketPathPreservation(path, backupPath, isDirectory);
+    }
+
+    internal static bool PathExists(string path) => LStat(path, out _) == 0;
+
+    [System.Runtime.InteropServices.DllImport(
+        "System.Native",
+        EntryPoint = "SystemNative_LStat",
+        SetLastError = true)]
+    private static extern int LStat(
+        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)]
+        string path,
+        out UnixFileStatus status);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct UnixFileStatus
+    {
+        internal int Flags;
+        internal int Mode;
+        internal uint UserId;
+        internal uint GroupId;
+        internal long Size;
+        internal long AccessTime;
+        internal long AccessTimeNanoseconds;
+        internal long ModificationTime;
+        internal long ModificationTimeNanoseconds;
+        internal long ChangeTime;
+        internal long ChangeTimeNanoseconds;
+        internal long BirthTime;
+        internal long BirthTimeNanoseconds;
+        internal long Device;
+        internal long RawDevice;
+        internal long Inode;
+        internal uint UserFlags;
+        internal int HardLinkCount;
+    }
+}
+
+internal sealed class UnixSocketPathPreservation(
+    string path,
+    string backupPath,
+    bool isDirectory)
+{
+    private int _restored;
+
+    internal void Restore()
+    {
+        if (Interlocked.Exchange(ref _restored, 1) != 0)
+            return;
+        if (UnixSocketPathIdentity.PathExists(path))
+        {
+            throw new IOException(
+                $"Unix-domain socket path replacement could not be restored because '{path}' was recreated; " +
+                $"the preserved entry remains at '{backupPath}'.");
+        }
+        if (isDirectory)
+            Directory.Move(backupPath, path);
+        else
+            File.Move(backupPath, path);
     }
 }

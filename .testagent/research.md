@@ -1,103 +1,111 @@
-# 0.7.11 test research
+# 0.8.44 regression-test research
 
-## Baseline
+## Baseline and audit boundary
 
-- Base branch: `dev`
-- Base commit: `2dd4e84870b2694640ecd4ba61bec51f461e7226`
-- SDK: .NET SDK 10.0.102, Microsoft Testing Platform, TUnit 1.14.0
-- Release solution build: passed with zero warnings and zero errors
-- Last known unit tests before this P0 phase: 313 passed
-- Last known generator tests before this P0 phase: 59 passed
+- Exact baseline: local 0.8.43 commit `9789fbedd5af5e4b2b21be84684150047f26c6e2`.
+- This round starts with parallel shutdown aggregation, then continues timing, async ownership,
+  pooled memory, dynamic modules, and protocol length boundaries not promoted in 0.8.43.
+- A multi-cluster cancellation-callback hypothesis was rejected: the initiating failure remained
+  intact, every child stopped, and the coordinator reached Faulted. Its probe was removed.
 
-## Target inventory
+## Finding 1 — shutdown joins inspect only the exception selected by `await` (P2 lifecycle)
 
-- `SharpLink.Abstractions`: adapter runtime SPI and generated factory contract
-- `SharpLink.Sdk`: adapter registration and explicit selection attributes
-- `SharpLink.Runtime`: manifest-owned adapter scopes, generation-aware codec cache, disposal
-- `SharpLink.Generator`: metadata-only adapter discovery, selection, diagnostics, closed factory emission
-- client/server dynamic registration: transactional publish, drain, replace, scope disposal
-- serializer extension: migrate `SharpLink.Serializer.MemoryPack` to `SharpLink.Serializer.SharpPack`
-- contract manifest: required wire-format identity with no pre-1.0 legacy fallback
-- package/AOT/integration paths: automatic adapter selection without runtime resolver
+This is one root cause with three independently reproduced manifestations. They are counted once,
+not once per component or call site.
 
-## Acceptance checklist
+### Server session cleanup
 
-- Public adapter registration/selection APIs validate all declared constraints.
-- Native codecs remain preferred unless a selector or explicit adapter binding applies.
-- Adapter factories use closed `CreateCodec<T>()` calls and contain no runtime generic construction.
-- One scope is shared per runtime context, manifest instance, and adapter ID.
-- Registration and replacement publish transactionally; failed candidates dispose scopes.
-- Cache entries are bound to registration identity and old cleanup cannot remove new codecs.
-- Context/module disposal releases adapter scopes exactly once and preserves user-owned codecs.
-- SharpPack 1.1.0 is the only serializer dependency; MemoryPack package/API/product remains are removed.
-- MemoryPack 1.21.4 and SharpPack 1.1.0 golden payloads match before declaring `memorypack-binary/v1`.
-- Generator output is deterministic under reference and attribute reordering.
-- Missing, null, blank, or whitespace-only `wireFormatId` values make a baseline invalid.
-- Unit, generator, integration, concurrency, ALC, AOT, pack, and package-smoke coverage passes.
-- No remote state is changed; final branch contains four local commits and a clean worktree.
+- `SharpLinkServer.DisposeAllSessionsAsync` awaited a `Task.WhenAll` and filtered only the single
+  exception rethrown by `await`. When that exception was an expected `IOException`, the catch
+  swallowed the entire aggregate even if another session had failed with an internal exception.
+- The deterministic witness injects one `InvalidOperationException` transport failure and enough
+  synchronous `IOException` closures to put an expected close first in the shutdown snapshot.
+  Baseline disposed every transport but returned success, losing the unexpected failure.
+- Pre-fix evidence: `artifacts/0.8.44-prefx-server-mixed-session-cleanup.log`.
+- Fix: after `WhenAll` fails, flatten every child task exception, discard only known terminal
+  close types (including structured `ConnectionClosed`), and preserve one or aggregate multiple
+  unexpected failures with their original exception identities.
+- Post-fix evidence: `artifacts/0.8.44-postfix-server-mixed-session-cleanup.log` (1/1 pass).
 
-## Existing conventions
+### Client background-worker cleanup
 
-- Tests use TUnit and executable Microsoft Testing Platform projects.
-- Generator tests compile in-memory source and inspect diagnostics/generated text.
-- Runtime tests use small in-file fake manifests/codecs rather than a mocking library.
-- Integration tests exercise real client/server transports and dynamic assembly registration.
+- `SharpLinkClient.IgnoreExpectedStopExceptionAsync` caught every exception once the shared
+  shutdown token had been cancelled. Because `StopCoreAsync` cancels that token before joining
+  `_reconnectTask` and `_expansionTask`, an already-faulted background worker carrying an unrelated
+  internal exception was silently treated as normal cancellation.
+- The witness installs a completed `InvalidOperationException` reconnect task, calls the public
+  `StopAsync`, and verifies both that cleanup reaches Stopped and that the failure is retained.
+- Pre-fix evidence: `artifacts/0.8.44-prefx-client-reconnect-cleanup.log`.
+- Fix: flatten aggregate connect failures and suppress only expected shutdown/transport terminal
+  types for background reconnect/expansion work; preserve one unexpected failure with its original
+  stack or aggregate multiple failures. The caller-owned initial `ConnectAsync` task remains
+  suppressed during Stop to avoid reporting an already-observed failure twice.
+- Post-fix evidence: `artifacts/0.8.44-postfix-client-reconnect-cleanup.log` and
+  `artifacts/0.8.44-postfix-client-connect-observed-control.log` (both 1/1 pass).
 
-## P0 static pairing and gap audit
+### Nested Server/Client background joins
 
-- The required Roslyn static-pairing scan ran once over this checkout: 254 source files,
-  66 test files, 53 paired files, and 201 unpaired files.
-- This is a parse-only heuristic rather than line or branch coverage. It undercounts
-  indirect generator and integration coverage, but it identified no direct pairing for
-  the new SDK attributes, adapter SPI, runtime provider, or SharpPack codec source.
-- The existing Generator additions cover one valid selector, type binding, named tuple
-  binding, unmanaged selector priority, one `SHARPLINK043` shape, and one
-  `SHARPLINK045` conflict. P0 must cover the remaining diagnostic and determinism matrix.
-- The user explicitly rejected compatibility with development-time manifests that omit
-  `wireFormatId`; the field is required and an invalid baseline must report
-  `SHARPLINK024`.
+- Server and Client background joins filtered only the exception rethrown by `await Task.WhenAll`.
+  A tracked task that internally aggregated an expected transport close with an unexpected internal
+  failure could therefore be accepted as normal shutdown, even though its full `Task.Exception`
+  still contained the unexpected cause.
+- The deterministic Server witness tracks one nested `WhenAll` whose first failure is an expected
+  `IOException` and whose sibling is `InvalidOperationException`. The baseline join returns success.
+- Pre-fix evidence: `artifacts/0.8.44-prefx-framework-join-mixed-failure.log`.
+- Fix: Server framework/session joins and Client background joins flatten every tracked task's
+  complete exception tree, suppress only explicit shutdown terminal types, and rethrow one or
+  aggregate multiple unexpected failures.
+- Post-fix evidence: `artifacts/0.8.44-postfix-framework-join-mixed-failure.log` and
+  `artifacts/0.8.44-postfix-client-background-join.log` (both 1/1 pass).
 
-## Final observed totals
+### Static endpoint-cluster worker join
 
-- Unit tests: 327 passed.
-- Generator tests: 76 passed.
-- Integration tests: 226 passed.
-- Local packages: seven 0.7.11 packages, including `SharpLink.Serializer.SharpPack`
-  and excluding `SharpLink.Serializer.MemoryPack`.
+- The first convergence pass found one remaining manifestation in
+  `StaticClusterRuntime.WaitForWorkersAsync`: the join added only the exception selected by
+  `await Task.WhenAll`, so an expected transport failure inside a nested worker hid its unexpected
+  sibling. This is the same shutdown-join root cause and does not increase the finding count.
+- Pre-fix evidence: `artifacts/0.8.44-prefx-static-cluster-worker-join.log`.
+- Fix: after the aggregate join fails, inspect every worker's complete exception tree and retain
+  non-shutdown cancellation exactly as before.
+- Post-fix evidence: `artifacts/0.8.44-postfix-static-cluster-worker-join.log` (1/1 pass).
 
-## External serializer deep-review audit
+## Finding 2 — a failed error-response enqueue leaks Server call admission (P1 lifecycle)
 
-Bounded production inventory:
+- The synchronous Server dispatch branches released their call state only after sending an error
+  response. If a handler failed synchronously and the bounded send queue then rejected that error
+  frame, `ReleaseDispatchResources` was skipped, leaving both global and per-connection active-call
+  counters elevated. Graceful stop could consequently wait for a call that had already ended.
+- The witness binds a session to a one-byte send budget, holds one frame in a blocking output flush,
+  invokes a synchronously failing service, and deterministically forces the error response enqueue
+  to return `ResourceExhausted`. The baseline leaves both admission counters at one.
+- Pre-fix evidence: `artifacts/0.8.44-prefx-server-error-enqueue-release.log`.
+- Fix: place terminal stream/cancellation/error handling inside `try/finally` cleanup in both
+  synchronous response shapes, and mark a manually returned response writer as transferred before
+  a module-drain send can fail.
+- Post-fix evidence: `artifacts/0.8.44-postfix-server-error-enqueue-release.log` (1/1 pass; both
+  active-call counters return to zero while the original queue failure remains observable).
 
-- compile-time registration discovery, Adapter shape/effective accessibility,
-  selection, factory emission, and contract compatibility;
-- runtime factory identity validation, Scope preparation/rollback/disposal, Context
-  construction/disposal, dynamic register/replace/unregister, and client shutdown;
-- SharpPack 1.1.0 exact source behavior for empty versus registered Context formatter
-  graphs, payload consumption, exception mapping, and collectible ownership;
-- local NuGet dependency range, generated-source delivery, JIT package consumption,
-  NativeAOT publication, and serializer hot-path performance.
+## Finding 3 — rejected stream terminal frames retain flow-control slots (P2 availability)
 
-Confirmed defects and fixes:
+- `SendStreamCompleteAsync` and `SendStreamErrorAsync` marked their send stream complete only after
+  the terminal frame entered the session queue. A bounded-queue rejection therefore left the
+  `StreamFlowController` state open forever even though the producer had ended. Repetition could
+  exhaust `MaxConcurrentStreamsPerConnection` on an otherwise healthy connection.
+- The witness opens the sole permitted flow-controlled stream, repays all byte credit, blocks one
+  frame in the send pump, and forces `StreamComplete` to fail with `ResourceExhausted`. On the
+  baseline, a second stream is rejected because the first slot remains retained.
+- Pre-fix evidence: `artifacts/0.8.44-prefx-stream-complete-slot.log`.
+- Fix: terminal-frame enqueue and flow-state completion now share a `try/finally`, for both success
+  and error terminal frames. The original send exception still propagates.
+- Post-fix evidence: `artifacts/0.8.44-postfix-stream-complete-slot.log` (1/1 pass; the next stream
+  acquires the single configured slot after the terminal enqueue rejection).
 
-- Effective Adapter accessibility now walks every containing type.
-- Every generated factory Adapter instance is validated even when its Adapter ID was
-  already prepared by another factory.
-- Scope, registration, Context, module, and client cleanup continue after individual
-  failures while preserving the first exception; adopt/dispose publication is locked.
-- Automatic SharpPack Scopes force a frozen Context-owned formatter graph rather than
-  SharpPack's process-wide default slot.
-- Cancellation, fatal errors, and nested/aggregate occurrences are not mapped to
-  `DataLoss`; ordinary payload/formatter failures still are.
-- The SharpPack dependency uses the exact NuGet range `[1.1.0]`.
-- Contract baselines contain a required reachable `codecs` wire inventory, closing the
-  compatibility hole for Adapter payloads nested inside native collections.
+## Rejected observations
 
-Ruled-out candidates:
-
-- Open generic Adapter implementations already report `SHARPLINK043`.
-- Different Adapter implementations/IDs with the same target/schema/wire are allowed
-  by the explicit compatibility contract: implementation identity does not enter wire
-  compatibility after the extension owner has proven the shared `WireFormatId`.
-- Empty payload behavior is already covered by
-  `SharpPackCodecShouldWrapMalformedPayloadAsDataLoss`.
+- DNS refresh jitter near `TimeSpan.MaxValue` does not wrap to the minimum interval on the target
+  runtime: the floating-point-to-`long` conversion saturates. The probe passed unchanged and was
+  removed, so this is not counted.
+- Shared-memory writer spill completion reads `SemaphoreSlim.CurrentCount`, but `_completed` is
+  published before that read. A later flush observes completion before touching spill state, while
+  an earlier flush already owns the zero-count gate. The apparent TOCTOU does not create concurrent
+  spill access and is not counted.

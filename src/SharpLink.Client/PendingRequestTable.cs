@@ -35,6 +35,7 @@ internal interface IPendingCallOwner
 {
     void OnPendingCallRegistered();
     void OnPendingCallCompleted(in PendingCallCompletion completion);
+    void OnProducerCancellationCallbackFailed(Exception exception);
 }
 
 /// <summary>
@@ -58,6 +59,7 @@ internal interface IPendingCallCompletionObserver
 /// </remarks>
 internal sealed class PendingRequestTable : IDisposable
 {
+    private static readonly TimeSpan MaxTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue);
     private readonly int _indexMask;
     private readonly PendingCall?[] _slots;
     private readonly IRpcCodecProvider _codecProvider;
@@ -78,6 +80,12 @@ internal sealed class PendingRequestTable : IDisposable
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
         if (!System.Numerics.BitOperations.IsPow2(capacity))
             throw new ArgumentException("Pending request capacity must be a power of two.", nameof(capacity));
+        if (capacity > SharpLinkProtocolOptions.MaximumPendingRequestsPerConnection)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(capacity),
+                $"Pending request capacity cannot exceed {SharpLinkProtocolOptions.MaximumPendingRequestsPerConnection}.");
+        }
 
         _slots = new PendingCall?[capacity];
         _indexMask = capacity - 1;
@@ -122,12 +130,14 @@ internal sealed class PendingRequestTable : IDisposable
         long deadlineTimestamp,
         CancellationToken cancellationToken,
         out long id,
-        IPendingCallCompletionObserver? completionObserver = null)
+        IPendingCallCompletionObserver? completionObserver = null,
+        bool hasResponsePayload = true,
+        bool responseNullable = false)
     {
         ArgumentNullException.ThrowIfNull(responseCodec);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (TryRent(
-                responseCodec, kind, deadlineTimestamp, cancellationToken,
+                responseCodec, kind, deadlineTimestamp, cancellationToken, hasResponsePayload, responseNullable,
                 completionObserver, out id, out var operation))
             return operation;
 
@@ -166,12 +176,14 @@ internal sealed class PendingRequestTable : IDisposable
         bool waitForSlot,
         DateTimeOffset? deadline,
         CancellationToken cancellationToken,
-        IPendingCallCompletionObserver? completionObserver = null)
+        IPendingCallCompletionObserver? completionObserver = null,
+        bool hasResponsePayload = true,
+        bool responseNullable = false)
     {
         ArgumentNullException.ThrowIfNull(responseCodec);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (TryRent(
-                responseCodec, kind, deadlineTimestamp, cancellationToken,
+                responseCodec, kind, deadlineTimestamp, cancellationToken, hasResponsePayload, responseNullable,
                 completionObserver, out var id, out var operation))
             return new PendingRequestLease<T>(id, operation);
         if (!waitForSlot)
@@ -186,7 +198,7 @@ internal sealed class PendingRequestTable : IDisposable
             try
             {
                 if (TryRent(
-                        responseCodec, kind, deadlineTimestamp, cancellationToken,
+                        responseCodec, kind, deadlineTimestamp, cancellationToken, hasResponsePayload, responseNullable,
                         completionObserver, out id, out operation))
                     return new PendingRequestLease<T>(id, operation);
 
@@ -199,11 +211,10 @@ internal sealed class PendingRequestTable : IDisposable
                     var remaining = absoluteDeadline - DateTimeOffset.UtcNow;
                     if (remaining <= TimeSpan.Zero)
                         throw CreateDeadlineExceededException();
-                    try
-                    {
-                        await _slotAvailable.WaitAsync(remaining, cancellationToken).ConfigureAwait(false);
-                    }
-                    catch (TimeoutException)
+                    if (!await SharpLinkTimer.WaitAsync(
+                            _slotAvailable,
+                            remaining,
+                            cancellationToken).ConfigureAwait(false))
                     {
                         throw CreateDeadlineExceededException();
                     }
@@ -215,7 +226,7 @@ internal sealed class PendingRequestTable : IDisposable
             }
 
             if (TryRent(
-                    responseCodec, kind, deadlineTimestamp, cancellationToken,
+                    responseCodec, kind, deadlineTimestamp, cancellationToken, hasResponsePayload, responseNullable,
                     completionObserver, out id, out operation))
                 return new PendingRequestLease<T>(id, operation);
         }
@@ -229,6 +240,7 @@ internal sealed class PendingRequestTable : IDisposable
         IPendingCallCompletionObserver? completionObserver = null)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (kind is not (PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming))
             throw new ArgumentOutOfRangeException(nameof(kind));
 
@@ -252,6 +264,7 @@ internal sealed class PendingRequestTable : IDisposable
         CancellationToken cancellationToken,
         IPendingCallCompletionObserver? completionObserver = null)
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         var operation = RpcOperationPool<RpcEmptyRequest>.Rent();
         if (TryRegister(
                 PendingCallKind.OneWayClientStreaming,
@@ -261,7 +274,9 @@ internal sealed class PendingRequestTable : IDisposable
                 cancellationToken,
                 out var id,
                 RpcEmptyRequestCodec.Instance,
-                completionObserver))
+                completionObserver,
+                hasResponsePayload: false,
+                responseNullable: false))
         {
             return new PendingRequestLease<RpcEmptyRequest>(id, operation);
         }
@@ -373,6 +388,8 @@ internal sealed class PendingRequestTable : IDisposable
         PendingCallKind kind,
         long deadlineTimestamp,
         CancellationToken cancellationToken,
+        bool hasResponsePayload,
+        bool responseNullable,
         IPendingCallCompletionObserver? completionObserver,
         out long id,
         out RpcRequestOperation<T> operation)
@@ -386,7 +403,9 @@ internal sealed class PendingRequestTable : IDisposable
                 cancellationToken,
                 out id,
                 responseCodec,
-                completionObserver))
+                completionObserver,
+                hasResponsePayload,
+                responseNullable))
         {
             return true;
         }
@@ -404,12 +423,14 @@ internal sealed class PendingRequestTable : IDisposable
         CancellationToken cancellationToken,
         out long id,
         IRpcCodec<T> responseCodec,
-        IPendingCallCompletionObserver? completionObserver)
+        IPendingCallCompletionObserver? completionObserver,
+        bool hasResponsePayload,
+        bool responseNullable)
     {
         for (var attempt = 0; attempt < _slots.Length; attempt++)
         {
             id = NextRequestId();
-            operation.Initialize(id, responseCodec);
+            operation.Initialize(id, responseCodec, hasResponsePayload, responseNullable);
             var call = PendingCall.Rent(
                 this,
                 id,
@@ -423,6 +444,7 @@ internal sealed class PendingRequestTable : IDisposable
             if (Interlocked.CompareExchange(ref _slots[index], call, null) is null)
             {
                 OnRegistered(call);
+                CompleteRegistrationIfDisposed(call);
                 return true;
             }
 
@@ -458,6 +480,7 @@ internal sealed class PendingRequestTable : IDisposable
             if (Interlocked.CompareExchange(ref _slots[index], call, null) is null)
             {
                 OnRegistered(call);
+                CompleteRegistrationIfDisposed(call);
                 return true;
             }
 
@@ -477,6 +500,12 @@ internal sealed class PendingRequestTable : IDisposable
             UpdateEarliestDeadline(call.DeadlineTimestamp);
         if (call.CancellationToken.IsCancellationRequested)
             TryComplete(call.Id, PendingCallCompletionReason.UserCancellation);
+    }
+
+    private void CompleteRegistrationIfDisposed(PendingCall call)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            TryComplete(call.Id, PendingCallCompletionReason.ConnectionClosed);
     }
 
     private bool TryTakeMatchingCall(long id, out PendingCall? call)
@@ -542,7 +571,18 @@ internal sealed class PendingRequestTable : IDisposable
         ref ReadOnlySequence<byte> payload)
     {
         call.DisposeCancellationRegistration();
-        call.CancelProducer(reason);
+        var producerCancellationFailure = call.CancelProducer(reason);
+        if (producerCancellationFailure is not null)
+        {
+            try
+            {
+                _owner?.OnProducerCancellationCallbackFailed(producerCancellationFailure);
+            }
+            catch
+            {
+                // Diagnostics must never interrupt the terminal pending-call transition.
+            }
+        }
         var isResponse = reason is PendingCallCompletionReason.Response or PendingCallCompletionReason.LocalStreamComplete;
         if (isResponse && call.Operation is { } responseOperation)
         {
@@ -589,6 +629,9 @@ internal sealed class PendingRequestTable : IDisposable
                 "Request deadline exceeded."),
             PendingCallCompletionReason.ConsumerAbandoned => new OperationCanceledException(
                 "The response stream consumer stopped before remote completion."),
+            PendingCallCompletionReason.ConnectionClosed => new SharpLinkException(
+                SharpLinkErrorCode.ConnectionClosed,
+                "The owning RPC connection closed."),
             _ => null
         };
 
@@ -677,6 +720,8 @@ internal sealed class PendingRequestTable : IDisposable
         var delay = remainingTicks <= 0
             ? TimeSpan.Zero
             : TimeSpan.FromSeconds((double)remainingTicks / Stopwatch.Frequency);
+        if (delay > MaxTimerDelay)
+            delay = MaxTimerDelay;
         try
         {
             _deadlineTimer.Change(delay, Timeout.InfiniteTimeSpan);
@@ -801,15 +846,38 @@ internal sealed class PendingRequestTable : IDisposable
                 spinner.SpinOnce();
         }
 
-        public void CancelProducer(PendingCallCompletionReason reason)
+        public Exception? CancelProducer(PendingCallCompletionReason reason)
         {
             var producerCancellation = _producerCancellation;
             if (producerCancellation is null)
-                return;
-            if (reason != PendingCallCompletionReason.LocalStreamComplete)
-                producerCancellation.Cancel();
-            producerCancellation.Dispose();
+                return null;
             _producerCancellation = null;
+            if (reason == PendingCallCompletionReason.LocalStreamComplete)
+            {
+                producerCancellation.Dispose();
+                return null;
+            }
+            return CancelAndDisposeProducer(producerCancellation);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static Exception? CancelAndDisposeProducer(
+            CancellationTokenSource producerCancellation)
+        {
+            Exception? callbackFailure = null;
+            try
+            {
+                producerCancellation.Cancel();
+            }
+            catch (Exception exception)
+            {
+                callbackFailure = exception;
+            }
+            finally
+            {
+                producerCancellation.Dispose();
+            }
+            return callbackFailure;
         }
 
         public void ReturnUnused()

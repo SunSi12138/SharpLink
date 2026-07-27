@@ -180,6 +180,7 @@ internal sealed partial class SharpLinkClient
     {
         var scope = SharpLinkTelemetry.StartClientCall(method);
         await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
+        var terminalObserved = false;
         try
         {
             while (true)
@@ -189,6 +190,7 @@ internal sealed partial class SharpLinkClient
                 {
                     if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
                     {
+                        terminalObserved = true;
                         scope.Complete();
                         yield break;
                     }
@@ -196,6 +198,7 @@ internal sealed partial class SharpLinkClient
                 }
                 catch (Exception exception)
                 {
+                    terminalObserved = true;
                     scope.Complete(exception);
                     throw;
                 }
@@ -204,7 +207,12 @@ internal sealed partial class SharpLinkClient
         }
         finally
         {
-            scope.Complete();
+            if (!terminalObserved)
+            {
+                scope.Complete(new OperationCanceledException(
+                    "The response stream consumer stopped before remote completion."));
+                SharpLinkTelemetry.RecordAbandonedCall("client", "consumer_abandoned");
+            }
         }
     }
 }

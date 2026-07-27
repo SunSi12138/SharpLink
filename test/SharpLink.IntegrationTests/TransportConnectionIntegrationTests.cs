@@ -101,6 +101,62 @@ public class TransportConnectionIntegrationTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task ServerProtocolViolationShouldReleaseItsReadBeforeCompletingTheReader()
+    {
+        using var serverCts = new CancellationTokenSource();
+        var connection = new CompletionJoiningTransportConnection();
+        var listener = new SingleConnectionListener(connection);
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .UseTransport(listener);
+        var server = serverBuilder.Build();
+        var serverTask = server.RunAsync(serverCts.Token).AsTask();
+
+        try
+        {
+            using var frames = new PooledByteBufferWriter();
+            var limits = new SharpLinkProtocolOptions();
+            var handshake = ProtocolV2FrameWriter.BeginFrame(
+                frames,
+                ProtocolV2FrameType.HandshakeRequest,
+                ProtocolV2FrameFlags.None,
+                0);
+            ProtocolV2PayloadCodec.WriteHandshakeRequest(
+                frames,
+                new ProtocolV2HandshakeRequest(
+                    ProtocolV2Constants.MinorVersion,
+                    ProtocolV2Capabilities.None,
+                    ProtocolV2Capabilities.None,
+                    SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
+                    1024 * 1024,
+                    16 * 1024 * 1024,
+                    ReadOnlyMemory<byte>.Empty),
+                limits);
+            ProtocolV2FrameWriter.EndFrame(frames, handshake);
+
+            var illegalResponse = ProtocolV2FrameWriter.BeginFrame(
+                frames,
+                ProtocolV2FrameType.Response,
+                ProtocolV2FrameFlags.None,
+                1);
+            ProtocolV2FrameWriter.EndFrame(frames, illegalResponse);
+            await connection.InjectAsync(frames.WrittenMemory);
+
+            await connection.Reader.CompleteStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(!connection.Reader.CompleteObservedOutstandingRead,
+                "terminal protocol teardown must AdvanceTo before awaiting reader completion");
+        }
+        finally
+        {
+            connection.Reader.ReleaseCompletion();
+            await serverCts.CancelAsync();
+            await server.DisposeAsync();
+            await serverTask.WaitAsync(TimeSpan.FromSeconds(2));
+            await connection.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task TcpShouldEnforceNegotiatedFrameLimitInBothDirections()
     {
         await VerifyNegotiatedFrameLimitAsync(
@@ -769,6 +825,84 @@ public class TransportConnectionIntegrationTests
                 "structured authenticator rejection");
             Ensure(exception.Code == SharpLinkErrorCode.AuthenticationExpired, "structured authenticator code");
             Ensure(exception.Message == "token expired", "structured authenticator message");
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await cts.CancelAsync();
+            await server.DisposeAsync();
+            await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
+        }
+    }
+
+    [Test]
+    public async Task TcpAuthenticatorShouldRejectContradictoryAuthenticatedResult()
+    {
+        using var cts = new CancellationTokenSource();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseAuthenticator(SharpLinkAuthenticator.CreateServer(static (_, _) => ValueTask.FromResult(
+                new SharpLinkAuthenticationResult(
+                    IsAuthenticated: true,
+                    ErrorCode: SharpLinkErrorCode.AuthenticationRejected,
+                    ErrorMessage: "provider rejected the credential",
+                    Context: null))))
+            .RequireAuthentication()
+            .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
+
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        var server = serverBuilder.Build();
+        var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
+        var client = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), port)
+            .Build();
+
+        try
+        {
+            var exception = await CaptureSharpLinkException(
+                client.ConnectAsync(cts.Token).AsTask(),
+                "contradictory authenticated provider result");
+            Ensure(exception.Code == SharpLinkErrorCode.AuthenticationRejected,
+                "a provider rejection code must not establish an authenticated connection");
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await cts.CancelAsync();
+            await server.DisposeAsync();
+            await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
+        }
+    }
+
+    [Test]
+    public async Task TcpAuthenticatorShouldSanitizeAnUndefinedRejectionCode()
+    {
+        using var cts = new CancellationTokenSource();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseAuthenticator(SharpLinkAuthenticator.CreateServer(static (_, _) => ValueTask.FromResult(
+                new SharpLinkAuthenticationResult(
+                    IsAuthenticated: false,
+                    ErrorCode: (SharpLinkErrorCode)ushort.MaxValue,
+                    ErrorMessage: "undefined provider code",
+                    Context: null))))
+            .RequireAuthentication()
+            .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
+
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        var server = serverBuilder.Build();
+        var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
+        var client = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), port)
+            .Build();
+
+        try
+        {
+            var exception = await CaptureSharpLinkException(
+                client.ConnectAsync(cts.Token).AsTask(),
+                "undefined authentication rejection code");
+            Ensure(exception.Code == SharpLinkErrorCode.AuthenticationRejected,
+                "undefined provider codes must become a stable authentication rejection");
         }
         finally
         {
@@ -1531,6 +1665,118 @@ public class TransportConnectionIntegrationTests
     private static void IgnoreExpectedException(Exception ex)
     {
         _ = ex.HResult;
+    }
+}
+
+internal sealed class SingleConnectionListener(ITransportConnection connection) : IServerTransportListener
+{
+    private int _accepted;
+
+    public EndPoint? LocalEndPoint => null;
+
+    public async ValueTask<ITransportConnection> AcceptAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (Interlocked.CompareExchange(ref _accepted, 1, 0) == 0)
+            return connection;
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        throw new UnreachableException();
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+internal sealed class CompletionJoiningTransportConnection : ITransportConnection
+{
+    private readonly System.IO.Pipelines.Pipe _input = new();
+    private readonly System.IO.Pipelines.Pipe _output = new();
+
+    internal CompletionJoiningTransportConnection()
+        => Reader = new CompletionJoiningPipeReader(_input.Reader);
+
+    public string Id { get; } = "completion-joining";
+    public System.IO.Pipelines.PipeReader Input => Reader;
+    public System.IO.Pipelines.PipeWriter Output => _output.Writer;
+    public EndPoint? LocalEndPoint => null;
+    public EndPoint? RemoteEndPoint => null;
+
+    internal CompletionJoiningPipeReader Reader { get; }
+
+    internal async ValueTask InjectAsync(ReadOnlyMemory<byte> payload)
+    {
+        await _input.Writer.WriteAsync(payload);
+        await _input.Writer.FlushAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Reader.ReleaseCompletion();
+        await _input.Writer.CompleteAsync();
+        await _output.Reader.CompleteAsync();
+    }
+}
+
+internal sealed class CompletionJoiningPipeReader(System.IO.Pipelines.PipeReader inner)
+    : System.IO.Pipelines.PipeReader
+{
+    private readonly Lock _completionGate = new();
+    private readonly TaskCompletionSource _release =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Task? _completionTask;
+    private int _outstandingRead;
+
+    internal TaskCompletionSource CompleteStarted { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal bool CompleteObservedOutstandingRead { get; private set; }
+
+    public override void AdvanceTo(SequencePosition consumed)
+        => AdvanceTo(consumed, consumed);
+
+    public override void AdvanceTo(SequencePosition consumed, SequencePosition examined)
+    {
+        inner.AdvanceTo(consumed, examined);
+        Volatile.Write(ref _outstandingRead, 0);
+    }
+
+    public override void CancelPendingRead() => inner.CancelPendingRead();
+
+    public override void Complete(Exception? exception = null)
+        => _ = CompleteAsync(exception);
+
+    public override ValueTask CompleteAsync(Exception? exception = null)
+    {
+        lock (_completionGate)
+        {
+            _completionTask ??= CompleteAfterReleaseAsync(exception);
+            return new ValueTask(_completionTask);
+        }
+    }
+
+    public override bool TryRead(out System.IO.Pipelines.ReadResult result)
+    {
+        if (!inner.TryRead(out result))
+            return false;
+        Volatile.Write(ref _outstandingRead, 1);
+        return true;
+    }
+
+    public override async ValueTask<System.IO.Pipelines.ReadResult> ReadAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var result = await inner.ReadAsync(cancellationToken);
+        Volatile.Write(ref _outstandingRead, 1);
+        return result;
+    }
+
+    internal void ReleaseCompletion() => _release.TrySetResult();
+
+    private async Task CompleteAfterReleaseAsync(Exception? exception)
+    {
+        CompleteObservedOutstandingRead = Volatile.Read(ref _outstandingRead) != 0;
+        CompleteStarted.TrySetResult();
+        await _release.Task;
+        await inner.CompleteAsync(exception);
     }
 }
 

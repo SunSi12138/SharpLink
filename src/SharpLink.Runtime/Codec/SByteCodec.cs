@@ -15,7 +15,7 @@ internal sealed class SByteCodec : IRpcCodec<sbyte>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public sbyte Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        CodecHelpers.EnsureAvailable(buffer, Size);
+        CodecHelpers.EnsureExactSize(buffer, Size);
         return CodecHelpers.ReadUnmanaged<sbyte>(buffer);
     }
 }
@@ -45,11 +45,11 @@ internal sealed class NullableSByteCodec : IRpcCodec<sbyte?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public sbyte? Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        CodecHelpers.EnsureAvailable(buffer, Size);
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
-            if (start == 0) return null;
+            if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
             return (sbyte)Unsafe.Add(ref start, 1);
         }
 
@@ -57,7 +57,7 @@ internal sealed class NullableSByteCodec : IRpcCodec<sbyte?>
         buffer.CopyTo(temp);
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         
-        if (tempStart == 0) return null;
+        if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
         return (sbyte)Unsafe.Add(ref tempStart, 1);
     }
 }

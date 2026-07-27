@@ -28,19 +28,25 @@ internal sealed class SharpLinkServerReadiness : ISharpLinkServerReadiness
 /// <param name="readiness">The local server readiness source.</param>
 public sealed class SharpLinkServerHealthCheck(ISharpLinkServerReadiness readiness) : IHealthCheck
 {
+    private static readonly Task<HealthCheckResult> SReady =
+        Task.FromResult(HealthCheckResult.Healthy("SharpLink server is ready."));
+    private static readonly Task<HealthCheckResult> SDraining =
+        Task.FromResult(HealthCheckResult.Degraded("SharpLink server is draining."));
+    private static readonly Task<HealthCheckResult> SUnhealthy =
+        Task.FromResult(HealthCheckResult.Unhealthy("SharpLink server is not ready."));
+
     /// <inheritdoc />
     public Task<HealthCheckResult> CheckHealthAsync(
         HealthCheckContext context,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var result = readiness.Status switch
+        return readiness.Status switch
         {
-            SharpLinkHealthStatus.Ready => HealthCheckResult.Healthy("SharpLink server is ready."),
-            SharpLinkHealthStatus.Draining => HealthCheckResult.Degraded("SharpLink server is draining."),
-            _ => HealthCheckResult.Unhealthy("SharpLink server is not ready.")
+            SharpLinkHealthStatus.Ready => SReady,
+            SharpLinkHealthStatus.Draining => SDraining,
+            _ => SUnhealthy
         };
-        return Task.FromResult(result);
     }
 }
 

@@ -50,6 +50,8 @@ Stream ID 0 表示默认返回流，1–65535 表示显式流参数。Request ID
 
 类型未列出的标志组合一律非法。`Error` 与 `Compressed` 不得同时出现；控制帧、错误帧和空业务载荷不压缩。
 
+二进制错误的 `code:uint16` 必须映射到已定义的 `SharpLinkErrorCode`。写端与读端执行相同校验；未定义值不会被写出，也会被对端作为 `ProtocolViolation` 拒绝。
+
 ## 握手与能力
 
 Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `HandshakeRequest`。Server 返回双方能力交集和较小的 frame/window 限制。当前 capability bits：

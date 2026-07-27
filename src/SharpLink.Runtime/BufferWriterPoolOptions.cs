@@ -6,6 +6,9 @@ public sealed class BufferWriterPoolOptions
     /// <summary>The hard upper bound for writers retained by SharpLink: 64 KiB.</summary>
     public const int MaximumRetainedCapacityBytes = 64 * 1024;
 
+    /// <summary>The hard aggregate configured memory budget for retained idle writers.</summary>
+    public const long MaximumConfiguredRetainedBytes = 64L * 1024 * 1024;
+
     /// <summary>Gets or sets the initial writer capacity.</summary>
     public int InitialCapacity { get; set; } = 1024;
 
@@ -23,6 +26,12 @@ public sealed class BufferWriterPoolOptions
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(MaxRetainedCapacityBytes, 0);
         if (MaxRetainedCapacityBytes > MaximumRetainedCapacityBytes)
             throw new ArgumentOutOfRangeException(nameof(MaxRetainedCapacityBytes), $"Retained writers cannot exceed {MaximumRetainedCapacityBytes} bytes.");
+        if ((long)MaxPooledWriters * MaxRetainedCapacityBytes > MaximumConfiguredRetainedBytes)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxPooledWriters),
+                $"Configured retained writer memory cannot exceed {MaximumConfiguredRetainedBytes} bytes.");
+        }
     }
 
     /// <summary>Creates a validated copy isolated from later mutations.</summary>

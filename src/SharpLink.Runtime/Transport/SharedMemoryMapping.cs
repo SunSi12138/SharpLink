@@ -6,6 +6,8 @@ namespace SharpLink.Runtime;
 
 internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
 {
+    private static readonly Lock s_creationGate = new();
+    private static readonly TimeSpan StaleMappingMinimumAge = TimeSpan.FromMinutes(1);
     private static int s_activeMappingCount;
     private readonly FileStream _file;
     private readonly MemoryMappedFile _mappedFile;
@@ -39,6 +41,15 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
     internal static int ActiveMappingCount => Volatile.Read(ref s_activeMappingCount);
 
     public static SharedMemoryMapping CreateServer(int capacity, ReadOnlySpan<byte> nonce, out string path)
+    {
+        lock (s_creationGate)
+            return CreateServerCore(capacity, nonce, out path);
+    }
+
+    private static SharedMemoryMapping CreateServerCore(
+        int capacity,
+        ReadOnlySpan<byte> nonce,
+        out string path)
     {
         var directory = GetMappingDirectory();
         EnsureMappingDirectory(directory);
@@ -172,10 +183,13 @@ internal sealed unsafe class SharedMemoryMapping : IAsyncDisposable
 
     private static void CleanupUnownedMappings(string directory)
     {
+        var staleBefore = DateTime.UtcNow - StaleMappingMinimumAge;
         foreach (var candidate in Directory.EnumerateFiles(directory, "*.shm", SearchOption.TopDirectoryOnly))
         {
             try
             {
+                if (File.GetLastWriteTimeUtc(candidate) > staleBefore)
+                    continue;
                 using (new FileStream(
                            candidate,
                            FileMode.Open,

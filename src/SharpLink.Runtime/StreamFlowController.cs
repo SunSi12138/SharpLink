@@ -16,6 +16,7 @@ internal sealed class StreamFlowController
     private readonly Dictionary<StreamKey, SendState> _sendStates = [];
     private readonly Dictionary<StreamKey, ReceiveState> _receiveStates = [];
     private readonly LinkedList<CreditWaiter> _waiters = [];
+    private Queue<ConsumedCreditUpdate>? _consumedCreditUpdates;
     private long _sendConnectionCredit;
     private long _receiveConnectionCredit;
     private long _pendingConnectionConsumed;
@@ -53,12 +54,44 @@ internal sealed class StreamFlowController
         ValidateEncodedBytes(encodedBytes);
         cancellationToken.ThrowIfCancellationRequested();
 
-        CreditWaiter? waiter;
+        var key = new StreamKey(requestId, streamId);
+        SendState state;
         lock (_gate)
         {
             ThrowIfTerminated();
-            var key = new StreamKey(requestId, streamId);
-            var state = GetOrAddSendState(key);
+            state = GetOrAddSendState(key);
+            if (state.AbortException is { } abortException)
+                throw abortException;
+            if (state.Completed)
+                throw CreateStreamClosedException();
+            if (_waiters.Count == 0 && CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
+            {
+                Reserve(state, encodedBytes);
+                return ValueTask.CompletedTask;
+            }
+        }
+
+        return AcquireContendedSendCreditAsync(key, state, encodedBytes, cancellationToken);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private ValueTask AcquireContendedSendCreditAsync(
+        StreamKey key,
+        SendState expectedState,
+        int encodedBytes,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        CreditWaiter waiter;
+        List<CreditWaiter>? ready;
+        lock (_gate)
+        {
+            ThrowIfTerminated();
+            if (!_sendStates.TryGetValue(key, out var state) ||
+                !ReferenceEquals(state, expectedState))
+            {
+                throw CreateStreamClosedException();
+            }
             if (state.AbortException is { } abortException)
                 throw abortException;
             if (state.Completed)
@@ -71,8 +104,10 @@ internal sealed class StreamFlowController
 
             waiter = new CreditWaiter(this, key, encodedBytes);
             waiter.Node = _waiters.AddLast(waiter);
+            ready = AdmitWaiters();
         }
 
+        CompleteReadyWaiters(ready);
         return new ValueTask(waiter.WaitAsync(cancellationToken));
     }
 
@@ -285,13 +320,47 @@ internal sealed class StreamFlowController
                     _receiveStates.Remove(key);
                 return completedDelta;
             }
-            if (state.PendingConsumed < _streamUpdateThreshold &&
-                _pendingConnectionConsumed < _connectionUpdateThreshold)
+            if (state.PendingConsumed >= _streamUpdateThreshold)
+                return TakePendingCredit(state);
+            if (_pendingConnectionConsumed < _connectionUpdateThreshold)
             {
                 return 0;
             }
 
-            return TakePendingCredit(state);
+            return FlushPendingConnectionCredit(key);
+        }
+    }
+
+    public bool TryTakeConsumedCreditUpdate(out long requestId, out ushort streamId, out int credit)
+    {
+        // Connection-threshold flushes are rare. Avoid taking the flow-control gate after every
+        // ordinary stream item when there are no cross-stream updates to drain.
+        if (Volatile.Read(ref _consumedCreditUpdates) is null)
+        {
+            requestId = 0;
+            streamId = 0;
+            credit = 0;
+            return false;
+        }
+
+        lock (_gate)
+        {
+            var updates = _consumedCreditUpdates;
+            if (updates is null || !updates.TryDequeue(out var update))
+            {
+                _consumedCreditUpdates = null;
+                requestId = 0;
+                streamId = 0;
+                credit = 0;
+                return false;
+            }
+
+            requestId = update.Key.RequestId;
+            streamId = update.Key.StreamId;
+            credit = update.Credit;
+            if (updates.Count == 0)
+                _consumedCreditUpdates = null;
+            return true;
         }
     }
 
@@ -331,6 +400,8 @@ internal sealed class StreamFlowController
                 waiters[index].Node = null;
             _sendStates.Clear();
             _receiveStates.Clear();
+            _consumedCreditUpdates?.Clear();
+            _consumedCreditUpdates = null;
         }
 
         for (var index = 0; index < waiters.Length; index++)
@@ -379,28 +450,43 @@ internal sealed class StreamFlowController
     private List<CreditWaiter>? AdmitWaiters()
     {
         List<CreditWaiter>? ready = null;
-        while (_waiters.First is { } first)
+        var node = _waiters.First;
+        while (node is not null)
         {
-            var waiter = first.Value;
+            var next = node.Next;
+            var waiter = node.Value;
             if (!_sendStates.TryGetValue(waiter.Key, out var state) ||
                 state.Completed || state.AbortException is not null)
             {
-                _waiters.RemoveFirst();
+                _waiters.Remove(node);
                 waiter.Node = null;
                 waiter.Rejection = state?.AbortException ?? CreateStreamClosedException();
                 (ready ??= []).Add(waiter);
+                node = next;
                 continue;
             }
-            if (!CanReserve(state.Credit, _sendConnectionCredit, waiter.EncodedBytes))
+            if (!HasConnectionCredit(_sendConnectionCredit, waiter.EncodedBytes))
                 break;
+            if (!HasStreamCredit(state.Credit, waiter.EncodedBytes))
+            {
+                node = next;
+                continue;
+            }
 
             Reserve(state, waiter.EncodedBytes);
-            _waiters.RemoveFirst();
+            _waiters.Remove(node);
             waiter.Node = null;
             (ready ??= []).Add(waiter);
+            node = next;
         }
         return ready;
     }
+
+    private bool HasStreamCredit(long credit, int encodedBytes)
+        => encodedBytes <= credit || (encodedBytes > _streamWindow && credit == _streamWindow);
+
+    private bool HasConnectionCredit(long credit, int encodedBytes)
+        => encodedBytes <= credit || (encodedBytes > _connectionWindow && credit == _connectionWindow);
 
     private static void CompleteReadyWaiters(List<CreditWaiter>? ready)
     {
@@ -424,6 +510,35 @@ internal sealed class StreamFlowController
         state.PendingConsumed = 0;
         _pendingConnectionConsumed -= delta;
         return checked((int)delta);
+    }
+
+    private int FlushPendingConnectionCredit(StreamKey currentKey)
+    {
+        var currentCredit = 0;
+        List<StreamKey>? completed = null;
+        foreach (var pair in _receiveStates)
+        {
+            var state = pair.Value;
+            var credit = TakePendingCredit(state);
+            if (credit != 0)
+            {
+                if (pair.Key == currentKey)
+                    currentCredit = credit;
+                else
+                    (_consumedCreditUpdates ??= new Queue<ConsumedCreditUpdate>())
+                        .Enqueue(new ConsumedCreditUpdate(pair.Key, credit));
+            }
+            if (state.Completed && state.Credit == _streamWindow)
+                (completed ??= []).Add(pair.Key);
+        }
+
+        if (completed is not null)
+        {
+            for (var index = 0; index < completed.Count; index++)
+                _receiveStates.Remove(completed[index]);
+        }
+
+        return currentCredit;
     }
 
     private void CancelWaiter(CreditWaiter waiter, CancellationToken cancellationToken)
@@ -465,6 +580,8 @@ internal sealed class StreamFlowController
         => new(SharpLinkErrorCode.ConnectionClosed, "The stream is closed.");
 
     private readonly record struct StreamKey(long RequestId, ushort StreamId);
+
+    private readonly record struct ConsumedCreditUpdate(StreamKey Key, int Credit);
 
     private sealed class SendState(long initialCredit)
     {

@@ -226,28 +226,44 @@ internal sealed class ServiceRegistration : IAsyncDisposable
                 throw new InvalidOperationException("The SharpLink service factory returned null.");
             return new ConnectionServiceInstance(service, scope, _disposeScopedService);
         }
-        catch
+        catch (Exception activationException)
         {
-            await ServiceLease.DisposeScopeAsync(scope).ConfigureAwait(false);
+            try
+            {
+                await ServiceLease.DisposeScopeAsync(scope).ConfigureAwait(false);
+            }
+            catch (Exception cleanupException)
+            {
+                throw new AggregateException(activationException, cleanupException);
+            }
             throw;
         }
     }
 
     private async ValueTask<ServiceLease> AcquirePerCallAsync(SharpLinkDynamicModuleLease moduleLease)
     {
-        var scope = (_scopeFactory ?? throw new InvalidOperationException("Service scope factory is unavailable."))
-            .CreateScope();
+        IServiceScope? scope = null;
         try
         {
+            scope = (_scopeFactory ?? throw new InvalidOperationException("Service scope factory is unavailable."))
+                .CreateScope();
             var service = (_factory ?? throw new InvalidOperationException("Service factory is unavailable."))
                 .Invoke(scope.ServiceProvider) ??
                 throw new InvalidOperationException("The SharpLink service factory returned null.");
             return new ServiceLease(service, scope, _disposeScopedService, moduleLease);
         }
-        catch
+        catch (Exception activationException)
         {
             moduleLease.Dispose();
-            await ServiceLease.DisposeScopeAsync(scope).ConfigureAwait(false);
+            try
+            {
+                if (scope is not null)
+                    await ServiceLease.DisposeScopeAsync(scope).ConfigureAwait(false);
+            }
+            catch (Exception cleanupException)
+            {
+                throw new AggregateException(activationException, cleanupException);
+            }
             throw;
         }
     }
@@ -316,15 +332,21 @@ internal sealed class ConnectionServiceInstance : IAsyncDisposable
         {
             serviceException = exception;
         }
+        Exception? scopeException = null;
         try
         {
             await ServiceLease.DisposeScopeAsync(_scope).ConfigureAwait(false);
         }
-        catch when (serviceException is not null)
+        catch (Exception exception)
         {
+            scopeException = exception;
         }
+        if (serviceException is not null && scopeException is not null)
+            throw new AggregateException(serviceException, scopeException);
         if (serviceException is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(serviceException).Throw();
+        if (scopeException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(scopeException).Throw();
     }
 }
 
@@ -362,21 +384,27 @@ internal readonly struct ServiceLease : IAsyncDisposable
             serviceException = exception;
         }
 
+        Exception? scopeException = null;
         try
         {
             if (_scope is not null)
                 await DisposeScopeAsync(_scope).ConfigureAwait(false);
         }
-        catch when (serviceException is not null)
+        catch (Exception exception)
         {
+            scopeException = exception;
         }
         finally
         {
             _moduleLease.Dispose();
         }
 
+        if (serviceException is not null && scopeException is not null)
+            throw new AggregateException(serviceException, scopeException);
         if (serviceException is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(serviceException).Throw();
+        if (scopeException is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(scopeException).Throw();
     }
 
     internal static ValueTask DisposeServiceAsync(object service)

@@ -57,22 +57,26 @@ public partial class RpcGenerator
         sb.AppendLine($"    public {manifestTypeName}() {{ }}");
         sb.AppendLine("    public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;");
         sb.AppendLine("    public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;");
-        sb.AppendLine("    public string GeneratorVersion => \"0.7.11\";");
+        sb.AppendLine($"    public string GeneratorVersion => \"{EscapeString(ExecutingGeneratorVersion)}\";");
         sb.AppendLine($"    public Assembly OwnerAssembly => typeof({manifestTypeName}).Assembly;");
         sb.AppendLine("    string ISharpLinkGeneratedAssemblyManifest.CompileTimeDescriptor => CompileTimeDescriptor;");
         sb.AppendLine();
         AppendContractManifestArray(sb, contracts);
         AppendServiceManifestArray(sb, serviceModels);
         AppendCodecManifestArray(sb, codecs);
-        sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => __contracts;");
-        sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => __services;");
-        sb.AppendLine("    public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => __codecs;");
-        sb.AppendLine("    public IReadOnlyList<string> Dependencies => __dependencies;");
         sb.AppendLine("    private static readonly string[] __dependencies = new string[]");
         sb.AppendLine("    {");
         foreach (var dependency in dependencies)
             sb.AppendLine($"        \"{EscapeString(dependency)}\",");
         sb.AppendLine("    };");
+        sb.AppendLine("    private static readonly IReadOnlyList<SharpLinkGeneratedContractDescriptor> __readOnlyContracts = Array.AsReadOnly(__contracts);");
+        sb.AppendLine("    private static readonly IReadOnlyList<SharpLinkGeneratedServiceDescriptor> __readOnlyServices = Array.AsReadOnly(__services);");
+        sb.AppendLine("    private static readonly IReadOnlyList<IRpcGeneratedCodecFactory> __readOnlyCodecs = Array.AsReadOnly(__codecs);");
+        sb.AppendLine("    private static readonly IReadOnlyList<string> __readOnlyDependencies = Array.AsReadOnly(__dependencies);");
+        sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => __readOnlyContracts;");
+        sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => __readOnlyServices;");
+        sb.AppendLine("    public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => __readOnlyCodecs;");
+        sb.AppendLine("    public IReadOnlyList<string> Dependencies => __readOnlyDependencies;");
         sb.AppendLine("}");
         sb.AppendLine();
         sb.AppendLine("internal static class __SharpLinkGeneratedAssemblyManifestInitializer");
@@ -95,7 +99,7 @@ public partial class RpcGenerator
             sb.AppendLine($"            \"{EscapeString(RemoveGlobalPrefix(contract.FullName))}\",");
             sb.AppendLine($"            {contract.Hash}L,");
             sb.AppendLine($"            \"{contract.Fingerprint}\",");
-            sb.AppendLine("            new SharpLinkGeneratedMethodDescriptor[]");
+            sb.AppendLine("            Array.AsReadOnly(new SharpLinkGeneratedMethodDescriptor[]");
             sb.AppendLine("            {");
             foreach (var method in contract.Methods.OrderBy(static method => method.Hash))
             {
@@ -108,7 +112,7 @@ public partial class RpcGenerator
                 sb.AppendLine($"                    \"{EscapeString(method.ResponseSchema)}\",");
                 sb.AppendLine($"                    \"{method.Fingerprint}\"),");
             }
-            sb.AppendLine("            },");
+            sb.AppendLine("            }),");
             sb.AppendLine($"            static channel => new {GetGeneratedContractTypeName(contract, "Proxy")}(channel),");
             sb.AppendLine($"            static () => new {GetGeneratedContractTypeName(contract, "Stub")}()),");
         }
@@ -135,7 +139,7 @@ public partial class RpcGenerator
             sb.AppendLine($"            {service.Interface.Hash}L,");
             sb.AppendLine($"            \"{serviceFingerprint}\",");
             sb.AppendLine($"            SharpLinkServiceLifetime.{service.Lifetime},");
-            sb.AppendLine($"            new Type[] {{ {dependencyTypes} }},");
+            sb.AppendLine($"            Array.AsReadOnly(new Type[] {{ {dependencyTypes} }}),");
             sb.AppendLine($"            static provider => new {service.ServiceFullName}({arguments})),");
         }
         sb.AppendLine("    };");

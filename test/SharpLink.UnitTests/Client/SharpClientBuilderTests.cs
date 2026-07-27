@@ -137,6 +137,7 @@ public class SharpClientBuilderTests
 
         var firstClient = builder.Build();
         builder.UseProtocol(static options => options.MaxFramePayloadBytes = 4096);
+        builder.UseTransport(new NoopTransport());
         var secondClient = builder.Build();
 
         Ensure(ReadMaxFramePayloadBytes(firstClient) == 2048, "first client protocol snapshot");
@@ -170,6 +171,7 @@ public class SharpClientBuilderTests
             options.MinConnections = 2;
             options.MaxConnections = 4;
         });
+        builder.UseTransport(new NoopTransport());
         var configuredClient = builder.Build();
         builder.UseConnectionPool(options => options.MaxConnections = 6);
         Ensure(ReadConnectionPool(configuredClient) is { MinConnections: 2, MaxConnections: 4 },
@@ -207,6 +209,41 @@ public class SharpClientBuilderTests
             _ = builder.Build();
             return Task.CompletedTask;
         });
+    }
+
+    [Test]
+    public async Task DirectTransportShouldBeTransferredByOnlyOneBuild()
+    {
+        var transport = new TrackingTransport();
+        var builder = SharpClientBuilder.Create().UseTransport(transport);
+        var first = builder.Build();
+
+        await EnsureThrows<InvalidOperationException>(() =>
+        {
+            _ = builder.Build();
+            return Task.CompletedTask;
+        });
+
+        await first.DisposeAsync();
+        Ensure(transport.DisposeCount == 1, "one Client must own and dispose the direct transport");
+    }
+
+    [Test]
+    public async Task EndpointResolverShouldBeTransferredByOnlyOneBuild()
+    {
+        var resolver = new TrackingResolver();
+        var builder = SharpClientBuilder.Create()
+            .UseEndpointResolver(resolver, static _ => new NoopTransport());
+        var first = builder.Build();
+
+        await EnsureThrows<InvalidOperationException>(() =>
+        {
+            _ = builder.Build();
+            return Task.CompletedTask;
+        });
+
+        await first.DisposeAsync();
+        Ensure(resolver.DisposeCount == 1, "one Client must own and dispose the endpoint resolver");
     }
 
     private static TimeSpan? ReadRequestTimeout(ISharpLinkClient client)
@@ -269,6 +306,41 @@ public class SharpClientBuilderTests
             => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class TrackingTransport : IClientTransportFactory
+    {
+        public int DisposeCount { get; private set; }
+
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
+
+        public ValueTask DisposeAsync()
+        {
+            DisposeCount++;
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class TrackingResolver : ISharpLinkEndpointResolver
+    {
+        public int DisposeCount { get; private set; }
+
+        public ValueTask<SharpLinkEndpointSnapshot> ResolveAsync(CancellationToken cancellationToken)
+            => ValueTask.FromException<SharpLinkEndpointSnapshot>(new NotSupportedException());
+
+        public async IAsyncEnumerable<SharpLinkEndpointSnapshot> WatchAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Yield();
+            yield break;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            DisposeCount++;
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class IncompatibleManifest : ISharpLinkGeneratedAssemblyManifest

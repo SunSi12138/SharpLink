@@ -26,6 +26,9 @@ public sealed class SharpLinkProtocolOptions
     /// <summary>The default maximum remote error message size: 64 KiB.</summary>
     public const int DefaultMaxErrorMessageBytes = 64 * 1024;
 
+    /// <summary>The hard maximum pending-request table capacity per physical Client connection.</summary>
+    public const int MaximumPendingRequestsPerConnection = 1024 * 1024;
+
     /// <summary>Gets or sets the largest payload accepted for a single protocol frame.</summary>
     public int MaxFramePayloadBytes { get; set; } = DefaultMaxFramePayloadBytes;
 
@@ -35,7 +38,7 @@ public sealed class SharpLinkProtocolOptions
     /// <summary>Gets or sets the maximum remote error message size reserved for protocol v2.</summary>
     public int MaxErrorMessageBytes { get; set; } = DefaultMaxErrorMessageBytes;
 
-    /// <summary>Gets or sets the maximum time allowed for the RPC handshake.</summary>
+    /// <summary>Gets or sets the positive RPC handshake timeout, up to 2,147,483,647 milliseconds.</summary>
     public TimeSpan HandshakeTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary>Gets or sets the maximum pending requests on one connection.</summary>
@@ -57,7 +60,14 @@ public sealed class SharpLinkProtocolOptions
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxMetadataBytes);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxErrorMessageBytes);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(HandshakeTimeout, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(HandshakeTimeout, SharpLinkTimer.MaximumDelay);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxPendingRequestsPerConnection);
+        if (MaxPendingRequestsPerConnection > MaximumPendingRequestsPerConnection)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxPendingRequestsPerConnection),
+                $"MaxPendingRequestsPerConnection cannot exceed {MaximumPendingRequestsPerConnection}.");
+        }
         if (!BitOperations.IsPow2(MaxPendingRequestsPerConnection))
             throw new ArgumentException("MaxPendingRequestsPerConnection must be a power of two.", nameof(MaxPendingRequestsPerConnection));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxConcurrentStreamsPerConnection);

@@ -18,6 +18,8 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     private ManualResetValueTaskSourceCore<T> _core;
     private IRpcCodec<T>? _codec;
     private T? _response;
+    private bool _hasResponsePayload;
+    private bool _responseNullable;
     
     private readonly Action<RpcRequestOperation<T>> _returnAction;
 
@@ -34,11 +36,17 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
         Initialize(id, codecProvider.GetCodec<T>());
     }
 
-    public void Initialize(long id, IRpcCodec<T> codec)
+    public void Initialize(
+        long id,
+        IRpcCodec<T> codec,
+        bool hasResponsePayload = true,
+        bool responseNullable = false)
     {
         ArgumentNullException.ThrowIfNull(codec);
         Id = id;
         _codec = codec;
+        _hasResponsePayload = hasResponsePayload;
+        _responseNullable = responseNullable;
     }
     // 【新增】发送失败时的手动归还
     public void ReturnError() => ReturnToPool();
@@ -62,8 +70,14 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     {
         try
         {
-            if (payload.Length == 0)
+            if (!_hasResponsePayload)
             {
+                if (!payload.IsEmpty)
+                {
+                    return new SharpLinkException(
+                        SharpLinkErrorCode.DataLoss,
+                        "A payload-less RPC response contains unexpected bytes.");
+                }
                 _response = default;
                 return null;
             }
@@ -71,6 +85,12 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
             // 此时 payload 有效，直接转为 T 对象，不拷贝 bytes
             _response = (_codec ?? throw new InvalidOperationException("Request operation has no response codec."))
                 .Deserialize(payload);
+            if (!_responseNullable && default(T) is null && _response is null)
+            {
+                return new SharpLinkException(
+                    SharpLinkErrorCode.DataLoss,
+                    "A non-nullable RPC response was null.");
+            }
             return null;
         }
         catch (Exception ex)
@@ -97,6 +117,8 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     {
         _codec = null;
         _response = default;
+        _hasResponsePayload = false;
+        _responseNullable = false;
         // Clear the continuation and its state before this operation enters the
         // process-wide generic pool. A continuation can close over request types
         // from a collectible AssemblyLoadContext even when T itself is static.

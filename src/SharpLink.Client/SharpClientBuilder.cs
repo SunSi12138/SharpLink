@@ -371,18 +371,82 @@ public class SharpClientBuilder
         if (modeCount == 0)
             throw new InvalidOperationException("Transport, endpoint(s), or an endpoint resolver must be set before building the client.");
 
+        var directTransport = _transport;
+        var endpointResolver = _endpointResolver;
         var runtimeContext = staticManifests is null
             ? _runtimeContextBuilder.Build()
             : _runtimeContextBuilder.Build(staticManifests);
         try
         {
-            return BuildWithRuntimeContext(runtimeContext, staticManifests, preflightEndpoints);
+            var client = BuildWithRuntimeContext(runtimeContext, staticManifests, preflightEndpoints);
+            ReleaseTransferredBuilderResource(directTransport, endpointResolver);
+            return client;
         }
-        catch
+        catch (Exception buildException)
+        {
+            ReleaseTransferredBuilderResource(directTransport, endpointResolver);
+            ThrowAfterClientBuildRollback(
+                buildException,
+                directTransport,
+                endpointResolver,
+                runtimeContext);
+            throw new System.Diagnostics.UnreachableException();
+        }
+    }
+
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void ThrowAfterClientBuildRollback(
+        Exception buildException,
+        IClientTransportFactory? directTransport,
+        ISharpLinkEndpointResolver? endpointResolver,
+        SharpLinkRuntimeContext runtimeContext)
+    {
+        List<Exception>? cleanupFailures = null;
+        if (directTransport is not null)
+        {
+            try
+            {
+                SharpLinkAsyncCleanup.DisposeSynchronously(directTransport);
+            }
+            catch (Exception cleanupException)
+            {
+                (cleanupFailures ??= []).Add(cleanupException);
+            }
+        }
+        if (endpointResolver is not null && !ReferenceEquals(endpointResolver, directTransport))
+        {
+            try
+            {
+                SharpLinkAsyncCleanup.DisposeSynchronously(endpointResolver);
+            }
+            catch (Exception cleanupException)
+            {
+                (cleanupFailures ??= []).Add(cleanupException);
+            }
+        }
+        try
         {
             runtimeContext.Dispose();
-            throw;
         }
+        catch (Exception cleanupException)
+        {
+            (cleanupFailures ??= []).Add(cleanupException);
+        }
+        if (cleanupFailures is null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(buildException).Throw();
+        cleanupFailures!.Insert(0, buildException);
+        throw new AggregateException(cleanupFailures);
+    }
+
+    private void ReleaseTransferredBuilderResource(
+        IClientTransportFactory? directTransport,
+        ISharpLinkEndpointResolver? endpointResolver)
+    {
+        if (directTransport is not null)
+            _transport = null;
+        if (endpointResolver is not null)
+            _endpointResolver = null;
     }
 
     private ISharpLinkClient BuildWithRuntimeContext(
@@ -429,11 +493,18 @@ public class SharpClientBuilder
                         fixedEndpoint: endpoints[0],
                         staticManifests: staticManifests);
                 }
-                catch
+                catch (Exception buildException)
                 {
-                    try { transport.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
-                    catch { }
-                    throw;
+                    try
+                    {
+                        SharpLinkAsyncCleanup.DisposeSynchronously(transport);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        throw new AggregateException(buildException, cleanupException);
+                    }
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(buildException).Throw();
+                    throw new System.Diagnostics.UnreachableException();
                 }
             }
 
@@ -468,7 +539,7 @@ public class SharpClientBuilder
                 List<Exception>? cleanupFailures = null;
                 foreach (var factory in ownedFactories)
                 {
-                    try { factory.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+                    try { SharpLinkAsyncCleanup.DisposeSynchronously(factory); }
                     catch (Exception exception) { (cleanupFailures ??= []).Add(exception); }
                 }
                 if (cleanupFailures is null)
@@ -480,7 +551,7 @@ public class SharpClientBuilder
 
         var fixedTransport = _transport!;
         if (fixedTransport is IPerformanceProfileAwareTransport profileAwareTransport)
-            profileAwareTransport.BindPerformanceProfile(runtimeContext.Options.PerformanceProfile);
+            profileAwareTransport.BindPerformanceProfile(runtimeContext.PerformanceProfile);
         var connectionPool = CreateConnectionPoolSnapshot(runtimeContext);
         if (fixedTransport is AnonymousPipeClientTransportFactory && connectionPool.MaxConnections != 1)
             throw new InvalidOperationException("Anonymous-pipe handle offers support exactly one client connection.");
@@ -591,13 +662,20 @@ public class SharpClientBuilder
         {
             try
             {
-                profileAware.BindPerformanceProfile(runtimeContext.Options.PerformanceProfile);
+                profileAware.BindPerformanceProfile(runtimeContext.PerformanceProfile);
             }
-            catch
+            catch (Exception bindingException)
             {
-                try { transport.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
-                catch { }
-                throw;
+                try
+                {
+                    SharpLinkAsyncCleanup.DisposeSynchronously(transport);
+                }
+                catch (Exception cleanupException)
+                {
+                    throw new AggregateException(bindingException, cleanupException);
+                }
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(bindingException).Throw();
+                throw new System.Diagnostics.UnreachableException();
             }
         }
         return transport;
@@ -651,7 +729,7 @@ public class SharpClientBuilder
         if (_connectionPoolConfigured)
             return _connectionPool.CloneValidated();
 
-        var maxConnections = runtimeContext.Options.PerformanceProfile == SharpLinkPerformanceProfile.Throughput
+        var maxConnections = runtimeContext.PerformanceProfile == SharpLinkPerformanceProfile.Throughput
             ? Math.Min(Environment.ProcessorCount, 4)
             : 1;
         return new SharpLinkConnectionPoolOptions
@@ -667,7 +745,7 @@ public class SharpClientBuilder
             return _connectionPool.CloneValidated().MaxConnections;
 
         using var runtimeContext = _runtimeContextBuilder.Build(includeGeneratedAssemblyCatalog: false);
-        return runtimeContext.Options.PerformanceProfile == SharpLinkPerformanceProfile.Throughput
+        return runtimeContext.PerformanceProfile == SharpLinkPerformanceProfile.Throughput
             ? Math.Max(1, Math.Min(Environment.ProcessorCount, 4))
             : 1;
     }

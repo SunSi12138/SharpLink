@@ -262,8 +262,14 @@ public static class RpcSessionExtensions
                 }
                 ownsWriter = false;
                 var runtimeSession = GetRuntimeSession(session);
-                runtimeSession.SendPacket(writer);
-                runtimeSession.CompleteSendStream(requestId, streamId);
+                try
+                {
+                    runtimeSession.SendPacket(writer);
+                }
+                finally
+                {
+                    runtimeSession.CompleteSendStream(requestId, streamId);
+                }
             }
             finally
             {
@@ -304,8 +310,14 @@ public static class RpcSessionExtensions
                     SetTruncatedFlag(writer, token);
                 ownsWriter = false;
                 var runtimeSession = GetRuntimeSession(session);
-                runtimeSession.SendPacket(writer);
-                runtimeSession.CompleteSendStream(requestId, streamId, exception);
+                try
+                {
+                    runtimeSession.SendPacket(writer);
+                }
+                finally
+                {
+                    runtimeSession.CompleteSendStream(requestId, streamId, exception);
+                }
             }
             finally
             {

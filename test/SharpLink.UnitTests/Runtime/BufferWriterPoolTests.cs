@@ -3,6 +3,49 @@ namespace SharpLink.UnitTests.Runtime;
 public class BufferWriterPoolTests
 {
     [Test]
+    [NotInParallel]
+    public void ConcurrentReturnsMustNotPopulateDetachedQueueAfterDispose()
+    {
+        const int writerCount = 256;
+        var poolField = typeof(SharpLinkBufferWriterPool).GetField(
+            "_pool",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new Exception("cannot inspect writer pool queue");
+        var detachedWriters = 0;
+
+        for (var iteration = 0; iteration < 500 && detachedWriters == 0; iteration++)
+        {
+            var pool = CreatePool(options =>
+            {
+                options.InitialCapacity = 16;
+                options.MaxPooledWriters = writerCount;
+                options.MaxRetainedCapacityBytes = 256;
+            });
+            var writers = new IRpcByteBufferWriter[writerCount];
+            for (var index = 0; index < writers.Length; index++)
+                writers[index] = pool.Rent();
+            var queue = (System.Collections.Concurrent.ConcurrentQueue<PooledByteBufferWriter>)
+                (poolField.GetValue(pool) ?? throw new Exception("writer pool queue disappeared before disposal"));
+
+            Parallel.For(0, writerCount + 1, index =>
+            {
+                if (index == writerCount / 2)
+                    pool.Dispose();
+                else
+                    pool.Return(writers[index < writerCount / 2 ? index : index - 1]);
+            });
+
+            detachedWriters = queue.Count;
+            while (queue.TryDequeue(out var leaked))
+                leaked.ReleaseRetainedBuffer();
+            pool.Dispose();
+        }
+
+        Ensure(detachedWriters == 0,
+            $"Dispose left {detachedWriters} writer(s) in a detached queue");
+    }
+
+    [Test]
     public void ConstructorShouldRejectNullOrInvalidOptions()
     {
         AssertThrows<ArgumentNullException>(() => _ = new SharpLinkBufferWriterPool(null!));

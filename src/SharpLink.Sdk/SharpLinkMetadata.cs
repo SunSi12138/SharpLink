@@ -31,6 +31,13 @@ public sealed class SharpLinkMetadata : IReadOnlyList<KeyValuePair<string, strin
         }
     }
 
+    private SharpLinkMetadata(KeyValuePair<string, string>[] validatedEntries, bool takeOwnership)
+        => _entries = validatedEntries;
+
+    internal static SharpLinkMetadata FromValidatedEntries(
+        KeyValuePair<string, string>[] validatedEntries)
+        => new(validatedEntries, takeOwnership: true);
+
     /// <summary>Gets the number of metadata entries.</summary>
     public int Count => _entries.Length;
 

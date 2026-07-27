@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Client;
@@ -93,6 +95,150 @@ public sealed class DynamicEndpointResolverTests
     }
 
     [Test]
+    public async Task DnsResolverShouldNotHideUnexpectedQueryFailuresBehindLastGood()
+    {
+        var query = new TestDnsQuery { Addresses = [IPAddress.Loopback] };
+        await using var resolver = new SharpLinkDnsEndpointResolver(
+            "service.example",
+            5001,
+            new SharpLinkDnsResolverOptions
+            {
+                RefreshInterval = TimeSpan.FromMilliseconds(1),
+                MinimumRefreshInterval = TimeSpan.FromMilliseconds(1),
+                MaximumRefreshInterval = TimeSpan.FromMilliseconds(1),
+                JitterRatio = 0
+            },
+            query);
+        _ = await resolver.ResolveAsync(CancellationToken.None);
+        query.Exception = new InvalidOperationException("query implementation failed");
+
+        await EnsureThrows<InvalidOperationException>(async () =>
+            _ = await resolver.ResolveAsync(CancellationToken.None));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        await using var watch = resolver.WatchAsync(timeout.Token).GetAsyncEnumerator(timeout.Token);
+        await EnsureThrows<InvalidOperationException>(async () =>
+            _ = await watch.MoveNextAsync());
+    }
+
+    [Test]
+    public void EndpointSnapshotShouldNotExposeItsMutableBackingArray()
+    {
+        var original = new SharpLinkEndpoint
+        {
+            Id = "original",
+            Address = new SharpLinkTcpAddress("127.0.0.1", 5001)
+        };
+        var snapshot = new SharpLinkEndpointSnapshot(1, [original]);
+        var mutated = false;
+        if (snapshot.Endpoints is IList<SharpLinkEndpoint> mutable)
+        {
+            var replacement = new SharpLinkEndpoint
+            {
+                Id = "injected",
+                Address = new SharpLinkTcpAddress("127.0.0.1", 5002)
+            };
+            try
+            {
+                mutable[0] = replacement;
+                mutated = ReferenceEquals(snapshot.Endpoints[0], replacement);
+                mutable[0] = original;
+            }
+            catch (NotSupportedException)
+            {
+            }
+        }
+
+        Ensure(!mutated, "a published endpoint topology must remain immutable");
+    }
+
+    [Test]
+    public void EndpointSnapshotShouldFreezeNestedEndpointAttributes()
+    {
+        var attributes = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["zone"] = "east"
+        };
+        var snapshot = new SharpLinkEndpointSnapshot(1,
+        [
+            new SharpLinkEndpoint
+            {
+                Id = "endpoint",
+                Address = new SharpLinkTcpAddress("127.0.0.1", 5001),
+                Attributes = attributes
+            }
+        ]);
+
+        attributes["zone"] = "west";
+        var injected = false;
+        if (snapshot.Endpoints[0].Attributes is IDictionary<string, string> mutable)
+        {
+            try
+            {
+                mutable["role"] = "admin";
+                injected = snapshot.Endpoints[0].Attributes.ContainsKey("role");
+            }
+            catch (NotSupportedException)
+            {
+            }
+        }
+
+        Ensure(snapshot.Endpoints[0].Attributes["zone"] == "east" && !injected,
+            "snapshot endpoints must own frozen attribute dictionaries");
+    }
+
+    [Test]
+    public async Task BuiltInResolversShouldDisposeTheirCancellationSources()
+    {
+        var @delegate = new DelegateSharpLinkEndpointResolver(
+            static _ => ValueTask.FromResult(new SharpLinkEndpointSnapshot(0, [])));
+        var dns = new SharpLinkDnsEndpointResolver(
+            "service.example",
+            5001,
+            new SharpLinkDnsResolverOptions(),
+            new TestDnsQuery { Addresses = [IPAddress.Loopback] });
+
+        await @delegate.DisposeAsync();
+        await dns.DisposeAsync();
+
+        EnsureCancellationSourceDisposed(@delegate);
+        EnsureCancellationSourceDisposed(dns);
+    }
+
+    [Test]
+    public async Task EndpointResolverPollingShouldSupportTimerRangeExceedingIntervals()
+    {
+        await using var @delegate = new DelegateSharpLinkEndpointResolver(
+            static _ => ValueTask.FromResult(new SharpLinkEndpointSnapshot(0, [])),
+            TimeSpan.MaxValue);
+        await using var dns = new SharpLinkDnsEndpointResolver(
+            "service.example",
+            5001,
+            new SharpLinkDnsResolverOptions
+            {
+                RefreshInterval = TimeSpan.MaxValue,
+                MinimumRefreshInterval = TimeSpan.FromMilliseconds(1),
+                MaximumRefreshInterval = TimeSpan.MaxValue,
+                JitterRatio = 0
+            },
+            new TestDnsQuery { Addresses = [IPAddress.Loopback] });
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await using var delegateWatch = @delegate.WatchAsync(cancellation.Token)
+            .GetAsyncEnumerator(cancellation.Token);
+        await using var dnsWatch = dns.WatchAsync(cancellation.Token)
+            .GetAsyncEnumerator(cancellation.Token);
+
+        var delegateMove = delegateWatch.MoveNextAsync().AsTask();
+        var dnsMove = dnsWatch.MoveNextAsync().AsTask();
+        var delegateFailure = await CaptureFailureAsync(delegateMove);
+        var dnsFailure = await CaptureFailureAsync(dnsMove);
+
+        Ensure(delegateFailure is OperationCanceledException,
+            $"long delegate polling should remain cancellable, not fail as {delegateFailure?.GetType().Name}");
+        Ensure(dnsFailure is OperationCanceledException,
+            $"long DNS polling should remain cancellable, not fail as {dnsFailure?.GetType().Name}");
+    }
+
+    [Test]
     public async Task DynamicBuilderShouldOwnResolverAndRejectFixedTransportConflict()
     {
         var resolver = new TrackingResolver();
@@ -158,6 +304,31 @@ public sealed class DynamicEndpointResolverTests
         }
     }
 
+    [Test]
+    public async Task RetriedResolverFailureShouldNotBeAnUnhandledBackgroundError()
+    {
+        var loggerFactory = new CaptureLoggerFactory();
+        await using var client = SharpClientBuilder.Create()
+            .UseLoggerFactory(loggerFactory)
+            .UseEndpointResolver(new FailingWatchResolver(), _ => new TrackingFactory())
+            .Build();
+
+        await client.ConnectAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (!loggerFactory.HasEntry(static entry =>
+                   entry.Level == LogLevel.Error || entry.EventId.Id == 6102))
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        Ensure(!loggerFactory.HasEntry(static entry => entry.Level == LogLevel.Error),
+            "a resolver failure owned by the retry worker must not be reported as unhandled");
+        Ensure(loggerFactory.HasEntry(static entry =>
+                entry is { Level: LogLevel.Warning, EventId.Id: 6102,
+                    Exception: InvalidOperationException { Message: "watch failed" } }),
+            "the retried resolver failure should remain observable through its warning event");
+    }
+
     private static async Task EnsureThrows<TException>(Func<Task> action) where TException : Exception
     {
         try
@@ -166,6 +337,36 @@ public sealed class DynamicEndpointResolverTests
             throw new Exception($"expected {typeof(TException).Name}");
         }
         catch (TException)
+        {
+        }
+    }
+
+    private static async Task<Exception?> CaptureFailureAsync(Task task)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static void EnsureCancellationSourceDisposed(object resolver)
+    {
+        var field = resolver.GetType().GetField(
+            "_disposeCts",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("resolver cancellation source field was not found");
+        var source = (CancellationTokenSource)field.GetValue(resolver)!;
+        try
+        {
+            _ = source.Token;
+            throw new Exception("resolver cancellation source was cancelled but not disposed");
+        }
+        catch (ObjectDisposedException)
         {
         }
     }
@@ -180,9 +381,12 @@ public sealed class DynamicEndpointResolverTests
     {
         public IPAddress[] Addresses { get; set; } = [];
         public bool Throw { get; set; }
+        public Exception? Exception { get; set; }
 
         public ValueTask<IPAddress[]> QueryAsync(string host, CancellationToken cancellationToken)
         {
+            if (Exception is { } exception)
+                return ValueTask.FromException<IPAddress[]>(exception);
             if (Throw)
                 return ValueTask.FromException<IPAddress[]>(new SocketException());
             return ValueTask.FromResult(Addresses);
@@ -226,6 +430,64 @@ public sealed class DynamicEndpointResolverTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
+    private sealed class FailingWatchResolver : ISharpLinkEndpointResolver
+    {
+        public ValueTask<SharpLinkEndpointSnapshot> ResolveAsync(CancellationToken cancellationToken)
+            => ValueTask.FromResult(new SharpLinkEndpointSnapshot(0, []));
+
+        public async IAsyncEnumerable<SharpLinkEndpointSnapshot> WatchAsync(
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Yield();
+            yield return await ValueTask.FromException<SharpLinkEndpointSnapshot>(
+                new InvalidOperationException("watch failed"));
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class CaptureLoggerFactory : ILoggerFactory
+    {
+        private readonly Lock _gate = new();
+        private readonly List<LogEntry> _entries = [];
+
+        public ILogger CreateLogger(string categoryName) => new CaptureLogger(this);
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
+        internal bool HasEntry(Func<LogEntry, bool> predicate)
+        {
+            lock (_gate)
+                return _entries.Exists(entry => predicate(entry));
+        }
+
+        private sealed class CaptureLogger(CaptureLoggerFactory owner) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                lock (owner._gate)
+                    owner._entries.Add(new LogEntry(logLevel, eventId, exception));
+            }
+        }
+    }
+
+    private readonly record struct LogEntry(LogLevel Level, EventId EventId, Exception? Exception);
+
     private sealed class TrackingFactory : IClientTransportFactory
     {
         public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
@@ -233,4 +495,5 @@ public sealed class DynamicEndpointResolverTests
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
+
 }

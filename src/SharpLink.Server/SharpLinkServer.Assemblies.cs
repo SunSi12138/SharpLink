@@ -22,6 +22,8 @@ internal sealed partial class SharpLinkServer
         RpcGeneratedManifestRegistration? codecRegistration = null;
         IReadOnlyDictionary<long, ServiceRegistration>? candidateServices = null;
         IReadOnlyDictionary<long, ServiceRegistration>? retainedCandidateServices = null;
+        SharpLinkAssemblyRegistrationError? rollbackError = null;
+        Exception? rollbackException = null;
         var published = false;
         try
         {
@@ -56,7 +58,10 @@ internal sealed partial class SharpLinkServer
                 var candidate = BuildRegistrationCandidate(
                     manifest!, module, currentServices, currentModules, currentCodecs: null, out var error);
                 if (error is not null)
+                {
+                    rollbackError = error;
                     return SharpLinkAssemblyRegistrationResult.Failure(error);
+                }
                 candidateServices = candidate.Services;
                 retainedCandidateServices = currentServices;
 
@@ -71,24 +76,29 @@ internal sealed partial class SharpLinkServer
                     {
                         if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
                         {
-                            return Failure(
+                            rollbackError = CreateError(
                                 SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                                 $"Server state '{CurrentState}' does not accept runtime assembly registration.",
                                 assembly);
+                            return SharpLinkAssemblyRegistrationResult.Failure(rollbackError);
                         }
                         if (IsAssemblyRegistered(assembly))
                         {
-                            return Failure(
+                            rollbackError = CreateError(
                                 SharpLinkAssemblyRegistrationErrorCode.DuplicateAssembly,
                                 "The same Assembly object is already registered on this server.",
                                 assembly);
+                            return SharpLinkAssemblyRegistrationResult.Failure(rollbackError);
                         }
 
                         var dependencyError = ValidateDependencies(
                             manifest!,
                             [.. _dynamicModules.Values]);
                         if (dependencyError is not null)
+                        {
+                            rollbackError = dependencyError;
                             return SharpLinkAssemblyRegistrationResult.Failure(dependencyError);
+                        }
 
                         _runtimeContext.PublishGeneratedCodecs(candidate.Codecs);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
@@ -101,28 +111,38 @@ internal sealed partial class SharpLinkServer
                 }
                 if (retry)
                 {
-                    DisposeCandidateServices(candidate.Services, currentServices);
                     candidateServices = null;
                     retainedCandidateServices = null;
-                    codecRegistration.Dispose();
+                    var abandonedRegistration = codecRegistration;
                     codecRegistration = null;
+                    DisposeRegistrationCandidate(candidate.Services, currentServices, abandonedRegistration);
                 }
             }
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
         {
-            return Failure(
+            rollbackException = exception;
+            rollbackError = CreateError(
                 SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                 $"Assembly registration failed transactionally: {exception.GetType().Name}: {exception.Message}",
                 assembly);
+            return SharpLinkAssemblyRegistrationResult.Failure(rollbackError);
         }
         finally
         {
             if (!published)
             {
-                if (candidateServices is not null && retainedCandidateServices is not null)
-                    DisposeCandidateServices(candidateServices, retainedCandidateServices);
-                codecRegistration?.Dispose();
+                try
+                {
+                    DisposeRegistrationCandidate(
+                        candidateServices,
+                        retainedCandidateServices,
+                        codecRegistration);
+                }
+                catch (Exception cleanupException)
+                {
+                    ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupException);
+                }
             }
         }
     }
@@ -184,6 +204,8 @@ internal sealed partial class SharpLinkServer
         RpcGeneratedManifestRegistration? codecRegistration = null;
         IReadOnlyDictionary<long, ServiceRegistration>? candidateServices = null;
         IReadOnlyDictionary<long, ServiceRegistration>? retainedCandidateServices = null;
+        SharpLinkAssemblyRegistrationError? rollbackError = null;
+        Exception? rollbackException = null;
         var published = false;
         try
         {
@@ -251,7 +273,10 @@ internal sealed partial class SharpLinkServer
                 var candidate = BuildRegistrationCandidate(
                     manifest!, newModule, retainedServices, currentModules, retainedCodecs, out var error);
                 if (error is not null)
+                {
+                    rollbackError = error;
                     return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(error));
+                }
                 candidateServices = candidate.Services;
                 retainedCandidateServices = retainedServices;
 
@@ -267,10 +292,11 @@ internal sealed partial class SharpLinkServer
                         oldModule.State != SharpLinkDynamicModuleState.Running ||
                         _unregisterOperations.ContainsKey(oldAssembly))
                     {
-                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                        rollbackError = CreateError(
                             SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                             "The old Assembly object changed while the replacement candidate was being prepared.",
-                            newAssembly)));
+                            newAssembly);
+                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
                     }
                     else
                     {
@@ -291,29 +317,39 @@ internal sealed partial class SharpLinkServer
                 }
                 if (retry)
                 {
-                    DisposeCandidateServices(candidate.Services, retainedServices);
                     candidateServices = null;
                     retainedCandidateServices = null;
-                    codecRegistration.Dispose();
+                    var abandonedRegistration = codecRegistration;
                     codecRegistration = null;
                     newModule = null;
+                    DisposeRegistrationCandidate(candidate.Services, retainedServices, abandonedRegistration);
                 }
             }
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
         {
-            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+            rollbackException = exception;
+            rollbackError = CreateError(
                 SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                 $"Assembly replacement failed transactionally: {exception.GetType().Name}: {exception.Message}",
-                newAssembly)));
+                newAssembly);
+            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
         }
         finally
         {
             if (!published)
             {
-                if (candidateServices is not null && retainedCandidateServices is not null)
-                    DisposeCandidateServices(candidateServices, retainedCandidateServices);
-                codecRegistration?.Dispose();
+                try
+                {
+                    DisposeRegistrationCandidate(
+                        candidateServices,
+                        retainedCandidateServices,
+                        codecRegistration);
+                }
+                catch (Exception cleanupException)
+                {
+                    ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupException);
+                }
             }
         }
 
@@ -347,8 +383,9 @@ internal sealed partial class SharpLinkServer
         var drainTask = module.WaitForDrainAsync();
         if (!drainTask.IsCompleted)
         {
-            var timeoutTask = Task.Delay(gracefulTimeout);
-            if (!ReferenceEquals(await Task.WhenAny(drainTask, timeoutTask).ConfigureAwait(false), drainTask))
+            if (!await SharpLinkDynamicModule.WaitForDrainAsync(
+                    drainTask,
+                    gracefulTimeout).ConfigureAwait(false))
             {
                 module.CancelRemainingCalls();
                 await Task.Yield();
@@ -439,7 +476,7 @@ internal sealed partial class SharpLinkServer
             _registryGeneration++;
         }
 
-        Exception? firstException = null;
+        List<Exception>? failures = null;
         var connections = _connections.Values.Concat(_retiredConnections.Keys).Distinct().ToArray();
         foreach (var connection in connections)
         {
@@ -451,7 +488,7 @@ internal sealed partial class SharpLinkServer
                 }
                 catch (Exception exception)
                 {
-                    firstException ??= exception;
+                    (failures ??= []).Add(exception);
                 }
             }
         }
@@ -463,7 +500,7 @@ internal sealed partial class SharpLinkServer
             }
             catch (Exception exception)
             {
-                firstException ??= exception;
+                (failures ??= []).Add(exception);
             }
         }
         try
@@ -472,14 +509,16 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            firstException ??= exception;
+            (failures ??= []).Add(exception);
         }
         finally
         {
             module.MarkReleased();
         }
-        if (firstException is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
     }
 
     private RpcGeneratedCodecRegistration? FindReplacementCodec(
@@ -644,18 +683,80 @@ internal sealed partial class SharpLinkServer
         IReadOnlyDictionary<long, ServiceRegistration> candidate,
         IReadOnlyDictionary<long, ServiceRegistration> retained)
     {
+        List<Exception>? failures = null;
         foreach (var pair in candidate)
         {
             if (retained.TryGetValue(pair.Key, out var existing) && ReferenceEquals(existing, pair.Value))
                 continue;
-            pair.Value.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            try
+            {
+                SharpLinkAsyncCleanup.DisposeSynchronously(pair.Value);
+            }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(exception);
+            }
         }
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
+    }
+
+    private static void DisposeRegistrationCandidate(
+        IReadOnlyDictionary<long, ServiceRegistration>? candidateServices,
+        IReadOnlyDictionary<long, ServiceRegistration>? retainedServices,
+        RpcGeneratedManifestRegistration? codecRegistration)
+    {
+        List<Exception>? failures = null;
+        if (candidateServices is not null && retainedServices is not null)
+        {
+            try
+            {
+                DisposeCandidateServices(candidateServices, retainedServices);
+            }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(exception);
+            }
+        }
+        try
+        {
+            codecRegistration?.Dispose();
+        }
+        catch (Exception exception)
+        {
+            (failures ??= []).Add(exception);
+        }
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
+    }
+
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void ThrowAfterAssemblyRollback(
+        SharpLinkAssemblyRegistrationError? rollbackError,
+        Exception? rollbackException,
+        Exception cleanupException)
+    {
+        if (rollbackException is not null)
+            throw new AggregateException(rollbackException, cleanupException);
+        if (rollbackError is not null)
+        {
+            throw new AggregateException(
+                new InvalidOperationException($"{rollbackError.Code}: {rollbackError.Message}"),
+                cleanupException);
+        }
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
+        throw new System.Diagnostics.UnreachableException();
     }
 
     private static void DisposeCreatedServices(IReadOnlyList<ServiceRegistration> services)
     {
         for (var index = services.Count - 1; index >= 0; index--)
-            services[index].DisposeAsync().AsTask().GetAwaiter().GetResult();
+            SharpLinkAsyncCleanup.DisposeSynchronously(services[index]);
     }
 
     private SharpLinkAssemblyRegistrationError? ValidateReplacementDependants(
@@ -774,7 +875,7 @@ internal sealed partial class SharpLinkServer
         lock (_registryGate)
             modules = [.. _dynamicModules];
 
-        Exception? firstException = null;
+        List<Exception>? failures = null;
         for (var index = 0; index < modules.Length; index++)
         {
             var pair = modules[index];
@@ -786,12 +887,14 @@ internal sealed partial class SharpLinkServer
             }
             catch (Exception exception)
             {
-                firstException ??= exception;
+                (failures ??= []).Add(exception);
             }
         }
 
-        if (firstException is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstException).Throw();
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException(failures);
     }
 
     private bool IsAssemblyRegistered(Assembly assembly)

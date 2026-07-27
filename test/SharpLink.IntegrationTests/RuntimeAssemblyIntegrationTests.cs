@@ -252,6 +252,52 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task MultiClusterReplacementCleanupFailureShouldReconcilePublishedChildRoutes()
+    {
+        using var oldPlugin = PluginBundle.Load(
+            "multi-cluster-replacement-cleanup-failure-old", loadService: false);
+        using var newPlugin = PluginBundle.Load(
+            "multi-cluster-replacement-cleanup-failure-new", loadService: false);
+        await using var registrationSource = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), 1)
+            .Build();
+        var registrationResult = registrationSource.RegisterAssembly(oldPlugin.ContractAssembly);
+        Ensure(registrationResult.Succeeded, "controlled child registration result");
+
+        var child = new ControlledDynamicAssemblyClient(registrationResult);
+        var slot = new SharpLinkClusterSlot("plugins", child, AllowDynamicContracts: true);
+        await using var client = new SharpLinkMultiClusterClient(
+            new SharpLinkMultiClusterOptions(),
+            new[] { slot }.ToFrozenDictionary(static candidate => candidate.Key),
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
+            []);
+        Ensure(client.RegisterAssembly("plugins", oldPlugin.ContractAssembly).Succeeded,
+            "multi-cluster controlled registration");
+        child.PublishReplacementThenFailCleanup();
+
+        try
+        {
+            _ = await client.ReplaceAssemblyAsync(
+                "plugins",
+                oldPlugin.ContractAssembly,
+                newPlugin.ContractAssembly,
+                TimeSpan.Zero);
+            throw new Exception("assert failed: child cleanup failure must reach the caller");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message.Contains("replacement cleanup failure", StringComparison.Ordinal),
+                "child cleanup failure is preserved");
+        }
+
+        Ensure(child.IsDynamicAssemblyRegistered(newPlugin.ContractAssembly) &&
+               !child.IsDynamicAssemblyRegistered(oldPlugin.ContractAssembly),
+            "the child has already committed the replacement generation");
+        _ = GetMultiClusterProxy(client, newPlugin.ContractType);
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task MultiClusterReplacementShouldPublishCoordinatorRoutesBeforeOldDrainAndAfterCallerCancellation()
     {
         await using var harness = await DynamicHarness.CreateAsync();
@@ -563,10 +609,12 @@ public sealed class RuntimeAssemblyIntegrationTests
                 plugin.ServiceAssembly, TimeSpan.FromSeconds(2));
             throw new Exception("assert failed: service disposal failure must be reported");
         }
-        catch (InvalidOperationException exception)
+        catch (Exception exception)
         {
-            Ensure(exception.Message.Contains("dynamic disposal failure", StringComparison.Ordinal),
-                "original disposal failure is preserved");
+            Ensure(ContainsMessage(exception, "First dynamic disposal failure."),
+                "first disposal failure is preserved");
+            Ensure(ContainsMessage(exception, "Second dynamic disposal failure."),
+                "second disposal failure is preserved");
         }
 
         Ensure(plugin.GetServiceStaticInt(firstServiceName, "Disposed") == 1,
@@ -615,8 +663,19 @@ public sealed class RuntimeAssemblyIntegrationTests
         plugin.InvokeServiceStatic(firstServiceName, "EnableDisposeFailure");
 
         await harness.Client.StopAsync();
-        await harness.Server.StopAsync(TimeSpan.FromSeconds(2));
+        Exception? stopFailure = null;
+        try
+        {
+            await harness.Server.StopAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (Exception exception)
+        {
+            stopFailure = exception;
+            harness.ExpectServerStopFailure("First dynamic disposal failure.");
+        }
 
+        Ensure(stopFailure is not null && ContainsMessage(stopFailure, "First dynamic disposal failure."),
+            "Server Stop must surface the dynamic disposal failure");
         Ensure(plugin.GetServiceStaticInt(firstServiceName, "Disposed") == 1,
             "throwing dynamic service disposed once during stop");
         Ensure(plugin.GetServiceStaticInt(secondServiceName, "Disposed") == 1,
@@ -1475,6 +1534,20 @@ public sealed class RuntimeAssemblyIntegrationTests
             throw new Exception($"assert failed: {message}");
     }
 
+    private static bool ContainsMessage(Exception exception, string message)
+    {
+        if (exception.Message == message)
+            return true;
+        if (exception is AggregateException aggregate)
+        {
+            foreach (var inner in aggregate.InnerExceptions)
+                if (ContainsMessage(inner, message))
+                    return true;
+            return false;
+        }
+        return exception.InnerException is { } nested && ContainsMessage(nested, message);
+    }
+
     private sealed class TrackedWeakReferences
     {
         private readonly List<(string Name, WeakReference Reference)> _items = [];
@@ -1633,6 +1706,7 @@ public sealed class RuntimeAssemblyIntegrationTests
         private int _unregisterCalls;
         private int _rejectNextUnregister;
         private int _blockNextUnregisterRejection;
+        private int _publishReplacementThenFailCleanup;
 
         internal ControlledDynamicAssemblyClient(SharpLinkAssemblyRegistrationResult registrationResult)
         {
@@ -1691,7 +1765,19 @@ public sealed class RuntimeAssemblyIntegrationTests
             Assembly newAssembly,
             TimeSpan gracefulTimeout,
             CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+        {
+            _ = gracefulTimeout;
+            _ = cancellationToken;
+            if (Interlocked.Exchange(ref _publishReplacementThenFailCleanup, 0) == 0)
+                throw new NotSupportedException();
+            lock (_gate)
+            {
+                _registeredAssemblies.Remove(oldAssembly);
+                _registeredAssemblies.Add(newAssembly);
+            }
+            return ValueTask.FromException<SharpLinkAssemblyReplacementResult>(
+                new InvalidOperationException("controlled replacement cleanup failure"));
+        }
 
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 
@@ -1727,6 +1813,9 @@ public sealed class RuntimeAssemblyIntegrationTests
         internal void RejectNextUnregister() => Volatile.Write(ref _rejectNextUnregister, 1);
 
         internal void BlockAndRejectNextUnregister() => Volatile.Write(ref _blockNextUnregisterRejection, 1);
+
+        internal void PublishReplacementThenFailCleanup()
+            => Volatile.Write(ref _publishReplacementThenFailCleanup, 1);
 
         internal void CompleteRejectedUnregister()
             => RejectedUnregisterCompletion.TrySetException(
@@ -1804,6 +1893,7 @@ public sealed class RuntimeAssemblyIntegrationTests
         private readonly CancellationTokenSource _serverCancellation;
         private readonly Task _serverTask;
         private readonly ServiceProvider _serviceProvider;
+        private string? _expectedServerStopFailure;
 
         private DynamicHarness(
             ISharpLinkServer server,
@@ -1824,6 +1914,9 @@ public sealed class RuntimeAssemblyIntegrationTests
         internal ISharpLinkServer Server { get; }
         internal ISharpLinkClient Client { get; }
         internal int Port { get; }
+
+        internal void ExpectServerStopFailure(string message)
+            => _expectedServerStopFailure = message;
 
         internal static async Task<DynamicHarness> CreateAsync(
             bool registerDynamicServiceDependencies = true)
@@ -1851,14 +1944,22 @@ public sealed class RuntimeAssemblyIntegrationTests
         public async ValueTask DisposeAsync()
         {
             await Client.StopAsync();
-            await Server.StopAsync(TimeSpan.FromSeconds(2));
+            try
+            {
+                await Server.StopAsync(TimeSpan.FromSeconds(2));
+            }
+            catch (Exception exception) when (
+                _expectedServerStopFailure is { } message && ContainsMessage(exception, message))
+            {
+            }
             await _serverCancellation.CancelAsync();
             try
             {
                 await _serverTask.WaitAsync(TimeSpan.FromSeconds(2));
             }
             catch (Exception exception) when (
-                exception is OperationCanceledException or ObjectDisposedException or IOException or SocketException)
+                exception is OperationCanceledException or ObjectDisposedException or IOException or SocketException ||
+                _expectedServerStopFailure is { } message && ContainsMessage(exception, message))
             {
             }
             _serverCancellation.Dispose();
