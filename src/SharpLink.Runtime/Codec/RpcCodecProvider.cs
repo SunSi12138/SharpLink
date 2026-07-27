@@ -520,7 +520,12 @@ internal static class BuiltinRpcCodecs
         AddBlitCollections<Rune>(codecs); AddBlitCollections<long>(codecs);
         AddBlitCollections<ulong>(codecs); AddBlitCollections<double>(codecs);
         AddBlitCollections<Guid>(codecs); AddBlitCollections<decimal>(codecs);
-        AddBlitCollections<DateTimeOffset>(codecs); AddBlitCollections<DateTime>(codecs);
+        Add(codecs, DateTimeOffsetArrayCodec.Instance);
+        Add(codecs, DateTimeOffsetListCodec.Instance);
+        Add(codecs, DateTimeOffsetMemoryCodec.Instance);
+        Add(codecs, DateTimeOffsetReadOnlyMemoryCodec.Instance);
+        Add(codecs, DateTimeOffsetImmutableArrayCodec.Instance);
+        AddBlitCollections<DateTime>(codecs);
         AddBlitCollections<DateOnly>(codecs); AddBlitCollections<TimeOnly>(codecs);
         AddBlitCollections<TimeSpan>(codecs); AddBlitCollections<Int128>(codecs);
         AddBlitCollections<UInt128>(codecs); AddBlitCollections<Index>(codecs);

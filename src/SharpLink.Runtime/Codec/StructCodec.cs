@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text;
 
 namespace SharpLink.Runtime;
 
@@ -57,10 +58,9 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
         writer.Advance(4);
 
         if (value.Length <= 0) return;
-        
+
         var byteSpan = MemoryMarshal.AsBytes(new ReadOnlySpan<T>(value));
         CodecHelpers.EnsureSerializablePayloadLength(byteSpan.Length, nameof(value));
-            
         var dest = writer.GetSpan(byteSpan.Length);
         byteSpan.CopyTo(dest);
         writer.Advance(byteSpan.Length);
@@ -99,6 +99,8 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
             payload.Slice(0, byteCount).CopyTo(destBytes);
         }
 
+        if (RequiresSemanticValidation())
+            CodecHelpers.ValidateBlitElements(array);
         return array;
     }
 
@@ -112,8 +114,16 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
 
         var array = new T[length];
         buffer.Slice(sizeof(int), byteCount).CopyTo(MemoryMarshal.AsBytes(array.AsSpan()));
+        if (RequiresSemanticValidation())
+            CodecHelpers.ValidateBlitElements(array);
         return array;
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool RequiresSemanticValidation()
+        => typeof(T) == typeof(bool) || typeof(T) == typeof(Rune) || typeof(T) == typeof(decimal) ||
+           typeof(T) == typeof(DateOnly) || typeof(T) == typeof(DateTime) || typeof(T) == typeof(TimeOnly) ||
+           typeof(T) == typeof(DateTimeOffset);
 }
 
 internal sealed class BlitListCodec<T> : IRpcCodec<List<T>?> where T:unmanaged
@@ -144,7 +154,6 @@ internal sealed class BlitListCodec<T> : IRpcCodec<List<T>?> where T:unmanaged
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(headerSpan), span.Length);
         writer.Advance(4);
 
-        // 写入 Body
         if (span.Length <= 0) return;
         var byteSpan = MemoryMarshal.AsBytes(span);
         CodecHelpers.EnsureSerializablePayloadLength(byteSpan.Length, nameof(value));
@@ -167,8 +176,16 @@ internal sealed class BlitListCodec<T> : IRpcCodec<List<T>?> where T:unmanaged
         CollectionsMarshal.SetCount(list, length);
         buffer.Slice(sizeof(int), byteCount)
             .CopyTo(MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(list)));
+        if (RequiresSemanticValidation())
+            CodecHelpers.ValidateBlitElements(CollectionsMarshal.AsSpan(list));
         return list;
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool RequiresSemanticValidation()
+        => typeof(T) == typeof(bool) || typeof(T) == typeof(Rune) || typeof(T) == typeof(decimal) ||
+           typeof(T) == typeof(DateOnly) || typeof(T) == typeof(DateTime) || typeof(T) == typeof(TimeOnly) ||
+           typeof(T) == typeof(DateTimeOffset);
 }
 
 internal sealed class BlitMemoryCodec<T> : IRpcCodec<Memory<T>>  where T:unmanaged
@@ -191,7 +208,6 @@ internal sealed class BlitMemoryCodec<T> : IRpcCodec<Memory<T>>  where T:unmanag
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(header), span.Length);
         writer.Advance(4);
 
-        // 写入 Body
         if (span.Length <= 0) return;
         var byteSpan = MemoryMarshal.AsBytes(span);
         CodecHelpers.EnsureSerializablePayloadLength(byteSpan.Length, nameof(value));
@@ -267,7 +283,6 @@ internal sealed class BlitImmutableArrayCodec<T> : IRpcCodec<ImmutableArray<T>> 
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(4)), span.Length);
         writer.Advance(4);
 
-        // Body
         if (span.Length <= 0) return;
         var byteSpan = MemoryMarshal.AsBytes(span);
         CodecHelpers.EnsureSerializablePayloadLength(byteSpan.Length, nameof(value));
@@ -282,4 +297,77 @@ internal sealed class BlitImmutableArrayCodec<T> : IRpcCodec<ImmutableArray<T>> 
         var array = BlitArrayCodec<T>.Instance.Deserialize(buffer);
         return array is null ? default : Unsafe.As<T[], ImmutableArray<T>>(ref array);
     }
+}
+
+internal sealed class DateTimeOffsetArrayCodec : IRpcCodec<DateTimeOffset[]?>
+{
+    internal static readonly DateTimeOffsetArrayCodec Instance = new();
+
+    public void Serialize(in DateTimeOffset[]? value, IBufferWriter<byte> writer)
+    {
+        CodecHelpers.WriteInt32(writer, value?.Length ?? -1);
+        if (value is not null)
+            CodecHelpers.WriteDateTimeOffsetBlitPayload(value, writer);
+    }
+
+    public DateTimeOffset[]? Deserialize(in ReadOnlySequence<byte> buffer)
+        => BlitArrayCodec<DateTimeOffset>.Instance.Deserialize(buffer);
+}
+
+internal sealed class DateTimeOffsetListCodec : IRpcCodec<List<DateTimeOffset>?>
+{
+    internal static readonly DateTimeOffsetListCodec Instance = new();
+
+    public void Serialize(in List<DateTimeOffset>? value, IBufferWriter<byte> writer)
+    {
+        CodecHelpers.WriteInt32(writer, value?.Count ?? -1);
+        if (value is not null)
+            CodecHelpers.WriteDateTimeOffsetBlitPayload(CollectionsMarshal.AsSpan(value), writer);
+    }
+
+    public List<DateTimeOffset>? Deserialize(in ReadOnlySequence<byte> buffer)
+        => BlitListCodec<DateTimeOffset>.Instance.Deserialize(buffer);
+}
+
+internal sealed class DateTimeOffsetMemoryCodec : IRpcCodec<Memory<DateTimeOffset>>
+{
+    internal static readonly DateTimeOffsetMemoryCodec Instance = new();
+
+    public void Serialize(in Memory<DateTimeOffset> value, IBufferWriter<byte> writer)
+    {
+        CodecHelpers.WriteInt32(writer, value.Length);
+        CodecHelpers.WriteDateTimeOffsetBlitPayload(value.Span, writer);
+    }
+
+    public Memory<DateTimeOffset> Deserialize(in ReadOnlySequence<byte> buffer)
+        => BlitMemoryCodec<DateTimeOffset>.Instance.Deserialize(buffer);
+}
+
+internal sealed class DateTimeOffsetReadOnlyMemoryCodec : IRpcCodec<ReadOnlyMemory<DateTimeOffset>>
+{
+    internal static readonly DateTimeOffsetReadOnlyMemoryCodec Instance = new();
+
+    public void Serialize(in ReadOnlyMemory<DateTimeOffset> value, IBufferWriter<byte> writer)
+    {
+        CodecHelpers.WriteInt32(writer, value.Length);
+        CodecHelpers.WriteDateTimeOffsetBlitPayload(value.Span, writer);
+    }
+
+    public ReadOnlyMemory<DateTimeOffset> Deserialize(in ReadOnlySequence<byte> buffer)
+        => BlitReadOnlyMemoryCodec<DateTimeOffset>.Instance.Deserialize(buffer);
+}
+
+internal sealed class DateTimeOffsetImmutableArrayCodec : IRpcCodec<ImmutableArray<DateTimeOffset>>
+{
+    internal static readonly DateTimeOffsetImmutableArrayCodec Instance = new();
+
+    public void Serialize(in ImmutableArray<DateTimeOffset> value, IBufferWriter<byte> writer)
+    {
+        CodecHelpers.WriteInt32(writer, value.IsDefault ? -1 : value.Length);
+        if (!value.IsDefault)
+            CodecHelpers.WriteDateTimeOffsetBlitPayload(value.AsSpan(), writer);
+    }
+
+    public ImmutableArray<DateTimeOffset> Deserialize(in ReadOnlySequence<byte> buffer)
+        => BlitImmutableArrayCodec<DateTimeOffset>.Instance.Deserialize(buffer);
 }

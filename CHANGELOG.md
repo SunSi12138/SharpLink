@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.23] - 2026-07-27
+
+### Fixed
+
+- Boolean blit collections now reject non-canonical element bytes across array, List, Memory, ReadOnlyMemory, and ImmutableArray Codecs.
+- Rune and decimal blit collections now apply the same semantic validation as their scalar Codecs.
+- DateOnly, DateTime, and TimeOnly blit collections now reject invalid temporal values.
+- DateTimeOffset blit collections now reject invalid UTC ticks or offsets and clear native padding without mutating caller-owned values.
+- Truncated shared-memory server responses now surface `Unavailable` from Client Connect while preserving the original EOF as the inner cause.
+
+### Compatibility and validation
+
+- Collection counts, element layouts, and Protocol v2 framing are unchanged. Valid older payloads remain readable; new DateTimeOffset collection writers canonicalize padding to zero.
+- Non-incremental Release build, Generator 84/84, Unit 449/449, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- All-bit-pattern-valid `int[]` serialize/deserialize retained about 10.1/17.0 ns and 0/88 B/op. Sixteen-element Boolean and DateTimeOffset validation add about 5 ns and 23 ns respectively with unchanged allocations; two shared-helper designs that regressed ordinary writes were rejected.
+
 ## [0.8.22] - 2026-07-27
 
 ### Fixed

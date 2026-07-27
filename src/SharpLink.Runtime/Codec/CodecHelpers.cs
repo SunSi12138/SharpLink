@@ -182,6 +182,103 @@ internal static class CodecHelpers
             throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Invalid Decimal payload.", ex);
         }
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void ValidateBlitElements<T>(ReadOnlySpan<T> values) where T : unmanaged
+    {
+        if (typeof(T) == typeof(bool))
+        {
+            var bytes = MemoryMarshal.AsBytes(values);
+            for (var index = 0; index < bytes.Length; index++)
+                if (bytes[index] > 1)
+                    throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "Boolean collection contains a non-canonical element.");
+            return;
+        }
+        if (typeof(T) == typeof(Rune))
+        {
+            var typed = MemoryMarshal.Cast<T, Rune>(values);
+            for (var index = 0; index < typed.Length; index++)
+                _ = ValidateRune(typed[index]);
+            return;
+        }
+        if (typeof(T) == typeof(decimal))
+        {
+            var typed = MemoryMarshal.Cast<T, decimal>(values);
+            for (var index = 0; index < typed.Length; index++)
+                _ = ValidateDecimal(typed[index]);
+            return;
+        }
+        if (typeof(T) == typeof(DateOnly))
+        {
+            var typed = MemoryMarshal.Cast<T, DateOnly>(values);
+            for (var index = 0; index < typed.Length; index++)
+                _ = CreateDateOnly(typed[index].DayNumber);
+            return;
+        }
+        if (typeof(T) == typeof(DateTime))
+        {
+            var typed = MemoryMarshal.Cast<T, DateTime>(values);
+            for (var index = 0; index < typed.Length; index++)
+            {
+                var value = typed[index];
+                _ = CreateDateTime(Unsafe.As<DateTime, long>(ref value));
+            }
+            return;
+        }
+        if (typeof(T) == typeof(TimeOnly))
+        {
+            var typed = MemoryMarshal.Cast<T, TimeOnly>(values);
+            for (var index = 0; index < typed.Length; index++)
+                _ = ValidateTimeOnly(typed[index]);
+            return;
+        }
+        if (typeof(T) == typeof(DateTimeOffset))
+            ValidateDateTimeOffsetElements(MemoryMarshal.AsBytes(values));
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void NormalizeDateTimeOffsetBlitPayload(Span<byte> payload)
+    {
+        const int size = 16;
+        for (var offset = 0; offset < payload.Length; offset += size)
+            payload.Slice(offset + sizeof(short), 6).Clear();
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void WriteDateTimeOffsetBlitPayload(
+        ReadOnlySpan<DateTimeOffset> values,
+        IBufferWriter<byte> writer)
+    {
+        if (values.IsEmpty)
+            return;
+        var source = MemoryMarshal.AsBytes(values);
+        EnsureSerializablePayloadLength(source.Length, nameof(values));
+        var destination = writer.GetSpan(source.Length)[..source.Length];
+        source.CopyTo(destination);
+        NormalizeDateTimeOffsetBlitPayload(destination);
+        writer.Advance(source.Length);
+    }
+
+    private static void ValidateDateTimeOffsetElements(ReadOnlySpan<byte> payload)
+    {
+        const int size = 16;
+        for (var offset = 0; offset < payload.Length; offset += size)
+        {
+            var element = payload[offset..];
+            var offsetMinutes = Unsafe.ReadUnaligned<short>(ref MemoryMarshal.GetReference(element));
+            var utcTicks = Unsafe.ReadUnaligned<long>(ref Unsafe.Add(
+                ref MemoryMarshal.GetReference(element), sizeof(long)));
+            if ((ulong)utcTicks > (ulong)DateTime.MaxValue.Ticks || offsetMinutes is < -840 or > 840)
+                throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DateTimeOffset collection contains invalid UTC ticks or offset.");
+            var offsetTicks = (long)offsetMinutes * TimeSpan.TicksPerMinute;
+            if (offsetTicks > 0 && utcTicks > DateTime.MaxValue.Ticks - offsetTicks ||
+                offsetTicks < 0 && utcTicks < -offsetTicks)
+            {
+                throw new SharpLinkException(SharpLinkErrorCode.DataLoss, "DateTimeOffset collection contains a value outside the supported clock range.");
+            }
+        }
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void WriteInt32(IBufferWriter<byte> writer, in int value)
     {

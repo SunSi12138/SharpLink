@@ -1,27 +1,27 @@
-# 0.8.22 regression-test research
+# 0.8.23 regression-test research
 
 ## Target inventory and evidence candidates
 
-- Generated DTO Boolean members use raw unmanaged reads, accepting non-canonical bytes other than zero and one.
-- Generated DTO Rune members bypass the built-in Rune Codec and can materialize invalid Unicode scalar values.
-- Generated DTO decimal members bypass the built-in decimal Codec and can materialize invalid flag layouts.
-- Generated DTO DateOnly, DateTime, and TimeOnly members bypass their built-in semantic validation.
-- Generated DTO DateTimeOffset members use a raw 16-byte struct image, including padding, instead of the canonical validated 10-byte built-in Codec payload.
+- Boolean blit collections accept non-canonical element bytes across array, List, Memory, ReadOnlyMemory, and ImmutableArray Codecs.
+- Rune and decimal blit collections bypass the scalar semantic validation shared by ordinary values.
+- DateOnly, DateTime, and TimeOnly blit collections can materialize invalid temporal values.
+- DateTimeOffset blit collections accept invalid UTC ticks or offsets and transmit six bytes of native padding per element.
+- A truncated shared-memory server response escapes Client Connect as raw `EndOfStreamException` instead of the transport's structured `Unavailable` error.
 
 ## Acceptance checklist
 
-- Generated Boolean fields retain their compact one-byte wire representation but accept only zero or one.
-- Rune and decimal fields retain fixed wire but use their validated generated readers and surface malformed input as `DataLoss`.
-- DateOnly, DateTime, and TimeOnly fields retain fixed wire but use their validated generated readers.
-- DateTimeOffset fields retain the 16-byte fixed layout, clear its six padding bytes on write, and reject invalid ticks or offsets.
-- Valid generated DTO round trips retain their normal behavior and changed hot paths show no material performance regression.
+- Every built-in blit collection shape rejects invalid Boolean, Rune, decimal, and temporal elements as `DataLoss`.
+- DateTimeOffset collection writers clear padding without mutating caller-owned values.
+- Integer and other all-bit-pattern-valid blit collections retain their existing zero-allocation fast path.
+- Truncated shared-memory server responses surface `Unavailable` with the original EOF retained as the inner cause.
+- Changed valid collection paths show no material performance regression.
 
 ## Audit guardrails
 
-The automatic performance-pattern scan produced no critical hits; manual review discarded generator string operations and synchronously-read completed tasks as cold-path or deliberate fast-path uses. Blit collections of semantic element types remain a separate audit candidate and are not folded into these five DTO-member findings without their own collection-specific evidence and performance treatment.
+The collection findings are a distinct runtime Codec path from 0.8.22 generated DTO fields and cover five concrete public collection types. The observed shared-memory EOF was converted into a deterministic truncated-peer probe rather than being accepted from one resource-contended flaky run.
 
 ## Regression and performance evidence
 
-Against clean 0.8.21 commit `481989c`, the complete pre-fix Integration run contained 236 tests: all 231 existing tests passed and exactly five new behavioral probes failed. The complete pre-fix Generator run contained 84 tests: all 83 existing tests passed and exactly the new emitted-source probe failed. The evidence directly observed acceptance of malformed Boolean, Rune, decimal, DateOnly, DateTime, TimeOnly, and DateTimeOffset bytes, plus propagation of attacker-controlled padding in the raw 16-byte DateTimeOffset layout.
+Against clean 0.8.22 commit `3a4338d`, the complete pre-fix Unit run contained 449 tests: all 445 existing tests passed and exactly four new collection probes failed. The complete pre-fix Integration run contained 237 tests: all 236 existing tests passed and exactly the deterministic truncated-response probe failed.
 
-The initial length-delimited Codec implementation was rejected after A/B measured about 66/109 ns for six-field serialize/deserialize versus about 38/35–36 ns at baseline. The final fixed-wire implementation retains 0/80 B/op and measures about 38–39/36–38 ns, an absolute validation cost of about 1–2 ns.
+Final focused Unit 449/449 and Integration 237/237 pass. Performance A/B rejected two shared serialization helpers; the final ordinary int path retained about 10.1/17.0 ns and unchanged allocations. Sixteen-element Boolean and DateTimeOffset validation add about 5 ns and 23 ns respectively with unchanged allocations.

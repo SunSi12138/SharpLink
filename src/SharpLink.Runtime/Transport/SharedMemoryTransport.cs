@@ -41,6 +41,7 @@ public sealed class SharedMemoryClientTransportFactory : IClientTransportFactory
             PipeDirection.InOut,
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
         SharedMemoryMapping? mapping = null;
+        var serverResponseReceived = false;
         try
         {
             await pipe.ConnectAsync(connectCts.Token).ConfigureAwait(false);
@@ -55,6 +56,7 @@ public sealed class SharedMemoryClientTransportFactory : IClientTransportFactory
                 pipe,
                 nonce,
                 connectCts.Token).ConfigureAwait(false);
+            serverResponseReceived = true;
             if (response.Capacity > resolved.CapacityPerDirectionBytes)
             {
                 throw new SharpLinkException(
@@ -88,6 +90,13 @@ public sealed class SharedMemoryClientTransportFactory : IClientTransportFactory
             throw new SharpLinkException(
                 SharpLinkErrorCode.PermissionDenied,
                 "Shared-memory transport could not access the same-user mapping.",
+                exception);
+        }
+        catch (IOException exception) when (!serverResponseReceived)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.Unavailable,
+                "Shared-memory server closed the transport handshake before it completed.",
                 exception);
         }
         finally

@@ -176,6 +176,53 @@ public class CodecSafetyTests
     }
 
     [Test]
+    public void BooleanBlitCollectionsShouldRejectNonCanonicalElements()
+    {
+        AssertBlitCollectionShapesReject<bool>([2]);
+    }
+
+    [Test]
+    public void RuneAndDecimalBlitCollectionsShouldRejectInvalidElements()
+    {
+        var invalidRune = new byte[sizeof(int)];
+        BinaryPrimitives.WriteInt32LittleEndian(invalidRune, 0x11_0000);
+        AssertBlitCollectionShapesReject<Rune>(invalidRune);
+        AssertBlitCollectionShapesReject<decimal>(Enumerable.Repeat((byte)0xFF, 16).ToArray());
+    }
+
+    [Test]
+    public void TemporalBlitCollectionsShouldRejectInvalidElements()
+    {
+        var invalidDateOnly = new byte[sizeof(int)];
+        BinaryPrimitives.WriteInt32LittleEndian(invalidDateOnly, int.MaxValue);
+        AssertBlitCollectionShapesReject<DateOnly>(invalidDateOnly);
+
+        var invalidDateTime = new byte[sizeof(long)];
+        BinaryPrimitives.WriteInt64LittleEndian(invalidDateTime, DateTime.MaxValue.Ticks + 1);
+        AssertBlitCollectionShapesReject<DateTime>(invalidDateTime);
+
+        var invalidTimeOnly = new byte[sizeof(long)];
+        BinaryPrimitives.WriteInt64LittleEndian(invalidTimeOnly, long.MaxValue);
+        AssertBlitCollectionShapesReject<TimeOnly>(invalidTimeOnly);
+    }
+
+    [Test]
+    public void DateTimeOffsetBlitCollectionsShouldValidateValuesAndClearPadding()
+    {
+        var invalid = new byte[16];
+        BinaryPrimitives.WriteInt16LittleEndian(invalid, 0);
+        BinaryPrimitives.WriteInt64LittleEndian(invalid.AsSpan(sizeof(long)), long.MaxValue);
+        AssertBlitCollectionShapesReject<DateTimeOffset>(invalid);
+
+        var poisoned = CreateDateTimeOffsetWithPoisonedPadding();
+        AssertDateTimeOffsetCollectionPadding(new[] { poisoned });
+        AssertDateTimeOffsetCollectionPadding(new List<DateTimeOffset> { poisoned });
+        AssertDateTimeOffsetCollectionPadding(new Memory<DateTimeOffset>([poisoned]));
+        AssertDateTimeOffsetCollectionPadding(new ReadOnlyMemory<DateTimeOffset>([poisoned]));
+        AssertDateTimeOffsetCollectionPadding(ImmutableArray.Create(poisoned));
+    }
+
+    [Test]
     public void SharpPackCodecShouldWrapMalformedPayloadAsDataLoss()
     {
         var codec = SharpPackRpcCodec.Create<int>(new SharpPackSerializerContext());
@@ -294,6 +341,35 @@ public class CodecSafetyTests
         bytes[0] = 2;
         ExpectDataLoss(() => Deserialize<T>(new ReadOnlySequence<byte>(bytes)));
         ExpectDataLoss(() => Deserialize<T>(CreateSegmentedSequence(bytes)));
+    }
+
+    private static void AssertBlitCollectionShapesReject<T>(byte[] element) where T : unmanaged
+    {
+        var payload = CreateLengthPrefixedPayload(1, element);
+        ExpectDataLoss(() => Deserialize<T[]>(new ReadOnlySequence<byte>(payload)));
+        ExpectDataLoss(() => Deserialize<List<T>>(CreateSegmentedSequence(payload)));
+        ExpectDataLoss(() => Deserialize<Memory<T>>(new ReadOnlySequence<byte>(payload)));
+        ExpectDataLoss(() => Deserialize<ReadOnlyMemory<T>>(CreateSegmentedSequence(payload)));
+        ExpectDataLoss(() => Deserialize<ImmutableArray<T>>(new ReadOnlySequence<byte>(payload)));
+    }
+
+    private static void AssertDateTimeOffsetCollectionPadding<T>(T value)
+    {
+        var writer = new ArrayBufferWriter<byte>();
+        Serialize(value, writer);
+        Ensure(writer.WrittenSpan.Length == sizeof(int) + 16, $"DateTimeOffset collection size {typeof(T)}");
+        Ensure(writer.WrittenSpan.Slice(sizeof(int) + sizeof(short), 6).IndexOfAnyExcept((byte)0) < 0,
+            $"DateTimeOffset collection padding {typeof(T)}");
+    }
+
+    private static DateTimeOffset CreateDateTimeOffsetWithPoisonedPadding()
+    {
+        var value = new DateTimeOffset(2026, 7, 27, 12, 34, 56, TimeSpan.FromHours(8));
+        Span<byte> bytes = stackalloc byte[16];
+        bytes.Fill(0xA5);
+        BinaryPrimitives.WriteInt16LittleEndian(bytes, checked((short)value.Offset.TotalMinutes));
+        BinaryPrimitives.WriteInt64LittleEndian(bytes[sizeof(long)..], value.UtcTicks);
+        return MemoryMarshal.Read<DateTimeOffset>(bytes);
     }
 
     private static void Serialize<T>(in T value, IBufferWriter<byte> writer)
