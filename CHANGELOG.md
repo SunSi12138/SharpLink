@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.26] - 2026-07-27
+
+### Fixed
+
+- `[Oneway]` RPCs must now return non-generic `Task` or `ValueTask`; response-bearing and streaming shapes report `SHARPLINK056` instead of generating calls that cannot honor fire-and-forget semantics.
+- Proxy request and stream locals now avoid every user-parameter collision, including chained underscore variants.
+- DTO members that differ only by case no longer crash constructor analysis; exact constructor-parameter matches take priority, while ambiguous case-insensitive fallback reports the existing `SHARPLINK012` diagnostic.
+- Generated dictionary readers now translate null keys to an RPC `DataLoss` error before reaching `Dictionary.TryAdd`; duplicate keys keep the existing `DataLoss` behavior.
+- Non-public default interface helpers are no longer emitted as RPC routes, while non-public abstract methods report `SHARPLINK054`.
+
+### Compatibility and validation
+
+- Protocol v2, route hashes, payload layouts, Manifest schema, and valid public RPC surfaces are unchanged. Previously generated invalid Oneway and non-public abstract surfaces had no usable RPC contract.
+- Non-incremental Release build, Generator 101/101, Unit 449/449, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- A 40-contract/400-method, 101-sample Generator A/B measured 14.755 → 13.530 ms. Compiler-thread allocation increased by 76,640 B (0.27%); an isolated 16-key dictionary guard comparison measured 171.891 → 170.941 ns.
+
 ## [0.8.25] - 2026-07-27
 
 ### Fixed

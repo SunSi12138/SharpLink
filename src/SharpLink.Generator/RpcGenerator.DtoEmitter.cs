@@ -454,6 +454,8 @@ public partial class RpcGenerator
             sb.AppendLine("        {");
             sb.AppendLine("            var key = __keyCodec.Deserialize(RpcGeneratedCodecWire.ReadLengthDelimited(ref reader));");
             sb.AppendLine("            var value = __valueCodec.Deserialize(RpcGeneratedCodecWire.ReadLengthDelimited(ref reader));");
+            sb.AppendLine("            if (key is null)");
+            sb.AppendLine("                throw RpcGeneratedCodecWire.DataLoss(\"Generated dictionary contains a null key.\");");
             sb.AppendLine("            if (!result.TryAdd(key!, value!))");
             sb.AppendLine("                throw RpcGeneratedCodecWire.DataLoss(\"Generated dictionary contains a duplicate key.\");");
             sb.AppendLine("        }");

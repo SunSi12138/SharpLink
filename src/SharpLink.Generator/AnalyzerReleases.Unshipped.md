@@ -57,3 +57,4 @@
  SHARPLINK053 | SharpLink.Generator | Error | Static RPC method is unsupported
  SHARPLINK054 | SharpLink.Generator | Error | RPC contract member is unsupported
  SHARPLINK055 | SharpLink.Generator | Error | RPC contract must be publicly reachable
+ SHARPLINK056 | SharpLink.Generator | Error | Oneway RPC return type is invalid

@@ -339,6 +339,14 @@ public partial class RpcGenerator
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    private static readonly DiagnosticDescriptor InvalidOnewayReturnRule = new(
+        id: "SHARPLINK056",
+        title: "Oneway RPC Return Type Is Invalid",
+        messageFormat: "Oneway RPC method '{0}' is invalid: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     private static DiagnosticDescriptor AdapterRule(string id, string title)
         => new(
             id: id,

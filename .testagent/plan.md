@@ -1,10 +1,10 @@
-# 0.8.25 regression-test plan
+# 0.8.26 regression-test plan
 
-1. [x] Prove sanitized hint and nested generated-type identities collide.
-2. [x] Prove keyword method/parameter symbols emit invalid syntax or semantics.
-3. [x] Prove by-ref RPC signatures are accepted without a usable wire model.
-4. [x] Prove static abstract RPC methods are accepted without a valid generated implementation.
-5. [x] Prove abstract properties/indexers/events leave generated proxies incomplete.
-6. [x] Run the complete pre-fix Generator suite and record the exact failure set.
+1. [x] Prove invalid Oneway response/stream shapes are accepted.
+2. [x] Prove user parameters collide with generated Proxy locals.
+3. [x] Prove case-insensitive DTO member ambiguity crashes the Generator.
+4. [x] Prove generated dictionary null keys escape as a raw BCL exception path.
+5. [x] Prove non-public default interface helpers are emitted as RPC routes.
+6. [x] Complete the revised pre-fix Generator evidence after disproving the collection hypothesis.
 7. [x] Implement only proven fixes and review assertions/pseudo-mutations.
-8. [x] Run release, package, documentation, and performance gates; prepare the local 0.8.25 commit.
+8. [x] Run the exact-final-tree release/package gates and prepare the local 0.8.26 commit.

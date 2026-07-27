@@ -974,6 +974,161 @@ public interface IDefaultMemberContract : SharpLink.Sdk.IService
     }
 
     [Test]
+    public Task InvalidOnewayReturnShapesShouldReportSharplink056()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IInvalidOnewayContract : SharpLink.Sdk.IService
+{
+    [SharpLink.Sdk.Oneway]
+    Task<int> TaskResult(CancellationToken cancellationToken);
+
+    [SharpLink.Sdk.Oneway]
+    ValueTask<int> ValueTaskResult(CancellationToken cancellationToken);
+
+    [SharpLink.Sdk.Oneway]
+    IAsyncEnumerable<int> StreamResult(CancellationToken cancellationToken);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK056", 3);
+
+        var valid = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IValidOnewayContract : SharpLink.Sdk.IService
+{
+    [SharpLink.Sdk.Oneway]
+    Task Fire(CancellationToken cancellationToken);
+
+    [SharpLink.Sdk.Oneway]
+    ValueTask Send(CancellationToken cancellationToken);
+}
+""");
+        EnsureDoesNotHaveRule(valid, "SHARPLINK056");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task GeneratedProxyLocalsShouldNotCollideWithUserParameters()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface ILocalNameContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Invoke(
+        int __request,
+        int __request_,
+        IAsyncEnumerable<int> __streams,
+        IAsyncEnumerable<int> __streams_,
+        CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(!generated.Contains("        var __request =", StringComparison.Ordinal),
+            "generated request local must not shadow a user parameter");
+        Ensure(!generated.Contains("        var __request_ =", StringComparison.Ordinal),
+            "generated request local must skip chained user collisions");
+        Ensure(!generated.Contains("        var __streams =", StringComparison.Ordinal),
+            "generated streams local must not shadow a user parameter");
+        Ensure(!generated.Contains("        var __streams_ =", StringComparison.Ordinal),
+            "generated streams local must skip chained user collisions");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task CaseInsensitiveDtoMemberAmbiguityShouldReportSharplink012()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class AmbiguousCaseDto
+{
+    public string Name { get; set; } = string.Empty;
+    public string name { get; set; } = string.Empty;
+}
+""");
+
+        var diagnostics = RunGenerator(source);
+        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id == "CS8785"),
+            $"case-insensitive member names must not crash the Generator. Actual: {FormatDiagnostics(diagnostics)}");
+        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK012"),
+            $"an assignable DTO with case-distinct members should remain supported. Actual: {FormatDiagnostics(diagnostics)}");
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains("value.Name", StringComparison.Ordinal) &&
+               generated.Contains("value.name", StringComparison.Ordinal),
+            "both case-distinct members must remain in the generated Codec");
+
+        var ambiguousConstructor = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class AmbiguousConstructorDto
+{
+    public string Name { get; }
+    public string name { get; }
+
+    public AmbiguousConstructorDto(string NAME)
+    {
+        Name = NAME;
+        name = NAME;
+    }
+}
+""");
+        var constructorDiagnostics = RunGenerator(ambiguousConstructor);
+        Ensure(!constructorDiagnostics.Any(static diagnostic => diagnostic.Id == "CS8785"),
+            $"ambiguous constructor mapping must not crash the Generator. Actual: {FormatDiagnostics(constructorDiagnostics)}");
+        EnsureRuleCount(ambiguousConstructor, "SHARPLINK012", 1);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task GeneratedDictionaryReaderShouldRejectNullKeysAsDataLoss()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IDictionaryContract : SharpLink.Sdk.IService
+{
+    ValueTask<Dictionary<string, string>> Echo(
+        Dictionary<string, string> values,
+        CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains("Generated dictionary contains a null key.", StringComparison.Ordinal),
+            "generated dictionary readers must reject null keys before Dictionary.TryAdd");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task NonPublicDefaultInterfaceHelpersShouldNotBecomeRpcRoutes()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IHelperContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Invoke(int value, CancellationToken cancellationToken);
+
+    private ValueTask<int> Normalize(int value) => new(value);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(!generated.Contains(" Normalize(", StringComparison.Ordinal) &&
+               !generated.Contains(".Normalize(", StringComparison.Ordinal) &&
+               !generated.Contains("\"Normalize\"", StringComparison.Ordinal),
+            "non-public default interface helpers must not become generated routes");
+
+        var nonPublicAbstract = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface INonPublicAbstractContract : SharpLink.Sdk.IService
+{
+    protected abstract ValueTask<int> Hidden(int value, CancellationToken cancellationToken);
+}
+""");
+        EnsureRuleCount(nonPublicAbstract, "SHARPLINK054", 1);
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task ConflictingStaticMethodDescriptorsShouldReportSharplink022()
     {
         var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSdkSource());

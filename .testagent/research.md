@@ -1,21 +1,22 @@
-# 0.8.25 regression-test research
+# 0.8.26 regression-test research
 
 ## Target inventory and evidence candidates
 
-- Sanitizing fully-qualified contract names by replacing every punctuation character with `_` can produce duplicate Roslyn hint names; nested contracts with the same simple name also emit colliding top-level Proxy/Stub/helper types.
-- C# keyword method and parameter names lose their source escape marker in Roslyn symbols and are emitted as invalid syntax or the wrong `default` expression.
-- `ref`, `out`, `in`, and by-ref return signatures pass RPC method analysis even though the wire model and generated implementation cannot represent them.
-- Static abstract interface RPC methods pass ordinary-method analysis but generated instance proxies cannot implement them.
-- Abstract properties, indexers, and events on an RPC contract are silently ignored, leaving generated proxies incomplete.
+- `[Oneway]` accepts payload-returning Task/ValueTask and streaming returns, producing uncompilable or descriptor/invoker-mismatched code.
+- User parameters named `__request` or `__streams` collide with generated Proxy locals.
+- DTOs with public members differing only by case crash constructor analysis in `ToDictionary(StringComparer.OrdinalIgnoreCase)` instead of reporting a stable construction diagnostic.
+- Generated dictionary readers pass a null reference key to `Dictionary.TryAdd`, leaking raw `ArgumentNullException` instead of structured `DataLoss`.
+- Non-public default interface helper methods are modeled as RPC routes, producing inaccessible Stub calls and unintended Manifest entries.
 
 ## Acceptance checklist
 
-- Hint names are collision-resistant and public nested contracts receive deterministic unique generated peer names.
-- Every emitted source identifier is escaped without changing the raw contract/member identity used for hashes and Manifests.
-- Unsupported by-ref, static abstract, property, indexer, and event surfaces produce stable compile-time errors and suppress incomplete artifacts.
-- Existing top-level generated type names and valid instance method output remain source-compatible.
-- Generator latency and allocation show no material regression.
+- Oneway routes accept only non-generic Task/ValueTask returns and never stream responses.
+- Generated method locals are deterministically unique against every user parameter.
+- Case-distinct DTO members remain supported; exact constructor-name matches win, while ambiguous case-insensitive fallback produces normal constructor analysis rather than a generator crash.
+- Null dictionary keys report generated `DataLoss` before entering BCL collection code.
+- Non-public default helper methods are ignored; non-public abstract methods are diagnosed instead of leaving an incomplete proxy.
+- Valid paths show no material Generator or runtime regression.
 
 ## Audit guardrails
 
-The native unmanaged fallback remains a real ABI/padding risk, but changing it would alter existing native wire behavior and requires a separately designed migration. It is retained as an open audit candidate rather than being forced into this batch.
+The proposed collection-count change was explicitly disproved: nested generated items use fixed UInt32 length prefixes, so the existing four-byte structural lower bound is correct. That probe and code change were removed and do not count. Direct string wire and unmanaged ABI/padding remain separately queued because changing them requires a versioned design.

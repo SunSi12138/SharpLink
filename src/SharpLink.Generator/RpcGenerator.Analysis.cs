@@ -182,6 +182,7 @@ public partial class RpcGenerator
         var list = ImmutableArray.CreateBuilder<InvalidRpcMethodModel>();
         foreach (var method in GetContractMethods(symbol))
         {
+            var isOneWay = false;
             if (method.IsStatic)
             {
                 list.Add(new InvalidRpcMethodModel(
@@ -208,6 +209,8 @@ public partial class RpcGenerator
             }
             foreach (var attribute in method.GetAttributes())
             {
+                if (IsOnewayAttribute(attribute))
+                    isOneWay = true;
                 if (!IsTimeoutAttribute(attribute))
                     continue;
                 if (TryGetTimeoutSeconds(attribute, out var seconds) &&
@@ -219,6 +222,14 @@ public partial class RpcGenerator
                         detail,
                         attribute.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? method.Locations.FirstOrDefault()));
                 }
+            }
+            if (isOneWay && !IsValidOnewayReturnType(method.ReturnType))
+            {
+                list.Add(new InvalidRpcMethodModel(
+                    InvalidRpcMethodKind.OnewayReturn,
+                    method.Name,
+                    "only non-generic Task or ValueTask returns are supported",
+                    method.Locations.FirstOrDefault()));
             }
         }
 
@@ -475,7 +486,17 @@ public partial class RpcGenerator
                 m.Parameters.Count(IsCallOptionsParameter) > 1 ||
                 !HasValidControlParameterOrder(m) ||
                 m.Parameters.Count(p => IsAsyncEnumerable(p.Type, out _)) > sbyte.MaxValue ||
-                HasInvalidTimeout(m));
+                HasInvalidMethodAttributes(m));
+    }
+
+    private static bool IsValidOnewayReturnType(ITypeSymbol type)
+    {
+        if (type is not INamedTypeSymbol { Arity: 0 } named ||
+            named.ContainingNamespace.ToDisplayString() != "System.Threading.Tasks")
+        {
+            return false;
+        }
+        return named.Name is "Task" or "ValueTask";
     }
 
     private static bool HasByReferenceSignature(IMethodSymbol method)
@@ -499,7 +520,7 @@ public partial class RpcGenerator
         {
             foreach (var member in contract.GetMembers())
             {
-                if (member is not (IPropertySymbol { IsAbstract: true } or IEventSymbol { IsAbstract: true }) ||
+                if (!IsUnsupportedAbstractContractMember(member) ||
                     !(seen ??= new HashSet<ISymbol>(SymbolEqualityComparer.Default)).Add(member.OriginalDefinition))
                 {
                     continue;
@@ -507,9 +528,12 @@ public partial class RpcGenerator
                 diagnostics.Add(new InvalidRpcMethodModel(
                     InvalidRpcMethodKind.ContractMember,
                     GetContractMemberName(member),
-                    member is IEventSymbol
-                        ? "abstract events cannot be implemented by an RPC proxy"
-                        : "abstract properties and indexers cannot be represented as RPC routes",
+                    member switch
+                    {
+                        IEventSymbol => "abstract events cannot be implemented by an RPC proxy",
+                        IMethodSymbol => "non-public abstract methods cannot be exposed as RPC routes",
+                        _ => "abstract properties and indexers cannot be represented as RPC routes"
+                    },
                     member.Locations.FirstOrDefault()));
             }
         }
@@ -531,7 +555,7 @@ public partial class RpcGenerator
     {
         foreach (var member in contract.GetMembers())
         {
-            if (member is IPropertySymbol { IsAbstract: true } or IEventSymbol { IsAbstract: true })
+            if (IsUnsupportedAbstractContractMember(member))
                 return true;
         }
         return false;
@@ -539,6 +563,15 @@ public partial class RpcGenerator
 
     private static string GetContractMemberName(ISymbol member)
         => member is IPropertySymbol { IsIndexer: true } ? "this[]" : member.Name;
+
+    private static bool IsUnsupportedAbstractContractMember(ISymbol member)
+        => member is IPropertySymbol { IsAbstract: true } or IEventSymbol { IsAbstract: true } ||
+           member is IMethodSymbol
+           {
+               MethodKind: MethodKind.Ordinary,
+               IsAbstract: true,
+               DeclaredAccessibility: not Accessibility.Public
+           };
 
     private static bool HasGenericContainingType(INamedTypeSymbol symbol)
     {
@@ -560,18 +593,21 @@ public partial class RpcGenerator
         return true;
     }
 
-    private static bool HasInvalidTimeout(IMethodSymbol method)
+    private static bool HasInvalidMethodAttributes(IMethodSymbol method)
     {
+        var isOneWay = false;
         foreach (var attribute in method.GetAttributes())
         {
-            if (IsTimeoutAttribute(attribute) &&
+            if (IsOnewayAttribute(attribute))
+                isOneWay = true;
+            else if (IsTimeoutAttribute(attribute) &&
                 TryGetTimeoutSeconds(attribute, out var seconds) &&
                 !TryValidateTimeoutSeconds(seconds, out _))
             {
                 return true;
             }
         }
-        return false;
+        return isOneWay && !IsValidOnewayReturnType(method.ReturnType);
     }
 
     private static bool HasTypeParameter(ITypeSymbol type)
@@ -617,7 +653,8 @@ public partial class RpcGenerator
     {
         var methods = new List<IMethodSymbol>();
         foreach (var method in symbol.GetMembers().OfType<IMethodSymbol>()
-                     .Where(static method => method.MethodKind == MethodKind.Ordinary))
+                     .Where(static method => method.MethodKind == MethodKind.Ordinary &&
+                                             method.DeclaredAccessibility == Accessibility.Public))
         {
             methods.Add(method);
         }
@@ -627,7 +664,8 @@ public partial class RpcGenerator
                      .OrderBy(static contract => contract.ToDisplayString(), StringComparer.Ordinal)
                      .SelectMany(static contract => contract.GetMembers()
                          .OfType<IMethodSymbol>()
-                         .Where(static method => method.MethodKind == MethodKind.Ordinary)))
+                         .Where(static method => method.MethodKind == MethodKind.Ordinary &&
+                                                 method.DeclaredAccessibility == Accessibility.Public)))
         {
             if (!methods.Any(existing => HasSameContractSignature(existing, method)))
                 methods.Add(method);

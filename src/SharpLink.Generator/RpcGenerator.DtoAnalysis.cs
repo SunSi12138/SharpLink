@@ -600,7 +600,7 @@ public partial class RpcGenerator
 
             var memberByName = members.ToDictionary(
                 static member => member.Symbol.Name,
-                StringComparer.OrdinalIgnoreCase);
+                StringComparer.Ordinal);
             foreach (var constructor in type.InstanceConstructors
                          .Where(IsConstructorAccessible)
                          .OrderBy(static constructor => constructor.Parameters.Length)
@@ -611,7 +611,7 @@ public partial class RpcGenerator
                 foreach (var parameter in constructor.Parameters)
                 {
                     if (parameter.Name is null ||
-                        !memberByName.TryGetValue(parameter.Name, out var member) ||
+                        !TryGetConstructorMember(parameter.Name, out var member) ||
                         !SymbolEqualityComparer.Default.Equals(parameter.Type, member.Type))
                     {
                         valid = false;
@@ -630,6 +630,27 @@ public partial class RpcGenerator
 
             constructorMembers = [];
             return false;
+
+            bool TryGetConstructorMember(string parameterName, out AnalyzedMember member)
+            {
+                if (memberByName.TryGetValue(parameterName, out member!))
+                    return true;
+
+                AnalyzedMember? candidate = null;
+                foreach (var current in members)
+                {
+                    if (!string.Equals(current.Symbol.Name, parameterName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (candidate is not null)
+                    {
+                        member = null!;
+                        return false;
+                    }
+                    candidate = current;
+                }
+                member = candidate!;
+                return candidate is not null;
+            }
         }
 
         private bool IsConstructorAccessible(IMethodSymbol constructor)

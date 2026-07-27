@@ -72,7 +72,8 @@ internal enum InvalidRpcMethodKind
     Timeout,
     ByReference,
     Static,
-    ContractMember
+    ContractMember,
+    OnewayReturn
 }
 internal readonly record struct InvalidCancellationTokenMethodModel(string MethodName, Location? Location);
 internal readonly record struct InvalidCallOptionsMethodModel(string MethodName, Location? Location);
