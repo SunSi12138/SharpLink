@@ -4,6 +4,26 @@
 
 ## [Unreleased]
 
+## [0.8.36] - 2026-07-27
+
+### Fixed
+
+- Server call admission publishes the global active count before its final Running-state check, so Stop cannot observe a completed drain and then admit a racing request; rejected races roll back both counters.
+- Server Stop now joins connection-scoped asynchronous service cleanup for connections with no remaining calls, while preserving bounded deferred cleanup for explicitly uncooperative calls.
+- Performance-profile queue defaults apply only when `MaxSendQueueBytes` was never assigned, preserving an explicit 8 MiB value under LowLatency or Throughput.
+- Protocol v2 handshake response writers and readers reject compression capability/profile mismatches at the public codec boundary.
+
+### Changed
+
+- Removed the unusable `SharpLinkCallOptions.EnableCompression` member. Compression remains automatic after Client/Server provider negotiation and continues to obey runtime payload and savings thresholds.
+
+### Compatibility and validation
+
+- Valid Protocol v2 payloads and route hashes are unchanged. Code that initialized `EnableCompression` must remove that initializer and configure providers through `UseRuntime`; invalid handshake responses now fail at their codec trust boundary.
+- Pre-fix Unit preserved all 479 existing passes and failed only four new probes; Integration preserved all 239 existing passes and failed only the new cleanup-join probe.
+- The exact 0.8.35 admission/release hot-path baseline and 0.8.36 candidate both allocate zero. Median-of-process medians measured 5.1399 -> 5.1706 ns (+0.60%), within the 5% no-regression gate.
+- Non-incremental Release build, Generator 108/108, Unit 483/483, Integration 240/240, 120-second shared-memory Chaos, NativeAOT, and seven-package pre-commit pack passed.
+
 ## [0.8.35] - 2026-07-27
 
 ### Fixed

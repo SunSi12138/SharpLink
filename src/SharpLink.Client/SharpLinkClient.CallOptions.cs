@@ -16,13 +16,6 @@ internal sealed partial class SharpLinkClient
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(optionTimeout, TimeSpan.Zero);
         if (methodTimeout is { } configuredMethodTimeout)
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(configuredMethodTimeout, TimeSpan.Zero);
-        if (options.EnableCompression)
-        {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.Unimplemented,
-                "Request compression is not available until a compression capability is registered.");
-        }
-
         var now = DateTimeOffset.UtcNow;
         DateTimeOffset? deadline = null;
         AddDeadlineCandidate(ref deadline, options.Deadline);

@@ -124,7 +124,7 @@ public class ProtocolV2Tests
         var responsePayload = new PooledByteBufferWriter();
         var response = new ProtocolV2HandshakeResponse(
             0,
-            ProtocolV2Capabilities.FlowControl,
+            ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.Compression,
             1024 * 1024,
             512 * 1024,
             8 * 1024 * 1024,
@@ -133,6 +133,68 @@ public class ProtocolV2Tests
         var decodedResponse = ProtocolV2PayloadCodec.ReadHandshakeResponse(
             new ReadOnlySequence<byte>(responsePayload.WrittenMemory), Limits);
         Ensure(decodedResponse == response, "handshake response round-trip");
+    }
+
+    [Test]
+    public void HandshakeResponseShouldRequireCompressionCapabilityAndProfileTogether()
+    {
+        var withoutCapability = new ProtocolV2HandshakeResponse(
+            ProtocolV2Constants.MinorVersion,
+            ProtocolV2Capabilities.FlowControl,
+            4 * 1024 * 1024,
+            1024 * 1024,
+            16 * 1024 * 1024,
+            "brotli");
+        var withoutProfile = withoutCapability with
+        {
+            NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.Compression,
+            CompressionProfile = null
+        };
+
+        var writeProfileWithoutCapability = CaptureException(() =>
+            ProtocolV2PayloadCodec.WriteHandshakeResponse(new PooledByteBufferWriter(), withoutCapability));
+        var writeCapabilityWithoutProfile = CaptureException(() =>
+            ProtocolV2PayloadCodec.WriteHandshakeResponse(new PooledByteBufferWriter(), withoutProfile));
+
+        var coherentPayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeResponse(
+            coherentPayload,
+            withoutCapability with
+            {
+                NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.Compression
+            });
+        var profileWithoutCapabilityBytes = coherentPayload.WrittenMemory.ToArray();
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            profileWithoutCapabilityBytes.AsSpan(sizeof(ushort), sizeof(ulong)),
+            (ulong)ProtocolV2Capabilities.FlowControl);
+        var readProfileWithoutCapability = CaptureException(() =>
+            ProtocolV2PayloadCodec.ReadHandshakeResponse(
+                new ReadOnlySequence<byte>(profileWithoutCapabilityBytes), Limits));
+
+        var capabilityWithoutProfilePayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeResponse(
+            capabilityWithoutProfilePayload,
+            withoutCapability with
+            {
+                NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl,
+                CompressionProfile = null
+            });
+        var capabilityWithoutProfileBytes = capabilityWithoutProfilePayload.WrittenMemory.ToArray();
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            capabilityWithoutProfileBytes.AsSpan(sizeof(ushort), sizeof(ulong)),
+            (ulong)(ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.Compression));
+        var readCapabilityWithoutProfile = CaptureException(() =>
+            ProtocolV2PayloadCodec.ReadHandshakeResponse(
+                new ReadOnlySequence<byte>(capabilityWithoutProfileBytes), Limits));
+
+        Ensure(writeProfileWithoutCapability is ArgumentException,
+            "the writer must reject a compression profile without the negotiated capability");
+        Ensure(writeCapabilityWithoutProfile is ArgumentException,
+            "the writer must reject negotiated compression without a selected profile");
+        Ensure(readProfileWithoutCapability is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation },
+            "the reader must reject a compression profile without the negotiated capability");
+        Ensure(readCapabilityWithoutProfile is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation },
+            "the reader must reject negotiated compression without a selected profile");
     }
 
     [Test]

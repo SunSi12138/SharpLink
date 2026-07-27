@@ -3,6 +3,42 @@ namespace SharpLink.IntegrationTests;
 public sealed class ServiceLifetimeIntegrationTests
 {
     [Test]
+    [NotInParallel]
+    public async Task ServerStopShouldJoinConnectionServiceCleanup()
+    {
+        BlockingConnectionCleanupProbe.Reset();
+        using var serverCancellation = new CancellationTokenSource();
+        var builder = SharpLinkServerBuilder.Create()
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
+        var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
+        await using var server = builder.Build();
+        var serverTask = server.RunAsync(serverCancellation.Token).AsTask();
+        await using var client = CreateClient(port);
+        await client.ConnectAsync();
+        _ = await client.Get<IBlockingConnectionCleanupProbe>().ActivateAsync();
+
+        var stop = server.StopAsync(TimeSpan.FromSeconds(2)).AsTask();
+        await BlockingConnectionCleanupProbe.DisposeStarted.WaitAsync(TimeSpan.FromSeconds(2));
+        try
+        {
+            await Task.Delay(50);
+            Ensure(!stop.IsCompleted,
+                "Server Stop must not complete while an owned connection service is still disposing");
+        }
+        finally
+        {
+            BlockingConnectionCleanupProbe.ReleaseDispose();
+        }
+
+        await stop.WaitAsync(TimeSpan.FromSeconds(2));
+        await serverCancellation.CancelAsync();
+        await IgnoreStopAsync(serverTask);
+        Ensure(BlockingConnectionCleanupProbe.DisposeCount == 1,
+            "connection service cleanup must complete exactly once before Stop returns");
+    }
+
+    [Test]
     public async Task ConnectionLifetimeShouldReusePerConnectionAndDisposeOnDisconnect()
     {
         ConnectionLifetimeProbe.Reset();
@@ -241,6 +277,45 @@ public interface IConnectionLifetimeProbe : IService
 {
     [NonCancellable]
     ValueTask<int> GetInstanceIdAsync();
+}
+
+[RpcContract]
+public interface IBlockingConnectionCleanupProbe : IService
+{
+    [NonCancellable]
+    ValueTask<int> ActivateAsync();
+}
+
+[RpcService(Lifetime = SharpLinkServiceLifetime.Connection)]
+public sealed class BlockingConnectionCleanupProbe : IBlockingConnectionCleanupProbe, IAsyncDisposable
+{
+    private static TaskCompletionSource _disposeStarted = NewSignal();
+    private static TaskCompletionSource _disposeRelease = NewSignal();
+    private static int _disposeCount;
+
+    internal static Task DisposeStarted => Volatile.Read(ref _disposeStarted).Task;
+    internal static int DisposeCount => Volatile.Read(ref _disposeCount);
+
+    internal static void Reset()
+    {
+        Volatile.Write(ref _disposeStarted, NewSignal());
+        Volatile.Write(ref _disposeRelease, NewSignal());
+        Volatile.Write(ref _disposeCount, 0);
+    }
+
+    internal static void ReleaseDispose() => Volatile.Read(ref _disposeRelease).TrySetResult();
+
+    public ValueTask<int> ActivateAsync() => ValueTask.FromResult(1);
+
+    public async ValueTask DisposeAsync()
+    {
+        Interlocked.Increment(ref _disposeCount);
+        Volatile.Read(ref _disposeStarted).TrySetResult();
+        await Volatile.Read(ref _disposeRelease).Task.ConfigureAwait(false);
+    }
+
+    private static TaskCompletionSource NewSignal()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
 
 [RpcService(Lifetime = SharpLinkServiceLifetime.Connection)]

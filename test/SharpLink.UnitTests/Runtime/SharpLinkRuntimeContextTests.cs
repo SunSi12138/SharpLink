@@ -63,6 +63,22 @@ public class SharpLinkRuntimeContextTests
     }
 
     [Test]
+    public void PerformanceProfilesShouldPreserveAnExplicitDefaultValuedQueue()
+    {
+        const int explicitlyConfiguredQueueBytes = 8 * 1024 * 1024;
+        var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options =>
+            {
+                options.PerformanceProfile = SharpLinkPerformanceProfile.Throughput;
+                options.FlowControl.MaxSendQueueBytes = explicitlyConfiguredQueueBytes;
+            })
+            .Build();
+
+        Ensure(context.Options.FlowControl.MaxSendQueueBytes == explicitlyConfiguredQueueBytes,
+            "an explicit queue value must take precedence over a profile default even when it equals the nominal default");
+    }
+
+    [Test]
     public void BuiltInCodecShouldBeImmutable()
     {
         try

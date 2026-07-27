@@ -6,6 +6,15 @@ namespace SharpLink.UnitTests.Abstractions;
 public class SharpLinkCallOptionsTests
 {
     [Test]
+    public void CallOptionsShouldNotExposeAnUnusableCompressionSwitch()
+    {
+        var property = typeof(SharpLinkCallOptions).GetProperty("EnableCompression");
+
+        Ensure(property is null,
+            "compression is negotiated and applied automatically, so call options must not expose a switch that always fails");
+    }
+
+    [Test]
     public void MetadataShouldBeImmutableAndPreserveInsertionOrder()
     {
         var entries = new[]

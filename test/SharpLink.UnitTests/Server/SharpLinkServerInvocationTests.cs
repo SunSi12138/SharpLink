@@ -1,12 +1,106 @@
 using Microsoft.Extensions.DependencyInjection;
 using SharpLink.Server;
+using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Threading;
 
 namespace SharpLink.UnitTests.Server;
 
 public class SharpLinkServerInvocationTests
 {
+    [Test]
+    [NotInParallel]
+    public async Task CallAdmissionShouldNotCrossTheServerDrainBoundary()
+    {
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .DisableAutomaticServiceRegistration()
+            .UseTransport(new IdleListener())
+            .Build();
+        var input = new System.IO.Pipelines.Pipe();
+        var output = new System.IO.Pipelines.Pipe();
+        await using var session = new RpcSession(
+            "admission-drain-race",
+            input.Reader,
+            output.Writer,
+            static () => { },
+            static () => true);
+        var connection = new ServerConnectionState(
+            session,
+            new RuntimeConcurrencyOptions(),
+            CancellationToken.None);
+        Ensure(connection.MarkReady(null), "connection ready");
+
+        var tryAcquire = CreatePrivateCall<Func<SharpLinkServer, ServerConnectionState, int>>(
+            typeof(SharpLinkServer).GetMethod(
+                "TryAcquireCall",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Server call admission path"));
+        var setState = CreateVolatileInt32Setter<SharpLinkServer>("_state");
+        var globalActiveCalls = typeof(SharpLinkServer).GetField(
+            "_globalActiveCalls",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find global active-call counter");
+        var connectionActiveCalls = typeof(ServerConnectionState).GetField(
+            "_activeCalls",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find connection active-call counter");
+
+        const int running = 2;
+        const int draining = 3;
+        const int acquired = 0;
+        const int delayVariants = 96;
+        const int iterationsPerDelay = 2_000;
+        using var phase = new Barrier(2);
+        var admissionResult = -1;
+        var witnessedLateAdmission = false;
+        var worker = new Thread(() =>
+        {
+            for (var delay = 0; delay < delayVariants; delay++)
+            {
+                for (var iteration = 0; iteration < iterationsPerDelay; iteration++)
+                {
+                    phase.SignalAndWait();
+                    admissionResult = tryAcquire(server, connection);
+                    phase.SignalAndWait();
+                }
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "SharpLink admission/drain race probe"
+        };
+        worker.Start();
+
+        for (var delay = 0; delay < delayVariants; delay++)
+        {
+            for (var iteration = 0; iteration < iterationsPerDelay; iteration++)
+            {
+                setState(server, running);
+                globalActiveCalls.SetValue(server, 0);
+                connectionActiveCalls.SetValue(connection, 0);
+                admissionResult = -1;
+                phase.SignalAndWait();
+                Thread.SpinWait(delay);
+                setState(server, draining);
+                var drainObservedZeroCalls = (int)globalActiveCalls.GetValue(server)! == 0;
+                phase.SignalAndWait();
+                if (drainObservedZeroCalls && admissionResult == acquired)
+                    witnessedLateAdmission = true;
+            }
+        }
+        worker.Join();
+
+        globalActiveCalls.SetValue(server, 0);
+        connectionActiveCalls.SetValue(connection, 0);
+        setState(server, draining);
+        Ensure(!witnessedLateAdmission,
+            "Stop observed zero active calls but a racing request was still admitted after the drain boundary");
+        Ensure((int)globalActiveCalls.GetValue(server)! == 0, "global active-call counter rollback");
+        Ensure(connection.ActiveCalls == 0, "connection active-call counter rollback");
+        await connection.CloseAsync();
+    }
+
     [Test]
     public async Task FailedInvocationShouldPreserveLeaseCleanupFailure()
     {
@@ -70,6 +164,44 @@ public class SharpLinkServerInvocationTests
             return false;
         }
         return exception.InnerException is { } nested && ContainsMessage(nested, message);
+    }
+
+    private static TDelegate CreatePrivateCall<TDelegate>(MethodInfo method)
+        where TDelegate : Delegate
+    {
+        var invoke = typeof(TDelegate).GetMethod("Invoke")!;
+        var parameters = invoke.GetParameters().Select(static parameter => parameter.ParameterType).ToArray();
+        var dynamicMethod = new DynamicMethod(
+            $"Call_{method.Name}",
+            invoke.ReturnType,
+            parameters,
+            typeof(SharpLinkServerInvocationTests).Module,
+            skipVisibility: true);
+        var generator = dynamicMethod.GetILGenerator();
+        for (var index = 0; index < parameters.Length; index++)
+            generator.Emit(OpCodes.Ldarg, index);
+        generator.Emit(OpCodes.Call, method);
+        generator.Emit(OpCodes.Ret);
+        return dynamicMethod.CreateDelegate<TDelegate>();
+    }
+
+    private static Action<TTarget, int> CreateVolatileInt32Setter<TTarget>(string fieldName)
+    {
+        var field = typeof(TTarget).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception($"cannot find field {fieldName}");
+        var dynamicMethod = new DynamicMethod(
+            $"Set_{fieldName}",
+            typeof(void),
+            [typeof(TTarget), typeof(int)],
+            typeof(SharpLinkServerInvocationTests).Module,
+            skipVisibility: true);
+        var generator = dynamicMethod.GetILGenerator();
+        generator.Emit(OpCodes.Ldarg_0);
+        generator.Emit(OpCodes.Ldarg_1);
+        generator.Emit(OpCodes.Volatile);
+        generator.Emit(OpCodes.Stfld, field);
+        generator.Emit(OpCodes.Ret);
+        return dynamicMethod.CreateDelegate<Action<TTarget, int>>();
     }
 
     private static void Ensure(bool condition, string message)

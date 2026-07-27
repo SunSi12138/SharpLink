@@ -23,7 +23,4 @@ public readonly record struct SharpLinkCallOptions
 
     /// <summary>Gets whether the call waits asynchronously for a ready connection.</summary>
     public bool WaitForReady { get; init; }
-
-    /// <summary>Gets whether payload compression is requested.</summary>
-    public bool EnableCompression { get; init; }
 }

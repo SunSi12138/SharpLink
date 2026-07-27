@@ -261,7 +261,7 @@ internal sealed partial class SharpLinkServer
         finally
         {
             if (added)
-                _ = CompleteRetiredConnectionCleanupAsync(connection);
+                ObserveRetiredConnectionCleanup(connection);
         }
     }
 
@@ -276,8 +276,15 @@ internal sealed partial class SharpLinkServer
         finally
         {
             if (added)
-                _ = CompleteRetiredConnectionCleanupAsync(connection);
+                ObserveRetiredConnectionCleanup(connection);
         }
+    }
+
+    private void ObserveRetiredConnectionCleanup(ServerConnectionState connection)
+    {
+        var cleanup = CompleteRetiredConnectionCleanupAsync(connection);
+        if (connection.ActiveCalls == 0)
+            TrackFrameworkTask(cleanup);
     }
 
     private async Task CompleteRetiredConnectionCleanupAsync(ServerConnectionState connection)

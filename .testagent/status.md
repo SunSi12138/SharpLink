@@ -1,17 +1,17 @@
-# 0.8.35 test status
+# 0.8.36 test status
 
 ## Evidence status
 
-- Five version-advancing P2 findings and two follow-up P2 findings have pre-fix runtime evidence.
-- Post-fix Unit is 479/479 and Integration is 239/239.
-- Compiled shared-memory and TCP rolling-restart probes pass with zero unexpected failures and zero Client/Server Errors.
-- Server injected-error gate exits 2; unwritable requested-report gate exits 6.
-- Three-process A/B allocation is 6,536 -> 6,168 B/Build with no latency regression.
-
-## Remaining final gate
-
-- Pack all seven packages, verify exact embedded commit after commit, and run fresh-cache package smoke.
-- Final non-incremental build is 0 warnings/errors; Generator 108/108, Unit 479/479, Integration 239/239.
-- Final 120-second Chaos passed with 818,793 successes, 302,335 expected failures, 11 restarts, no unexpected failures or Client/Server Errors, successful drain, and five zero active metrics.
-- Client/Server Error injection and unwritable-report exit probes passed; NativeAOT printed `AOT_SMOKE_PASS transport=tcp`.
+- Pre-fix Unit was 479 existing passes plus exactly four new failures (483 total).
+- Pre-fix Integration was 239 existing passes plus exactly one new failure (240 total).
+- The bounded 192,000-schedule race probe witnessed admission after drain in about 0.47 seconds.
+- Post-fix Unit is 483/483 and Integration is 240/240.
+- A first three-state-read admission fix was rejected at +6.4%. The final exact-baseline A/B is
+  5.1399 -> 5.1706 ns by median of three process medians (+0.60%), with 0 B for both.
 - Consecutive complete audit rounds without a new improvement remain 0/3.
+
+## Current gate
+
+- Run exact-final non-incremental build, Generator/Unit/Integration, Chaos, NativeAOT, seven-package
+  pack, exact commit metadata verification, and fresh-cache package smoke.
+- Commit 0.8.36 locally, then resume whole-framework audit with the clean-round count still 0/3.

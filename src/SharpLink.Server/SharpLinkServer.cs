@@ -659,18 +659,18 @@ internal sealed partial class SharpLinkServer(
                 : ServerCallAdmissionResult.Unavailable;
         }
 
-        if (CurrentState != ServerState.Running)
+        if (Interlocked.Increment(ref _globalActiveCalls) > _globalMaxConcurrentCalls)
         {
+            Interlocked.Decrement(ref _globalActiveCalls);
             connection.ReleaseCall();
-            return ServerCallAdmissionResult.Unavailable;
+            return ServerCallAdmissionResult.CapacityExhausted;
         }
 
-        if (Interlocked.Increment(ref _globalActiveCalls) <= _globalMaxConcurrentCalls)
+        if (CurrentState == ServerState.Running)
             return ServerCallAdmissionResult.Acquired;
 
-        Interlocked.Decrement(ref _globalActiveCalls);
-        connection.ReleaseCall();
-        return ServerCallAdmissionResult.CapacityExhausted;
+        ReleaseCall(connection);
+        return ServerCallAdmissionResult.Unavailable;
     }
 
     private bool TryAcceptRequest(ServerConnectionState connection, long requestId)

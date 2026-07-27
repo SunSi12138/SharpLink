@@ -107,6 +107,7 @@ public static class ProtocolV2PayloadCodec
     {
         ArgumentNullException.ThrowIfNull(writer);
         ValidateKnownCapabilities(response.NegotiatedCapabilities, nameof(response));
+        ValidateOutboundCompressionSelection(response);
         ValidatePeerLimits(response.MaxFramePayloadBytes, response.StreamReceiveWindowBytes,
             response.ConnectionReceiveWindowBytes);
         WriteUInt16(writer, response.MinorVersion);
@@ -152,13 +153,15 @@ public static class ProtocolV2PayloadCodec
         var negotiatedCapabilities = (ProtocolV2Capabilities)unchecked((ulong)capabilitiesBits);
         if ((negotiatedCapabilities & ~KnownCapabilities) != 0)
             throw ProtocolV2FrameParser.Violation("HandshakeResponse negotiated unknown capabilities.");
-        return new ProtocolV2HandshakeResponse(
+        var response = new ProtocolV2HandshakeResponse(
             unchecked((ushort)minorBits),
             negotiatedCapabilities,
             maxFrame,
             streamWindow,
             connectionWindow,
             profile);
+        ValidateInboundCompressionSelection(response);
+        return response;
     }
 
     private static void ValidateKnownCapabilities(
@@ -167,6 +170,29 @@ public static class ProtocolV2PayloadCodec
     {
         if ((capabilities & ~KnownCapabilities) != 0)
             throw new ArgumentOutOfRangeException(parameterName, "Handshake capabilities contain unknown bits.");
+    }
+
+    private static void ValidateOutboundCompressionSelection(
+        in ProtocolV2HandshakeResponse response)
+    {
+        var negotiated =
+            (response.NegotiatedCapabilities & ProtocolV2Capabilities.Compression) != 0;
+        if (negotiated == (response.CompressionProfile is not null))
+            return;
+        throw new ArgumentException(
+            "Negotiated compression and its selected profile must either both be present or both be absent.",
+            nameof(response));
+    }
+
+    private static void ValidateInboundCompressionSelection(
+        in ProtocolV2HandshakeResponse response)
+    {
+        var negotiated =
+            (response.NegotiatedCapabilities & ProtocolV2Capabilities.Compression) != 0;
+        if (negotiated == (response.CompressionProfile is not null))
+            return;
+        throw ProtocolV2FrameParser.Violation(
+            "HandshakeResponse compression capability and selected profile are inconsistent.");
     }
 
     private static void ValidateCompressionProfiles(ReadOnlySpan<string> profiles)

@@ -16,11 +16,23 @@ public enum SharpLinkPerformanceProfile
 /// <summary>Configures bounded buffering and call concurrency for one runtime context.</summary>
 public sealed class SharpLinkFlowControlOptions
 {
+    private const int DefaultMaxSendQueueBytes = 8 * 1024 * 1024;
+    private int _maxSendQueueBytes = DefaultMaxSendQueueBytes;
+    private bool _maxSendQueueBytesConfigured;
+
     /// <summary>The hard maximum active Server calls on one physical connection.</summary>
     public const int MaximumConcurrentCallsPerConnection = 1024 * 1024;
 
     /// <summary>Gets or sets the maximum queued outbound bytes.</summary>
-    public int MaxSendQueueBytes { get; set; } = 8 * 1024 * 1024;
+    public int MaxSendQueueBytes
+    {
+        get => _maxSendQueueBytes;
+        set
+        {
+            _maxSendQueueBytes = value;
+            _maxSendQueueBytesConfigured = true;
+        }
+    }
 
     /// <summary>Gets or sets the initial receive window for one stream.</summary>
     public int StreamReceiveWindowBytes { get; set; } = 1024 * 1024;
@@ -50,13 +62,26 @@ public sealed class SharpLinkFlowControlOptions
     internal SharpLinkFlowControlOptions CloneValidated()
     {
         Validate();
-        return new SharpLinkFlowControlOptions
+        var clone = new SharpLinkFlowControlOptions
         {
-            MaxSendQueueBytes = MaxSendQueueBytes,
             StreamReceiveWindowBytes = StreamReceiveWindowBytes,
             ConnectionReceiveWindowBytes = ConnectionReceiveWindowBytes,
             MaxConcurrentCallsPerConnection = MaxConcurrentCallsPerConnection
         };
+        clone._maxSendQueueBytes = _maxSendQueueBytes;
+        clone._maxSendQueueBytesConfigured = _maxSendQueueBytesConfigured;
+        return clone;
+    }
+
+    internal bool HasConfiguredMaxSendQueueBytes => _maxSendQueueBytesConfigured;
+
+    internal void CopySnapshotTo(SharpLinkFlowControlOptions destination)
+    {
+        destination._maxSendQueueBytes = _maxSendQueueBytes;
+        destination._maxSendQueueBytesConfigured = _maxSendQueueBytesConfigured;
+        destination.StreamReceiveWindowBytes = StreamReceiveWindowBytes;
+        destination.ConnectionReceiveWindowBytes = ConnectionReceiveWindowBytes;
+        destination.MaxConcurrentCallsPerConnection = MaxConcurrentCallsPerConnection;
     }
 }
 
@@ -100,7 +125,7 @@ public sealed class SharpLinkRuntimeOptions
         SharpLinkFlowControlOptions options,
         SharpLinkPerformanceProfile profile)
     {
-        if (options.MaxSendQueueBytes != 8 * 1024 * 1024)
+        if (options.HasConfiguredMaxSendQueueBytes)
             return options;
 
         options.MaxSendQueueBytes = profile switch
@@ -123,12 +148,7 @@ public sealed class SharpLinkRuntimeOptions
     }
 
     private static void CopyFlowControl(SharpLinkFlowControlOptions source, SharpLinkFlowControlOptions destination)
-    {
-        destination.MaxSendQueueBytes = source.MaxSendQueueBytes;
-        destination.StreamReceiveWindowBytes = source.StreamReceiveWindowBytes;
-        destination.ConnectionReceiveWindowBytes = source.ConnectionReceiveWindowBytes;
-        destination.MaxConcurrentCallsPerConnection = source.MaxConcurrentCallsPerConnection;
-    }
+        => source.CopySnapshotTo(destination);
 
     private static void CopyCompression(
         SharpLinkCompressionOptions source,
