@@ -260,6 +260,26 @@ public class ProtocolV2Tests
     }
 
     [Test]
+    public void BinaryErrorWriterShouldRejectUndefinedErrorCodes()
+    {
+        using var payload = new PooledByteBufferWriter();
+        try
+        {
+            ProtocolV2PayloadCodec.WriteError(
+                payload,
+                (SharpLinkErrorCode)22,
+                "undefined",
+                Limits.MaxErrorMessageBytes,
+                out _);
+            throw new Exception("expected undefined error-code rejection");
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+        }
+        Ensure(payload.WrittenCount == 0, "undefined error codes must not write a partial payload");
+    }
+
+    [Test]
     public async Task BinaryErrorShouldRejectInvalidUtf8()
     {
         var payload = new byte[]

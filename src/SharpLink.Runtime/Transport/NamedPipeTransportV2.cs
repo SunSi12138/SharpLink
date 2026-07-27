@@ -22,6 +22,7 @@ public sealed class NamedPipeClientTransportFactory : IClientTransportFactory
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
         ArgumentException.ThrowIfNullOrWhiteSpace(serverName);
+        NamedPipeTransportValidation.ValidateClientOptions(pipeOptions);
         _pipeName = NamedPipeName.Normalize(pipeName);
         _serverName = serverName;
         _pipeOptions = pipeOptions;
@@ -93,6 +94,8 @@ public sealed class NamedPipeServerTransportListener : IServerTransportListener
         {
             throw new ArgumentOutOfRangeException(nameof(maxServerInstances));
         }
+        NamedPipeTransportValidation.ValidateTransmissionMode(transmissionMode);
+        NamedPipeTransportValidation.ValidateServerOptions(pipeOptions);
         _pipeName = NamedPipeName.Normalize(pipeName);
         _maxServerInstances = maxServerInstances;
         _transmissionMode = transmissionMode;
@@ -218,6 +221,35 @@ public sealed class NamedPipeServerTransportListener : IServerTransportListener
     {
         lock (_gate)
             _pendingAccepts.Remove(pipe);
+    }
+}
+
+internal static class NamedPipeTransportValidation
+{
+    private const PipeOptions ClientOptions =
+        PipeOptions.Asynchronous |
+        PipeOptions.WriteThrough |
+        PipeOptions.CurrentUserOnly;
+    private const PipeOptions ServerOptions =
+        ClientOptions |
+        PipeOptions.FirstPipeInstance;
+
+    internal static void ValidateClientOptions(PipeOptions options)
+    {
+        if ((options & ~ClientOptions) != 0)
+            throw new ArgumentOutOfRangeException(nameof(options), "Named-pipe client options contain unsupported bits.");
+    }
+
+    internal static void ValidateServerOptions(PipeOptions options)
+    {
+        if ((options & ~ServerOptions) != 0)
+            throw new ArgumentOutOfRangeException(nameof(options), "Named-pipe server options contain undefined bits.");
+    }
+
+    internal static void ValidateTransmissionMode(PipeTransmissionMode mode)
+    {
+        if (!Enum.IsDefined(mode))
+            throw new ArgumentOutOfRangeException(nameof(mode));
     }
 }
 

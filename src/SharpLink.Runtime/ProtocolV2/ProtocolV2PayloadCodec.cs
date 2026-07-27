@@ -335,6 +335,8 @@ public static class ProtocolV2PayloadCodec
     {
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentOutOfRangeException.ThrowIfNegative(maxMessageBytes);
+        if (!IsDefinedErrorCode(code))
+            throw new ArgumentOutOfRangeException(nameof(code), "Error code must be a defined SharpLinkErrorCode value.");
         message ??= string.Empty;
         var charCount = message.Length;
         var byteCount = Encoding.UTF8.GetByteCount(message);

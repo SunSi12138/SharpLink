@@ -34,6 +34,79 @@ public sealed class AdmissionControlTests
     }
 
     [Test]
+    public void RatePolicyDurationsBeyondThePortableTimerRangeShouldFailDuringConfiguration()
+    {
+        new SharpLinkTokenBucketLimitOptions
+        {
+            TokenLimit = 1,
+            TokensPerPeriod = 1,
+            ReplenishmentPeriod = SharpLinkTimer.MaximumDelay
+        }.Validate();
+        new SharpLinkFixedWindowLimitOptions
+        {
+            PermitLimit = 1,
+            Window = SharpLinkTimer.MaximumDelay
+        }.Validate();
+        new SharpLinkSlidingWindowLimitOptions
+        {
+            PermitLimit = 1,
+            Window = SharpLinkTimer.MaximumDelay,
+            SegmentsPerWindow = 2
+        }.Validate();
+        var aboveMaximum = SharpLinkTimer.MaximumDelay.Add(TimeSpan.FromTicks(1));
+        var failures = new Exception?[]
+        {
+            CaptureFailure(() => new SharpLinkTokenBucketLimitOptions
+            {
+                TokenLimit = 1,
+                TokensPerPeriod = 1,
+                ReplenishmentPeriod = aboveMaximum
+            }.Validate()),
+            CaptureFailure(() => new SharpLinkFixedWindowLimitOptions
+            {
+                PermitLimit = 1,
+                Window = aboveMaximum
+            }.Validate()),
+            CaptureFailure(() => new SharpLinkSlidingWindowLimitOptions
+            {
+                PermitLimit = 1,
+                Window = aboveMaximum,
+                SegmentsPerWindow = 2
+            }.Validate())
+        };
+
+        var rejectedCount = 0;
+        foreach (var failure in failures)
+            if (failure is ArgumentOutOfRangeException)
+                rejectedCount++;
+
+        Ensure(rejectedCount == failures.Length,
+            $"all timer-backed rate policies must reject the oversized duration; observed " +
+            $"{failures[0]?.GetType().Name ?? "none"}, " +
+            $"{failures[1]?.GetType().Name ?? "none"}, " +
+            $"{failures[2]?.GetType().Name ?? "none"}");
+    }
+
+    [Test]
+    public void SlidingWindowShouldRejectAZeroTickSegmentDuration()
+    {
+        new SharpLinkSlidingWindowLimitOptions
+        {
+            PermitLimit = 1,
+            Window = TimeSpan.FromTicks(2),
+            SegmentsPerWindow = 2
+        }.Validate();
+        var options = new SharpLinkSlidingWindowLimitOptions
+        {
+            PermitLimit = 1,
+            Window = TimeSpan.FromTicks(1),
+            SegmentsPerWindow = 2
+        };
+
+        EnsureThrows<ArgumentOutOfRangeException>(options.Validate);
+    }
+
+    [Test]
     public void RuleMustRejectMultipleRatePolicies()
     {
         var rule = new SharpLinkAdmissionRuleOptions();
@@ -418,6 +491,19 @@ public sealed class AdmissionControlTests
     {
         if (!condition)
             throw new Exception($"assert failed: {message}");
+    }
+
+    private static Exception? CaptureFailure(Action action)
+    {
+        try
+        {
+            action();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 
     private static void EnsureThrows<TException>(Action action)

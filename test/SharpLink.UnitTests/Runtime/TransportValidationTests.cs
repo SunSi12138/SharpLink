@@ -65,6 +65,49 @@ public class TransportValidationTests
     }
 
     [Test]
+    public async Task NamedPipeTransportsShouldRejectUndefinedEnumsDuringConfiguration()
+    {
+        var allDefinedOptions = System.IO.Pipes.PipeOptions.None;
+        foreach (var option in Enum.GetValues<System.IO.Pipes.PipeOptions>())
+        {
+            NamedPipeTransportValidation.ValidateServerOptions(option);
+            if (option != System.IO.Pipes.PipeOptions.FirstPipeInstance)
+                NamedPipeTransportValidation.ValidateClientOptions(option);
+            allDefinedOptions |= option;
+        }
+        NamedPipeTransportValidation.ValidateServerOptions(allDefinedOptions);
+        foreach (var mode in Enum.GetValues<PipeTransmissionMode>())
+            NamedPipeTransportValidation.ValidateTransmissionMode(mode);
+
+        const System.IO.Pipes.PipeOptions undefinedOptions =
+            (System.IO.Pipes.PipeOptions)0x1000_0000;
+        const PipeTransmissionMode undefinedMode = (PipeTransmissionMode)42;
+        var clientFailure = CaptureFailure(() =>
+            _ = new NamedPipeClientTransportFactory("pipe", ".", undefinedOptions));
+        var clientServerOnlyFailure = CaptureFailure(() =>
+            _ = new NamedPipeClientTransportFactory(
+                "pipe",
+                ".",
+                System.IO.Pipes.PipeOptions.FirstPipeInstance));
+        var serverOptionsFailure = CaptureFailure(() =>
+            _ = new NamedPipeServerTransportListener(
+                "pipe",
+                NamedPipeServerStream.MaxAllowedServerInstances,
+                PipeTransmissionMode.Byte,
+                undefinedOptions));
+        var serverModeFailure = CaptureFailure(() =>
+            _ = new NamedPipeServerTransportListener(
+                "pipe",
+                NamedPipeServerStream.MaxAllowedServerInstances,
+                undefinedMode));
+
+        await Assert.That(clientFailure).IsTypeOf<ArgumentOutOfRangeException>();
+        await Assert.That(clientServerOnlyFailure).IsTypeOf<ArgumentOutOfRangeException>();
+        await Assert.That(serverOptionsFailure).IsTypeOf<ArgumentOutOfRangeException>();
+        await Assert.That(serverModeFailure).IsTypeOf<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
     public async Task SocketClientShouldRejectTheServerOnlyEphemeralPort()
     {
         await Assert.That(() => new SocketClientTransportFactory(
@@ -99,6 +142,30 @@ public class TransportValidationTests
         await Assert.That(protocolFailure).IsTypeOf<ArgumentOutOfRangeException>();
         await Assert.That(tlsFailure).IsTypeOf<ArgumentOutOfRangeException>();
         await Assert.That(sharedMemoryFailure).IsTypeOf<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task SocketKeepAliveDurationsBeyondNativeRangeShouldFailDuringConfiguration()
+    {
+        var maximum = TimeSpan.FromSeconds(int.MaxValue);
+        var accepted = new SocketTransportOptions
+        {
+            KeepAliveTime = maximum,
+            KeepAliveInterval = maximum
+        }.CloneValidated();
+        var timeFailure = CaptureFailure(() => new SocketTransportOptions
+        {
+            KeepAliveTime = maximum.Add(TimeSpan.FromTicks(1))
+        }.CloneValidated());
+        var intervalFailure = CaptureFailure(() => new SocketTransportOptions
+        {
+            KeepAliveInterval = maximum.Add(TimeSpan.FromTicks(1))
+        }.CloneValidated());
+
+        await Assert.That(accepted.KeepAliveTime).IsEqualTo(maximum);
+        await Assert.That(accepted.KeepAliveInterval).IsEqualTo(maximum);
+        await Assert.That(timeFailure).IsTypeOf<ArgumentOutOfRangeException>();
+        await Assert.That(intervalFailure).IsTypeOf<ArgumentOutOfRangeException>();
     }
 
     [Test]

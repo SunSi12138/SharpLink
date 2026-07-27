@@ -17,7 +17,7 @@ public sealed class SharpLinkTokenBucketLimitOptions
     public int TokenLimit { get; set; }
     /// <summary>Gets or sets the tokens added per replenishment period.</summary>
     public int TokensPerPeriod { get; set; }
-    /// <summary>Gets or sets the automatic replenishment period.</summary>
+    /// <summary>Gets or sets the automatic replenishment period, up to 2,147,483,647 milliseconds.</summary>
     public TimeSpan ReplenishmentPeriod { get; set; } = TimeSpan.FromSeconds(1);
 
     internal void Validate()
@@ -25,6 +25,7 @@ public sealed class SharpLinkTokenBucketLimitOptions
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(TokenLimit);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(TokensPerPeriod);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(ReplenishmentPeriod, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(ReplenishmentPeriod, SharpLinkTimer.MaximumDelay);
     }
 }
 
@@ -33,13 +34,14 @@ public sealed class SharpLinkFixedWindowLimitOptions
 {
     /// <summary>Gets or sets the maximum calls admitted during one window.</summary>
     public int PermitLimit { get; set; }
-    /// <summary>Gets or sets the fixed window duration.</summary>
+    /// <summary>Gets or sets the fixed window duration, up to 2,147,483,647 milliseconds.</summary>
     public TimeSpan Window { get; set; } = TimeSpan.FromSeconds(1);
 
     internal void Validate()
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(PermitLimit);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(Window, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(Window, SharpLinkTimer.MaximumDelay);
     }
 }
 
@@ -48,7 +50,7 @@ public sealed class SharpLinkSlidingWindowLimitOptions
 {
     /// <summary>Gets or sets the maximum calls admitted during one sliding window.</summary>
     public int PermitLimit { get; set; }
-    /// <summary>Gets or sets the complete sliding window duration.</summary>
+    /// <summary>Gets or sets the complete sliding window duration, up to 2,147,483,647 milliseconds.</summary>
     public TimeSpan Window { get; set; } = TimeSpan.FromSeconds(1);
     /// <summary>Gets or sets the number of replenishment segments in each window.</summary>
     public int SegmentsPerWindow { get; set; } = 4;
@@ -57,7 +59,14 @@ public sealed class SharpLinkSlidingWindowLimitOptions
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(PermitLimit);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(Window, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(Window, SharpLinkTimer.MaximumDelay);
         ArgumentOutOfRangeException.ThrowIfLessThan(SegmentsPerWindow, 2);
+        if (Window.Ticks < SegmentsPerWindow)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(SegmentsPerWindow),
+                "Each sliding-window segment must span at least one TimeSpan tick.");
+        }
     }
 }
 

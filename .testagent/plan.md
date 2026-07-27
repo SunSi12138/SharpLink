@@ -1,10 +1,10 @@
-# 0.8.27 regression-test plan
+# 0.8.28 regression-test plan
 
-1. [x] Prove missing response payloads bypass registered Codecs.
-2. [x] Prove consumer stream tokens mask call/lease cancellation.
-3. [x] Prove Return/Dispose can retain a writer in a detached pool queue.
-4. [x] Prove successful unexpected hosted Server completion leaves the Host running.
-5. [x] Prove failed anonymous-pipe connection attempts permit illegal offer reuse.
-6. [x] Run the complete pre-fix Unit suite and record the exact failure set.
-7. [x] Implement only proven fixes and review assertions/pseudo-mutations.
-8. [x] Run exact-final-tree release, package, documentation, and performance gates; prepare the local 0.8.27 commit.
+1. [x] Add `SocketKeepAliveDurationsBeyondNativeRangeShouldFailDuringConfiguration` for both duration fields.
+2. [x] Add `RatePolicyDurationsBeyondThePortableTimerRangeShouldFailDuringConfiguration` covering token, fixed, and sliding windows.
+3. [x] Add `NamedPipeTransportsShouldRejectUndefinedEnumsDuringConfiguration` for client/server option bits and transmission mode.
+4. [x] Add `SlidingWindowShouldRejectAZeroTickSegmentDuration`.
+5. [x] Add `BinaryErrorWriterShouldRejectUndefinedErrorCodes`.
+6. [x] Run the complete pre-fix Unit suite and record all existing passes plus the exact new failure set.
+7. [x] Implement only proven fixes, then perform assertion-quality and pseudo-mutation reviews.
+8. [x] Run exact-final-tree non-incremental build, focused/full tests, package smoke, documentation, and performance gates; create the local 0.8.28 commit.

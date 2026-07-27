@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.28] - 2026-07-27
+
+### Fixed
+
+- TCP keep-alive time and interval now reject values beyond the native signed integer-seconds range during configuration instead of overflowing when a socket is created.
+- Token-bucket, fixed-window, and sliding-window admission periods now reject values beyond the portable timer range before constructing a runtime limiter.
+- Named-pipe client and server constructors now reject undefined option bits and transmission modes, and clients reject the server-only `FirstPipeInstance` bit, instead of deferring unusable configuration until connect or accept.
+- Sliding-window admission now rejects configurations whose segment duration would round down to zero `TimeSpan` ticks.
+- Binary protocol error writers now reject undefined `SharpLinkErrorCode` values before writing a payload that the matching reader cannot accept.
+
+### Compatibility and validation
+
+- Protocol v2 framing and every valid payload layout are unchanged. Only undefined error-code writes and previously unusable transport/admission configurations are rejected earlier.
+- Non-incremental Release build, Generator 101/101, Unit 459/459, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- Fifteen-sample boundary A/B kept binary error writing at 11.888 → 11.968 ns with 0 B/op. Configuration validation added 1.14 ns to socket option freezing and 1.49 ns across three admission policies; alternating runtime A/B remained within a 5% no-regression gate with unchanged allocations.
+
 ## [0.8.27] - 2026-07-27
 
 ### Fixed

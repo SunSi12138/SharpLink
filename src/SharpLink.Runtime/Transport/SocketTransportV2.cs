@@ -3,16 +3,19 @@ namespace SharpLink.Runtime;
 /// <summary>Configures sockets created by SharpLink transport factories and listeners.</summary>
 public sealed class SocketTransportOptions
 {
+    private static readonly TimeSpan SMaximumKeepAliveDuration =
+        TimeSpan.FromSeconds(int.MaxValue);
+
     /// <summary>Gets or sets whether TCP disables Nagle buffering.</summary>
     public bool NoDelay { get; set; } = true;
 
     /// <summary>Gets or sets whether TCP keep-alive probes are enabled.</summary>
     public bool KeepAlive { get; set; } = true;
 
-    /// <summary>Gets or sets the idle time before TCP keep-alive probes begin.</summary>
+    /// <summary>Gets or sets the idle time before TCP keep-alive probes begin, up to 2,147,483,647 seconds.</summary>
     public TimeSpan KeepAliveTime { get; set; } = TimeSpan.FromSeconds(30);
 
-    /// <summary>Gets or sets the interval between TCP keep-alive probes.</summary>
+    /// <summary>Gets or sets the interval between TCP keep-alive probes, up to 2,147,483,647 seconds.</summary>
     public TimeSpan KeepAliveInterval { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary>Gets or sets the number of failed TCP keep-alive probes before disconnect.</summary>
@@ -28,6 +31,8 @@ public sealed class SocketTransportOptions
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(KeepAliveTime, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(KeepAliveInterval, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(KeepAliveTime, SMaximumKeepAliveDuration);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(KeepAliveInterval, SMaximumKeepAliveDuration);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(KeepAliveRetryCount);
         if (SendBufferBytes is { } sendBytes)
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sendBytes);

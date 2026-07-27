@@ -198,7 +198,7 @@ public partial class PluginGraph
 
 Client/Server 不需要 resolver 或手工注册自动 Adapter Codec。高级自定义 formatter 可由调用方创建 `SharpPackSerializerContext`，再通过 `SharpPackRpcCodec.Create<T>(context)` 显式 `UseCodec`；该 Codec 仍保持最高优先级且 Context 所有权属于调用方。
 
-每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context；自动 Context 拥有独立 formatter graph，不使用进程级默认 formatter slot，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。详细设计见 [`doc/architecture-0.7.11.md`](doc/architecture-0.7.11.md)；升级 0.8.x 前请阅读 [`doc/migration-0.8.27.md`](doc/migration-0.8.27.md)。
+每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context；自动 Context 拥有独立 formatter graph，不使用进程级默认 formatter slot，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。详细设计见 [`doc/architecture-0.7.11.md`](doc/architecture-0.7.11.md)；升级 0.8.x 前请阅读 [`doc/migration-0.8.28.md`](doc/migration-0.8.28.md)。
 
 ## 协商压缩
 
@@ -252,7 +252,7 @@ var server = SharpLinkServerBuilder.Create()
     .Build();
 ```
 
-速率策略可选 TokenBucket、FixedWindow 或 SlidingWindow，公共 API 不暴露底层 `System.Threading.RateLimiting` 类型。等待队列同时受调用数、保留字节、最长等待、调用 deadline、取消、断连和 Server Draining 限制；任一容量不足立即返回 `ResourceExhausted`。分区键为空时进入明确的默认分区，池满且没有安全可回收的空闲项时按 `partition_capacity` 拒绝，不记录真实分区键。
+速率策略可选 TokenBucket、FixedWindow 或 SlidingWindow，公共 API 不暴露底层 `System.Threading.RateLimiting` 类型。所有自动计时周期最多为 2,147,483,647 ms；SlidingWindow 的每个 segment 必须至少覆盖一个 `TimeSpan` tick。等待队列同时受调用数、保留字节、最长等待、调用 deadline、取消、断连和 Server Draining 限制；任一容量不足立即返回 `ResourceExhausted`。分区键为空时进入明确的默认分区，池满且没有安全可回收的空闲项时按 `partition_capacity` 拒绝，不记录真实分区键。
 
 OneWay 默认不排队；被过载策略拒绝时服务方法不会执行，只记录 dropped/resource-exhausted 指标和限频日志。`QueueOneWayCalls=true` 才允许它进入相同有界队列。客户端本地 `await` OneWay 成功只表示 SendPump 接受了帧，不代表服务端已经执行。
 
@@ -262,6 +262,8 @@ Admission 指标为 `sharplink.admission.permits.active`、`calls.queued`、`cal
 
 - `NamedPipe` 在 Unix/macOS 下最终会映射到 Unix Domain Socket 路径
 - 当前运行时会对超长 pipe name 做确定性缩短，避免触发平台路径长度限制
+- NamedPipe 的未定义 `PipeOptions` bit 或 `PipeTransmissionMode` 会在 factory/listener 构造时立即拒绝；client 也拒绝仅供 server 使用的 `FirstPipeInstance`
+- TCP keep-alive time/interval 的最大值为 2,147,483,647 秒，配置会在创建 socket 前冻结并校验
 - `AnonymousPipe` 当前已覆盖本机连接、断连与本机压测回归；仓库内置 LoadTest 仅支持 `--mode local`
 - 每组 AnonymousPipe handle 从首次连接尝试开始即为已消费；失败重试必须申请新 offer
 - 若自行基于 `IAnonymousPipeAllocator` 将句柄转交外部进程，需要由宿主明确管理句柄交接与释放时机
@@ -580,6 +582,7 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 0.7.8 endpoint admission 与 circuit breaker：`doc/architecture-0.7.8.md`
 - 0.7.9 迁移、组合验证与 API freeze：`doc/migration-0.7.9.md`
 - 0.7.9 本地性能与组合 smoke：`doc/performance-0.7.9.md`
+- 0.8.28 边界审核、迁移与性能：`doc/audit-0.8.28.md`、`doc/migration-0.8.28.md`、`doc/performance-0.8.28.md`
 - 0.6.10 性能与 Chaos：`doc/performance-0.6.10.md`、`doc/chaos-0.6.10.md`
 - 贡献指南：`CONTRIBUTING.md`
 - 更新日志：`CHANGELOG.md`

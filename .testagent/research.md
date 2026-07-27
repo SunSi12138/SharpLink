@@ -1,22 +1,29 @@
-# 0.8.27 regression-test research
+# 0.8.28 regression-test research
 
-## Target inventory and evidence candidates
+## Bounded target inventory
 
-- A successful response with a missing payload bypasses its registered Codec and silently materializes `default(T)`.
-- Supplying a consumer cancellation token to a pooled response stream replaces the call/lease token instead of preserving both cancellation owners.
-- `SharpLinkBufferWriterPool.Return` can enqueue into a detached queue when `Dispose` wins between the pool snapshot and `Enqueue`, retaining an ArrayPool lease after disposal.
-- A hosted Server run loop that completes successfully after startup is silently ignored, leaving the Host alive after its critical service exits.
-- `AnonymousPipeClientTransportFactory` resets its one-shot gate after a failed attempt and permits reuse of an offer whose inherited handles may already have been consumed or closed.
+- `SocketTransportOptions`: keep-alive durations are validated only as positive, but the native option path performs a checked conversion to signed integer seconds.
+- Admission rate policies: token, fixed-window, and sliding-window durations reach BCL timer-backed rate limiters without SharpLink's portable timer-range validation.
+- Named-pipe transport constructors accept undefined `PipeOptions` and `PipeTransmissionMode` values, deferring unusable configuration until connect/accept.
+- Sliding-window admission accepts more segments than the configured window has ticks, producing a zero-duration segment boundary for the timer-backed limiter.
+- `ProtocolV2PayloadCodec.WriteError` emits undefined in-range `SharpLinkErrorCode` values even though its reader rejects the same wire value.
+
+The repository convention is TUnit in `test/SharpLink.UnitTests`, with focused tests colocated in the existing transport, resolver, retry, admission, and flow-control suites. The required static source/test pairing scan was run once. It was polluted by retained ignored performance baseline clones under `artifacts/`, so its counts are only a heuristic; the live target files are already paired with `TransportValidationTests`, `DynamicEndpointResolverTests`, `SharpLinkClientRetryTests`, `AdmissionControlTests`, and `StreamFlowControllerTests` respectively.
 
 ## Acceptance checklist
 
-- Payload-bearing calls always delegate even an empty payload to the registered Codec; payload-less acknowledgements reject unexpected bytes.
-- Stream lease and consumer cancellation tokens remain independently effective and their registrations are cleared before pooling.
-- Every Return/Dispose ordering either retains the writer in the live pool or releases its backing array; no detached queue remains populated.
-- Unexpected successful Server run-loop completion logs/stops the Host, while normal application shutdown remains quiet.
-- An anonymous-pipe offer remains permanently one-shot once the first connection attempt begins, including failure paths.
-- Normal response, streaming, pooling, hosted-stop, and transport hot paths show no material regression.
+- Both keep-alive duration fields reject values that cannot be converted to native signed integer seconds during configuration.
+- All three timer-backed admission rate-policy durations reject values beyond the portable timer range before a runtime limiter is created.
+- Named-pipe client and server constructors reject undefined option bits and transmission modes synchronously; clients also reject server-only `FirstPipeInstance`.
+- Sliding-window admission rejects configurations whose segment duration would be zero ticks.
+- Binary error writers reject undefined error codes before emitting an unreadable payload.
+- Existing normal-boundary behavior remains covered and hot-path performance does not materially regress.
 
 ## Audit guardrails
 
-Keep-alive durations beyond the native integer-seconds range are a separate confirmed-looking boundary that still needs isolated evidence; it does not count in this batch. Direct string wire encoding and arbitrary unmanaged ABI/padding require a versioned compatibility design and are not opportunistically changed here.
+Direct string wire encoding, arbitrary unmanaged ABI/padding, and external-process anonymous-pipe handle transfer still require versioned/public API designs and are not opportunistically changed. The suspected pending-table Dispose/Rent race is not counted until a deterministic pre-fix witness exists.
+
+## Rejected hypotheses
+
+- DNS and retry jitter at `TimeSpan.MaxValue` saturate rather than wrap on the supported .NET 10 runtime; repeated boundary probes passed.
+- Excess flow-control credit near `int.MaxValue` is already normalized to `ProtocolViolation`; the boundary probe passed.
