@@ -248,6 +248,35 @@ public interface ICompatibleControlNamesContract : SharpLink.Sdk.IService, IFirs
     }
 
     [Test]
+    public Task ResponseNullabilityMustParticipateInGeneratedMethodFingerprint()
+    {
+        var required = BuildSource("""
+#nullable enable
+[SharpLink.Sdk.RpcContract]
+public interface IResponseFingerprintContract : SharpLink.Sdk.IService
+{
+    ValueTask<string> Resolve(CancellationToken cancellationToken);
+}
+""");
+
+        var optional = BuildSource("""
+#nullable enable
+[SharpLink.Sdk.RpcContract]
+public interface IResponseFingerprintContract : SharpLink.Sdk.IService
+{
+    ValueTask<string?> Resolve(CancellationToken cancellationToken);
+}
+""");
+
+        var requiredFingerprint = GetFirstGeneratedMethodFingerprint(required);
+        var optionalFingerprint = GetFirstGeneratedMethodFingerprint(optional);
+
+        Ensure(!string.Equals(requiredFingerprint, optionalFingerprint, StringComparison.Ordinal),
+            "required and nullable responses must not publish the same runtime method fingerprint");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task DirectRedeclarationShouldCanonicalizeInheritedRpcSemantics()
     {
         var source = BuildSource("""
@@ -2812,6 +2841,26 @@ namespace SharpLink.Abstractions
         var generated = RunGeneratorAndGetSources(source);
         return generated.FirstOrDefault(static text => text.Contains("__SharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal))
             ?? throw new Exception("Expected generated assembly manifest source.");
+    }
+
+    private static string GetFirstGeneratedMethodFingerprint(string source)
+    {
+        var manifest = GetGeneratedManifest(source);
+        const string marker = "new SharpLinkGeneratedMethodDescriptor(";
+        var start = manifest.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0)
+            throw new Exception("Expected generated method descriptor.");
+        var end = manifest.IndexOf("),", start, StringComparison.Ordinal);
+        if (end < 0)
+            throw new Exception("Expected generated method descriptor terminator.");
+        var quotedLines = manifest[start..end]
+            .Split('\n')
+            .Select(static line => line.Trim())
+            .Where(static line => line.StartsWith("\"", StringComparison.Ordinal))
+            .ToArray();
+        if (quotedLines.Length < 4)
+            throw new Exception("Expected generated method fingerprint line.");
+        return quotedLines[^1].TrimEnd(',').Trim('"');
     }
 
     private static MetadataReference CreateMetadataReference(

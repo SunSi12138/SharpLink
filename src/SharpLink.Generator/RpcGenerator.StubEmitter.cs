@@ -291,7 +291,7 @@ public partial class RpcGenerator
 
             foreach (var p in streamParams)
             {
-                sb.AppendLine($"                dispatcher_{p.Name} = SharpLink.Runtime.PooledAsyncStreamDispatcher<{p.DisplayStreamItemType}>.Rent(cancellationToken, session.RuntimeContext.Codecs);");
+                sb.AppendLine($"                dispatcher_{p.Name} = SharpLink.Runtime.PooledAsyncStreamDispatcher<{p.DisplayStreamItemType}>.Rent(cancellationToken, session.RuntimeContext.Codecs, {(p.PayloadNullable ? "true" : "false")});");
                 sb.AppendLine($"                session.StreamManager.Register(requestId, (ushort){streamId}, dispatcher_{p.Name});");
                 streamId++;
             }

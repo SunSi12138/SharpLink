@@ -6,6 +6,67 @@ namespace SharpLink.UnitTests.Runtime;
 public class PooledAsyncStreamDispatcherTests
 {
     private static readonly ReadOnlySequence<byte> Payload = new(new byte[] { 1 });
+    private static readonly ReadOnlySequence<byte> NullStringPayload = new(new byte[] { 255, 255, 255, 255 });
+
+    [Test]
+    [NotInParallel]
+    public async Task RequiredClientResponseStreamMustRejectDecodedNull()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new NullReferenceItemCodec());
+
+        var failure = await CaptureDispatchFailureAsync(() => dispatcher.DispatchAsync(Payload));
+        dispatcher.Complete(failure);
+        await dispatcher.DisposeAsync();
+
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "a required Client response stream item decoded as null must be DataLoss");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+
+        var nullableDispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new NullReferenceItemCodec(),
+            payloadNullable: true);
+        await nullableDispatcher.DispatchAsync(Payload);
+        nullableDispatcher.Complete(exception: null);
+        var enumerator = nullableDispatcher.GetAsyncEnumerator();
+        Ensure(await enumerator.MoveNextAsync() && enumerator.Current is null,
+            "an explicitly nullable Client response stream item must preserve null");
+        await enumerator.DisposeAsync();
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RequiredServerRequestStreamMustRejectDecodedNull()
+    {
+        PooledAsyncStreamDispatcher<string>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<string>.Rent(
+            default,
+            SharpLinkRuntimeContext.Default.Codecs);
+
+        var failure = await CaptureDispatchFailureAsync(() => dispatcher.DispatchAsync(NullStringPayload));
+        dispatcher.Complete(failure);
+        await dispatcher.DisposeAsync();
+
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "a required Server request stream item decoded as null must be DataLoss");
+        PooledAsyncStreamDispatcher<string>.ClearPoolForTests();
+
+        var nullableDispatcher = PooledAsyncStreamDispatcher<string>.Rent(
+            default,
+            SharpLinkRuntimeContext.Default.Codecs,
+            payloadNullable: true);
+        await nullableDispatcher.DispatchAsync(NullStringPayload);
+        nullableDispatcher.Complete(exception: null);
+        var enumerator = nullableDispatcher.GetAsyncEnumerator();
+        Ensure(await enumerator.MoveNextAsync() && enumerator.Current is null,
+            "an explicitly nullable Server request stream item must preserve null");
+        await enumerator.DisposeAsync();
+        PooledAsyncStreamDispatcher<string>.ClearPoolForTests();
+    }
 
     [Test]
     [NotInParallel]
@@ -385,6 +446,19 @@ public class PooledAsyncStreamDispatcherTests
         }
     }
 
+    private static async Task<Exception?> CaptureDispatchFailureAsync(Func<ValueTask> dispatch)
+    {
+        try
+        {
+            await dispatch();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
     private sealed record ReferenceItem(object Marker);
 
     private sealed class ReferenceItemCodec(
@@ -417,5 +491,13 @@ public class PooledAsyncStreamDispatcherTests
         }
 
         public byte Deserialize(in ReadOnlySequence<byte> buffer) => buffer.FirstSpan[0];
+    }
+
+    private sealed class NullReferenceItemCodec : IRpcCodec<ReferenceItem>
+    {
+        public void Serialize(in ReferenceItem value, IBufferWriter<byte> buffer)
+            => throw new NotSupportedException();
+
+        public ReferenceItem Deserialize(in ReadOnlySequence<byte> buffer) => null!;
     }
 }

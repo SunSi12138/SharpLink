@@ -659,7 +659,6 @@ public static class ProtocolV2PayloadCodec
 
     internal static bool IsDefinedErrorCode(SharpLinkErrorCode code) => code switch
     {
-        SharpLinkErrorCode.Unknown or
         SharpLinkErrorCode.RemoteError or
         SharpLinkErrorCode.AuthenticationRejected or
         SharpLinkErrorCode.AuthenticationExpired or

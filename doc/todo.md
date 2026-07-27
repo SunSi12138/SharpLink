@@ -52,6 +52,8 @@
 - `0.8.37`（已完成）：收紧 generated type 可达性、keyword DTO 标识符、sealed record/ref-like DTO 与 static abstract contract 边界。
 - `0.8.38`（已完成）：收紧 generated service/DTO 构造计划、pointer/function-pointer 工件与 interceptor 结构化取消状态。
 - `0.8.39`（已完成）：收紧 interceptor 终端状态、continuation 和结果类型边界，消除 client stream context capture，并统一 malformed request DataLoss 分类。
+- `0.8.40`（已完成）：收紧 interceptor 异步 continuation 所有权、结构化错误 code 与 generated response nullability 边界。
+- `0.8.41`（已完成）：在 scalar/双向 stream 解码、runtime fingerprint 与 Protocol v2 reserved error code 上闭合 nullability/错误身份边界。
 - `0.8.x`（进行中）：每累计五项 P2 及以上实证改进推进一个小版本；其他低风险改进随批次合入但不单独推进版本。连续三轮审计无新改进点后结束。
 - `0.8.x-rc`：上述审核收敛后执行 Chaos、长稳、跨平台/AOT/Package/性能 Release Gate，只修复正确性、稳定性、性能回退和文档问题。
 - `1.0.0`：通过 RC 接受标准后发布稳定 API 与 Protocol v2。

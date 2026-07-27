@@ -1,74 +1,62 @@
-# 0.8.40 regression-test research
+# 0.8.41 regression-test research
 
 ## Candidate inventory
 
-- Generated Stubs whose contract has no methods in one invocation category throw the legacy public
-  `RpcException`; the equivalent non-empty switch default already returns structured Unimplemented.
-- `SharpLinkException` accepts Unknown and undefined enum values even though Protocol v2 refuses to
-  serialize them. A custom mapper/interceptor can therefore break error delivery instead of safely
-  producing Internal.
-- A response-bearing Server interceptor can invoke an incomplete continuation, discard its
-  `ValueTask`, and return. The 0.8.39 invoked guard passes while the response owner is still in use.
-- A Client interceptor can start an incomplete terminal continuation, discard it, and immediately
-  return a short-circuit result. The orphan attempt continues after the logical call completes.
-- Generator nullability participates in contract metadata and request validation, but non-nullable
-  top-level and stream responses can still serialize or short-circuit null as a successful result.
+- `RpcRequestOperation<T>` accepts a null decoded scalar response regardless of generated
+  `ResponseNullable`; a custom or mismatched peer can therefore return null for required unary and
+  client-streaming results outside the interceptor path.
+- The Client response-stream `PooledAsyncStreamDispatcher<T>` similarly enqueues null for required
+  ServerStreaming/DuplexStreaming items.
+- The Server uses the same dispatcher for ClientStreaming/DuplexStreaming request items but generated
+  Stubs do not pass `PayloadNullable`, so required application stream inputs also accept null.
+- Response nullability is present in the contract Manifest but absent from the runtime method
+  fingerprint. Required and nullable inherited response contracts therefore appear identical during
+  generated conflict checks and live route compatibility.
+- `SharpLinkErrorCode.Unknown` is reserved for unset local state and 0.8.40 prevents constructing a
+  service error with it, but Protocol v2 still writes and accepts it as a remote Error code.
 
 ## Acceptance boundary
 
-- Every unknown method shape returns structured Unimplemented; remove the now-unused public
-  `RpcException` abstraction.
-- Reject non-wire SharpLink error codes at construction so mapper failures fall through the existing
-  safe Internal boundary; all defined concrete codes remain valid.
-- If an interceptor invokes `next`, the pipeline must join that continuation before completing even
-  when interceptor code discards it. Preserve synchronous fast paths and valid result transformation.
-- Enforce generated response nullability for service unary/stream results and Client interceptor
-  short circuits; nullable reference responses remain valid and value-type paths do not allocate.
+- Scalar response operations reject decoded null as `DataLoss` unless the generated descriptor marks
+  the response nullable; propagate the flag through every unary/retry/client-streaming rent path.
+- Stream dispatchers reject decoded null as `DataLoss` by default. Client response streams pass
+  `ResponseNullable`; generated Server request streams pass each parameter's `PayloadNullable`.
+- Nullable response contracts differ in method/service/contract fingerprints without changing method
+  IDs, wire type names, required-response fingerprints, or payload layout.
+- Protocol Error writer, validator, and reader reject reserved `Unknown`; concrete defined codes keep
+  their existing wire values.
 
 ## Planned evidence and pseudo-mutations
 
-- Generate response-only and no-response-only contracts and assert both empty category dispatchers
-  use Unimplemented while `RpcException` is absent from the public assembly.
-- Exercise Unknown and an undefined code directly and through a custom exception mapper.
-- Hold a terminal call behind a deterministic gate while Client and Server interceptors discard
-  `next`; prove the outer call currently completes before the terminal.
-- Return null for non-nullable/nullable unary and stream contracts, including a Client short circuit.
-- A check that only tests `WasInvoked`, only scalar results, or only service responses must leave at
-  least one witness failing. Joining must not add work to the zero-interceptor path.
+- Dispatch a null-returning codec through `PendingRequestTable`; require required failure and a later
+  nullable control.
+- Exercise both stream-dispatcher Rent paths: the Client codec overload and Server codec-provider
+  overload must independently reject required null; later nullable controls must remain valid.
+- Build inherited contracts that differ only in response nullability and require `SHARPLINK057` while
+  preserving the existing request-nullability behavior.
+- Prove both `WriteError(Unknown)` and a raw Unknown Error payload are rejected, with a concrete-code
+  round-trip as the control.
+- A scalar-only fix, Client-stream-only wiring, Server-stream-only wiring, display-type hashing, or
+  writer-only Unknown guard must leave at least one witness failing.
 
 ## Preserved pre-fix evidence
 
-- Exact baseline: local 0.8.39 commit `8fffab767ce76c70a6c459148a288a07594e69ea`.
-- Generator suite: 118 established tests passed and only
-  `EmptyInvocationCategoriesMustUseStructuredUnimplemented` failed because generated source still
-  contained `RpcException`.
-- Targeted Abstractions suite: 21 established tests passed and only the new public-surface and
-  non-wire-code witnesses failed.
-- Interceptor Integration class: 14 established tests passed and exactly the four new witnesses
-  failed. The pre-fix compilation also emitted CS8613/CS8604 at generated Proxy/Stub nullability
-  boundaries.
+- Exact baseline: local 0.8.40 commit `dd431f5b18fc0e98b24a5f6edddd45a320d8fe23`.
+- Generator suite: 119 established tests passed and only the new separate-compilation response
+  fingerprint witness failed. The inherited-nullability diagnostic control already passed through
+  Roslyn symbol comparison and was not counted as evidence.
+- Unit suite: all 486 established tests passed and exactly four new witnesses failed: reserved
+  Unknown Error, required scalar null, Client response-stream null, and Server request-stream null.
 
 ## Assertion and pseudo-mutation review
 
-- Replacing Unimplemented with Internal or restoring `RpcException` fails independent generated
-  source and reflected public-surface assertions.
-- Accepting either Unknown or an undefined enum value fails the direct constructor witness; allowing
-  the three-argument path also breaks the custom-mapper Internal fallback witness.
-- Retaining only `WasInvoked` fails both deterministic gate tests: the outer call must remain pending
-  until the discarded continuation completes. The Client test additionally proves the interceptor's
-  transformed result is preserved.
-- Enforcing only unary or only stream nullability leaves a witness failing; enforcing only generated
-  service output leaves the Client short-circuit witness failing. Nullable counterparts prove the
-  guard is not unconditional.
-- Nullable source display is separated from protocol identity. Generated C# preserves `?`, while
-  method IDs, request schemas, manifest wire-type lookup, and existing contract names remain based on
-  the prior non-nullable runtime type spelling.
-- The first full Unit run exposed one implementation regression: an interceptor that awaited `next`
-  caused the same downstream exception to be observed twice and aggregated. Client and Server now
-  preserve that exception identity and aggregate only genuinely independent failures; the exact old
-  retry test and complete suites pass.
-- The first exact-baseline performance probe rejected eager `ValueTask.AsTask()` sharing at
-  approximately 1,808 versus 1,584 B/op. Final join state uses a bounded self-node pool, direct
-  forwarding remains allocation-free, and descriptor Boolean flags pack response nullability without
-  expanding interceptor contexts. Final allocation is approximately 1,560 B/op, descriptor size is
-  40 versus the exact baseline's 48 bytes, and latency ranges overlap.
+- Scalar required and nullable operations share the same null-returning codec; omitting any
+  PendingRequestTable/RpcRequestOperation flag propagation fails one side of the paired assertion.
+- Client codec and Server codec-provider stream Rent paths have independent required failures and
+  nullable controls. Existing optional ServerStreaming plus a real optional ClientStreaming control
+  verify both generated wiring directions.
+- Fingerprints are compared across separate compilations of the same fully qualified contract, so
+  nullable C# display output cannot satisfy the witness. Only the runtime method schema changes;
+  required response fingerprints and method IDs retain their prior inputs.
+- Unknown is exercised at writer and raw-reader boundaries. The existing ResourceExhausted
+  round-trip and undefined-code tests preserve concrete code compatibility and partial-write safety.

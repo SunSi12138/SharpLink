@@ -294,6 +294,9 @@ public class InterceptorIntegrationTests
             await optionalStream.DisposeAsync();
         }
 
+        Ensure(await service.CountOptionalStreamAsync(OptionalNullInput(), CancellationToken.None) == 1,
+            "optional Client stream null request item");
+
         var requiredShortCircuit = new TrackingShortCircuitClientInterceptor(null);
         await using (var client = CreateDisconnectedClient(requiredShortCircuit))
         {
@@ -470,6 +473,12 @@ public class InterceptorIntegrationTests
     {
         await Task.Yield();
         yield return 42;
+    }
+
+    private static async IAsyncEnumerable<string?> OptionalNullInput()
+    {
+        await Task.Yield();
+        yield return null;
     }
 
     private static void Ensure(bool condition, string name)
@@ -841,6 +850,9 @@ public interface IInterceptorTestService : IService
     IAsyncEnumerable<string> RequiredNullStreamAsync();
     [NonCancellable]
     IAsyncEnumerable<string?> OptionalNullStreamAsync();
+    ValueTask<int> CountOptionalStreamAsync(
+        IAsyncEnumerable<string?> values,
+        CancellationToken cancellationToken);
     [Oneway]
     [NonCancellable]
     ValueTask NotifyAsync(int value);
@@ -908,6 +920,19 @@ public sealed class InterceptorTestService : IInterceptorTestService
     {
         await Task.Yield();
         yield return null;
+    }
+
+    public async ValueTask<int> CountOptionalStreamAsync(
+        IAsyncEnumerable<string?> values,
+        CancellationToken cancellationToken)
+    {
+        var count = 0;
+        await foreach (var value in values.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            if (value is null)
+                count++;
+        }
+        return count;
     }
 
     public ValueTask NotifyAsync(int value) => ValueTask.CompletedTask;

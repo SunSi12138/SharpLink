@@ -141,7 +141,10 @@ internal sealed partial class SharpLinkClient
             includeClientDefault: false,
             method.HasMethodTimeout,
             method.MethodTimeout);
-        var dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(cancellationToken, responseCodec);
+        var dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(
+            cancellationToken,
+            responseCodec,
+            method.ResponseNullable);
         TrackBackgroundTask(StartServerStreamingInvokerAsync(
             dispatcher,
             method,
@@ -193,7 +196,10 @@ internal sealed partial class SharpLinkClient
             includeClientDefault: false,
             method.HasMethodTimeout,
             method.MethodTimeout);
-        var dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(cancellationToken, responseCodec);
+        var dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(
+            cancellationToken,
+            responseCodec,
+            method.ResponseNullable);
         TrackBackgroundTask(StartDuplexStreamingInvokerAsync(
             dispatcher,
             method,
@@ -237,7 +243,8 @@ internal sealed partial class SharpLinkClient
                 cancellationToken,
                 out var requestId,
                 outcome,
-                hasResponsePayload: method.HasResponsePayload);
+                hasResponsePayload: method.HasResponsePayload,
+                responseNullable: method.ResponseNullable);
             return StartUnaryCall(
                 connection,
                 method.ContractId,
@@ -284,7 +291,8 @@ internal sealed partial class SharpLinkClient
                 control.Deadline,
                 cancellationToken,
                 outcome,
-                hasResponsePayload: method.HasResponsePayload).ConfigureAwait(false);
+                hasResponsePayload: method.HasResponsePayload,
+                responseNullable: method.ResponseNullable).ConfigureAwait(false);
             return await StartUnaryCall(
                 connection,
                 method.ContractId,
@@ -493,7 +501,8 @@ internal sealed partial class SharpLinkClient
                     cancellationToken,
                     out requestId,
                     outcome,
-                    hasResponsePayload: method.HasResponsePayload);
+                    hasResponsePayload: method.HasResponsePayload,
+                    responseNullable: method.ResponseNullable);
             }
             else
             {
@@ -511,7 +520,8 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     cancellationToken,
                     outcome,
-                    hasResponsePayload: method.HasResponsePayload).ConfigureAwait(false);
+                    hasResponsePayload: method.HasResponsePayload,
+                    responseNullable: method.ResponseNullable).ConfigureAwait(false);
                 requestId = lease.Id;
                 operation = lease.Operation;
             }

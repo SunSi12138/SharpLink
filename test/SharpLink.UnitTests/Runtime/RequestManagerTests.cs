@@ -50,6 +50,37 @@ public class PendingRequestTableTests
     }
 
     [Test]
+    public async Task RequiredScalarResponseMustRejectDecodedNull()
+    {
+        using var manager = new PendingRequestTable(8);
+        var operation = manager.Rent(
+            new NullStringCodec(),
+            PendingCallKind.Unary,
+            deadlineTimestamp: 0,
+            CancellationToken.None,
+            out var requestId);
+        var payload = new ReadOnlySequence<byte>(new byte[] { 1 });
+
+        Ensure(manager.Dispatch(requestId, ref payload), "null response should reach its pending call");
+        var failure = await CaptureExceptionAsync(operation.AsValueTask().AsTask());
+
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "a required scalar response decoded as null must be DataLoss");
+
+        var nullableOperation = manager.Rent(
+            new NullStringCodec(),
+            PendingCallKind.Unary,
+            deadlineTimestamp: 0,
+            CancellationToken.None,
+            out requestId,
+            responseNullable: true);
+        payload = new ReadOnlySequence<byte>(new byte[] { 1 });
+        Ensure(manager.Dispatch(requestId, ref payload), "nullable response dispatch");
+        Ensure(await nullableOperation.AsValueTask() is null,
+            "an explicitly nullable scalar response must preserve null");
+    }
+
+    [Test]
     public async Task OccupiedWrappedSlotShouldAdvanceIdToAnotherFreeSlot()
     {
         var manager = new PendingRequestTable(4);
@@ -665,6 +696,14 @@ public class PendingRequestTableTests
         public void Complete(Exception? exception)
         {
         }
+    }
+
+    private sealed class NullStringCodec : IRpcCodec<string>
+    {
+        public void Serialize(in string value, IBufferWriter<byte> buffer)
+            => throw new NotSupportedException();
+
+        public string Deserialize(in ReadOnlySequence<byte> buffer) => null!;
     }
 
     private sealed class BlockingStreamingCompletionObserver : IPendingCallCompletionObserver, IDisposable

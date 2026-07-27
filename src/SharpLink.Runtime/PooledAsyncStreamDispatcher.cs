@@ -54,6 +54,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
     private T? _current;
     private IRpcCodec<T>? _codec;
+    private bool _payloadNullable;
     private Action<long, ushort, int>? _bytesConsumed;
     private Action<long>? _consumerAbandoned;
     private long _flowControlRequestId;
@@ -79,13 +80,26 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     public static PooledAsyncStreamDispatcher<T> Rent(
         CancellationToken enumerationToken = default,
         IRpcCodecProvider? codecProvider = null)
+        => Rent(enumerationToken, codecProvider, payloadNullable: false);
+
+    public static PooledAsyncStreamDispatcher<T> Rent(
+        CancellationToken enumerationToken,
+        IRpcCodecProvider? codecProvider,
+        bool payloadNullable)
         => Rent(
             enumerationToken,
-            (codecProvider ?? SharpLinkRuntimeContext.Default.Codecs).GetCodec<T>());
+            (codecProvider ?? SharpLinkRuntimeContext.Default.Codecs).GetCodec<T>(),
+            payloadNullable);
 
     public static PooledAsyncStreamDispatcher<T> Rent(
         CancellationToken enumerationToken,
         IRpcCodec<T> codec)
+        => Rent(enumerationToken, codec, payloadNullable: false);
+
+    public static PooledAsyncStreamDispatcher<T> Rent(
+        CancellationToken enumerationToken,
+        IRpcCodec<T> codec,
+        bool payloadNullable)
     {
         ArgumentNullException.ThrowIfNull(codec);
         if (!Pool.TryPop(out var dispatcher))
@@ -93,11 +107,14 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         else
             Interlocked.Decrement(ref s_retainedCount);
 
-        dispatcher.Reset(enumerationToken, codec);
+        dispatcher.Reset(enumerationToken, codec, payloadNullable);
         return dispatcher;
     }
 
-    private void Reset(CancellationToken enumerationToken, IRpcCodec<T> codec)
+    private void Reset(
+        CancellationToken enumerationToken,
+        IRpcCodec<T> codec,
+        bool payloadNullable)
     {
         _enumerationCancellationRegistration.Dispose();
         _enumerationCancellationRegistration = default;
@@ -107,6 +124,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _enumerationToken = enumerationToken;
         _additionalEnumerationToken = default;
         _codec = codec;
+        _payloadNullable = payloadNullable;
 
         _waitSource = new ManualResetValueTaskSourceCore<bool>
         {
@@ -172,6 +190,12 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             // 反序列化可能很重：尽量让队列/锁不要挡它（这里本来就无锁）
             item = (_codec ?? throw new InvalidOperationException("Stream dispatcher has no codec."))
                 .Deserialize(payload);
+            if (!_payloadNullable && default(T) is null && item is null)
+            {
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.DataLoss,
+                    "A non-nullable RPC stream item was null.");
+            }
         }
         catch
         {
@@ -612,6 +636,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _additionalEnumerationToken = default;
         _error = null;
         _codec = null;
+        _payloadNullable = false;
         _bytesConsumed = null;
         _consumerAbandoned = null;
         _flowControlRequestId = 0;

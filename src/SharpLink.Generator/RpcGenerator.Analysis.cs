@@ -1144,16 +1144,19 @@ public partial class RpcGenerator
                     .Where(static parameter => !parameter.IsCancellationToken && !parameter.IsCallOptions)
                     .Select(static parameter =>
                         $"{parameter.Name}:{parameter.Type}:{(parameter.IsStream ? "stream" : "value")}:{(parameter.PayloadNullable ? "nullable" : "required")}"));
+                var responsePayload = isGenericTask
+                    ? ((INamedTypeSymbol)m.ReturnType).TypeArguments[0]
+                    : itemTypeSymbol;
+                var responseNullable = responsePayload is not null && IsNullablePayload(responsePayload);
                 var responseSchema = isStreamReturn
                     ? $"stream:{streamItemType}"
                     : $"value:{returnType}";
+                if (responseNullable)
+                    responseSchema += ":nullable";
                 var kind = isOneWay ? "OneWay" : isStreamReturn
                     ? (paramArray.Any(static parameter => parameter.IsStream) ? "DuplexStreaming" : "ServerStreaming")
                     : paramArray.Any(static parameter => parameter.IsStream) ? "ClientStreaming" : "Unary";
                 var canonical = $"{m.Name}|{methodHash}|{kind}|{requestSchema}|{responseSchema}|cancel={paramArray.Any(static parameter => parameter.IsCancellationToken)}|timeout={hasTimeoutAttribute}:{timeoutSeconds?.ToString("R", CultureInfo.InvariantCulture)}|idempotent={isIdempotent}";
-                var responsePayload = isGenericTask
-                    ? ((INamedTypeSymbol)m.ReturnType).TypeArguments[0]
-                    : itemTypeSymbol;
 
                 return new RpcMethodModel(
                     Name: m.Name,
@@ -1177,7 +1180,7 @@ public partial class RpcGenerator
                     RequestSchema: requestSchema,
                     ResponseSchema: responseSchema,
                     Fingerprint: Hashing.GetSha256(canonical),
-                    ResponseNullable: responsePayload is not null && IsNullablePayload(responsePayload),
+                    ResponseNullable: responseNullable,
                     ResponseEnumUnderlyingType: responsePayload is null ? null : GetEnumUnderlyingType(responsePayload),
                     StreamItemEnumUnderlyingType: itemTypeSymbol is null ? null : GetEnumUnderlyingType(itemTypeSymbol),
                     Location: m.Locations.FirstOrDefault());

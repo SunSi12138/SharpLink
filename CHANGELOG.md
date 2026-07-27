@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [0.8.41] - 2026-07-27
+
+### Fixed
+
+- Required unary and client-streaming responses now reject a null value decoded by a custom or mismatched codec as structured `DataLoss`; explicitly nullable responses remain valid.
+- Required ServerStreaming/DuplexStreaming response items and ClientStreaming/DuplexStreaming request items now enforce their generated nullability contract at the shared stream dispatcher boundary.
+- Runtime method fingerprints now include nullable response identity, preventing separately generated required and nullable contracts from appearing compatible while preserving method IDs and required-response fingerprints.
+- Protocol v2 Error writers and readers reject the reserved `SharpLinkErrorCode.Unknown` value; concrete defined wire codes retain their existing values and round trips.
+
+### Compatibility and validation
+
+- Valid Protocol v2 bytes, method IDs, payload layouts, and required-response fingerprints are unchanged. Existing two-argument `PooledAsyncStreamDispatcher<T>.Rent` binaries remain compatible; generated callers use new nullability-aware overloads.
+- Pre-fix Generator preserved all 119 existing passes and failed only the new separate-compilation fingerprint proof; Unit preserved all 486 existing passes and failed exactly four new scalar-null, two-direction stream-null, and reserved-code proofs.
+- Non-incremental Release built with zero warnings/errors; Generator 120/120, Unit 490/490, Integration 250/250, 120-second shared-memory Chaos, NativeAOT TCP, seven-package pack, and fresh-cache TCP/shared-memory package smoke passed. Exact-0.8.40/candidate TCP process medians changed by +0.36% without interceptors and +0.98% with interceptors, with unchanged allocations; required-reference stream dispatch was exactly 13.860 ns/op on both process medians.
+
 ## [0.8.40] - 2026-07-27
 
 ### Fixed

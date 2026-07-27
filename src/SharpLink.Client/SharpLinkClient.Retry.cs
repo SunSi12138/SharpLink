@@ -168,7 +168,8 @@ internal sealed partial class SharpLinkClient
                 cancellationToken,
                 out var requestId,
                 outcome,
-                hasResponsePayload: hasResponsePayload);
+                hasResponsePayload: hasResponsePayload,
+                responseNullable: method.ResponseNullable);
             return StartUnaryCall(
                 connection,
                 contractId,
@@ -214,7 +215,8 @@ internal sealed partial class SharpLinkClient
                 control.Deadline,
                 cancellationToken,
                 outcome,
-                hasResponsePayload: hasResponsePayload).ConfigureAwait(false);
+                hasResponsePayload: hasResponsePayload,
+                responseNullable: method.ResponseNullable).ConfigureAwait(false);
             return await StartUnaryCall(
                 connection,
                 contractId,

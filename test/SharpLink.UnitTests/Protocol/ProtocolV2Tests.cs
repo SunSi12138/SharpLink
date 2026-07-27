@@ -349,6 +349,28 @@ public class ProtocolV2Tests
     }
 
     [Test]
+    public async Task BinaryErrorShouldRejectReservedUnknownCodeInBothDirections()
+    {
+        using var payload = new PooledByteBufferWriter();
+        var writeFailure = CaptureException(() => ProtocolV2PayloadCodec.WriteError(
+            payload,
+            SharpLinkErrorCode.Unknown,
+            "reserved",
+            Limits.MaxErrorMessageBytes,
+            out _));
+        var readFailure = CaptureException(() => ProtocolV2PayloadCodec.ReadError(
+            new ReadOnlySequence<byte>(new byte[] { 0, 0, 0 }),
+            ProtocolV2FrameFlags.Error,
+            Limits.MaxErrorMessageBytes));
+
+        await Assert.That(writeFailure).IsTypeOf<ArgumentOutOfRangeException>();
+        await Assert.That(payload.WrittenCount).IsEqualTo(0);
+        await Assert.That(readFailure).IsAssignableTo<SharpLinkException>();
+        await Assert.That((readFailure as SharpLinkException)?.Code)
+            .IsEqualTo(SharpLinkErrorCode.ProtocolViolation);
+    }
+
+    [Test]
     public async Task BinaryErrorShouldRejectInvalidUtf8()
     {
         var payload = new byte[]
