@@ -465,6 +465,7 @@ internal sealed class SharedMemoryTransportConnection : ITransportConnection
 
 internal static class SharedMemoryHandshake
 {
+    private static readonly Encoding SStrictUtf8 = new UTF8Encoding(false, true);
     private const int Magic = 0x53484D31;
     private const int Version = 3;
     private const int ClientHelloBytes = 4 + 4 + 4 + 4 + SharedMemoryLayout.NonceBytes;
@@ -561,7 +562,18 @@ internal static class SharedMemoryHandshake
 
         var pathBytes = new byte[pathLength];
         await stream.ReadExactlyAsync(pathBytes, cancellationToken).ConfigureAwait(false);
-        var path = Encoding.UTF8.GetString(pathBytes);
+        string path;
+        try
+        {
+            path = SStrictUtf8.GetString(pathBytes);
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.FailedPrecondition,
+                "Shared-memory mapping path is not valid UTF-8.",
+                exception);
+        }
         SharedMemoryMapping.ValidateMappingPath(path);
         return new SharedMemoryServerResponse(capacity, processId, path);
     }

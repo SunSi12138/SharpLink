@@ -4,6 +4,26 @@
 
 ## [Unreleased]
 
+## [0.8.21] - 2026-07-27
+
+### Fixed
+
+- Shared-memory handshakes now reject malformed UTF-8 mapping paths before filesystem security validation.
+- Generated null collection payloads now reject trailing bytes consistently with non-null collections.
+- Generated DTO string serialization now rejects isolated UTF-16 surrogates instead of replacement-encoding them.
+- Request metadata sizing and encoding now reject isolated surrogates instead of changing keys or values on the wire.
+- Dynamic per-call service scope-creation failure now releases its module lease, preventing plugin drains from being stranded.
+
+### Changed
+
+- Removed two unused internal writer/nullable-short serialization helpers.
+
+### Compatibility and validation
+
+- Protocol v2 wire formats and generated Manifest versions are unchanged. Previously normalized malformed local or peer text is now rejected; valid Unicode including surrogate pairs is unchanged.
+- Non-incremental Release build, Generator 83/83, Unit 445/445, Integration 231/231, seven-package pack, and fresh-cache package smoke passed.
+- Metadata construction retained 136 B/op and baseline latency. Strict sizing adds about 2 ns; strict generated string writes add about 4 ns with zero allocation, an intentionally bounded integrity cost after a slower extra-scan design was rejected.
+
 ## [0.8.20] - 2026-07-27
 
 ### Fixed

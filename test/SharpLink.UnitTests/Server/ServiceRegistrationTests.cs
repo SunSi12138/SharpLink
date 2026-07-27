@@ -31,6 +31,30 @@ public class ServiceRegistrationTests
     }
 
     [Test]
+    public async Task ScopeCreationFailureShouldReleaseDynamicPerCallLease()
+    {
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var manifest = new EmptyManifest(typeof(ServiceRegistrationTests).Assembly);
+        using var codecRegistration = context.PrepareGeneratedManifest(manifest);
+        var module = new SharpLinkDynamicModule(
+            typeof(ServiceRegistrationTests).Assembly,
+            manifest,
+            codecRegistration);
+        var registration = ServiceRegistration.CreatePerCall(
+            typeof(object),
+            new StubMarker(),
+            new ScopeCreationThrowingFactory(),
+            static _ => new object(),
+            disposeService: true,
+            module);
+
+        var failure = await CaptureAsync(() => registration.AcquireAsync(null!, isStream: false));
+
+        Ensure(ContainsMessage(failure, "scope creation failed"), "scope creation failure preserved");
+        Ensure(module.RemainingCalls == 0, "failed scope creation must release its module call lease");
+    }
+
+    [Test]
     public async Task ConnectionActivationRollbackShouldPreserveActivationAndScopeFailures()
     {
         var registration = ServiceRegistration.CreateConnection(
@@ -304,6 +328,12 @@ public class ServiceRegistrationTests
     private sealed class ThrowingScopeFactory(string message) : IServiceScopeFactory
     {
         public IServiceScope CreateScope() => new ThrowingScope(message);
+    }
+
+    private sealed class ScopeCreationThrowingFactory : IServiceScopeFactory
+    {
+        public IServiceScope CreateScope()
+            => throw new InvalidOperationException("scope creation failed");
     }
 
     private sealed class ThrowingScope(string message) : IServiceScope, IAsyncDisposable

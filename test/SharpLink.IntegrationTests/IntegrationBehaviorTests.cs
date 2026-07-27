@@ -3,6 +3,18 @@ namespace SharpLink.IntegrationTests;
 public class IntegrationBehaviorTests
 {
     [Test]
+    public void GeneratedNullCollectionShouldRejectTrailingBytes()
+    {
+        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        var codec = context.Codecs.GetCodec<List<string>>();
+        var failure = CaptureException(() => codec.Deserialize(
+            new ReadOnlySequence<byte>(new byte[] { 0, 0xA5 })));
+
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "null generated collection must reject trailing bytes");
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task BasicRpcAndStreamingShouldWork(bool useSharedMemory)
@@ -1444,6 +1456,19 @@ public class IntegrationBehaviorTests
     {
         if (!condition)
             throw new Exception($"assert failed: {name}");
+    }
+
+    private static Exception? CaptureException(Action action)
+    {
+        try
+        {
+            action();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 
     private static int GetFreePort()

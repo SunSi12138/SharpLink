@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace SharpLink.UnitTests.Abstractions;
 
 public class GeneratedCodecWireTests
@@ -37,6 +39,17 @@ public class GeneratedCodecWireTests
         Ensure(exhausted.Code == SharpLinkErrorCode.ResourceExhausted, "collection limit code");
     }
 
+    [Test]
+    public void GeneratedStringWriterShouldRejectIsolatedSurrogates()
+    {
+        using var writer = new PooledByteBufferWriter();
+        var failure = CaptureException(() => RpcGeneratedCodecWire.WriteString(writer, "\uD800"));
+
+        Ensure(failure is EncoderFallbackException,
+            $"isolated surrogate should fail strict UTF-8 encoding, not {failure?.GetType().Name}");
+        Ensure(writer.WrittenCount == 0, "invalid string must not partially write its length");
+    }
+
     private static SharpLinkException CaptureSharpLink(Action action)
     {
         try
@@ -59,6 +72,19 @@ public class GeneratedCodecWireTests
             throw new Exception("expected SharpLinkException");
         }
         catch (SharpLinkException exception)
+        {
+            return exception;
+        }
+    }
+
+    private static Exception? CaptureException(Action action)
+    {
+        try
+        {
+            action();
+            return null;
+        }
+        catch (Exception exception)
         {
             return exception;
         }

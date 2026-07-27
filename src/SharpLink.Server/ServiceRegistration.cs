@@ -242,10 +242,11 @@ internal sealed class ServiceRegistration : IAsyncDisposable
 
     private async ValueTask<ServiceLease> AcquirePerCallAsync(SharpLinkDynamicModuleLease moduleLease)
     {
-        var scope = (_scopeFactory ?? throw new InvalidOperationException("Service scope factory is unavailable."))
-            .CreateScope();
+        IServiceScope? scope = null;
         try
         {
+            scope = (_scopeFactory ?? throw new InvalidOperationException("Service scope factory is unavailable."))
+                .CreateScope();
             var service = (_factory ?? throw new InvalidOperationException("Service factory is unavailable."))
                 .Invoke(scope.ServiceProvider) ??
                 throw new InvalidOperationException("The SharpLink service factory returned null.");
@@ -256,7 +257,8 @@ internal sealed class ServiceRegistration : IAsyncDisposable
             moduleLease.Dispose();
             try
             {
-                await ServiceLease.DisposeScopeAsync(scope).ConfigureAwait(false);
+                if (scope is not null)
+                    await ServiceLease.DisposeScopeAsync(scope).ConfigureAwait(false);
             }
             catch (Exception cleanupException)
             {

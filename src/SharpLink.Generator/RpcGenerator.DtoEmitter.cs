@@ -406,6 +406,7 @@ public partial class RpcGenerator
         sb.AppendLine("        var count = RpcGeneratedCodecWire.ReadCollectionCount(ref reader);");
         sb.AppendLine("        if (count < 0)");
         sb.AppendLine("        {");
+        sb.AppendLine("            RpcGeneratedCodecWire.EnsureFullyConsumed(reader);");
         if (model.Kind is GeneratedCodecKind.Array or GeneratedCodecKind.List or GeneratedCodecKind.Dictionary)
             sb.AppendLine("            return null;");
         else

@@ -403,8 +403,8 @@ public static class ProtocolV2PayloadCodec
         for (var index = 0; index < metadata.Count; index++)
         {
             var entry = metadata[index];
-            var keyBytes = Encoding.UTF8.GetByteCount(entry.Key);
-            var valueBytes = Encoding.UTF8.GetByteCount(entry.Value);
+            var keyBytes = SStrictUtf8.GetByteCount(entry.Key);
+            var valueBytes = SStrictUtf8.GetByteCount(entry.Value);
             length = checked(length + GetVarUInt32Length(checked((uint)keyBytes)) + keyBytes);
             length = checked(length + GetVarUInt32Length(checked((uint)valueBytes)) + valueBytes);
         }
@@ -541,12 +541,12 @@ public static class ProtocolV2PayloadCodec
 
     private static void WriteUtf8(IBufferWriter<byte> writer, string value)
     {
-        var byteCount = Encoding.UTF8.GetByteCount(value);
+        var byteCount = SStrictUtf8.GetByteCount(value);
         WriteVarUInt32(writer, checked((uint)byteCount));
         if (byteCount == 0)
             return;
         var destination = writer.GetSpan(byteCount);
-        var written = Encoding.UTF8.GetBytes(value.AsSpan(), destination);
+        var written = SStrictUtf8.GetBytes(value.AsSpan(), destination);
         writer.Advance(written);
     }
 

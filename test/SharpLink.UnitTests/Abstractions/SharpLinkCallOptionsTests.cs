@@ -34,6 +34,33 @@ public class SharpLinkCallOptionsTests
         }
     }
 
+    [Test]
+    public void MetadataShouldRejectInvalidUnicodeBeforeWireEncoding()
+    {
+        var invalidKey = new SharpLinkMetadata(
+            new KeyValuePair<string, string>("tenant\uD800", "value"));
+        var invalidValue = new SharpLinkMetadata(
+            new KeyValuePair<string, string>("tenant", "value\uDC00"));
+        var keyFailure = CaptureException(() => ProtocolV2PayloadCodec.GetMetadataPayloadLength(invalidKey));
+        var valueFailure = CaptureException(() => ProtocolV2PayloadCodec.GetMetadataPayloadLength(invalidValue));
+
+        Ensure(keyFailure is ArgumentException, "invalid Unicode metadata key");
+        Ensure(valueFailure is ArgumentException, "invalid Unicode metadata value");
+    }
+
+    private static Exception? CaptureException(Action action)
+    {
+        try
+        {
+            action();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)

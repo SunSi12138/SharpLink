@@ -145,12 +145,12 @@ public static class RpcGeneratedCodecWire
     {
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(value);
-        var byteCount = Encoding.UTF8.GetByteCount(value);
+        var byteCount = SStrictUtf8.GetByteCount(value);
         WriteUInt32(writer, checked((uint)byteCount));
         if (byteCount == 0)
             return;
         var span = writer.GetSpan(byteCount);
-        var written = Encoding.UTF8.GetBytes(value, span);
+        var written = SStrictUtf8.GetBytes(value, span);
         writer.Advance(written);
     }
 

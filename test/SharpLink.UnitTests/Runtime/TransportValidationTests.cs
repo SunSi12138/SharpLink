@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.IO.Pipes;
 using System.Linq;
 using System.Net;
@@ -98,6 +99,45 @@ public class TransportValidationTests
         await Assert.That(protocolFailure).IsTypeOf<ArgumentOutOfRangeException>();
         await Assert.That(tlsFailure).IsTypeOf<ArgumentOutOfRangeException>();
         await Assert.That(sharedMemoryFailure).IsTypeOf<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task SharedMemoryServerResponseShouldRejectMalformedPathUtf8()
+    {
+        var name = $"su{Guid.NewGuid():N}"[..10];
+        await using var server = new NamedPipeServerStream(
+            name,
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            System.IO.Pipes.PipeOptions.Asynchronous | System.IO.Pipes.PipeOptions.CurrentUserOnly);
+        await using var client = new NamedPipeClientStream(
+            ".",
+            name,
+            PipeDirection.InOut,
+            System.IO.Pipes.PipeOptions.Asynchronous | System.IO.Pipes.PipeOptions.CurrentUserOnly);
+        await Task.WhenAll(server.WaitForConnectionAsync(), client.ConnectAsync());
+
+        var nonce = new byte[SharedMemoryLayout.NonceBytes];
+        Random.Shared.NextBytes(nonce);
+        var response = new byte[20 + nonce.Length + 2];
+        BinaryPrimitives.WriteInt32LittleEndian(response, 0x53484D31);
+        BinaryPrimitives.WriteInt32LittleEndian(response.AsSpan(4), 3);
+        BinaryPrimitives.WriteInt32LittleEndian(response.AsSpan(8), 64 * 1024);
+        BinaryPrimitives.WriteInt32LittleEndian(response.AsSpan(12), Environment.ProcessId);
+        BinaryPrimitives.WriteInt32LittleEndian(response.AsSpan(16), 2);
+        nonce.CopyTo(response, 20);
+        response[^2] = 0xC3;
+        response[^1] = 0x28;
+
+        var read = SharedMemoryHandshake.ReadServerResponseAsync(client, nonce, CancellationToken.None).AsTask();
+        await server.WriteAsync(response);
+        var failure = await CaptureFailureAsync(read);
+
+        await Assert.That(failure).IsTypeOf<SharpLinkException>();
+        var sharpLinkFailure = (SharpLinkException)failure!;
+        await Assert.That(sharpLinkFailure.Code).IsEqualTo(SharpLinkErrorCode.FailedPrecondition);
+        await Assert.That(sharpLinkFailure.Message).Contains("UTF-8");
     }
 
     [Test]
@@ -218,6 +258,19 @@ public class TransportValidationTests
         try
         {
             action();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static async Task<Exception?> CaptureFailureAsync(Task operation)
+    {
+        try
+        {
+            await operation;
             return null;
         }
         catch (Exception exception)

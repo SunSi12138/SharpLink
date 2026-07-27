@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace SharpLink.Runtime;
 
 public static class RpcBufferWriterExtensions
@@ -48,20 +46,6 @@ public static class RpcBufferWriterExtensions
             var span = writer.WrittenSpan;
             var lengthSlice = span.Slice(token.StartOffset + 1, sizeof(int));
             BinaryPrimitives.WriteInt32LittleEndian(lengthSlice, bodyLength);
-        }
-    }
-
-    extension(IBufferWriter<byte> writer)
-    {
-        public void WriteUtf8String(string? value)
-        {
-            if (string.IsNullOrEmpty(value))
-                return;
-
-            var maxLen = Encoding.UTF8.GetMaxByteCount(value.Length);
-            var span = writer.GetSpan(maxLen);
-            var longWritten = Encoding.UTF8.GetBytes(value, span);
-            writer.Advance(longWritten);
         }
     }
 }
