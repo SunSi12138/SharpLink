@@ -249,6 +249,128 @@ public class SharpLinkClientLifecycleStateTests
     }
 
     [Test]
+    public async Task StopShouldPreserveAnUnexpectedCompletedReconnectFailure()
+    {
+        var client = new SharpLinkClient(
+            new NonConnectingFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        var reconnectTaskField = typeof(SharpLinkClient).GetField(
+            "_reconnectTask",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find client reconnect task");
+        reconnectTaskField.SetValue(
+            client,
+            Task.FromException(new InvalidOperationException("unexpected reconnect cleanup failure")));
+
+        Exception failure;
+        try
+        {
+            await client.StopAsync();
+            throw new Exception("expected stop failure");
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Ensure(ContainsException(failure, static exception =>
+                exception is InvalidOperationException { Message: "unexpected reconnect cleanup failure" }),
+            "shutdown cancellation must not hide an unexpected completed reconnect failure");
+        Ensure(client.State == SharpLinkConnectionState.Stopped,
+            "client cleanup must still reach the stopped state when it reports the failure");
+    }
+
+    [Test]
+    public async Task BackgroundJoinShouldNotHideAnUnexpectedNestedFailure()
+    {
+        await using var client = new SharpLinkClient(
+            new NonConnectingFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        var expected = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var unexpected = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var mixed = Task.WhenAll(expected.Task, unexpected.Task);
+        typeof(SharpLinkClient).GetMethod(
+                "TrackBackgroundTask",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(client, [mixed]);
+        var wait = typeof(SharpLinkClient).GetMethod(
+            "WaitForBackgroundTasksAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Client background task join");
+        var joined = (Task)wait.Invoke(client, null)!;
+        await Task.Yield();
+        expected.TrySetException(new IOException("expected background transport closure"));
+        unexpected.TrySetException(new InvalidOperationException("unexpected background nested failure"));
+
+        Exception? failure = null;
+        try
+        {
+            await joined;
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Ensure(failure is not null && ContainsException(failure, static exception =>
+                exception is InvalidOperationException { Message: "unexpected background nested failure" }),
+            "an expected background close must not hide an unexpected nested task failure");
+    }
+
+    [Test]
+    public async Task StaticClusterWorkerJoinShouldNotHideAnUnexpectedNestedFailure()
+    {
+        await using var client = (SharpLinkClient)SharpClientBuilder.Create()
+            .UseEndpoints(
+                [CreateEndpoint("first", 5001), CreateEndpoint("second", 5002)],
+                _ => new NonConnectingFactory())
+            .Build();
+        var cluster = typeof(SharpLinkClient).GetField(
+                "_cluster",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(client)
+            ?? throw new Exception("cannot find static cluster runtime");
+        var endpoints = (Array)(cluster.GetType().GetField(
+                "_endpoints",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(cluster)
+            ?? throw new Exception("cannot find static cluster endpoints"));
+        var firstEndpoint = endpoints.GetValue(0)
+            ?? throw new Exception("cannot find first static endpoint state");
+        var reconnectTask = firstEndpoint.GetType().GetProperty("ReconnectTask")
+            ?? throw new Exception("cannot find static reconnect worker");
+        var expected = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var unexpected = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        reconnectTask.SetValue(firstEndpoint, Task.WhenAll(expected.Task, unexpected.Task));
+        var failures = new List<Exception>();
+        var wait = cluster.GetType().GetMethod(
+            "WaitForWorkersAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find static cluster worker join");
+        var joined = (Task)wait.Invoke(cluster, [failures])!;
+        await Task.Yield();
+        expected.TrySetException(new IOException("expected static worker transport closure"));
+        unexpected.TrySetException(new InvalidOperationException("unexpected static worker nested failure"));
+
+        await joined;
+
+        var retainedUnexpected = false;
+        for (var index = 0; index < failures.Count; index++)
+        {
+            retainedUnexpected |= ContainsException(failures[index], static exception =>
+                exception is InvalidOperationException { Message: "unexpected static worker nested failure" });
+        }
+        Ensure(retainedUnexpected,
+            "an expected static worker close must not hide an unexpected nested task failure");
+    }
+
+    [Test]
     public async Task DisconnectedReadySessionShouldReconnectWithFreshConnection()
     {
         var transport = new SequenceClientTransportFactory();

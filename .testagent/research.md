@@ -1,76 +1,111 @@
-# 0.8.43 regression-test research
+# 0.8.44 regression-test research
 
-## Audit boundary
+## Baseline and audit boundary
 
-- Exact source baseline: local 0.8.42 commit `cd2de157e05fd4b3d97dd34f056871c2c9d95ee8`.
-- The audit covered shared-memory lifetime, flow-control hot paths, pending-call completion,
-  streaming telemetry lifetime, and dynamic endpoint/admission-policy retirement.
-- Every counted finding has an observed or deterministic pre-fix failure plus a post-fix control.
-- A rare `WindowUpdate references an unknown stream` Integration failure remains an observation,
-  not a finding: dispatcher disposal already closes admission and drains acquired dispatches before
-  reporting consumer abandonment, and two complete reruns passed.
+- Exact baseline: local 0.8.43 commit `9789fbedd5af5e4b2b21be84684150047f26c6e2`.
+- This round starts with parallel shutdown aggregation, then continues timing, async ownership,
+  pooled memory, dynamic modules, and protocol length boundaries not promoted in 0.8.43.
+- A multi-cluster cancellation-callback hypothesis was rejected: the initiating failure remained
+  intact, every child stopped, and the coordinator reached Faulted. Its probe was removed.
 
-## Finding 1 — fresh shared-memory mappings can be unlinked during creation (P1 availability)
+## Finding 1 — shutdown joins inspect only the exception selected by `await` (P2 lifecycle)
 
-- `SharedMemoryMapping.CreateServer` ran stale-file cleanup before every mapping creation without
-  coordinating concurrent creators. On Unix, one creator could unlink another creator's newly
-  opened file before permission/header initialization or before its Client opened it.
-- The first 0.8.42 final Unit gate failed in `File.SetUnixFileMode` after this unlink. A 64-round,
-  eight-creator stress witness also failed from `CreateServer`; the deterministic companion
-  `CreatingMappingShouldPreserveFreshPeerFiles` proved that baseline cleanup deleted a fresh peer.
-- Pre-fix evidence: `artifacts/0.8.43-prefx-shm-two-witnesses.log` (494 pass, one expected fail).
-- Fix: serialize in-process cleanup plus creation and exclude mappings younger than one minute.
-  The five-minute stale-file control prevents deleting cleanup outright.
-- Post-fix evidence: `artifacts/0.8.43-postfix-shm-cleanup.log` (495/495 pass).
+This is one root cause with three independently reproduced manifestations. They are counted once,
+not once per component or call site.
 
-## Finding 2 — ordinary streaming items take a redundant second flow-control lock (P2 performance)
+### Server session cleanup
 
-- The isolated 0.7.11/0.8.41 comparison located the first regression at 0.8.0 commit
-  `7a99fc66`: each consumed item first updated credit under `_gate`, then unconditionally entered
-  the same gate again to inspect an almost-always-null cross-stream credit queue. Duplex streaming
-  performs roughly 512 redundant lock acquisitions per RPC.
-- Stock-versus-causal-removal paired throughput changed 4,832→5,155 (+6.7%), 4,795→5,255
-  (+9.6%), and 4,810→4,986 (+3.7%); paired median +6.7%, P50/P99 -6.2%, CPU/stream -8.8%.
-  Raw evidence and methodology are retained in the isolated performance checkout under
-  `artifacts/bisect/raw` and `artifacts/causal`.
-- MemoryDiagnoser corrected an earlier normalization artifact: size-32 changed only 6.57→6.58 KB
-  and size-256 31.09→31.29 KB, so no product allocation regression is claimed.
-- Fix: publish absence with a nullable queue, bypass `_gate` when null, and return the queue to null
-  after its last item. Existing cross-stream threshold tests guard against stranded credits.
+- `SharpLinkServer.DisposeAllSessionsAsync` awaited a `Task.WhenAll` and filtered only the single
+  exception rethrown by `await`. When that exception was an expected `IOException`, the catch
+  swallowed the entire aggregate even if another session had failed with an internal exception.
+- The deterministic witness injects one `InvalidOperationException` transport failure and enough
+  synchronous `IOException` closures to put an expected close first in the shutdown snapshot.
+  Baseline disposed every transport but returned success, losing the unexpected failure.
+- Pre-fix evidence: `artifacts/0.8.44-prefx-server-mixed-session-cleanup.log`.
+- Fix: after `WhenAll` fails, flatten every child task exception, discard only known terminal
+  close types (including structured `ConnectionClosed`), and preserve one or aggregate multiple
+  unexpected failures with their original exception identities.
+- Post-fix evidence: `artifacts/0.8.44-postfix-server-mixed-session-cleanup.log` (1/1 pass).
 
-## Finding 3 — implicit connection closure is rewritten as Internal (P2 correctness)
+### Client background-worker cleanup
 
-- `PendingRequestTable.CreateCompletionException` had no `ConnectionClosed` case. Disposing the
-  table could therefore complete a pending operation with reason `ConnectionClosed` but no explicit
-  exception, after which the fallback constructed an `Internal` error.
-- The deterministic completion test and the existing 512-way dispose/register race both failed on
-  baseline; evidence is in `artifacts/0.8.43-prefx-pending-connection-code.log` (494 pass, two fail).
-- Fix: synthesize a `SharpLinkException` retaining `SharpLinkErrorCode.ConnectionClosed`.
-- Post-fix controls: all 21 pending-table tests and the complete 496-test Unit gate pass.
+- `SharpLinkClient.IgnoreExpectedStopExceptionAsync` caught every exception once the shared
+  shutdown token had been cancelled. Because `StopCoreAsync` cancels that token before joining
+  `_reconnectTask` and `_expansionTask`, an already-faulted background worker carrying an unrelated
+  internal exception was silently treated as normal cancellation.
+- The witness installs a completed `InvalidOperationException` reconnect task, calls the public
+  `StopAsync`, and verifies both that cleanup reaches Stopped and that the failure is retained.
+- Pre-fix evidence: `artifacts/0.8.44-prefx-client-reconnect-cleanup.log`.
+- Fix: flatten aggregate connect failures and suppress only expected shutdown/transport terminal
+  types for background reconnect/expansion work; preserve one unexpected failure with its original
+  stack or aggregate multiple failures. The caller-owned initial `ConnectAsync` task remains
+  suppressed during Stop to avoid reporting an already-observed failure twice.
+- Post-fix evidence: `artifacts/0.8.44-postfix-client-reconnect-cleanup.log` and
+  `artifacts/0.8.44-postfix-client-connect-observed-control.log` (both 1/1 pass).
 
-## Finding 4 — abandoning a client response stream reports successful telemetry (P2 observability)
+### Nested Server/Client background joins
 
-- `ObserveStream` unconditionally completed its client call scope as successful in `finally`, even
-  when a consumer disposed the enumerator before observing a terminal item or failure.
-- `EarlyClientStreamDisposalShouldNotReportSuccessfulCompletion` consumes one server-stream item,
-  disposes early, and inspects the stopped Client activity. Baseline reported `Unset`/success;
-  evidence is `artifacts/0.8.43-prefx-client-stream-telemetry.log`.
-- Fix: track whether the remote terminal was observed; otherwise complete with
-  `OperationCanceledException` and increment the client `consumer_abandoned` counter.
-- The exact targeted Integration test passes after the fix and verifies Error plus `error.type`.
+- Server and Client background joins filtered only the exception rethrown by `await Task.WhenAll`.
+  A tracked task that internally aggregated an expected transport close with an unexpected internal
+  failure could therefore be accepted as normal shutdown, even though its full `Task.Exception`
+  still contained the unexpected cause.
+- The deterministic Server witness tracks one nested `WhenAll` whose first failure is an expected
+  `IOException` and whose sibling is `InvalidOperationException`. The baseline join returns success.
+- Pre-fix evidence: `artifacts/0.8.44-prefx-framework-join-mixed-failure.log`.
+- Fix: Server framework/session joins and Client background joins flatten every tracked task's
+  complete exception tree, suppress only explicit shutdown terminal types, and rethrow one or
+  aggregate multiple unexpected failures.
+- Post-fix evidence: `artifacts/0.8.44-postfix-framework-join-mixed-failure.log` and
+  `artifacts/0.8.44-postfix-client-background-join.log` (both 1/1 pass).
 
-## Finding 5 — stale topology selection recreates retired admission state (P2 resource lifetime)
+### Static endpoint-cluster worker join
 
-- `DynamicClusterRuntime.GetReadyConnection` reads a published selection snapshot without holding
-  the topology gate, as intended. A custom selector can still be running when an update retires and
-  releases that endpoint generation. When selection resumes, `TryAcquire` lazily recreates breaker
-  state before connection selection proves the old generation is no longer ready. No later topology
-  event retires that recreated state, so repeated address churn can retain one sample-ring pair per
-  stale generation.
-- The deterministic test pauses selection on the old snapshot, publishes an empty topology, waits
-  for lifecycle retirement, then resumes. Baseline leaves one active generation; evidence is
-  `artifacts/0.8.43-prefx-stale-admission-retirement.log`.
-- Fix: after a granted selection finds no connection, check the endpoint's release flag under the
-  topology gate and repeat the idempotent lifecycle retirement outside the gate. If release has not
-  happened yet, the normal release path remains responsible, covering both race orders.
-- Post-fix evidence: `artifacts/0.8.43-postfix-stale-admission-retirement.log` (1/1 pass).
+- The first convergence pass found one remaining manifestation in
+  `StaticClusterRuntime.WaitForWorkersAsync`: the join added only the exception selected by
+  `await Task.WhenAll`, so an expected transport failure inside a nested worker hid its unexpected
+  sibling. This is the same shutdown-join root cause and does not increase the finding count.
+- Pre-fix evidence: `artifacts/0.8.44-prefx-static-cluster-worker-join.log`.
+- Fix: after the aggregate join fails, inspect every worker's complete exception tree and retain
+  non-shutdown cancellation exactly as before.
+- Post-fix evidence: `artifacts/0.8.44-postfix-static-cluster-worker-join.log` (1/1 pass).
+
+## Finding 2 — a failed error-response enqueue leaks Server call admission (P1 lifecycle)
+
+- The synchronous Server dispatch branches released their call state only after sending an error
+  response. If a handler failed synchronously and the bounded send queue then rejected that error
+  frame, `ReleaseDispatchResources` was skipped, leaving both global and per-connection active-call
+  counters elevated. Graceful stop could consequently wait for a call that had already ended.
+- The witness binds a session to a one-byte send budget, holds one frame in a blocking output flush,
+  invokes a synchronously failing service, and deterministically forces the error response enqueue
+  to return `ResourceExhausted`. The baseline leaves both admission counters at one.
+- Pre-fix evidence: `artifacts/0.8.44-prefx-server-error-enqueue-release.log`.
+- Fix: place terminal stream/cancellation/error handling inside `try/finally` cleanup in both
+  synchronous response shapes, and mark a manually returned response writer as transferred before
+  a module-drain send can fail.
+- Post-fix evidence: `artifacts/0.8.44-postfix-server-error-enqueue-release.log` (1/1 pass; both
+  active-call counters return to zero while the original queue failure remains observable).
+
+## Finding 3 — rejected stream terminal frames retain flow-control slots (P2 availability)
+
+- `SendStreamCompleteAsync` and `SendStreamErrorAsync` marked their send stream complete only after
+  the terminal frame entered the session queue. A bounded-queue rejection therefore left the
+  `StreamFlowController` state open forever even though the producer had ended. Repetition could
+  exhaust `MaxConcurrentStreamsPerConnection` on an otherwise healthy connection.
+- The witness opens the sole permitted flow-controlled stream, repays all byte credit, blocks one
+  frame in the send pump, and forces `StreamComplete` to fail with `ResourceExhausted`. On the
+  baseline, a second stream is rejected because the first slot remains retained.
+- Pre-fix evidence: `artifacts/0.8.44-prefx-stream-complete-slot.log`.
+- Fix: terminal-frame enqueue and flow-state completion now share a `try/finally`, for both success
+  and error terminal frames. The original send exception still propagates.
+- Post-fix evidence: `artifacts/0.8.44-postfix-stream-complete-slot.log` (1/1 pass; the next stream
+  acquires the single configured slot after the terminal enqueue rejection).
+
+## Rejected observations
+
+- DNS refresh jitter near `TimeSpan.MaxValue` does not wrap to the minimum interval on the target
+  runtime: the floating-point-to-`long` conversion saturates. The probe passed unchanged and was
+  removed, so this is not counted.
+- Shared-memory writer spill completion reads `SemaphoreSlim.CurrentCount`, but `_completed` is
+  published before that read. A later flush observes completion before touching spill state, while
+  an earlier flush already owns the zero-count gate. The apparent TOCTOU does not create concurrent
+  spill access and is not counted.

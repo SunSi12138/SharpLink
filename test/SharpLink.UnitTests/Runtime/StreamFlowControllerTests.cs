@@ -1,4 +1,5 @@
 using System.Threading;
+using System.IO.Pipelines;
 
 namespace SharpLink.UnitTests.Runtime;
 
@@ -202,6 +203,51 @@ public class StreamFlowControllerTests
         await controller.AcquireSendCreditAsync(9, 0, 4, CancellationToken.None);
     }
 
+    [Test]
+    public async Task RejectedStreamCompletionFrameShouldReleaseItsFlowControlSlot()
+    {
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(static options =>
+            {
+                options.FlowControl.MaxSendQueueBytes = 1;
+                options.Protocol.MaxConcurrentStreamsPerConnection = 1;
+            })
+            .Build();
+        var input = new Pipe();
+        var output = new BlockingFlushPipeWriter();
+        await using var session = new RpcSession(
+            "stream-completion-capacity",
+            input.Reader,
+            output,
+            static () => { },
+            static () => true);
+        session.BindRuntimeContext(context);
+        session.NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl;
+        session.EnableStreamFlowControl(4, 4);
+        await session.AcquireStreamSendCreditAsync(1, 1, 1, CancellationToken.None);
+        session.ApplyWindowUpdate(1, new ProtocolV2WindowUpdate(1, 1));
+        session.SendHealthCheck(99);
+        await output.FlushStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        try
+        {
+            try
+            {
+                session.SendStreamCompleteAsync(1, 1);
+                throw new Exception("expected the bounded send queue to reject StreamComplete");
+            }
+            catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ResourceExhausted)
+            {
+            }
+
+            await session.AcquireStreamSendCreditAsync(2, 1, 1, CancellationToken.None);
+        }
+        finally
+        {
+            output.ReleaseFlush();
+        }
+    }
+
     private static async Task ExpectCancellation(ValueTask pending)
     {
         try
@@ -230,5 +276,29 @@ public class StreamFlowControllerTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private sealed class BlockingFlushPipeWriter : PipeWriter
+    {
+        private readonly ArrayBufferWriter<byte> _buffer = new();
+        private readonly TaskCompletionSource<FlushResult> _flush =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource FlushStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override void Advance(int bytes) => _buffer.Advance(bytes);
+        public override void CancelPendingFlush() => _flush.TrySetResult(new FlushResult(true, false));
+        public override void Complete(Exception? exception = null) => ReleaseFlush();
+        public override ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default)
+        {
+            FlushStarted.TrySetResult();
+            return new ValueTask<FlushResult>(_flush.Task.WaitAsync(cancellationToken));
+        }
+        public override Memory<byte> GetMemory(int sizeHint = 0) => _buffer.GetMemory(sizeHint);
+        public override Span<byte> GetSpan(int sizeHint = 0) => _buffer.GetSpan(sizeHint);
+
+        internal void ReleaseFlush()
+            => _flush.TrySetResult(new FlushResult(isCanceled: false, isCompleted: false));
     }
 }

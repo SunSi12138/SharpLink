@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [0.8.44] - 2026-07-28
+
+### Fixed
+
+- Server session/framework joins, Client background-worker joins, and static endpoint-cluster worker joins inspect every fault in each tracked task and preserve unexpected sibling failures instead of trusting the single exception selected by `await Task.WhenAll`.
+- Server synchronous dispatch releases call admission, request state, service leases, and response writers even when a terminal cancellation/error response is rejected by the bounded send queue.
+- Rejected `StreamComplete` and `StreamError` frames still close their local send-flow state, preventing failed terminal enqueues from retaining `MaxConcurrentStreamsPerConnection` slots.
+
+### Compatibility and validation
+
+- Public API, valid Protocol v2 framing, method/field IDs, payload layouts, and successful call behavior are unchanged. Stop may now surface previously hidden unexpected background failures; bounded-queue terminal failures retain their original exception while cleanup completes.
+- The independent-root-cause policy counts the three shutdown-join manifestations once. This release contains three actual engineering root causes and does not pad the batch with duplicate call sites, theoretical races, defensive-only edits, or syntax modernization.
+- Exact-0.8.43/candidate Balanced TCP streaming completed without failures. A five-pair, 10-second c2s follow-up measured paired-median QPS -0.05%, P50 -0.19%, P99 +0.27%, and CPU/operation -0.38%, excluding a measurable hot-path regression.
+- Non-incremental Release built with zero warnings/errors; Generator 121/121, Unit 503/503, Integration 252/252, 120-second shared-memory Chaos, independent-process SharedMemory NativeAOT, seven-package pack, and fresh-cache PackageSmoke passed.
+
 ## [0.8.43] - 2026-07-27
 
 ### Fixed

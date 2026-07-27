@@ -432,11 +432,36 @@ internal sealed partial class SharpLinkServer(
         {
             await Task.WhenAll(tasks).ConfigureAwait(false);
         }
-        catch (Exception exception) when (
-            exception is OperationCanceledException or ObjectDisposedException or
-                System.IO.IOException or SocketException or SharpLinkException)
+        catch
         {
+            ThrowUnexpectedShutdownTaskFailures(tasks);
         }
+    }
+
+    private static bool IsExpectedSessionShutdownException(Exception exception)
+        => exception is OperationCanceledException or ObjectDisposedException or
+            System.IO.IOException or SocketException or
+            SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed };
+
+    private static void ThrowUnexpectedShutdownTaskFailures(Task[] tasks)
+    {
+        List<Exception>? unexpected = null;
+        for (var taskIndex = 0; taskIndex < tasks.Length; taskIndex++)
+        {
+            if (tasks[taskIndex].Exception is not { } aggregate)
+                continue;
+            foreach (var exception in aggregate.Flatten().InnerExceptions)
+            {
+                if (IsExpectedSessionShutdownException(exception))
+                    continue;
+                (unexpected ??= []).Add(exception);
+            }
+        }
+
+        if (unexpected is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(unexpected[0]).Throw();
+        if (unexpected is not null)
+            throw new AggregateException(unexpected);
     }
 
     private async Task WaitForFrameworkTasksAsync()
@@ -454,8 +479,9 @@ internal sealed partial class SharpLinkServer(
             {
                 await Task.WhenAll(tasks).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or System.IO.IOException or SocketException)
+            catch
             {
+                ThrowUnexpectedShutdownTaskFailures(tasks);
             }
         }
     }

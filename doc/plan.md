@@ -70,7 +70,8 @@
 - `0.8.41`：修复 scalar/stream 解码 nullability、runtime response fingerprint 与 reserved `Unknown` wire code 边界；详见 [`audit-0.8.41.md`](audit-0.8.41.md)。
 - `0.8.42`：修复 Throughput SendPump、Codec 规范 null、Protocol writer 本地错误分类与 DTO member nullability schema identity；详见 [`audit-0.8.42.md`](audit-0.8.42.md)。
 - `0.8.43`：修复共享内存创建竞态、流控空队列锁、连接关闭错误身份、提前流释放遥测与动态准入状态退役；详见 [`audit-0.8.43.md`](audit-0.8.43.md)。
-- 后续每五项 P2 及以上的已复现、已修复、已验证改进形成一个小版本；P3/语法与抽象收敛可随批次提交，但不单独推进版本。
+- `0.8.44`：修复 shutdown join 异常丢失、Server call admission 终态清理与 send-stream flow-control 终态清理；详见 [`audit-0.8.44.md`](audit-0.8.44.md)。
+- 后续按独立、高价值工程根因推进：跨组件或调用点的同根因只计一次，极端理论竞态、纯防御修改和语法现代化不计入 P2，也不为凑数量延迟或拆分版本。
 - 每批必须通过 Release、Generator、Unit、Integration 和相关性能门禁；连续三轮无新改进点后转入 RC。
 
 ## 0.8.x-rc：发布门禁

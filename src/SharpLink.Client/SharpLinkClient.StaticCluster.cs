@@ -852,9 +852,25 @@ internal sealed partial class SharpLinkClient
                 if (workers.Length == 0)
                     return;
 
-                try { await Task.WhenAll(workers).ConfigureAwait(false); }
-                catch (OperationCanceledException) when (_client._shutdownCts.IsCancellationRequested) { }
-                catch (Exception exception) { cleanupFailures.Add(exception); }
+                try
+                {
+                    await Task.WhenAll(workers).ConfigureAwait(false);
+                }
+                catch
+                {
+                    for (var index = 0; index < workers.Length; index++)
+                    {
+                        var worker = workers[index];
+                        if (worker.Exception is { } aggregate)
+                        {
+                            cleanupFailures.AddRange(aggregate.Flatten().InnerExceptions);
+                        }
+                        else if (worker.IsCanceled && !_client._shutdownCts.IsCancellationRequested)
+                        {
+                            cleanupFailures.Add(new TaskCanceledException(worker));
+                        }
+                    }
+                }
             }
         }
 

@@ -1,5 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
 using SharpLink.Server;
+using System.Buffers.Binary;
+using System.Collections.Concurrent;
+using System.Collections.Frozen;
+using System.Collections.Generic;
+using System.IO.Pipelines;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -150,6 +155,199 @@ public class SharpLinkServerInvocationTests
             "leased invocation must retain the lease cleanup failure");
     }
 
+    [Test]
+    public async Task SessionShutdownShouldNotHideAnUnexpectedSiblingCleanupFailure()
+    {
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .DisableAutomaticServiceRegistration()
+            .UseTransport(new IdleListener())
+            .Build();
+        var connections = (ConcurrentDictionary<string, ServerConnectionState>)(
+            typeof(SharpLinkServer).GetField("_connections", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(server)!);
+        var unexpectedTransport = new ThrowingTransportConnection(
+            "unexpected",
+            new InvalidOperationException("unexpected sibling session cleanup failed"));
+        var unexpected = new ServerConnectionState(
+            new RpcSession(unexpectedTransport),
+            new RuntimeConcurrencyOptions(),
+            CancellationToken.None);
+        connections.TryAdd(unexpected.Session.Id, unexpected);
+
+        var expectedTransports = new List<ThrowingTransportConnection>();
+        for (var index = 0; index < 64 && ReferenceEquals(connections.Values.First(), unexpected); index++)
+        {
+            var transport = new ThrowingTransportConnection(
+                $"expected-{index}",
+                new IOException("expected session transport closure"));
+            expectedTransports.Add(transport);
+            var connection = new ServerConnectionState(
+                new RpcSession(transport),
+                new RuntimeConcurrencyOptions(),
+                CancellationToken.None);
+            connections.TryAdd(connection.Session.Id, connection);
+        }
+        Ensure(!ReferenceEquals(connections.Values.First(), unexpected),
+            "the expected close must be first in the deterministic shutdown snapshot");
+
+        var disposeSessions = CreatePrivateCall<Func<SharpLinkServer, Task>>(
+            typeof(SharpLinkServer).GetMethod(
+                "DisposeAllSessionsAsync",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Server session shutdown path"));
+        Exception? failure = null;
+        try
+        {
+            await disposeSessions(server);
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Ensure(failure is not null && ContainsMessage(failure, "unexpected sibling session cleanup failed"),
+            "an expected sibling close must not hide an unexpected session cleanup failure");
+        Ensure(unexpectedTransport.DisposeCount == 1 &&
+               expectedTransports.All(static transport => transport.DisposeCount == 1),
+            "parallel session shutdown must still dispose every transport");
+    }
+
+    [Test]
+    public async Task FailedErrorResponseEnqueueShouldStillReleaseTheServerCall()
+    {
+        var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .DisableAutomaticServiceRegistration()
+            .UseRuntime(static options => options.FlowControl.MaxSendQueueBytes = 1)
+            .UseTransport(new IdleListener())
+            .Build();
+        var runtimeContext = (SharpLinkRuntimeContext)(
+            typeof(SharpLinkServer).GetField("_runtimeContext", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(server)!);
+        var input = new Pipe();
+        var output = new BlockingFlushPipeWriter();
+        await using var session = new RpcSession(
+            "error-response-capacity",
+            input.Reader,
+            output,
+            static () => { },
+            static () => true);
+        session.BindRuntimeContext(runtimeContext);
+        var connection = new ServerConnectionState(
+            session,
+            new RuntimeConcurrencyOptions(),
+            CancellationToken.None);
+        Ensure(connection.MarkReady(null), "connection ready");
+        var stub = new SynchronouslyThrowingStub();
+        var registration = ServiceRegistration.CreateSingleton(
+            typeof(ThrowingService),
+            stub,
+            new ThrowingService(),
+            ownsService: false);
+        typeof(SharpLinkServer).GetField("_services", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(server, new Dictionary<long, ServiceRegistration> { [stub.InterfaceHash] = registration }
+                .ToFrozenDictionary());
+        var setState = CreateInterlockedInt32Setter<SharpLinkServer>("_state");
+        const int running = 2;
+        setState(server, running);
+        session.SendHealthCheck(99);
+        await output.FlushStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var request = new byte[sizeof(long) * 2];
+        BinaryPrimitives.WriteInt64LittleEndian(request, stub.InterfaceHash);
+        BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), 1);
+        var dispatch = typeof(SharpLinkServer).GetMethod(
+            "DispatchRpcAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Server RPC dispatch path");
+        var globalActiveCalls = typeof(SharpLinkServer).GetField(
+            "_globalActiveCalls",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find global active-call counter");
+        var connectionActiveCalls = typeof(ServerConnectionState).GetField(
+            "_activeCalls",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find connection active-call counter");
+
+        Exception? failure = null;
+        try
+        {
+            try
+            {
+                var operation = (ValueTask)dispatch.Invoke(server,
+                [
+                    connection,
+                    1L,
+                    ProtocolV2FrameFlags.None,
+                    new ReadOnlySequence<byte>(request),
+                    connection.CallCancellations,
+                    CancellationToken.None,
+                    null,
+                    false
+                ])!;
+                await operation;
+            }
+            catch (Exception exception)
+            {
+                failure = exception is TargetInvocationException { InnerException: { } inner }
+                    ? inner
+                    : exception;
+            }
+
+            Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted },
+                $"the bounded send queue should reject the error response, actual: {failure}");
+            Ensure((int)globalActiveCalls.GetValue(server)! == 0 && connection.ActiveCalls == 0,
+                "a failed error-response enqueue must not leak the Server call admission counters");
+        }
+        finally
+        {
+            globalActiveCalls.SetValue(server, 0);
+            connectionActiveCalls.SetValue(connection, 0);
+            output.ReleaseFlush();
+            await connection.CloseAsync();
+            await server.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task FrameworkJoinShouldNotHideAnUnexpectedSiblingFailure()
+    {
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .DisableAutomaticServiceRegistration()
+            .UseTransport(new IdleListener())
+            .Build();
+        var expected = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var unexpected = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var mixed = Task.WhenAll(expected.Task, unexpected.Task);
+        var track = typeof(SharpLinkServer).GetMethod(
+            "TrackFrameworkTask",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Server framework task tracker");
+        track.Invoke(server, [mixed]);
+        var wait = CreatePrivateCall<Func<SharpLinkServer, Task>>(
+            typeof(SharpLinkServer).GetMethod(
+                "WaitForFrameworkTasksAsync",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Server framework task join"));
+        var joined = wait(server);
+        await Task.Yield();
+        expected.TrySetException(new IOException("expected framework transport closure"));
+        unexpected.TrySetException(new InvalidOperationException("unexpected framework sibling failure"));
+
+        Exception? failure = null;
+        try
+        {
+            await joined;
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Ensure(failure is not null && ContainsMessage(failure, "unexpected framework sibling failure"),
+            "an expected framework close must not hide an unexpected sibling task failure");
+    }
+
     private static bool ContainsMessage(Exception exception, string message)
     {
         if (exception.Message == message)
@@ -223,6 +421,26 @@ public class SharpLinkServerInvocationTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
+    private sealed class ThrowingTransportConnection(string id, Exception failure) : ITransportConnection
+    {
+        private readonly Pipe _input = new();
+        private readonly Pipe _output = new();
+        private int _disposeCount;
+
+        public string Id { get; } = id;
+        public PipeReader Input => _input.Reader;
+        public PipeWriter Output => _output.Writer;
+        public System.Net.EndPoint? LocalEndPoint => null;
+        public System.Net.EndPoint? RemoteEndPoint => null;
+        internal int DisposeCount => Volatile.Read(ref _disposeCount);
+
+        public ValueTask DisposeAsync()
+        {
+            Interlocked.Increment(ref _disposeCount);
+            return ValueTask.FromException(failure);
+        }
+    }
+
     private sealed class ThrowingService : IAsyncDisposable
     {
         public ValueTask DisposeAsync()
@@ -260,5 +478,63 @@ public class SharpLinkServerInvocationTests
 
         private static ValueTask Fail()
             => ValueTask.FromException(new InvalidOperationException("handler failed"));
+    }
+
+    private sealed class SynchronouslyThrowingStub : IRpcStub
+    {
+        public long InterfaceHash => 7;
+
+        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        {
+            descriptor = new RpcMethodDescriptor(
+                InterfaceHash,
+                methodHash,
+                RpcMethodKind.Unary,
+                HasResponsePayload: false,
+                HasClientStreams: false,
+                HasMethodTimeout: false,
+                MethodTimeout: null);
+            return true;
+        }
+
+        public ValueTask InvokeNoReturnAsync(object service, IRpcSession session, long methodHash,
+            long requestId, ReadOnlySequence<byte> args) => Throw();
+
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcSession session, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken) => Throw();
+
+        public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output) => Throw();
+
+        public ValueTask InvokeCancellableAsync(object service, IRpcSession session, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output,
+            CancellationToken cancellationToken) => Throw();
+
+        private static ValueTask Throw()
+            => throw new InvalidOperationException("handler failed synchronously");
+    }
+
+    private sealed class BlockingFlushPipeWriter : PipeWriter
+    {
+        private readonly ArrayBufferWriter<byte> _buffer = new();
+        private readonly TaskCompletionSource<FlushResult> _flush =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource FlushStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override void Advance(int bytes) => _buffer.Advance(bytes);
+        public override void CancelPendingFlush() => _flush.TrySetResult(new FlushResult(true, false));
+        public override void Complete(Exception? exception = null) => ReleaseFlush();
+        public override ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default)
+        {
+            FlushStarted.TrySetResult();
+            return new ValueTask<FlushResult>(_flush.Task.WaitAsync(cancellationToken));
+        }
+        public override Memory<byte> GetMemory(int sizeHint = 0) => _buffer.GetMemory(sizeHint);
+        public override Span<byte> GetSpan(int sizeHint = 0) => _buffer.GetSpan(sizeHint);
+
+        internal void ReleaseFlush()
+            => _flush.TrySetResult(new FlushResult(isCanceled: false, isCompleted: false));
     }
 }
