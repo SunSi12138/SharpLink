@@ -8,7 +8,7 @@ public sealed class AnonymousPipeClientTransportFactory : IClientTransportFactor
     private int _connectStarted;
     private int _disposed;
 
-    /// <summary>Creates a factory for one pair of inherited anonymous-pipe handles.</summary>
+    /// <summary>Creates a one-shot factory for one pair of inherited anonymous-pipe handles.</summary>
     /// <param name="inHandle">The handle from which the client reads.</param>
     /// <param name="outHandle">The handle to which the client writes.</param>
     public AnonymousPipeClientTransportFactory(string inHandle, string outHandle)
@@ -20,6 +20,7 @@ public sealed class AnonymousPipeClientTransportFactory : IClientTransportFactor
     }
 
     /// <inheritdoc />
+    /// <remarks>The offer is consumed when the first connection attempt begins, even if that attempt fails.</remarks>
     public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -44,7 +45,6 @@ public sealed class AnonymousPipeClientTransportFactory : IClientTransportFactor
                 await input.DisposeAsync().ConfigureAwait(false);
             if (output is not null)
                 await output.DisposeAsync().ConfigureAwait(false);
-            Volatile.Write(ref _connectStarted, 0);
             throw;
         }
     }

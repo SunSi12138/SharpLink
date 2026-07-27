@@ -1,4 +1,5 @@
 using System.IO.Pipelines;
+using System.IO.Pipes;
 using System.Net;
 using System.Reflection;
 using System.Threading;
@@ -8,6 +9,25 @@ namespace SharpLink.UnitTests.Runtime;
 
 public class AnonymousPipeAllocatorTests
 {
+    [Test]
+    public async Task FailedClientConnectionAttemptShouldStillConsumeOneShotOffer()
+    {
+        await using var serverOutput = new AnonymousPipeServerStream(
+            PipeDirection.Out,
+            HandleInheritability.Inheritable);
+        await using var factory = new AnonymousPipeClientTransportFactory(
+            serverOutput.GetClientHandleAsString(),
+            "invalid-anonymous-pipe-handle");
+
+        var firstFailure = await CaptureFailureAsync(factory.ConnectAsync().AsTask());
+        var secondFailure = await CaptureFailureAsync(factory.ConnectAsync().AsTask());
+
+        Ensure(firstFailure is not null,
+            "the invalid second handle must fail the first connection attempt");
+        Ensure(secondFailure is InvalidOperationException,
+            $"a consumed one-shot offer must reject retry, not fail as {secondFailure?.GetType().Name ?? "success"}");
+    }
+
     [Test]
     public async Task FullOfferQueueShouldFailFastAndDisposeShouldRejectFurtherOffers()
     {

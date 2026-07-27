@@ -99,6 +99,34 @@ public class SharpLinkServerHostedServiceTests
     }
 
     [Test]
+    public async Task UnexpectedSuccessfulRunCompletionShouldStopTheHost()
+    {
+        var transport = new BlockingTransport();
+        var builder = SharpLinkServerBuilder.Create().UseTransport(transport);
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var lifetime = new TestHostApplicationLifetime();
+        var hosted = new SharpLinkServerHostedService(
+            builder,
+            NullLoggerFactory.Instance,
+            provider,
+            new SharpLinkServerReadiness(),
+            lifetime);
+
+        await hosted.StartAsync(CancellationToken.None);
+        var server = (ISharpLinkServer)(typeof(SharpLinkServerHostedService)
+            .GetField("_server", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(hosted) ?? throw new Exception("hosted server was not published"));
+        await server.StopAsync(TimeSpan.Zero);
+        var completed = await Task.WhenAny(
+            lifetime.StopRequested.Task,
+            Task.Delay(TimeSpan.FromMilliseconds(500)));
+
+        await hosted.StopAsync(CancellationToken.None);
+        Ensure(ReferenceEquals(completed, lifetime.StopRequested.Task),
+            "an unexpected successful Server run-loop exit must stop the owning Host");
+    }
+
+    [Test]
     public async Task SuccessfulStartupShouldNotRetainItsCancellationToken()
     {
         var transport = new BlockingTransport();

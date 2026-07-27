@@ -8,6 +8,32 @@ public class PooledAsyncStreamDispatcherTests
 
     [Test]
     [NotInParallel]
+    public async Task ConsumerCancellationTokenShouldNotMaskLeaseCancellation()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        using var leaseCancellation = new CancellationTokenSource();
+        using var consumerCancellation = new CancellationTokenSource();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            leaseCancellation.Token,
+            new ReferenceItemCodec());
+        var enumerator = dispatcher.GetAsyncEnumerator(consumerCancellation.Token);
+        var waiting = enumerator.MoveNextAsync().AsTask();
+
+        leaseCancellation.Cancel();
+        var completed = await Task.WhenAny(
+            waiting,
+            Task.Delay(TimeSpan.FromMilliseconds(250)));
+
+        consumerCancellation.Cancel();
+        _ = await CaptureFailureAsync(waiting);
+        await enumerator.DisposeAsync();
+        Ensure(ReferenceEquals(completed, waiting),
+            "the call/lease cancellation token must remain effective when the consumer supplies another token");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task PoolShouldRetainAtMost1024DispatchersAfterBurst()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -335,6 +361,19 @@ public class PooledAsyncStreamDispatcherTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private static async Task<Exception?> CaptureFailureAsync(Task task)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 
     private sealed record ReferenceItem(object Marker);

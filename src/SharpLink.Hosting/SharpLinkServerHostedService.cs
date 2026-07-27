@@ -14,6 +14,7 @@ internal sealed class SharpLinkServerHostedService(
     private CancellationTokenSource? _runCts;
     private readonly Lock _stopGate = new();
     private Task? _stopTask;
+    private int _stopRequested;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -61,6 +62,13 @@ internal sealed class SharpLinkServerHostedService(
         try
         {
             await runTask.ConfigureAwait(false);
+            if (Volatile.Read(ref _stopRequested) == 0 &&
+                !applicationLifetime.ApplicationStopping.IsCancellationRequested)
+            {
+                loggerFactory.CreateLogger<SharpLinkServerHostedService>().LogCritical(
+                    "SharpLink server run loop completed unexpectedly.");
+                applicationLifetime.StopApplication();
+            }
         }
         catch (Exception exception)
         {
@@ -75,6 +83,7 @@ internal sealed class SharpLinkServerHostedService(
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
+        Volatile.Write(ref _stopRequested, 1);
         lock (_stopGate)
             return _stopTask ??= StopCoreAsync(cancellationToken);
     }

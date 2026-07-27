@@ -236,7 +236,8 @@ internal sealed partial class SharpLinkClient
                 control.DeadlineTimestamp,
                 cancellationToken,
                 out var requestId,
-                outcome);
+                outcome,
+                hasResponsePayload: method.HasResponsePayload);
             return StartUnaryCall(
                 connection,
                 method.ContractId,
@@ -282,7 +283,8 @@ internal sealed partial class SharpLinkClient
                 waitForSlot: true,
                 control.Deadline,
                 cancellationToken,
-                outcome).ConfigureAwait(false);
+                outcome,
+                hasResponsePayload: method.HasResponsePayload).ConfigureAwait(false);
             return await StartUnaryCall(
                 connection,
                 method.ContractId,
@@ -490,7 +492,8 @@ internal sealed partial class SharpLinkClient
                     control.DeadlineTimestamp,
                     cancellationToken,
                     out requestId,
-                    outcome);
+                    outcome,
+                    hasResponsePayload: method.HasResponsePayload);
             }
             else
             {
@@ -507,7 +510,8 @@ internal sealed partial class SharpLinkClient
                     waitForSlot: true,
                     control.Deadline,
                     cancellationToken,
-                    outcome).ConfigureAwait(false);
+                    outcome,
+                    hasResponsePayload: method.HasResponsePayload).ConfigureAwait(false);
                 requestId = lease.Id;
                 operation = lease.Operation;
             }

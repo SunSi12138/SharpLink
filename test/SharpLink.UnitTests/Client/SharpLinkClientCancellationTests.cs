@@ -68,11 +68,10 @@ public class SharpLinkClientCancellationTests
 
         await transport.Connection.InjectPacketAsync(
             ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, unchecked((long)callPacket.RequestId));
-        await transport.Connection.InjectPacketAsync(
-            ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((long)callPacket.RequestId));
+        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)callPacket.RequestId));
 
         var value = await invokeTask;
-        Ensure(value == 0, "empty response should deserialize to default(int)");
+        Ensure(value == 0, "zero-valued Int32 response");
     }
 
     [Test]

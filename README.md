@@ -198,7 +198,7 @@ public partial class PluginGraph
 
 Client/Server 不需要 resolver 或手工注册自动 Adapter Codec。高级自定义 formatter 可由调用方创建 `SharpPackSerializerContext`，再通过 `SharpPackRpcCodec.Create<T>(context)` 显式 `UseCodec`；该 Codec 仍保持最高优先级且 Context 所有权属于调用方。
 
-每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context；自动 Context 拥有独立 formatter graph，不使用进程级默认 formatter slot，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。详细设计见 [`doc/architecture-0.7.11.md`](doc/architecture-0.7.11.md)；升级 0.8.x 前请阅读 [`doc/migration-0.8.26.md`](doc/migration-0.8.26.md)。
+每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context；自动 Context 拥有独立 formatter graph，不使用进程级默认 formatter slot，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。详细设计见 [`doc/architecture-0.7.11.md`](doc/architecture-0.7.11.md)；升级 0.8.x 前请阅读 [`doc/migration-0.8.27.md`](doc/migration-0.8.27.md)。
 
 ## 协商压缩
 
@@ -263,6 +263,7 @@ Admission 指标为 `sharplink.admission.permits.active`、`calls.queued`、`cal
 - `NamedPipe` 在 Unix/macOS 下最终会映射到 Unix Domain Socket 路径
 - 当前运行时会对超长 pipe name 做确定性缩短，避免触发平台路径长度限制
 - `AnonymousPipe` 当前已覆盖本机连接、断连与本机压测回归；仓库内置 LoadTest 仅支持 `--mode local`
+- 每组 AnonymousPipe handle 从首次连接尝试开始即为已消费；失败重试必须申请新 offer
 - 若自行基于 `IAnonymousPipeAllocator` 将句柄转交外部进程，需要由宿主明确管理句柄交接与释放时机
 
 平台能力矩阵：

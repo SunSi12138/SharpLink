@@ -130,12 +130,13 @@ internal sealed class PendingRequestTable : IDisposable
         long deadlineTimestamp,
         CancellationToken cancellationToken,
         out long id,
-        IPendingCallCompletionObserver? completionObserver = null)
+        IPendingCallCompletionObserver? completionObserver = null,
+        bool hasResponsePayload = true)
     {
         ArgumentNullException.ThrowIfNull(responseCodec);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (TryRent(
-                responseCodec, kind, deadlineTimestamp, cancellationToken,
+                responseCodec, kind, deadlineTimestamp, cancellationToken, hasResponsePayload,
                 completionObserver, out id, out var operation))
             return operation;
 
@@ -174,12 +175,13 @@ internal sealed class PendingRequestTable : IDisposable
         bool waitForSlot,
         DateTimeOffset? deadline,
         CancellationToken cancellationToken,
-        IPendingCallCompletionObserver? completionObserver = null)
+        IPendingCallCompletionObserver? completionObserver = null,
+        bool hasResponsePayload = true)
     {
         ArgumentNullException.ThrowIfNull(responseCodec);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (TryRent(
-                responseCodec, kind, deadlineTimestamp, cancellationToken,
+                responseCodec, kind, deadlineTimestamp, cancellationToken, hasResponsePayload,
                 completionObserver, out var id, out var operation))
             return new PendingRequestLease<T>(id, operation);
         if (!waitForSlot)
@@ -194,7 +196,7 @@ internal sealed class PendingRequestTable : IDisposable
             try
             {
                 if (TryRent(
-                        responseCodec, kind, deadlineTimestamp, cancellationToken,
+                        responseCodec, kind, deadlineTimestamp, cancellationToken, hasResponsePayload,
                         completionObserver, out id, out operation))
                     return new PendingRequestLease<T>(id, operation);
 
@@ -222,7 +224,7 @@ internal sealed class PendingRequestTable : IDisposable
             }
 
             if (TryRent(
-                    responseCodec, kind, deadlineTimestamp, cancellationToken,
+                    responseCodec, kind, deadlineTimestamp, cancellationToken, hasResponsePayload,
                     completionObserver, out id, out operation))
                 return new PendingRequestLease<T>(id, operation);
         }
@@ -268,7 +270,8 @@ internal sealed class PendingRequestTable : IDisposable
                 cancellationToken,
                 out var id,
                 RpcEmptyRequestCodec.Instance,
-                completionObserver))
+                completionObserver,
+                hasResponsePayload: false))
         {
             return new PendingRequestLease<RpcEmptyRequest>(id, operation);
         }
@@ -380,6 +383,7 @@ internal sealed class PendingRequestTable : IDisposable
         PendingCallKind kind,
         long deadlineTimestamp,
         CancellationToken cancellationToken,
+        bool hasResponsePayload,
         IPendingCallCompletionObserver? completionObserver,
         out long id,
         out RpcRequestOperation<T> operation)
@@ -393,7 +397,8 @@ internal sealed class PendingRequestTable : IDisposable
                 cancellationToken,
                 out id,
                 responseCodec,
-                completionObserver))
+                completionObserver,
+                hasResponsePayload))
         {
             return true;
         }
@@ -411,12 +416,13 @@ internal sealed class PendingRequestTable : IDisposable
         CancellationToken cancellationToken,
         out long id,
         IRpcCodec<T> responseCodec,
-        IPendingCallCompletionObserver? completionObserver)
+        IPendingCallCompletionObserver? completionObserver,
+        bool hasResponsePayload)
     {
         for (var attempt = 0; attempt < _slots.Length; attempt++)
         {
             id = NextRequestId();
-            operation.Initialize(id, responseCodec);
+            operation.Initialize(id, responseCodec, hasResponsePayload);
             var call = PendingCall.Rent(
                 this,
                 id,

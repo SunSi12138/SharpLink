@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.27] - 2026-07-27
+
+### Fixed
+
+- Payload-bearing responses now always pass empty input to their registered Codec instead of silently returning `default(T)`; payload-less acknowledgements reject unexpected bytes as `DataLoss`.
+- A response stream now preserves both its call/lease cancellation token and a distinct consumer enumeration token instead of allowing the latter to mask the former.
+- Concurrent writer Return and pool Dispose can no longer enqueue an ArrayPool-backed writer into a detached queue after disposal.
+- An unexpectedly successful hosted Server run-loop exit now logs a critical event and stops the owning Host; an explicit hosted stop remains quiet.
+- Anonymous-pipe client offers remain one-shot after a failed connection attempt and can no longer retry handles that may already have been consumed or closed.
+
+### Compatibility and validation
+
+- Protocol v2 framing and valid payload layouts are unchanged. Peers that incorrectly omit a required response payload or attach bytes to a payload-less acknowledgement now receive `DataLoss` instead of a silent default/acceptance.
+- Non-incremental Release build, Generator 101/101, Unit 454/454, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- Fifteen-sample A/B medians measured writer rent/return at 8.884 → 8.830 ns, Int32 response completion at 44.174 → 43.836 ns, and stream dispatch/consume at 16.795 → 16.803 ns; allocations were unchanged.
+
 ## [0.8.26] - 2026-07-27
 
 ### Fixed

@@ -8,12 +8,45 @@ namespace SharpLink.UnitTests.Runtime;
 public class PendingRequestTableTests
 {
     private const int TableCapacity = 65536;
+    private static readonly ReadOnlySequence<byte> SInt32Payload = new(new byte[sizeof(int)]);
 
     [Test]
     public void ConstructorShouldRequirePowerOfTwoCapacity()
     {
         AssertThrows<ArgumentOutOfRangeException>(() => _ = new PendingRequestTable(0));
         AssertThrows<ArgumentException>(() => _ = new PendingRequestTable(3));
+    }
+
+    [Test]
+    public async Task PayloadBearingResponseShouldNotTreatMissingPayloadAsDefaultValue()
+    {
+        using var manager = new PendingRequestTable(8);
+        var operation = manager.Rent(
+            new Int32Codec(),
+            PendingCallKind.Unary,
+            deadlineTimestamp: 0,
+            CancellationToken.None,
+            out var requestId);
+        var payload = ReadOnlySequence<byte>.Empty;
+
+        Ensure(manager.Dispatch(requestId, ref payload), "missing response payload should reach its pending call");
+        var failure = await CaptureExceptionAsync(operation.AsValueTask().AsTask());
+
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            $"missing Int32 response payload must be DataLoss, not {failure?.GetType().Name ?? "a default value"}");
+
+        var payloadlessOperation = manager.Rent(
+            new Int32Codec(),
+            PendingCallKind.Unary,
+            deadlineTimestamp: 0,
+            CancellationToken.None,
+            out requestId,
+            hasResponsePayload: false);
+        payload = new ReadOnlySequence<byte>(new byte[] { 1 });
+        Ensure(manager.Dispatch(requestId, ref payload), "unexpected response payload should reach its pending call");
+        failure = await CaptureExceptionAsync(payloadlessOperation.AsValueTask().AsTask());
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DataLoss },
+            "payload-less acknowledgements must reject unexpected response bytes");
     }
 
     [Test]
@@ -25,25 +58,25 @@ public class PendingRequestTableTests
         for (var index = 0; index < 3; index++)
         {
             var shortRequest = manager.Rent<int>(out var shortRequestId);
-            var payload = ReadOnlySequence<byte>.Empty;
-            Ensure(manager.Dispatch(shortRequestId, ref payload), "short request dispatch");
+            var shortPayload = SInt32Payload;
+            Ensure(manager.Dispatch(shortRequestId, ref shortPayload), "short request dispatch");
             _ = await shortRequest.AsValueTask();
         }
 
         var fourthRequest = manager.Rent<int>(out var fourthRequestId);
         Ensure((fourthRequestId & 3) != (longRequestId & 3), "collision should advance request ID");
         Ensure(manager.Count == 2, "collision probing should use another free slot");
-        var emptyPayload = ReadOnlySequence<byte>.Empty;
-        Ensure(manager.Dispatch(fourthRequestId, ref emptyPayload), "probed slot should dispatch");
+        var payload = SInt32Payload;
+        Ensure(manager.Dispatch(fourthRequestId, ref payload), "probed slot should dispatch");
         _ = await fourthRequest.AsValueTask();
 
         var healthyRequest = manager.Rent<int>(out var healthyRequestId);
-        emptyPayload = ReadOnlySequence<byte>.Empty;
-        Ensure(manager.Dispatch(healthyRequestId, ref emptyPayload), "free slot after collision should remain usable");
+        payload = SInt32Payload;
+        Ensure(manager.Dispatch(healthyRequestId, ref payload), "free slot after collision should remain usable");
         _ = await healthyRequest.AsValueTask();
 
-        emptyPayload = ReadOnlySequence<byte>.Empty;
-        Ensure(manager.Dispatch(longRequestId, ref emptyPayload), "long request should remain registered");
+        payload = SInt32Payload;
+        Ensure(manager.Dispatch(longRequestId, ref payload), "long request should remain registered");
         _ = await longRequest.AsValueTask();
     }
 
@@ -69,19 +102,19 @@ public class PendingRequestTableTests
         var manager = new PendingRequestTable();
 
         var op1 = manager.Rent<int>(out var requestId1);
-        var emptyPayload = ReadOnlySequence<byte>.Empty;
-        Ensure(manager.Dispatch(requestId1, ref emptyPayload), "request1 should dispatch");
+        var payload = SInt32Payload;
+        Ensure(manager.Dispatch(requestId1, ref payload), "request1 should dispatch");
         _ = await op1.AsValueTask();
 
         SetNextId(manager, requestId1 + TableCapacity - 1);
         var op2 = manager.Rent<int>(out var requestId2);
         Ensure(requestId2 - requestId1 == TableCapacity, "request ids should reuse same slot");
 
-        emptyPayload = ReadOnlySequence<byte>.Empty;
-        Ensure(!manager.Dispatch(requestId1, ref emptyPayload), "stale response should be rejected");
+        payload = SInt32Payload;
+        Ensure(!manager.Dispatch(requestId1, ref payload), "stale response should be rejected");
 
-        emptyPayload = ReadOnlySequence<byte>.Empty;
-        Ensure(manager.Dispatch(requestId2, ref emptyPayload), "current pending should still dispatch");
+        payload = SInt32Payload;
+        Ensure(manager.Dispatch(requestId2, ref payload), "current pending should still dispatch");
         _ = await op2.AsValueTask();
     }
 
@@ -91,8 +124,8 @@ public class PendingRequestTableTests
         var manager = new PendingRequestTable();
 
         var op1 = manager.Rent<int>(out var requestId1);
-        var emptyPayload = ReadOnlySequence<byte>.Empty;
-        Ensure(manager.Dispatch(requestId1, ref emptyPayload), "request1 should dispatch");
+        var payload = SInt32Payload;
+        Ensure(manager.Dispatch(requestId1, ref payload), "request1 should dispatch");
         _ = await op1.AsValueTask();
 
         SetNextId(manager, requestId1 + TableCapacity - 1);
@@ -115,10 +148,10 @@ public class PendingRequestTableTests
         Ensure(afterWrapId == long.MinValue, "request ID should preserve all 64 bits across wrap");
         Ensure(afterWrapId != 0, "request ID zero is reserved");
 
-        var payload = ReadOnlySequence<byte>.Empty;
+        var payload = SInt32Payload;
         Ensure(manager.Dispatch(afterWrapId, ref payload), "wrapped request should dispatch by full ID");
         _ = await afterWrap.AsValueTask();
-        payload = ReadOnlySequence<byte>.Empty;
+        payload = SInt32Payload;
         Ensure(manager.Dispatch(beforeWrapId, ref payload), "pre-wrap request should remain independent");
         _ = await beforeWrap.AsValueTask();
     }
@@ -150,13 +183,13 @@ public class PendingRequestTableTests
             System.Threading.CancellationToken.None).AsTask();
         Ensure(!waiting.IsCompleted, "full table waiter should suspend");
 
-        var payload = ReadOnlySequence<byte>.Empty;
+        var payload = SInt32Payload;
         Ensure(manager.Dispatch(firstId, ref payload), "first request should dispatch");
         _ = await first.AsValueTask();
 
         var lease = await waiting;
         Ensure(manager.Count == 2, "released capacity should be handed to waiter");
-        payload = ReadOnlySequence<byte>.Empty;
+        payload = SInt32Payload;
         Ensure(manager.Dispatch(lease.Id, ref payload), "waited request should dispatch");
         _ = await lease.Operation.AsValueTask();
         manager.FailAllPendingRequests(new IOException("cleanup"));
@@ -210,8 +243,7 @@ public class PendingRequestTableTests
     {
         var manager = new PendingRequestTable(1);
         var operation = manager.Rent<int>(out var requestId);
-        var payload1 = ReadOnlySequence<byte>.Empty;
-        var payload2 = ReadOnlySequence<byte>.Empty;
+        var payload1 = SInt32Payload;
 
         var response = Task.Run(() => manager.Dispatch(requestId, ref payload1));
         var cancel = Task.Run(() => manager.DispatchError(requestId, new OperationCanceledException()));
@@ -365,7 +397,7 @@ public class PendingRequestTableTests
                 deadlineTimestamp: 0,
                 CancellationToken.None,
                 out var requestId);
-            var payload = ReadOnlySequence<byte>.Empty;
+            var payload = SInt32Payload;
             var winners = new bool[3];
             Parallel.Invoke(
                 () => winners[0] = manager.Dispatch(requestId, ref payload),

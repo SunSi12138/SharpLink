@@ -77,6 +77,8 @@ public sealed class SharpLinkBufferWriterPool : IRpcBufferWriterPool, IDisposabl
         }
 
         pool.Enqueue(pooledWriter);
+        if (Volatile.Read(ref _pool) is null)
+            DrainRetainedWriters(pool);
     }
 
     /// <summary>Releases every idle writer retained by this pool and rejects subsequent rents.</summary>

@@ -1,22 +1,22 @@
-# 0.8.26 regression-test research
+# 0.8.27 regression-test research
 
 ## Target inventory and evidence candidates
 
-- `[Oneway]` accepts payload-returning Task/ValueTask and streaming returns, producing uncompilable or descriptor/invoker-mismatched code.
-- User parameters named `__request` or `__streams` collide with generated Proxy locals.
-- DTOs with public members differing only by case crash constructor analysis in `ToDictionary(StringComparer.OrdinalIgnoreCase)` instead of reporting a stable construction diagnostic.
-- Generated dictionary readers pass a null reference key to `Dictionary.TryAdd`, leaking raw `ArgumentNullException` instead of structured `DataLoss`.
-- Non-public default interface helper methods are modeled as RPC routes, producing inaccessible Stub calls and unintended Manifest entries.
+- A successful response with a missing payload bypasses its registered Codec and silently materializes `default(T)`.
+- Supplying a consumer cancellation token to a pooled response stream replaces the call/lease token instead of preserving both cancellation owners.
+- `SharpLinkBufferWriterPool.Return` can enqueue into a detached queue when `Dispose` wins between the pool snapshot and `Enqueue`, retaining an ArrayPool lease after disposal.
+- A hosted Server run loop that completes successfully after startup is silently ignored, leaving the Host alive after its critical service exits.
+- `AnonymousPipeClientTransportFactory` resets its one-shot gate after a failed attempt and permits reuse of an offer whose inherited handles may already have been consumed or closed.
 
 ## Acceptance checklist
 
-- Oneway routes accept only non-generic Task/ValueTask returns and never stream responses.
-- Generated method locals are deterministically unique against every user parameter.
-- Case-distinct DTO members remain supported; exact constructor-name matches win, while ambiguous case-insensitive fallback produces normal constructor analysis rather than a generator crash.
-- Null dictionary keys report generated `DataLoss` before entering BCL collection code.
-- Non-public default helper methods are ignored; non-public abstract methods are diagnosed instead of leaving an incomplete proxy.
-- Valid paths show no material Generator or runtime regression.
+- Payload-bearing calls always delegate even an empty payload to the registered Codec; payload-less acknowledgements reject unexpected bytes.
+- Stream lease and consumer cancellation tokens remain independently effective and their registrations are cleared before pooling.
+- Every Return/Dispose ordering either retains the writer in the live pool or releases its backing array; no detached queue remains populated.
+- Unexpected successful Server run-loop completion logs/stops the Host, while normal application shutdown remains quiet.
+- An anonymous-pipe offer remains permanently one-shot once the first connection attempt begins, including failure paths.
+- Normal response, streaming, pooling, hosted-stop, and transport hot paths show no material regression.
 
 ## Audit guardrails
 
-The proposed collection-count change was explicitly disproved: nested generated items use fixed UInt32 length prefixes, so the existing four-byte structural lower bound is correct. That probe and code change were removed and do not count. Direct string wire and unmanaged ABI/padding remain separately queued because changing them requires a versioned design.
+Keep-alive durations beyond the native integer-seconds range are a separate confirmed-looking boundary that still needs isolated evidence; it does not count in this batch. Direct string wire encoding and arbitrary unmanaged ABI/padding require a versioned compatibility design and are not opportunistically changed here.
