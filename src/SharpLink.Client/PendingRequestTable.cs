@@ -238,6 +238,7 @@ internal sealed class PendingRequestTable : IDisposable
         IPendingCallCompletionObserver? completionObserver = null)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (kind is not (PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming))
             throw new ArgumentOutOfRangeException(nameof(kind));
 
@@ -261,6 +262,7 @@ internal sealed class PendingRequestTable : IDisposable
         CancellationToken cancellationToken,
         IPendingCallCompletionObserver? completionObserver = null)
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         var operation = RpcOperationPool<RpcEmptyRequest>.Rent();
         if (TryRegister(
                 PendingCallKind.OneWayClientStreaming,
@@ -436,6 +438,7 @@ internal sealed class PendingRequestTable : IDisposable
             if (Interlocked.CompareExchange(ref _slots[index], call, null) is null)
             {
                 OnRegistered(call);
+                CompleteRegistrationIfDisposed(call);
                 return true;
             }
 
@@ -471,6 +474,7 @@ internal sealed class PendingRequestTable : IDisposable
             if (Interlocked.CompareExchange(ref _slots[index], call, null) is null)
             {
                 OnRegistered(call);
+                CompleteRegistrationIfDisposed(call);
                 return true;
             }
 
@@ -490,6 +494,12 @@ internal sealed class PendingRequestTable : IDisposable
             UpdateEarliestDeadline(call.DeadlineTimestamp);
         if (call.CancellationToken.IsCancellationRequested)
             TryComplete(call.Id, PendingCallCompletionReason.UserCancellation);
+    }
+
+    private void CompleteRegistrationIfDisposed(PendingCall call)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            TryComplete(call.Id, PendingCallCompletionReason.ConnectionClosed);
     }
 
     private bool TryTakeMatchingCall(long id, out PendingCall? call)

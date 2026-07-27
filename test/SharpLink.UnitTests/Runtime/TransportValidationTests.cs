@@ -39,6 +39,44 @@ public class TransportValidationTests
     }
 
     [Test]
+    public async Task PipeBackedTransportsShouldRejectInvalidLogicalNamesDuringConfiguration()
+    {
+        foreach (var invalidName in new[] { "nested/name", "nested\\name", "nul\0name" })
+        {
+            var namedPipeClient = CaptureConstructionFailure(
+                () => new NamedPipeClientTransportFactory(invalidName));
+            var namedPipeServer = CaptureConstructionFailure(
+                () => new NamedPipeServerTransportListener(invalidName));
+            var sharedMemoryClient = CaptureConstructionFailure(
+                () => new SharedMemoryClientTransportFactory(invalidName));
+            var sharedMemoryServer = CaptureConstructionFailure(
+                () => new SharedMemoryServerTransportListener(invalidName));
+
+            await Assert.That(namedPipeClient).IsTypeOf<ArgumentException>();
+            await Assert.That(namedPipeServer).IsTypeOf<ArgumentException>();
+            await Assert.That(sharedMemoryClient).IsTypeOf<ArgumentException>();
+            await Assert.That(sharedMemoryServer).IsTypeOf<ArgumentException>();
+        }
+    }
+
+    [Test]
+    public async Task AbstractUnixSocketSnapshotShouldPreserveSerializedAddress()
+    {
+        var original = new UnixDomainSocketEndPoint("\0sharplink-abstract");
+        var snapshot = SocketTransportSocketFactory.Snapshot(original);
+
+        await Assert.That(snapshot).IsTypeOf<UnixDomainSocketEndPoint>();
+        await Assert.That(GetSocketAddressBytes(snapshot.Serialize()))
+            .IsEquivalentTo(GetSocketAddressBytes(original.Serialize()));
+        await Assert.That(SocketTransportSocketFactory.GetFileSystemPath(original)).IsNull();
+
+        var fileSystemPath = Path.Combine(Path.GetTempPath(), "sharplink-filesystem.sock");
+        await Assert.That(SocketTransportSocketFactory.GetFileSystemPath(
+                new UnixDomainSocketEndPoint(fileSystemPath)))
+            .IsEqualTo(fileSystemPath);
+    }
+
+    [Test]
     [Arguments(-2)]
     [Arguments(0)]
     [Arguments(255)]
@@ -331,6 +369,33 @@ public class TransportValidationTests
         {
             return exception;
         }
+    }
+
+    private static Exception? CaptureConstructionFailure(Func<IAsyncDisposable> factory)
+    {
+        IAsyncDisposable? instance = null;
+        try
+        {
+            instance = factory();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+        finally
+        {
+            if (instance is not null)
+                instance.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    private static byte[] GetSocketAddressBytes(SocketAddress address)
+    {
+        var bytes = new byte[address.Size];
+        for (var index = 0; index < bytes.Length; index++)
+            bytes[index] = address[index];
+        return bytes;
     }
 
     private static async Task<Exception?> CaptureFailureAsync(Task operation)

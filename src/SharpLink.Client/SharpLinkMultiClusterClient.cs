@@ -40,7 +40,12 @@ internal sealed class SharpLinkMultiClusterClient : ISharpLinkMultiClusterClient
             var slots = Volatile.Read(ref _clusters);
             if (slots.Count == 0)
                 return state;
-            var ready = slots.Values.Count(static slot => slot.Client.State == SharpLinkConnectionState.Ready);
+            var ready = 0;
+            foreach (var pair in slots)
+            {
+                if (pair.Value.Client.State == SharpLinkConnectionState.Ready)
+                    ready++;
+            }
             return ready == slots.Count ? SharpLinkMultiClusterState.Ready : SharpLinkMultiClusterState.Degraded;
         }
     }

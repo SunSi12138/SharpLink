@@ -95,6 +95,7 @@ SharpLink.Serializer.SharpPack
 - 只有当前候选已有在途请求时才合并触发一个扩容 worker，不能按每次调用创建连接。
 - `GoAway` 将单条 session 标为 draining 并立即从选择快照移除；已有请求完成后释放该连接，池在后台恢复最小连接数。
 - Client Stop 取消并等待 connect、reconnect、expand、heartbeat 与 read-loop worker，再释放所有 session 和 transport factory。
+- Client/Server 收到完整帧时同时维护诊断用 UTC `LastActive` 与内部单调时间戳；heartbeat timeout 只按单调 elapsed time 判定，不受系统墙钟校时或调用方修改诊断属性影响。
 
 ## 0.7.x endpoint 拓扑与韧性
 

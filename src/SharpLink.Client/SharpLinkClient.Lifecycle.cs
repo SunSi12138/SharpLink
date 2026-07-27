@@ -457,7 +457,7 @@ internal sealed partial class SharpLinkClient
                 while (ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
                 {
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
-                    session.LastActive = DateTime.UtcNow;
+                    session.MarkActive();
                     IRpcByteBufferWriter? decodedOwner = null;
                     try
                     {
@@ -584,8 +584,7 @@ internal sealed partial class SharpLinkClient
         {
             session.SendPingAsync();
             await SharpLinkTimer.DelayAsync(_heartbeatInterval, ct).ConfigureAwait(false);
-            var now = DateTime.UtcNow;
-            if (now - session.LastActive <= _heartbeatTimeout && session.IsConnected)
+            if (session.TimeSinceLastActivity <= _heartbeatTimeout && session.IsConnected)
                 continue;
 
             LogServerHeartbeatTimeout(_logger);

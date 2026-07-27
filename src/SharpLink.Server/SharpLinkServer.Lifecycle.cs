@@ -296,11 +296,10 @@ internal sealed partial class SharpLinkServer
         while (!ct.IsCancellationRequested)
         {
             await SharpLinkTimer.DelayAsync(heartbeatCheckInterval, ct).ConfigureAwait(false);
-            var now = DateTime.UtcNow;
             foreach (var (id, connection) in _connections)
             {
                 var session = connection.Session;
-                if (now - session.LastActive <= heartbeatTimeout || !session.IsConnected)
+                if (session.TimeSinceLastActivity <= heartbeatTimeout || !session.IsConnected)
                     continue;
                 
                 using var sessionScope = BeginSessionLogScope(_logger, session.Id);
@@ -519,7 +518,7 @@ internal sealed partial class SharpLinkServer
                     while (ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
                     {
                         SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
-                        session.LastActive = DateTime.UtcNow;
+                        session.MarkActive();
                         IRpcByteBufferWriter? decodedOwner = null;
                         try
                         {
@@ -591,7 +590,6 @@ internal sealed partial class SharpLinkServer
                             {
                             case ProtocolV2FrameType.Ping:
                                 DebugLogClientHeartbeatReceived(_logger);
-                                session.LastActive = DateTime.UtcNow;
                                 session.SendPongAsync(ReadMonotonicTimestamp(payload));
                                 break;
                             case ProtocolV2FrameType.Pong:

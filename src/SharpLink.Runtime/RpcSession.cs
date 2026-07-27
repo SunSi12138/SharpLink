@@ -1,4 +1,6 @@
-﻿namespace SharpLink.Runtime;
+﻿using System.Diagnostics;
+
+namespace SharpLink.Runtime;
 
 public sealed partial class RpcSession : IRpcSession
 {
@@ -8,7 +10,10 @@ public sealed partial class RpcSession : IRpcSession
     private int _negotiatedMaxFramePayloadBytes = SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes;
     internal int NegotiatedMaxFramePayloadBytes => Volatile.Read(ref _negotiatedMaxFramePayloadBytes);
     IRpcRuntimeContext IRpcSession.RuntimeContext => RuntimeContext;
+    private long _lastActiveTimestamp = Stopwatch.GetTimestamp();
     public DateTime LastActive { get; set; } = DateTime.UtcNow;
+    internal TimeSpan TimeSinceLastActivity
+        => Stopwatch.GetElapsedTime(Volatile.Read(ref _lastActiveTimestamp));
     public PipeReader Input { get; }
     private PipeWriter Output { get; }
 
@@ -41,6 +46,12 @@ public sealed partial class RpcSession : IRpcSession
     private const int TelemetryOpened = 1;
     private const int TelemetryClosed = 2;
     internal Func<long, long, long, Exception, SharpLinkException>? ServiceExceptionMapper { get; set; }
+
+    internal void MarkActive()
+    {
+        Volatile.Write(ref _lastActiveTimestamp, Stopwatch.GetTimestamp());
+        LastActive = DateTime.UtcNow;
+    }
 
     internal void SetTelemetrySide(string side)
     {

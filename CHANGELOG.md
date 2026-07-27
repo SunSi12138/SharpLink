@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.29] - 2026-07-27
+
+### Fixed
+
+- Pending requests that race table disposal are now completed instead of being inserted after the disposal scan; stream registration APIs reject calls begun after disposal consistently with unary registration.
+- Client and server heartbeat expiry now uses monotonic elapsed time, so wall-clock adjustments and caller-written `LastActive` values cannot suppress or spuriously trigger disconnects.
+- Named-pipe and shared-memory constructors now reject logical names containing NUL or path separators during configuration on every platform.
+- Unix-domain endpoint snapshots now preserve serialized abstract-namespace addresses, and abstract sockets are excluded from filesystem ownership and cleanup.
+- Multi-cluster Ready/Degraded state reads no longer allocate a LINQ iterator on every observation.
+
+### Compatibility and validation
+
+- Protocol v2 framing, payloads, and generated code are unchanged. `IRpcSession.LastActive` remains a wall-clock diagnostic property, but framework heartbeat decisions no longer use caller-written values.
+- Non-incremental Release build, Generator 101/101, Unit 464/464, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- Alternating 15-sample A/B kept pending response completion at 37.176 → 37.127 ns with unchanged 24 B/op. Multi-cluster state improved from 8.972 ns / 56 B to 3.189 ns / 0 B; monotonic activity update/check adds about 4.04 ns with 0 B/op and does not affect the request-table, serialization, or send paths.
+
 ## [0.8.28] - 2026-07-27
 
 ### Fixed

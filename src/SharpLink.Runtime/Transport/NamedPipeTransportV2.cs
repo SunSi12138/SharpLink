@@ -260,6 +260,14 @@ internal static class NamedPipeName
 
     public static string Normalize(string pipeName)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
+        if (pipeName.Contains('\0') || pipeName.Contains('/') || pipeName.Contains('\\'))
+        {
+            throw new ArgumentException(
+                "A logical pipe name cannot contain NUL or path separators.",
+                nameof(pipeName));
+        }
+
         if (OperatingSystem.IsWindows())
             return pipeName;
 

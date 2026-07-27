@@ -31,6 +31,28 @@ public class SharpLinkClientLifecycleStateTests
     }
 
     [Test]
+    public async Task FutureWallClockActivityShouldNotSuppressHeartbeatTimeout()
+    {
+        var transport = new TestClientTransportFactory();
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromMilliseconds(10),
+            TimeSpan.FromMilliseconds(30));
+        await client.ConnectAsync();
+        var readyConnectionsField = typeof(SharpLinkClient).GetField(
+            "_readyConnections",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find ready connection field");
+        var connection = ((ClientConnection[])readyConnectionsField.GetValue(client)!)[0];
+
+        connection.Session.LastActive = DateTime.UtcNow.AddDays(1);
+
+        await WaitUntilAsync(
+            () => connection.State == ClientConnectionState.Closed,
+            () => $"heartbeat did not close the silent connection; state={connection.State}");
+    }
+
+    [Test]
     public async Task SharedFixedConnectShouldSurviveFirstWaiterCancellation()
     {
         var transport = new BlockingInitialTransportFactory();

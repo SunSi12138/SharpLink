@@ -170,7 +170,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
         {
             if (localEndPoint is UnixDomainSocketEndPoint uds)
             {
-                unixPath = uds.ToString();
+                unixPath = SocketTransportSocketFactory.GetFileSystemPath(uds);
                 if (File.Exists(unixPath))
                 {
                     throw new IOException(
@@ -259,9 +259,15 @@ internal static class SocketTransportSocketFactory
         {
             IPEndPoint ip => new IPEndPoint(CloneAddress(ip.Address), ip.Port),
             DnsEndPoint dns => new DnsEndPoint(dns.Host, dns.Port, dns.AddressFamily),
-            UnixDomainSocketEndPoint unix => new UnixDomainSocketEndPoint(unix.ToString()),
+            UnixDomainSocketEndPoint unix => unix.Create(unix.Serialize()),
             _ => endPoint
         };
+
+    internal static string? GetFileSystemPath(UnixDomainSocketEndPoint endPoint)
+    {
+        var address = endPoint.Serialize();
+        return address.Size > 2 && address[2] == 0 ? null : endPoint.ToString();
+    }
 
     private static IPAddress CloneAddress(IPAddress address)
         => address.AddressFamily == AddressFamily.InterNetworkV6

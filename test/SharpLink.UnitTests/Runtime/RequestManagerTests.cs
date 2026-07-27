@@ -336,6 +336,76 @@ public class PendingRequestTableTests
     }
 
     [Test]
+    public async Task DisposedTableShouldRejectEveryStreamRegistration()
+    {
+        var manager = new PendingRequestTable(8);
+        manager.Dispose();
+
+        long registeredStreamId = 0;
+        var streamFailure = CaptureException(() =>
+        {
+            registeredStreamId = manager.RegisterStream(
+                PendingCallKind.ServerStreaming,
+                new NoopStreamDispatcher(),
+                deadlineTimestamp: 0,
+                CancellationToken.None);
+        });
+        PendingRequestLease<RpcEmptyRequest> registeredOneWay = default;
+        var oneWayFailure = CaptureException(() =>
+        {
+            registeredOneWay = manager.RegisterOneWayClientStream(
+                deadlineTimestamp: 0,
+                CancellationToken.None);
+        });
+
+        if (registeredStreamId != 0)
+            manager.TryComplete(registeredStreamId, PendingCallCompletionReason.ConnectionClosed);
+        if (registeredOneWay.Id != 0)
+        {
+            manager.TryComplete(registeredOneWay.Id, PendingCallCompletionReason.ConnectionClosed);
+            _ = await CaptureExceptionAsync(registeredOneWay.Operation.AsValueTask().AsTask());
+        }
+
+        await Assert.That(streamFailure).IsTypeOf<ObjectDisposedException>();
+        await Assert.That(oneWayFailure).IsTypeOf<ObjectDisposedException>();
+        await Assert.That(manager.Count).IsEqualTo(0);
+
+        for (var iteration = 0; iteration < 512; iteration++)
+        {
+            var racingTable = new PendingRequestTable(1);
+            using var start = new ManualResetEventSlim();
+            RpcRequestOperation<int>? operation = null;
+            var rent = Task.Run(() =>
+            {
+                start.Wait();
+                try
+                {
+                    operation = racingTable.Rent<int>(out _);
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+            });
+            var dispose = Task.Run(() =>
+            {
+                start.Wait();
+                racingTable.Dispose();
+            });
+            start.Set();
+            await Task.WhenAll(rent, dispose);
+
+            Ensure(racingTable.Count == 0,
+                $"Dispose/Rent race stranded a pending slot at iteration {iteration}");
+            if (operation is not null)
+            {
+                var failure = await CaptureExceptionAsync(operation.AsValueTask().AsTask());
+                Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed },
+                    "a call registered during disposal must observe connection closure");
+            }
+        }
+    }
+
+    [Test]
     public async Task MonotonicDeadlineScanShouldCompleteWithoutCompletionPathRemoval()
     {
         using var manager = new PendingRequestTable(8);
@@ -461,6 +531,19 @@ public class PendingRequestTableTests
         try
         {
             await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static Exception? CaptureException(Action action)
+    {
+        try
+        {
+            action();
             return null;
         }
         catch (Exception exception)

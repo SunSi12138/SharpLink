@@ -347,6 +347,33 @@ public sealed class SharpLinkMultiClusterClientTests
             "the shared operation must preserve the child failure");
     }
 
+    [Test]
+    public async Task ReadyStateReadsShouldNotAllocate()
+    {
+        SharpLinkClusterKey cluster = "ready";
+        var child = new CoordinatedUnregisterClient(SharpLinkConnectionState.Ready);
+        var slot = new SharpLinkClusterSlot(cluster, child, AllowDynamicContracts: true);
+        await using var client = new SharpLinkMultiClusterClient(
+            new SharpLinkMultiClusterOptions(),
+            new Dictionary<SharpLinkClusterKey, SharpLinkClusterSlot> { [cluster] = slot }
+                .ToFrozenDictionary(),
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
+            []);
+        typeof(SharpLinkMultiClusterClient)
+            .GetField("_state", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(client, (int)SharpLinkMultiClusterState.Ready);
+        _ = client.State;
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var readyReads = 0;
+        for (var index = 0; index < 100_000; index++)
+            readyReads += client.State == SharpLinkMultiClusterState.Ready ? 1 : 0;
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Ensure(readyReads == 100_000, "every state read should preserve Ready semantics");
+        Ensure(allocated == 0, $"ready state reads allocated {allocated} bytes");
+    }
+
     private static async Task EnsureThrows<TException>(Func<Task> action) where TException : Exception
     {
         try
@@ -496,8 +523,12 @@ public sealed class SharpLinkMultiClusterClientTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _unregisterCallCount;
 
+        internal CoordinatedUnregisterClient(
+            SharpLinkConnectionState state = SharpLinkConnectionState.Created)
+            => State = state;
+
         internal int UnregisterCallCount => Volatile.Read(ref _unregisterCallCount);
-        public SharpLinkConnectionState State { get; private set; } = SharpLinkConnectionState.Created;
+        public SharpLinkConnectionState State { get; private set; }
 
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
             => SharpLinkAssemblyRegistrationResult.Success();

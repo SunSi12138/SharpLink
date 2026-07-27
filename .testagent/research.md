@@ -1,29 +1,32 @@
-# 0.8.28 regression-test research
+# 0.8.29 regression-test research
 
 ## Bounded target inventory
 
-- `SocketTransportOptions`: keep-alive durations are validated only as positive, but the native option path performs a checked conversion to signed integer seconds.
-- Admission rate policies: token, fixed-window, and sliding-window durations reach BCL timer-backed rate limiters without SharpLink's portable timer-range validation.
-- Named-pipe transport constructors accept undefined `PipeOptions` and `PipeTransmissionMode` values, deferring unusable configuration until connect/accept.
-- Sliding-window admission accepts more segments than the configured window has ticks, producing a zero-duration segment boundary for the timer-backed limiter.
-- `ProtocolV2PayloadCodec.WriteError` emits undefined in-range `SharpLinkErrorCode` values even though its reader rejects the same wire value.
+- `PendingRequestTable`: `Rent` checks disposal only before insertion, while both stream registration APIs can insert without any disposal check. A 50,000-iteration external race probe witnessed a stranded slot on iteration 1 (`requestId=1`, incomplete operation).
+- Client/server heartbeat expiry uses `DateTime.UtcNow` and mutable wall-clock `IRpcSession.LastActive`; a clock rollback or future timestamp can prevent timeout, while a forward adjustment can disconnect a healthy peer.
+- Named-pipe and shared-memory logical names accept path separators and NUL, producing platform-dependent or delayed transport failures instead of synchronous configuration rejection.
+- Socket endpoint snapshotting rebuilds Unix-domain endpoints from `ToString()`. For an abstract Linux endpoint, the original serialized path starts with NUL (`15 01 00...`) while the snapshot starts with `@` (`16 01 40...`), changing it into a filesystem endpoint. Listener cleanup likewise treats the display string as a filesystem path.
+- `SharpLinkMultiClusterClient.State` uses LINQ over a frozen dictionary and allocates 56 bytes on every Ready/Degraded read; a one-million-read probe measured exactly 56,000,000 bytes.
 
-The repository convention is TUnit in `test/SharpLink.UnitTests`, with focused tests colocated in the existing transport, resolver, retry, admission, and flow-control suites. The required static source/test pairing scan was run once. It was polluted by retained ignored performance baseline clones under `artifacts/`, so its counts are only a heuristic; the live target files are already paired with `TransportValidationTests`, `DynamicEndpointResolverTests`, `SharpLinkClientRetryTests`, `AdmissionControlTests`, and `StreamFlowControllerTests` respectively.
+The repository convention is TUnit in `test/SharpLink.UnitTests`. The required source/test pairing scan was run; retained ignored A/B baseline clones under `artifacts/` pollute its global counts, so it is used only as a routing heuristic. Focused regression coverage belongs in `RequestManagerTests`, `SharpLinkClientLifecycleStateTests`, `TransportValidationTests`, and `SharpLinkMultiClusterClientTests`.
 
 ## Acceptance checklist
 
-- Both keep-alive duration fields reject values that cannot be converted to native signed integer seconds during configuration.
-- All three timer-backed admission rate-policy durations reject values beyond the portable timer range before a runtime limiter is created.
-- Named-pipe client and server constructors reject undefined option bits and transmission modes synchronously; clients also reject server-only `FirstPipeInstance`.
-- Sliding-window admission rejects configurations whose segment duration would be zero ticks.
-- Binary error writers reject undefined error codes before emitting an unreadable payload.
-- Existing normal-boundary behavior remains covered and hot-path performance does not materially regress.
+- Calls begun after pending-table disposal throw synchronously; insertion racing with disposal is terminally completed and cannot leave a slot or incomplete operation.
+- Heartbeat timeout decisions use monotonic elapsed time and cannot be defeated by a future public wall-clock `LastActive` value.
+- All pipe-backed logical-name entry points reject separators and NUL during construction.
+- Unix-domain endpoint snapshots preserve serialized bytes, and abstract endpoints never participate in filesystem ownership/deletion checks.
+- Multi-cluster state reads preserve semantics while allocating zero bytes after warm-up.
+- Existing behavior remains covered and runtime performance does not materially regress.
 
 ## Audit guardrails
 
-Direct string wire encoding, arbitrary unmanaged ABI/padding, and external-process anonymous-pipe handle transfer still require versioned/public API designs and are not opportunistically changed. The suspected pending-table Dispose/Rent race is not counted until a deterministic pre-fix witness exists.
+The public `IRpcSession.LastActive` wall-clock property remains available for compatibility and diagnostics; only timeout accounting moves to an internal monotonic timestamp. Pipe names remain logical identifiers, so cross-platform rejection is intentional. Abstract-socket handling is limited to byte-preserving snapshot and cleanup ownership, without changing bind semantics.
 
-## Rejected hypotheses
+## Rejected hypothesis
 
-- DNS and retry jitter at `TimeSpan.MaxValue` saturate rather than wrap on the supported .NET 10 runtime; repeated boundary probes passed.
-- Excess flow-control credit near `int.MaxValue` is already normalized to `ProtocolViolation`; the boundary probe passed.
+The two ready-signal completions initially suspected to be duplicate belong to the independent fixed-client and static-cluster shutdown paths. Neither path contains a duplicate operation, so no cleanup change is warranted.
+
+## P3 cleanup
+
+The server receive loop already marks every parsed frame active before dispatch. Its Ping case repeated the same wall-clock write; after monotonic sampling this would duplicate both clocks, so the redundant Ping-only update is removed without advancing the version batch.
