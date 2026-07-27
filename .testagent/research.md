@@ -1,62 +1,54 @@
-# 0.8.41 regression-test research
+# 0.8.42 regression-test research
 
 ## Candidate inventory
 
-- `RpcRequestOperation<T>` accepts a null decoded scalar response regardless of generated
-  `ResponseNullable`; a custom or mismatched peer can therefore return null for required unary and
-  client-streaming results outside the interceptor path.
-- The Client response-stream `PooledAsyncStreamDispatcher<T>` similarly enqueues null for required
-  ServerStreaming/DuplexStreaming items.
-- The Server uses the same dispatcher for ClientStreaming/DuplexStreaming request items but generated
-  Stubs do not pass `PayloadNullable`, so required application stream inputs also accept null.
-- Response nullability is present in the contract Manifest but absent from the runtime method
-  fingerprint. Required and nullable inherited response contracts therefore appear identical during
-  generated conflict checks and live route compatibility.
-- `SharpLinkErrorCode.Unknown` is reserved for unset local state and 0.8.40 prevents constructing a
-  service error with it, but Protocol v2 still writes and accepts it as a remote Error code.
+- Throughput-profile timed batching repeatedly cancels the single-reader Channel waiter at its 1 ms
+  deadline. Under streaming load, producer completion can race that cancellation and resume
+  `WaitForMoreUntilDeadlineAsync` twice, terminating the process with `InvalidOperationException`.
+- Non-nullable `Memory<T>` and `ReadOnlyMemory<T>` built-in Codecs accept the array/list-only `-1`
+  null marker and silently coerce it to empty memory.
+- Fixed-width nullable primitive Codecs validate the 0/1 marker but accept arbitrary ignored value
+  bytes when the marker is null, creating multiple non-canonical encodings for the same value.
+- Public cancel/health and handshake writers reuse peer validators, so invalid local values throw
+  `SharpLinkException(ProtocolViolation)` instead of argument exceptions.
+- Generated runtime Codec `SchemaId` omits DTO member nullability even though generated decoding and
+  contract manifests distinguish required and nullable members.
 
 ## Acceptance boundary
 
-- Scalar response operations reject decoded null as `DataLoss` unless the generated descriptor marks
-  the response nullable; propagate the flag through every unary/retry/client-streaming rent path.
-- Stream dispatchers reject decoded null as `DataLoss` by default. Client response streams pass
-  `ResponseNullable`; generated Server request streams pass each parameter's `PayloadNullable`.
-- Nullable response contracts differ in method/service/contract fingerprints without changing method
-  IDs, wire type names, required-response fingerprints, or payload layout.
-- Protocol Error writer, validator, and reader reject reserved `Unknown`; concrete defined codes keep
-  their existing wire values.
-
-## Planned evidence and pseudo-mutations
-
-- Dispatch a null-returning codec through `PendingRequestTable`; require required failure and a later
-  nullable control.
-- Exercise both stream-dispatcher Rent paths: the Client codec overload and Server codec-provider
-  overload must independently reject required null; later nullable controls must remain valid.
-- Build inherited contracts that differ only in response nullability and require `SHARPLINK057` while
-  preserving the existing request-nullability behavior.
-- Prove both `WriteError(Unknown)` and a raw Unknown Error payload are rejected, with a concrete-code
-  round-trip as the control.
-- A scalar-only fix, Client-stream-only wiring, Server-stream-only wiring, display-type hashing, or
-  writer-only Unknown guard must leave at least one witness failing.
+- Timed batching keeps at most one outstanding Channel read wait. A deadline races that wait against
+  a separate delay without cancelling the underlying read; a timed-out wait is retained and consumed
+  by the next pump iteration.
+- Memory shapes reject `-1` as `DataLoss`; arrays, lists, and default `ImmutableArray<T>` retain their
+  existing null/default representations.
+- Every fixed nullable null payload requires zero value bytes on contiguous and segmented input;
+  canonical null and all present values remain unchanged.
+- Local control and handshake writer validation throws argument exceptions before advancing the
+  writer; inbound readers continue to classify the same bits as `ProtocolViolation`.
+- DTO member nullability contributes to runtime Codec schema identity without changing field IDs or
+  valid payload bytes.
 
 ## Preserved pre-fix evidence
 
-- Exact baseline: local 0.8.40 commit `dd431f5b18fc0e98b24a5f6edddd45a320d8fe23`.
-- Generator suite: 119 established tests passed and only the new separate-compilation response
-  fingerprint witness failed. The inherited-nullability diagnostic control already passed through
-  Roslyn symbol comparison and was not counted as evidence.
-- Unit suite: all 486 established tests passed and exactly four new witnesses failed: reserved
-  Unknown Error, required scalar null, Client response-stream null, and Server request-stream null.
+- Exact baseline is local 0.8.41 commit `d0e0df4e3e81b9ead5c416c9a33ebd459c55f5a1`.
+- The independent exact-baseline Throughput load exited 134 twice with the same stack rooted at
+  `RpcSession.SendPump.WaitForMoreUntilDeadlineAsync`; focused samples crashed in 3/5 s2c and 5/5 c2s
+  0.8.41 processes. Evidence is preserved under
+  `../feature-perf-0.7.11-vs-0.8.41-20260727-a/artifacts/raw/`.
+- Generator: all 120 established tests passed and only the new separate-compilation DTO SchemaId
+  witness failed.
+- Unit: all 490 established assertions outside the modified witnesses passed; exactly three tests
+  failed, independently proving Memory null coercion, non-canonical nullable bodies, and local writer
+  error misclassification.
 
-## Assertion and pseudo-mutation review
+## Pseudo-mutation review
 
-- Scalar required and nullable operations share the same null-returning codec; omitting any
-  PendingRequestTable/RpcRequestOperation flag propagation fails one side of the paired assertion.
-- Client codec and Server codec-provider stream Rent paths have independent required failures and
-  nullable controls. Existing optional ServerStreaming plus a real optional ClientStreaming control
-  verify both generated wiring directions.
-- Fingerprints are compared across separate compilations of the same fully qualified contract, so
-  nullable C# display output cannot satisfy the witness. Only the runtime method schema changes;
-  required response fingerprints and method IDs retain their prior inputs.
-- Unknown is exercised at writer and raw-reader boundaries. The existing ResourceExhausted
-  round-trip and undefined-code tests preserve concrete code compatibility and partial-write safety.
+- Sixteen post-fix repetitions of the identical `operation=all`, Throughput-profile TCP reproducer
+  completed all 64 unary/c2s/s2c/duplex stages with zero failures. Raw evidence is preserved under
+  `artifacts/0.8.42-sendpump-repro/` and `artifacts/performance/0.8.42-throughput-final/`.
+- Array/list/default-immutable controls prevent a blanket rejection of `-1` collection markers.
+- Three distinct nullable sizes and segmented input prevent a marker-only or one-codec fix.
+- Cancel/health and handshake limits use independent witnesses, untouched writers, and verify both
+  exception family and pre-write validation.
+- DTO schemas are compared across separate compilations of the same full type identity, isolating
+  member nullability from names, IDs, and traversal order.

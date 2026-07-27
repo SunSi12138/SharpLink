@@ -251,6 +251,48 @@ public class ProtocolV2Tests
     }
 
     [Test]
+    public async Task ControlWritersShouldClassifyInvalidLocalEnumsAsArgumentsWithoutPartialOutput()
+    {
+        using var writer = new PooledByteBufferWriter();
+        var cancel = CaptureException(() => ProtocolV2PayloadCodec.WriteCancelReason(
+            writer, (ProtocolV2CancelReason)byte.MaxValue));
+        var health = CaptureException(() => ProtocolV2PayloadCodec.WriteHealthResponse(
+            writer, (SharpLinkHealthStatus)byte.MaxValue));
+        await Assert.That(cancel).IsTypeOf<ArgumentOutOfRangeException>();
+        await Assert.That(health).IsTypeOf<ArgumentOutOfRangeException>();
+        await Assert.That(writer.WrittenCount).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task HandshakeWritersShouldClassifyInvalidLocalLimitsAsArgumentsWithoutPartialOutput()
+    {
+        using var writer = new PooledByteBufferWriter();
+        var requestFailure = CaptureException(() => ProtocolV2PayloadCodec.WriteHandshakeRequest(
+            writer,
+            new ProtocolV2HandshakeRequest(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.None,
+                ProtocolV2Capabilities.None,
+                MaxFramePayloadBytes: 1,
+                StreamReceiveWindowBytes: 1,
+                ConnectionReceiveWindowBytes: 1,
+                ReadOnlyMemory<byte>.Empty),
+            Limits));
+        var responseFailure = CaptureException(() => ProtocolV2PayloadCodec.WriteHandshakeResponse(
+            writer,
+            new ProtocolV2HandshakeResponse(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.None,
+                MaxFramePayloadBytes: 1,
+                StreamReceiveWindowBytes: 1,
+                ConnectionReceiveWindowBytes: 1)));
+
+        await Assert.That(requestFailure).IsAssignableTo<ArgumentException>();
+        await Assert.That(responseFailure).IsAssignableTo<ArgumentException>();
+        await Assert.That(writer.WrittenCount).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task CancelReasonShouldRoundTripAndEnforceNegotiatedShape()
     {
         foreach (var reason in new[]

@@ -518,7 +518,12 @@ public partial class RpcGenerator
 
             var schema = new StringBuilder(typeName);
             foreach (var member in generatedMembers)
-                schema.Append('|').Append(member.FieldId).Append(':').Append(member.TypeName).Append(':').Append(member.Required);
+            {
+                schema.Append('|').Append(member.FieldId).Append(':').Append(member.TypeName)
+                    .Append(':').Append(member.Required);
+                if (member.Nullable)
+                    schema.Append(":nullable");
+            }
             var dependencyTypes = new List<ITypeSymbol>(analyzedMembers.Count + 1) { type };
             dependencyTypes.AddRange(analyzedMembers.Select(static member => member.Type));
             _models[typeName] = new GeneratedCodecModel(

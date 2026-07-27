@@ -119,6 +119,11 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
         return array;
     }
 
+    internal static T[] DeserializeRequired(in ReadOnlySequence<byte> buffer)
+        => Instance.Deserialize(buffer) ?? throw new SharpLinkException(
+            SharpLinkErrorCode.DataLoss,
+            "A non-nullable memory payload used the reserved null collection marker.");
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool RequiresSemanticValidation()
         => typeof(T) == typeof(bool) || typeof(T) == typeof(Rune) || typeof(T) == typeof(decimal) ||
@@ -218,10 +223,7 @@ internal sealed class BlitMemoryCodec<T> : IRpcCodec<Memory<T>>  where T:unmanag
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Memory<T> Deserialize(in ReadOnlySequence<byte> buffer)
-    {
-        var array = BlitArrayCodec<T>.Instance.Deserialize(buffer);
-        return array?.AsMemory() ?? Memory<T>.Empty;
-    }
+        => BlitArrayCodec<T>.DeserializeRequired(buffer).AsMemory();
 }
 
 internal sealed class BlitReadOnlyMemoryCodec<T> : IRpcCodec<ReadOnlyMemory<T>> where T:unmanaged
@@ -251,10 +253,7 @@ internal sealed class BlitReadOnlyMemoryCodec<T> : IRpcCodec<ReadOnlyMemory<T>> 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ReadOnlyMemory<T> Deserialize(in ReadOnlySequence<byte> buffer)
-    {
-        var array = BlitArrayCodec<T>.Instance.Deserialize(buffer);
-        return array is null ? ReadOnlyMemory<T>.Empty : new ReadOnlyMemory<T>(array);
-    }
+        => new(BlitArrayCodec<T>.DeserializeRequired(buffer));
 }
 
 internal sealed class BlitImmutableArrayCodec<T> : IRpcCodec<ImmutableArray<T>>   where T:unmanaged

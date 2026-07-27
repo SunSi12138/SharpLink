@@ -30,15 +30,35 @@ internal static class CodecHelpers
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool ReadNullablePresence(byte marker)
-        => marker switch
+    public static bool ReadNullablePresence(ref byte marker, int valueBytes)
+    {
+        if (marker == 1)
+            return true;
+        if (marker != 0)
         {
-            0 => false,
-            1 => true,
-            _ => throw new SharpLinkException(
+            throw new SharpLinkException(
                 SharpLinkErrorCode.DataLoss,
-                $"Nullable Codec presence marker {marker} is invalid.")
+                $"Nullable Codec presence marker {marker} is invalid.");
+        }
+        ref var value = ref Unsafe.Add(ref marker, 1);
+        var hasNonZeroValue = valueBytes switch
+        {
+            1 => value != 0,
+            2 => Unsafe.ReadUnaligned<ushort>(ref value) != 0,
+            4 => Unsafe.ReadUnaligned<uint>(ref value) != 0,
+            8 => Unsafe.ReadUnaligned<ulong>(ref value) != 0,
+            16 => (Unsafe.ReadUnaligned<ulong>(ref value) |
+                   Unsafe.ReadUnaligned<ulong>(ref Unsafe.Add(ref value, sizeof(ulong)))) != 0,
+            _ => MemoryMarshal.CreateReadOnlySpan(ref value, valueBytes).IndexOfAnyExcept((byte)0) >= 0
         };
+        if (hasNonZeroValue)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.DataLoss,
+                "Nullable Codec null payload contains non-canonical value bytes.");
+        }
+        return false;
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int ReadInt32(in ReadOnlySequence<byte> buffer)

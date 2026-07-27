@@ -113,6 +113,14 @@ public class CodecSafetyTests
     }
 
     [Test]
+    public void NullableFixedLengthCodecsShouldRejectNonCanonicalNullBodies()
+    {
+        AssertRejectsNonCanonicalNull<int?>();
+        AssertRejectsNonCanonicalNull<Guid?>();
+        AssertRejectsNonCanonicalNull<DateTimeOffset?>();
+    }
+
+    [Test]
     public void BooleanAndNullableCodecsShouldRejectNonCanonicalMarkers()
     {
         ExpectDataLoss(() => Deserialize<bool>(new ReadOnlySequence<byte>(new byte[] { 2 })));
@@ -174,6 +182,8 @@ public class CodecSafetyTests
         Ensure(Deserialize<int[]?>(new ReadOnlySequence<byte>(CreateLengthPrefix(-1))) is null, "null array");
         Ensure(Deserialize<List<int>?>(new ReadOnlySequence<byte>(CreateLengthPrefix(-1))) is null, "null list");
         Ensure(Deserialize<ImmutableArray<int>>(new ReadOnlySequence<byte>(CreateLengthPrefix(-1))).IsDefault, "default immutable array");
+        ExpectDataLoss(() => Deserialize<Memory<int>>(new ReadOnlySequence<byte>(CreateLengthPrefix(-1))));
+        ExpectDataLoss(() => Deserialize<ReadOnlyMemory<int>>(CreateSegmentedSequence(CreateLengthPrefix(-1))));
         ExpectDataLoss(() => Deserialize<int[]?>(new ReadOnlySequence<byte>(CreateLengthPrefixedPayload(-1, [0xA5]))));
         ExpectDataLoss(() => Deserialize<List<int>?>(CreateSegmentedSequence(CreateLengthPrefixedPayload(-1, [0xA5]))));
         Ensure(Deserialize<int[]>(new ReadOnlySequence<byte>(CreateLengthPrefix(0))) is { Length: 0 }, "empty array");
@@ -346,6 +356,17 @@ public class CodecSafetyTests
         Serialize(value, writer);
         var bytes = writer.WrittenSpan.ToArray();
         bytes[0] = 2;
+        ExpectDataLoss(() => Deserialize<T>(new ReadOnlySequence<byte>(bytes)));
+        ExpectDataLoss(() => Deserialize<T>(CreateSegmentedSequence(bytes)));
+    }
+
+    private static void AssertRejectsNonCanonicalNull<T>()
+    {
+        var writer = new ArrayBufferWriter<byte>();
+        Serialize(default(T)!, writer);
+        var bytes = writer.WrittenSpan.ToArray();
+        Ensure(bytes.Length > 1 && bytes[0] == 0, $"nullable null layout {typeof(T)}");
+        bytes[^1] = 0xA5;
         ExpectDataLoss(() => Deserialize<T>(new ReadOnlySequence<byte>(bytes)));
         ExpectDataLoss(() => Deserialize<T>(CreateSegmentedSequence(bytes)));
     }

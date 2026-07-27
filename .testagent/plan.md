@@ -1,12 +1,11 @@
-# 0.8.41 regression-test plan
+# 0.8.42 regression-test plan
 
-1. [x] Prove required scalar responses accept decoded null outside interceptors.
-2. [x] Prove required Client response streams accept decoded null.
-3. [x] Prove required Server request streams accept decoded null.
-4. [x] Prove response nullability is absent from method fingerprints.
-5. [x] Prove Protocol v2 writes and accepts reserved Unknown errors.
-6. [x] Preserve pre-fix existing-suite passes and review assertions/pseudo-mutations.
-7. [x] Implement only stable proven fixes with required/nullable controls.
-8. [x] Run non-incremental Release and complete Generator/Unit/Integration gates.
-9. [x] Run exact-baseline performance, Chaos, NativeAOT, and package gates.
-10. [x] Update bilingual 0.8.41 documentation and complete local-commit readiness review.
+1. [x] Prove Throughput timed batching can terminate the process under streaming load.
+2. [x] Prove Memory/ReadOnlyMemory accept an invalid null collection marker.
+3. [x] Prove nullable fixed Codecs accept non-canonical ignored null bodies.
+4. [x] Prove local control and handshake writers misclassify invalid values as peer violations.
+5. [x] Prove DTO member nullability is absent from runtime Codec schema identity.
+6. [x] Implement only the five proven fixes with compatibility controls.
+7. [x] Run non-incremental Release and Generator/Unit/Integration gates.
+8. [x] Run exact-baseline performance, Chaos, NativeAOT, and package gates.
+9. [x] Update bilingual 0.8.42 documentation and complete local-commit readiness review.

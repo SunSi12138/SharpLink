@@ -56,7 +56,7 @@ internal sealed class NullableUInt128Codec : IRpcCodec<UInt128?>
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
-            if (!CodecHelpers.ReadNullablePresence(start)) return null;
+            if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
             return Unsafe.ReadUnaligned<UInt128>(ref Unsafe.Add(ref start, 1));
         }
 
@@ -64,7 +64,7 @@ internal sealed class NullableUInt128Codec : IRpcCodec<UInt128?>
         buffer.CopyTo(temp);
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         
-        if (!CodecHelpers.ReadNullablePresence(tempStart)) return null;
+        if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
         return Unsafe.ReadUnaligned<UInt128>(ref Unsafe.Add(ref tempStart, 1));
     }
 }

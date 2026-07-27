@@ -192,6 +192,8 @@ BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 仍均为 832 B
 
 0.8.41 的 scalar nullability TCP 与 required-reference stream dispatcher 精确基线门禁见 [`performance-0.8.41.md`](performance-0.8.41.md)。
 
+0.8.42 的 Throughput SendPump 稳定性、nullable Codec 与真实 TCP 精确基线门禁见 [`performance-0.8.42.md`](performance-0.8.42.md)。
+
 0.8.38 的 Generator 构造边界、HostApplication 构建与 interceptor 运行时 A/B 门禁见 [`performance-0.8.38.md`](performance-0.8.38.md)。
 
 ## 0.5.5 Stream/Connection 字节流控回归（2026-07-17，同一 runner）

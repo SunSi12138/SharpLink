@@ -25,6 +25,7 @@ public sealed partial class RpcSession
         private readonly Lock _admissionGate = new();
         private readonly Task _pumpTask;
         private TaskCompletionSource<bool>? _capacityChanged;
+        private Task<bool>? _pendingReadWait;
         private long _queuedBytes;
         private int _stopped;
         private int _faulted;
@@ -134,7 +135,7 @@ public sealed partial class RpcSession
 
             try
             {
-                while (await _queue.Reader.WaitToReadAsync(_sessionCancellation).ConfigureAwait(false))
+                while (await WaitToReadAsync().ConfigureAwait(false))
                 {
                     while (_queue.Reader.TryRead(out var frame))
                     {
@@ -206,6 +207,12 @@ public sealed partial class RpcSession
 
         private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchStart)
         {
+            var waitToRead = _queue.Reader.WaitToReadAsync(_sessionCancellation);
+            if (waitToRead.IsCompletedSuccessfully)
+                return waitToRead.Result;
+
+            var pendingRead = waitToRead.AsTask();
+            _pendingReadWait = pendingRead;
             while (true)
             {
                 var remainingTicks = _maxLatencyTicks - (Stopwatch.GetTimestamp() - batchStart);
@@ -214,19 +221,28 @@ public sealed partial class RpcSession
 
                 var timerTicks = Math.Min(remainingTicks, MaximumTimerStopwatchTicks);
                 var delay = TimeSpan.FromSeconds((double)timerTicks / Stopwatch.Frequency);
-                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCancellation);
-                timeoutCts.CancelAfter(delay);
-                try
+                using var delayCancellation = new CancellationTokenSource();
+                var delayTask = Task.Delay(delay, delayCancellation.Token);
+                if (await Task.WhenAny(pendingRead, delayTask).ConfigureAwait(false) == pendingRead)
                 {
-                    return await _queue.Reader.WaitToReadAsync(timeoutCts.Token).ConfigureAwait(false);
+                    _pendingReadWait = null;
+                    await delayCancellation.CancelAsync().ConfigureAwait(false);
+                    return await pendingRead.ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) when (
-                    timeoutCts.IsCancellationRequested && !_sessionCancellation.IsCancellationRequested)
-                {
-                    if (remainingTicks <= MaximumTimerStopwatchTicks)
-                        return false;
-                }
+
+                if (remainingTicks <= MaximumTimerStopwatchTicks)
+                    return false;
             }
+        }
+
+        private ValueTask<bool> WaitToReadAsync()
+        {
+            var pendingRead = _pendingReadWait;
+            if (pendingRead is null)
+                return _queue.Reader.WaitToReadAsync(_sessionCancellation);
+
+            _pendingReadWait = null;
+            return new ValueTask<bool>(pendingRead);
         }
 
         private bool TryReserve(int bytes)

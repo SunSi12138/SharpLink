@@ -61,7 +61,7 @@ internal sealed class NullableRuneCodec : IRpcCodec<Rune?>
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
-            if (!CodecHelpers.ReadNullablePresence(start)) return null;
+            if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
             return CodecHelpers.ValidateRune(
                 Unsafe.ReadUnaligned<Rune>(ref Unsafe.Add(ref start, 1)));
         }
@@ -70,7 +70,7 @@ internal sealed class NullableRuneCodec : IRpcCodec<Rune?>
         buffer.CopyTo(temp);
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         
-        if (!CodecHelpers.ReadNullablePresence(tempStart)) return null;
+        if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
         return CodecHelpers.ValidateRune(
             Unsafe.ReadUnaligned<Rune>(ref Unsafe.Add(ref tempStart, 1)));
     }

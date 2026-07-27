@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.42] - 2026-07-27
+
+### Fixed
+
+- Throughput timed batching retains a single outstanding Channel read across flush deadlines instead of repeatedly cancelling it, preventing a producer/cancellation race from terminating the process.
+- Non-nullable `Memory<T>` and `ReadOnlyMemory<T>` Codecs reject the collection null marker as `DataLoss`; nullable array/list and default `ImmutableArray<T>` shapes retain their existing representations.
+- Fixed-width nullable primitive Codecs reject non-zero ignored value bytes after a null marker, while canonical null and present-value decoding remain allocation-free.
+- Protocol v2 cancel/health and handshake writers classify invalid local enum/limit arguments as argument errors before advancing the writer; readers continue to classify peer input as `ProtocolViolation`.
+- Generated DTO runtime Codec schema identity includes nullable member annotations while preserving established non-nullable schema identities.
+
+### Compatibility and validation
+
+- Valid Protocol v2 framing, method IDs, field IDs, payload bytes, and non-nullable DTO schema identities are unchanged. Previously accepted non-canonical nullable null bodies and null markers for non-nullable memory shapes now fail as `DataLoss`.
+- Exact 0.8.41 Throughput streaming exited 134 in both independent `operation=all` repetitions and in 3/5 s2c plus 5/5 c2s processes; the candidate completed 16/16 processes and 64/64 unary/streaming stages without failure.
+- Non-incremental Release built with zero warnings/errors; Generator 121/121, Unit 493/493, Integration 250/250, 120-second shared-memory Chaos, NativeAOT TCP, seven-package pack, and fresh-cache TCP/shared-memory package smoke passed. Ten-process exact-baseline/candidate TCP unary medians changed by -0.76% with stable P50/P99 and slightly lower allocation; nullable present decode improved 5.155 to 5.090 ns/op with zero allocation.
+
 ## [0.8.41] - 2026-07-27
 
 ### Fixed

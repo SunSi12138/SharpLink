@@ -277,6 +277,35 @@ public interface IResponseFingerprintContract : SharpLink.Sdk.IService
     }
 
     [Test]
+    public Task DtoMemberNullabilityMustParticipateInRuntimeCodecSchemaIdentity()
+    {
+        var required = BuildSource("""
+#nullable enable
+[SharpLink.Sdk.RpcContract]
+public interface IDtoSchemaContract : SharpLink.Sdk.IService
+{
+    ValueTask<Payload> Resolve(CancellationToken cancellationToken);
+}
+public sealed class Payload { public string Name { get; set; } = string.Empty; }
+""");
+        var optional = BuildSource("""
+#nullable enable
+[SharpLink.Sdk.RpcContract]
+public interface IDtoSchemaContract : SharpLink.Sdk.IService
+{
+    ValueTask<Payload> Resolve(CancellationToken cancellationToken);
+}
+public sealed class Payload { public string? Name { get; set; } }
+""");
+
+        var requiredSchema = GetFirstGeneratedCodecSchema(required);
+        var optionalSchema = GetFirstGeneratedCodecSchema(optional);
+        Ensure(!string.Equals(requiredSchema, optionalSchema, StringComparison.Ordinal),
+            "required and nullable DTO members must not publish the same runtime Codec schema");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task DirectRedeclarationShouldCanonicalizeInheritedRpcSemantics()
     {
         var source = BuildSource("""
@@ -2862,6 +2891,12 @@ namespace SharpLink.Abstractions
             throw new Exception("Expected generated method fingerprint line.");
         return quotedLines[^1].TrimEnd(',').Trim('"');
     }
+
+    private static string GetFirstGeneratedCodecSchema(string source)
+        => string.Join("\n", RunGeneratorAndGetSources(source))
+            .Split('\n')
+            .Select(static line => line.Trim())
+            .First(static line => line.StartsWith("public string SchemaId =>", StringComparison.Ordinal));
 
     private static MetadataReference CreateMetadataReference(
         string assemblyName,

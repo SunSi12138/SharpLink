@@ -31,7 +31,7 @@ public static class ProtocolV2PayloadCodec
                 "Required handshake capabilities must also be advertised as supported.",
                 nameof(request));
         }
-        ValidatePeerLimits(request.MaxFramePayloadBytes, request.StreamReceiveWindowBytes,
+        ValidateLocalLimits(request.MaxFramePayloadBytes, request.StreamReceiveWindowBytes,
             request.ConnectionReceiveWindowBytes);
         if (request.AuthenticationPayload.Length > limits.MaxMetadataBytes)
         {
@@ -108,7 +108,7 @@ public static class ProtocolV2PayloadCodec
         ArgumentNullException.ThrowIfNull(writer);
         ValidateKnownCapabilities(response.NegotiatedCapabilities, nameof(response));
         ValidateOutboundCompressionSelection(response);
-        ValidatePeerLimits(response.MaxFramePayloadBytes, response.StreamReceiveWindowBytes,
+        ValidateLocalLimits(response.MaxFramePayloadBytes, response.StreamReceiveWindowBytes,
             response.ConnectionReceiveWindowBytes);
         WriteUInt16(writer, response.MinorVersion);
         WriteUInt64(writer, (ulong)response.NegotiatedCapabilities);
@@ -307,7 +307,13 @@ public static class ProtocolV2PayloadCodec
         ProtocolV2CancelReason reason)
     {
         ArgumentNullException.ThrowIfNull(writer);
-        ValidateCancelReason(reason);
+        if (reason is not ProtocolV2CancelReason.Unspecified and
+            not ProtocolV2CancelReason.UserCancellation and
+            not ProtocolV2CancelReason.DeadlineExceeded and
+            not ProtocolV2CancelReason.ConsumerAbandoned)
+        {
+            throw new ArgumentOutOfRangeException(nameof(reason));
+        }
         var span = writer.GetSpan(1);
         span[0] = (byte)reason;
         writer.Advance(1);
@@ -332,7 +338,12 @@ public static class ProtocolV2PayloadCodec
         SharpLinkHealthStatus status)
     {
         ArgumentNullException.ThrowIfNull(writer);
-        ValidateHealthStatus(status);
+        if (status is not SharpLinkHealthStatus.Ready and
+            not SharpLinkHealthStatus.Draining and
+            not SharpLinkHealthStatus.Unhealthy)
+        {
+            throw new ArgumentOutOfRangeException(nameof(status));
+        }
         var span = writer.GetSpan(1);
         span[0] = (byte)status;
         writer.Advance(1);
@@ -634,6 +645,21 @@ public static class ProtocolV2PayloadCodec
         }
         if (streamWindow <= 0 || connectionWindow <= 0 || connectionWindow < streamWindow)
             throw ProtocolV2FrameParser.Violation("Peer receive windows are invalid.");
+    }
+
+    private static void ValidateLocalLimits(int maxFrame, int streamWindow, int connectionWindow)
+    {
+        if (maxFrame < SharpLinkProtocolOptions.MinMaxFramePayloadBytes ||
+            maxFrame > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxFrame),
+                $"Frame limit must be between {SharpLinkProtocolOptions.MinMaxFramePayloadBytes} and {SharpLinkProtocolOptions.MaxMaxFramePayloadBytes} bytes.");
+        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(streamWindow);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(connectionWindow);
+        if (connectionWindow < streamWindow)
+            throw new ArgumentException("Connection receive window cannot be smaller than stream receive window.");
     }
 
     private static void ValidateHealthStatus(SharpLinkHealthStatus status)

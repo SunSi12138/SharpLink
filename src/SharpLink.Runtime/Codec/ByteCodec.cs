@@ -49,7 +49,7 @@ internal sealed class NullableByteCodec : IRpcCodec<byte?>
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
-            if (!CodecHelpers.ReadNullablePresence(start)) return null;
+            if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
             return Unsafe.Add(ref start, 1);
         }
 
@@ -58,7 +58,7 @@ internal sealed class NullableByteCodec : IRpcCodec<byte?>
         buffer.CopyTo(temp);
 
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
-        if (!CodecHelpers.ReadNullablePresence(tempStart)) return null;
+        if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
         
         return Unsafe.Add(ref tempStart, 1);
     }

@@ -1,0 +1,9 @@
+# SharpLink 0.8.42 deep audit
+
+Version 0.8.42 uses exact commit `d0e0df4` as its 0.8.41 baseline and closes one P1 plus four P2 findings: the Throughput send pump no longer cancels and replaces its single-reader Channel waiter at every deadline; non-nullable memory Codecs reject the collection null marker; fixed-width nullable Codecs reject non-canonical non-zero null bodies; local protocol writers use argument errors while peer readers retain `ProtocolViolation`; and nullable DTO members participate in runtime Codec schema identity without changing established non-nullable identities.
+
+Before the fix, both exact-baseline `operation=all` repetitions exited 134; focused 0.8.41 runs crashed in 3/5 s2c and 5/5 c2s processes. The candidate completed 16/16 processes and all 64 unary/streaming stages. Generator preserved 120 established passes and failed only the new separately compiled DTO-schema proof. Unit preserved 490 established passes and failed the three new/extended memory, nullable-body, and writer-boundary witnesses.
+
+The final non-incremental Release build has no warnings or errors; Generator is 121/121, Unit 493/493, and Integration 250/250. Exact-baseline/candidate TCP unary medians were 166,576 to 165,315 QPS (-0.76%) with stable P50/P99 and slightly lower allocation. Nullable present decode improved from 5.155 to 5.090 ns/op; canonical null validation measured 5.444 to 5.937 ns/op, an absolute 0.493 ns cost, with zero allocation on both paths. A rejected decorator prototype measured roughly 10.3/21.5 ns instead.
+
+The 120-second shared-memory Chaos gate completed 814,834 successes, 319,230 expected failures, zero unexpected failures, and 23 restarts, with no Client/Server Errors, 218 ms maximum recovery, and all five final gauges at zero. NativeAOT TCP, seven-package pack, and fresh-cache TCP/shared-memory functional smoke passed. This round found new improvements, so the clean-round counter remains 0/3.

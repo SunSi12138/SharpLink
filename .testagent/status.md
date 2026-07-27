@@ -1,27 +1,19 @@
-# 0.8.41 test status
+# 0.8.42 test status
 
-## Evidence status
-
-- Exact baseline is local 0.8.40 commit `dd431f5b18fc0e98b24a5f6edddd45a320d8fe23`.
-- All five candidates have deterministic pre-fix failures, causal fixes, required/nullable or
-  concrete/reserved controls, and reviewed pseudo-mutation coverage.
-- The 0.8.40 exact-commit build/package/AOT gates are complete and the working tree was clean before
-  this Research/Plan update.
+- Exact baseline: 0.8.41 commit `d0e0df4e3e81b9ead5c416c9a33ebd459c55f5a1`.
+- Five candidates have deterministic source/load-boundary evidence; all 120 established Generator and
+  490 established Unit tests remained passing outside the new/modified witnesses.
+- The five scoped implementations and paired controls are complete. The P1 Throughput crash changed
+  from two exact-baseline `operation=all` exits with code 134 to 16/16 successful candidate processes
+  and 64/64 successful operation stages.
+- Versioned non-incremental Release built with zero warnings/errors; Generator 121/121, Unit 493/493,
+  and serial Integration 250/250 passed. One earlier Integration pass had two non-repeating timing
+  failures; two subsequent complete serial passes were clean and the evidence remains preserved.
+- Ten-process exact-baseline/candidate TCP unary medians changed -0.76%, with unchanged P50, stable
+  P99, and slightly lower allocation. Nullable present decode improved 5.155 -> 5.090 ns/op; canonical
+  null validation was 5.444 -> 5.937 ns/op with zero allocation. A 10.3/21.5 ns wrapper was rejected.
+- The 120-second shared-memory Chaos gate completed 814,834 success, 319,230 expected, zero unexpected,
+  23 restarts, no Client/Server Errors, 218 ms maximum recovery, and all final gauges zero. NativeAOT
+  TCP, seven-package pre-commit pack, fresh-cache TCP/shared-memory package smoke, bilingual docs, and
+  final diff/readiness review passed.
 - Consecutive complete audit rounds without a new improvement remain 0/3.
-
-## Current gate
-
-- Final candidate: non-incremental Release 0 warnings/errors; Generator 120/120, Unit 490/490,
-  and serial Integration 250/250 passed. A parallel Integration run exposed existing certificate
-  import/test-resource races; the unchanged tests all passed in the serial release gate.
-- Exact-0.8.40/candidate five-process TCP medians changed +0.36% without interceptors and +0.98%
-  with interceptors, with unchanged allocations. Required-reference stream dispatch measured an
-  identical 13.860 ns/op process median and 1.333 B/op.
-- 120-second shared-memory Chaos passed with 815,964 success, 316,929 expected, zero unexpected,
-  23 restarts, no Client/Server Error, 221 ms maximum recovery, and all final gauges zero.
-- NativeAOT TCP, seven-package pre-commit pack, and fresh-cache TCP/shared-memory functional smoke
-  passed. The legacy two-argument public stream-dispatcher Rent overloads remain present for binary
-  compatibility; an exact-0.8.40-compiled stream harness ran successfully after swapping in the
-  0.8.41 Runtime and Abstractions assemblies.
-- Bilingual audit, migration, and performance documentation and the final diff/readiness review are
-  complete; the batch is ready for its local 0.8.41 commit.
