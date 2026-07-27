@@ -63,6 +63,7 @@
 - `0.8.1`：修复认证与 Manifest 可变快照、Resolver 释放、语义请求校验和 `List<T>` 双数组解码；详见 [`audit-0.8.1.md`](audit-0.8.1.md)。
 - `0.8.2`：修复共享 Connect 取消传播、cluster 握手超时、DNS 异常吞噬、非规范 VarUInt32 与非法 UTF-8 error payload；详见 [`audit-0.8.2.md`](audit-0.8.2.md)。
 - `0.8.3`：修复 endpoint nested attributes、async shutdown callback、连接与 Hosting cleanup 异常遮蔽，并删除 metadata decode 二次复制；详见 [`audit-0.8.3.md`](audit-0.8.3.md)。
+- `0.8.37`：修复 generated service/DTO 可达性、keyword DTO 标识符、record/ref-like DTO 与 static abstract contract 边界；详见 [`audit-0.8.37.md`](audit-0.8.37.md)。
 - 后续每五项 P2 及以上的已复现、已修复、已验证改进形成一个小版本；P3/语法与抽象收敛可随批次提交，但不单独推进版本。
 - 每批必须通过 Release、Generator、Unit、Integration 和相关性能门禁；连续三轮无新改进点后转入 RC。
 

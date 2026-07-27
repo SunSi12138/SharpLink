@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [0.8.37] - 2026-07-27
+
+### Fixed
+
+- Generator analysis reports `SHARPLINK018`/`SHARPLINK009` when service or explicit DTO declarations cannot be reached from the sibling generated namespace, replacing raw generated C# accessibility failures.
+- Generated DTO Codecs keep escaped keyword syntax only on member access and compose locals from raw symbol names, so members such as `@class` produce valid C#.
+- Native generated DTO Codecs reject unsealed record classes instead of silently slicing derived record state through a base record schema.
+- Ref-like DTO payloads report `SHARPLINK009` and suppress contract artifacts that cannot legally store or use them as ordinary generic arguments.
+- RPC contracts with static abstract operators or conversions report `SHARPLINK054` and suppress an unimplementable Proxy.
+- The admission/drain race gate now models the production `Interlocked.Exchange` state transition instead of a weaker volatile store that could create a false ARM64 store-buffering witness under process-level load.
+
+### Compatibility and validation
+
+- Protocol v2, route hashes, and valid generated payloads are unchanged. Internal and protected-internal same-assembly service/DTO declarations remain supported.
+- Unsealed record DTOs must be sealed or routed through an explicit Codec Adapter. Ref-like RPC payloads and static abstract operator/conversion contracts were never valid generated artifacts and now fail with SharpLink diagnostics.
+- Pre-fix Generator preserved all 108 existing passes and failed exactly five new probes; post-fix Generator is 113/113. Non-incremental Release build, Unit 483/483, and Integration 240/240 passed. The corrected race gate also passed three consecutive full Unit reruns after its load-only false positive was reproduced.
+- Interleaved exact-0.8.36/current non-incremental HostApplication builds measured median wall time 2.13 -> 1.89 seconds; the batch changes no runtime hot-path IL.
+
 ## [0.8.36] - 2026-07-27
 
 ### Fixed

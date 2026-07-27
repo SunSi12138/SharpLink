@@ -184,7 +184,7 @@ public partial class RpcGenerator
             {
                 var member = initializerMembers[index];
                 var suffix = index == initializerMembers.Length - 1 ? string.Empty : ",";
-                sb.AppendLine($"            {member.Identifier} = local_{member.Identifier}{suffix}");
+                sb.AppendLine($"            {EscapeIdentifier(member.Identifier)} = local_{member.Identifier}{suffix}");
             }
             sb.Append("        }");
         }
@@ -200,7 +200,7 @@ public partial class RpcGenerator
         GeneratedMemberModel member,
         Dictionary<string, int> complexIndexes)
     {
-        var value = $"value.{member.Identifier}";
+        var value = $"value.{EscapeIdentifier(member.Identifier)}";
         var fieldId = member.FieldId.ToString(InvariantCulture) + "U";
         switch (member.Kind)
         {

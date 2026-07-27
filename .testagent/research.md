@@ -1,56 +1,61 @@
-# 0.8.36 regression-test research
+# 0.8.37 regression-test research
 
 ## Candidate inventory
 
-- `SharpLinkServer.TryAcquireCall` checks `Running`, acquires connection capacity, checks
-  `Running` again, and only then increments `_globalActiveCalls`. Stop can transition to
-  Draining and observe zero between the second check and the increment, while the method still
-  returns `Acquired`.
-- Retired connection cleanup awaits `ServerConnectionState.ServiceCleanupTask` in an untracked
-  fire-and-forget task. Server Stop joins connection handlers and sessions, but can return before a
-  connection-scoped service finishes asynchronous disposal.
-- Performance-profile defaults infer whether `MaxSendQueueBytes` was configured by comparing its
-  value to 8 MiB. An explicit 8 MiB value is therefore overwritten by LowLatency or Throughput.
-- `SharpLinkCallOptions.EnableCompression` is a public switch whose only consumer throws
-  `Unimplemented` for every `true` value, including sessions where compression was configured and
-  negotiated. Compression is otherwise automatic, so the switch is a dead and misleading API.
-- Handshake response encoding and decoding accept a compression profile when Compression is not
-  negotiated, and accept negotiated Compression without a profile. The Client repairs this only
-  in a later caller-specific check, leaving the public codec able to emit and return semantically
-  invalid protocol values.
+- Service and explicitly rooted DTO analysis do not verify that the annotated type and every
+  containing type are accessible from the sibling `SharpLink.Generated` namespace. Private,
+  protected, private-protected, and file-local declarations therefore leak raw C# accessibility
+  errors from generated code.
+- DTO member analysis stores an already escaped keyword (for example `@class`) and then embeds it
+  inside local names such as `local_@class` and `seen_@class`, which are invalid identifiers.
+- Native DTO generation permits unsealed record classes even though it rejects other unsealed
+  classes. Passing a derived record through the base record Codec silently serializes only base
+  state and deserializes a base instance.
+- Ref-like structs are treated as unmanaged built-ins, while generated Proxy/Stub paths require
+  them as ordinary generic arguments and fields. The result is broken generated C# rather than a
+  SharpLink diagnostic.
+- Static abstract operators and conversions are excluded from RPC route discovery and from the
+  unsupported-member check. A generated Proxy cannot satisfy those inherited interface members.
+- The admission/drain race test uses a volatile state store while production transitions through
+  `Interlocked.Exchange`. Under parallel process load ARM64 can observe a store-buffering outcome
+  that is impossible at the production full-fence boundary, creating a false release failure.
 
 ## Acceptance boundary
 
-- No call may be admitted after Server leaves Running, even if Stop races the final global-count
-  publication; rollback must preserve both global and connection counters.
-- A normally completed Server Stop must join connection-service cleanup that started as part of
-  closing its owned connections, while the existing bounded forced-stop policy remains intact.
-- Profile defaults apply only when the queue was never explicitly assigned; explicitly assigning
-  the nominal 8 MiB default must be preserved in frozen options.
-- Remove the unusable per-call compression switch and document automatic negotiated compression;
-  do not invent partial force-compression semantics for only the initial request frame.
-- Both outbound and inbound handshake response codec boundaries reject profile/capability
-  incoherence before a session can consume it.
+- Emit `SHARPLINK018` for inaccessible service types and `SHARPLINK009` for inaccessible explicit
+  DTO roots, while allowing public, internal, and protected-internal declarations that sibling
+  generated code can access in the same assembly.
+- Keep escaped syntax only for member access and use raw symbol names when composing generated
+  identifiers.
+- Require native generated record classes to be sealed so the declared wire schema cannot silently
+  slice runtime-derived state.
+- Emit `SHARPLINK009` for ref-like DTOs and suppress the affected contract Proxy/Stub.
+- Emit `SHARPLINK054` for abstract operators/conversions and suppress the affected contract
+  Proxy/Stub; default/static non-abstract interface helpers remain allowed.
+- Preserve the admission race schedule scan but make its state transition atomic and full-fence,
+  exactly like production `TransitionTo`.
 
 ## Planned evidence
 
-- Use a bounded admission-race probe plus exact counter assertions; retain only a deterministic or
-  repeatedly witnessed pre-fix failure.
-- Use a blocked `IAsyncDisposable` connection service and assert that Stop remains incomplete until
-  disposal is released.
-- Freeze Throughput options after explicitly assigning 8 MiB and assert the exact value.
-- Assert the SDK surface no longer exposes the dead switch; preserve a pre-fix runtime probe showing
-  `true` always fails despite configured compression.
-- Exercise all four handshake response coherence combinations at both writer and reader boundaries.
+- Compile an isolated private service to preserve the two raw `CS0122` failures from the generated
+  manifest, then cover service and DTO diagnostics in the Generator suite.
+- Assert generated source never contains `local_@class` or `seen_@class` and still accesses
+  `value.@class` correctly.
+- Run an exact-baseline Codec round trip to prove `DerivedPayload` decodes as `BasePayload`, then
+  reject an unsealed base record used as an explicit native DTO root.
+- Reject a ref struct used by an RPC contract and assert no Proxy is emitted.
+- Reject a static abstract operator and assert no Proxy is emitted.
+- Reproduce the load-only admission false positive, replace the weak test transition, and run
+  consecutive complete Unit suites.
 
 ## Assertion and pseudo-mutation review
 
-- Removing the final post-increment state check, or forgetting either counter rollback, must fail
-  admission/counter assertions.
-- Replacing tracked retired cleanup with fire-and-forget must let Stop complete while disposal is
-  blocked.
-- Dropping the explicit-configuration bit must restore the 8 -> 32 MiB overwrite.
-- Reintroducing the SDK property must fail the public-surface assertion; compression configuration
-  and negotiated automatic compression tests remain unchanged.
-- Dropping either writer or reader coherence validation, or checking only one direction, must fail a
-  distinct assertion.
+- Removing either containing-type traversal or one rejected accessibility kind must restore raw
+  generated accessibility failures; allowed same-assembly accessibility gets a positive control.
+- Reusing escaped member syntax for local names must fail the two exact invalid-name assertions.
+- Restoring the record exception must remove the expected diagnostic and re-enable silent slicing.
+- Checking ref-like roots only after unmanaged short-circuit, or failing to suppress contract
+  generation, must fail separate assertions.
+- Ignoring non-ordinary abstract methods must restore both the missing diagnostic and broken Proxy.
+- Reverting the test setter to volatile store must restore the ARM64-only false witness under
+  process-level load; the product admission implementation remains unchanged.

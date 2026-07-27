@@ -36,7 +36,7 @@ public class SharpLinkServerInvocationTests
                 "TryAcquireCall",
                 BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find Server call admission path"));
-        var setState = CreateVolatileInt32Setter<SharpLinkServer>("_state");
+        var setState = CreateInterlockedInt32Setter<SharpLinkServer>("_state");
         var globalActiveCalls = typeof(SharpLinkServer).GetField(
             "_globalActiveCalls",
             BindingFlags.Instance | BindingFlags.NonPublic)
@@ -185,7 +185,7 @@ public class SharpLinkServerInvocationTests
         return dynamicMethod.CreateDelegate<TDelegate>();
     }
 
-    private static Action<TTarget, int> CreateVolatileInt32Setter<TTarget>(string fieldName)
+    private static Action<TTarget, int> CreateInterlockedInt32Setter<TTarget>(string fieldName)
     {
         var field = typeof(TTarget).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception($"cannot find field {fieldName}");
@@ -197,9 +197,12 @@ public class SharpLinkServerInvocationTests
             skipVisibility: true);
         var generator = dynamicMethod.GetILGenerator();
         generator.Emit(OpCodes.Ldarg_0);
+        generator.Emit(OpCodes.Ldflda, field);
         generator.Emit(OpCodes.Ldarg_1);
-        generator.Emit(OpCodes.Volatile);
-        generator.Emit(OpCodes.Stfld, field);
+        generator.Emit(OpCodes.Call, typeof(Interlocked).GetMethod(
+            nameof(Interlocked.Exchange),
+            [typeof(int).MakeByRefType(), typeof(int)])!);
+        generator.Emit(OpCodes.Pop);
         generator.Emit(OpCodes.Ret);
         return dynamicMethod.CreateDelegate<Action<TTarget, int>>();
     }

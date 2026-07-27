@@ -184,6 +184,8 @@ BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 仍均为 832 B
 
 0.8.36 的 Server 准入/释放精确基线与候选门禁见 [`performance-0.8.36.md`](performance-0.8.36.md)。
 
+0.8.37 的 Generator 类型边界与非增量 HostApplication 构建 A/B 门禁见 [`performance-0.8.37.md`](performance-0.8.37.md)。
+
 ## 0.5.5 Stream/Connection 字节流控回归（2026-07-17，同一 runner）
 
 Protocol v2 握手现在协商 `FlowControl` capability。每个 stream 与 connection 同时维护有界 byte credit；正常发送快路径无 Task 分配，额度耗尽时才创建 FIFO waiter。dispatcher 在消费者实际取得 item 后按 encoded byte count 归还额度，取消、deadline 和 session fault 会完成全部等待者。一字节窗口的真实 client/server stream Integration 已验证暂停与恢复，单个合法大 item 使用一次临时借用。

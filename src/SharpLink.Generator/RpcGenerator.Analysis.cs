@@ -27,7 +27,8 @@ public partial class RpcGenerator
             return null;
 
         var contracts = symbol.AllInterfaces.Where(HasRpcContractAttribute).ToArray();
-        if (contracts.Length != 1 || symbol.IsAbstract || symbol.IsGenericType)
+        if (contracts.Length != 1 || symbol.IsAbstract || symbol.IsGenericType ||
+            !IsAccessibleFromGeneratedCode(symbol))
             return null;
         var interfaceSymbol = contracts[0];
         if (HasInvalidRpcMethod(interfaceSymbol)) return null;
@@ -105,12 +106,16 @@ public partial class RpcGenerator
                 $"the service implements {contracts.Length} RPC contracts; exactly one is supported",
                 location);
         }
-        if (symbol.IsAbstract || symbol.IsGenericType)
+        if (symbol.IsAbstract || symbol.IsGenericType || !IsAccessibleFromGeneratedCode(symbol))
         {
             return new RpcServiceDiagnosticModel(
                 RpcServiceDiagnosticKind.InvalidType,
                 symbol.Name,
-                symbol.IsAbstract ? "abstract RPC services are not supported" : "open generic RPC services are not supported",
+                symbol.IsAbstract
+                    ? "abstract RPC services are not supported"
+                    : symbol.IsGenericType
+                        ? "open generic RPC services are not supported"
+                        : "the service type and every containing type must be accessible from generated code",
                 location);
         }
 
@@ -488,6 +493,8 @@ public partial class RpcGenerator
                 !IsSupportedRpcReturnType(m.ReturnType) ||
                 m.IsStatic ||
                 HasByReferenceSignature(m) ||
+                ContainsRefLikeType(m.ReturnType) ||
+                m.Parameters.Any(static parameter => ContainsRefLikeType(parameter.Type)) ||
                 m.IsGenericMethod ||
                 HasTypeParameter(m.ReturnType) ||
                 m.Parameters.Any(p => HasTypeParameter(p.Type)) ||
@@ -540,6 +547,8 @@ public partial class RpcGenerator
                     member switch
                     {
                         IEventSymbol => "abstract events cannot be implemented by an RPC proxy",
+                        IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator or MethodKind.Conversion } =>
+                            "static abstract operators and conversions cannot be implemented by an RPC proxy",
                         IMethodSymbol => "non-public abstract methods cannot be exposed as RPC routes",
                         _ => "abstract properties and indexers cannot be represented as RPC routes"
                     },
@@ -575,6 +584,11 @@ public partial class RpcGenerator
 
     private static bool IsUnsupportedAbstractContractMember(ISymbol member)
         => member is IPropertySymbol { IsAbstract: true } or IEventSymbol { IsAbstract: true } ||
+           member is IMethodSymbol
+           {
+               IsAbstract: true,
+               MethodKind: MethodKind.UserDefinedOperator or MethodKind.Conversion
+           } ||
            member is IMethodSymbol
            {
                MethodKind: MethodKind.Ordinary,
@@ -632,6 +646,31 @@ public partial class RpcGenerator
                                          namedType.TypeArguments.Any(HasTypeParameter),
             _ => false
         };
+    }
+
+    private static bool ContainsRefLikeType(ITypeSymbol type)
+        => type switch
+        {
+            INamedTypeSymbol { IsRefLikeType: true } => true,
+            IArrayTypeSymbol arrayType => ContainsRefLikeType(arrayType.ElementType),
+            IPointerTypeSymbol pointerType => ContainsRefLikeType(pointerType.PointedAtType),
+            INamedTypeSymbol namedType => namedType.TypeArguments.Any(ContainsRefLikeType),
+            _ => false
+        };
+
+    private static bool IsAccessibleFromGeneratedCode(INamedTypeSymbol symbol)
+    {
+        for (var current = symbol; current is not null; current = current.ContainingType)
+        {
+            if (current.IsFileLocal ||
+                current.DeclaredAccessibility is Accessibility.Private or
+                    Accessibility.Protected or
+                    Accessibility.ProtectedAndInternal)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static bool IsCancellationTokenParameter(IParameterSymbol parameter)

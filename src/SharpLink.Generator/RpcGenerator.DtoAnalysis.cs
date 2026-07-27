@@ -292,6 +292,23 @@ public partial class RpcGenerator
             var typeName = GetTypeName(type);
             if (_models.ContainsKey(typeName) || _failed.Contains(typeName))
                 return;
+            if (type is INamedTypeSymbol namedArtifact)
+            {
+                if (namedArtifact.IsRefLikeType)
+                {
+                    Report(DtoDiagnosticKind.Unsupported, type,
+                        "ref-like DTOs cannot be used by generated Codec or RPC artifacts");
+                    _failed.Add(typeName);
+                    return;
+                }
+                if (!IsAccessibleFromGeneratedCode(namedArtifact))
+                {
+                    Report(DtoDiagnosticKind.Unsupported, type,
+                        "the DTO type and every containing type must be accessible from generated code");
+                    _failed.Add(typeName);
+                    return;
+                }
+            }
             if (TrySelectAdapter(type, out var adapter))
             {
                 if (adapter is not null)
@@ -402,7 +419,7 @@ public partial class RpcGenerator
                 _failed.Add(typeName);
                 return;
             }
-            if (named.TypeKind == TypeKind.Class && !named.IsSealed && !named.IsRecord)
+            if (named.TypeKind == TypeKind.Class && !named.IsSealed)
             {
                 Report(DtoDiagnosticKind.Unsupported, type,
                     "classes must be sealed; add an installed serializer selector Attribute or [RpcCodecAdapter(typeof(...))] for polymorphic graphs");
@@ -476,7 +493,7 @@ public partial class RpcGenerator
                 .OrderBy(static member => member.FieldId)
                 .Select(member => new GeneratedMemberModel(
                     member.Symbol.Name,
-                    EscapeIdentifier(member.Symbol.Name),
+                    member.Symbol.Name,
                     GetTypeName(member.Type),
                     member.FieldId,
                     member.Kind,
