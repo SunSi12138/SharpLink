@@ -614,7 +614,8 @@ internal sealed partial class SharpLinkServer
                             {
                             case ProtocolV2FrameType.Ping:
                                 DebugLogClientHeartbeatReceived(_logger);
-                                session.SendPongAsync(ReadMonotonicTimestamp(payload));
+                                await session.SendPongWithBackpressureAsync(
+                                    ReadMonotonicTimestamp(payload), ct).ConfigureAwait(false);
                                 break;
                             case ProtocolV2FrameType.Pong:
                                 DebugLogClientHeartbeatReceived(_logger);
@@ -698,9 +699,10 @@ internal sealed partial class SharpLinkServer
                                         SharpLinkErrorCode.ProtocolViolation,
                                         "HealthCheck was not negotiated for this session.");
                                 }
-                                session.SendHealthResponse(
+                                await session.SendHealthResponseWithBackpressureAsync(
                                     unchecked((long)header.RequestId),
-                                    HealthStatus);
+                                    HealthStatus,
+                                    ct).ConfigureAwait(false);
                                 break;
                             case ProtocolV2FrameType.HandshakeRequest:
                             case ProtocolV2FrameType.HandshakeResponse:

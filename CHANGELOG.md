@@ -9,10 +9,14 @@
 ### Fixed
 
 - `SharpLink.PackageSmoke` now composes its restore-time package version directly from `VersionPrefix` and `VersionSuffix`. The previous `$(Version)` default was expanded before the SDK synthesized that property, leaving all four SharpLink `PackageReference` versions empty and making the NuGet release gate fail with `NU1015` for every prerelease candidate.
+- Client heartbeat Ping and peer Pong/HealthResponse control frames now wait for bounded send-queue capacity. Sustained OneWay saturation no longer turns a local heartbeat `ResourceExhausted` into a disconnected single-connection pool and a cascade of `Unavailable`; application OneWay sends retain their explicit fail-fast backpressure signal.
+- Response/control-frame capacity waiting first uses the original synchronous queue-admission path and creates an asynchronous waiter only when the queue is actually full, preserving normal-path throughput and allocation behavior.
 
 ### Validation
 
 - MSBuild property evaluation reports `SharpLinkPackageVersion=1.0.0-rc3`. A fresh package cache restores exclusively from the locally packed SharpLink feed plus NuGet.org, compiles generated contracts without project references, and runs the package consumer over TCP and SharedMemory.
+- Deterministic heartbeat tests prove that a full queue keeps the connection healthy until capacity returns and that Ping, Pong, and HealthResponse retain synchronous completion and exact frames when capacity is available. The Unit suite passes 507/507.
+- Twelve-second single-connection TCP and SharedMemory OneWay saturation witnesses cross the heartbeat interval with only expected `ResourceExhausted` results and zero `Unavailable`. Five exact RC1/RC3 response-load pairs completed without failures; median QPS changed -0.36%, P50 +0.77%, P99 -0.92%, CPU/operation -0.52%, and allocation/operation +0.02%, excluding a material normal-path regression.
 - RC2 was never tagged or published. It is retained locally as the exact response-backpressure fix checkpoint and is superseded because its clean-cache package-consumer gate could not restore the prerelease package graph.
 
 ## [1.0.0-rc2] - 2026-07-28

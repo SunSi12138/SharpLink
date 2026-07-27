@@ -209,10 +209,26 @@ public static class RpcSessionExtensions
         public void SendPingAsync()
             => SendTimestampFrame(session, ProtocolV2FrameType.Ping, Stopwatch.GetTimestamp());
 
+        internal ValueTask SendPingWithBackpressureAsync(CancellationToken cancellationToken = default)
+            => SendTimestampFrameWithBackpressureAsync(
+                session,
+                ProtocolV2FrameType.Ping,
+                Stopwatch.GetTimestamp(),
+                cancellationToken);
+
         /// <summary>Sends a pong that echoes a received ping timestamp.</summary>
         /// <param name="timestamp">The monotonic timestamp from the ping frame.</param>
         public void SendPongAsync(long timestamp)
             => SendTimestampFrame(session, ProtocolV2FrameType.Pong, timestamp);
+
+        internal ValueTask SendPongWithBackpressureAsync(
+            long timestamp,
+            CancellationToken cancellationToken = default)
+            => SendTimestampFrameWithBackpressureAsync(
+                session,
+                ProtocolV2FrameType.Pong,
+                timestamp,
+                cancellationToken);
 
         /// <summary>Sends a protocol-level health request on a negotiated session.</summary>
         /// <param name="requestId">The non-zero health request identifier.</param>
@@ -240,6 +256,34 @@ public static class RpcSessionExtensions
                 }
                 ownsWriter = false;
                 GetRuntimeSession(session).SendPacket(writer);
+            }
+            finally
+            {
+                if (ownsWriter)
+                    session.RuntimeContext.Buffers.Return(writer);
+            }
+        }
+
+        internal async ValueTask SendHealthResponseWithBackpressureAsync(
+            long requestId,
+            SharpLinkHealthStatus status,
+            CancellationToken cancellationToken = default)
+        {
+            var writer = GetRuntimeSession(session).RentFrameWriter();
+            var ownsWriter = true;
+            try
+            {
+                using (writer.BeginPacketScope(
+                           ProtocolV2FrameType.HealthResponse,
+                           ProtocolV2FrameFlags.None,
+                           unchecked((ulong)requestId)))
+                {
+                    ProtocolV2PayloadCodec.WriteHealthResponse(writer, status);
+                }
+                ownsWriter = false;
+                await GetRuntimeSession(session)
+                    .SendPacketWithBackpressureAsync(writer, cancellationToken)
+                    .ConfigureAwait(false);
             }
             finally
             {
@@ -454,6 +498,34 @@ public static class RpcSessionExtensions
             }
             ownsWriter = false;
             GetRuntimeSession(session).SendPacket(writer);
+        }
+        finally
+        {
+            if (ownsWriter)
+                session.RuntimeContext.Buffers.Return(writer);
+        }
+    }
+
+    private static async ValueTask SendTimestampFrameWithBackpressureAsync(
+        IRpcSession session,
+        ProtocolV2FrameType type,
+        long timestamp,
+        CancellationToken cancellationToken)
+    {
+        var writer = GetRuntimeSession(session).RentFrameWriter();
+        var ownsWriter = true;
+        try
+        {
+            using (writer.BeginPacketScope(type, ProtocolV2FrameFlags.None, 0))
+            {
+                var span = writer.GetSpan(sizeof(long));
+                BinaryPrimitives.WriteInt64LittleEndian(span, timestamp);
+                writer.Advance(sizeof(long));
+            }
+            ownsWriter = false;
+            await GetRuntimeSession(session)
+                .SendPacketWithBackpressureAsync(writer, cancellationToken)
+                .ConfigureAwait(false);
         }
         finally
         {

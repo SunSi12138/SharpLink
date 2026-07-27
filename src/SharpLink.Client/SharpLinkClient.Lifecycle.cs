@@ -496,7 +496,8 @@ internal sealed partial class SharpLinkClient
                         switch (header.Type)
                         {
                         case ProtocolV2FrameType.Ping:
-                            session.SendPongAsync(ReadMonotonicTimestamp(payload));
+                            await session.SendPongWithBackpressureAsync(
+                                ReadMonotonicTimestamp(payload), ct).ConfigureAwait(false);
                             break;
                         case ProtocolV2FrameType.Pong:
                             DebugLogServerHeartbeatReceived(_logger);
@@ -590,7 +591,7 @@ internal sealed partial class SharpLinkClient
         using var sessionScope = BeginSessionLogScope(_logger, session.Id);
         while (!ct.IsCancellationRequested)
         {
-            session.SendPingAsync();
+            await session.SendPingWithBackpressureAsync(ct).ConfigureAwait(false);
             await SharpLinkTimer.DelayAsync(_heartbeatInterval, ct).ConfigureAwait(false);
             if (session.TimeSinceLastActivity <= _heartbeatTimeout && session.IsConnected)
                 continue;
