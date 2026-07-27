@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: SharpLink version
-      placeholder: 1.0.0-rc1
+      placeholder: 1.0.0-rc2
     validations:
       required: true
   - type: input

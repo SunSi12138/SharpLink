@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+## [1.0.0-rc2] - 2026-07-28
+
+### Fixed
+
+- Server RPC success, service-error, admission-rejection, decode-error, cancellation, and module-drain responses now wait for bounded send-queue capacity instead of allowing a local `ResourceExhausted` enqueue failure to escape synchronous dispatch and terminate the connection. The synchronous fast path remains allocation-free when capacity is available.
+- Response backpressure retains the global and per-connection call-admission slots until the response enters the send queue, bounding queued response work instead of accepting unbounded replacement calls while a slow peer is saturated.
+- The formal performance matrix fixes both endpoints to the same 64 MiB send queue for normal throughput comparisons and uses payload-aware default concurrency. The dedicated OneWay backpressure workload retains profile defaults and reports saturation separately.
+
+### Validation
+
+- Deterministic full-queue regression tests cover mapped error and successful payload responses, connection health before and after recovery, retained admission while blocked, final resource release, exact response contents, and the non-full synchronous fast path. The full Unit suite passes 505/505 with zero build warnings or errors.
+- The original SharedMemory witness at 64 KiB payload and concurrency 128 completed 728,343 calls with 12 client-local default-queue `ResourceExhausted` signals and no `ConnectionClosed`/`Unavailable` cascade. Repeating with the matrix's fixed 64 MiB queue completed 734,065 calls with zero failures.
+- RC1 was never tagged or published. It is retained as a local reproducible checkpoint and superseded by RC2 because its default-queue load witness could amplify one server response enqueue failure into connection-wide failures.
+
 ## [1.0.0-rc1] - 2026-07-28
 
 ### Release candidate

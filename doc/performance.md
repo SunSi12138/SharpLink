@@ -1,10 +1,10 @@
 # SharpLink 性能基线
 
-本文只发布 `1.0.0-rc1` 精确提交上的最终可复现实测。0.x 开发期的逐版本局部 A/B、临时 runner 结果和优化日志不属于稳定性能承诺，已从用户文档移除；代码历史仍保留在 Git 和 CHANGELOG。
+本文只发布 `1.0.0-rc2` 精确提交上的最终可复现实测。0.x 开发期的逐版本局部 A/B、临时 runner 结果和优化日志不属于稳定性能承诺，已从用户文档移除；代码历史仍保留在 Git 和 CHANGELOG。
 
 ## 当前状态
 
-`1.0.0-rc1` 的代码、公开 API、协议和包表面已进入本地冻结；最终 QPS、吞吐和延迟数字仍必须在该精确 RC 提交完成下述矩阵后发布。测试未完成前不以候选前的开发机结果或短时 smoke 填充本节。
+`1.0.0-rc2` 的代码、公开 API、协议和包表面已进入本地冻结；最终 QPS、吞吐和延迟数字仍必须在该精确 RC 提交完成下述矩阵后发布。测试未完成前不以候选前的开发机结果或短时 smoke 填充本节。
 
 ## 环境记录
 
@@ -17,9 +17,9 @@
 - compression/admission/interceptor/topology 配置；
 - 同机后台进程与温控检查。
 
-原始 JSON、BenchmarkDotNet 报告和环境快照写入 `artifacts/performance/rc1/`，不提交仓库；本文只保存汇总表、命令和解释。
+原始 JSON、BenchmarkDotNet 报告和环境快照写入 `artifacts/performance/rc2/`，不提交仓库；本文只保存汇总表、命令和解释。
 
-## RC1 场景矩阵
+## RC2 场景矩阵
 
 | 维度 | 覆盖 |
 |---|---|
@@ -49,7 +49,7 @@ SHARPLINK_MATRIX_TIER=smoke ./eng/run-performance-matrix.sh
 ```bash
 SHARPLINK_MATRIX_TIER=full \
 SHARPLINK_MATRIX_RUNTIMES=jit,aot \
-SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/rc1/matrix" \
+SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/rc2/matrix" \
 ./eng/run-performance-matrix.sh
 ```
 
@@ -72,4 +72,4 @@ SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/rc1/matrix" \
 
 ## 最终结果
 
-冻结 `1.0.0-rc1` 后填写。
+冻结 `1.0.0-rc2` 后填写。
