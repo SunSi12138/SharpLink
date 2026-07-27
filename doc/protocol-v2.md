@@ -2,7 +2,7 @@
 
 Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容或恢复扫描。任何 magic、长度、类型、标志或载荷结构错误都作为连接级 `ProtocolViolation` 处理并关闭连接。
 
-0.6.9 使用 protocol minor 1；0.6.10 升为 minor 2，并增加可协商的带原因 Cancel。0.7.4 升为 minor 3，在握手中加入压缩算法列表和唯一选中 token。minor 仍取双方较小值，但 minor 3 的握手载荷布局已经改变，因此 0.7.4 不承诺与 0.7.3 及更早版本互操作；两个 0.7.4 对端在未启用、单方启用或算法无交集时都会使用未压缩连接。
+当前 protocol minor 为 3，能力包含 metadata、compression、flow control、health check 和 cancellation reason。minor 取双方较小值；当前 1.0 RC 只承诺与采用相同 minor-3 握手布局的对端互操作。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
 
 ## 固定帧头
 
@@ -72,7 +72,7 @@ authenticationLength:varuint32 + authentication bytes
 
 wire profile 最多 16 个；每个 profile 为 1–64 字节、大小写敏感的可见规范 ASCII，且列表内唯一。`HandshakeResponse` 在固定字段后编码 `selectedProfileLength:uint8 + selectedProfile`。Server 按自身 Provider 注册顺序选择 Client 列表中的第一个匹配项；无交集时清除 compression capability 并发送零长度 profile。协商 capability 与 profile 缺失/多余或选择未被 Client 提供的 profile 都是连接级 `ProtocolViolation`。
 
-`ISharpLinkCompressionProvider.WireProfile` 表示完整的 wire profile，不是结构化参数协商。只影响发送端 CPU/压缩比而不影响解码的配置（内置 Provider 的 `CompressionLevel`）可以在两端不同；dictionary identity、必须支持的 window/profile 或其他会影响解码兼容性的配置必须编码进唯一 profile，例如 `zstd/v1` 与 `zstd-dict/0123abcd`，并作为不同 Provider 参与现有优先级协商。对同一 profile 配置出不兼容的解码参数属于 Provider 配置错误。这样后续可接入 [.NET 11 的 Zstandard 支持](https://learn.microsoft.com/dotnet/core/whats-new/dotnet-11/overview)及 [`ZstandardCompressionOptions`](https://learn.microsoft.com/dotnet/api/system.io.compression.zstandardcompressionoptions?view=net-11.0)，而无需让 v0.7.4 协议理解算法专属参数；.NET 11 API 在正式发布前仍可能变化。
+`ISharpLinkCompressionProvider.WireProfile` 表示完整的 wire profile，不是结构化参数协商。只影响发送端 CPU/压缩比而不影响解码的配置（例如内置 Provider 的 `CompressionLevel`）可以在两端不同；dictionary identity、必须支持的 window/profile 或其他影响解码兼容性的配置必须编码进唯一 profile，例如 `zstd/v1` 与 `zstd-dict/0123abcd`，并作为不同 Provider 参与现有优先级协商。对同一 profile 配置不兼容解码参数属于 Provider 配置错误。
 
 对端缺少任一 required capability 时，Server 返回 `Unimplemented` 错误并关闭连接。认证载荷不得超过握手/metadata 上限。
 

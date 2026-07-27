@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-28
+
+### Documentation and demos
+
+- Replaced 301 version-specific architecture, audit, migration, performance, and chaos reports with 18 current topic documents covering setup, contracts/codecs, calls/streaming, transports, security, resilience, admission, hosting, observability, multi-cluster/dynamic modules, limits, troubleshooting, migration, architecture, Protocol v2, load testing, and the pending RC performance baseline.
+- Reworked the README documentation index and removed every link to superseded 0.x reports. Local links across README and the complete current documentation set validate without missing targets.
+- Added runnable Security, Compression, AdmissionControl, InterceptorsTelemetry, Resilience, TransportMatrix, and MultiCluster demos. The transport matrix executes TCP, NamedPipe, UDS where supported, SharedMemory, and AnonymousPipe; the multi-cluster demo uses two generated contract assemblies and two physical servers to prove compile-time route isolation.
+
+### Compatibility and validation
+
+- Product runtime behavior and public API are unchanged. The performance matrix default output path no longer embeds an obsolete development version.
+- The complete 41-project Release solution rebuild passes with zero warnings and errors. All seven new demos execute successfully and assert their advertised behavior, including negotiated bidirectional compression, overload rejection, ActivitySource emission, two-endpoint routing, five transports, and two generated cluster routes.
+
 ## [0.9.0] - 2026-07-28
 
 ### Documentation

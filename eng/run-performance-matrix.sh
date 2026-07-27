@@ -6,7 +6,7 @@ ROOT="${SHARPLINK_MATRIX_ROOT:-$SCRIPT_ROOT}"
 TIER="${SHARPLINK_MATRIX_TIER:-smoke}"
 RUNTIMES="${SHARPLINK_MATRIX_RUNTIMES:-jit}"
 REPETITIONS="${SHARPLINK_MATRIX_REPETITIONS:-}"
-OUTPUT_ROOT="${SHARPLINK_MATRIX_OUTPUT:-$ROOT/artifacts/performance/v0.7.4/matrix}"
+OUTPUT_ROOT="${SHARPLINK_MATRIX_OUTPUT:-$ROOT/artifacts/performance/current/matrix}"
 
 if [[ "$TIER" == "full" ]]; then
   DEFAULT_TRANSPORTS="tcp,uds,namedpipe,anonymous,sharedmemory"

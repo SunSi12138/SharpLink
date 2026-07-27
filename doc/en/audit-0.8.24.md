@@ -1,9 +1,0 @@
-# SharpLink 0.8.24 deep audit
-
-Chinese: [`../audit-0.8.24.md`](../audit-0.8.24.md)
-
-Against 0.8.23 commit `3202bd7`, this batch confirmed five P2 improvements: C# attribute constants bypassed the `TimeoutAttribute` constructor validation; unions accepted non-positive tags; union cases accepted abstract, open, unrelated, or multiply-tagged mappings; an explicit empty `SharpLinkRpcContracts` filter incorrectly fell back to automatic reference scanning; and both generated Manifest formats continued to report generator `0.8.3`.
-
-The complete pre-fix Generator run contained 88 tests: 82 existing tests passed and exactly six failed (generator provenance has separate JSON and assembly-Manifest surfaces). The fix adds `SHARPLINK050` and `SHARPLINK051`; contracts with invalid timeouts no longer emit dangerous descriptors; union declarations enforce a one-to-one mapping from positive tags to assignable closed concrete cases; an explicit empty filter returns an empty set; and version provenance comes from the executing Generator assembly, removing a recurring release-time synchronization point. A redundant constant-false branch was also removed from the same method-validation path as a P3 cleanup; it does not count toward the five-item version threshold.
-
-After the fixes, the non-incremental Release build completed with 0 warnings and 0 errors; Generator 88/88, Unit 449/449, Integration 237/237, the seven-package pack, and fresh-cache package smoke all passed. An initial separate timeout-analysis pipeline was rejected after a 400-method synthetic workload moved from 57.290 ms to 69.062 ms. After folding validation into the existing method-diagnostic traversal, a 101-sample comparison measured 41.029 to 40.675 ms with a bounded 0.57% increase in compiler-thread allocation. No runtime hot path changed. See [`performance-0.8.24.md`](../performance-0.8.24.md) and [`migration-0.8.24.md`](../migration-0.8.24.md).

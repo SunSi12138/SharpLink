@@ -98,7 +98,7 @@ SharpLink.Serializer.SharpPack
 - Client/Server 收到完整帧时同时维护诊断用 UTC `LastActive` 与内部单调时间戳；heartbeat timeout 只按单调 elapsed time 判定，不受系统墙钟校时或调用方修改诊断属性影响。
 - Generic Host 的 Server Stop 是终态屏障：Stop 开始后的 Run 结束（成功或失败）不再反向触发应用停止，Stop 完成后也不能重新 Start 同一 hosted service 实例。
 
-## 0.7.x endpoint 拓扑与韧性
+## Endpoint 拓扑与韧性
 
 - 固定单 endpoint 仍是默认快路径；只有显式 `UseEndpoints` 或 `UseEndpointResolver` 才会创建 endpoint candidate、selector 和后台 topology worker。单个 static endpoint 在 Build 时折叠回固定快路径。
 - static 和 dynamic cluster 都以不可变 Ready candidate snapshot 供调用路径读取；端点增减或 Ready 边界变化由单 writer 发布，选择路径不获取 topology writer lock。多 endpoint 默认 P2C，可显式选择 Random、RoundRobin、LeastPending 或同步自定义 selector。
@@ -141,7 +141,7 @@ SharpLink.Serializer.SharpPack
 - Codec cache 绑定 Manifest registration identity；replace 发布新代后，旧模块清理不会删除新 Codec
 - Codec Provider、Buffer Pool、状态容器配置都冻结在各自的 `SharpLinkRuntimeContext` 中，不允许 Builder 覆盖进程级可变配置
 
-完整 Adapter SPI、事务发布和动态卸载设计见 [`architecture-0.7.11.md`](architecture-0.7.11.md)。
+完整 Adapter SPI、事务发布和动态卸载设计见 [`contracts-and-codecs.md`](contracts-and-codecs.md) 与 [`dynamic-modules-and-multicluster.md`](dynamic-modules-and-multicluster.md)。
 
 ## 平台约束
 

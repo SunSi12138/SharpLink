@@ -7,6 +7,12 @@
   zero. Release rebuild completes with zero warnings and errors.
 - All seven 0.9.0 runtime packages contain their matching XML documentation file. Generator
   121/121, Unit 503/503, and Integration 252/252 pass.
-- The next phase replaces version-by-version reports with current feature/limit guidance and adds
-  runnable demos for the major implemented feature families that are not yet represented.
+- The current documentation set contains 18 stable topic files; all 301 version-specific
+  architecture/audit/migration/performance/chaos reports have been removed.
+- Seven new runnable demos cover security, compression, admission, interceptor/telemetry,
+  resilience, five transports, and two-assembly multi-cluster routing. All execute successfully.
+- The 41-project Release solution rebuild and Markdown local-link validation pass with zero build
+  warnings/errors and zero missing local links.
+- The next phase validates packages, PackageSmoke, NativeAOT, Chaos and the full existing demo set
+  before freezing `1.0.0-rc1`.
 - No product behavior change or performance claim has been made in this phase yet.

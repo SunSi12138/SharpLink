@@ -47,3 +47,15 @@
   has absorbed every still-relevant behavior and limit.
 - All documentation links, code snippets, demos, packages, tests, AOT and performance gates are
   validated on the exact RC candidate.
+
+## Documentation and demo result
+
+- Removed 301 version-specific reports after absorbing current behaviors and limits into 18 stable
+  topic documents. README and all current local Markdown links validate without missing targets.
+- Added seven runnable feature demos plus two isolated multi-cluster contract projects. All demos
+  execute successfully; the full solution now contains 41 projects and rebuilds with zero warnings
+  and errors.
+- Dynamic plugin unload remains an integration-test scenario because a truthful proof requires
+  external plugin files and a collectible AssemblyLoadContext; the documentation links the exact
+  contract/service/rollback projects and lifecycle integration coverage instead of presenting a
+  fake single-file unload demo.
