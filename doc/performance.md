@@ -186,6 +186,8 @@ BenchmarkDotNet `UnaryBenchmarks.Rpc_Add` 的 PayloadSize 16/256 仍均为 832 B
 
 0.8.37 的 Generator 类型边界与非增量 HostApplication 构建 A/B 门禁见 [`performance-0.8.37.md`](performance-0.8.37.md)。
 
+0.8.39 的 interceptor 调用边界与真实 TCP 运行时 A/B 门禁见 [`performance-0.8.39.md`](performance-0.8.39.md)。
+
 0.8.38 的 Generator 构造边界、HostApplication 构建与 interceptor 运行时 A/B 门禁见 [`performance-0.8.38.md`](performance-0.8.38.md)。
 
 ## 0.5.5 Stream/Connection 字节流控回归（2026-07-17，同一 runner）

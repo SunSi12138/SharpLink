@@ -10,6 +10,13 @@ namespace SharpLink.UnitTests.Runtime;
 
 public class CodecSafetyTests
 {
+    [Test]
+    public void EmptyRequestCodecShouldMapTrailingPayloadToDataLoss()
+    {
+        ExpectDataLoss(() => RpcEmptyRequestCodec.Instance.Deserialize(
+            new ReadOnlySequence<byte>(new byte[] { 0xA5 })));
+    }
+
     private static readonly IRpcCodecProvider SCodecs =
         new SharpLinkRuntimeContextBuilder().Build().Codecs;
 

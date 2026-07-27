@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.39] - 2026-07-27
+
+### Fixed
+
+- Server terminal failures now populate interceptor context status, error code, exception, and elapsed time before unwinding through interceptor code.
+- Response-bearing Server interceptors that return without invoking their continuation fail locally as a structured `Internal` error instead of emitting an empty successful response.
+- Client interceptor short-circuit results are validated inside the tracked pipeline, so wrong unary, streaming, or OneWay result shapes record `Failed` before reaching the caller.
+- Framework consumption of application client streams no longer captures a caller `SynchronizationContext` at each asynchronous `MoveNextAsync`.
+- Generated request Codecs, generated Server Stub decoders, and `RpcEmptyRequestCodec` classify malformed peer-controlled wire input as structured `DataLoss` instead of unstructured `InvalidDataException`/`Internal`.
+
+### Compatibility and validation
+
+- Valid Protocol v2 bytes, route hashes, payload layouts, interceptor ordering, and the zero-interceptor fast path are unchanged. OneWay Server interceptors retain their no-response short-circuit behavior, and arbitrary application `InvalidDataException` remains `Internal`.
+- Pre-fix Generator preserved 117 existing passes and failed only the new generated-wire proof; Unit failed only the new empty-request proof; Integration preserved 9 existing interceptor passes and failed exactly four new context/continuation/type/synchronization proofs.
+- Non-incremental Release built with zero warnings/errors; Generator 118/118, Unit 484/484, Integration 246/246, 120-second shared-memory Chaos, NativeAOT TCP, seven-package pack, and fresh-cache TCP/shared-memory package smoke passed. Exact-0.8.38/candidate intercepted-RPC process medians were 41.267 -> 40.831 microseconds (-1.06%) with unchanged approximately 1,584.02-1,584.05 B/op.
+
 ## [0.8.38] - 2026-07-27
 
 ### Fixed

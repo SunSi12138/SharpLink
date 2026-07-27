@@ -240,11 +240,11 @@ public partial class RpcGenerator
                 var sizeToken = GetSizeToken(p.Type);
                 if (IsBooleanType(p.Type))
                 {
-                    sb.AppendLine($"                if (!reader.TryRead(out var marker_{p.Name}) || marker_{p.Name} is not (0 or 1)) throw new InvalidDataException();");
+                    sb.AppendLine($"                if (!reader.TryRead(out var marker_{p.Name}) || marker_{p.Name} is not (0 or 1)) throw RpcGeneratedCodecWire.DataLoss(\"Request Boolean marker is missing or non-canonical.\");");
                     sb.AppendLine($"                arg_{p.Name} = marker_{p.Name} == 1;");
                     continue;
                 }
-                sb.AppendLine($"                if (reader.Remaining < {sizeToken}) throw new InvalidDataException();");
+                sb.AppendLine($"                if (reader.Remaining < {sizeToken}) throw RpcGeneratedCodecWire.DataLoss(\"Request fixed argument is truncated.\");");
                 sb.AppendLine($"                if (reader.UnreadSpan.Length >= {sizeToken})");
                 sb.AppendLine("                {");
                 sb.AppendLine($"                    arg_{p.Name} = System.Runtime.CompilerServices.Unsafe.ReadUnaligned<{p.Type}>(in System.Runtime.InteropServices.MemoryMarshal.GetReference(reader.UnreadSpan));");
@@ -252,7 +252,7 @@ public partial class RpcGenerator
                 sb.AppendLine("                else");
                 sb.AppendLine("                {");
                 sb.AppendLine($"                    Span<byte> tmp_{p.Name} = stackalloc byte[{sizeToken}];");
-                sb.AppendLine($"                    if (!reader.TryCopyTo(tmp_{p.Name})) throw new InvalidDataException();");
+                sb.AppendLine($"                    if (!reader.TryCopyTo(tmp_{p.Name})) throw RpcGeneratedCodecWire.DataLoss(\"Request fixed argument is truncated.\");");
                 sb.AppendLine($"                    arg_{p.Name} = System.Runtime.CompilerServices.Unsafe.ReadUnaligned<{p.Type}>(in System.Runtime.InteropServices.MemoryMarshal.GetReference(tmp_{p.Name}));");
                 sb.AppendLine("                }");
                 sb.AppendLine($"                reader.Advance({sizeToken});");
@@ -260,8 +260,8 @@ public partial class RpcGenerator
 
             foreach (var p in complexParams)
             {
-                sb.AppendLine($"                if (!reader.TryReadLittleEndian(out int len_{p.Name})) throw new InvalidDataException();");
-                sb.AppendLine($"                if (len_{p.Name} < 0 || reader.Remaining < len_{p.Name}) throw new InvalidDataException();");
+                sb.AppendLine($"                if (!reader.TryReadLittleEndian(out int len_{p.Name})) throw RpcGeneratedCodecWire.DataLoss(\"Request argument length is truncated.\");");
+                sb.AppendLine($"                if (len_{p.Name} < 0 || reader.Remaining < len_{p.Name}) throw RpcGeneratedCodecWire.DataLoss(\"Request argument length is invalid.\");");
                 sb.AppendLine($"                var seq_{p.Name} = reader.UnreadSequence.Slice(0, len_{p.Name});");
                 if (p.IsValueType || p.IsNullableReference)
                 {
@@ -269,13 +269,13 @@ public partial class RpcGenerator
                 }
                 else
                 {
-                    sb.AppendLine($"                arg_{p.Name} = session.RuntimeContext.Codecs.GetCodec<{p.Type}>().Deserialize(in seq_{p.Name}) ?? throw new InvalidDataException(\"Argument {p.Name} is null.\");");
+                    sb.AppendLine($"                arg_{p.Name} = session.RuntimeContext.Codecs.GetCodec<{p.Type}>().Deserialize(in seq_{p.Name}) ?? throw RpcGeneratedCodecWire.DataLoss(\"Argument {p.Name} is null.\");");
                 }
 
                 sb.AppendLine($"                reader.Advance(len_{p.Name});");
             }
 
-            sb.AppendLine("                if (reader.Remaining != 0) throw new InvalidDataException();");
+            sb.AppendLine("                if (reader.Remaining != 0) throw RpcGeneratedCodecWire.DataLoss(\"Request contains trailing data.\");");
 
             foreach (var p in streamParams)
             {

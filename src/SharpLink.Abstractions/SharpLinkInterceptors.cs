@@ -126,7 +126,10 @@ public delegate ValueTask SharpLinkServerInvocationDelegate(SharpLinkServerInvoc
 /// <summary>Intercepts a server call for authorization, limiting, auditing, or exception policy.</summary>
 public interface ISharpLinkServerInterceptor
 {
-    /// <summary>Invokes this interceptor. Throw a <see cref="SharpLinkException"/> to reject a call.</summary>
+    /// <summary>
+    /// Invokes this interceptor. Response-bearing calls must invoke <paramref name="next"/>;
+    /// throw a <see cref="SharpLinkException"/> to reject a call. One-way calls may return directly.
+    /// </summary>
     ValueTask InvokeAsync(
         SharpLinkServerInvocationContext context,
         SharpLinkServerInvocationDelegate next);

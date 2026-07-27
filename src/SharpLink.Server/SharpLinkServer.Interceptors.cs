@@ -483,10 +483,7 @@ internal sealed partial class SharpLinkServer
         Exception exception,
         SharpLinkServerInvocationContext context)
     {
-        context.Exception = exception;
-        context.Status = IsCancellationException(exception)
-            ? SharpLinkInvocationStatus.Cancelled
-            : SharpLinkInvocationStatus.Failed;
+        RecordInvocationFailure(context, exception);
         try
         {
             var mapped = _exceptionMapper.Map(exception, context)
@@ -576,20 +573,9 @@ internal sealed partial class SharpLinkServer
                 if (context.Status == SharpLinkInvocationStatus.Pending)
                     context.Status = SharpLinkInvocationStatus.Succeeded;
             }
-            catch (Exception exception) when (IsCancellationException(exception))
-            {
-                context.Status = SharpLinkInvocationStatus.Cancelled;
-                context.ErrorCode = SharpLinkErrorCode.Cancelled;
-                context.Exception = exception;
-                throw;
-            }
             catch (Exception exception)
             {
-                context.Status = SharpLinkInvocationStatus.Failed;
-                context.ErrorCode = exception is SharpLinkException sharpLinkException
-                    ? sharpLinkException.Code
-                    : SharpLinkErrorCode.Internal;
-                context.Exception = exception;
+                RecordInvocationFailure(context, exception);
                 throw;
             }
             finally
@@ -604,12 +590,35 @@ internal sealed partial class SharpLinkServer
                 return InvokeTerminalTrackedAsync(context);
 
             var continuation = new ServerInterceptorContinuation(this, index + 1);
-            return _interceptors[index].InvokeAsync(context, continuation.InvokeAsync);
+            var invocation = _interceptors[index].InvokeAsync(context, continuation.InvokeAsync);
+            if (!invocation.IsCompletedSuccessfully)
+                return AwaitInterceptorAsync(invocation, continuation);
+            EnsureResponseContinuationInvoked(continuation);
+            return ValueTask.CompletedTask;
+        }
+
+        private async ValueTask AwaitInterceptorAsync(
+            ValueTask invocation,
+            ServerInterceptorContinuation continuation)
+        {
+            await invocation.ConfigureAwait(false);
+            EnsureResponseContinuationInvoked(continuation);
+        }
+
+        private void EnsureResponseContinuationInvoked(ServerInterceptorContinuation continuation)
+        {
+            if (_output is not null && !continuation.WasInvoked)
+            {
+                throw new InvalidOperationException(
+                    "A Server interceptor must invoke its continuation for a response-bearing RPC.");
+            }
         }
 
         private sealed class ServerInterceptorContinuation(ServerInterceptorPipeline owner, int nextIndex)
         {
             private int _invoked;
+
+            public bool WasInvoked => Volatile.Read(ref _invoked) != 0;
 
             public ValueTask InvokeAsync(SharpLinkServerInvocationContext context)
             {
@@ -640,6 +649,11 @@ internal sealed partial class SharpLinkServer
                 }
                 context.Status = SharpLinkInvocationStatus.Succeeded;
             }
+            catch (Exception exception)
+            {
+                RecordInvocationFailure(context, exception);
+                throw;
+            }
             finally
             {
                 context.Elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(_started);
@@ -650,4 +664,20 @@ internal sealed partial class SharpLinkServer
     private static bool IsCancellationException(Exception exception)
         => exception is OperationCanceledException or
            SharpLinkException { Code: SharpLinkErrorCode.Cancelled };
+
+    private static void RecordInvocationFailure(
+        SharpLinkServerInvocationContext context,
+        Exception exception)
+    {
+        var cancelled = IsCancellationException(exception);
+        context.Status = cancelled
+            ? SharpLinkInvocationStatus.Cancelled
+            : SharpLinkInvocationStatus.Failed;
+        context.ErrorCode = cancelled
+            ? SharpLinkErrorCode.Cancelled
+            : exception is SharpLinkException sharpLinkException
+                ? sharpLinkException.Code
+                : SharpLinkErrorCode.Internal;
+        context.Exception = exception;
+    }
 }

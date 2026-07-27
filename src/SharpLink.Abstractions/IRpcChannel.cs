@@ -62,7 +62,7 @@ public sealed class RpcEmptyRequestCodec : IRpcCodec<RpcEmptyRequest>
     public RpcEmptyRequest Deserialize(in ReadOnlySequence<byte> buffer)
     {
         if (!buffer.IsEmpty)
-            throw new System.IO.InvalidDataException("An empty RPC request contains trailing data.");
+            throw RpcGeneratedCodecWire.DataLoss("An empty RPC request contains trailing data.");
         return default;
     }
 }

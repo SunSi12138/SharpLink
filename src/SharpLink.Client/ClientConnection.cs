@@ -136,7 +136,7 @@ internal sealed class ClientConnection :
 
         try
         {
-            await foreach (var item in stream.WithCancellation(cancellationToken))
+            await foreach (var item in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
                 await Session.SendStreamChunkAsync(
                     requestId,

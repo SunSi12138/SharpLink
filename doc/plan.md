@@ -65,6 +65,7 @@
 - `0.8.3`：修复 endpoint nested attributes、async shutdown callback、连接与 Hosting cleanup 异常遮蔽，并删除 metadata decode 二次复制；详见 [`audit-0.8.3.md`](audit-0.8.3.md)。
 - `0.8.37`：修复 generated service/DTO 可达性、keyword DTO 标识符、record/ref-like DTO 与 static abstract contract 边界；详见 [`audit-0.8.37.md`](audit-0.8.37.md)。
 - `0.8.38`：修复 generated service/DTO 构造计划、pointer/function-pointer 产物与 interceptor 结构化取消状态；详见 [`audit-0.8.38.md`](audit-0.8.38.md)。
+- `0.8.39`：修复 interceptor 终端状态/continuation/结果边界、client stream context capture 与 malformed request DataLoss 分类；详见 [`audit-0.8.39.md`](audit-0.8.39.md)。
 - 后续每五项 P2 及以上的已复现、已修复、已验证改进形成一个小版本；P3/语法与抽象收敛可随批次提交，但不单独推进版本。
 - 每批必须通过 Release、Generator、Unit、Integration 和相关性能门禁；连续三轮无新改进点后转入 RC。
 

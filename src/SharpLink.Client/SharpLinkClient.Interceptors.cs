@@ -89,6 +89,7 @@ internal sealed partial class SharpLinkClient
             try
             {
                 var result = await InvokeNextAsync(0, _context).ConfigureAwait(false);
+                ValidateResult(result);
                 if (_context.Status == SharpLinkInvocationStatus.Pending)
                     _context.Status = SharpLinkInvocationStatus.Succeeded;
                 return result;
@@ -176,6 +177,8 @@ internal sealed partial class SharpLinkClient
         protected abstract ValueTask<SharpLinkClientInvocationResult> InvokeTerminalAsync(
             SharpLinkClientInvocationContext context);
 
+        protected abstract void ValidateResult(SharpLinkClientInvocationResult result);
+
         private static bool IsCancellationException(Exception exception)
             => exception is OperationCanceledException or
                SharpLinkException { Code: SharpLinkErrorCode.Cancelled };
@@ -206,6 +209,9 @@ internal sealed partial class SharpLinkClient
 
         public async ValueTask<TResponse> InvokeTypedAsync()
             => (await InvokeAsync().ConfigureAwait(false)).GetValue<TResponse>();
+
+        protected override void ValidateResult(SharpLinkClientInvocationResult result)
+            => _ = result.GetValue<TResponse>();
 
         protected override async ValueTask<SharpLinkClientInvocationResult> InvokeTerminalAsync(
             SharpLinkClientInvocationContext context)
@@ -244,6 +250,12 @@ internal sealed partial class SharpLinkClient
 
         public async ValueTask InvokeVoidAsync()
             => _ = await InvokeAsync().ConfigureAwait(false);
+
+        protected override void ValidateResult(SharpLinkClientInvocationResult result)
+        {
+            if (result.Value is not null)
+                throw new InvalidCastException("An intercepted OneWay result must be null.");
+        }
 
         protected override async ValueTask<SharpLinkClientInvocationResult> InvokeTerminalAsync(
             SharpLinkClientInvocationContext context)
@@ -286,6 +298,9 @@ internal sealed partial class SharpLinkClient
 
         public async ValueTask<TResponse> InvokeTypedAsync()
             => (await InvokeAsync().ConfigureAwait(false)).GetValue<TResponse>();
+
+        protected override void ValidateResult(SharpLinkClientInvocationResult result)
+            => _ = result.GetValue<TResponse>();
 
         protected override async ValueTask<SharpLinkClientInvocationResult> InvokeTerminalAsync(
             SharpLinkClientInvocationContext context)
@@ -330,6 +345,12 @@ internal sealed partial class SharpLinkClient
                 _method, _request, _requestCodec, _responseCodec, context.Options, context.CancellationToken);
             return ValueTask.FromResult(new SharpLinkClientInvocationResult(stream));
         }
+
+        protected override void ValidateResult(SharpLinkClientInvocationResult result)
+        {
+            if (result.Value is not IAsyncEnumerable<TResponse>)
+                throw new InvalidCastException($"The intercepted result is not {typeof(IAsyncEnumerable<TResponse>).FullName}.");
+        }
     }
 
     private sealed class DuplexStreamingInterceptorState<TRequest, TResponse, TStreams> : ClientInterceptorState
@@ -366,6 +387,12 @@ internal sealed partial class SharpLinkClient
                 _method, _request, _requestCodec, _responseCodec, _streams,
                 context.Options, context.CancellationToken);
             return ValueTask.FromResult(new SharpLinkClientInvocationResult(stream));
+        }
+
+        protected override void ValidateResult(SharpLinkClientInvocationResult result)
+        {
+            if (result.Value is not IAsyncEnumerable<TResponse>)
+                throw new InvalidCastException($"The intercepted result is not {typeof(IAsyncEnumerable<TResponse>).FullName}.");
         }
     }
 

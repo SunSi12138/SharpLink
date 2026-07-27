@@ -2552,6 +2552,28 @@ public unsafe interface IPointerPayloadContract : SharpLink.Sdk.IService
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task GeneratedRequestWireFailuresMustUseStructuredDataLoss()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IRequestDataLossContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Validate(
+        bool enabled,
+        string name,
+        CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(!generated.Contains("throw new InvalidDataException", StringComparison.Ordinal),
+            "peer-controlled generated request wire failures must not leak unstructured InvalidDataException");
+        Ensure(CountOccurrences(generated, "throw RpcGeneratedCodecWire.DataLoss(") >= 8,
+            "request Codec and Stub must classify marker, truncation, length, null, and trailing failures as DataLoss");
+        return Task.CompletedTask;
+    }
+
     private static string BuildSource(string contract)
     {
         return $$"""

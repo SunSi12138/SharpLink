@@ -250,18 +250,18 @@ public partial class RpcGenerator
             if (IsBooleanType(parameter.Type))
             {
                 sb.AppendLine($"        if (!reader.TryRead(out var marker_{parameter.Name}) || marker_{parameter.Name} is not (0 or 1))");
-                sb.AppendLine($"            throw new InvalidDataException(\"Request field '{parameter.Name}' has an invalid Boolean marker.\");");
+                sb.AppendLine($"            throw RpcGeneratedCodecWire.DataLoss(\"Request field '{parameter.Name}' has an invalid Boolean marker.\");");
                 sb.AppendLine($"        var value_{parameter.Name} = marker_{parameter.Name} == 1;");
                 continue;
             }
-            sb.AppendLine($"        if (reader.Remaining < {size}) throw new InvalidDataException(\"Request field '{parameter.Name}' is truncated.\");");
+            sb.AppendLine($"        if (reader.Remaining < {size}) throw RpcGeneratedCodecWire.DataLoss(\"Request field '{parameter.Name}' is truncated.\");");
             sb.AppendLine($"        {parameter.Type} value_{parameter.Name};");
             sb.AppendLine($"        if (reader.UnreadSpan.Length >= {size})");
             sb.AppendLine($"            value_{parameter.Name} = Unsafe.ReadUnaligned<{parameter.Type}>(in System.Runtime.InteropServices.MemoryMarshal.GetReference(reader.UnreadSpan));");
             sb.AppendLine("        else");
             sb.AppendLine("        {");
             sb.AppendLine($"            Span<byte> temporary_{parameter.Name} = stackalloc byte[{size}];");
-            sb.AppendLine($"            if (!reader.TryCopyTo(temporary_{parameter.Name})) throw new InvalidDataException(\"Request field is truncated.\");");
+            sb.AppendLine($"            if (!reader.TryCopyTo(temporary_{parameter.Name})) throw RpcGeneratedCodecWire.DataLoss(\"Request field is truncated.\");");
             sb.AppendLine($"            value_{parameter.Name} = Unsafe.ReadUnaligned<{parameter.Type}>(in System.Runtime.InteropServices.MemoryMarshal.GetReference(temporary_{parameter.Name}));");
             sb.AppendLine("        }");
             sb.AppendLine($"        reader.Advance({size});");
@@ -269,15 +269,15 @@ public partial class RpcGenerator
         foreach (var parameter in complex)
         {
             sb.AppendLine($"        if (!reader.TryReadLittleEndian(out int length_{parameter.Name}) || length_{parameter.Name} < 0 || reader.Remaining < length_{parameter.Name})");
-            sb.AppendLine($"            throw new InvalidDataException(\"Request field '{parameter.Name}' has an invalid length.\");");
+            sb.AppendLine($"            throw RpcGeneratedCodecWire.DataLoss(\"Request field '{parameter.Name}' has an invalid length.\");");
             sb.AppendLine($"        var payload_{parameter.Name} = reader.UnreadSequence.Slice(0, length_{parameter.Name});");
             var nullGuard = parameter.IsValueType || parameter.IsNullableReference
                 ? ""
-                : $" ?? throw new InvalidDataException(\"Request field '{parameter.Name}' is null.\")";
+                : $" ?? throw RpcGeneratedCodecWire.DataLoss(\"Request field '{parameter.Name}' is null.\")";
             sb.AppendLine($"        var value_{parameter.Name} = __codec_{parameter.Name}.Deserialize(payload_{parameter.Name}){nullGuard};");
             sb.AppendLine($"        reader.Advance(length_{parameter.Name});");
         }
-        sb.AppendLine("        if (reader.Remaining != 0) throw new InvalidDataException(\"Request contains trailing data.\");");
+        sb.AppendLine("        if (reader.Remaining != 0) throw RpcGeneratedCodecWire.DataLoss(\"Request contains trailing data.\");");
         sb.AppendLine($"        return new {requestType}({string.Join(", ", parameters.Select(static parameter => $"value_{parameter.Name}"))});");
         sb.AppendLine("    }");
         sb.AppendLine("}");
