@@ -105,6 +105,7 @@ public partial class RpcGenerator : IIncrementalGenerator
                     InvalidRpcMethodKind.Static => StaticRpcMethodRule,
                     InvalidRpcMethodKind.ContractMember => UnsupportedContractMemberRule,
                     InvalidRpcMethodKind.OnewayReturn => InvalidOnewayReturnRule,
+                    InvalidRpcMethodKind.InheritedSignatureConflict => ConflictingInheritedRpcSignatureRule,
                     _ => InvalidReturnTypeRule
                 };
                 var diagnostic = Diagnostic.Create(

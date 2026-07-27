@@ -331,7 +331,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             {
                 try
                 {
-                    registrations[index].DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    SharpLinkAsyncCleanup.DisposeSynchronously(registrations[index]);
                 }
                 catch (Exception cleanupException)
                 {
@@ -343,7 +343,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         {
             try
             {
-                admissionController.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                SharpLinkAsyncCleanup.DisposeSynchronously(admissionController);
             }
             catch (Exception cleanupException)
             {
@@ -354,7 +354,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         {
             try
             {
-                ownedServiceProvider.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                SharpLinkAsyncCleanup.DisposeSynchronously(ownedServiceProvider);
             }
             catch (Exception cleanupException)
             {
@@ -371,7 +371,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         }
         try
         {
-            transport.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            SharpLinkAsyncCleanup.DisposeSynchronously(transport);
         }
         catch (Exception cleanupException)
         {

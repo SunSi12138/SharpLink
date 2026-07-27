@@ -18,12 +18,20 @@ internal sealed class SharpLinkMultiClusterClientHostedService(
             {
                 if (_stopTask is not null)
                     throw new InvalidOperationException("The SharpLink multi-cluster client host has already stopped.");
+                if (_client is not null)
+                    throw new DuplicateStartException();
                 builder.UseLoggerFactoryIfUnset(loggerFactory);
                 client = builder.Build();
                 _client = client;
             }
             await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
             accessor.SetClient(client);
+        }
+        catch (DuplicateStartException exception)
+        {
+            throw new InvalidOperationException(
+                "The SharpLink multi-cluster client host has already started.",
+                exception);
         }
         catch (Exception exception)
         {
@@ -90,4 +98,6 @@ internal sealed class SharpLinkMultiClusterClientHostedService(
         if (client is not null)
             await client.DisposeAsync().ConfigureAwait(false);
     }
+
+    private sealed class DuplicateStartException : Exception;
 }

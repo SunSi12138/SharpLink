@@ -18,12 +18,18 @@ internal sealed class SharpLinkClientHostedService(
             {
                 if (_stopTask is not null)
                     throw new InvalidOperationException("The SharpLink client host has already stopped.");
+                if (_client is not null)
+                    throw new DuplicateStartException();
                 builder.UseLoggerFactoryIfUnset(loggerFactory);
                 client = builder.Build();
                 _client = client;
             }
             await client.ConnectAsync(cancellationToken);
             accessor.SetClient(client);
+        }
+        catch (DuplicateStartException exception)
+        {
+            throw new InvalidOperationException("The SharpLink client host has already started.", exception);
         }
         catch (Exception ex)
         {
@@ -90,4 +96,6 @@ internal sealed class SharpLinkClientHostedService(
         if (client is not null)
             await client.DisposeAsync();
     }
+
+    private sealed class DuplicateStartException : Exception;
 }

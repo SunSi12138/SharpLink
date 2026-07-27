@@ -25,9 +25,10 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
     [Test]
     public async Task ConcurrentHostedStopCallersShouldAwaitTheSameCoordinatorCleanup()
     {
+        var accessor = new SharpLinkMultiClusterClientAccessor();
         var service = new SharpLinkMultiClusterClientHostedService(
             SharpLinkMultiClusterClientBuilder.Create(),
-            new SharpLinkMultiClusterClientAccessor(),
+            accessor,
             Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
         var client = new BlockingStopMultiClusterClient();
         typeof(SharpLinkMultiClusterClientHostedService)
@@ -45,6 +46,43 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
             throw new Exception("Concurrent hosted stop callers must join coordinator cleanup.");
     }
 
+    [Test]
+    public async Task DuplicateHostedStartShouldNotDisposeTheExistingClient()
+    {
+        var accessor = new SharpLinkMultiClusterClientAccessor();
+        var service = new SharpLinkMultiClusterClientHostedService(
+            SharpLinkMultiClusterClientBuilder.Create(),
+            accessor,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+        var client = new DisposalTrackingMultiClusterClient();
+        typeof(SharpLinkMultiClusterClientHostedService)
+            .GetField("_client", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(service, client);
+
+        Exception? failure = null;
+        try
+        {
+            await service.StartAsync(CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        if (failure is not InvalidOperationException)
+            throw new Exception("A second hosted start must be rejected.");
+        if (client.DisposeCount != 0)
+            throw new Exception("Rejecting a second hosted start must not dispose the existing client.");
+        if (!ReferenceEquals(client, typeof(SharpLinkMultiClusterClientHostedService)
+                .GetField("_client", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(service)))
+        {
+            throw new Exception("Rejecting a second hosted start must preserve the existing coordinator owner.");
+        }
+        if (accessor.GetClientAsync().IsCompleted)
+            throw new Exception("Rejecting a second hosted start must not poison the coordinator accessor.");
+    }
+
     private static async Task EnsureThrows<TException>(Func<Task> action) where TException : Exception
     {
         try
@@ -59,7 +97,7 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
         throw new Exception($"Expected {typeof(TException).Name}.");
     }
 
-    private sealed class FakeMultiClusterClient : ISharpLinkMultiClusterClient
+    private class FakeMultiClusterClient : ISharpLinkMultiClusterClient
     {
         public SharpLinkMultiClusterState State => SharpLinkMultiClusterState.Ready;
 
@@ -98,7 +136,18 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
                 ReferencesReleased = true
             });
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public virtual ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class DisposalTrackingMultiClusterClient : FakeMultiClusterClient
+    {
+        internal int DisposeCount { get; private set; }
+
+        public override ValueTask DisposeAsync()
+        {
+            DisposeCount++;
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class BlockingStopMultiClusterClient : ISharpLinkMultiClusterClient

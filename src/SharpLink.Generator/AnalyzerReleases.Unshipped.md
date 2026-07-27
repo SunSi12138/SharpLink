@@ -58,3 +58,4 @@
  SHARPLINK054 | SharpLink.Generator | Error | RPC contract member is unsupported
  SHARPLINK055 | SharpLink.Generator | Error | RPC contract must be publicly reachable
  SHARPLINK056 | SharpLink.Generator | Error | Oneway RPC return type is invalid
+ SHARPLINK057 | SharpLink.Generator | Error | Inherited RPC signatures have incompatible return types

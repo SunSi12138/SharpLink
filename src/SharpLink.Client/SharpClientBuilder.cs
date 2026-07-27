@@ -407,7 +407,7 @@ public class SharpClientBuilder
         {
             try
             {
-                directTransport.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                SharpLinkAsyncCleanup.DisposeSynchronously(directTransport);
             }
             catch (Exception cleanupException)
             {
@@ -418,7 +418,7 @@ public class SharpClientBuilder
         {
             try
             {
-                endpointResolver.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                SharpLinkAsyncCleanup.DisposeSynchronously(endpointResolver);
             }
             catch (Exception cleanupException)
             {
@@ -497,7 +497,7 @@ public class SharpClientBuilder
                 {
                     try
                     {
-                        transport.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                        SharpLinkAsyncCleanup.DisposeSynchronously(transport);
                     }
                     catch (Exception cleanupException)
                     {
@@ -539,7 +539,7 @@ public class SharpClientBuilder
                 List<Exception>? cleanupFailures = null;
                 foreach (var factory in ownedFactories)
                 {
-                    try { factory.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+                    try { SharpLinkAsyncCleanup.DisposeSynchronously(factory); }
                     catch (Exception exception) { (cleanupFailures ??= []).Add(exception); }
                 }
                 if (cleanupFailures is null)
@@ -668,7 +668,7 @@ public class SharpClientBuilder
             {
                 try
                 {
-                    transport.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    SharpLinkAsyncCleanup.DisposeSynchronously(transport);
                 }
                 catch (Exception cleanupException)
                 {

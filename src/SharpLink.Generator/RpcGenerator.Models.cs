@@ -78,7 +78,8 @@ internal enum InvalidRpcMethodKind
     ByReference,
     Static,
     ContractMember,
-    OnewayReturn
+    OnewayReturn,
+    InheritedSignatureConflict
 }
 internal readonly record struct InvalidCancellationTokenMethodModel(string MethodName, Location? Location);
 internal readonly record struct InvalidCallOptionsMethodModel(string MethodName, Location? Location);
@@ -330,6 +331,9 @@ internal static class Hashing
     {
         return (long)Hash(iName.Replace("global::", "").Replace(" ", ""));
     }
+
+    public static string GetIdentifierHash(string value)
+        => Hash(value).ToString("x16", CultureInfo.InvariantCulture);
 
     public static string GetSha256(string value)
     {

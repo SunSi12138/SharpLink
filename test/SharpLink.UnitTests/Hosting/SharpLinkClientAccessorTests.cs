@@ -139,6 +139,33 @@ public class SharpLinkClientAccessorTests
     }
 
     [Test]
+    public async Task DuplicateHostedStartShouldNotDisposeTheExistingClient()
+    {
+        var accessor = new SharpLinkClientAccessor();
+        var service = new SharpLinkClientHostedService(
+            SharpClientBuilder.Create(),
+            accessor,
+            NullLoggerFactory.Instance);
+        var client = new DisposalTrackingClient();
+        typeof(SharpLinkClientHostedService)
+            .GetField("_client", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(service, client);
+
+        var failure = await CaptureExceptionAsync(service.StartAsync(CancellationToken.None));
+
+        Ensure(failure is InvalidOperationException,
+            "a second hosted start must be rejected");
+        Ensure(client.DisposeCount == 0,
+            "rejecting a second hosted start must not dispose the existing client");
+        Ensure(ReferenceEquals(client, typeof(SharpLinkClientHostedService)
+                .GetField("_client", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(service)),
+            "rejecting a second hosted start must preserve the existing client owner");
+        Ensure(!accessor.GetClientAsync().IsCompleted,
+            "rejecting a second hosted start must not poison the client accessor");
+    }
+
+    [Test]
     public async Task ConcurrentHostedStopCallersShouldAwaitTheSameClientCleanup()
     {
         var service = new SharpLinkClientHostedService(
@@ -219,7 +246,7 @@ public class SharpLinkClientAccessorTests
             throw new Exception(message);
     }
 
-    private sealed class FakeSharpLinkClient : ISharpLinkClient
+    private class FakeSharpLinkClient : ISharpLinkClient
     {
         public SharpLinkConnectionState State => SharpLinkConnectionState.Ready;
 
@@ -231,7 +258,7 @@ public class SharpLinkClientAccessorTests
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Ready));
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public virtual ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
         public T Get<T>() where T : IService
             => throw new NotSupportedException();
@@ -255,6 +282,17 @@ public class SharpLinkClientAccessorTests
                 Succeeded = true,
                 ReferencesReleased = true
             });
+    }
+
+    private sealed class DisposalTrackingClient : FakeSharpLinkClient
+    {
+        internal int DisposeCount { get; private set; }
+
+        public override ValueTask DisposeAsync()
+        {
+            DisposeCount++;
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class ThrowingLifecycleTransportFactory : IClientTransportFactory

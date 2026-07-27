@@ -347,6 +347,14 @@ public partial class RpcGenerator
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    private static readonly DiagnosticDescriptor ConflictingInheritedRpcSignatureRule = new(
+        id: "SHARPLINK057",
+        title: "Inherited RPC Signatures Conflict",
+        messageFormat: "RPC method '{0}' is invalid: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     private static DiagnosticDescriptor AdapterRule(string id, string title)
         => new(
             id: id,

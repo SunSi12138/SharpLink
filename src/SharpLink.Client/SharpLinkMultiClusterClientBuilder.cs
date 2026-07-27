@@ -140,7 +140,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
             var cleanupFailures = new List<Exception>();
             for (var index = createdSlots.Count - 1; index >= 0; index--)
             {
-                try { createdSlots[index].Client.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+                try { SharpLinkAsyncCleanup.DisposeSynchronously(createdSlots[index].Client); }
                 catch (Exception cleanupException) { cleanupFailures.Add(cleanupException); }
             }
             if (cleanupFailures.Count == 0)

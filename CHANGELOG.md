@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.33] - 2026-07-27
+
+### Fixed
+
+- Inherited RPC methods with identical parameter signatures but incompatible return types now report `SHARPLINK057` and suppress broken Proxy/Stub output instead of silently collapsing one declaration.
+- Generated Stub size fields include a deterministic type-identity suffix, preventing distinct enum names that sanitize to the same C# identifier from producing duplicate fields.
+- Synchronous Client and Server Builder rollback now runs asynchronous resource cleanup away from the caller's synchronization context, preserving completion and aggregated failures without deadlocking a non-pumping context.
+- Duplicate Client Hosted Service Start is rejected without disposing or losing the already-owned client and without poisoning its accessor.
+- Duplicate Multi-Cluster Hosted Service Start independently preserves the existing coordinator and accessor instead of transferring them into startup-failure cleanup.
+
+### Compatibility and validation
+
+- Protocol v2, route hashes, valid generated contracts, and public API are unchanged. `SHARPLINK057` rejects an interface shape for which a generated class cannot implement both inherited declarations.
+- Non-incremental Release build, Generator 104/104, Unit 477/477, Integration 238/238, seven-package pack, and fresh-cache package smoke passed.
+- A 40-contract/400-enum-method Generator stress gate measured 20.192 ms / 32,888,392 B at the 0.8.32 baseline and 15.116 ms / 33,142,168 B for 0.8.33. Latency did not regress; the 0.77% allocation increase is the bounded cost of collision-resistant generated identifiers in this deliberately enum-heavy fixture.
+
 ## [0.8.32] - 2026-07-27
 
 ### Fixed

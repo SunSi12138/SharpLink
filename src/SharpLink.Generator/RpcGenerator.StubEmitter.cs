@@ -381,7 +381,7 @@ public partial class RpcGenerator
             .Replace("[", "_")
             .Replace("]", "_");
 
-        return $"__size_type_{sanitized}";
+        return $"__size_type_{sanitized}_{Hashing.GetIdentifierHash(typeName)}";
     }
 
     private static string GetSizeToken(string typeName)

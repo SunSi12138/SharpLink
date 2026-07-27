@@ -115,6 +115,44 @@ public class StaticEndpointBuilderTests
     }
 
     [Test]
+    public void BuilderRollbackShouldNotDeadlockAsyncCleanupOnASynchronizationContext()
+    {
+        var factory = new ContextCapturingDisposeFactory();
+        using var finished = new ManualResetEventSlim();
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new NonPumpingSynchronizationContext());
+            try
+            {
+                _ = SharpClientBuilder.Create()
+                    .UseEndpoint(Endpoint("one", 5001), _ => factory)
+                    .UseConnectionPool(static options => options.MaxConnections = 0)
+                    .Build();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                finished.Set();
+            }
+        })
+        {
+            IsBackground = true
+        };
+
+        thread.Start();
+        Ensure(finished.Wait(TimeSpan.FromSeconds(2)),
+            "synchronous Build deadlocked while awaiting async rollback cleanup");
+        Ensure(failure is not null && ContainsException<ArgumentOutOfRangeException>(failure),
+            "rollback must preserve the original validation failure");
+        Ensure(factory.DisposeCompleted,
+            "rollback must complete the context-capturing asynchronous disposal");
+    }
+
+    [Test]
     public async Task SingleEndpointAnonymousPipeFactoryShouldRejectExpandedConnectionPools()
     {
         await EnsureThrows<InvalidOperationException>(() =>
@@ -501,6 +539,27 @@ public class StaticEndpointBuilderTests
             return throwOnDispose
                 ? ValueTask.FromException(new InvalidOperationException("profile cleanup failure"))
                 : ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class ContextCapturingDisposeFactory : IClientTransportFactory
+    {
+        internal bool DisposeCompleted { get; private set; }
+
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
+
+        public async ValueTask DisposeAsync()
+        {
+            await Task.Yield();
+            DisposeCompleted = true;
+        }
+    }
+
+    private sealed class NonPumpingSynchronizationContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback d, object? state)
+        {
         }
     }
 

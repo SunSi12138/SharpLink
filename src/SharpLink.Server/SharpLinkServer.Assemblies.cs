@@ -690,7 +690,7 @@ internal sealed partial class SharpLinkServer
                 continue;
             try
             {
-                pair.Value.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                SharpLinkAsyncCleanup.DisposeSynchronously(pair.Value);
             }
             catch (Exception exception)
             {
@@ -756,7 +756,7 @@ internal sealed partial class SharpLinkServer
     private static void DisposeCreatedServices(IReadOnlyList<ServiceRegistration> services)
     {
         for (var index = services.Count - 1; index >= 0; index--)
-            services[index].DisposeAsync().AsTask().GetAwaiter().GetResult();
+            SharpLinkAsyncCleanup.DisposeSynchronously(services[index]);
     }
 
     private SharpLinkAssemblyRegistrationError? ValidateReplacementDependants(

@@ -1,30 +1,29 @@
-# 0.8.32 regression-test research
+# 0.8.33 regression-test research
 
 ## Bounded target inventory
 
-- Unix socket capture gap: a filesystem UDS is bound before its type/device/inode identity is captured. If the path is replaced in that gap and capture fails, cleanup receives a null identity and disposes the socket without preserving the replacement, reopening the caller-data deletion fixed for the ordinary dispose path in 0.8.31.
-- Compression negotiation identity: runtime options retain provider objects and reread `WireProfile` during client advertisement, server selection, lookup, session diagnostics, and errors. A mutable provider can therefore change the protocol identity after Build even though builder configuration is documented as frozen.
-- Authentication provider boundary: a rejected primary `SharpLinkAuthenticationResult` with an undefined nonzero `SharpLinkErrorCode` passes server normalization, then faults the binary error writer instead of returning a stable authentication rejection.
-- Extreme positive call timeout: builder/call documentation accepts any positive `TimeSpan`, but `DateTimeOffset.UtcNow.Add(timeout)` throws for `TimeSpan.MaxValue`. A configured default therefore builds successfully and fails every RPC before sending; the monotonic deadline path already supports saturation.
-- Admission immediate path: every admitted request creates a fixed eight-slot array, a retained-lease array, and an acquired-lease array even when it never queues. These are short-lived Gen0 allocations on an explicitly throughput-sensitive server path; the common single-concurrency rule needs neither oversized slots nor retained/acquired arrays.
+- `GetContractMethods` collapses inherited members by method name/arity/parameter types but ignores return type and route-affecting attributes. Two valid base interfaces with the same parameters and incompatible task payloads therefore emit one Proxy member that cannot implement both declarations instead of a focused diagnostic.
+- Stub size-field names replace namespace/type punctuation with underscores. Distinct enum types such as `A.B_C.State` and `A_B.C.State` therefore emit duplicate fields in one generated Stub and fail downstream compilation.
+- Client and Server builders synchronously wait on arbitrary user `DisposeAsync` implementations during rollback. If cleanup begins under a non-pumping synchronization context and awaits, the continuation is posted back to the blocked context and Build never returns.
+- Client Hosted Service does not reject a second Start before its broad startup catch. A duplicate Start can overwrite `_client`; the accessor then rejects publication and cleanup disposes only the replacement, losing the original owner and poisoning the accessor.
+- Multi-Cluster Hosted Service independently has the same ownership bug for its coordinator and therefore requires its own lifecycle fix and regression boundary.
 
 ## Engineering boundary
 
-- Preserve any path entry when a bound Unix socket has no captured identity; a possible stale socket is safer than deleting an entry whose ownership cannot be proven.
-- Capture each validated profile/provider pair once in the runtime snapshot. Provider execution remains delegated to the original thread-safe instance; only mutable wire identity is frozen.
-- Normalize undefined authentication codes at the server trust boundary even when a provider bypasses the `Reject` factory through the public primary constructor.
-- Saturate positive timeouts at `DateTimeOffset.MaxValue`; preserve rejection of zero/negative values and earlier explicit deadlines.
-- Size admission slots exactly and transfer a single acquired lease directly for one non-retained limiter. Preserve the general multi-rule and queued ownership path. A measured shared-pool implementation is unacceptable if rent/return overhead regresses latency.
+- Reject conflicting inherited route declarations at generation time while continuing to collapse exact compatible redeclarations.
+- Make generated type-derived identifiers collision-resistant without changing wire type names, hashes, or ordinary fixed-size code.
+- Invoke asynchronous rollback cleanup away from the caller's synchronization context while preserving synchronous Build semantics and complete exception aggregation; this is a cold failure path.
+- Reject duplicate Client Hosted Start outside startup cleanup so the existing client owner and accessor remain intact.
+- Apply the same once-only boundary independently to Multi-Cluster Hosted Start so its existing coordinator is not transferred into failure cleanup.
 
 ## Acceptance checklist
 
-- Cleanup with a bound path but no captured identity preserves a replacement file.
-- A provider profile mutation after Build cannot alter lookup or negotiation identity.
-- Undefined provider rejection codes reach the peer as `AuthenticationRejected` rather than faulting the handshake encoder.
-- `TimeSpan.MaxValue` default request timeout sends a cancellable request with a valid far-future deadline.
-- Warm immediate admission stays below a measured per-call allocation ceiling after eliminating its three framework-owned arrays.
-- Existing uncompressed, built-in compression, authentication, timeout, and UDS paths remain stable.
+- Incompatible inherited routes report one stable Generator diagnostic and emit no broken contract artifacts.
+- Every generated Stub size field has a unique deterministic identifier.
+- Builder rollback completes and disposes the resource on a non-pumping synchronization-context thread.
+- Duplicate Client Hosted Start leaves the pre-existing client undisposed and does not enter accessor failure cleanup.
+- Duplicate Multi-Cluster Hosted Start leaves the pre-existing coordinator undisposed and does not enter accessor failure cleanup.
 
 ## Deferred/rejected signals
 
-The shared-memory reader contains one duplicate `SetNext` call; it is harmless cleanup. Multi-cluster deferred unregister polling after Faulted state is not promoted because the owning client still requires explicit disposal and already retains the registration itself. A custom compression-provider overrun was also rejected: the runtime supplies an exact-capacity leased `PooledByteBufferWriter`, and the pre-fix proof showed it already throws before exposing one byte beyond the negotiated/declared bound. The first admission implementation pooled bounded arrays and reduced allocation to 232 B/call, but its 93.996 ns mean regressed the 58.477 ns baseline by about 60.7%; it was removed. Exact slots plus the direct single-lease path measured 49.262 ns / 288 B.
+Extreme DNS jitter was rejected after an executable probe showed current .NET saturates the out-of-range floating-point conversion instead of wrapping negative; no defect exists on the supported runtime. Cross-pool writer return is documented ownership misuse and is not promoted because runtime paths already return to their originating Context and an owner check would tax every packet. A single legacy `object` monitor in the circuit breaker and private-object disposal locks are syntax/clarity cleanup candidates, not P2 evidence and do not advance the version.

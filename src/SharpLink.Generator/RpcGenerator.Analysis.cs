@@ -180,6 +180,14 @@ public partial class RpcGenerator
             return ImmutableArray<InvalidRpcMethodModel>.Empty;
 
         var list = ImmutableArray.CreateBuilder<InvalidRpcMethodModel>();
+        foreach (var method in GetConflictingInheritedRpcSignatures(symbol))
+        {
+            list.Add(new InvalidRpcMethodModel(
+                InvalidRpcMethodKind.InheritedSignatureConflict,
+                method.Name,
+                "inherited declarations with the same parameters must have compatible return types",
+                method.Locations.FirstOrDefault() ?? symbol.Locations.FirstOrDefault()));
+        }
         foreach (var method in GetContractMethods(symbol))
         {
             var isOneWay = false;
@@ -471,7 +479,8 @@ public partial class RpcGenerator
     {
         if (interfaceSymbol.Arity > 0 || HasGenericContainingType(interfaceSymbol) ||
             !IsPubliclyReachableContract(interfaceSymbol) ||
-            HasUnsupportedContractMember(interfaceSymbol))
+            HasUnsupportedContractMember(interfaceSymbol) ||
+            GetConflictingInheritedRpcSignatures(interfaceSymbol).Any())
             return true;
 
         return GetContractMethods(interfaceSymbol)
@@ -695,6 +704,38 @@ public partial class RpcGenerator
         }
 
         return true;
+    }
+
+    private static IEnumerable<IMethodSymbol> GetConflictingInheritedRpcSignatures(INamedTypeSymbol symbol)
+    {
+        if (!symbol.AllInterfaces.Any(static contract => !IsIService(contract)))
+            yield break;
+
+        var methods = symbol.GetMembers().OfType<IMethodSymbol>()
+            .Concat(symbol.AllInterfaces
+                .Where(static contract => !IsIService(contract))
+                .SelectMany(static contract => contract.GetMembers().OfType<IMethodSymbol>()))
+            .Where(static method => method.MethodKind == MethodKind.Ordinary &&
+                                    method.DeclaredAccessibility == Accessibility.Public)
+            .ToArray();
+        var reported = new List<IMethodSymbol>();
+        for (var leftIndex = 0; leftIndex < methods.Length; leftIndex++)
+        {
+            var left = methods[leftIndex];
+            if (reported.Any(existing => HasSameContractSignature(existing, left)))
+                continue;
+            for (var rightIndex = leftIndex + 1; rightIndex < methods.Length; rightIndex++)
+            {
+                var right = methods[rightIndex];
+                if (HasSameContractSignature(left, right) &&
+                    !SymbolEqualityComparer.IncludeNullability.Equals(left.ReturnType, right.ReturnType))
+                {
+                    reported.Add(left);
+                    yield return left;
+                    break;
+                }
+            }
+        }
     }
 
     private static bool IsIService(INamedTypeSymbol symbol)

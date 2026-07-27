@@ -76,6 +76,77 @@ public interface IDerivedService : SharpLink.Sdk.IService, IBaseOperations
     }
 
     [Test]
+    public Task IncompatibleInheritedRpcRoutesShouldReportASpecificDiagnostic()
+    {
+        var source = BuildSource("""
+public interface INumericBase
+{
+    ValueTask<int> Resolve(CancellationToken cancellationToken);
+}
+
+public interface ITextBase
+{
+    ValueTask<string> Resolve(CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IConflictingContract : SharpLink.Sdk.IService, INumericBase, ITextBase
+{
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK057", 1);
+        Ensure(!string.Join("\n", RunGeneratorAndGetSources(source)).Contains(
+                "IConflictingContractProxy",
+                StringComparison.Ordinal),
+            "a conflicting inherited contract must not emit a broken Proxy");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task GeneratedStubSizeFieldsShouldRemainUniqueForSanitizedEnumNames()
+    {
+        var source = BuildSource("""
+namespace A
+{
+    public static class B_C
+    {
+        public enum State : short { None }
+    }
+}
+
+namespace A_B
+{
+    public static class C
+    {
+        public enum State : short { None }
+    }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IEnumCollisionContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Resolve(
+        A.B_C.State first,
+        A_B.C.State second,
+        CancellationToken cancellationToken);
+}
+""");
+
+        var sizeFields = string.Join("\n", RunGeneratorAndGetSources(source))
+            .Split('\n')
+            .Select(static line => line.Trim())
+            .Where(static line => line.StartsWith(
+                "private static readonly int __size_type_", StringComparison.Ordinal))
+            .Select(static line => line[..line.IndexOf(" =", StringComparison.Ordinal)])
+            .ToArray();
+        Ensure(sizeFields.Length == 2, "both enum sizes must be cached by the generated Stub");
+        Ensure(sizeFields.Distinct(StringComparer.Ordinal).Count() == sizeFields.Length,
+            "distinct enum types must not emit duplicate generated size fields");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task InvalidReturnTypeShouldReportSharplink001()
     {
         var source = BuildSource("""
