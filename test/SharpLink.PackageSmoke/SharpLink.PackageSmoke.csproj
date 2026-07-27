@@ -5,7 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
-    <SharpLinkPackageVersion Condition="'$(SharpLinkPackageVersion)' == ''">$(Version)</SharpLinkPackageVersion>
+    <SharpLinkPackageVersion Condition="'$(SharpLinkPackageVersion)' == '' and '$(VersionSuffix)' == ''">$(VersionPrefix)</SharpLinkPackageVersion>
+    <SharpLinkPackageVersion Condition="'$(SharpLinkPackageVersion)' == '' and '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix)</SharpLinkPackageVersion>
   </PropertyGroup>
 
   <ItemGroup>
