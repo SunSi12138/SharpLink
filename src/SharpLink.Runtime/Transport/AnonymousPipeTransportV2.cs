@@ -115,7 +115,8 @@ public sealed class AnonymousPipeServerTransportListener : IServerTransportListe
             output = new AnonymousPipeServerStream(PipeDirection.Out, HandleInheritability.Inheritable);
             var offer = new AnonymousPipeOffer(
                 output.GetClientHandleAsString(),
-                input.GetClientHandleAsString());
+                input.GetClientHandleAsString(),
+                new AnonymousPipeHandleTransfer(input, output));
             connection = new AnonymousPipeTransportConnection(input, output);
             input = null;
             output = null;

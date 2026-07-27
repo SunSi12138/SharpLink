@@ -90,6 +90,21 @@ public class TransportValidationTests
     }
 
     [Test]
+    public async Task CustomSocketEndpointSnapshotShouldNotRetainTheMutableSource()
+    {
+        var original = new MutableSocketEndPoint(0x12, 0x34);
+        var snapshot = SocketTransportSocketFactory.Snapshot(original);
+        var expected = GetSocketAddressBytes(original.Serialize());
+
+        original.First = 0xAB;
+        original.Second = 0xCD;
+
+        await Assert.That(snapshot).IsNotSameReferenceAs(original);
+        await Assert.That(GetSocketAddressBytes(snapshot.Serialize()).AsSpan().SequenceEqual(expected))
+            .IsTrue();
+    }
+
+    [Test]
     [Arguments(-2)]
     [Arguments(0)]
     [Arguments(255)]
@@ -291,6 +306,44 @@ public class TransportValidationTests
     }
 
     [Test]
+    public async Task UnixSocketListenerShouldNotDeleteAPathReplacement()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var root = Path.Combine(Path.GetTempPath(), $"sl-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var filePath = Path.Combine(root, "file.sock");
+            var fileListener = new SocketServerTransportListener(
+                new UnixDomainSocketEndPoint(filePath));
+            File.Delete(filePath);
+            await File.WriteAllTextAsync(filePath, "replacement-owned-by-caller");
+
+            await fileListener.DisposeAsync();
+
+            await Assert.That(File.Exists(filePath)).IsTrue();
+            await Assert.That(await File.ReadAllTextAsync(filePath))
+                .IsEqualTo("replacement-owned-by-caller");
+
+            var directoryPath = Path.Combine(root, "directory.sock");
+            var directoryListener = new SocketServerTransportListener(
+                new UnixDomainSocketEndPoint(directoryPath));
+            File.Delete(directoryPath);
+            Directory.CreateDirectory(directoryPath);
+
+            await directoryListener.DisposeAsync();
+
+            await Assert.That(Directory.Exists(directoryPath)).IsTrue();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task SocketClientFactoryShouldSnapshotAMutableIpEndPoint()
     {
         await using var listener = new SocketServerTransportListener(
@@ -409,6 +462,30 @@ public class TransportValidationTests
         for (var index = 0; index < bytes.Length; index++)
             bytes[index] = address[index];
         return bytes;
+    }
+
+    private sealed class MutableSocketEndPoint(byte first, byte second) : EndPoint
+    {
+        internal byte First { get; set; } = first;
+        internal byte Second { get; set; } = second;
+
+        public override AddressFamily AddressFamily => AddressFamily.InterNetwork;
+
+        public override SocketAddress Serialize()
+        {
+            var address = new SocketAddress(AddressFamily, 4);
+            address[2] = First;
+            address[3] = Second;
+            return address;
+        }
+
+        public override EndPoint Create(SocketAddress socketAddress)
+        {
+            ArgumentNullException.ThrowIfNull(socketAddress);
+            if (socketAddress.Family != AddressFamily || socketAddress.Size != 4)
+                throw new ArgumentException("Unexpected mutable endpoint address.", nameof(socketAddress));
+            return new MutableSocketEndPoint(socketAddress[2], socketAddress[3]);
+        }
     }
 
     private static async Task<Exception?> CaptureFailureAsync(Task operation)

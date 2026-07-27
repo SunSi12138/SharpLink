@@ -272,7 +272,7 @@ public static class ProtocolV2FrameParser
 }
 
 /// <summary>Writes SharpLink Protocol v2 frame headers and payload lengths.</summary>
-public static class ProtocolV2FrameWriter
+internal static class ProtocolV2FrameWriter
 {
     /// <summary>Begins a frame and returns a token that must be ended after writing its payload.</summary>
     public static ProtocolV2FrameToken BeginFrame(
@@ -317,4 +317,4 @@ public static class ProtocolV2FrameWriter
 }
 
 /// <summary>Identifies a Protocol v2 frame header awaiting payload length backfill.</summary>
-public readonly record struct ProtocolV2FrameToken(int StartOffset);
+internal readonly record struct ProtocolV2FrameToken(int StartOffset);

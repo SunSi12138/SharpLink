@@ -1,20 +1,18 @@
-# 0.8.30 test status
+# 0.8.31 test status
 
 ## Evidence status
 
-- Five P2 candidates identified against clean 0.8.29 commit `88039d5`.
-- Comprehensive performance-pattern scan completed and manually triaged; cold-path and extensibility false positives are recorded in research rather than changed.
-- Complete pre-fix Generator run: 102 total, all 101 existing tests passed, and only the new Task/ValueTask semantic probe failed.
-- Complete pre-fix Unit run: 468 total, all 464 existing tests passed, and only the four new hosting/address/allocation probes failed. Local health polling allocated exactly 9,600,000 bytes across 100,000 calls (96 B/call).
+- Five P2 candidates identified against clean 0.8.30 commit `6ecdac9`.
+- Complete pre-fix Unit run: 473 total, all 468 existing tests passed, and only the five new probes failed.
+- Official .NET pipe-transfer and stable cross-Unix lstat ABI evidence is recorded in research and audit documentation.
 - Consecutive complete audit rounds without a new improvement: 0/3.
 
 ## Current gate
 
-- Research, scan checklist, test mapping, and complete pre-fix evidence are complete.
-- Production implementation has not changed.
-- The five proven fixes are implemented; Generator is 102/102 and Unit is 468/468. The hosted lifecycle probe also checks duplicate Start without increasing the recommendation/test count.
-- Assertion-quality review found no assertion-free or trivial-only probe: tests preserve the original Stop failure and Host token, verify terminal readiness/ownership and exact duplicate-Start message, assert both Proxy and Stub Task paths, cover every invalid logical-name character at both public address types, and combine health semantics with exact allocation.
-- Pseudo-mutation review kills removal of the Run-fault stop guard, lifecycle gate or either Start-state check, changing the outer-type prefix back to substring matching, bypassing either address constructor or any invalid character, and restoring per-call `Task.FromResult`. No material survived mutation remains in the five branches.
-- The exact final source tree passed non-incremental Release build with 0 warnings/errors, Generator 102/102, Unit 468/468, Integration 237/237, seven-package pack, SDK analyzer inspection, and fresh-cache package smoke resolving only 0.8.30 SharpLink packages.
-- Final Generator A/B (median of three process medians) is 15.438 → 15.411 ms with essentially unchanged allocation. Local health polling is 96 → 0 B/call; the bimodal nanosecond distributions overlap, with a disclosed roughly 5 ns worst process-median tradeoff in this low-frequency path.
-- Version, changelog, README, architecture, Chinese/English audit, migration, and performance documentation are complete. The local 0.8.30 commit is ready.
+- The five proven fixes are implemented. Three obsolete-registry tests were deleted with that unsupported surface; exact-final Unit target is therefore 470.
+- Assertion-quality review verifies endpoint byte identity after source mutation, replacement file existence and exact content, raw writer/token visibility, both local pipe-handle closures plus idempotence and redaction, and every removed/internalized type individually.
+- Pseudo-mutation review kills returning the custom endpoint source, bypassing Unix identity or replacement preservation, exporting either raw framing type, omitting either parent handle closure or redaction, and leaving any retired/helper type public.
+- Three identity-bearing raw-writer designs were rejected after measurable nanosecond-scale regression. The final writer body is restored verbatim and internalized; contemporaneous Release measurements are 3.473 ns baseline versus 3.524 ns candidate (about +1.5%, both 0 B/op, inside the 5% gate).
+- The exact final source tree passed a non-incremental Release build with 0 warnings/errors, Generator 102/102, Unit 470/470, and Integration 237/237.
+- Seven 0.8.31 packages were created; `SharpLink.Sdk` contains the Generator analyzer, and a fresh-cache PackageSmoke resolved only 0.8.31 SharpLink dependencies and passed.
+- Chinese/English audit, migration, performance, changelog, README, architecture, and version updates are complete. The local 0.8.31 commit is ready.

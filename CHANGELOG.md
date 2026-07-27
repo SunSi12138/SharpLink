@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [0.8.31] - 2026-07-27
+
+### Fixed
+
+- Socket client factories now snapshot supported custom mutable `EndPoint` implementations through `Create(Serialize())` and reject implementations that cannot produce an independent snapshot.
+- Unix-domain listener disposal identifies its own filesystem socket by file type, device, and inode, preserving a caller-owned entry that replaced the bound path.
+- Anonymous-pipe offers redact inheritable handles from diagnostics and expose idempotent parent-side transfer completion so servers can observe a child process closing its handles.
+
+### Changed
+
+- The duplicate raw `ProtocolV2FrameWriter`/token surface, packet writer helpers, and striped runtime map are now implementation details. The unsupported `ISerializer`, `IServiceRegister`, `StripedLongSet`, `GeneratedProxyRegistry`, and `GeneratedStubRegistry` surfaces were removed.
+
+### Compatibility and validation
+
+- Protocol v2 wire framing and generated RPC paths are unchanged. Consumers of removed/internalized implementation APIs must migrate to generated proxies/stubs, `IRpcCodec`/`IRpcCodecAdapter`, builders, and framework-owned runtime state.
+- Non-incremental Release build, Generator 102/102, Unit 470/470, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- The restored raw frame body measured 3.473 ns at the contemporaneous 0.8.30 baseline and 3.524 ns for 0.8.31 (about +1.5%, inside the 5% nanosecond-scale gate), with 0 B/op for both; the production method body is unchanged.
+
 ## [0.8.30] - 2026-07-27
 
 ### Fixed

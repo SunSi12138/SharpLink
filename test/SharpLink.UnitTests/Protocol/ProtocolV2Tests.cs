@@ -28,6 +28,13 @@ public class ProtocolV2Tests
     }
 
     [Test]
+    public async Task RawFrameWriterAndTokenShouldRemainInternalImplementationDetails()
+    {
+        await Assert.That(typeof(ProtocolV2FrameWriter).IsPublic).IsFalse();
+        await Assert.That(typeof(ProtocolV2FrameToken).IsPublic).IsFalse();
+    }
+
+    [Test]
     public void ZeroThroughFourteenHeaderBytesShouldRemainPartial()
     {
         var writer = new PooledByteBufferWriter();

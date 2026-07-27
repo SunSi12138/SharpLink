@@ -1,28 +1,29 @@
-# 0.8.30 regression-test research
+# 0.8.31 regression-test research
 
 ## Bounded target inventory
 
-- `SharpLinkServerHostedService` Run observation: successful completion after `StopAsync` is suppressed, but the fault path ignores `_stopRequested` and can report an expected stop failure as critical and call `StopApplication`.
-- `SharpLinkServerHostedService` terminal lifecycle: a completed Stop is not a barrier for a later Start, which can publish a new server that the cached Stop task no longer owns.
-- Generator task-shape emission: Proxy/Stub code decides ValueTask semantics with `ReturnType.Contains("ValueTask")`. A valid `Task<ValueTaskPayload>` is therefore emitted as though the outer type were `ValueTask<T>`, producing incorrect return/await code.
-- Public endpoint addresses: `SharpLinkNamedPipeAddress` and `SharpLinkSharedMemoryAddress` still accept NUL and path separators even though the concrete transports reject the same logical names. Resolver/configuration failures are therefore still delayed for these public entry points.
-- Local hosting health checks construct a new completed `Task<HealthCheckResult>` on every poll even though the three results are immutable constants; this is recurring managed allocation in a monitoring path.
+- Custom socket endpoint ownership: `SocketTransportSocketFactory.Snapshot` clones the three built-in endpoint types but returns every other `EndPoint` by reference. A mutable custom endpoint can therefore change a factory's connection target after construction. The `EndPoint.Serialize`/`Create` contract provides a general snapshot path.
+- Unix-domain socket cleanup: the listener remembers only a filesystem path. If that socket node is unlinked and replaced while the listener is alive, disposal deletes the replacement even though its device/inode no longer belongs to the listener.
+- Duplicate raw framing surface: public `ProtocolV2FrameWriter`/`ProtocolV2FrameToken` can silently backfill writer B with a token from writer A, while the framework already uses the separate internal packet writer on every generated hot path. Runtime identity checks measurably regress this nanosecond-scale API, so the duplicate raw writer belongs inside the implementation boundary.
+- Anonymous-pipe handle transfer: the BCL requires `AnonymousPipeServerStream.DisposeLocalCopyOfClientHandle` after inherited handles reach a child process; otherwise the server cannot observe client disposal. `AnonymousPipeOffer` exposes no completion hook and its generated record `ToString` prints both inheritable handles.
+- Obsolete public abstractions: `GeneratedProxyRegistry` and `GeneratedStubRegistry` are no longer emitted or consumed but retain process-wide strong `Type`/delegate roots. `ISerializer`, `IServiceRegister`, and `StripedLongSet` have zero repository consumers; `StripedLongMap`, `RpcBufferWriterExtensions`, `PacketToken`, and `PacketScope` are implementation-only despite being exported.
 
-## Comprehensive performance scan checklist
+## Evidence and engineering boundary
 
-The .NET performance-pattern skill was run against framework `src/**/*.cs` on .NET 10. Exact signals: async-void 0; `.Result` 4 (all completed ValueTask/Task or generated text after manual review); synchronous `.Wait` 1 (shutdown gate, manually proven to pulse before waiting); Substring 8 (Generator cold path); stackalloc 60 (none inside an accumulating loop); literal IndexOf 1 and StartsWith/Contains 3 (Generator cold path); cultureless ToLower/ToUpper 0; triple Replace 0; params 2; LINQ-on-char 0; static mutable Dictionary 0 versus static FrozenDictionary 0; new List 45; new Dictionary 40; CurrentCulture comparer 0; LINQ-chain signals 142 repository-wide and 26 in Runtime/Client/Server (all reviewed; one former hot State allocation was fixed in 0.8.29); HttpClient 0; uncached JsonSerializerOptions 0; compiled/generated/constructed Regex 0/0/0; unsealed/sealed classes 19/269; ContainsKey 21 (no hot same-key double lookup retained); string.Format 0; JsonSerializer calls 3 (Generator manifest tooling); byte-array construction 10 (bounded protocol/configuration or ownership arrays).
-
-The scanner influenced this batch only by elevating the health-check allocation and the string-based Generator task-shape bug. Cold registration LINQ, one-time collection construction, intentionally extensible public option/context types, and code-generation string slicing are rejected as non-hot or design-required rather than mechanically rewritten.
+- The anonymous-pipe requirement is explicit in the official .NET API contract: after transfer, the parent must close its local client-handle copy or it will not receive client-disposal notification. SharpLink will expose that same explicit transfer-completion lifecycle rather than guessing when an external child inherited the handles.
+- Unix socket ownership will be identified with the runtime's cross-Unix `System.Native` `lstat` shim (file type, device, inode), matching the stable `FileStatus` ABI used by .NET itself. Cleanup remains unchanged on Windows and abstract Unix sockets remain filesystem-free.
+- The internal packet writer stays allocation-free and raw for generated/runtime hot paths. The duplicate raw protocol writer/token are made internal instead of adding identity checks or a header-validation switch to every frame.
+- The API cleanup is limited to symbols with no current generator/runtime/documentation consumer. Supported manifest catalogs, codec adapters, sessions, stream dispatchers, and transport contracts remain public.
 
 ## Acceptance checklist
 
-- Expected Run faults after hosted Stop never request application shutdown.
-- Stop-before-Start and duplicate Start are rejected without publishing an unowned server.
-- Task versus ValueTask emission is a semantic model field, not a substring test, and `Task<ValueTaskPayload>` uses Task code in both Proxy and Stub.
-- Both public pipe-backed address constructors reject the same invalid logical-name characters as concrete transports.
-- Repeated local health-check calls preserve status/description and allocate zero bytes after warm-up.
-- Existing behavior and hot-path allocations remain stable.
+- A custom mutable endpoint is cloned through `Create(Serialize())` and later source mutations cannot alter the snapshot.
+- Listener disposal deletes its own unchanged Unix socket node but preserves any path replacement.
+- Raw frame/packet writers and their caller-forgeable offset tokens are no longer exported as supported public abstractions.
+- Anonymous-pipe offers redact handles and provide idempotent completion of the parent-side handle transfer.
+- Dead registries/interfaces/set disappear, while implementation-only collection and packet helpers are no longer exported.
+- Existing behavior and runtime hot-path performance remain stable.
 
-## Deferred hypotheses
+## Rejected/deferred hypotheses
 
-The low-level protocol writer accepts raw headers that the parser rejects, unknown custom `EndPoint` snapshots retain their source object when the type lacks a recognized clone path, and multi-cluster deferred unregister polling is not tracked in Faulted state. These require deliberate public API/lifecycle decisions and remain candidates for later audit rather than opportunistic changes in this batch.
+Full outbound frame-header validation would add work to every generated frame for misuse that is already caught by the receiving parser, so it is not bundled with the concrete cross-writer corruption fix. Shared-memory `PipeReader` contract misuse and multi-cluster deferred-unregister polling remain low-value/internal hypotheses without a production witness.

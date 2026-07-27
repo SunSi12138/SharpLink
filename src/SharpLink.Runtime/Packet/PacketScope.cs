@@ -1,8 +1,8 @@
 namespace SharpLink.Runtime;
 
-public readonly record struct PacketToken(int StartOffset);
+internal readonly record struct PacketToken(int StartOffset);
 
-public readonly ref struct PacketScope(IRpcByteBufferWriter writer, PacketToken token)
+internal readonly ref struct PacketScope(IRpcByteBufferWriter writer, PacketToken token)
 {
     public void Dispose()
     {

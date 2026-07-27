@@ -1,6 +1,6 @@
 namespace SharpLink.Runtime;
 
-public static class RpcBufferWriterExtensions
+internal static class RpcBufferWriterExtensions
 {
 
     extension(IRpcByteBufferWriter writer)

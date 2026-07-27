@@ -29,6 +29,7 @@ public class RuntimeHotPathBenchmarks
     private ReadOnlySequence<byte> _requestFrame;
     private ReadOnlySequence<byte> _metadataFrame;
     private ReadOnlySequence<byte> _segmentedMetadataFrame;
+    private PooledByteBufferWriter _frameWriter = null!;
     [GlobalSetup]
     public void Setup()
     {
@@ -40,10 +41,29 @@ public class RuntimeHotPathBenchmarks
         var metadataBytes = CreateRequestFrame(includeMetadata: true);
         _metadataFrame = new ReadOnlySequence<byte>(metadataBytes);
         _segmentedMetadataFrame = CreateSegmented(metadataBytes, 1);
+        _frameWriter = new PooledByteBufferWriter(64);
     }
 
     [GlobalCleanup]
-    public void Cleanup() => _pending.Dispose();
+    public void Cleanup()
+    {
+        _frameWriter.Dispose();
+        _pending.Dispose();
+    }
+
+    [Benchmark]
+    public int WriteRequestFrame()
+    {
+        _frameWriter.Clear();
+        var token = ProtocolV2FrameWriter.BeginFrame(
+            _frameWriter,
+            ProtocolV2FrameType.Request,
+            ProtocolV2FrameFlags.None,
+            1);
+        _frameWriter.Advance(ProtocolV2Constants.RequestPrefixBytes);
+        ProtocolV2FrameWriter.EndFrame(_frameWriter, token);
+        return _frameWriter.WrittenCount;
+    }
 
     [Benchmark]
     public async ValueTask<int> PendingRegisterAndComplete()

@@ -1,6 +1,6 @@
 namespace SharpLink.Runtime;
 
-public sealed class StripedLongMap<TValue> where TValue : class
+internal sealed class StripedLongMap<TValue> where TValue : class
 {
     private readonly Lock[] _locks;
     private readonly Dictionary<long, TValue>[] _maps;

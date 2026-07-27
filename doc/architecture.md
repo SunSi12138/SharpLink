@@ -148,6 +148,7 @@ SharpLink.Serializer.SharpPack
 - Unix/macOS 上 `NamedPipe` 由 .NET 映射到 Unix Domain Socket 路径
 - 当前运行时会对过长的 pipe name 做确定性缩短，避免触发路径长度限制
 - `AnonymousPipe` 适合本机协同进程，不适合跨主机场景
+- `IAnonymousPipeAllocator` 返回的一次性 offer 拥有 Server 端的本地 client-handle 副本。外部子进程继承两个 handle 后，宿主必须调用 `CompleteHandleTransfer()` 或释放 offer；此动作幂等，并关闭两个父进程副本，使 Server 能观察子进程最终断连。句柄不会出现在 offer 的诊断字符串中。
 - `SharedMemory` 只支持同机同用户。命名管道是权限边界和控制通道；数据不经过控制通道。
 - 每条共享内存连接拥有一个 4 KiB 版本化小端头部和两个 SPSC 环。读写游标、等待标志与关闭位按 128 字节隔离；文件映射只在双方 nonce、版本、容量和长度全部校验后开放。
 - Unix/macOS 在双方确认映射后 unlink 文件；Windows 使用 delete sharing 与 `DeleteOnClose`。新建映射前只清理能够独占打开的遗留 `.shm` 文件，不删除活跃连接资源。

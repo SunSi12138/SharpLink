@@ -142,6 +142,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
     private readonly TimeSpan _tlsHandshakeTimeout;
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly string? _ownedUnixSocketPath;
+    private readonly UnixSocketPathIdentity? _ownedUnixSocketIdentity;
     private int _disposed;
 
     /// <summary>Creates, binds, and starts a socket listener.</summary>
@@ -166,6 +167,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
 
         string? unixPath = null;
         string? boundUnixPath = null;
+        UnixSocketPathIdentity? boundUnixIdentity = null;
         try
         {
             if (localEndPoint is UnixDomainSocketEndPoint uds)
@@ -180,14 +182,20 @@ public sealed class SocketServerTransportListener : IServerTransportListener
 
             _listener.Bind(localEndPoint);
             boundUnixPath = unixPath;
+            if (unixPath is not null)
+                boundUnixIdentity = UnixSocketPathIdentity.Capture(unixPath);
             _listener.Listen(backlog);
             LocalEndPoint = _listener.LocalEndPoint;
             _ownedUnixSocketPath = unixPath;
+            _ownedUnixSocketIdentity = boundUnixIdentity;
         }
         catch
         {
-            _listener.Dispose();
-            TryDeleteOwnedUnixSocketPath(boundUnixPath);
+            DisposeListenerPreservingPathReplacement(
+                _listener,
+                boundUnixPath,
+                boundUnixIdentity);
+            TryDeleteOwnedUnixSocketPath(boundUnixPath, boundUnixIdentity);
             throw;
         }
     }
@@ -228,19 +236,45 @@ public sealed class SocketServerTransportListener : IServerTransportListener
             return ValueTask.CompletedTask;
 
         _disposeCts.Cancel();
-        _listener.Dispose();
+        DisposeListenerPreservingPathReplacement(
+            _listener,
+            _ownedUnixSocketPath,
+            _ownedUnixSocketIdentity);
         _disposeCts.Dispose();
-        TryDeleteOwnedUnixSocketPath(_ownedUnixSocketPath);
+        TryDeleteOwnedUnixSocketPath(_ownedUnixSocketPath, _ownedUnixSocketIdentity);
 
         return ValueTask.CompletedTask;
     }
 
-    private static void TryDeleteOwnedUnixSocketPath(string? path)
+    private static void DisposeListenerPreservingPathReplacement(
+        Socket listener,
+        string? path,
+        UnixSocketPathIdentity? identity)
+    {
+        var preservation = UnixSocketPathIdentity.PreserveReplacement(path, identity);
+        try
+        {
+            listener.Dispose();
+        }
+        finally
+        {
+            preservation?.Restore();
+        }
+    }
+
+    private static void TryDeleteOwnedUnixSocketPath(
+        string? path,
+        UnixSocketPathIdentity? identity)
     {
         if (path is not null)
         {
             try
             {
+                if (!OperatingSystem.IsWindows() &&
+                    (identity is null || !identity.Value.Matches(path)))
+                {
+                    return;
+                }
                 if (File.Exists(path))
                     File.Delete(path);
             }
@@ -260,8 +294,30 @@ internal static class SocketTransportSocketFactory
             IPEndPoint ip => new IPEndPoint(CloneAddress(ip.Address), ip.Port),
             DnsEndPoint dns => new DnsEndPoint(dns.Host, dns.Port, dns.AddressFamily),
             UnixDomainSocketEndPoint unix => unix.Create(unix.Serialize()),
-            _ => endPoint
+            _ => SnapshotCustom(endPoint)
         };
+
+    private static EndPoint SnapshotCustom(EndPoint endPoint)
+    {
+        try
+        {
+            var snapshot = endPoint.Create(endPoint.Serialize());
+            if (ReferenceEquals(snapshot, endPoint))
+            {
+                throw new InvalidOperationException(
+                    "The endpoint Create method returned its mutable source instance.");
+            }
+            return snapshot;
+        }
+        catch (Exception exception) when (
+            exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            throw new ArgumentException(
+                "Custom socket endpoints must support an independent Create(Serialize()) snapshot.",
+                nameof(endPoint),
+                exception);
+        }
+    }
 
     internal static string? GetFileSystemPath(UnixDomainSocketEndPoint endPoint)
     {
@@ -339,5 +395,116 @@ internal static class SocketTransportSocketFactory
         {
             Debug.WriteLine($"SharpLink skipped unsupported socket option {option}: {ex.Message}");
         }
+    }
+}
+
+internal readonly record struct UnixSocketPathIdentity(long Device, long Inode)
+{
+    private const int FileTypeMask = 0xF000;
+    private const int DirectoryFileType = 0x4000;
+    private const int SocketFileType = 0xC000;
+
+    internal static UnixSocketPathIdentity? Capture(string path)
+    {
+        if (OperatingSystem.IsWindows())
+            return null;
+        if (LStat(path, out var status) != 0)
+        {
+            throw new IOException(
+                $"Could not identify Unix-domain socket path '{path}'.",
+                new System.ComponentModel.Win32Exception(
+                    System.Runtime.InteropServices.Marshal.GetLastPInvokeError()));
+        }
+        if ((status.Mode & FileTypeMask) != SocketFileType)
+            throw new IOException($"Unix-domain socket path '{path}' is not a socket node.");
+        return new UnixSocketPathIdentity(status.Device, status.Inode);
+    }
+
+    internal bool Matches(string path)
+        => LStat(path, out var status) == 0 &&
+           (status.Mode & FileTypeMask) == SocketFileType &&
+           status.Device == Device &&
+           status.Inode == Inode;
+
+    internal static UnixSocketPathPreservation? PreserveReplacement(
+        string? path,
+        UnixSocketPathIdentity? identity)
+    {
+        if (OperatingSystem.IsWindows() || path is null || identity is null ||
+            identity.Value.Matches(path) || LStat(path, out var status) != 0)
+        {
+            return null;
+        }
+
+        var directory = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(directory))
+            directory = Directory.GetCurrentDirectory();
+        var backupPath = Path.Combine(
+            directory,
+            $".sharplink-preserve-{Guid.NewGuid():N}");
+        var isDirectory = (status.Mode & FileTypeMask) == DirectoryFileType;
+        if (isDirectory)
+            Directory.Move(path, backupPath);
+        else
+            File.Move(path, backupPath);
+        return new UnixSocketPathPreservation(path, backupPath, isDirectory);
+    }
+
+    internal static bool PathExists(string path) => LStat(path, out _) == 0;
+
+    [System.Runtime.InteropServices.DllImport(
+        "System.Native",
+        EntryPoint = "SystemNative_LStat",
+        SetLastError = true)]
+    private static extern int LStat(
+        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)]
+        string path,
+        out UnixFileStatus status);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct UnixFileStatus
+    {
+        internal int Flags;
+        internal int Mode;
+        internal uint UserId;
+        internal uint GroupId;
+        internal long Size;
+        internal long AccessTime;
+        internal long AccessTimeNanoseconds;
+        internal long ModificationTime;
+        internal long ModificationTimeNanoseconds;
+        internal long ChangeTime;
+        internal long ChangeTimeNanoseconds;
+        internal long BirthTime;
+        internal long BirthTimeNanoseconds;
+        internal long Device;
+        internal long RawDevice;
+        internal long Inode;
+        internal uint UserFlags;
+        internal int HardLinkCount;
+    }
+}
+
+internal sealed class UnixSocketPathPreservation(
+    string path,
+    string backupPath,
+    bool isDirectory)
+{
+    private int _restored;
+
+    internal void Restore()
+    {
+        if (Interlocked.Exchange(ref _restored, 1) != 0)
+            return;
+        if (UnixSocketPathIdentity.PathExists(path))
+        {
+            throw new IOException(
+                $"Unix-domain socket path replacement could not be restored because '{path}' was recreated; " +
+                $"the preserved entry remains at '{backupPath}'.");
+        }
+        if (isDirectory)
+            Directory.Move(backupPath, path);
+        else
+            File.Move(backupPath, path);
     }
 }

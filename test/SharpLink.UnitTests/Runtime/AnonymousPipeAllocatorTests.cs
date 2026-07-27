@@ -10,6 +10,35 @@ namespace SharpLink.UnitTests.Runtime;
 public class AnonymousPipeAllocatorTests
 {
     [Test]
+    public async Task OfferShouldRedactHandlesAndCompleteParentHandleTransfer()
+    {
+        await using var transport = new AnonymousPipeServerTransportListener(1);
+        var offer = await transport.AllocateAsync();
+        var connection = await transport.AcceptAsync();
+        await using var connectionScope = connection;
+
+        Ensure(!offer.ToString().Contains(offer.InHandle, StringComparison.Ordinal) &&
+               !offer.ToString().Contains(offer.OutHandle, StringComparison.Ordinal),
+            "anonymous-pipe offer diagnostics must redact inheritable handles");
+        await Assert.That(offer)
+            .IsEqualTo(new AnonymousPipeOffer(offer.InHandle, offer.OutHandle));
+        var completeTransfer = typeof(AnonymousPipeOffer).GetMethod("CompleteHandleTransfer");
+        Ensure(completeTransfer is not null,
+            "anonymous-pipe offers must let the parent complete handle transfer");
+
+        completeTransfer!.Invoke(offer, null);
+        completeTransfer.Invoke(offer, null);
+        var input = (AnonymousPipeServerStream)(typeof(AnonymousPipeTransportConnection)
+            .GetField("_inputStream", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(connection) ?? throw new Exception("missing anonymous-pipe input stream"));
+        var output = (AnonymousPipeServerStream)(typeof(AnonymousPipeTransportConnection)
+            .GetField("_outputStream", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(connection) ?? throw new Exception("missing anonymous-pipe output stream"));
+        Ensure(input.ClientSafePipeHandle.IsClosed && output.ClientSafePipeHandle.IsClosed,
+            "completing handle transfer must close both parent-side client-handle copies");
+    }
+
+    [Test]
     public async Task FailedClientConnectionAttemptShouldStillConsumeOneShotOffer()
     {
         await using var serverOutput = new AnonymousPipeServerStream(
