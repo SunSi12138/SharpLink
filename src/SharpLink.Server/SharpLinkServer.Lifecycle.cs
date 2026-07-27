@@ -758,6 +758,10 @@ internal sealed partial class SharpLinkServer
         catch (OperationCanceledException)
         {
         }
+        catch (SharpLinkException exception) when (
+            exception.Code == SharpLinkErrorCode.ConnectionClosed)
+        {
+        }
         catch (Exception ex)
         {
             LogRpcDispatchUnhandledException(_logger, ex);

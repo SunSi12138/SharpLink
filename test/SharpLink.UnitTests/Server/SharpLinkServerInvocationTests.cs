@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using SharpLink.Server;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
@@ -14,6 +15,46 @@ namespace SharpLink.UnitTests.Server;
 
 public class SharpLinkServerInvocationTests
 {
+    [Test]
+    public async Task DispatchObserverShouldSuppressOnlyExpectedConnectionClosure()
+    {
+        var loggerFactory = new CaptureLoggerFactory();
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .DisableAutomaticServiceRegistration()
+            .UseLoggerFactory(loggerFactory)
+            .UseTransport(new IdleListener())
+            .Build();
+        var awaitDispatch = typeof(SharpLinkServer).GetMethod(
+            "AwaitDispatchAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Server dispatch observer");
+        var expectedClosure = new SharpLinkException(
+            SharpLinkErrorCode.ConnectionClosed,
+            "Session is stopping.");
+
+        await InvokeAwaitDispatchAsync(awaitDispatch, server, expectedClosure, requestId: 41);
+
+        Ensure(loggerFactory.ErrorEntries.Count == 0,
+            "normal session shutdown must not be reported as an unhandled dispatch error");
+
+        var internalFailure = new SharpLinkException(
+            SharpLinkErrorCode.Internal,
+            "dispatch failed internally");
+        await InvokeAwaitDispatchAsync(awaitDispatch, server, internalFailure, requestId: 42);
+        Ensure(loggerFactory.ErrorEntries is [{ EventId.Id: LogEvents.Rpc.DispatchFailed } internalEntry] &&
+               ReferenceEquals(internalEntry.Exception, internalFailure),
+            "non-terminal SharpLink failures must remain observable as dispatch errors");
+
+        var unexpectedFailure = new InvalidOperationException("unexpected dispatch failure");
+        await InvokeAwaitDispatchAsync(awaitDispatch, server, unexpectedFailure, requestId: 43);
+        Ensure(loggerFactory.ErrorEntries is
+               [
+                   { EventId.Id: LogEvents.Rpc.DispatchFailed },
+                   { EventId.Id: LogEvents.Rpc.DispatchFailed } unexpectedEntry
+               ] && ReferenceEquals(unexpectedEntry.Exception, unexpectedFailure),
+            "ordinary unexpected failures must remain observable as dispatch errors");
+    }
+
     [Test]
     [NotInParallel]
     public async Task CallAdmissionShouldNotCrossTheServerDrainBoundary()
@@ -365,6 +406,15 @@ public class SharpLinkServerInvocationTests
         return exception.InnerException is { } nested && ContainsMessage(nested, message);
     }
 
+    private static Task InvokeAwaitDispatchAsync(
+        MethodInfo awaitDispatch,
+        SharpLinkServer server,
+        Exception exception,
+        long requestId)
+        => (Task)awaitDispatch.Invoke(
+            server,
+            [ValueTask.FromException(exception), requestId])!;
+
     private static void EnsureResponseFrame(
         ReadOnlyMemory<byte> bytes,
         SharpLinkProtocolOptions limits,
@@ -458,6 +508,38 @@ public class SharpLinkServerInvocationTests
         if (!condition)
             throw new Exception(message);
     }
+
+    private sealed class CaptureLoggerFactory : ILoggerFactory
+    {
+        private readonly Lock _gate = new();
+
+        internal List<LogEntry> ErrorEntries { get; } = [];
+
+        public ILogger CreateLogger(string categoryName) => new CaptureLogger(this);
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+
+        private sealed class CaptureLogger(CaptureLoggerFactory owner) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                if (logLevel != LogLevel.Error)
+                    return;
+                lock (owner._gate)
+                    owner.ErrorEntries.Add(new LogEntry(eventId, exception));
+            }
+        }
+    }
+
+    private readonly record struct LogEntry(EventId EventId, Exception? Exception);
 
     private sealed class IdleListener : IServerTransportListener
     {
