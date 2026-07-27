@@ -56,6 +56,8 @@ public interface ISharpLinkCompressionProvider
 /// </example>
 public sealed class SharpLinkCompressionOptions
 {
+    private IReadOnlyList<SharpLinkCompressionProviderBinding>? _providerBindings;
+
     /// <summary>The maximum number of advertised providers.</summary>
     public const int MaxProviders = 16;
 
@@ -76,6 +78,9 @@ public sealed class SharpLinkCompressionOptions
 
     /// <summary>Validates provider tokens and compression-benefit thresholds.</summary>
     public void Validate()
+        => _ = ValidateAndCreateBindings();
+
+    private List<SharpLinkCompressionProviderBinding> ValidateAndCreateBindings()
     {
         ArgumentOutOfRangeException.ThrowIfNegative(MinimumPayloadBytes);
         ArgumentOutOfRangeException.ThrowIfNegative(MinimumSavingsBytes);
@@ -85,27 +90,46 @@ public sealed class SharpLinkCompressionOptions
             throw new ArgumentOutOfRangeException(nameof(Providers), $"At most {MaxProviders} providers may be configured.");
 
         var profiles = new HashSet<string>(StringComparer.Ordinal);
+        var bindings = new List<SharpLinkCompressionProviderBinding>(Providers.Count);
         foreach (var provider in Providers)
         {
             ArgumentNullException.ThrowIfNull(provider);
-            SharpLinkCompressionProfile.Validate(provider.WireProfile, nameof(Providers));
-            if (!profiles.Add(provider.WireProfile))
-                throw new ArgumentException($"Compression wire profile '{provider.WireProfile}' is registered more than once.", nameof(Providers));
+            var wireProfile = provider.WireProfile;
+            SharpLinkCompressionProfile.Validate(wireProfile, nameof(Providers));
+            if (!profiles.Add(wireProfile))
+                throw new ArgumentException($"Compression wire profile '{wireProfile}' is registered more than once.", nameof(Providers));
+            bindings.Add(new SharpLinkCompressionProviderBinding(wireProfile, provider));
         }
+        return bindings;
     }
 
     internal SharpLinkCompressionOptions CloneValidated()
     {
-        Validate();
+        var bindings = _providerBindings ?? ValidateAndCreateBindings();
         var clone = new SharpLinkCompressionOptions
         {
             MinimumPayloadBytes = MinimumPayloadBytes,
             MinimumSavingsBytes = MinimumSavingsBytes,
-            MinimumSavingsRatio = MinimumSavingsRatio
+            MinimumSavingsRatio = MinimumSavingsRatio,
+            _providerBindings = bindings
         };
         foreach (var provider in Providers)
             clone.Providers.Add(provider);
         return clone;
+    }
+
+    internal IReadOnlyList<SharpLinkCompressionProviderBinding> ProviderBindings
+        => _providerBindings ?? throw new InvalidOperationException(
+            "Compression provider bindings are available only after options are frozen.");
+
+    internal void CopyValidatedSnapshotTo(SharpLinkCompressionOptions destination)
+    {
+        destination.MinimumPayloadBytes = MinimumPayloadBytes;
+        destination.MinimumSavingsBytes = MinimumSavingsBytes;
+        destination.MinimumSavingsRatio = MinimumSavingsRatio;
+        foreach (var provider in Providers)
+            destination.Providers.Add(provider);
+        destination._providerBindings = ProviderBindings;
     }
 
     internal bool IsBeneficial(int originalBytes, int compressedBytes)
@@ -117,15 +141,22 @@ public sealed class SharpLinkCompressionOptions
     }
 
     internal ISharpLinkCompressionProvider? FindProvider(string wireProfile)
+        => FindProviderBinding(wireProfile)?.Provider;
+
+    internal SharpLinkCompressionProviderBinding? FindProviderBinding(string wireProfile)
     {
-        foreach (var provider in Providers)
+        foreach (var binding in ProviderBindings)
         {
-            if (string.Equals(provider.WireProfile, wireProfile, StringComparison.Ordinal))
-                return provider;
+            if (string.Equals(binding.WireProfile, wireProfile, StringComparison.Ordinal))
+                return binding;
         }
         return null;
     }
 }
+
+internal readonly record struct SharpLinkCompressionProviderBinding(
+    string WireProfile,
+    ISharpLinkCompressionProvider Provider);
 
 /// <summary>Creates the NativeAOT-safe Brotli provider backed only by <see cref="System.IO.Compression"/>.</summary>
 public static class SharpLinkCompressionProviders

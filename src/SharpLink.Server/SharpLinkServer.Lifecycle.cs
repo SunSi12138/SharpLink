@@ -330,7 +330,7 @@ internal sealed partial class SharpLinkServer
                     ProtocolV2Capabilities.FlowControl |
                     ProtocolV2Capabilities.HealthCheck |
                     ProtocolV2Capabilities.CancellationReason;
-                if (_runtimeContext.Compression.Providers.Count != 0)
+                if (_runtimeContext.Compression.ProviderBindings.Count != 0)
                     supportedCapabilities |= ProtocolV2Capabilities.Compression;
                 if (header.Type != ProtocolV2FrameType.HandshakeRequest)
                 {
@@ -364,9 +364,9 @@ internal sealed partial class SharpLinkServer
 
                 if (authResult.IsAuthenticated)
                 {
-                    var compressionProvider = SelectCompressionProvider(request);
+                    var compressionBinding = SelectCompressionProvider(request);
                     var negotiatedCapabilities = request.SupportedCapabilities & supportedCapabilities;
-                    if (compressionProvider is null)
+                    if (compressionBinding is null)
                         negotiatedCapabilities &= ~ProtocolV2Capabilities.Compression;
                     var response = new ProtocolV2HandshakeResponse(
                         Math.Min(request.MinorVersion, ProtocolV2Constants.MinorVersion),
@@ -374,12 +374,12 @@ internal sealed partial class SharpLinkServer
                         Math.Min(request.MaxFramePayloadBytes, _protocolOptions.MaxFramePayloadBytes),
                         Math.Min(request.StreamReceiveWindowBytes, _runtimeContext.FlowControl.StreamReceiveWindowBytes),
                         Math.Min(request.ConnectionReceiveWindowBytes, _runtimeContext.FlowControl.ConnectionReceiveWindowBytes),
-                        compressionProvider?.WireProfile);
+                        compressionBinding?.WireProfile);
                     var runtimeSession = (RpcSession)session;
                     runtimeSession.NegotiatedCapabilities = response.NegotiatedCapabilities;
                     runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
-                    if (compressionProvider is not null)
-                        runtimeSession.EnableCompression(compressionProvider);
+                    if (compressionBinding is { } binding)
+                        runtimeSession.EnableCompression(binding.Provider, binding.WireProfile);
                     if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
                     {
                         runtimeSession.EnableStreamFlowControl(
@@ -423,7 +423,7 @@ internal sealed partial class SharpLinkServer
             "Client disconnected during handshake.");
     }
 
-    private ISharpLinkCompressionProvider? SelectCompressionProvider(
+    private SharpLinkCompressionProviderBinding? SelectCompressionProvider(
         in ProtocolV2HandshakeRequest request)
     {
         if ((request.SupportedCapabilities & ProtocolV2Capabilities.Compression) == 0 ||
@@ -432,12 +432,12 @@ internal sealed partial class SharpLinkServer
             return null;
         }
 
-        foreach (var provider in _runtimeContext.Compression.Providers)
+        foreach (var binding in _runtimeContext.Compression.ProviderBindings)
         {
             foreach (var profile in request.CompressionProfiles.Span)
             {
-                if (string.Equals(provider.WireProfile, profile, StringComparison.Ordinal))
-                    return provider;
+                if (string.Equals(binding.WireProfile, profile, StringComparison.Ordinal))
+                    return binding;
             }
         }
         return null;
@@ -482,6 +482,13 @@ internal sealed partial class SharpLinkServer
                 return SharpLinkAuthenticationResult.Reject(
                     SharpLinkErrorCode.AuthenticationRejected,
                     result.ErrorMessage);
+            }
+            if (!result.IsAuthenticated &&
+                !ProtocolV2PayloadCodec.IsDefinedErrorCode(result.ErrorCode))
+            {
+                return SharpLinkAuthenticationResult.Reject(
+                    SharpLinkErrorCode.AuthenticationRejected,
+                    "Authentication provider returned an undefined error code.");
             }
             return result;
         }

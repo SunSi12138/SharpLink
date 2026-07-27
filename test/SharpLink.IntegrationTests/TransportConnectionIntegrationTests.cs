@@ -819,6 +819,45 @@ public class TransportConnectionIntegrationTests
     }
 
     [Test]
+    public async Task TcpAuthenticatorShouldSanitizeAnUndefinedRejectionCode()
+    {
+        using var cts = new CancellationTokenSource();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseAuthenticator(SharpLinkAuthenticator.CreateServer(static (_, _) => ValueTask.FromResult(
+                new SharpLinkAuthenticationResult(
+                    IsAuthenticated: false,
+                    ErrorCode: (SharpLinkErrorCode)ushort.MaxValue,
+                    ErrorMessage: "undefined provider code",
+                    Context: null))))
+            .RequireAuthentication()
+            .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
+
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        var server = serverBuilder.Build();
+        var serverTask = Task.Run(() => server.RunAsync(cts.Token).AsTask(), CancellationToken.None);
+        var client = SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), port)
+            .Build();
+
+        try
+        {
+            var exception = await CaptureSharpLinkException(
+                client.ConnectAsync(cts.Token).AsTask(),
+                "undefined authentication rejection code");
+            Ensure(exception.Code == SharpLinkErrorCode.AuthenticationRejected,
+                "undefined provider codes must become a stable authentication rejection");
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await cts.CancelAsync();
+            await server.DisposeAsync();
+            await Task.WhenAny(serverTask, Task.Delay(1000, CancellationToken.None));
+        }
+    }
+
+    [Test]
     public async Task TcpAuthenticatorShouldRejectExpiredContextDuringHandshake()
     {
         using var cts = new CancellationTokenSource();

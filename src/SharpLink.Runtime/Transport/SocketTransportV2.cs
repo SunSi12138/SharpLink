@@ -430,8 +430,9 @@ internal readonly record struct UnixSocketPathIdentity(long Device, long Inode)
         string? path,
         UnixSocketPathIdentity? identity)
     {
-        if (OperatingSystem.IsWindows() || path is null || identity is null ||
-            identity.Value.Matches(path) || LStat(path, out var status) != 0)
+        if (OperatingSystem.IsWindows() || path is null ||
+            identity is { } captured && captured.Matches(path) ||
+            LStat(path, out var status) != 0)
         {
             return null;
         }

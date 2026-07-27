@@ -143,14 +143,8 @@ internal sealed partial class SharpLinkClient
 
     private static DateTimeOffset AddTimeout(DateTimeOffset now, TimeSpan timeout)
     {
-        try
-        {
-            return now.Add(timeout);
-        }
-        catch (ArgumentOutOfRangeException exception)
-        {
-            throw new ArgumentOutOfRangeException(nameof(timeout), timeout, exception.Message);
-        }
+        var maximum = DateTimeOffset.MaxValue - now;
+        return timeout >= maximum ? DateTimeOffset.MaxValue : now.Add(timeout);
     }
 
     private static SharpLinkException CreateDeadlineExceededException()

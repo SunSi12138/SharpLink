@@ -344,6 +344,36 @@ public class TransportValidationTests
     }
 
     [Test]
+    public async Task UnixSocketCleanupWithoutCapturedIdentityShouldPreserveAReplacement()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var path = Path.Combine(Path.GetTempPath(), $"sl-{Guid.NewGuid():N}.sock");
+        using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        socket.Bind(new UnixDomainSocketEndPoint(path));
+        try
+        {
+            File.Delete(path);
+            await File.WriteAllTextAsync(path, "replacement-before-identity-capture");
+            typeof(SocketServerTransportListener)
+                .GetMethod(
+                    "DisposeListenerPreservingPathReplacement",
+                    System.Reflection.BindingFlags.Static |
+                    System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(null, [socket, path, null]);
+
+            await Assert.That(File.Exists(path)).IsTrue();
+            await Assert.That(await File.ReadAllTextAsync(path))
+                .IsEqualTo("replacement-before-identity-capture");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
     public async Task SocketClientFactoryShouldSnapshotAMutableIpEndPoint()
     {
         await using var listener = new SocketServerTransportListener(

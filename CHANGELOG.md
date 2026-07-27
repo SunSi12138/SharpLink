@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.32] - 2026-07-27
+
+### Fixed
+
+- Unix-domain listener cleanup now preserves an existing path entry when bind succeeded but socket identity capture did not, avoiding deletion of a caller replacement in that narrow failure window.
+- Compression negotiation freezes every validated wire-profile/provider binding at Runtime Context Build, so later mutation of a custom provider's `WireProfile` cannot change advertisement, selection, lookup, or diagnostics.
+- Authentication result factories reject undefined error codes, while the Server trust boundary normalizes a provider-created undefined rejection to `AuthenticationRejected` instead of faulting handshake encoding.
+- Any positive default request timeout is usable: deadlines beyond the `DateTimeOffset` range saturate at `DateTimeOffset.MaxValue` for ordinary calls and health checks.
+- Immediate server admission uses exact limiter slots and a single-lease fast path instead of allocating three oversized/transient arrays for the common concurrency-only rule.
+
+### Compatibility and validation
+
+- Protocol v2 framing and valid payloads are unchanged. Compression still uses the original provider instance, but the profile validated at Build is its immutable wire identity for that Runtime Context.
+- Non-incremental Release build, Generator 102/102, Unit 474/474, Integration 238/238, seven-package pack, and fresh-cache package smoke passed.
+- Immediate admission improved from 58.477 ns / 568 B to 49.262 ns / 288 B. A pooled-array candidate measured 93.996 ns / 232 B and was rejected rather than trading allocation for latency.
+
 ## [0.8.31] - 2026-07-27
 
 ### Fixed

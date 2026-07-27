@@ -17,7 +17,7 @@ internal sealed partial class SharpLinkClient
         }
 
         var deadline = _hasRequestTimeout
-            ? DateTimeOffset.UtcNow + _requestTimeoutValue
+            ? AddTimeout(DateTimeOffset.UtcNow, _requestTimeoutValue)
             : (DateTimeOffset?)null;
         var operation = connection.PendingCalls.Rent(
             HealthResponseCodec.Instance,

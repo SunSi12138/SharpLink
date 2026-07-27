@@ -1,29 +1,30 @@
-# 0.8.31 regression-test research
+# 0.8.32 regression-test research
 
 ## Bounded target inventory
 
-- Custom socket endpoint ownership: `SocketTransportSocketFactory.Snapshot` clones the three built-in endpoint types but returns every other `EndPoint` by reference. A mutable custom endpoint can therefore change a factory's connection target after construction. The `EndPoint.Serialize`/`Create` contract provides a general snapshot path.
-- Unix-domain socket cleanup: the listener remembers only a filesystem path. If that socket node is unlinked and replaced while the listener is alive, disposal deletes the replacement even though its device/inode no longer belongs to the listener.
-- Duplicate raw framing surface: public `ProtocolV2FrameWriter`/`ProtocolV2FrameToken` can silently backfill writer B with a token from writer A, while the framework already uses the separate internal packet writer on every generated hot path. Runtime identity checks measurably regress this nanosecond-scale API, so the duplicate raw writer belongs inside the implementation boundary.
-- Anonymous-pipe handle transfer: the BCL requires `AnonymousPipeServerStream.DisposeLocalCopyOfClientHandle` after inherited handles reach a child process; otherwise the server cannot observe client disposal. `AnonymousPipeOffer` exposes no completion hook and its generated record `ToString` prints both inheritable handles.
-- Obsolete public abstractions: `GeneratedProxyRegistry` and `GeneratedStubRegistry` are no longer emitted or consumed but retain process-wide strong `Type`/delegate roots. `ISerializer`, `IServiceRegister`, and `StripedLongSet` have zero repository consumers; `StripedLongMap`, `RpcBufferWriterExtensions`, `PacketToken`, and `PacketScope` are implementation-only despite being exported.
+- Unix socket capture gap: a filesystem UDS is bound before its type/device/inode identity is captured. If the path is replaced in that gap and capture fails, cleanup receives a null identity and disposes the socket without preserving the replacement, reopening the caller-data deletion fixed for the ordinary dispose path in 0.8.31.
+- Compression negotiation identity: runtime options retain provider objects and reread `WireProfile` during client advertisement, server selection, lookup, session diagnostics, and errors. A mutable provider can therefore change the protocol identity after Build even though builder configuration is documented as frozen.
+- Authentication provider boundary: a rejected primary `SharpLinkAuthenticationResult` with an undefined nonzero `SharpLinkErrorCode` passes server normalization, then faults the binary error writer instead of returning a stable authentication rejection.
+- Extreme positive call timeout: builder/call documentation accepts any positive `TimeSpan`, but `DateTimeOffset.UtcNow.Add(timeout)` throws for `TimeSpan.MaxValue`. A configured default therefore builds successfully and fails every RPC before sending; the monotonic deadline path already supports saturation.
+- Admission immediate path: every admitted request creates a fixed eight-slot array, a retained-lease array, and an acquired-lease array even when it never queues. These are short-lived Gen0 allocations on an explicitly throughput-sensitive server path; the common single-concurrency rule needs neither oversized slots nor retained/acquired arrays.
 
-## Evidence and engineering boundary
+## Engineering boundary
 
-- The anonymous-pipe requirement is explicit in the official .NET API contract: after transfer, the parent must close its local client-handle copy or it will not receive client-disposal notification. SharpLink will expose that same explicit transfer-completion lifecycle rather than guessing when an external child inherited the handles.
-- Unix socket ownership will be identified with the runtime's cross-Unix `System.Native` `lstat` shim (file type, device, inode), matching the stable `FileStatus` ABI used by .NET itself. Cleanup remains unchanged on Windows and abstract Unix sockets remain filesystem-free.
-- The internal packet writer stays allocation-free and raw for generated/runtime hot paths. The duplicate raw protocol writer/token are made internal instead of adding identity checks or a header-validation switch to every frame.
-- The API cleanup is limited to symbols with no current generator/runtime/documentation consumer. Supported manifest catalogs, codec adapters, sessions, stream dispatchers, and transport contracts remain public.
+- Preserve any path entry when a bound Unix socket has no captured identity; a possible stale socket is safer than deleting an entry whose ownership cannot be proven.
+- Capture each validated profile/provider pair once in the runtime snapshot. Provider execution remains delegated to the original thread-safe instance; only mutable wire identity is frozen.
+- Normalize undefined authentication codes at the server trust boundary even when a provider bypasses the `Reject` factory through the public primary constructor.
+- Saturate positive timeouts at `DateTimeOffset.MaxValue`; preserve rejection of zero/negative values and earlier explicit deadlines.
+- Size admission slots exactly and transfer a single acquired lease directly for one non-retained limiter. Preserve the general multi-rule and queued ownership path. A measured shared-pool implementation is unacceptable if rent/return overhead regresses latency.
 
 ## Acceptance checklist
 
-- A custom mutable endpoint is cloned through `Create(Serialize())` and later source mutations cannot alter the snapshot.
-- Listener disposal deletes its own unchanged Unix socket node but preserves any path replacement.
-- Raw frame/packet writers and their caller-forgeable offset tokens are no longer exported as supported public abstractions.
-- Anonymous-pipe offers redact handles and provide idempotent completion of the parent-side handle transfer.
-- Dead registries/interfaces/set disappear, while implementation-only collection and packet helpers are no longer exported.
-- Existing behavior and runtime hot-path performance remain stable.
+- Cleanup with a bound path but no captured identity preserves a replacement file.
+- A provider profile mutation after Build cannot alter lookup or negotiation identity.
+- Undefined provider rejection codes reach the peer as `AuthenticationRejected` rather than faulting the handshake encoder.
+- `TimeSpan.MaxValue` default request timeout sends a cancellable request with a valid far-future deadline.
+- Warm immediate admission stays below a measured per-call allocation ceiling after eliminating its three framework-owned arrays.
+- Existing uncompressed, built-in compression, authentication, timeout, and UDS paths remain stable.
 
-## Rejected/deferred hypotheses
+## Deferred/rejected signals
 
-Full outbound frame-header validation would add work to every generated frame for misuse that is already caught by the receiving parser, so it is not bundled with the concrete cross-writer corruption fix. Shared-memory `PipeReader` contract misuse and multi-cluster deferred-unregister polling remain low-value/internal hypotheses without a production witness.
+The shared-memory reader contains one duplicate `SetNext` call; it is harmless cleanup. Multi-cluster deferred unregister polling after Faulted state is not promoted because the owning client still requires explicit disposal and already retains the registration itself. A custom compression-provider overrun was also rejected: the runtime supplies an exact-capacity leased `PooledByteBufferWriter`, and the pre-fix proof showed it already throws before exposing one byte beyond the negotiated/declared bound. The first admission implementation pooled bounded arrays and reduced allocation to 232 B/call, but its 93.996 ns mean regressed the 58.477 ns baseline by about 60.7%; it was removed. Exact slots plus the direct single-lease path measured 49.262 ns / 288 B.

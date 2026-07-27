@@ -148,6 +148,35 @@ public sealed class AdmissionControlTests
     }
 
     [Test]
+    public async Task ImmediateAdmissionShouldNotAllocateThreeTransientArraysPerCall()
+    {
+        var options = new SharpLinkAdmissionControlOptions();
+        options.Global.UseConcurrency(1);
+        await using var controller = SharpLinkAdmissionController.Create(options, []);
+        var context = CreateContext();
+        for (var index = 0; index < 2_000; index++)
+        {
+            var warmup = await controller.AcquireAsync(
+                context, 1, allowQueue: false, CancellationToken.None);
+            warmup.Lease!.Dispose();
+        }
+
+        const int iterations = 20_000;
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < iterations; index++)
+        {
+            var decision = await controller.AcquireAsync(
+                context, 1, allowQueue: false, CancellationToken.None);
+            decision.Lease!.Dispose();
+        }
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        var bytesPerCall = allocated / iterations;
+
+        Ensure(bytesPerCall <= 320,
+            $"immediate admission allocated {bytesPerCall} B/call after warm-up");
+    }
+
+    [Test]
     public async Task PartitionCapacityShouldProtectActiveEntryAndReclaimIdleEntry()
     {
         var key = "first";

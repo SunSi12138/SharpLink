@@ -3,16 +3,24 @@ namespace SharpLink.Runtime;
 public sealed partial class RpcSession
 {
     private ISharpLinkCompressionProvider? _compressionProvider;
+    private string? _compressionProfile;
 
-    internal string? CompressionProfile => Volatile.Read(ref _compressionProvider)?.WireProfile;
+    internal string? CompressionProfile => Volatile.Read(ref _compressionProfile);
 
     internal void EnableCompression(ISharpLinkCompressionProvider provider)
+        => EnableCompression(provider, provider.WireProfile);
+
+    internal void EnableCompression(
+        ISharpLinkCompressionProvider provider,
+        string wireProfile)
     {
         ArgumentNullException.ThrowIfNull(provider);
+        SharpLinkCompressionProfile.Validate(wireProfile, nameof(wireProfile));
         if ((NegotiatedCapabilities & ProtocolV2Capabilities.Compression) == 0)
             throw new InvalidOperationException("Compression was not negotiated for this session.");
         if (Interlocked.CompareExchange(ref _compressionProvider, provider, null) is not null)
             throw new InvalidOperationException("Compression is already enabled for this session.");
+        Volatile.Write(ref _compressionProfile, wireProfile);
     }
 
     private IRpcByteBufferWriter PrepareOutboundPacket(
@@ -80,7 +88,7 @@ public sealed partial class RpcSession
             {
                 throw new SharpLinkCompressionProviderException(
                     SharpLinkErrorCode.Internal,
-                    $"Compression provider '{provider.WireProfile}' failed before the frame was queued.",
+                    $"Compression provider '{CompressionProfile}' failed before the frame was queued.",
                     exception);
             }
 
@@ -89,7 +97,7 @@ public sealed partial class RpcSession
             {
                 throw new SharpLinkCompressionProviderException(
                     SharpLinkErrorCode.Internal,
-                    $"Compression provider '{provider.WireProfile}' reported inconsistent consumed or written bytes.");
+                    $"Compression provider '{CompressionProfile}' reported inconsistent consumed or written bytes.");
             }
             if (!RuntimeContext.Compression.IsBeneficial(
                     originalLength,
@@ -167,14 +175,14 @@ public sealed partial class RpcSession
             {
                 throw new SharpLinkException(
                     SharpLinkErrorCode.DataLoss,
-                    $"Compressed payload for '{provider.WireProfile}' is truncated, corrupt, or exceeds its declared length.",
+                    $"Compressed payload for '{CompressionProfile}' is truncated, corrupt, or exceeds its declared length.",
                     exception);
             }
             catch (Exception exception)
             {
                 throw new SharpLinkException(
                     SharpLinkErrorCode.Internal,
-                    $"Compression provider '{provider.WireProfile}' failed while decoding a frame.",
+                    $"Compression provider '{CompressionProfile}' failed while decoding a frame.",
                     exception);
             }
 

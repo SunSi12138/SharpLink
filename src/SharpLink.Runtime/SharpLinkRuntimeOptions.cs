@@ -133,11 +133,5 @@ public sealed class SharpLinkRuntimeOptions
     private static void CopyCompression(
         SharpLinkCompressionOptions source,
         SharpLinkCompressionOptions destination)
-    {
-        destination.MinimumPayloadBytes = source.MinimumPayloadBytes;
-        destination.MinimumSavingsBytes = source.MinimumSavingsBytes;
-        destination.MinimumSavingsRatio = source.MinimumSavingsRatio;
-        foreach (var provider in source.Providers)
-            destination.Providers.Add(provider);
-    }
+        => source.CopyValidatedSnapshotTo(destination);
 }

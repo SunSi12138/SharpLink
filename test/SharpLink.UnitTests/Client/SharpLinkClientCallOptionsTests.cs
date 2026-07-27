@@ -90,6 +90,28 @@ public class SharpLinkClientCallOptionsTests
     }
 
     [Test]
+    public async Task MaximumPositiveDefaultTimeoutShouldSaturateAndSendTheRequest()
+    {
+        var transport = new TestClientTransportFactory();
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            requestTimeout: TimeSpan.MaxValue);
+        await client.ConnectAsync();
+
+        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var request = await transport.Connection
+            .WaitForSentPacket(ProtocolV2FrameType.Request)
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
+
+        Ensure(await invocation == 0, "maximum positive timeout should not fail before send");
+        Ensure((request.Flags & ProtocolV2FrameFlags.HasDeadline) != 0,
+            "saturated timeout should retain an explicit far-future deadline");
+    }
+
+    [Test]
     public async Task WaitForReadyShouldRetryZeroAdmissionDelayWithABoundedYield()
     {
         var transport = new TestClientTransportFactory();

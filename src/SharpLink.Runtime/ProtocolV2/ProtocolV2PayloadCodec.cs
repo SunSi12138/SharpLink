@@ -631,7 +631,7 @@ public static class ProtocolV2PayloadCodec
         }
     }
 
-    private static bool IsDefinedErrorCode(SharpLinkErrorCode code) => code switch
+    internal static bool IsDefinedErrorCode(SharpLinkErrorCode code) => code switch
     {
         SharpLinkErrorCode.Unknown or
         SharpLinkErrorCode.RemoteError or

@@ -310,10 +310,10 @@ internal sealed partial class SharpLinkClient
                 SharpLinkErrorCode.ResourceExhausted,
                 $"Authentication payload exceeds {_protocolOptions.MaxMetadataBytes} bytes.");
         }
-        var compressionProfiles = _runtimeContext.Compression.Providers.Count == 0
+        var compressionProfiles = _runtimeContext.Compression.ProviderBindings.Count == 0
             ? ReadOnlyMemory<string>.Empty
-            : _runtimeContext.Compression.Providers
-                .Select(static provider => provider.WireProfile)
+            : _runtimeContext.Compression.ProviderBindings
+                .Select(static binding => binding.WireProfile)
                 .ToArray();
         var supportedCapabilities =
             ProtocolV2Capabilities.Metadata |
@@ -358,11 +358,11 @@ internal sealed partial class SharpLinkClient
                         var runtimeSession = (RpcSession)session;
                         runtimeSession.NegotiatedCapabilities = response.NegotiatedCapabilities;
                         runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
-                        var compressionProvider = ValidateNegotiatedCompression(
+                        var compressionBinding = ValidateNegotiatedCompression(
                             response,
                             compressionProfiles.Span);
-                        if (compressionProvider is not null)
-                            runtimeSession.EnableCompression(compressionProvider);
+                        if (compressionBinding is { } binding)
+                            runtimeSession.EnableCompression(binding.Provider, binding.WireProfile);
                         if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
                         {
                             runtimeSession.EnableStreamFlowControl(
@@ -410,7 +410,7 @@ internal sealed partial class SharpLinkClient
             : CreateConnectionClosedException("Server disconnected during handshake.");
     }
 
-    private ISharpLinkCompressionProvider? ValidateNegotiatedCompression(
+    private SharpLinkCompressionProviderBinding? ValidateNegotiatedCompression(
         in ProtocolV2HandshakeResponse response,
         ReadOnlySpan<string> offeredProfiles)
     {
@@ -437,8 +437,8 @@ internal sealed partial class SharpLinkClient
                 break;
             }
         }
-        var provider = offered ? _runtimeContext.Compression.FindProvider(profile) : null;
-        return provider ?? throw CreateProtocolViolationException(
+        var binding = offered ? _runtimeContext.Compression.FindProviderBinding(profile) : null;
+        return binding ?? throw CreateProtocolViolationException(
             $"The server selected compression profile '{profile}' that the client did not offer.");
     }
 
