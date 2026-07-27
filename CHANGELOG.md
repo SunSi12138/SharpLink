@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [1.0.0-rc1] - 2026-07-28
+
+### Release candidate
+
+- Froze the documented public API, Protocol v2 minor-3 wire layout, generated contract surface, package graph, feature demos, operational limits, and release process for final scenario, soak, and performance validation.
+- Confirmed bidirectional independent-process TCP interoperability between the final 0.8 series and the RC code using generated DTO and scalar calls. Protocol v1 and handshake layouts other than minor 3 remain unsupported.
+- Publishes seven consistently versioned libraries with complete XML IntelliSense documentation and matching portable-PDB symbol packages; `SharpLink.Sdk` continues to carry the source generator rather than publishing it as an eighth package.
+
+### Publication status
+
+- This checkpoint is retained locally while the exact-RC performance matrix and long-running soak are completed. No tag, GitHub Release, or NuGet package has been created.
+- Public publication additionally requires the repository `release` Environment, NuGet.org Trusted Publishing policy, private vulnerability reporting, Dependabot alerts, and an initial clean CodeQL result described in `doc/releasing.md`.
+
 ## [0.9.2] - 2026-07-28
 
 ### Fixed
