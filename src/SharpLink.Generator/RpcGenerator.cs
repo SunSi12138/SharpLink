@@ -4,6 +4,10 @@ namespace SharpLink.Generator;
 public partial class RpcGenerator : IIncrementalGenerator
 {
     private static readonly CultureInfo InvariantCulture = CultureInfo.InvariantCulture;
+    private static readonly SymbolDisplayFormat FullyQualifiedNullableFormat =
+        SymbolDisplayFormat.FullyQualifiedFormat.WithMiscellaneousOptions(
+            SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions |
+            SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
     private static readonly string ExecutingGeneratorVersion =
         typeof(RpcGenerator).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
     private const string RpcContractAttributeMetadataName = "SharpLink.Sdk.RpcContractAttribute";

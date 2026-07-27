@@ -1076,10 +1076,14 @@ public partial class RpcGenerator
             .Select(m =>
             {
                 var returnType = m.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                var displayReturnType = m.ReturnType.ToDisplayString(FullyQualifiedNullableFormat);
                 var isGenericTask = m.ReturnType is INamedTypeSymbol { IsGenericType: true } &&
                                     m.ReturnType.ToDisplayString().StartsWith("System.Threading.Tasks");
                 var genericArg = isGenericTask
                     ? ((INamedTypeSymbol)m.ReturnType).TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                    : null;
+                var displayGenericArg = isGenericTask
+                    ? ((INamedTypeSymbol)m.ReturnType).TypeArguments[0].ToDisplayString(FullyQualifiedNullableFormat)
                     : null;
 
                 var isNonGenericTaskLike = m.ReturnType.ToDisplayString() is "System.Threading.Tasks.Task" or "System.Threading.Tasks.ValueTask";
@@ -1089,17 +1093,21 @@ public partial class RpcGenerator
 
                 var isStreamReturn = false;
                 string? streamItemType = null;
+                string? displayStreamItemType = null;
                 if (IsAsyncEnumerable(m.ReturnType, out var itemTypeSymbol))
                 {
                     isStreamReturn = true;
                     streamItemType = itemTypeSymbol!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    displayStreamItemType = itemTypeSymbol.ToDisplayString(FullyQualifiedNullableFormat);
                     isGenericTask = false;
                     genericArg = null;
+                    displayGenericArg = null;
                 }
 
                 var paramArray = m.Parameters.Select(p =>
                 {
                     var pType = p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    var displayPType = p.Type.ToDisplayString(FullyQualifiedNullableFormat);
                     var isStream = IsAsyncEnumerable(p.Type, out var pItemType);
                     var isValueType = p.Type.IsValueType;
                     var isNullableReference = !isValueType && p.NullableAnnotation == NullableAnnotation.Annotated;
@@ -1109,8 +1117,10 @@ public partial class RpcGenerator
                     return new RpcParameterModel(
                         p.Name,
                         pType,
+                        displayPType,
                         isStream,
                         isStream ? pItemType!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) : null,
+                        isStream ? pItemType!.ToDisplayString(FullyQualifiedNullableFormat) : null,
                         IsInlineFixedRpcType(p.Type),
                         isValueType,
                         isNullableReference,
@@ -1122,9 +1132,11 @@ public partial class RpcGenerator
                         p.Locations.FirstOrDefault());
                 }).ToImmutableArray();
 
-                var paramTypes = paramArray
-                    .Where(p => !p.IsCancellationToken && !p.IsCallOptions)
-                    .Select(p => p.Type)
+                var paramTypes = m.Parameters
+                    .Where(static parameter =>
+                        !IsCancellationTokenParameter(parameter) &&
+                        !IsCallOptionsParameter(parameter))
+                    .Select(p => p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
                     .ToArray();
                 var methodHash = Hashing.GetMethodHash(m.Name, paramTypes);
 
@@ -1146,10 +1158,13 @@ public partial class RpcGenerator
                 return new RpcMethodModel(
                     Name: m.Name,
                     ReturnType: returnType,
+                    DisplayReturnType: displayReturnType,
                     IsGenericTask: isGenericTask,
                     IsStreamReturn: isStreamReturn,
                     StreamItemType: streamItemType,
+                    DisplayStreamItemType: displayStreamItemType,
                     GenericArgumentType: genericArg,
+                    DisplayGenericArgumentType: displayGenericArg,
                     IsVoid: m.ReturnsVoid || isNonGenericTaskLike,
                     IsOneWay: isOneWay,
                     HasCancellationToken: paramArray.Any(p => p.IsCancellationToken),

@@ -219,6 +219,114 @@ public class InterceptorIntegrationTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task ServerInterceptorMustJoinAnInvokedContinuation()
+    {
+        InterceptorTestService.ResetDelayedCall();
+        await using var harness = await InterceptorHarness.CreateAsync(
+            serverInterceptor: new AbandoningServerInterceptor());
+        var call = harness.Client.Get<IInterceptorTestService>().DelayedAsync().AsTask();
+        try
+        {
+            await InterceptorTestService.DelayedCallStarted.WaitAsync(TimeSpan.FromSeconds(3));
+            await Task.Delay(50);
+            Ensure(!call.IsCompleted, "server interceptor must not abandon its invoked continuation");
+        }
+        finally
+        {
+            InterceptorTestService.ReleaseDelayedCall();
+        }
+        Ensure(await call.WaitAsync(TimeSpan.FromSeconds(3)) == 42,
+            "joined server continuation response");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ClientInterceptorMustJoinAnInvokedContinuation()
+    {
+        InterceptorTestService.ResetDelayedCall();
+        await using var harness = await InterceptorHarness.CreateAsync(
+            clientInterceptor: new AbandoningClientInterceptor(777));
+        var call = harness.Client.Get<IInterceptorTestService>().DelayedAsync().AsTask();
+        try
+        {
+            await InterceptorTestService.DelayedCallStarted.WaitAsync(TimeSpan.FromSeconds(3));
+            await Task.Delay(50);
+            Ensure(!call.IsCompleted, "client interceptor must not orphan its invoked continuation");
+        }
+        finally
+        {
+            InterceptorTestService.ReleaseDelayedCall();
+        }
+        Ensure(await call.WaitAsync(TimeSpan.FromSeconds(3)) == 777,
+            "joined client continuation may still transform the result");
+    }
+
+    [Test]
+    public async Task NonNullableResponsesMustRejectNullAtEveryGeneratedBoundary()
+    {
+        await using var harness = await InterceptorHarness.CreateAsync();
+        var service = harness.Client.Get<IInterceptorTestService>();
+
+        var unary = await CaptureSharpLinkException(service.RequiredNullAsync().AsTask());
+        Ensure(unary.Code == SharpLinkErrorCode.Internal, "required unary null response");
+        Ensure(await service.OptionalNullAsync() is null, "optional unary null response");
+
+        var requiredStream = service.RequiredNullStreamAsync().GetAsyncEnumerator();
+        try
+        {
+            var streamFailure = await CaptureSharpLinkException(requiredStream.MoveNextAsync().AsTask());
+            Ensure(streamFailure.Code == SharpLinkErrorCode.Internal, "required stream null response");
+        }
+        finally
+        {
+            await requiredStream.DisposeAsync();
+        }
+
+        var optionalStream = service.OptionalNullStreamAsync().GetAsyncEnumerator();
+        try
+        {
+            Ensure(await optionalStream.MoveNextAsync() && optionalStream.Current is null,
+                "optional stream null response");
+        }
+        finally
+        {
+            await optionalStream.DisposeAsync();
+        }
+
+        var requiredShortCircuit = new TrackingShortCircuitClientInterceptor(null);
+        await using (var client = CreateDisconnectedClient(requiredShortCircuit))
+        {
+            var failure = await CaptureException(
+                client.Get<IInterceptorTestService>().RequiredNullAsync().AsTask());
+            Ensure(failure is InvalidCastException, "required Client short-circuit null response");
+            Ensure(requiredShortCircuit.Context?.Status == SharpLinkInvocationStatus.Failed,
+                "required Client short-circuit null status");
+        }
+
+        var optionalShortCircuit = new TrackingShortCircuitClientInterceptor(null);
+        await using (var client = CreateDisconnectedClient(optionalShortCircuit))
+        {
+            Ensure(await client.Get<IInterceptorTestService>().OptionalNullAsync() is null,
+                "optional Client short-circuit null response");
+            Ensure(optionalShortCircuit.Context?.Status == SharpLinkInvocationStatus.Succeeded,
+                "optional Client short-circuit null status");
+        }
+    }
+
+    [Test]
+    public async Task UndefinedMappedErrorCodeMustFallBackToInternal()
+    {
+        await using var harness = await InterceptorHarness.CreateAsync(
+            exceptionMapper: new UndefinedCodeExceptionMapper());
+        var failure = await CaptureSharpLinkException(
+            harness.Client.Get<IInterceptorTestService>().FailAsync().AsTask());
+
+        Ensure(failure.Code == SharpLinkErrorCode.Internal,
+            "undefined mapper code must use the safe Internal boundary");
+    }
+
+    [Test]
     public async Task AsyncServerInterceptorShouldOwnArgumentsUntilNextCompletes()
     {
         var interceptor = new DelayedFirstServerInterceptor();
@@ -452,6 +560,17 @@ public class InterceptorIntegrationTests
         }
     }
 
+    private sealed class AbandoningClientInterceptor(int value) : ISharpLinkClientInterceptor
+    {
+        public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+        {
+            _ = next(context);
+            return ValueTask.FromResult(new SharpLinkClientInvocationResult(value));
+        }
+    }
+
     private sealed class RecordingServerInterceptor : ISharpLinkServerInterceptor
     {
         public SharpLinkServerInvocationContext? Context { get; private set; }
@@ -587,6 +706,17 @@ public class InterceptorIntegrationTests
         }
     }
 
+    private sealed class AbandoningServerInterceptor : ISharpLinkServerInterceptor
+    {
+        public ValueTask InvokeAsync(
+            SharpLinkServerInvocationContext context,
+            SharpLinkServerInvocationDelegate next)
+        {
+            _ = next(context);
+            return ValueTask.CompletedTask;
+        }
+    }
+
     private sealed class DelayedFirstServerInterceptor : ISharpLinkServerInterceptor
     {
         private readonly TaskCompletionSource<bool> _entered =
@@ -618,6 +748,12 @@ public class InterceptorIntegrationTests
             => exception is InvalidOperationException
                 ? new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "public-failure", exception)
                 : new SharpLinkException(SharpLinkErrorCode.Internal, "internal", exception);
+    }
+
+    private sealed class UndefinedCodeExceptionMapper : IRpcExceptionMapper
+    {
+        public SharpLinkException Map(Exception exception, SharpLinkServerInvocationContext context)
+            => new((SharpLinkErrorCode)int.MaxValue, "undefined", exception);
     }
 
     private sealed class InterceptorHarness : IAsyncDisposable
@@ -695,6 +831,16 @@ public interface IInterceptorTestService : IService
     ValueTask<int> FailAsync();
     [NonCancellable]
     ValueTask<int> CountInvocationAsync();
+    [NonCancellable]
+    ValueTask<int> DelayedAsync();
+    [NonCancellable]
+    ValueTask<string> RequiredNullAsync();
+    [NonCancellable]
+    ValueTask<string?> OptionalNullAsync();
+    [NonCancellable]
+    IAsyncEnumerable<string> RequiredNullStreamAsync();
+    [NonCancellable]
+    IAsyncEnumerable<string?> OptionalNullStreamAsync();
     [Oneway]
     [NonCancellable]
     ValueTask NotifyAsync(int value);
@@ -707,10 +853,22 @@ public interface IInterceptorTestService : IService
 public sealed class InterceptorTestService : IInterceptorTestService
 {
     private static int _invocationCount;
+    private static TaskCompletionSource<bool> s_delayedCallStarted = CreateGate();
+    private static TaskCompletionSource<bool> s_delayedCallRelease = CreateGate();
 
     public static int InvocationCount => Volatile.Read(ref _invocationCount);
 
     public static void ResetInvocationCount() => Volatile.Write(ref _invocationCount, 0);
+
+    public static Task DelayedCallStarted => Volatile.Read(ref s_delayedCallStarted).Task;
+
+    public static void ResetDelayedCall()
+    {
+        Volatile.Write(ref s_delayedCallStarted, CreateGate());
+        Volatile.Write(ref s_delayedCallRelease, CreateGate());
+    }
+
+    public static void ReleaseDelayedCall() => Volatile.Read(ref s_delayedCallRelease).TrySetResult(true);
 
     public ValueTask<string> DescribeAsync(int value, SharpLinkCallOptions options)
     {
@@ -728,6 +886,29 @@ public sealed class InterceptorTestService : IInterceptorTestService
 
     public ValueTask<int> CountInvocationAsync()
         => ValueTask.FromResult(Interlocked.Increment(ref _invocationCount));
+
+    public async ValueTask<int> DelayedAsync()
+    {
+        Volatile.Read(ref s_delayedCallStarted).TrySetResult(true);
+        await Volatile.Read(ref s_delayedCallRelease).Task.ConfigureAwait(false);
+        return 42;
+    }
+
+    public ValueTask<string> RequiredNullAsync() => ValueTask.FromResult<string>(null!);
+
+    public ValueTask<string?> OptionalNullAsync() => ValueTask.FromResult<string?>(null);
+
+    public async IAsyncEnumerable<string> RequiredNullStreamAsync()
+    {
+        await Task.Yield();
+        yield return null!;
+    }
+
+    public async IAsyncEnumerable<string?> OptionalNullStreamAsync()
+    {
+        await Task.Yield();
+        yield return null;
+    }
 
     public ValueTask NotifyAsync(int value) => ValueTask.CompletedTask;
 
@@ -747,4 +928,7 @@ public sealed class InterceptorTestService : IInterceptorTestService
         await Task.Yield();
         throw new InvalidOperationException("secret-service-detail");
     }
+
+    private static TaskCompletionSource<bool> CreateGate()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
 }

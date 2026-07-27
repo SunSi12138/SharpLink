@@ -1,12 +1,12 @@
-# 0.8.39 regression-test plan
+# 0.8.40 regression-test plan
 
-1. [x] Prove Server interceptors cannot observe terminal failures before unwind.
-2. [x] Prove response-bearing Server interceptors can silently omit the terminal.
-3. [x] Prove wrong Client short-circuit types publish Succeeded before caller failure.
-4. [x] Prove Client stream enumeration captures a supplied synchronization context.
-5. [x] Prove generated malformed request shapes are misclassified instead of DataLoss.
-6. [x] Run complete pre-fix affected suites and preserve all existing passes.
-7. [x] Implement only proven fixes and complete assertion/pseudo-mutation review.
+1. [x] Prove empty generated invocation categories leak legacy Internal errors.
+2. [x] Prove non-wire SharpLink error codes break safe error delivery.
+3. [x] Prove Server interceptors can abandon an invoked continuation.
+4. [x] Prove Client interceptors can orphan an invoked terminal attempt.
+5. [x] Prove non-nullable unary/stream responses accept null.
+6. [x] Preserve complete pre-fix existing-suite passes and review assertions/pseudo-mutations.
+7. [x] Implement only stable proven fixes and remove only truly unused abstractions.
 8. [x] Run non-incremental Release and complete Generator/Unit/Integration gates.
 9. [x] Run exact-baseline performance, Chaos, NativeAOT, and package gates.
-10. [x] Update bilingual 0.8.39 documentation and commit locally.
+10. [x] Update bilingual 0.8.40 documentation and commit locally.

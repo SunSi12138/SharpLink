@@ -12,7 +12,8 @@ public class LegacyApiSurfaceTests
             "SharpLink.Abstractions.GeneratedProxyRegistry",
             "SharpLink.Abstractions.GeneratedStubRegistry",
             "SharpLink.Abstractions.ISerializer",
-            "SharpLink.Abstractions.IServiceRegister"
+            "SharpLink.Abstractions.IServiceRegister",
+            "SharpLink.Abstractions.RpcException"
         };
         foreach (var name in obsoleteAbstractions)
             await Assert.That(abstractions.GetType(name, throwOnError: false)).IsNull();

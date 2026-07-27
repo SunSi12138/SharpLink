@@ -198,7 +198,7 @@ public partial class PluginGraph
 
 Client/Server 不需要 resolver 或手工注册自动 Adapter Codec。高级自定义 formatter 可由调用方创建 `SharpPackSerializerContext`，再通过 `SharpPackRpcCodec.Create<T>(context)` 显式 `UseCodec`；该 Codec 仍保持最高优先级且 Context 所有权属于调用方。
 
-每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context；自动 Context 拥有独立 formatter graph，不使用进程级默认 formatter slot，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。详细设计见 [`doc/architecture-0.7.11.md`](doc/architecture-0.7.11.md)；升级 0.8.x 前请阅读 [`doc/migration-0.8.39.md`](doc/migration-0.8.39.md)。
+每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context；自动 Context 拥有独立 formatter graph，不使用进程级默认 formatter slot，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。详细设计见 [`doc/architecture-0.7.11.md`](doc/architecture-0.7.11.md)；升级 0.8.x 前请阅读 [`doc/migration-0.8.40.md`](doc/migration-0.8.40.md)。
 
 ## 协商压缩
 
@@ -584,6 +584,7 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 0.7.8 endpoint admission 与 circuit breaker：`doc/architecture-0.7.8.md`
 - 0.7.9 迁移、组合验证与 API freeze：`doc/migration-0.7.9.md`
 - 0.7.9 本地性能与组合 smoke：`doc/performance-0.7.9.md`
+- 0.8.40 interceptor continuation、结构化错误与 response nullability 审核：`doc/audit-0.8.40.md`、`doc/migration-0.8.40.md`、`doc/performance-0.8.40.md`
 - 0.8.39 interceptor 调用边界、client stream context 与 malformed request 分类审核：`doc/audit-0.8.39.md`、`doc/migration-0.8.39.md`、`doc/performance-0.8.39.md`
 - 0.8.38 生成构造计划、指针工件与 interceptor 取消状态审核：`doc/audit-0.8.38.md`、`doc/migration-0.8.38.md`、`doc/performance-0.8.38.md`
 - 0.8.37 Generator 类型边界与合法 C# 产物审核：`doc/audit-0.8.37.md`、`doc/migration-0.8.37.md`、`doc/performance-0.8.37.md`

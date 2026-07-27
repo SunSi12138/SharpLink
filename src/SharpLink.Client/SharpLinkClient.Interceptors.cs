@@ -45,7 +45,7 @@ internal sealed partial class SharpLinkClient
     {
         var invocation = new ServerStreamingInterceptorState<TRequest, TResponse>(
             this, method, request, requestCodec, responseCodec, options, cancellationToken).InvokeAsync();
-        return new InterceptedAsyncEnumerable<TResponse>(invocation);
+        return new InterceptedAsyncEnumerable<TResponse>(invocation, method.ResponseNullable);
     }
 
     private IAsyncEnumerable<TResponse> InvokeDuplexStreamingIntercepted<TRequest, TResponse, TStreams>(
@@ -60,7 +60,7 @@ internal sealed partial class SharpLinkClient
     {
         var invocation = new DuplexStreamingInterceptorState<TRequest, TResponse, TStreams>(
             this, method, request, requestCodec, responseCodec, streams, options, cancellationToken).InvokeAsync();
-        return new InterceptedAsyncEnumerable<TResponse>(invocation);
+        return new InterceptedAsyncEnumerable<TResponse>(invocation, method.ResponseNullable);
     }
 
     private abstract class ClientInterceptorState
@@ -123,13 +123,75 @@ internal sealed partial class SharpLinkClient
             if (index >= _client._clientInterceptors.Length)
                 return InvokeTerminalTrackedAsync(context);
 
-            var continuation = new ClientInterceptorContinuation(this, index + 1);
-            return _client._clientInterceptors[index].InvokeAsync(context, continuation.InvokeAsync);
+            var continuation = new ClientInterceptorContinuation(
+                ClientContinuationState.Rent(this, index + 1));
+            ValueTask<SharpLinkClientInvocationResult> invocation;
+            try
+            {
+                invocation = _client._clientInterceptors[index].InvokeAsync(context, continuation.InvokeAsync);
+            }
+            catch (Exception exception)
+            {
+                invocation = ValueTask.FromException<SharpLinkClientInvocationResult>(exception);
+            }
+            if (!invocation.IsCompletedSuccessfully)
+            {
+                if (continuation.IsSameInvocation(invocation))
+                    return invocation;
+                return AwaitInterceptorAndContinuationAsync(invocation, continuation);
+            }
+            var result = invocation.Result;
+            var continuationCompletion = continuation.JoinAsync();
+            return continuationCompletion.IsCompletedSuccessfully
+                ? ValueTask.FromResult(result)
+                : AwaitContinuationAsync(result, continuationCompletion);
         }
 
-        private sealed class ClientInterceptorContinuation(ClientInterceptorState owner, int nextIndex)
+        private static async ValueTask<SharpLinkClientInvocationResult> AwaitContinuationAsync(
+            SharpLinkClientInvocationResult result,
+            ValueTask continuationCompletion)
+        {
+            await continuationCompletion.ConfigureAwait(false);
+            return result;
+        }
+
+        private static async ValueTask<SharpLinkClientInvocationResult> AwaitInterceptorAndContinuationAsync(
+            ValueTask<SharpLinkClientInvocationResult> invocation,
+            ClientInterceptorContinuation continuation)
+        {
+            SharpLinkClientInvocationResult result = default;
+            Exception? invocationException = null;
+            try
+            {
+                result = await invocation.ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                invocationException = exception;
+            }
+
+            try
+            {
+                await continuation.JoinAsync().ConfigureAwait(false);
+            }
+            catch (Exception continuationException) when (
+                ReferenceEquals(invocationException, continuationException))
+            {
+                // The interceptor awaited next and propagated the same failure.
+            }
+            catch (Exception continuationException) when (invocationException is not null)
+            {
+                throw new AggregateException(invocationException, continuationException);
+            }
+            if (invocationException is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(invocationException).Throw();
+            return result;
+        }
+
+        private sealed class ClientInterceptorContinuation(ClientContinuationState state)
         {
             private int _invoked;
+            private ClientContinuationState? _state = state;
 
             public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
                 SharpLinkClientInvocationContext context)
@@ -139,7 +201,121 @@ internal sealed partial class SharpLinkClient
                     return ValueTask.FromException<SharpLinkClientInvocationResult>(
                         new InvalidOperationException("An interceptor continuation can only be invoked once."));
                 }
-                return owner.InvokeNextAsync(nextIndex, context);
+                return (_state ?? throw new InvalidOperationException("The interceptor continuation has expired."))
+                    .InvokeAsync(context);
+            }
+
+            public ValueTask JoinAsync()
+            {
+                var state = Interlocked.Exchange(ref _state, null);
+                return state is null ? ValueTask.CompletedTask : state.JoinAndReturnAsync();
+            }
+
+            public bool IsSameInvocation(ValueTask<SharpLinkClientInvocationResult> invocation)
+            {
+                var state = _state;
+                if (state is null || !state.IsSameInvocation(invocation))
+                    return false;
+                if (!ReferenceEquals(Interlocked.CompareExchange(ref _state, null, state), state))
+                    return false;
+                state.Return();
+                return true;
+            }
+        }
+
+        private sealed class ClientContinuationState
+        {
+            private const int MaxRetained = 4096;
+            private static ClientContinuationState? s_cached;
+            private static int s_retained;
+
+            private ClientInterceptorState? _owner;
+            private ClientContinuationState? _nextCached;
+            private int _nextIndex;
+            private ValueTask<SharpLinkClientInvocationResult> _completion;
+            private int _completionAvailable;
+
+            public static ClientContinuationState Rent(ClientInterceptorState owner, int nextIndex)
+            {
+                ClientContinuationState state;
+                while (true)
+                {
+                    state = Volatile.Read(ref s_cached)!;
+                    if (state is null)
+                    {
+                        state = new ClientContinuationState();
+                        break;
+                    }
+                    if (ReferenceEquals(
+                            Interlocked.CompareExchange(ref s_cached, state._nextCached, state),
+                            state))
+                    {
+                        Interlocked.Decrement(ref s_retained);
+                        break;
+                    }
+                }
+                state._nextCached = null;
+                state._owner = owner;
+                state._nextIndex = nextIndex;
+                return state;
+            }
+
+            public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+                SharpLinkClientInvocationContext context)
+            {
+                var invocation = (_owner ?? throw new InvalidOperationException("The interceptor continuation has expired."))
+                    .InvokeNextAsync(_nextIndex, context);
+                _completion = invocation;
+                Volatile.Write(ref _completionAvailable, 1);
+                return invocation;
+            }
+
+            public bool IsSameInvocation(ValueTask<SharpLinkClientInvocationResult> invocation)
+                => Volatile.Read(ref _completionAvailable) != 0 && _completion.Equals(invocation);
+
+            public ValueTask JoinAndReturnAsync()
+            {
+                if (Volatile.Read(ref _completionAvailable) == 0 || _completion.IsCompleted)
+                {
+                    Return();
+                    return ValueTask.CompletedTask;
+                }
+                return AwaitCompletionAndReturnAsync(this, _completion);
+            }
+
+            public void Return()
+            {
+                _owner = null;
+                _nextIndex = 0;
+                _completion = default;
+                Volatile.Write(ref _completionAvailable, 0);
+                if (Interlocked.Increment(ref s_retained) > MaxRetained)
+                {
+                    Interlocked.Decrement(ref s_retained);
+                    return;
+                }
+                ClientContinuationState? head;
+                do
+                {
+                    head = Volatile.Read(ref s_cached);
+                    _nextCached = head;
+                } while (!ReferenceEquals(
+                    Interlocked.CompareExchange(ref s_cached, this, head),
+                    head));
+            }
+
+            private static async ValueTask AwaitCompletionAndReturnAsync(
+                ClientContinuationState state,
+                ValueTask<SharpLinkClientInvocationResult> completion)
+            {
+                try
+                {
+                    _ = await completion.ConfigureAwait(false);
+                }
+                finally
+                {
+                    state.Return();
+                }
             }
         }
 
@@ -211,7 +387,11 @@ internal sealed partial class SharpLinkClient
             => (await InvokeAsync().ConfigureAwait(false)).GetValue<TResponse>();
 
         protected override void ValidateResult(SharpLinkClientInvocationResult result)
-            => _ = result.GetValue<TResponse>();
+        {
+            var value = result.GetValue<TResponse>();
+            if (!Context.Method.ResponseNullable && default(TResponse) is null && value is null)
+                throw new InvalidCastException("A non-nullable intercepted RPC response was null.");
+        }
 
         protected override async ValueTask<SharpLinkClientInvocationResult> InvokeTerminalAsync(
             SharpLinkClientInvocationContext context)
@@ -300,7 +480,11 @@ internal sealed partial class SharpLinkClient
             => (await InvokeAsync().ConfigureAwait(false)).GetValue<TResponse>();
 
         protected override void ValidateResult(SharpLinkClientInvocationResult result)
-            => _ = result.GetValue<TResponse>();
+        {
+            var value = result.GetValue<TResponse>();
+            if (!Context.Method.ResponseNullable && default(TResponse) is null && value is null)
+                throw new InvalidCastException("A non-nullable intercepted RPC response was null.");
+        }
 
         protected override async ValueTask<SharpLinkClientInvocationResult> InvokeTerminalAsync(
             SharpLinkClientInvocationContext context)
@@ -397,7 +581,8 @@ internal sealed partial class SharpLinkClient
     }
 
     private sealed class InterceptedAsyncEnumerable<T>(
-        ValueTask<SharpLinkClientInvocationResult> invocation) : IAsyncEnumerable<T>
+        ValueTask<SharpLinkClientInvocationResult> invocation,
+        bool responseNullable) : IAsyncEnumerable<T>
     {
         private int _enumerated;
 
@@ -409,7 +594,11 @@ internal sealed partial class SharpLinkClient
 
             var stream = (await invocation.ConfigureAwait(false)).GetValue<IAsyncEnumerable<T>>();
             await foreach (var item in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
+            {
+                if (!responseNullable && default(T) is null && item is null)
+                    throw new InvalidCastException("A non-nullable intercepted RPC stream response was null.");
                 yield return item;
+            }
         }
     }
 }

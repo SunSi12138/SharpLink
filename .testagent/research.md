@@ -1,60 +1,74 @@
-# 0.8.39 regression-test research
+# 0.8.40 regression-test research
 
 ## Candidate inventory
 
-- Server terminal invocation records only success. When the terminal throws, interceptor frames
-  unwind before the outer pipeline records failure, so an interceptor catching `next` observes a
-  still-Pending context with no error code or exception. The equivalent Client terminal records
-  failure before unwinding.
-- A Server interceptor can return successfully without invoking `next` for a response-bearing
-  call. The pipeline marks the context Succeeded and sends an empty success response that fails
-  later in the Client Codec; the Server API provides no way for that interceptor to create a
-  replacement response.
-- Client interceptor result type validation occurs after the tracked pipeline has marked the
-  context Succeeded. A wrong short-circuit type therefore throws `InvalidCastException` to the
-  caller while the retained context claims success.
-- `ClientConnection.SendClientStreamAsync` is the only framework `await foreach` over application
-  stream input that does not use `ConfigureAwait(false)`. An incomplete `MoveNextAsync` can post
-  every producer continuation back to a caller synchronization context.
-- Generated fixed/request decoders and `RpcEmptyRequestCodec` use `InvalidDataException` for
-  malformed wire input, while generated DTO and built-in Codec boundaries use structured
-  `SharpLinkErrorCode.DataLoss`. On the Server, the default exception mapper turns the former into
-  `Internal`, misclassifying peer-controlled malformed request data as an application failure.
+- Generated Stubs whose contract has no methods in one invocation category throw the legacy public
+  `RpcException`; the equivalent non-empty switch default already returns structured Unimplemented.
+- `SharpLinkException` accepts Unknown and undefined enum values even though Protocol v2 refuses to
+  serialize them. A custom mapper/interceptor can therefore break error delivery instead of safely
+  producing Internal.
+- A response-bearing Server interceptor can invoke an incomplete continuation, discard its
+  `ValueTask`, and return. The 0.8.39 invoked guard passes while the response owner is still in use.
+- A Client interceptor can start an incomplete terminal continuation, discard it, and immediately
+  return a short-circuit result. The orphan attempt continues after the logical call completes.
+- Generator nullability participates in contract metadata and request validation, but non-nullable
+  top-level and stream responses can still serialize or short-circuit null as a successful result.
 
 ## Acceptance boundary
 
-- Record Server terminal failure/cancellation status, code, exception, and elapsed time before
-  unwinding through interceptor code; retain the outer catch as the pipeline-level fallback.
-- For response-bearing Server calls, returning from an interceptor without invoking its
-  continuation fails locally as `Internal`; OneWay interception retains its existing no-response
-  behavior.
-- Validate every Client interceptor result inside the tracked pipeline before success is
-  published. Correct unary, stream, one-way, and short-circuit results remain unchanged.
-- Configure only the framework-side client-stream enumeration await; user iterator internals keep
-  their own context semantics.
-- Generated/empty request wire validation throws structured DataLoss without changing valid bytes
-  or mapping arbitrary application `InvalidDataException` to a public peer error.
+- Every unknown method shape returns structured Unimplemented; remove the now-unused public
+  `RpcException` abstraction.
+- Reject non-wire SharpLink error codes at construction so mapper failures fall through the existing
+  safe Internal boundary; all defined concrete codes remain valid.
+- If an interceptor invokes `next`, the pipeline must join that continuation before completing even
+  when interceptor code discards it. Preserve synchronous fast paths and valid result transformation.
+- Enforce generated response nullability for service unary/stream results and Client interceptor
+  short circuits; nullable reference responses remain valid and value-type paths do not allocate.
 
-## Planned evidence
+## Planned evidence and pseudo-mutations
 
-- Add a Server interceptor that catches a failing service continuation and snapshots context state
-  before rethrowing.
-- Add a no-next Server interceptor for a value-returning call and distinguish the current Client
-  decode failure from the intended Server-side structured failure.
-- Add a wrong-type Client short circuit and retain its context after caller failure.
-- Use a controlled incomplete `IAsyncEnumerator.MoveNextAsync` plus a counting synchronization
-  context to prove the framework consumer posts back today.
-- Execute generated request Codec and Stub malformed shapes for non-canonical Boolean, truncation,
-  invalid length/null, trailing bytes, and empty requests, asserting DataLoss at each boundary.
+- Generate response-only and no-response-only contracts and assert both empty category dispatchers
+  use Unimplemented while `RpcException` is absent from the public assembly.
+- Exercise Unknown and an undefined code directly and through a custom exception mapper.
+- Hold a terminal call behind a deterministic gate while Client and Server interceptors discard
+  `next`; prove the outer call currently completes before the terminal.
+- Return null for non-nullable/nullable unary and stream contracts, including a Client short circuit.
+- A check that only tests `WasInvoked`, only scalar results, or only service responses must leave at
+  least one witness failing. Joining must not add work to the zero-interceptor path.
+
+## Preserved pre-fix evidence
+
+- Exact baseline: local 0.8.39 commit `8fffab767ce76c70a6c459148a288a07594e69ea`.
+- Generator suite: 118 established tests passed and only
+  `EmptyInvocationCategoriesMustUseStructuredUnimplemented` failed because generated source still
+  contained `RpcException`.
+- Targeted Abstractions suite: 21 established tests passed and only the new public-surface and
+  non-wire-code witnesses failed.
+- Interceptor Integration class: 14 established tests passed and exactly the four new witnesses
+  failed. The pre-fix compilation also emitted CS8613/CS8604 at generated Proxy/Stub nullability
+  boundaries.
 
 ## Assertion and pseudo-mutation review
 
-- Updating only the outer Server pipeline must leave the interceptor's pre-unwind snapshot failing;
-  updating only the terminal must leave no-next detection failing.
-- A simple non-null result check must not satisfy wrong scalar, wrong stream, or non-null OneWay
-  results; positive short-circuit controls prevent rejecting valid results.
-- Moving user production to `Task.Run` would hide the synchronization-context witness but add a
-  task hop; the exact `ConfigureAwait(false)` assertion preserves the allocation-free synchronous
-  fast path.
-- Mapping all `InvalidDataException` in the public exception mapper must fail the application-code
-  control; the generated trust boundary itself owns DataLoss classification.
+- Replacing Unimplemented with Internal or restoring `RpcException` fails independent generated
+  source and reflected public-surface assertions.
+- Accepting either Unknown or an undefined enum value fails the direct constructor witness; allowing
+  the three-argument path also breaks the custom-mapper Internal fallback witness.
+- Retaining only `WasInvoked` fails both deterministic gate tests: the outer call must remain pending
+  until the discarded continuation completes. The Client test additionally proves the interceptor's
+  transformed result is preserved.
+- Enforcing only unary or only stream nullability leaves a witness failing; enforcing only generated
+  service output leaves the Client short-circuit witness failing. Nullable counterparts prove the
+  guard is not unconditional.
+- Nullable source display is separated from protocol identity. Generated C# preserves `?`, while
+  method IDs, request schemas, manifest wire-type lookup, and existing contract names remain based on
+  the prior non-nullable runtime type spelling.
+- The first full Unit run exposed one implementation regression: an interceptor that awaited `next`
+  caused the same downstream exception to be observed twice and aggregated. Client and Server now
+  preserve that exception identity and aggregate only genuinely independent failures; the exact old
+  retry test and complete suites pass.
+- The first exact-baseline performance probe rejected eager `ValueTask.AsTask()` sharing at
+  approximately 1,808 versus 1,584 B/op. Final join state uses a bounded self-node pool, direct
+  forwarding remains allocation-free, and descriptor Boolean flags pack response nullability without
+  expanding interceptor contexts. Final allocation is approximately 1,560 B/op, descriptor size is
+  40 versus the exact baseline's 48 bytes, and latency ranges overlap.

@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [0.8.40] - 2026-07-27
+
+### Fixed
+
+- Generated Stubs now classify absent invocation categories as structured `Unimplemented`; the obsolete public `RpcException` type has been removed.
+- `SharpLinkException` rejects `Unknown` and undefined error codes at construction, so invalid custom mapper output falls through the Server's safe `Internal` boundary instead of breaking Protocol v2 error serialization.
+- Client and Server interceptor pipelines join an invoked incomplete continuation even when interceptor code discards its `ValueTask`, preventing orphaned terminal calls and response-buffer lifetime races.
+- Generated Proxy/Stub signatures preserve nullable reference annotations, and non-nullable scalar/stream responses reject null at generated service and Client short-circuit boundaries while nullable responses remain valid.
+
+### Compatibility and validation
+
+- Valid Protocol v2 framing, route hashes, request schemas, manifest wire types, and payload layouts are unchanged. Generated method metadata adds response nullability; its Boolean flags are packed into a 40-byte descriptor while retaining both the legacy nine-value and new ten-value deconstruction shapes.
+- Pre-fix Generator preserved 118 existing passes and failed only the new empty-category proof; targeted Abstractions preserved 21 existing passes and failed exactly two new code/public-surface proofs; the Interceptor Integration class preserved 14 existing passes and failed exactly four new join/nullability/mapper proofs.
+- Non-incremental Release built with zero warnings/errors; Generator 119/119, Unit 486/486, Integration 250/250, 120-second shared-memory Chaos, NativeAOT TCP, seven-package pack, and fresh-cache TCP/shared-memory package smoke passed. Exact-0.8.39/candidate intercepted-RPC process medians were 39.845 -> 40.234 microseconds (+0.98%, overlapping ranges), while allocation fell from approximately 1,584 to 1,560 B/op.
+
 ## [0.8.39] - 2026-07-27
 
 ### Fixed

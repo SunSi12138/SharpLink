@@ -361,9 +361,9 @@ public interface ITaskPayloadContract : SharpLink.Sdk.IService
         Ensure(proxyStart >= 0 && proxyEnd > proxyStart &&
                generated.AsSpan(proxyStart, proxyEnd - proxyStart).Contains(".AsTask();", StringComparison.Ordinal),
             "Task<T> Proxy emission must convert the channel ValueTask using outer Task semantics");
-        Ensure(generated.Contains("Serialize(pending.GetAwaiter().GetResult(), output)", StringComparison.Ordinal),
+        Ensure(generated.Contains("__SerializeResponse(pending.GetAwaiter().GetResult(), false, session, output)", StringComparison.Ordinal),
             "Task<T> Stub emission must use Task result semantics even when T contains 'ValueTask'");
-        Ensure(generated.Contains("return __AwaitTaskResultAsync(pending, session, output);", StringComparison.Ordinal),
+        Ensure(generated.Contains("return __AwaitTaskResultAsync(pending, false, session, output);", StringComparison.Ordinal),
             "Task<T> Stub emission must await the outer Task type");
         Ensure(!generated.Contains("Serialize(pending.Result, output)", StringComparison.Ordinal),
             "Task<T> must not use the ValueTask-only Result path");
@@ -591,11 +591,11 @@ public sealed class HelloService : IHelloService
         Ensure(allGenerated.Contains("public bool SupportsCancellation(long methodHash)"),
             "streaming stubs must publish framework cancellation support");
         Ensure(allGenerated.Contains(
-                "RpcMethodKind.ClientStreaming, true, true, false, null, false, 1)",
+                "RpcMethodKind.ClientStreaming, true, true, false, null, false, 1, false)",
                 StringComparison.Ordinal),
             "single client-stream count must be generated deterministically");
         Ensure(allGenerated.Contains(
-                "RpcMethodKind.ClientStreaming, true, true, false, null, false, 2)",
+                "RpcMethodKind.ClientStreaming, true, true, false, null, false, 2, false)",
                 StringComparison.Ordinal),
             "multiple client-stream count must be generated deterministically");
         var supportsCancellationCases = allGenerated.Split("=> true", StringSplitOptions.None).Length - 1;
@@ -2571,6 +2571,34 @@ public interface IRequestDataLossContract : SharpLink.Sdk.IService
             "peer-controlled generated request wire failures must not leak unstructured InvalidDataException");
         Ensure(CountOccurrences(generated, "throw RpcGeneratedCodecWire.DataLoss(") >= 8,
             "request Codec and Stub must classify marker, truncation, length, null, and trailing failures as DataLoss");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task EmptyInvocationCategoriesMustUseStructuredUnimplemented()
+    {
+        var responseOnly = string.Join("\n", RunGeneratorAndGetSources(BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IResponseOnlyContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Get(CancellationToken cancellationToken);
+}
+""")));
+        var noResponseOnly = string.Join("\n", RunGeneratorAndGetSources(BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface INoResponseOnlyContract : SharpLink.Sdk.IService
+{
+    [SharpLink.Sdk.Oneway]
+    ValueTask Notify(CancellationToken cancellationToken);
+}
+""")));
+
+        Ensure(!responseOnly.Contains("RpcException", StringComparison.Ordinal) &&
+               !noResponseOnly.Contains("RpcException", StringComparison.Ordinal),
+            "empty invocation categories must not emit the legacy unstructured exception");
+        Ensure(responseOnly.Contains("SharpLinkErrorCode.Unimplemented", StringComparison.Ordinal) &&
+               noResponseOnly.Contains("SharpLinkErrorCode.Unimplemented", StringComparison.Ordinal),
+            "both empty invocation categories must return structured Unimplemented");
         return Task.CompletedTask;
     }
 

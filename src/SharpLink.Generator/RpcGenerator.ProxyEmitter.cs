@@ -72,7 +72,7 @@ public partial class RpcGenerator
             ? $"TimeSpan.FromSeconds({seconds.ToString("R", InvariantCulture)}d)"
             : "null";
         sb.AppendLine(
-            $"    private static readonly RpcMethodDescriptor __method_{suffix} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount});");
+            $"    private static readonly RpcMethodDescriptor __method_{suffix} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")});");
 
         if (GetPayloadParameters(method).Length != 0)
             sb.AppendLine($"    private readonly IRpcCodec<{GetRequestType(model, method)}> __requestCodec_{suffix};");
@@ -83,7 +83,7 @@ public partial class RpcGenerator
     private static void AppendProxyMethod(StringBuilder sb, RpcInterfaceModel model, RpcMethodModel method)
     {
         var suffix = GetMethodSuffix(method);
-        var parameterList = string.Join(", ", method.Parameters.Select(parameter => $"{parameter.Type} {EscapeIdentifier(parameter.Name)}"));
+        var parameterList = string.Join(", ", method.Parameters.Select(parameter => $"{parameter.DisplayType} {EscapeIdentifier(parameter.Name)}"));
         var payloadParameters = GetPayloadParameters(method);
         var streamParameters = GetStreamParameters(method);
         var requestType = payloadParameters.Length == 0 ? "RpcEmptyRequest" : GetRequestType(model, method);
@@ -102,7 +102,7 @@ public partial class RpcGenerator
         var requestLocal = GetUniqueGeneratedLocalName(method, "__request");
         var streamsLocal = GetUniqueGeneratedLocalName(method, "__streams");
 
-        sb.AppendLine($"    public {method.ReturnType} {EscapeIdentifier(method.Name)}({parameterList})");
+        sb.AppendLine($"    public {method.DisplayReturnType} {EscapeIdentifier(method.Name)}({parameterList})");
         sb.AppendLine("    {");
         sb.AppendLine($"        var {requestLocal} = {requestValue};");
         if (streamParameters.Length != 0 || method.IsOneWay)
@@ -188,8 +188,8 @@ public partial class RpcGenerator
         sb.AppendLine($"internal readonly struct {requestType}");
         sb.AppendLine("{");
         foreach (var parameter in parameters)
-            sb.AppendLine($"    internal readonly {parameter.Type} {EscapeIdentifier(parameter.Name)};");
-        sb.AppendLine($"    internal {requestType}({string.Join(", ", parameters.Select(static parameter => $"{parameter.Type} {EscapeIdentifier(parameter.Name)}"))})");
+            sb.AppendLine($"    internal readonly {parameter.DisplayType} {EscapeIdentifier(parameter.Name)};");
+        sb.AppendLine($"    internal {requestType}({string.Join(", ", parameters.Select(static parameter => $"{parameter.DisplayType} {EscapeIdentifier(parameter.Name)}"))})");
         sb.AppendLine("    {");
         foreach (var parameter in parameters)
             sb.AppendLine($"        this.{EscapeIdentifier(parameter.Name)} = {EscapeIdentifier(parameter.Name)};");
@@ -199,12 +199,12 @@ public partial class RpcGenerator
         sb.AppendLine($"internal sealed class {codecType} : IRpcCodec<{requestType}>");
         sb.AppendLine("{");
         foreach (var parameter in complex)
-            sb.AppendLine($"    private readonly IRpcCodec<{parameter.Type}> __codec_{parameter.Name};");
+            sb.AppendLine($"    private readonly IRpcCodec<{parameter.DisplayType}> __codec_{parameter.Name};");
         sb.AppendLine($"    internal {codecType}(IRpcCodecProvider codecs)");
         sb.AppendLine("    {");
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(codecs);");
         foreach (var parameter in complex)
-            sb.AppendLine($"        __codec_{parameter.Name} = codecs.GetCodec<{parameter.Type}>();");
+            sb.AppendLine($"        __codec_{parameter.Name} = codecs.GetCodec<{parameter.DisplayType}>();");
         sb.AppendLine("    }");
 
         sb.AppendLine($"    public void Serialize(in {requestType} value, IBufferWriter<byte> writer)");
@@ -290,8 +290,8 @@ public partial class RpcGenerator
         sb.AppendLine($"internal readonly struct {streamsType} : IRpcClientStreamWriter");
         sb.AppendLine("{");
         foreach (var stream in streams)
-            sb.AppendLine($"    private readonly {stream.Type} _{stream.Name};");
-        sb.AppendLine($"    internal {streamsType}({string.Join(", ", streams.Select(static stream => $"{stream.Type} {EscapeIdentifier(stream.Name)}"))})");
+            sb.AppendLine($"    private readonly {stream.DisplayType} _{stream.Name};");
+        sb.AppendLine($"    internal {streamsType}({string.Join(", ", streams.Select(static stream => $"{stream.DisplayType} {EscapeIdentifier(stream.Name)}"))})");
         sb.AppendLine("    {");
         foreach (var stream in streams)
             sb.AppendLine($"        _{stream.Name} = {EscapeIdentifier(stream.Name)};");
@@ -325,7 +325,7 @@ public partial class RpcGenerator
         => method.Parameters.Where(static parameter => parameter.IsStream).ToArray();
 
     private static string GetResponseType(RpcMethodModel method)
-        => method.IsStreamReturn ? method.StreamItemType! : method.IsVoid ? "byte" : method.GenericArgumentType!;
+        => method.IsStreamReturn ? method.DisplayStreamItemType! : method.IsVoid ? "byte" : method.DisplayGenericArgumentType!;
 
     private static string GetMethodKind(RpcMethodModel method)
     {

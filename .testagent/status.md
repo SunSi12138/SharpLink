@@ -1,21 +1,24 @@
-# 0.8.39 test status
+# 0.8.40 test status
 
 ## Evidence status
 
-- Exact baseline is local 0.8.38 commit `d863dc31f74e49f5cb48de59ba43436510702933`.
-- All five P2 roots have deterministic pre-fix evidence: Generator retained 117 existing passes and
-  failed only the generated-wire proof; Unit failed only the empty-request proof; Integration
-  retained nine interceptor passes and failed exactly four new proofs.
-- Post-fix non-incremental Release is 0 warnings/errors; Generator is 118/118, Unit 484/484, and
-  Integration 246/246 after the stream/OneWay pseudo-mutation controls were added.
-- Exact-baseline/candidate interceptor process medians are 41.267/40.831 microseconds (-1.06%)
-  with unchanged approximately 1,584.02-1,584.05 B/op.
-- The 120-second shared-memory Chaos gate passed with 837,357 successes, 330,087 expected
-  failures, zero unexpected failures, 23 restarts, zero Client/Server Errors, and all five final
-  metrics at zero. NativeAOT TCP and fresh-cache 0.8.39 package TCP/shared-memory smoke passed.
+- Exact baseline is local 0.8.39 commit `8fffab767ce76c70a6c459148a288a07594e69ea`.
+- All five candidates have deterministic pre-fix failures against unchanged 0.8.39 production,
+  causal fixes, negative controls, and reviewed pseudo-mutation coverage.
+- Non-incremental Release build: 0 warnings, 0 errors.
+- Complete post-fix suites: Generator 119/119, Unit 486/486, Integration 250/250.
+- Exact pre-existing retry regression that caught duplicate exception aggregation: 1/1 passed after
+  preserving shared exception identity.
+- Exact-baseline/candidate intercepted process medians: 39.845 -> 40.234 microseconds (+0.98%,
+  overlapping ranges); allocation: approximately 1,584 -> 1,560 B/op. Plain allocation remains
+  approximately 320 B/op and `RpcMethodDescriptor` is 40 versus 48 bytes.
+- Final 120-second shared-memory Chaos: 817,230 success, 318,950 expected, zero unexpected, 23
+  restarts, zero Client/Server Errors, 222 ms maximum recovery, drained with five zero metrics.
+- NativeAOT TCP, seven-package pre-commit pack, and fresh-cache TCP/shared-memory functional smoke
+  passed.
 - Consecutive complete audit rounds without a new improvement remain 0/3.
 
 ## Current gate
 
-- The 0.8.39 batch is locally committed after final source review. Verify exact-commit package
-  metadata and fresh-cache package gates, then begin the next audit batch from the clean exact HEAD.
+- Finish documentation review, run the final versioned build/test gate, commit locally, then repack
+  from the exact commit and verify package repository/version metadata.
