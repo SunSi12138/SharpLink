@@ -57,6 +57,7 @@ public static class Program
         Console.WriteLine("  --consumer-delay-ms 0 --early-break-after 0 --pause-after 0 --pause-ms 0");
         Console.WriteLine("  --min-connections 1 --max-connections 1");
         Console.WriteLine("  --profile balanced|lowlatency|throughput");
+        Console.WriteLine("  --max-send-queue-bytes 67108864 (optional bounded throughput-test override)");
         Console.WriteLine("  --shm-name sharplink-stream-loadtest --shm-capacity 8388608 --shm-spin-count 8");
         Console.WriteLine("  --detailed-shm-evidence (diagnostic counters; do not use for formal timing)");
         Console.WriteLine("  --json-output artifacts/perf/stream.json");
@@ -76,6 +77,7 @@ public static class Program
         Console.WriteLine(
             $"[Config] concurrency=[{string.Join(',', options.ConcurrencyConfig)}] " +
             $"pool={options.MinConnections}/{options.MaxConnections} profile={options.PerformanceProfile} " +
+            $"sendQueue={options.MaxSendQueueBytes?.ToString() ?? "profile-default"}B " +
             $"delay={options.ConsumerDelayMilliseconds}ms earlyBreak={options.EarlyBreakAfter} " +
             $"pause={options.PauseAfter}/{options.PauseMilliseconds}ms");
 
@@ -109,7 +111,9 @@ public static class Program
             options.PerformanceProfile,
             sharedMemoryName: options.SharedMemoryName,
             sharedMemoryCapacity: options.SharedMemoryCapacity,
-            sharedMemorySpinCount: options.SharedMemorySpinCount);
+            sharedMemorySpinCount: options.SharedMemorySpinCount,
+            configureServerRuntime: runtime => ConfigureRuntime(runtime, options),
+            configureClientRuntime: runtime => ConfigureRuntime(runtime, options));
 
         using var serverCts = new CancellationTokenSource();
         var serverTask = RunServerLoopAsync(harness.Server, serverCts.Token);
@@ -161,7 +165,8 @@ public static class Program
             options.PerformanceProfile,
             options.SharedMemoryName,
             options.SharedMemoryCapacity,
-            options.SharedMemorySpinCount);
+            options.SharedMemorySpinCount,
+            runtime => ConfigureRuntime(runtime, options));
 
         Console.WriteLine("[Server] started");
         await server.RunAsync(cancel.Token);
@@ -185,7 +190,8 @@ public static class Program
             options.PerformanceProfile,
             sharedMemoryName: options.SharedMemoryName,
             sharedMemoryCapacity: options.SharedMemoryCapacity,
-            sharedMemorySpinCount: options.SharedMemorySpinCount);
+            sharedMemorySpinCount: options.SharedMemorySpinCount,
+            configureRuntime: runtime => ConfigureRuntime(runtime, options));
 
         try
         {
@@ -356,6 +362,14 @@ public static class Program
 
     private static IReadOnlyList<string> ResolveOperations(string op)
         => op == "all" ? ["unary", "c2s", "s2c", "duplex"] : [op];
+
+    private static void ConfigureRuntime(
+        SharpLinkRuntimeOptions runtime,
+        StreamLoadOptions options)
+    {
+        if (options.MaxSendQueueBytes is { } maxSendQueueBytes)
+            runtime.FlowControl.MaxSendQueueBytes = maxSendQueueBytes;
+    }
 }
 
 public sealed class StreamLoadOptions
@@ -386,6 +400,7 @@ public sealed class StreamLoadOptions
     public int PauseAfter { get; private init; }
     public int PauseMilliseconds { get; private init; }
     public SharpLinkPerformanceProfile PerformanceProfile { get; private init; } = SharpLinkPerformanceProfile.Balanced;
+    public int? MaxSendQueueBytes { get; private init; }
     public string? JsonOutputPath { get; private init; }
 
     public static StreamLoadOptions Parse(string[] args)
@@ -449,6 +464,9 @@ public sealed class StreamLoadOptions
             "throughput" => SharpLinkPerformanceProfile.Throughput,
             _ => throw new ArgumentException($"Unsupported performance profile: {profileText}.")
         };
+        var maxSendQueueBytes = ParseOptionalInt(map, "max-send-queue-bytes");
+        if (maxSendQueueBytes is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxSendQueueBytes));
 
         return new StreamLoadOptions
         {
@@ -479,6 +497,7 @@ public sealed class StreamLoadOptions
             PauseAfter = ParseNonNegative(map, "pause-after"),
             PauseMilliseconds = ParseNonNegative(map, "pause-ms"),
             PerformanceProfile = profile,
+            MaxSendQueueBytes = maxSendQueueBytes,
             JsonOutputPath = map.GetValueOrDefault("json-output")
         };
     }

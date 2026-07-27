@@ -350,6 +350,15 @@ public sealed partial class RpcSession : IRpcSession
             await completion.Task.WaitAsync(ct).ConfigureAwait(false);
     }
 
+    internal ValueTask SendPacketWithBackpressureAsync(
+        IRpcByteBufferWriter packet,
+        CancellationToken cancellationToken = default)
+        => SendPacketAsync(
+            packet,
+            waitForCapacity: true,
+            forceFlush: false,
+            cancellationToken);
+
     private void ValidateOutboundPacketOrReturn(IRpcByteBufferWriter packet, bool allowEmpty)
     {
         try

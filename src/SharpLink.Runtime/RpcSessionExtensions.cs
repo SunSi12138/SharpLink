@@ -89,6 +89,29 @@ public static class RpcSessionExtensions
             }
         }
 
+        internal async ValueTask SendPacketWithBackpressureAsync(
+            ProtocolV2FrameType frameType,
+            ProtocolV2FrameFlags flags,
+            long requestId,
+            CancellationToken cancellationToken = default)
+        {
+            var writer = GetRuntimeSession(session).RentFrameWriter();
+            var ownsWriter = true;
+            try
+            {
+                writer.WritePacket(frameType, flags, unchecked((ulong)requestId));
+                ownsWriter = false;
+                await GetRuntimeSession(session)
+                    .SendPacketWithBackpressureAsync(writer, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                if (ownsWriter)
+                    session.RuntimeContext.Buffers.Return(writer);
+            }
+        }
+
         /// <summary>Maps and sends a bounded RPC response error.</summary>
         public void SendRpcErrorAsync(long requestId, Exception exception)
         {
@@ -104,6 +127,26 @@ public static class RpcSessionExtensions
                 code,
                 message,
                 GetMaxErrorMessageBytes(session));
+        }
+
+        internal ValueTask SendRpcErrorWithBackpressureAsync(
+            long requestId,
+            Exception exception,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(exception);
+            var code = exception is SharpLinkException sharpLinkException
+                ? sharpLinkException.Code
+                : SharpLinkErrorCode.Internal;
+            var message = exception is SharpLinkException ? exception.Message : "Internal service error.";
+            return SendErrorFrameWithBackpressureAsync(
+                session,
+                ProtocolV2FrameType.Response,
+                requestId,
+                code,
+                message,
+                GetMaxErrorMessageBytes(session),
+                cancellationToken);
         }
 
         /// <summary>Sends a negotiated protocol cancellation for one active request.</summary>
@@ -469,6 +512,37 @@ public static class RpcSessionExtensions
             ownsWriter = false;
             await GetRuntimeSession(session)
                 .SendPacketAndFlushAsync(writer, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            if (ownsWriter)
+                session.RuntimeContext.Buffers.Return(writer);
+        }
+    }
+
+    private static async ValueTask SendErrorFrameWithBackpressureAsync(
+        IRpcSession session,
+        ProtocolV2FrameType frameType,
+        long requestId,
+        SharpLinkErrorCode code,
+        string? message,
+        int maxMessageBytes,
+        CancellationToken cancellationToken)
+    {
+        var writer = GetRuntimeSession(session).RentFrameWriter();
+        var ownsWriter = true;
+        try
+        {
+            var token = writer.BeginPacket(
+                frameType, ProtocolV2FrameFlags.Error, unchecked((ulong)requestId));
+            ProtocolV2PayloadCodec.WriteError(writer, code, message, maxMessageBytes, out var truncated);
+            writer.EndPacket(token);
+            if (truncated)
+                SetTruncatedFlag(writer, token);
+            ownsWriter = false;
+            await GetRuntimeSession(session)
+                .SendPacketWithBackpressureAsync(writer, cancellationToken)
                 .ConfigureAwait(false);
         }
         finally

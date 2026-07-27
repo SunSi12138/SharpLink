@@ -34,7 +34,9 @@ fi
 TRANSPORTS_CSV="${SHARPLINK_MATRIX_TRANSPORTS:-$DEFAULT_TRANSPORTS}"
 PROFILES_CSV="${SHARPLINK_MATRIX_PROFILES:-$DEFAULT_PROFILES}"
 PAYLOADS_CSV="${SHARPLINK_MATRIX_PAYLOADS:-$DEFAULT_PAYLOADS}"
-CONCURRENCY="${SHARPLINK_MATRIX_CONCURRENCY:-$DEFAULT_CONCURRENCY}"
+CONCURRENCY_OVERRIDE="${SHARPLINK_MATRIX_CONCURRENCY:-}"
+CONCURRENCY="${CONCURRENCY_OVERRIDE:-$DEFAULT_CONCURRENCY}"
+MAX_SEND_QUEUE_BYTES="${SHARPLINK_MATRIX_MAX_SEND_QUEUE_BYTES:-67108864}"
 WARMUP="${SHARPLINK_MATRIX_WARMUP:-$DEFAULT_WARMUP}"
 DURATION="${SHARPLINK_MATRIX_DURATION:-$DEFAULT_DURATION}"
 STREAM_OPERATION="${SHARPLINK_MATRIX_STREAM_OPERATION:-$DEFAULT_STREAM_OPERATION}"
@@ -42,6 +44,24 @@ WORKLOADS=",${SHARPLINK_MATRIX_WORKLOADS:-unary,oneway,oneway-backpressure,async
 IFS=',' read -r -a TRANSPORTS <<< "$TRANSPORTS_CSV"
 IFS=',' read -r -a PROFILES <<< "$PROFILES_CSV"
 IFS=',' read -r -a PAYLOADS <<< "$PAYLOADS_CSV"
+
+if [[ ! "$MAX_SEND_QUEUE_BYTES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "SHARPLINK_MATRIX_MAX_SEND_QUEUE_BYTES must be a positive integer." >&2
+  exit 2
+fi
+
+concurrency_for_payload() {
+  local payload="$1"
+  if [[ -n "$CONCURRENCY_OVERRIDE" || "$TIER" != "full" ]]; then
+    echo "$CONCURRENCY"
+  elif (( payload >= 1048576 )); then
+    echo "1,8,32"
+  elif (( payload >= 65536 )); then
+    echo "1,8,32,128"
+  else
+    echo "$CONCURRENCY"
+  fi
+}
 
 if [[ ! -d "$ROOT/test/SharpLink.LoadTest" || ! -d "$ROOT/test/SharpLink.StreamLoadTest" ]]; then
   echo "SharpLink matrix root is invalid: $ROOT" >&2
@@ -110,15 +130,16 @@ for runtime in "${RUNTIME_LIST[@]}"; do
           if [[ "$WORKLOADS" == *,unary,* ]]; then
             for payload in "${PAYLOADS[@]}"; do
               operation=echo
+              payload_concurrency="$(concurrency_for_payload "$payload")"
               if [[ "$payload" == "0" ]]; then
                 operation=empty
               fi
               run_project "$runtime" test/SharpLink.LoadTest \
                 --mode local --transport "$transport" --operation "$operation" \
-                --payload-size "$payload" --concurrency "$CONCURRENCY" \
+                --payload-size "$payload" --concurrency "$payload_concurrency" \
                 --warmup "$WARMUP" --duration "$DURATION" --metrics-port 0 \
                 --profile "$profile" --min-connections "$min_connections" \
-                --max-connections "$max_connections" \
+                --max-connections "$max_connections" --max-send-queue-bytes "$MAX_SEND_QUEUE_BYTES" \
                 --json-output "$prefix-unary-$payload.json"
             done
           fi
@@ -133,7 +154,7 @@ for runtime in "${RUNTIME_LIST[@]}"; do
               --payload-size 0 --concurrency 1 \
               --warmup "$WARMUP" --duration "$DURATION" --metrics-port 0 \
               --profile "$profile" --min-connections "$min_connections" \
-              --max-connections "$max_connections" \
+              --max-connections "$max_connections" --max-send-queue-bytes "$MAX_SEND_QUEUE_BYTES" \
               --json-output "$prefix-oneway.json"
           fi
 
@@ -154,7 +175,7 @@ for runtime in "${RUNTIME_LIST[@]}"; do
                 --payload-size 0 --concurrency "$CONCURRENCY" \
                 --warmup "$WARMUP" --duration "$DURATION" --metrics-port 0 \
                 --profile "$profile" --min-connections "$min_connections" \
-                --max-connections "$max_connections" \
+                --max-connections "$max_connections" --max-send-queue-bytes "$MAX_SEND_QUEUE_BYTES" \
                 --json-output "$prefix-$operation.json"
             done
           fi
@@ -164,7 +185,7 @@ for runtime in "${RUNTIME_LIST[@]}"; do
               --mode local --transport "$transport" --operation "$STREAM_OPERATION" --stream-size 256 \
               --concurrency "$CONCURRENCY" --warmup "$WARMUP" --duration "$DURATION" \
               --profile "$profile" --min-connections "$min_connections" \
-              --max-connections "$max_connections" \
+              --max-connections "$max_connections" --max-send-queue-bytes "$MAX_SEND_QUEUE_BYTES" \
               --json-output "$prefix-streams.json"
           fi
         done

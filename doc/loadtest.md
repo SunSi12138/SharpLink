@@ -133,6 +133,7 @@ dotnet run -c Release --project test/SharpLink.LoadTest -- \
 - `--heartbeat-timeout`: 心跳超时秒
 - `--min-connections`: Client 初始连接数（默认 `1`）
 - `--max-connections`: Client 压力扩容上限（默认 `1`，范围 `1..64`）
+- `--max-send-queue-bytes`: 可选的有界 SendPump 容量覆盖；正式吞吐对比应让 Client 与 Server 使用同一个固定值
 
 `anonymous` 传输的 `--max-connections` 必须为 `1`。验证连接池时可在 TCP/UDS/NamedPipe/SharedMemory 模式增加 `--min-connections 1 --max-connections 4`；最终实际连接数仍由并发压力触发，不会按每次 RPC 新建连接。
 
@@ -143,7 +144,6 @@ LoadTest 专有：
 - `--compression`: `none | brotli`（默认 `none`）
 - `--compression-level`: `fastest | optimal | smallest | nocompression`（默认 `fastest`，仅影响本地编码）
 - `--compression-min-payload`、`--compression-min-savings-bytes`、`--compression-min-savings-ratio`: 压缩收益策略（默认 `1024 / 64 / 0.05`）
-- `--max-send-queue-bytes`: 可选的有界 SendPump 容量覆盖；大 payload 吞吐对比应让所有配置使用相同值
 - `--payload-pattern`: `compressible | random`，随机输入使用固定 seed
 - `--metrics-port`: Prometheus 端口（`<=0` 关闭，默认 `9464`）
 
@@ -177,7 +177,7 @@ StreamLoadTest 专有：
 - SharedMemory 模式默认记录 negotiated capacity、notification backend、spill/wait/实际 notification 计数
 - 使用 `--detailed-shm-evidence` 时，额外记录直接写入、spill 原因与复制、staging、通知请求/合并及游标刷新；这些高频观测会扰动热路径，只能作为诊断证据
 
-`eng/run-performance-matrix.sh` 的 full tier 覆盖全部适用本机传输、三个 profile、payload `0/32/256/4096/65536/1048576`、并发 `1/8/32/128/256/512`、连接池 `1/1` 与 `1/4`。默认执行五轮，偶数轮反转传输顺序；原始 JSON 写入 `artifacts/performance/current/matrix`。SharedMemory 的正式基线必须同时列出同平台 TCP、UDS、NamedPipe 和 AnonymousPipe，不只选择有利对照。NativeAOT 独立进程 smoke 使用 `eng/run-shared-memory-aot-process-smoke.sh`。
+`eng/run-performance-matrix.sh` 的 full tier 覆盖全部适用本机传输、三个 profile、payload `0/32/256/4096/65536/1048576`、连接池 `1/1` 与 `1/4`。小 payload 使用并发 `1/8/32/128/256/512`，64 KiB 使用 `1/8/32/128`，1 MiB 使用 `1/8/32`；显式设置 `SHARPLINK_MATRIX_CONCURRENCY` 时按调用者给定列表执行。正常吞吐场景固定 Client/Server send queue 为 64 MiB（可由 `SHARPLINK_MATRIX_MAX_SEND_QUEUE_BYTES` 覆盖），避免不同 profile 的队列容量成为吞吐混杂变量；`oneway-backpressure` 专项刻意保留 profile 默认队列并单独报告预期饱和。默认执行五轮，偶数轮反转传输顺序；原始 JSON 写入 `artifacts/performance/current/matrix`。SharedMemory 的正式基线必须同时列出同平台 TCP、UDS、NamedPipe 和 AnonymousPipe，不只选择有利对照。NativeAOT 独立进程 smoke 使用 `eng/run-shared-memory-aot-process-smoke.sh`。
 
 静态 endpoint、动态 Resolver、admission、compression 和 interceptor 使用相应 LoadTest 参数或专项 Benchmark runner。最终性能结论只采用精确 RC 提交上同硬件、同配置、交替多轮的结果；短时 smoke 只证明矩阵可运行且无请求错误。
 
