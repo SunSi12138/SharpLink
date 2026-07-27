@@ -18,7 +18,7 @@
 12. [故障排查](troubleshooting.md)：常见配置、协议、资源和生命周期错误。
 13. [迁移到 1.0 RC](migration.md)：从 0.7/0.8 当前受支持表面迁移。
 
-深入资料：[架构](architecture.md)、[Protocol v2](protocol-v2.md)、[负载工具](loadtest.md)、[性能基线](performance.md)。
+深入资料：[架构](architecture.md)、[Protocol v2](protocol-v2.md)、[负载工具](loadtest.md)、[性能基线](performance.md)、[发布流程](releasing.md)。
 
 ## 特性与可运行证据
 

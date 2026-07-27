@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a reproducible SharpLink defect.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Do not report security vulnerabilities here. Use the private reporting link in SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: SharpLink version
+      placeholder: 1.0.0-rc1
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, architecture, .NET SDK/runtime, transport, and JIT or NativeAOT.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include the smallest contract, configuration, and commands that reproduce the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and evidence
+      description: Include exception details, structured error codes, logs, or a small trace without secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: regression
+    attributes:
+      label: Regression information
+      description: If known, identify the last version or commit where this worked.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing Issues and the current documentation.
+          required: true
+        - label: This report does not contain a security vulnerability or sensitive data.
+          required: true

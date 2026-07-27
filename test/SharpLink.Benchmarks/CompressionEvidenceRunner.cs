@@ -18,7 +18,7 @@ internal static class CompressionEvidenceRunner
     internal static async Task RunAsync(string[] args)
     {
         var outputPath = GetOption(args, "--output") ??
-            Path.Combine("artifacts", "performance", "v0.7.4", "compression-provider.json");
+            Path.Combine("artifacts", "performance", "current", "compression-provider.json");
         var results = new List<CompressionEvidenceResult>(120);
         foreach (var level in s_levels)
         {

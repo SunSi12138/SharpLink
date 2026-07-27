@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-07-28
+
+### Fixed
+
+- Separated semantic package versions from numeric CLR/file versions. `1.0.0-rc1` now builds as package/informational version `1.0.0-rc1` with assembly/file version `1.0.0.0`; previously the prerelease suffix caused compiler error `CS7034` and blocked every RC build.
+- Replaced the obsolete 0.7.4-only performance workflow and three version-bound evidence scripts with the current transport/profile/payload matrix smoke. The benchmark evidence runner no longer writes to a historical version directory.
+
+### Release engineering and security
+
+- Release builds now emit portable PDBs and all seven package projects produce matching `.snupkg` symbol packages while retaining package XML documentation. Package validation, Source Link source embedding, deterministic CI builds, transitive NuGet auditing, and zero-warning product builds are enforced centrally.
+- Added a clean-worktree package verifier for version consistency, exact repository commit, XML documentation, symbol PDBs, and the SDK-embedded Generator. Release Gate uploads verified `.nupkg`/`.snupkg` pairs.
+- Added gated NuGet.org OIDC Trusted Publishing. Main-targeting release PRs now automatically satisfy the repository's required `release-summary`; a `v*` tag publishes only after the complete three-platform build/test, NativeAOT, package-smoke, and Chaos gate succeeds and the protected `release` environment approves it. Manual workflow runs never publish and no long-lived API key is stored.
+- Added a pinned SDK feature band, security policy and private reporting path, Dependabot configuration, scheduled/PR CodeQL analysis, structured Issue/PR templates, least-privilege and commit-pinned workflow actions, PR concurrency control, and an explicit release/rollback checklist.
+- Corrected package copyright metadata and added package-specific descriptions and NativeAOT discovery tags.
+
+### Validation
+
+- A clean-cache 41-project Release rebuild completed with zero warnings/errors; Generator 121/121, Unit 503/503, and Integration 252/252 passed.
+- The pre-fix `1.0.0-rc1` build failed with `CS7034`; the fixed probe builds with zero warnings/errors and emits `1.0.0.0` assembly/file versions plus `1.0.0-rc1+<commit>` informational versions.
+- Seven `0.9.2` `.nupkg` and seven matching `.snupkg` files passed structural verification, and a fresh-cache package consumer restored, generated code, built, and ran successfully. NuGet reported no known vulnerable or deprecated direct/transitive package in the 41-project solution.
+
 ## [0.9.1] - 2026-07-28
 
 ### Documentation and demos

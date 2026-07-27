@@ -7,13 +7,13 @@
     </PropertyGroup>
     <!-- Nuget包信息 -->
     <PropertyGroup>
-        <Version>0.9.1</Version>
+        <VersionPrefix>0.9.2</VersionPrefix>
         <Authors>sunsi</Authors>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
         <PackageReadmeFile>README.md</PackageReadmeFile>
-        <PackageTags>rpc;dotnet;source-generator;streaming;ipc;tcp;shared-memory</PackageTags>
-        <PackageReleaseNotes>See CHANGELOG.md for release details.</PackageReleaseNotes>
+        <PackageTags>rpc;dotnet;source-generator;streaming;ipc;tcp;shared-memory;nativeaot</PackageTags>
+        <PackageReleaseNotes>https://github.com/SunSi12138/SharpLink/blob/v$(Version)/CHANGELOG.md</PackageReleaseNotes>
         <RepositoryUrl>https://github.com/SunSi12138/SharpLink</RepositoryUrl>
         <PackageProjectUrl>https://github.com/SunSi12138/SharpLink</PackageProjectUrl>
         <RepositoryType>git</RepositoryType>
@@ -23,16 +23,24 @@
     <!-- 程序集信息 -->
     <PropertyGroup>
         <Company>sunsi</Company>
-        <AssemblyVersion>$(Version)</AssemblyVersion>
+        <!-- NuGet versions may contain a prerelease suffix; CLR/file versions may not. -->
+        <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
         <AssemblyName>$(MSBuildProjectName)</AssemblyName>
-        <FileVersion>$(Version)</FileVersion>
+        <FileVersion>$(VersionPrefix).0</FileVersion>
         <InformationalVersion>$(Version)</InformationalVersion>
-        <Copyright>© 2025 sunsi</Copyright>
+        <Copyright>© 2026 sunsi</Copyright>
     </PropertyGroup>
 
     <!-- 项目描述 -->
     <PropertyGroup>
-        <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Generator'">框架生成器</Description>
+        <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Abstractions'">SharpLink RPC contracts, protocol models, and transport abstractions for .NET.</Description>
+        <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Client'">High-performance SharpLink RPC client with generated proxies, streaming, resilience, and multiple transports.</Description>
+        <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Generator'">Compile-time analyzers and source generators used by SharpLink.Sdk.</Description>
+        <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Hosting'">Microsoft.Extensions.Hosting and dependency-injection integration for SharpLink RPC clients and servers.</Description>
+        <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Runtime'">Protocol v2 sessions, flow control, codecs, and transport runtime for SharpLink RPC.</Description>
+        <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Sdk'">SharpLink RPC contract attributes, analyzers, and source generators.</Description>
+        <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Serializer.SharpPack'">SharpPack codec adapter for SharpLink RPC contracts.</Description>
+        <Description Condition="'$(MSBuildProjectName)' == 'SharpLink.Server'">High-performance SharpLink RPC server with generated dispatch, streaming, admission control, and multiple transports.</Description>
         <Description Condition="'$(Description)' == ''">SharpLink high-performance RPC components for .NET.</Description>
     </PropertyGroup>
 
@@ -43,6 +51,14 @@
     <PropertyGroup>
         <RootNamespace>$(MSBuildProjectName)</RootNamespace>
         <Deterministic>true</Deterministic>
+        <ContinuousIntegrationBuild Condition="'$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <EnablePackageValidation>true</EnablePackageValidation>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <NuGetAudit>true</NuGetAudit>
+        <NuGetAuditMode>all</NuGetAuditMode>
+        <WarningsAsErrors>$(WarningsAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsAsErrors>
     </PropertyGroup>
     <!-- 调试配置 -->
     <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
@@ -51,7 +67,7 @@
     </PropertyGroup>
     <!-- 发布配置 -->
     <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-        <DebugType>none</DebugType>
+        <DebugType>portable</DebugType>
         <Optimize>true</Optimize>
     </PropertyGroup>
 </Project>

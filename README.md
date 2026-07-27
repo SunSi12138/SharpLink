@@ -1,5 +1,9 @@
 # SharpLink
 
+[![PR Quick](https://github.com/SunSi12138/SharpLink/actions/workflows/pr-quick.yml/badge.svg)](https://github.com/SunSi12138/SharpLink/actions/workflows/pr-quick.yml)
+[![Nightly Regression](https://github.com/SunSi12138/SharpLink/actions/workflows/nightly.yml/badge.svg)](https://github.com/SunSi12138/SharpLink/actions/workflows/nightly.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 一个面向 .NET 的高性能 RPC 框架（当前主目标框架为 `net10.0`），支持：
 
 - Source Generator 自动生成 `Proxy/Stub/Codec/Assembly Manifest`
@@ -33,6 +37,13 @@
 - `Timeout`：默认超时与显式超时示例
 - `Oneway`：单向调用示例
 - `Log`：日志配置示例
+- `Security`：TLS 身份、认证、授权和调用上下文
+- `Compression`：双向协商压缩
+- `AdmissionControl`：并发接入和拒绝行为
+- `InterceptorsTelemetry`：Client/Server Interceptor、Activity 与 Meter
+- `Resilience`：静态端点、Retry 与 Circuit Breaker
+- `TransportMatrix`：TCP、NamedPipe、UDS、SharedMemory 与 AnonymousPipe
+- `MultiCluster`：两个独立契约程序集与物理集群路由
 - `SeparatedContracts / SeparatedServer / SeparatedClient`：分离式契约与多进程示例
 
 测试与基准（`test/`）：
@@ -582,5 +593,7 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 限制与调优：[`doc/limits-and-tuning.md`](doc/limits-and-tuning.md)
 - 故障排查与迁移：[`doc/troubleshooting.md`](doc/troubleshooting.md)、[`doc/migration.md`](doc/migration.md)
 - 架构、Protocol、负载和性能：[`doc/architecture.md`](doc/architecture.md)、[`doc/protocol-v2.md`](doc/protocol-v2.md)、[`doc/loadtest.md`](doc/loadtest.md)、[`doc/performance.md`](doc/performance.md)
-- 贡献指南：`CONTRIBUTING.md`
+- 发布流程：[`doc/releasing.md`](doc/releasing.md)
+- 贡献与社区：[`CONTRIBUTING.md`](CONTRIBUTING.md)、[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+- 安全漏洞请按 [`SECURITY.md`](SECURITY.md) 私下报告，不要创建公开 Issue。
 - 更新日志：`CHANGELOG.md`
