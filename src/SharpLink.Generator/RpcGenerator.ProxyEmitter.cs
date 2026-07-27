@@ -83,22 +83,24 @@ public partial class RpcGenerator
     private static void AppendProxyMethod(StringBuilder sb, RpcInterfaceModel model, RpcMethodModel method)
     {
         var suffix = GetMethodSuffix(method);
-        var parameterList = string.Join(", ", method.Parameters.Select(static parameter => $"{parameter.Type} {parameter.Name}"));
+        var parameterList = string.Join(", ", method.Parameters.Select(parameter => $"{parameter.Type} {EscapeIdentifier(parameter.Name)}"));
         var payloadParameters = GetPayloadParameters(method);
         var streamParameters = GetStreamParameters(method);
         var requestType = payloadParameters.Length == 0 ? "RpcEmptyRequest" : GetRequestType(model, method);
         var requestCodec = payloadParameters.Length == 0 ? "RpcEmptyRequestCodec.Instance" : $"__requestCodec_{suffix}";
         var requestValue = payloadParameters.Length == 0
             ? "default(RpcEmptyRequest)"
-            : $"new {requestType}({string.Join(", ", payloadParameters.Select(static parameter => parameter.Name))})";
+            : $"new {requestType}({string.Join(", ", payloadParameters.Select(static parameter => EscapeIdentifier(parameter.Name)))})";
         var streamsType = streamParameters.Length == 0 ? "RpcNoClientStreams" : GetStreamsType(model, method);
         var streamsValue = streamParameters.Length == 0
             ? "default(RpcNoClientStreams)"
-            : $"new {streamsType}({string.Join(", ", streamParameters.Select(static parameter => parameter.Name))})";
-        var cancellationToken = method.Parameters.FirstOrDefault(static parameter => parameter.IsCancellationToken)?.Name ?? "default";
-        var options = method.Parameters.FirstOrDefault(static parameter => parameter.IsCallOptions)?.Name ?? "default";
+            : $"new {streamsType}({string.Join(", ", streamParameters.Select(static parameter => EscapeIdentifier(parameter.Name)))})";
+        var cancellationParameter = method.Parameters.FirstOrDefault(static parameter => parameter.IsCancellationToken);
+        var optionsParameter = method.Parameters.FirstOrDefault(static parameter => parameter.IsCallOptions);
+        var cancellationToken = cancellationParameter is null ? "default" : EscapeIdentifier(cancellationParameter.Name);
+        var options = optionsParameter is null ? "default" : EscapeIdentifier(optionsParameter.Name);
 
-        sb.AppendLine($"    public {method.ReturnType} {method.Name}({parameterList})");
+        sb.AppendLine($"    public {method.ReturnType} {EscapeIdentifier(method.Name)}({parameterList})");
         sb.AppendLine("    {");
         sb.AppendLine($"        var __request = {requestValue};");
         if (streamParameters.Length != 0 || method.IsOneWay)
@@ -165,11 +167,11 @@ public partial class RpcGenerator
         sb.AppendLine($"internal readonly struct {requestType}");
         sb.AppendLine("{");
         foreach (var parameter in parameters)
-            sb.AppendLine($"    internal readonly {parameter.Type} {parameter.Name};");
-        sb.AppendLine($"    internal {requestType}({string.Join(", ", parameters.Select(static parameter => $"{parameter.Type} {parameter.Name}"))})");
+            sb.AppendLine($"    internal readonly {parameter.Type} {EscapeIdentifier(parameter.Name)};");
+        sb.AppendLine($"    internal {requestType}({string.Join(", ", parameters.Select(static parameter => $"{parameter.Type} {EscapeIdentifier(parameter.Name)}"))})");
         sb.AppendLine("    {");
         foreach (var parameter in parameters)
-            sb.AppendLine($"        this.{parameter.Name} = {parameter.Name};");
+            sb.AppendLine($"        this.{EscapeIdentifier(parameter.Name)} = {EscapeIdentifier(parameter.Name)};");
         sb.AppendLine("    }");
         sb.AppendLine("}");
 
@@ -196,9 +198,9 @@ public partial class RpcGenerator
             {
                 var size = GetInlineSizeToken(parameter.Type);
                 if (IsBooleanType(parameter.Type))
-                    sb.AppendLine($"        fixedSpan[fixedOffset] = value.{parameter.Name} ? (byte)1 : (byte)0;");
+                    sb.AppendLine($"        fixedSpan[fixedOffset] = value.{EscapeIdentifier(parameter.Name)} ? (byte)1 : (byte)0;");
                 else
-                    sb.AppendLine($"        Unsafe.WriteUnaligned(ref System.Runtime.InteropServices.MemoryMarshal.GetReference(fixedSpan.Slice(fixedOffset, {size})), value.{parameter.Name});");
+                    sb.AppendLine($"        Unsafe.WriteUnaligned(ref System.Runtime.InteropServices.MemoryMarshal.GetReference(fixedSpan.Slice(fixedOffset, {size})), value.{EscapeIdentifier(parameter.Name)});");
                 sb.AppendLine($"        fixedOffset += {size};");
             }
             sb.AppendLine("        writer.Advance(fixedSize);");
@@ -211,7 +213,7 @@ public partial class RpcGenerator
             sb.AppendLine($"        var lengthOffset_{index} = rpcWriter.WrittenCount;");
             sb.AppendLine("        writer.Advance(sizeof(int));");
             sb.AppendLine($"        var start_{index} = rpcWriter.WrittenCount;");
-            sb.AppendLine($"        __codec_{parameter.Name}.Serialize(value.{parameter.Name}, writer);");
+            sb.AppendLine($"        __codec_{parameter.Name}.Serialize(value.{EscapeIdentifier(parameter.Name)}, writer);");
             sb.AppendLine($"        var length_{index} = rpcWriter.WrittenCount - start_{index};");
             sb.AppendLine($"        var written_{index} = rpcWriter.WrittenSpan;");
             sb.AppendLine($"        BinaryPrimitives.WriteInt32LittleEndian(written_{index}.Slice(lengthOffset_{index}, sizeof(int)), length_{index});");
@@ -268,10 +270,10 @@ public partial class RpcGenerator
         sb.AppendLine("{");
         foreach (var stream in streams)
             sb.AppendLine($"    private readonly {stream.Type} _{stream.Name};");
-        sb.AppendLine($"    internal {streamsType}({string.Join(", ", streams.Select(static stream => $"{stream.Type} {stream.Name}"))})");
+        sb.AppendLine($"    internal {streamsType}({string.Join(", ", streams.Select(static stream => $"{stream.Type} {EscapeIdentifier(stream.Name)}"))})");
         sb.AppendLine("    {");
         foreach (var stream in streams)
-            sb.AppendLine($"        _{stream.Name} = {stream.Name};");
+            sb.AppendLine($"        _{stream.Name} = {EscapeIdentifier(stream.Name)};");
         sb.AppendLine("    }");
 
         if (streams.Length == 1)

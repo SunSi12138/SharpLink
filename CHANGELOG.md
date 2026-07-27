@@ -4,6 +4,26 @@
 
 ## [Unreleased]
 
+## [0.8.25] - 2026-07-27
+
+### Fixed
+
+- Collision-resistant Roslyn hint names prevent distinct fully-qualified contracts from crashing generation with CS8785; public nested contracts now receive deterministic unique Proxy/Stub/helper type names.
+- C# keyword RPC method and parameter names now remain escaped in every generated declaration and reference without changing contract hashes or Manifest identities.
+- `ref`, `out`, `in`, and by-ref return signatures now report `SHARPLINK052` instead of producing unusable generated implementations.
+- Static RPC methods now report `SHARPLINK053` instead of being modeled as instance routes.
+- Abstract contract properties, indexers, and events now report `SHARPLINK054` instead of leaving generated proxies incomplete.
+
+### Changed
+
+- Contracts and every containing type must be public (`SHARPLINK055`); nested contracts inside generic containing types reuse `SHARPLINK005`. Default interface properties/events with implementations remain allowed and are not RPC routes.
+
+### Compatibility and validation
+
+- Protocol v2, route hashes, payload layouts, top-level Proxy/Stub type names, and Manifest schema are unchanged. Generated type names for nested contracts now include containing-type identity; Roslyn hint names are build-internal and now include the existing contract ID.
+- Non-incremental Release build, Generator 96/96, Unit 449/449, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- A 40-contract/400-method, 101-sample Generator A/B measured 15.953 → 13.577 ms with overlapping quartiles. Compiler-thread allocation increased 40,976 B (0.14%); runtime hot paths are unchanged.
+
 ## [0.8.24] - 2026-07-27
 
 ### Fixed

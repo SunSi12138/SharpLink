@@ -285,7 +285,7 @@ public partial class RpcGenerator
             }
 
             var callArgs = string.Join(", ", method.Parameters.Select(p => p.IsStream ? $"dispatcher_{p.Name}" : $"arg_{p.Name}"));
-            var callLine = $"impl.{method.Name}({callArgs})";
+            var callLine = $"impl.{EscapeIdentifier(method.Name)}({callArgs})";
 
             if (method.IsStreamReturn)
             {

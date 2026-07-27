@@ -1,0 +1,9 @@
+# SharpLink 0.8.25 deep audit
+
+Chinese: [`../audit-0.8.25.md`](../audit-0.8.25.md)
+
+Against 0.8.24 commit `09d6078`, this batch confirmed five P2 improvements: sanitized Roslyn hint names for distinct fully-qualified contracts could collide and raise CS8785; nested contracts with the same simple name emitted the same top-level peer names; keyword method/parameter symbols lost `@` and produced invalid syntax or the wrong `default` expression; by-reference signatures were accepted; and static methods plus abstract properties/indexers/events could not produce a complete proxy but lacked diagnostics. The first two manifestations are handled as one generated-identity recommendation.
+
+The complete pre-fix Generator run contained 94 tests: all 88 existing tests passed and exactly six new probes failed. Hint names now append the existing 64-bit contract ID. Public nested contracts in non-generic containers derive peer names from containing-type identity plus a short hash. Source identifiers are escaped only at emission boundaries, retaining raw symbol identities in hashes and Manifests. `SHARPLINK052` through `SHARPLINK055` cover by-reference, static, non-method abstract members, and contracts that are not publicly reachable; generic containing types continue to report `SHARPLINK005`. Default interface members with implementations are not treated as routes.
+
+The strengthened Generator suite passes 96/96. The exact final tree also passed a non-incremental Release build with 0 warnings/errors, Unit 449/449, Integration 237/237, seven-package pack, and fresh-cache package smoke. A 101-sample, 40-contract/400-method Generator comparison measured 15.953 to 13.577 ms with overlapping quartiles. Compiler-thread allocation increased by 40,976 bytes (0.14%); no runtime hot path changed. See [`performance-0.8.25.md`](../performance-0.8.25.md) and [`migration-0.8.25.md`](../migration-0.8.25.md).

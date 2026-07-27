@@ -91,16 +91,21 @@ public partial class RpcGenerator : IIncrementalGenerator
         var invalidRpcContractInheritance = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcContractAttributeMetadataName,
                 static (node, _) => node is InterfaceDeclarationSyntax,
-                static (attributeContext, ct) => GetInvalidRpcContractInheritance(attributeContext, ct))
+                static (attributeContext, ct) => GetRpcContractDiagnosticOrNull(attributeContext, ct))
             .Where(static x => x is not null);
 
         context.RegisterSourceOutput(invalidMethods, static (spc, methods) =>
         {
             foreach (var method in methods)
             {
-                var descriptor = method.Kind == InvalidRpcMethodKind.Timeout
-                    ? InvalidTimeoutRule
-                    : InvalidReturnTypeRule;
+                var descriptor = method.Kind switch
+                {
+                    InvalidRpcMethodKind.Timeout => InvalidTimeoutRule,
+                    InvalidRpcMethodKind.ByReference => ByReferenceRpcSignatureRule,
+                    InvalidRpcMethodKind.Static => StaticRpcMethodRule,
+                    InvalidRpcMethodKind.ContractMember => UnsupportedContractMemberRule,
+                    _ => InvalidReturnTypeRule
+                };
                 var diagnostic = Diagnostic.Create(
                     descriptor,
                     method.Location,
@@ -177,9 +182,12 @@ public partial class RpcGenerator : IIncrementalGenerator
         });
         context.RegisterSourceOutput(invalidRpcContractInheritance, static (spc, model) =>
         {
+            var descriptor = model!.Value.Kind == RpcContractDiagnosticKind.Accessibility
+                ? RpcContractAccessibilityRule
+                : RpcContractMustInheritIServiceRule;
             var diagnostic = Diagnostic.Create(
-                RpcContractMustInheritIServiceRule,
-                model!.Value.Location,
+                descriptor,
+                model.Value.Location,
                 model.Value.InterfaceName);
             spc.ReportDiagnostic(diagnostic);
         });

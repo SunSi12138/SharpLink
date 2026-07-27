@@ -69,7 +69,10 @@ internal readonly record struct InvalidRpcMethodModel(
 internal enum InvalidRpcMethodKind
 {
     ReturnType,
-    Timeout
+    Timeout,
+    ByReference,
+    Static,
+    ContractMember
 }
 internal readonly record struct InvalidCancellationTokenMethodModel(string MethodName, Location? Location);
 internal readonly record struct InvalidCallOptionsMethodModel(string MethodName, Location? Location);
@@ -79,7 +82,15 @@ internal readonly record struct NonCancellableRpcMethodModel(string MethodName, 
 internal readonly record struct StreamingWithoutCancellationModel(string MethodName, Location? Location);
 internal readonly record struct ConflictingCancellationContractModel(string MethodName, Location? Location);
 internal readonly record struct InvalidGenericUsageModel(string SymbolName, string TypeName, Location? Location);
-internal readonly record struct InvalidRpcContractInheritanceModel(string InterfaceName, Location? Location);
+internal readonly record struct RpcContractDiagnosticModel(
+    RpcContractDiagnosticKind Kind,
+    string InterfaceName,
+    Location? Location);
+internal enum RpcContractDiagnosticKind
+{
+    Inheritance,
+    Accessibility
+}
 internal readonly record struct RpcServiceDiagnosticModel(
     RpcServiceDiagnosticKind Kind,
     string ServiceName,

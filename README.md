@@ -77,6 +77,8 @@ dotnet run --project demo/SeparatedClient/SeparatedClient.csproj
 - RPC 契约接口必须标记 `[RpcContract]`
 - RPC 服务实现必须标记 `[RpcService]`
 - 契约接口必须继承 `IService`
+- 契约及其 containing type 必须 public；公开 nested contract 受支持并获得确定性唯一生成类型名
+- RPC route 必须是普通 instance method；`ref/out/in`、by-ref return、static method 与 abstract property/indexer/event 会在编译期报告错误
 - Contract 所在程序集生成 Descriptor、Proxy、contract-based Stub 和 Codec；Service 所在程序集生成 Activator、生命周期与显式依赖
 - 每个生成程序集只有一个可由程序集特性直接定位的 Manifest，不使用 `Assembly.GetTypes()` 扫描
 - Server `Build()` 默认快照当时已加载的 Manifest 并自动注册 `[RpcService]`；Build 后加载的插件需要显式 `RegisterAssembly`
@@ -196,7 +198,7 @@ public partial class PluginGraph
 
 Client/Server 不需要 resolver 或手工注册自动 Adapter Codec。高级自定义 formatter 可由调用方创建 `SharpPackSerializerContext`，再通过 `SharpPackRpcCodec.Create<T>(context)` 显式 `UseCodec`；该 Codec 仍保持最高优先级且 Context 所有权属于调用方。
 
-每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context；自动 Context 拥有独立 formatter graph，不使用进程级默认 formatter slot，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。详细设计见 [`doc/architecture-0.7.11.md`](doc/architecture-0.7.11.md)；升级 0.8.x 前请阅读 [`doc/migration-0.8.24.md`](doc/migration-0.8.24.md)。
+每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context；自动 Context 拥有独立 formatter graph，不使用进程级默认 formatter slot，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。详细设计见 [`doc/architecture-0.7.11.md`](doc/architecture-0.7.11.md)；升级 0.8.x 前请阅读 [`doc/migration-0.8.25.md`](doc/migration-0.8.25.md)。
 
 ## 协商压缩
 

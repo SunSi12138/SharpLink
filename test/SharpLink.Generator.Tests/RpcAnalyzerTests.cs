@@ -787,6 +787,193 @@ public sealed class InaccessibleConstructorService : IInaccessibleContract
     }
 
     [Test]
+    public Task SanitizedHintNamesShouldRemainUnique()
+    {
+        var source = BuildSource("""
+namespace A.B
+{
+    [SharpLink.Sdk.RpcContract]
+    public interface IC : SharpLink.Sdk.IService
+    {
+        ValueTask<int> Invoke(CancellationToken cancellationToken);
+    }
+}
+
+namespace A
+{
+    [SharpLink.Sdk.RpcContract]
+    public interface B_IC : SharpLink.Sdk.IService
+    {
+        ValueTask<int> Invoke(CancellationToken cancellationToken);
+    }
+}
+""");
+
+        var diagnostics = RunGenerator(source);
+        Ensure(!diagnostics.Any(static diagnostic => diagnostic.Id == "CS8785"),
+            $"Distinct fully-qualified contracts must not collide after hint-name sanitization. Actual: {FormatDiagnostics(diagnostics)}");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task NestedContractsShouldReceiveUniqueGeneratedPeerNames()
+    {
+        var source = BuildSource("""
+namespace Nested
+{
+    public sealed class First
+    {
+        [SharpLink.Sdk.RpcContract]
+        public interface IInner : SharpLink.Sdk.IService
+        {
+            ValueTask<int> Invoke(CancellationToken cancellationToken);
+        }
+    }
+
+    public sealed class Second
+    {
+        [SharpLink.Sdk.RpcContract]
+        public interface IInner : SharpLink.Sdk.IService
+        {
+            ValueTask<int> Invoke(CancellationToken cancellationToken);
+        }
+    }
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(CountOccurrences(generated, "public sealed class IInner_Proxy") == 0,
+            "nested contracts with the same simple name must not emit colliding top-level Proxy types");
+        Ensure(generated.Contains(" : global::Nested.First.IInner", StringComparison.Ordinal) &&
+               generated.Contains(" : global::Nested.Second.IInner", StringComparison.Ordinal),
+            "both nested contracts must retain generated peers");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task KeywordRpcIdentifiersShouldEmitValidCSharpSyntax()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IKeywordContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> @class(int @event, SharpLink.Sdk.SharpLinkCallOptions @params, CancellationToken @default);
+}
+""");
+
+        var generated = RunGeneratorAndGetSources(source);
+        var syntaxErrors = generated
+            .SelectMany(static text => CSharpSyntaxTree.ParseText(text).GetDiagnostics())
+            .Where(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
+            .ToArray();
+        Ensure(syntaxErrors.Length == 0,
+            $"Keyword RPC identifiers must remain escaped in generated source. Actual: {FormatDiagnostics(syntaxErrors)}");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ByRefRpcSignaturesShouldReportSharplink052()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IByRefContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Ref(ref int value, CancellationToken cancellationToken);
+    ValueTask<int> Out(out int value, CancellationToken cancellationToken);
+    ValueTask<int> In(in int value, CancellationToken cancellationToken);
+    ref ValueTask<int> RefReturn(CancellationToken cancellationToken);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK052", 4);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task StaticAbstractRpcMethodsShouldReportSharplink053()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IStaticContract : SharpLink.Sdk.IService
+{
+    static abstract ValueTask<int> Invoke(int value, CancellationToken cancellationToken);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK053", 1);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task AbstractNonMethodContractMembersShouldReportSharplink054()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IMemberContract : SharpLink.Sdk.IService
+{
+    int Version { get; }
+    string this[int index] { get; }
+    event Action Changed;
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK054", 3);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task InaccessibleAndOpenNestedContractsShouldBeRejected()
+    {
+        var inaccessible = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+interface IInternalContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> Invoke(CancellationToken cancellationToken);
+}
+
+public sealed class Container
+{
+    [SharpLink.Sdk.RpcContract]
+    private interface IPrivateContract : SharpLink.Sdk.IService
+    {
+        ValueTask<int> Invoke(CancellationToken cancellationToken);
+    }
+}
+""");
+        EnsureRuleCount(inaccessible, "SHARPLINK055", 2);
+
+        var openNested = BuildSource("""
+public sealed class GenericContainer<T>
+{
+    [SharpLink.Sdk.RpcContract]
+    public interface IOpenContract : SharpLink.Sdk.IService
+    {
+        ValueTask<int> Invoke(CancellationToken cancellationToken);
+    }
+}
+""");
+        EnsureRuleCount(openNested, "SHARPLINK005", 1);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task DefaultInterfaceMembersShouldNotBeRejectedAsRpcRoutes()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IDefaultMemberContract : SharpLink.Sdk.IService
+{
+    int Version => 1;
+    event Action Changed { add { } remove { } }
+    ValueTask<int> Invoke(CancellationToken cancellationToken);
+}
+""");
+
+        EnsureDoesNotHaveRule(source, "SHARPLINK054");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task ConflictingStaticMethodDescriptorsShouldReportSharplink022()
     {
         var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSdkSource());
