@@ -223,7 +223,7 @@ internal sealed partial class SharpLinkClient
                 catch (Exception ex)
                 {
                     using var scope = BeginSessionLogScope(_logger, "reconnect");
-                    LogClientBackgroundLoopUnhandledException(_logger, nameof(ReconnectLoopAsync), ex);
+                    LogClientConnectionAttemptFailed(_logger, nameof(ReconnectLoopAsync), ex);
                     var nextDelay = Math.Min(baseDelay * 2, 5000);
                     Volatile.Write(ref _reconnectDelayMilliseconds, nextDelay);
                     TransitionTo(SharpLinkConnectionState.Reconnecting);
@@ -424,7 +424,7 @@ internal sealed partial class SharpLinkClient
         catch (Exception ex)
         {
             using var scope = BeginSessionLogScope(_logger, "pool-expand");
-            LogClientBackgroundLoopUnhandledException(_logger, nameof(ExpandOneAsync), ex);
+            LogClientConnectionAttemptFailed(_logger, nameof(ExpandOneAsync), ex);
 
             // Expansion is opportunistic while the pool still has a ready connection, but
             // that connection can start draining while ConnectOneAsync is in flight. Once

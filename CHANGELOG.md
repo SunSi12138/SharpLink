@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+## [0.8.34] - 2026-07-27
+
+### Fixed
+
+- Shared-memory reader completion now waits for both an in-progress read operation and any returned `ReadResult` before releasing staged bytes or mapping ownership, closing a teardown race that produced `NullReferenceException` under restart injection.
+- The Chaos release gate retains bounded aggregate client Error evidence across server generations and fails when any Error is captured; its opt-in injected-error self-test verifies the process exit and report.
+- Inherited RPC declarations with the same CLR signature now report `SHARPLINK057` when Oneway shape, timeout/idempotency/cancellation policy, serialized parameter names, or nested nullability disagree; an explicit derived redeclaration remains the canonical opt-in resolution.
+- Client and Server request loops accept the terminal `StreamPipeReader.AdvanceTo` race only after session close or cancellation, while preserving non-terminal invalid-buffer failures.
+- Recoverable fixed, static-cluster, and dynamic-cluster expansion/reconnect failures now use Warning event `6101` instead of the unhandled-background Error event `6002`.
+- The bounded dispatcher-pool collectability test no longer relies on async-state-machine/JIT temporary lifetime and now provides deterministic weak-reference evidence.
+
+### Compatibility and validation
+
+- Protocol v2, route hashes, valid payloads, and generated output for unambiguous contracts are unchanged. `LogEvents.Client.ConnectionAttemptFailed` is an additive public event ID; handled connection-attempt failures move from Error `6002` to Warning `6101`.
+- Non-incremental Release build, Generator 108/108, Unit 478/478, Integration 238/238, shared-memory Chaos, NativeAOT, seven-package pack, and fresh-cache package smoke passed.
+- Shared-memory reader A/B measured 29.564 -> 30.046 ns with unchanged 40 B/sample (+1.63%). Alternating inherited-Generator runs improved the median of process medians from 17.469 to 16.652 ms and allocation from 30,720,156 to 30,654,364 B.
+
 ## [0.8.33] - 2026-07-27
 
 ### Fixed

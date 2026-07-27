@@ -561,6 +561,12 @@ internal sealed partial class SharpLinkClient
                 {
                     reader.AdvanceTo(buffer.Start, buffer.End);
                 }
+                catch (InvalidOperationException) when (
+                    !session.IsConnected || ct.IsCancellationRequested)
+                {
+                    // Transport teardown can complete a StreamPipeReader after ReadAsync
+                    // returns. The buffer is already terminal and has no remaining owner.
+                }
                 catch (InvalidOperationException exception)
                 {
                     // Transport disposal may complete the reader after ReadAsync returns but

@@ -1,4 +1,5 @@
 using System.Threading;
+using System.Runtime.CompilerServices;
 
 namespace SharpLink.UnitTests.Runtime;
 
@@ -34,9 +35,23 @@ public class PooledAsyncStreamDispatcherTests
 
     [Test]
     [NotInParallel]
-    public async Task PoolShouldRetainAtMost1024DispatchersAfterBurst()
+    public void PoolShouldRetainAtMost1024DispatchersAfterBurst()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var discarded = FillPoolAndReturnDiscardedReference();
+
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1024,
+            "pool retention must be bounded after a 10,000-stream burst");
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Ensure(!discarded.IsAlive, "dispatchers above the retention cap must remain collectible");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference FillPoolAndReturnDiscardedReference()
+    {
         var codec = new ReferenceItemCodec();
         var dispatchers = new PooledAsyncStreamDispatcher<ReferenceItem>[10_000];
         for (var index = 0; index < dispatchers.Length; index++)
@@ -45,18 +60,12 @@ public class PooledAsyncStreamDispatcherTests
         for (var index = 0; index < dispatchers.Length; index++)
         {
             dispatchers[index].Complete(exception: null);
-            await dispatchers[index].DisposeAsync();
+            dispatchers[index].DisposeAsync().GetAwaiter().GetResult();
         }
 
-        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1024,
-            "pool retention must be bounded after a 10,000-stream burst");
         var discarded = new WeakReference(dispatchers[^1]);
         Array.Clear(dispatchers);
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-        Ensure(!discarded.IsAlive, "dispatchers above the retention cap must remain collectible");
-        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        return discarded;
     }
 
     [Test]

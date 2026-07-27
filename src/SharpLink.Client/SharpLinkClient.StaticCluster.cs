@@ -552,7 +552,7 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
-                LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ExpandAsync), exception);
+                LogClientConnectionAttemptFailed(_client._logger, nameof(ExpandAsync), exception);
                 if (endpoint.ReadyConnections.Length == 0)
                     EnsureReconnect(endpoint);
             }
@@ -584,7 +584,7 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
-                LogClientBackgroundLoopUnhandledException(_client._logger, nameof(ReconnectAsync), exception);
+                LogClientConnectionAttemptFailed(_client._logger, nameof(ReconnectAsync), exception);
                 lock (_gate)
                     endpoint.ReconnectDelayMilliseconds = NextReconnectDelay(delayMilliseconds);
             }

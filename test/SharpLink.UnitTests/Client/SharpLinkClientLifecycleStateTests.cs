@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Threading;
+using Microsoft.Extensions.Logging;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Client;
@@ -292,10 +293,12 @@ public class SharpLinkClientLifecycleStateTests
     public async Task FailedExpansionShouldHandZeroReadyPoolToReconnectWorker()
     {
         var transport = new SequenceClientTransportFactory(failedConnectsAfterInitial: 1);
+        var loggerFactory = new CaptureLoggerFactory();
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            loggerFactory,
             connectionPoolOptions: new SharpLinkConnectionPoolOptions
             {
                 MinConnections = 1,
@@ -318,6 +321,12 @@ public class SharpLinkClientLifecycleStateTests
                   client.State == SharpLinkConnectionState.Ready,
             () => $"failed expansion stranded the client after {transport.ConnectCount} attempts " +
                   $"in state {client.State} with {client.ReadyConnectionCount} ready connections");
+        Ensure(loggerFactory.Entries.FindIndex(static entry => entry.Level == LogLevel.Error) < 0,
+            "a recoverable expansion failure must not be reported as an unhandled background error");
+        Ensure(loggerFactory.Entries.FindIndex(static entry =>
+                entry is { Level: LogLevel.Warning, EventId.Id: LogEvents.Client.ConnectionAttemptFailed,
+                    Exception: SocketException }) >= 0,
+            "the recoverable expansion failure should remain observable through its warning event");
     }
 
     [Test]
@@ -787,6 +796,43 @@ public class SharpLinkClientLifecycleStateTests
                 await connections[index].DisposeAsync();
         }
     }
+
+    private sealed class CaptureLoggerFactory : ILoggerFactory
+    {
+        private readonly Lock _gate = new();
+
+        internal List<LogEntry> Entries { get; } = [];
+
+        public ILogger CreateLogger(string categoryName) => new CaptureLogger(this);
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class CaptureLogger(CaptureLoggerFactory owner) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                lock (owner._gate)
+                    owner.Entries.Add(new LogEntry(logLevel, eventId, exception));
+            }
+        }
+    }
+
+    private readonly record struct LogEntry(LogLevel Level, EventId EventId, Exception? Exception);
 
     private sealed class BlockingInitialTransportFactory : IClientTransportFactory
     {

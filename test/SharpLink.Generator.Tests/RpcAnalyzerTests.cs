@@ -104,6 +104,180 @@ public interface IConflictingContract : SharpLink.Sdk.IService, INumericBase, IT
     }
 
     [Test]
+    public Task ConflictingInheritedOnewayShapesShouldReportASpecificDiagnostic()
+    {
+        var source = BuildSource("""
+public interface IFireAndForgetBase
+{
+    [SharpLink.Sdk.Oneway]
+    ValueTask Notify(CancellationToken cancellationToken);
+}
+
+public interface IAcknowledgedBase
+{
+    ValueTask Notify(CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IConflictingOnewayContract : SharpLink.Sdk.IService, IFireAndForgetBase, IAcknowledgedBase
+{
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK057", 1);
+        Ensure(!string.Join("\n", RunGeneratorAndGetSources(source)).Contains(
+                "IConflictingOnewayContractProxy",
+                StringComparison.Ordinal),
+            "a conflicting inherited Oneway shape must not emit contract artifacts");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ConflictingInheritedRpcPoliciesShouldReportASpecificDiagnostic()
+    {
+        var source = BuildSource("""
+public interface IRetryingBase
+{
+    [SharpLink.Sdk.Timeout(1)]
+    [SharpLink.Sdk.Idempotent]
+    ValueTask<int> Resolve(int value, CancellationToken cancellationToken);
+}
+
+public interface INonRetryingBase
+{
+    [SharpLink.Sdk.Timeout(2)]
+    ValueTask<int> Resolve(int value, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IConflictingPolicyContract : SharpLink.Sdk.IService, IRetryingBase, INonRetryingBase
+{
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK057", 1);
+        Ensure(!string.Join("\n", RunGeneratorAndGetSources(source)).Contains(
+                "IConflictingPolicyContractProxy",
+                StringComparison.Ordinal),
+            "conflicting inherited RPC policies must not emit contract artifacts");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ConflictingInheritedRequestSchemasShouldReportASpecificDiagnostic()
+    {
+        var nameAndTopLevelNullability = BuildSource("""
+#nullable enable
+public interface IRequiredNameBase
+{
+    ValueTask<int> Resolve(string requiredName, CancellationToken cancellationToken);
+}
+
+public interface IOptionalAliasBase
+{
+    ValueTask<int> Resolve(string? optionalAlias, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IConflictingRequestSchemaContract : SharpLink.Sdk.IService, IRequiredNameBase, IOptionalAliasBase
+{
+}
+""");
+
+        EnsureRuleCount(nameAndTopLevelNullability, "SHARPLINK057", 1);
+        Ensure(!string.Join("\n", RunGeneratorAndGetSources(nameAndTopLevelNullability)).Contains(
+                "IConflictingRequestSchemaContractProxy",
+                StringComparison.Ordinal),
+            "conflicting inherited request schemas must not emit contract artifacts");
+
+        var nestedNullability = BuildSource("""
+#nullable enable
+public interface IRequiredItemsBase
+{
+    ValueTask<int> Resolve(List<string> items, CancellationToken cancellationToken);
+}
+
+public interface IOptionalItemsBase
+{
+    ValueTask<int> Resolve(List<string?> items, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IConflictingNestedSchemaContract : SharpLink.Sdk.IService, IRequiredItemsBase, IOptionalItemsBase
+{
+}
+""");
+        EnsureRuleCount(nestedNullability, "SHARPLINK057", 1);
+
+        var parameterNameOnly = BuildSource("""
+public interface IPrimaryNameBase
+{
+    ValueTask<int> Resolve(string primaryName, CancellationToken cancellationToken);
+}
+
+public interface IAliasNameBase
+{
+    ValueTask<int> Resolve(string aliasName, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IConflictingNameSchemaContract : SharpLink.Sdk.IService, IPrimaryNameBase, IAliasNameBase
+{
+}
+""");
+        EnsureRuleCount(parameterNameOnly, "SHARPLINK057", 1);
+
+        var controlParameterNames = BuildSource("""
+public interface IFirstControlBase
+{
+    ValueTask<int> Resolve(string value, CancellationToken firstToken);
+}
+
+public interface ISecondControlBase
+{
+    ValueTask<int> Resolve(string value, CancellationToken secondToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface ICompatibleControlNamesContract : SharpLink.Sdk.IService, IFirstControlBase, ISecondControlBase
+{
+}
+""");
+        EnsureDoesNotHaveRule(controlParameterNames, "SHARPLINK057");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task DirectRedeclarationShouldCanonicalizeInheritedRpcSemantics()
+    {
+        var source = BuildSource("""
+public interface IFireAndForgetBase
+{
+    [SharpLink.Sdk.Oneway]
+    ValueTask Notify(CancellationToken cancellationToken);
+}
+
+public interface IAcknowledgedBase
+{
+    ValueTask Notify(CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface ICanonicalContract : SharpLink.Sdk.IService, IFireAndForgetBase, IAcknowledgedBase
+{
+    new ValueTask Notify(CancellationToken cancellationToken);
+}
+""");
+
+        EnsureDoesNotHaveRule(source, "SHARPLINK057");
+        Ensure(string.Join("\n", RunGeneratorAndGetSources(source)).Contains(
+                "ICanonicalContract_Proxy",
+                StringComparison.Ordinal),
+            "an explicit derived declaration must remain the canonical generated route");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task GeneratedStubSizeFieldsShouldRemainUniqueForSanitizedEnumNames()
     {
         var source = BuildSource("""

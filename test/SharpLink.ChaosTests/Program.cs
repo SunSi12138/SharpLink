@@ -140,6 +140,8 @@ public static class Program
             endedMemory));
         var orderedMemorySamples = memorySamples.OrderBy(static sample => sample.ElapsedSeconds).ToArray();
         var lastSixHoursGrowthPercent = CalculateWindowGrowth(orderedMemorySamples, TimeSpan.FromHours(6));
+        if (options.InjectClientError)
+            clientLogs.InjectErrorForGateProbe();
         Task<ChaosDiagnosticArtifact>? activeDiagnosticCapture;
         lock (diagnosticGate)
             activeDiagnosticCapture = diagnosticCaptureTask;
@@ -164,6 +166,14 @@ public static class Program
                 "UnexpectedFailures",
                 $"Chaos recorded {unexpectedFailures} unexpected failures.",
                 null);
+        }
+        else if (clientLogs.ErrorCount != 0)
+        {
+            exitCode = 2;
+            terminalFailure = new ChaosFailure(
+                "ClientErrorLogs",
+                $"Chaos captured {clientLogs.ErrorCount} client Error log(s).",
+                string.Join(Environment.NewLine, clientLogs.AllSnapshot()));
         }
         else if (success == 0 || restartCount == 0)
         {
@@ -348,7 +358,7 @@ public static class Program
                 failures.OrderByDescending(static item => item.Value)
                     .ToDictionary(static item => item.Key, static item => item.Value),
                 [.. failureSamples],
-                clientLogs.Snapshot(),
+                clientLogs.AllSnapshot(),
                 [.. serverStops]);
         }
 
@@ -782,6 +792,7 @@ public static class Program
         Console.WriteLine("  --checkpoint-interval-seconds 60");
         Console.WriteLine("  --dump-on-failure true");
         Console.WriteLine("  --stop-on-unexpected true");
+        Console.WriteLine("  --inject-client-error false      (release-gate self-test)");
         Console.WriteLine("  --json-output artifacts/chaos/report.json");
     }
 }
@@ -986,7 +997,11 @@ internal sealed class ChaosMetricObserver : IDisposable
 internal sealed class ChaosLoggerFactory : ILoggerFactory, ILogger
 {
     private const int MaxRetainedErrors = 8;
-    private readonly ConcurrentQueue<string> _errors = new();
+    private readonly ConcurrentQueue<string> _generationErrors = new();
+    private readonly ConcurrentQueue<string> _allErrors = new();
+    private long _errorCount;
+
+    internal long ErrorCount => Volatile.Read(ref _errorCount);
 
     public void AddProvider(ILoggerProvider provider)
     {
@@ -1014,18 +1029,39 @@ internal sealed class ChaosLoggerFactory : ILoggerFactory, ILogger
         if (!IsEnabled(logLevel))
             return;
 
-        _errors.Enqueue(
+        RecordError(
             $"Event={eventId.Id}:{eventId.Name}; Message={formatter(state, exception)}; " +
             $"Exception={exception}");
-        while (_errors.Count > MaxRetainedErrors)
-            _errors.TryDequeue(out _);
     }
 
-    internal void Clear() => _errors.Clear();
+    internal void Clear() => _generationErrors.Clear();
 
-    internal IReadOnlyList<string> Snapshot() => [.. _errors];
+    internal IReadOnlyList<string> Snapshot() => [.. _generationErrors];
 
-    public void Dispose() => _errors.Clear();
+    internal IReadOnlyList<string> AllSnapshot() => [.. _allErrors];
+
+    internal void InjectErrorForGateProbe()
+        => RecordError("Injected client Error for the Chaos release-gate self-test.");
+
+    private void RecordError(string error)
+    {
+        Interlocked.Increment(ref _errorCount);
+        EnqueueBounded(_generationErrors, error);
+        EnqueueBounded(_allErrors, error);
+    }
+
+    private static void EnqueueBounded(ConcurrentQueue<string> queue, string error)
+    {
+        queue.Enqueue(error);
+        while (queue.Count > MaxRetainedErrors)
+            queue.TryDequeue(out _);
+    }
+
+    public void Dispose()
+    {
+        _generationErrors.Clear();
+        _allErrors.Clear();
+    }
 }
 
 internal sealed record ChaosDrainResult(
@@ -1049,6 +1085,7 @@ internal sealed class ChaosOptions
     internal TimeSpan CheckpointInterval { get; private init; } = TimeSpan.FromSeconds(30);
     internal bool DumpOnFailure { get; private init; } = true;
     internal bool StopOnUnexpectedFailure { get; private init; } = true;
+    internal bool InjectClientError { get; private init; }
     internal ChaosTransport Transport { get; private init; } = ChaosTransport.Tcp;
     internal string SharedMemoryName { get; private init; } = "sharplink-chaos";
     internal string? JsonOutputPath { get; private init; }
@@ -1096,6 +1133,7 @@ internal sealed class ChaosOptions
             CheckpointInterval = checkpointInterval,
             DumpOnFailure = ParseBoolean(values, "dump-on-failure", fallback: true),
             StopOnUnexpectedFailure = ParseBoolean(values, "stop-on-unexpected", fallback: true),
+            InjectClientError = ParseBoolean(values, "inject-client-error", fallback: false),
             Transport = transport,
             SharedMemoryName = values.GetValueOrDefault("shm-name", "sharplink-chaos"),
             JsonOutputPath = values.GetValueOrDefault("json-output")

@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Threading;
 
@@ -7,6 +8,32 @@ namespace SharpLink.UnitTests.Runtime;
 [NotInParallel]
 public class SharedMemoryPipelineLifecycleTests
 {
+    [Test]
+    public async Task ReaderCompletionShouldWaitForAPendingReadOperation()
+    {
+        await using var harness = await PipelineHarness.CreateAsync();
+        var reader = new SharedMemoryPipeReader(harness.Direction, harness.Control, spinCount: 0);
+        var pendingField = typeof(SharedMemoryPipeReader).GetField(
+            "_readOperationPending",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        pendingField.SetValue(reader, 1);
+
+        var completion = reader.CompleteAsync().AsTask();
+        var completedBeforeReadExited = completion.IsCompleted;
+        if (!completion.IsCompleted)
+        {
+            pendingField.SetValue(reader, 0);
+            var release = (TaskCompletionSource<bool>)typeof(SharedMemoryPipeReader).GetField(
+                    "_readActivityReleased",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(reader)!;
+            release.TrySetResult(true);
+            await completion.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+
+        await Assert.That(completedBeforeReadExited).IsFalse();
+    }
+
     [Test]
     public async Task RejectedSecondReadShouldNotBreakTheActiveReadCancellation()
     {

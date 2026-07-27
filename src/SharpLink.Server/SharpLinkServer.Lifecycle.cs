@@ -705,7 +705,16 @@ internal sealed partial class SharpLinkServer
                 finally
                 {
                     // 移动游标：buffer.Start 是我们没处理完的起始位置
-                    reader.AdvanceTo(buffer.Start, buffer.End);
+                    try
+                    {
+                        reader.AdvanceTo(buffer.Start, buffer.End);
+                    }
+                    catch (InvalidOperationException) when (
+                        !session.IsConnected || ct.IsCancellationRequested)
+                    {
+                        // Transport teardown can complete a StreamPipeReader after ReadAsync
+                        // returns. The buffer is already terminal and has no remaining owner.
+                    }
                 }
             }
         }

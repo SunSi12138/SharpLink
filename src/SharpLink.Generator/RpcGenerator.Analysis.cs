@@ -185,7 +185,7 @@ public partial class RpcGenerator
             list.Add(new InvalidRpcMethodModel(
                 InvalidRpcMethodKind.InheritedSignatureConflict,
                 method.Name,
-                "inherited declarations with the same parameters must have compatible return types",
+                "inherited declarations with the same CLR signature must agree on return type, call shape, execution policy, and request schema",
                 method.Locations.FirstOrDefault() ?? symbol.Locations.FirstOrDefault()));
         }
         foreach (var method in GetContractMethods(symbol))
@@ -711,32 +711,145 @@ public partial class RpcGenerator
         if (!symbol.AllInterfaces.Any(static contract => !IsIService(contract)))
             yield break;
 
-        var methods = symbol.GetMembers().OfType<IMethodSymbol>()
+        var directMethods = symbol.GetMembers().OfType<IMethodSymbol>()
+            .Where(static method => method.MethodKind == MethodKind.Ordinary &&
+                                    method.DeclaredAccessibility == Accessibility.Public)
+            .ToArray();
+        var methods = directMethods
             .Concat(symbol.AllInterfaces
                 .Where(static contract => !IsIService(contract))
                 .SelectMany(static contract => contract.GetMembers().OfType<IMethodSymbol>()))
             .Where(static method => method.MethodKind == MethodKind.Ordinary &&
                                     method.DeclaredAccessibility == Accessibility.Public)
             .ToArray();
-        var reported = new List<IMethodSymbol>();
-        for (var leftIndex = 0; leftIndex < methods.Length; leftIndex++)
+        var groups = new List<InheritedRpcSignatureGroup>();
+        for (var methodIndex = 0; methodIndex < methods.Length; methodIndex++)
         {
-            var left = methods[leftIndex];
-            if (reported.Any(existing => HasSameContractSignature(existing, left)))
-                continue;
-            for (var rightIndex = leftIndex + 1; rightIndex < methods.Length; rightIndex++)
+            var method = methods[methodIndex];
+            var groupIndex = -1;
+            for (var candidateIndex = 0; candidateIndex < groups.Count; candidateIndex++)
             {
-                var right = methods[rightIndex];
-                if (HasSameContractSignature(left, right) &&
-                    !SymbolEqualityComparer.IncludeNullability.Equals(left.ReturnType, right.ReturnType))
-                {
-                    reported.Add(left);
-                    yield return left;
-                    break;
-                }
+                if (!HasSameContractSignature(groups[candidateIndex].Representative, method))
+                    continue;
+                groupIndex = candidateIndex;
+                break;
             }
+            if (groupIndex < 0)
+            {
+                var hasDirectDeclaration = methodIndex < directMethods.Length;
+                groups.Add(new InheritedRpcSignatureGroup(
+                    method,
+                    hasDirectDeclaration ? default : GetInheritedRpcPolicy(method),
+                    hasDirectDeclaration,
+                    Reported: false));
+                continue;
+            }
+
+            var group = groups[groupIndex];
+            if (group.Reported)
+                continue;
+            if (SymbolEqualityComparer.IncludeNullability.Equals(
+                    group.Representative.ReturnType,
+                    method.ReturnType) &&
+                (group.HasDirectDeclaration || HasCompatibleInheritedRpcSemantics(
+                    group.Representative,
+                    method,
+                    group.Policy,
+                    GetInheritedRpcPolicy(method))))
+            {
+                continue;
+            }
+
+            groups[groupIndex] = group with { Reported = true };
+            yield return group.Representative;
         }
     }
+
+    private static bool HasCompatibleInheritedRpcSemantics(
+        IMethodSymbol left,
+        IMethodSymbol right,
+        InheritedRpcPolicy leftPolicy,
+        InheritedRpcPolicy rightPolicy)
+    {
+        for (var index = 0; index < left.Parameters.Length; index++)
+        {
+            var leftParameter = left.Parameters[index];
+            var rightParameter = right.Parameters[index];
+            if (IsCancellationTokenParameter(leftParameter) ||
+                IsCallOptionsParameter(leftParameter))
+            {
+                continue;
+            }
+            if (!string.Equals(leftParameter.Name, rightParameter.Name, StringComparison.Ordinal) ||
+                !SymbolEqualityComparer.IncludeNullability.Equals(
+                    leftParameter.Type,
+                    rightParameter.Type))
+            {
+                return false;
+            }
+        }
+
+        return leftPolicy == rightPolicy;
+    }
+
+    private static InheritedRpcPolicy GetInheritedRpcPolicy(IMethodSymbol method)
+    {
+        var isOneway = false;
+        var isIdempotent = false;
+        var isNonCancellable = false;
+        var hasTimeout = false;
+        double? timeoutSeconds = null;
+        foreach (var attribute in method.GetAttributes())
+        {
+            var attributeClass = attribute.AttributeClass;
+            if (attributeClass is null)
+                continue;
+            var attributeNamespace = attributeClass.ContainingNamespace;
+            if (attributeNamespace.ContainingNamespace is not { Name: "SharpLink" } root ||
+                !root.ContainingNamespace.IsGlobalNamespace ||
+                attributeNamespace.Name is not ("Sdk" or "Abstractions"))
+            {
+                continue;
+            }
+
+            switch (attributeClass.Name)
+            {
+                case "OnewayAttribute":
+                    isOneway = true;
+                    break;
+                case "IdempotentAttribute":
+                    isIdempotent = true;
+                    break;
+                case "NonCancellableAttribute":
+                    isNonCancellable = true;
+                    break;
+                case "TimeoutAttribute":
+                    hasTimeout = true;
+                    if (TryGetTimeoutSeconds(attribute, out var seconds))
+                        timeoutSeconds = seconds;
+                    break;
+            }
+        }
+        return new InheritedRpcPolicy(
+            isOneway,
+            isIdempotent,
+            isNonCancellable,
+            hasTimeout,
+            timeoutSeconds);
+    }
+
+    private readonly record struct InheritedRpcPolicy(
+        bool IsOneway,
+        bool IsIdempotent,
+        bool IsNonCancellable,
+        bool HasTimeout,
+        double? TimeoutSeconds);
+
+    private readonly record struct InheritedRpcSignatureGroup(
+        IMethodSymbol Representative,
+        InheritedRpcPolicy Policy,
+        bool HasDirectDeclaration,
+        bool Reported);
 
     private static bool IsIService(INamedTypeSymbol symbol)
         => string.Equals(symbol.Name, "IService", StringComparison.Ordinal) &&

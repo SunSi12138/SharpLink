@@ -15,7 +15,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
     private bool _currentIsStaging;
     private bool _stagingExaminedAll;
     private bool _hasOutstandingRead;
-    private TaskCompletionSource<bool>? _outstandingReadReleased;
+    private TaskCompletionSource<bool>? _readActivityReleased;
     private int _peerWriterArmed;
     private int _cancelPending;
     private int _readOperationPending;
@@ -101,7 +101,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         _currentRingLength = 0;
         _currentIsStaging = false;
         Volatile.Write(ref _hasOutstandingRead, false);
-        Volatile.Read(ref _outstandingReadReleased)?.TrySetResult(true);
+        Volatile.Read(ref _readActivityReleased)?.TrySetResult(true);
     }
 
     public override void CancelPendingRead()
@@ -118,21 +118,21 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         if (_direction.TakeWriterWaiting() | TakePeerWriterArmed())
             _control.SignalSpaceAvailable();
         _control.PulseDataWaiter();
-        if (!Volatile.Read(ref _hasOutstandingRead))
+        if (!HasReadActivity())
             DisposeStaging();
     }
 
     public override ValueTask CompleteAsync(Exception? exception = null)
     {
         Complete(exception);
-        var outstandingReadReleased = WaitForOutstandingReadReleaseAsync();
-        if (outstandingReadReleased.IsCompletedSuccessfully)
+        var readActivityReleased = WaitForReadActivityReleaseAsync();
+        if (readActivityReleased.IsCompletedSuccessfully)
         {
             DisposeStaging();
             return ValueTask.CompletedTask;
         }
 
-        return new ValueTask(CompleteAfterOutstandingReadAsync(outstandingReadReleased));
+        return new ValueTask(CompleteAfterReadActivityAsync(readActivityReleased));
     }
 
     public override bool TryRead(out ReadResult result)
@@ -156,7 +156,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         }
         finally
         {
-            Volatile.Write(ref _readOperationPending, 0);
+            FinishReadOperation();
         }
     }
 
@@ -215,7 +215,7 @@ internal sealed class SharedMemoryPipeReader : PipeReader
         }
         finally
         {
-            Volatile.Write(ref _readOperationPending, 0);
+            FinishReadOperation();
         }
     }
 
@@ -379,22 +379,45 @@ internal sealed class SharedMemoryPipeReader : PipeReader
             Thread.SpinWait(4);
     }
 
-    private Task WaitForOutstandingReadReleaseAsync()
+    private Task WaitForReadActivityReleaseAsync()
     {
-        if (!Volatile.Read(ref _hasOutstandingRead))
+        if (!HasReadActivity())
             return Task.CompletedTask;
 
         var created = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var waiter = Interlocked.CompareExchange(ref _outstandingReadReleased, created, null) ?? created;
-        if (!Volatile.Read(ref _hasOutstandingRead))
+        var waiter = Interlocked.CompareExchange(ref _readActivityReleased, created, null) ?? created;
+        if (!HasReadActivity())
             waiter.TrySetResult(true);
         return waiter.Task;
     }
 
-    private async Task CompleteAfterOutstandingReadAsync(Task outstandingReadReleased)
+    private async Task CompleteAfterReadActivityAsync(Task readActivityReleased)
     {
-        await outstandingReadReleased.ConfigureAwait(false);
+        await readActivityReleased.ConfigureAwait(false);
         DisposeStaging();
+    }
+
+    private bool HasReadActivity()
+        => Volatile.Read(ref _readOperationPending) != 0 ||
+           Volatile.Read(ref _hasOutstandingRead);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void FinishReadOperation()
+    {
+        Volatile.Write(ref _readOperationPending, 0);
+        if (Volatile.Read(ref _completed) == 0)
+            return;
+        FinishReadOperationAfterCompletion();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void FinishReadOperationAfterCompletion()
+    {
+        if (!Volatile.Read(ref _hasOutstandingRead))
+        {
+            DisposeStaging();
+            Volatile.Read(ref _readActivityReleased)?.TrySetResult(true);
+        }
     }
 
     private void DisposeStaging()
