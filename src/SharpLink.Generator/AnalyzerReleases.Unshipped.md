@@ -51,3 +51,5 @@
  SHARPLINK047 | SharpLink.Generator | Error | Codec Adapter target is open or unsupported
  SHARPLINK048 | SharpLink.Generator | Error | Codec Adapter or Wire Format identity conflicts
  SHARPLINK049 | SharpLink.Generator | Error | Codec Adapter attempts to replace a built-in Codec
+ SHARPLINK050 | SharpLink.Generator | Error | RPC timeout is invalid
+ SHARPLINK051 | SharpLink.Generator | Error | RPC union case is invalid

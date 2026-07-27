@@ -61,7 +61,16 @@ internal record RpcParameterModel(
     string? StreamItemEnumUnderlyingType,
     Location? Location);
 
-internal readonly record struct InvalidRpcMethodModel(string MethodName, string ReturnType, Location? Location);
+internal readonly record struct InvalidRpcMethodModel(
+    InvalidRpcMethodKind Kind,
+    string MethodName,
+    string Detail,
+    Location? Location);
+internal enum InvalidRpcMethodKind
+{
+    ReturnType,
+    Timeout
+}
 internal readonly record struct InvalidCancellationTokenMethodModel(string MethodName, Location? Location);
 internal readonly record struct InvalidCallOptionsMethodModel(string MethodName, Location? Location);
 internal readonly record struct InvalidControlParameterOrderModel(string MethodName, Location? Location);
@@ -102,6 +111,7 @@ internal sealed record RpcUnionModel(
 internal sealed record RpcUnionCaseModel(
     int Tag,
     string TypeName,
+    string? InvalidDetail,
     Location? Location);
 
 internal enum StaticRouteConflictKind

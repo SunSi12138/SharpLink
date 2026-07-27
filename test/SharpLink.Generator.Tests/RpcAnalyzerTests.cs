@@ -768,6 +768,25 @@ public sealed class InaccessibleConstructorService : IInaccessibleContract
     }
 
     [Test]
+    public Task ExplicitEmptyContractAssemblyFilterShouldDisableReferencedContractScanning()
+    {
+        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSdkSource());
+        var first = CreateMetadataReference("ContractOwnerA", BuildReferencedContractSource("ValueTask<int> Echo(int value);"), sdk);
+        var second = CreateMetadataReference("ContractOwnerB", BuildReferencedContractSource("ValueTask<string> Echo(int value);"), sdk);
+
+        var diagnostics = RunGenerator(
+            "[assembly: SharpLink.Sdk.SharpLinkRpcContracts()]\n" +
+            "namespace Consumer { public sealed class Marker; }",
+            sdk,
+            first,
+            second);
+        Ensure(!diagnostics.Any(static diagnostic =>
+                diagnostic.Id is "SHARPLINK021" or "SHARPLINK022" or "SHARPLINK023"),
+            $"An explicit empty contract filter must not fall back to automatic reference scanning. Actual: {FormatDiagnostics(diagnostics)}");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task ConflictingStaticMethodDescriptorsShouldReportSharplink022()
     {
         var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSdkSource());

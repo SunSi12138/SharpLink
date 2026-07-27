@@ -29,6 +29,7 @@ public partial class RpcGenerator
                 return new RpcUnionCaseModel(
                     tag,
                     RemoveGlobalPrefix(caseType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)),
+                    GetInvalidUnionCaseDetail(symbol, tag, caseType, context.SemanticModel.Compilation),
                     attribute.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? symbol.Locations.FirstOrDefault());
             })
             .Where(static item => item is not null)
@@ -42,6 +43,51 @@ public partial class RpcGenerator
                 RemoveGlobalPrefix(symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)),
                 cases,
                 symbol.Locations.FirstOrDefault());
+    }
+
+    private static string? GetInvalidUnionCaseDetail(
+        INamedTypeSymbol unionType,
+        int tag,
+        ITypeSymbol caseType,
+        Compilation compilation)
+    {
+        if (tag <= 0)
+            return $"union tag {tag} must be positive";
+        if (caseType is not INamedTypeSymbol namedCase ||
+            namedCase.IsUnboundGenericType ||
+            HasTypeParameter(namedCase) ||
+            namedCase.TypeKind is not (TypeKind.Class or TypeKind.Struct) ||
+            namedCase.IsAbstract)
+        {
+            return $"case type '{RemoveGlobalPrefix(caseType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))}' must be closed and concrete";
+        }
+        if (!IsDirectUnionCase(unionType, namedCase) &&
+            (compilation is not Microsoft.CodeAnalysis.CSharp.CSharpCompilation csharpCompilation ||
+             !csharpCompilation.ClassifyConversion(caseType, unionType).IsImplicit))
+        {
+            return $"case type '{RemoveGlobalPrefix(caseType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))}' is not assignable to the annotated union";
+        }
+        return null;
+    }
+
+    private static bool IsDirectUnionCase(INamedTypeSymbol unionType, INamedTypeSymbol caseType)
+    {
+        if (SymbolEqualityComparer.Default.Equals(unionType, caseType))
+            return true;
+        if (unionType.TypeKind == TypeKind.Interface)
+        {
+            foreach (var candidate in caseType.AllInterfaces)
+            {
+                if (SymbolEqualityComparer.Default.Equals(candidate, unionType))
+                    return true;
+            }
+        }
+        for (var current = caseType.BaseType; current is not null; current = current.BaseType)
+        {
+            if (SymbolEqualityComparer.Default.Equals(current, unionType))
+                return true;
+        }
+        return false;
     }
 
     private static ContractManifestOptions GetContractManifestOptions(AnalyzerConfigOptionsProvider provider)
@@ -329,6 +375,7 @@ public partial class RpcGenerator
                 {
                     Tag = item.Tag,
                     Type = item.TypeName,
+                    InvalidDetail = item.InvalidDetail,
                     SourceLocation = item.Location
                 });
             }
@@ -387,6 +434,15 @@ public partial class RpcGenerator
         }
         foreach (var union in current.Unions)
         {
+            foreach (var item in union.Cases.Where(static item => item.InvalidDetail is not null))
+            {
+                diagnostics.Add(new ContractCompatibilityDiagnostic(
+                    ContractCompatibilityKind.UnionDeclaration,
+                    item.SourceLocation,
+                    union.Name,
+                    item.InvalidDetail!,
+                    "use a positive tag and a closed concrete case type assignable to the annotated union"));
+            }
             foreach (var group in union.Cases.GroupBy(static item => item.Tag).Where(static group => group.Count() > 1))
             {
                 foreach (var item in group.Skip(1))
@@ -397,6 +453,21 @@ public partial class RpcGenerator
                         union.Name,
                         $"union tag {group.Key} is already assigned to '{group.First().Type}'",
                         "allocate a unique tag for every union case"));
+                }
+            }
+            foreach (var group in union.Cases
+                         .Where(static item => item.InvalidDetail is null)
+                         .GroupBy(static item => item.Type, StringComparer.Ordinal)
+                         .Where(static group => group.Select(static item => item.Tag).Distinct().Count() > 1))
+            {
+                foreach (var item in group.OrderBy(static item => item.Tag).Skip(1))
+                {
+                    diagnostics.Add(new ContractCompatibilityDiagnostic(
+                        ContractCompatibilityKind.UnionDeclaration,
+                        item.SourceLocation,
+                        union.Name,
+                        $"case type '{item.Type}' is already assigned to tag {group.Min(static candidate => candidate.Tag)}",
+                        "assign each concrete case type to exactly one stable tag"));
                 }
             }
         }
@@ -892,6 +963,7 @@ internal static class __SharpLinkContractManifest
         Required,
         EnumUnderlyingType,
         UnionTag,
+        UnionDeclaration,
         MethodRemoved,
         ContractRemoved,
         ServiceRouteRemoved,
@@ -902,7 +974,7 @@ internal static class __SharpLinkContractManifest
     {
         public string Format { get; set; } = ContractManifestFormat;
         public int Version { get; set; } = ContractManifestFormatVersion;
-        public string GeneratorVersion { get; set; } = "0.8.3";
+        public string GeneratorVersion { get; set; } = ExecutingGeneratorVersion;
         public string SchemaFingerprint { get; set; } = string.Empty;
         public List<ContractManifestContract> Contracts { get; set; } = [];
         public List<ContractManifestDto> Dtos { get; set; } = [];
@@ -990,6 +1062,7 @@ internal static class __SharpLinkContractManifest
     {
         public int Tag { get; set; }
         public string Type { get; set; } = string.Empty;
+        [JsonIgnore] public string? InvalidDetail { get; set; }
         [JsonIgnore] public Location? SourceLocation { get; set; }
     }
 

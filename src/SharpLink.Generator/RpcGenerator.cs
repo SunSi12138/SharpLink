@@ -4,6 +4,8 @@ namespace SharpLink.Generator;
 public partial class RpcGenerator : IIncrementalGenerator
 {
     private static readonly CultureInfo InvariantCulture = CultureInfo.InvariantCulture;
+    private static readonly string ExecutingGeneratorVersion =
+        typeof(RpcGenerator).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
     private const string RpcContractAttributeMetadataName = "SharpLink.Sdk.RpcContractAttribute";
     private const string RpcServiceAttributeMetadataName = "SharpLink.Sdk.RpcServiceAttribute";
     private const string ClusterContractAssemblyAttributeMetadataName =
@@ -96,11 +98,14 @@ public partial class RpcGenerator : IIncrementalGenerator
         {
             foreach (var method in methods)
             {
+                var descriptor = method.Kind == InvalidRpcMethodKind.Timeout
+                    ? InvalidTimeoutRule
+                    : InvalidReturnTypeRule;
                 var diagnostic = Diagnostic.Create(
-                    InvalidReturnTypeRule,
+                    descriptor,
                     method.Location,
                     method.MethodName,
-                    method.ReturnType);
+                    method.Detail);
                 spc.ReportDiagnostic(diagnostic);
             }
         });
@@ -326,6 +331,7 @@ public partial class RpcGenerator : IIncrementalGenerator
                     ContractCompatibilityKind.Required => RequiredMemberCompatibilityRule,
                     ContractCompatibilityKind.EnumUnderlyingType => EnumCompatibilityRule,
                     ContractCompatibilityKind.UnionTag => UnionTagCompatibilityRule,
+                    ContractCompatibilityKind.UnionDeclaration => InvalidUnionCaseRule,
                     ContractCompatibilityKind.MethodRemoved => MethodRemovedCompatibilityRule,
                     ContractCompatibilityKind.ContractRemoved => ContractRemovedCompatibilityRule,
                     ContractCompatibilityKind.ServiceRouteRemoved => ServiceRouteRemovedCompatibilityRule,

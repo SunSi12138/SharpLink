@@ -64,20 +64,108 @@ public sealed class HelloService : IHelloService
         Ensure(first.Json.Contains("\"tag\": 1", StringComparison.Ordinal), "union tag");
         Ensure(first.Json.Contains("\"schemaFingerprint\":", StringComparison.Ordinal),
             "schema fingerprint");
-        Ensure(first.Json.Contains("\"generatorVersion\": \"0.8.3\"", StringComparison.Ordinal),
-            "0.8.3 generator version");
+        var generatorVersion = typeof(RpcGenerator).Assembly.GetName().Version!.ToString(3);
+        Ensure(first.Json.Contains($"\"generatorVersion\": \"{generatorVersion}\"", StringComparison.Ordinal),
+            "executing generator assembly version");
         Ensure(!first.Json.Contains(Directory.GetCurrentDirectory(), StringComparison.Ordinal),
             "Manifest must not contain absolute paths");
         return Task.CompletedTask;
     }
 
     [Test]
-    public Task GeneratedAssemblyManifestShouldReportVersion083()
+    public Task GeneratedAssemblyManifestShouldReportExecutingGeneratorVersion()
     {
         var source = SimpleContract("ValueTask<int> Echo(int value, CancellationToken cancellationToken);");
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(generated.Contains("public string GeneratorVersion => \"0.8.3\";", StringComparison.Ordinal),
+        var generatorVersion = typeof(RpcGenerator).Assembly.GetName().Version!.ToString(3);
+        Ensure(generated.Contains($"public string GeneratorVersion => \"{generatorVersion}\";", StringComparison.Ordinal),
             "generated assembly Manifest version");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task InvalidTimeoutConstantsShouldReportSharplink050()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface ITimeoutContract : SharpLink.Sdk.IService
+{
+    [SharpLink.Sdk.Timeout(0)]
+    ValueTask<int> Zero(CancellationToken cancellationToken);
+
+    [SharpLink.Sdk.Timeout(-1)]
+    ValueTask<int> Negative(CancellationToken cancellationToken);
+
+    [SharpLink.Sdk.Timeout(double.NaN)]
+    ValueTask<int> NotANumber(CancellationToken cancellationToken);
+
+    [SharpLink.Sdk.Timeout(double.PositiveInfinity)]
+    ValueTask<int> Infinity(CancellationToken cancellationToken);
+
+    [SharpLink.Sdk.Timeout(double.Epsilon)]
+    ValueTask<int> RoundsToZero(CancellationToken cancellationToken);
+
+    [SharpLink.Sdk.Timeout(1e300)]
+    ValueTask<int> Overflow(CancellationToken cancellationToken);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK050", 6);
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(!generated.Contains("ITimeoutContract_Proxy", StringComparison.Ordinal),
+            "a contract with an invalid timeout must not emit descriptors");
+
+        var valid = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IValidTimeoutContract : SharpLink.Sdk.IService
+{
+    [SharpLink.Sdk.Timeout(1.5)]
+    ValueTask<int> Invoke(CancellationToken cancellationToken);
+}
+""");
+        EnsureDoesNotHaveRule(valid, "SHARPLINK050");
+        Ensure(string.Join("\n", RunGeneratorAndGetSources(valid)).Contains(
+                "TimeSpan.FromSeconds(1.5d)",
+                StringComparison.Ordinal),
+            "a valid fractional timeout must retain its generated descriptor");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task NonPositiveUnionTagsShouldReportSharplink051()
+    {
+        var source = BuildSource("""
+public sealed class ValidCase : IResultUnion { }
+
+[SharpLink.Sdk.RpcUnionCase(0, typeof(ValidCase))]
+[SharpLink.Sdk.RpcUnionCase(-1, typeof(ValidCase))]
+public interface IResultUnion { }
+""");
+
+        EnsureRuleCount(source, "SHARPLINK051", 2);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task InvalidUnionCaseMappingsShouldReportSharplink051()
+    {
+        var source = BuildSource("""
+public abstract class AbstractCase : ResultBase { }
+public interface InterfaceCase : IResultUnion { }
+public sealed class UnrelatedCase { }
+public sealed class OpenCase<T> : ResultBase { }
+public sealed class ValidCase : ResultBase { }
+
+[SharpLink.Sdk.RpcUnionCase(1, typeof(AbstractCase))]
+[SharpLink.Sdk.RpcUnionCase(6, typeof(InterfaceCase))]
+[SharpLink.Sdk.RpcUnionCase(2, typeof(UnrelatedCase))]
+[SharpLink.Sdk.RpcUnionCase(3, typeof(OpenCase<>))]
+[SharpLink.Sdk.RpcUnionCase(4, typeof(ValidCase))]
+[SharpLink.Sdk.RpcUnionCase(5, typeof(ValidCase))]
+public abstract class ResultBase { }
+""");
+
+        EnsureRuleCount(source, "SHARPLINK051", 5);
         return Task.CompletedTask;
     }
 

@@ -291,6 +291,22 @@ public partial class RpcGenerator
     private static readonly DiagnosticDescriptor BuiltinAdapterOverrideRule = AdapterRule(
         "SHARPLINK049", "Built-in Codec Cannot Be Rebound");
 
+    private static readonly DiagnosticDescriptor InvalidTimeoutRule = new(
+        id: "SHARPLINK050",
+        title: "RPC Timeout Is Invalid",
+        messageFormat: "RPC method '{0}' has an invalid Timeout: {1}",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor InvalidUnionCaseRule = new(
+        id: "SHARPLINK051",
+        title: "RPC Union Case Is Invalid",
+        messageFormat: "RPC union '{0}' is invalid: {1}. Suggested fix: {2}.",
+        category: "SharpLink.Generator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     private static DiagnosticDescriptor AdapterRule(string id, string title)
         => new(
             id: id,

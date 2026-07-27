@@ -1,5 +1,7 @@
 namespace SharpLink.Sdk;
 
+/// <summary>Defines the generated default timeout for an RPC method.</summary>
+/// <remarks>Explicit values must produce a positive finite <see cref="TimeSpan"/>; invalid attribute constants report SHARPLINK050 at compile time.</remarks>
 [AttributeUsage(AttributeTargets.Method)]
 public sealed class TimeoutAttribute : Attribute
 {

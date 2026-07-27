@@ -4,6 +4,25 @@
 
 ## [Unreleased]
 
+## [0.8.24] - 2026-07-27
+
+### Fixed
+
+- Invalid `[Timeout]` constants now report `SHARPLINK050` instead of emitting uncompilable or type-initializer-failing RPC descriptors.
+- Union tags must now be positive, and union cases must be closed, concrete, assignable, and mapped to exactly one tag; invalid declarations report `SHARPLINK051`.
+- An explicit empty `[assembly: SharpLinkRpcContracts()]` filter now disables referenced-contract discovery instead of falling back to automatic scanning.
+- Generated assembly and JSON contract Manifests now report the executing generator package version instead of the stale hard-coded `0.8.3` value.
+
+### Changed
+
+- Removed a redundant constant-false branch from RPC method validation while folding timeout checks into the existing traversal.
+
+### Compatibility and validation
+
+- Protocol v2 and payload layouts are unchanged. Contract `schemaFingerprint` values change because corrected generator provenance is part of the integrity-protected JSON; baseline compatibility comparison remains structural.
+- Non-incremental Release build, Generator 88/88, Unit 449/449, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- A duplicate method-analysis pipeline that regressed a 400-method synthetic generator workload by about 20% was rejected. The final 101-sample A/B measured 41.029 ms at the 0.8.23 baseline and 40.675 ms for 0.8.24; compiler-thread allocation moved by a bounded 0.57%, while runtime hot paths are unchanged.
+
 ## [0.8.23] - 2026-07-27
 
 ### Fixed

@@ -182,13 +182,28 @@ public partial class RpcGenerator
         var list = ImmutableArray.CreateBuilder<InvalidRpcMethodModel>();
         foreach (var method in GetContractMethods(symbol))
         {
-            if (IsSupportedRpcReturnType(method.ReturnType))
-                continue;
-
-            list.Add(new InvalidRpcMethodModel(
-                method.Name,
-                method.ReturnType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
-                method.Locations.FirstOrDefault()));
+            if (!IsSupportedRpcReturnType(method.ReturnType))
+            {
+                list.Add(new InvalidRpcMethodModel(
+                    InvalidRpcMethodKind.ReturnType,
+                    method.Name,
+                    method.ReturnType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+                    method.Locations.FirstOrDefault()));
+            }
+            foreach (var attribute in method.GetAttributes())
+            {
+                if (!IsTimeoutAttribute(attribute))
+                    continue;
+                if (TryGetTimeoutSeconds(attribute, out var seconds) &&
+                    !TryValidateTimeoutSeconds(seconds, out var detail))
+                {
+                    list.Add(new InvalidRpcMethodModel(
+                        InvalidRpcMethodKind.Timeout,
+                        method.Name,
+                        detail,
+                        attribute.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? method.Locations.FirstOrDefault()));
+                }
+            }
         }
 
         return list.ToImmutable();
@@ -429,7 +444,21 @@ public partial class RpcGenerator
                 m.Parameters.Count(IsCallOptionsParameter) > 1 ||
                 !HasValidControlParameterOrder(m) ||
                 m.Parameters.Count(p => IsAsyncEnumerable(p.Type, out _)) > sbyte.MaxValue ||
-                false);
+                HasInvalidTimeout(m));
+    }
+
+    private static bool HasInvalidTimeout(IMethodSymbol method)
+    {
+        foreach (var attribute in method.GetAttributes())
+        {
+            if (IsTimeoutAttribute(attribute) &&
+                TryGetTimeoutSeconds(attribute, out var seconds) &&
+                !TryValidateTimeoutSeconds(seconds, out _))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static bool HasTypeParameter(ITypeSymbol type)
@@ -563,21 +592,69 @@ public partial class RpcGenerator
             if (attribute.ConstructorArguments.Length == 0)
                 return null;
 
-            var argument = attribute.ConstructorArguments[0];
-            if (argument.Value is null)
-                return null;
-
-            return argument.Value switch
-            {
-                double value => value,
-                float value => value,
-                int value => value,
-                long value => value,
-                _ => null
-            };
+            return TryGetTimeoutSeconds(attribute, out var seconds) &&
+                   TryValidateTimeoutSeconds(seconds, out _)
+                ? seconds
+                : null;
         }
 
         return null;
+    }
+
+    private static bool TryGetTimeoutSeconds(AttributeData attribute, out double seconds)
+    {
+        seconds = default;
+        if (attribute.ConstructorArguments.Length == 0 || attribute.ConstructorArguments[0].Value is null)
+            return false;
+
+        switch (attribute.ConstructorArguments[0].Value)
+        {
+            case double value:
+                seconds = value;
+                return true;
+            case float value:
+                seconds = value;
+                return true;
+            case int value:
+                seconds = value;
+                return true;
+            case long value:
+                seconds = value;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryValidateTimeoutSeconds(double seconds, out string detail)
+    {
+        if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds <= 0)
+        {
+            detail = "seconds must be a finite number greater than zero";
+            return false;
+        }
+
+        try
+        {
+            if (TimeSpan.FromSeconds(seconds) <= TimeSpan.Zero)
+            {
+                detail = "seconds is too small to produce a positive TimeSpan";
+                return false;
+            }
+        }
+        catch (OverflowException)
+        {
+            detail = "seconds exceeds the supported TimeSpan range";
+            return false;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            detail = "seconds exceeds the supported TimeSpan range";
+            return false;
+        }
+
+        detail = string.Empty;
+        return true;
     }
 
     private static bool IsSupportedRpcReturnType(ITypeSymbol type)
@@ -1004,6 +1081,8 @@ public partial class RpcGenerator
             if (!IsAttribute(attribute, "SharpLink.Sdk", "SharpLinkRpcContractsAttribute"))
                 continue;
 
+            assemblyNames ??= new HashSet<string>(StringComparer.Ordinal);
+
             if (attribute.ConstructorArguments.Length == 0)
                 continue;
 
@@ -1015,7 +1094,6 @@ public partial class RpcGenerator
             {
                 if (item.Value is INamedTypeSymbol type && type.ContainingAssembly is { } containingAssembly)
                 {
-                    assemblyNames ??= new HashSet<string>(StringComparer.Ordinal);
                     assemblyNames.Add(containingAssembly.Identity.Name);
                 }
             }

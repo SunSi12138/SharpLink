@@ -1,6 +1,7 @@
 namespace SharpLink.Sdk;
 
-/// <summary>Assigns a stable wire tag to one concrete case of a polymorphic RPC contract type.</summary>
+/// <summary>Assigns a stable positive wire tag to one closed concrete case of a polymorphic RPC contract type.</summary>
+/// <remarks>The case type must be assignable to the annotated union and may be assigned exactly one tag.</remarks>
 /// <example><code>[RpcUnionCase(1, typeof(CardPayment))]</code></example>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface, AllowMultiple = true, Inherited = false)]
 public sealed class RpcUnionCaseAttribute : Attribute

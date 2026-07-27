@@ -1,27 +1,21 @@
-# 0.8.23 regression-test research
+# 0.8.24 regression-test research
 
 ## Target inventory and evidence candidates
 
-- Boolean blit collections accept non-canonical element bytes across array, List, Memory, ReadOnlyMemory, and ImmutableArray Codecs.
-- Rune and decimal blit collections bypass the scalar semantic validation shared by ordinary values.
-- DateOnly, DateTime, and TimeOnly blit collections can materialize invalid temporal values.
-- DateTimeOffset blit collections accept invalid UTC ticks or offsets and transmit six bytes of native padding per element.
-- A truncated shared-memory server response escapes Client Connect as raw `EndOfStreamException` instead of the transport's structured `Unavailable` error.
+- C# attribute construction does not execute `TimeoutAttribute(double)` at compile time, so zero, negative, non-finite, and `TimeSpan`-overflowing constants currently reach generated descriptors unchecked.
+- `RpcUnionCaseAttribute` documents a positive tag, but the current manifest accepts zero and negative tags.
+- Union case metadata accepts abstract, open, unrelated, and multiply-tagged case types, producing a manifest that cannot describe a sound polymorphic mapping.
+- An explicit empty `[assembly: SharpLinkRpcContracts()]` marker is treated as if no marker existed and falls back to scanning every SharpLink reference.
+- Both generated assembly manifests and JSON contract manifests still hard-code generator version `0.8.3`, despite later package versions.
 
 ## Acceptance checklist
 
-- Every built-in blit collection shape rejects invalid Boolean, Rune, decimal, and temporal elements as `DataLoss`.
-- DateTimeOffset collection writers clear padding without mutating caller-owned values.
-- Integer and other all-bit-pattern-valid blit collections retain their existing zero-allocation fast path.
-- Truncated shared-memory server responses surface `Unavailable` with the original EOF retained as the inner cause.
-- Changed valid collection paths show no material performance regression.
+- Invalid timeout constants produce one stable generator error and never emit uncompilable or type-initializer-failing descriptors.
+- Union tags must be positive; case types must be closed, concrete, assignable to the annotated union, and assigned exactly one tag.
+- An explicit empty contract-assembly marker selects no referenced assemblies.
+- Generated version metadata is derived from the executing generator assembly version so release bumps cannot leave stale provenance.
+- Valid generator inputs and incremental output remain deterministic.
 
 ## Audit guardrails
 
-The collection findings are a distinct runtime Codec path from 0.8.22 generated DTO fields and cover five concrete public collection types. The observed shared-memory EOF was converted into a deterministic truncated-peer probe rather than being accepted from one resource-contended flaky run.
-
-## Regression and performance evidence
-
-Against clean 0.8.22 commit `3a4338d`, the complete pre-fix Unit run contained 449 tests: all 445 existing tests passed and exactly four new collection probes failed. The complete pre-fix Integration run contained 237 tests: all 236 existing tests passed and exactly the deterministic truncated-response probe failed.
-
-Final focused Unit 449/449 and Integration 237/237 pass. Performance A/B rejected two shared serialization helpers; the final ordinary int path retained about 10.1/17.0 ns and unchanged allocations. Sixteen-element Boolean and DateTimeOffset validation add about 5 ns and 23 ns respectively with unchanged allocations.
+The union shape conditions form one recommendation because they enforce the single invariant promised by `RpcUnionCaseAttribute`: a one-to-one mapping from positive wire tags to concrete cases of the annotated union. Timeout validity, explicit reference filtering, and release provenance are separate failure domains.

@@ -1,10 +1,10 @@
-# 0.8.23 regression-test plan
+# 0.8.24 regression-test plan
 
-1. [x] Prove Boolean blit collections reject non-canonical elements across all five shapes.
-2. [x] Prove Rune and decimal blit collections reject invalid elements.
-3. [x] Prove temporal blit collections reject invalid elements.
-4. [x] Prove DateTimeOffset collections validate values and clear native padding.
-5. [x] Prove truncated shared-memory responses map to structured Unavailable.
-6. [x] Run complete pre-fix Unit and Integration suites and record the exact failure set.
-7. [x] Implement only proven fixes, review assertions/pseudo-mutations, and run performance A/B.
-8. [x] Complete release gates and documentation; prepare the local 0.8.23 commit.
+1. [x] Prove invalid timeout constants are accepted or generate broken descriptor code.
+2. [x] Prove non-positive union tags enter the contract manifest.
+3. [x] Prove invalid union case relationships/shapes and duplicate type mappings enter the manifest.
+4. [x] Prove an explicit empty contract-assembly filter falls back to unrelated reference scanning.
+5. [x] Prove generated manifests report stale generator provenance.
+6. [x] Run the complete pre-fix Generator suite and record the exact failure set.
+7. [x] Implement only proven fixes and review assertions/pseudo-mutations.
+8. [x] Run complete release, package, documentation, and performance gates; prepare the local 0.8.24 commit.
