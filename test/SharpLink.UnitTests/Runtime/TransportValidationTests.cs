@@ -60,6 +60,19 @@ public class TransportValidationTests
     }
 
     [Test]
+    public async Task PipeBackedEndpointAddressesShouldRejectInvalidLogicalNamesDuringConfiguration()
+    {
+        foreach (var invalidName in new[] { "nested/name", "nested\\name", "nul\0name" })
+        {
+            var namedPipeFailure = CaptureFailure(() => _ = new SharpLinkNamedPipeAddress(invalidName));
+            var sharedMemoryFailure = CaptureFailure(() => _ = new SharpLinkSharedMemoryAddress(invalidName));
+
+            await Assert.That(namedPipeFailure).IsTypeOf<ArgumentException>();
+            await Assert.That(sharedMemoryFailure).IsTypeOf<ArgumentException>();
+        }
+    }
+
+    [Test]
     public async Task AbstractUnixSocketSnapshotShouldPreserveSerializedAddress()
     {
         var original = new UnixDomainSocketEndPoint("\0sharplink-abstract");

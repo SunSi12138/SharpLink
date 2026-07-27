@@ -99,6 +99,76 @@ public class SharpLinkServerHostedServiceTests
     }
 
     [Test]
+    public async Task ExpectedRunFailureDuringHostedStopShouldNotStopTheHost()
+    {
+        var lifetime = new TestHostApplicationLifetime();
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var hosted = new SharpLinkServerHostedService(
+            SharpLinkServerBuilder.Create().UseTransport(new FailingDisposeTransport()),
+            NullLoggerFactory.Instance,
+            provider,
+            new SharpLinkServerReadiness(),
+            lifetime);
+        await hosted.StartAsync(CancellationToken.None);
+
+        var stopFailure = await CaptureFailureAsync(hosted.StopAsync(CancellationToken.None));
+        await Task.Delay(100);
+
+        Ensure(stopFailure is IOException { Message: "listener cleanup failed" },
+            "Hosted Stop must preserve the expected listener cleanup failure");
+        Ensure(!lifetime.ApplicationStopping.IsCancellationRequested,
+            "an expected Run fault after hosted Stop begins must not stop the owning Host");
+    }
+
+    [Test]
+    public async Task CompletedHostedStopShouldRejectLaterStart()
+    {
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var duplicateHosted = new SharpLinkServerHostedService(
+            SharpLinkServerBuilder.Create().UseTransport(new BlockingTransport()),
+            NullLoggerFactory.Instance,
+            provider,
+            new SharpLinkServerReadiness(),
+            new TestHostApplicationLifetime());
+        await duplicateHosted.StartAsync(CancellationToken.None);
+        var firstServer = (ISharpLinkServer)typeof(SharpLinkServerHostedService)
+            .GetField("_server", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(duplicateHosted)!;
+        var duplicateFailure = await CaptureFailureAsync(
+            duplicateHosted.StartAsync(CancellationToken.None));
+        var currentServer = (ISharpLinkServer)typeof(SharpLinkServerHostedService)
+            .GetField("_server", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(duplicateHosted)!;
+        await duplicateHosted.StopAsync(CancellationToken.None);
+        if (!ReferenceEquals(firstServer, currentServer))
+            await firstServer.DisposeAsync();
+
+        var readiness = new SharpLinkServerReadiness();
+        var hosted = new SharpLinkServerHostedService(
+            SharpLinkServerBuilder.Create().UseTransport(new BlockingTransport()),
+            NullLoggerFactory.Instance,
+            provider,
+            readiness,
+            new TestHostApplicationLifetime());
+        await hosted.StopAsync(CancellationToken.None);
+
+        var startFailure = await CaptureFailureAsync(hosted.StartAsync(CancellationToken.None));
+        var server = (ISharpLinkServer?)typeof(SharpLinkServerHostedService)
+            .GetField("_server", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(hosted);
+        if (server is not null)
+            await server.DisposeAsync();
+
+        Ensure(duplicateFailure is InvalidOperationException
+            { Message: "The SharpLink server host has already started." },
+            "a duplicate hosted Start must be rejected before replacing the owned server");
+        Ensure(startFailure is InvalidOperationException,
+            "a completed hosted Stop must be a terminal barrier to later Start");
+        Ensure(readiness.Status == SharpLinkHealthStatus.Unhealthy,
+            "a rejected post-stop Start must not publish readiness");
+    }
+
+    [Test]
     public async Task UnexpectedSuccessfulRunCompletionShouldStopTheHost()
     {
         var transport = new BlockingTransport();

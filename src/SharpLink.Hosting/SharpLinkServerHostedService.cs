@@ -19,23 +19,33 @@ internal sealed class SharpLinkServerHostedService(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        builder.UseLoggerFactoryIfUnset(loggerFactory);
-        builder.UseServiceProvider(serviceProvider);
-        _server = builder.Build();
-        readiness.Publish(_server);
-        _runCts = new CancellationTokenSource();
-        _runTask = _server.RunAsync(_runCts.Token).AsTask();
+        Task runTask;
+        lock (_stopGate)
+        {
+            if (Volatile.Read(ref _stopRequested) != 0)
+                throw new InvalidOperationException("The SharpLink server host has already stopped.");
+            if (_runCts is not null)
+                throw new InvalidOperationException("The SharpLink server host has already started.");
+
+            builder.UseLoggerFactoryIfUnset(loggerFactory);
+            builder.UseServiceProvider(serviceProvider);
+            _server = builder.Build();
+            readiness.Publish(_server);
+            _runCts = new CancellationTokenSource();
+            _runTask = _server.RunAsync(_runCts.Token).AsTask();
+            runTask = _runTask;
+        }
 
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!_runTask.IsCompleted)
+            if (!runTask.IsCompleted)
             {
-                _ = ObserveRunTaskAsync(_runTask);
+                _ = ObserveRunTaskAsync(runTask);
                 return;
             }
 
-            await _runTask.ConfigureAwait(false);
+            await runTask.ConfigureAwait(false);
             throw new InvalidOperationException("SharpLink server RunAsync completed during startup.");
         }
         catch (Exception runException)
@@ -72,7 +82,8 @@ internal sealed class SharpLinkServerHostedService(
         }
         catch (Exception exception)
         {
-            if (applicationLifetime.ApplicationStopping.IsCancellationRequested)
+            if (Volatile.Read(ref _stopRequested) != 0 ||
+                applicationLifetime.ApplicationStopping.IsCancellationRequested)
                 return;
             loggerFactory.CreateLogger<SharpLinkServerHostedService>().LogCritical(
                 exception,

@@ -294,7 +294,7 @@ public partial class RpcGenerator
             }
             else if (method.IsVoid)
             {
-                if (method.ReturnType.Contains("ValueTask"))
+                if (method.ReturnsValueTask)
                 {
                     sb.AppendLine($"                var pending = {callLine};");
                     sb.AppendLine("                if (!pending.IsCompletedSuccessfully)");
@@ -309,7 +309,7 @@ public partial class RpcGenerator
             }
             else
             {
-                if (method.ReturnType.Contains("ValueTask"))
+                if (method.ReturnsValueTask)
                 {
                     sb.AppendLine($"                var pending = {callLine};");
                     sb.AppendLine("                if (pending.IsCompletedSuccessfully)");

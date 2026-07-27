@@ -1,32 +1,28 @@
-# 0.8.29 regression-test research
+# 0.8.30 regression-test research
 
 ## Bounded target inventory
 
-- `PendingRequestTable`: `Rent` checks disposal only before insertion, while both stream registration APIs can insert without any disposal check. A 50,000-iteration external race probe witnessed a stranded slot on iteration 1 (`requestId=1`, incomplete operation).
-- Client/server heartbeat expiry uses `DateTime.UtcNow` and mutable wall-clock `IRpcSession.LastActive`; a clock rollback or future timestamp can prevent timeout, while a forward adjustment can disconnect a healthy peer.
-- Named-pipe and shared-memory logical names accept path separators and NUL, producing platform-dependent or delayed transport failures instead of synchronous configuration rejection.
-- Socket endpoint snapshotting rebuilds Unix-domain endpoints from `ToString()`. For an abstract Linux endpoint, the original serialized path starts with NUL (`15 01 00...`) while the snapshot starts with `@` (`16 01 40...`), changing it into a filesystem endpoint. Listener cleanup likewise treats the display string as a filesystem path.
-- `SharpLinkMultiClusterClient.State` uses LINQ over a frozen dictionary and allocates 56 bytes on every Ready/Degraded read; a one-million-read probe measured exactly 56,000,000 bytes.
+- `SharpLinkServerHostedService` Run observation: successful completion after `StopAsync` is suppressed, but the fault path ignores `_stopRequested` and can report an expected stop failure as critical and call `StopApplication`.
+- `SharpLinkServerHostedService` terminal lifecycle: a completed Stop is not a barrier for a later Start, which can publish a new server that the cached Stop task no longer owns.
+- Generator task-shape emission: Proxy/Stub code decides ValueTask semantics with `ReturnType.Contains("ValueTask")`. A valid `Task<ValueTaskPayload>` is therefore emitted as though the outer type were `ValueTask<T>`, producing incorrect return/await code.
+- Public endpoint addresses: `SharpLinkNamedPipeAddress` and `SharpLinkSharedMemoryAddress` still accept NUL and path separators even though the concrete transports reject the same logical names. Resolver/configuration failures are therefore still delayed for these public entry points.
+- Local hosting health checks construct a new completed `Task<HealthCheckResult>` on every poll even though the three results are immutable constants; this is recurring managed allocation in a monitoring path.
 
-The repository convention is TUnit in `test/SharpLink.UnitTests`. The required source/test pairing scan was run; retained ignored A/B baseline clones under `artifacts/` pollute its global counts, so it is used only as a routing heuristic. Focused regression coverage belongs in `RequestManagerTests`, `SharpLinkClientLifecycleStateTests`, `TransportValidationTests`, and `SharpLinkMultiClusterClientTests`.
+## Comprehensive performance scan checklist
+
+The .NET performance-pattern skill was run against framework `src/**/*.cs` on .NET 10. Exact signals: async-void 0; `.Result` 4 (all completed ValueTask/Task or generated text after manual review); synchronous `.Wait` 1 (shutdown gate, manually proven to pulse before waiting); Substring 8 (Generator cold path); stackalloc 60 (none inside an accumulating loop); literal IndexOf 1 and StartsWith/Contains 3 (Generator cold path); cultureless ToLower/ToUpper 0; triple Replace 0; params 2; LINQ-on-char 0; static mutable Dictionary 0 versus static FrozenDictionary 0; new List 45; new Dictionary 40; CurrentCulture comparer 0; LINQ-chain signals 142 repository-wide and 26 in Runtime/Client/Server (all reviewed; one former hot State allocation was fixed in 0.8.29); HttpClient 0; uncached JsonSerializerOptions 0; compiled/generated/constructed Regex 0/0/0; unsealed/sealed classes 19/269; ContainsKey 21 (no hot same-key double lookup retained); string.Format 0; JsonSerializer calls 3 (Generator manifest tooling); byte-array construction 10 (bounded protocol/configuration or ownership arrays).
+
+The scanner influenced this batch only by elevating the health-check allocation and the string-based Generator task-shape bug. Cold registration LINQ, one-time collection construction, intentionally extensible public option/context types, and code-generation string slicing are rejected as non-hot or design-required rather than mechanically rewritten.
 
 ## Acceptance checklist
 
-- Calls begun after pending-table disposal throw synchronously; insertion racing with disposal is terminally completed and cannot leave a slot or incomplete operation.
-- Heartbeat timeout decisions use monotonic elapsed time and cannot be defeated by a future public wall-clock `LastActive` value.
-- All pipe-backed logical-name entry points reject separators and NUL during construction.
-- Unix-domain endpoint snapshots preserve serialized bytes, and abstract endpoints never participate in filesystem ownership/deletion checks.
-- Multi-cluster state reads preserve semantics while allocating zero bytes after warm-up.
-- Existing behavior remains covered and runtime performance does not materially regress.
+- Expected Run faults after hosted Stop never request application shutdown.
+- Stop-before-Start and duplicate Start are rejected without publishing an unowned server.
+- Task versus ValueTask emission is a semantic model field, not a substring test, and `Task<ValueTaskPayload>` uses Task code in both Proxy and Stub.
+- Both public pipe-backed address constructors reject the same invalid logical-name characters as concrete transports.
+- Repeated local health-check calls preserve status/description and allocate zero bytes after warm-up.
+- Existing behavior and hot-path allocations remain stable.
 
-## Audit guardrails
+## Deferred hypotheses
 
-The public `IRpcSession.LastActive` wall-clock property remains available for compatibility and diagnostics; only timeout accounting moves to an internal monotonic timestamp. Pipe names remain logical identifiers, so cross-platform rejection is intentional. Abstract-socket handling is limited to byte-preserving snapshot and cleanup ownership, without changing bind semantics.
-
-## Rejected hypothesis
-
-The two ready-signal completions initially suspected to be duplicate belong to the independent fixed-client and static-cluster shutdown paths. Neither path contains a duplicate operation, so no cleanup change is warranted.
-
-## P3 cleanup
-
-The server receive loop already marks every parsed frame active before dispatch. Its Ping case repeated the same wall-clock write; after monotonic sampling this would duplicate both clocks, so the redundant Ping-only update is removed without advancing the version batch.
+The low-level protocol writer accepts raw headers that the parser rejects, unknown custom `EndPoint` snapshots retain their source object when the type lacks a recognized clone path, and multi-cluster deferred unregister polling is not tracked in Faulted state. These require deliberate public API/lifecycle decisions and remain candidates for later audit rather than opportunistic changes in this batch.

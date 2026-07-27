@@ -91,6 +91,41 @@ public interface IHelloService : SharpLink.Sdk.IService
     }
 
     [Test]
+    public Task TaskPayloadNamedValueTaskShouldKeepOuterTaskSemantics()
+    {
+        var source = BuildSource("""
+public sealed class ValueTaskPayload
+{
+    public int Value { get; set; }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface ITaskPayloadContract : SharpLink.Sdk.IService
+{
+    Task<ValueTaskPayload> Echo(ValueTaskPayload value, CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        var proxyStart = generated.IndexOf(
+            "public global::System.Threading.Tasks.Task<global::ValueTaskPayload> Echo(",
+            StringComparison.Ordinal);
+        var proxyEnd = proxyStart < 0
+            ? -1
+            : generated.IndexOf("\n    }", proxyStart, StringComparison.Ordinal);
+        Ensure(proxyStart >= 0 && proxyEnd > proxyStart &&
+               generated.AsSpan(proxyStart, proxyEnd - proxyStart).Contains(".AsTask();", StringComparison.Ordinal),
+            "Task<T> Proxy emission must convert the channel ValueTask using outer Task semantics");
+        Ensure(generated.Contains("Serialize(pending.GetAwaiter().GetResult(), output)", StringComparison.Ordinal),
+            "Task<T> Stub emission must use Task result semantics even when T contains 'ValueTask'");
+        Ensure(generated.Contains("return __AwaitTaskResultAsync(pending, session, output);", StringComparison.Ordinal),
+            "Task<T> Stub emission must await the outer Task type");
+        Ensure(!generated.Contains("Serialize(pending.Result, output)", StringComparison.Ordinal),
+            "Task<T> must not use the ValueTask-only Result path");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task MultipleCancellationTokensShouldReportSharplink002()
     {
         var source = BuildSource("""

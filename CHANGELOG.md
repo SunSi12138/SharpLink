@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.30] - 2026-07-27
+
+### Fixed
+
+- Generic Host server shutdown no longer treats an expected faulted Run completion as an unexpected application-fatal failure after Stop has begun.
+- A completed hosted server Stop is now terminal: later Start attempts are rejected instead of publishing a server that the cached Stop task cannot own; duplicate Start is also rejected.
+- Source generation now models the outer Task/ValueTask shape exactly, so valid `Task<T>` methods whose response type name contains `ValueTask` emit Task-compatible Proxy and Stub code.
+- Public named-pipe and shared-memory endpoint address values reject NUL and path separators at construction, matching their concrete transport factories.
+- Local server health checks reuse three immutable completed results instead of allocating a 96-byte Task on every poll.
+
+### Compatibility and validation
+
+- Protocol v2, valid generated contract shapes, payloads, and default hosting behavior are unchanged. Post-stop hosted restart was never owned by the lifecycle contract; invalid logical pipe names now fail at their earliest public value constructor.
+- Non-incremental Release build, Generator 102/102, Unit 468/468, Integration 237/237, seven-package pack, and fresh-cache package smoke passed.
+- A 40-contract/400-method Generator gate measured 15.438 → 15.411 ms with effectively unchanged compiler-thread allocation. Local health polling changed from 96 B/call to 0 B/call; its 15-sample latency distribution was bimodal but overlapping, with a bounded roughly 5 ns worst median difference in a once-per-health-poll path.
+
 ## [0.8.29] - 2026-07-27
 
 ### Fixed

@@ -96,6 +96,7 @@ SharpLink.Serializer.SharpPack
 - `GoAway` 将单条 session 标为 draining 并立即从选择快照移除；已有请求完成后释放该连接，池在后台恢复最小连接数。
 - Client Stop 取消并等待 connect、reconnect、expand、heartbeat 与 read-loop worker，再释放所有 session 和 transport factory。
 - Client/Server 收到完整帧时同时维护诊断用 UTC `LastActive` 与内部单调时间戳；heartbeat timeout 只按单调 elapsed time 判定，不受系统墙钟校时或调用方修改诊断属性影响。
+- Generic Host 的 Server Stop 是终态屏障：Stop 开始后的 Run 结束（成功或失败）不再反向触发应用停止，Stop 完成后也不能重新 Start 同一 hosted service 实例。
 
 ## 0.7.x endpoint 拓扑与韧性
 

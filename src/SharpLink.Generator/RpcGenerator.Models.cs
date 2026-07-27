@@ -44,7 +44,12 @@ internal record RpcMethodModel(
     bool ResponseNullable,
     string? ResponseEnumUnderlyingType,
     string? StreamItemEnumUnderlyingType,
-    Location? Location);
+    Location? Location)
+{
+    internal bool ReturnsValueTask => ReturnType.StartsWith(
+        "global::System.Threading.Tasks.ValueTask",
+        StringComparison.Ordinal);
+}
 
 internal record RpcParameterModel(
     string Name,

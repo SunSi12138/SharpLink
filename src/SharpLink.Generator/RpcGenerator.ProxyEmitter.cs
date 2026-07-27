@@ -160,7 +160,7 @@ public partial class RpcGenerator
         string invocation,
         bool hasResult)
     {
-        var returnsValueTask = method.ReturnType.Contains("ValueTask");
+        var returnsValueTask = method.ReturnsValueTask;
         if (hasResult)
         {
             sb.AppendLine(returnsValueTask
