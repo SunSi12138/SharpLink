@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [1.0.0-rc3] - 2026-07-28
+
+### Fixed
+
+- `SharpLink.PackageSmoke` now composes its restore-time package version directly from `VersionPrefix` and `VersionSuffix`. The previous `$(Version)` default was expanded before the SDK synthesized that property, leaving all four SharpLink `PackageReference` versions empty and making the NuGet release gate fail with `NU1015` for every prerelease candidate.
+
+### Validation
+
+- MSBuild property evaluation reports `SharpLinkPackageVersion=1.0.0-rc3`. A fresh package cache restores exclusively from the locally packed SharpLink feed plus NuGet.org, compiles generated contracts without project references, and runs the package consumer over TCP and SharedMemory.
+- RC2 was never tagged or published. It is retained locally as the exact response-backpressure fix checkpoint and is superseded because its clean-cache package-consumer gate could not restore the prerelease package graph.
+
 ## [1.0.0-rc2] - 2026-07-28
 
 ### Fixed
