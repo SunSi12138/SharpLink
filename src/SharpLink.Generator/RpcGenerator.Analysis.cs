@@ -34,7 +34,8 @@ public partial class RpcGenerator
         if (HasInvalidRpcMethod(interfaceSymbol)) return null;
 
         var constructor = SelectServiceConstructor(symbol);
-        if (constructor is null)
+        if (constructor is null ||
+            !IsServiceConstructorSupported(constructor, out var ignoredConstructorDetail))
             return null;
 
         var lifetime = GetServiceLifetime(symbol, out var validLifetime);
@@ -79,6 +80,31 @@ public partial class RpcGenerator
         return markedConstructors.Length == 1
             ? markedConstructors[0]
             : constructors.Length == 1 ? constructors[0] : null;
+    }
+
+    private static bool IsServiceConstructorSupported(
+        IMethodSymbol constructor,
+        out string invalidDetail)
+    {
+        foreach (var parameter in constructor.Parameters)
+        {
+            if (parameter.RefKind is RefKind.Ref or RefKind.Out or RefKind.RefReadOnlyParameter)
+            {
+                invalidDetail =
+                    $"constructor dependency '{parameter.Name}' requires by-reference storage and cannot be supplied by IServiceProvider";
+                return false;
+            }
+            if (parameter.Type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer ||
+                ContainsRefLikeType(parameter.Type))
+            {
+                invalidDetail =
+                    $"constructor dependency '{parameter.Name}' has type '{parameter.Type.ToDisplayString()}', which cannot round-trip through IServiceProvider";
+                return false;
+            }
+        }
+
+        invalidDetail = string.Empty;
+        return true;
     }
 
     private static RpcServiceDiagnosticModel? GetRpcServiceDiagnosticOrNull(
@@ -145,6 +171,18 @@ public partial class RpcGenerator
                 constructors.Length == 0
                     ? "no public constructor can be called by the generated activator"
                     : "constructor selection is ambiguous; expose one public constructor or mark exactly one with [ActivatorUtilitiesConstructor]",
+                location);
+        }
+
+        var selectedConstructor = markedConstructors.Length == 1
+            ? markedConstructors[0]
+            : constructors[0];
+        if (!IsServiceConstructorSupported(selectedConstructor, out var invalidConstructorDetail))
+        {
+            return new RpcServiceDiagnosticModel(
+                RpcServiceDiagnosticKind.InvalidConstructor,
+                symbol.Name,
+                invalidConstructorDetail,
                 location);
         }
 
@@ -495,6 +533,8 @@ public partial class RpcGenerator
                 HasByReferenceSignature(m) ||
                 ContainsRefLikeType(m.ReturnType) ||
                 m.Parameters.Any(static parameter => ContainsRefLikeType(parameter.Type)) ||
+                ContainsPointerOrFunctionPointer(m.ReturnType) ||
+                m.Parameters.Any(static parameter => ContainsPointerOrFunctionPointer(parameter.Type)) ||
                 m.IsGenericMethod ||
                 HasTypeParameter(m.ReturnType) ||
                 m.Parameters.Any(p => HasTypeParameter(p.Type)) ||
@@ -655,6 +695,16 @@ public partial class RpcGenerator
             IArrayTypeSymbol arrayType => ContainsRefLikeType(arrayType.ElementType),
             IPointerTypeSymbol pointerType => ContainsRefLikeType(pointerType.PointedAtType),
             INamedTypeSymbol namedType => namedType.TypeArguments.Any(ContainsRefLikeType),
+            _ => false
+        };
+
+    private static bool ContainsPointerOrFunctionPointer(ITypeSymbol type)
+        => type switch
+        {
+            IPointerTypeSymbol => true,
+            IFunctionPointerTypeSymbol => true,
+            IArrayTypeSymbol arrayType => ContainsPointerOrFunctionPointer(arrayType.ElementType),
+            INamedTypeSymbol namedType => namedType.TypeArguments.Any(ContainsPointerOrFunctionPointer),
             _ => false
         };
 
@@ -1373,6 +1423,7 @@ public partial class RpcGenerator
             var rpcContracts = type.AllInterfaces.Where(HasRpcContractAttribute).ToArray();
             var constructor = SelectServiceConstructor(type);
             if (rpcContracts.Length == 1 && constructor is not null &&
+                IsServiceConstructorSupported(constructor, out _) &&
                 !HasInvalidRpcMethod(rpcContracts[0]))
             {
                 var serviceNamespace = type.ContainingNamespace.IsGlobalNamespace
@@ -1524,26 +1575,26 @@ public partial class RpcGenerator
             var interfaceSymbol = FindRpcContractInterface(typeSymbol);
             if (interfaceSymbol is not null && !HasInvalidRpcMethod(interfaceSymbol))
             {
-                var fullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                if (seen.Add(fullName))
+                var constructor = SelectServiceConstructor(typeSymbol);
+                if (constructor is not null && IsServiceConstructorSupported(constructor, out _))
                 {
-                    var ns = typeSymbol.ContainingNamespace.IsGlobalNamespace ? "" : typeSymbol.ContainingNamespace.ToDisplayString();
-                    var constructor = typeSymbol.InstanceConstructors.FirstOrDefault(static candidate =>
-                        candidate.DeclaredAccessibility == Accessibility.Public);
-                    var parameters = constructor is null
-                        ? ImmutableArray<RpcConstructorParameterModel>.Empty
-                        : constructor.Parameters.Select(static parameter => new RpcConstructorParameterModel(
+                    var fullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    if (seen.Add(fullName))
+                    {
+                        var ns = typeSymbol.ContainingNamespace.IsGlobalNamespace ? "" : typeSymbol.ContainingNamespace.ToDisplayString();
+                        var parameters = constructor.Parameters.Select(static parameter => new RpcConstructorParameterModel(
                             parameter.Name,
                             parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))).ToImmutableArray();
-                    models.Add(new RpcServiceModel(
-                        typeSymbol.Name,
-                        ns,
-                        fullName,
-                        CreateInterfaceModel(interfaceSymbol),
-                        GetServiceLifetime(typeSymbol, out _),
-                        parameters,
-                        ImmutableArray.Create(interfaceSymbol.ContainingAssembly.Identity.ToString()),
-                        typeSymbol.Locations.FirstOrDefault()));
+                        models.Add(new RpcServiceModel(
+                            typeSymbol.Name,
+                            ns,
+                            fullName,
+                            CreateInterfaceModel(interfaceSymbol),
+                            GetServiceLifetime(typeSymbol, out _),
+                            parameters,
+                            ImmutableArray.Create(interfaceSymbol.ContainingAssembly.Identity.ToString()),
+                            typeSymbol.Locations.FirstOrDefault()));
+                    }
                 }
             }
         }

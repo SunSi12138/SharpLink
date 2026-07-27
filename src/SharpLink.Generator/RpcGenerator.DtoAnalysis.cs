@@ -309,6 +309,13 @@ public partial class RpcGenerator
                     return;
                 }
             }
+            if (type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer)
+            {
+                Report(DtoDiagnosticKind.Unsupported, type,
+                    "pointer and function-pointer values cannot be represented by generated Codec or RPC artifacts");
+                _failed.Add(typeName);
+                return;
+            }
             if (TrySelectAdapter(type, out var adapter))
             {
                 if (adapter is not null)
@@ -341,7 +348,7 @@ public partial class RpcGenerator
                 return;
             }
             if (type.SpecialType == SpecialType.System_Object ||
-                type.TypeKind is TypeKind.Delegate or TypeKind.Dynamic or TypeKind.Pointer or TypeKind.FunctionPointer)
+                type.TypeKind is TypeKind.Delegate or TypeKind.Dynamic)
             {
                 Report(DtoDiagnosticKind.Unsupported, type, "object, delegate, dynamic, pointer, and function-pointer values require an explicit typed Codec");
                 _failed.Add(typeName);
@@ -612,7 +619,7 @@ public partial class RpcGenerator
             if (type.TypeKind == TypeKind.Struct && members.All(static member => member.Assignable))
             {
                 constructorMembers = [];
-                return true;
+                return CompilerRequiredMembersAreSatisfied(type, members, setsRequiredMembers: false);
             }
 
             var memberByName = members.ToDictionary(
@@ -620,6 +627,8 @@ public partial class RpcGenerator
                 StringComparer.Ordinal);
             foreach (var constructor in type.InstanceConstructors
                          .Where(IsConstructorAccessible)
+                         .Where(static constructor => constructor.Parameters.All(static parameter =>
+                             parameter.RefKind is not (RefKind.Ref or RefKind.Out or RefKind.RefReadOnlyParameter)))
                          .OrderBy(static constructor => constructor.Parameters.Length)
                          .ThenBy(static constructor => constructor.ToDisplayString(), StringComparer.Ordinal))
             {
@@ -641,6 +650,16 @@ public partial class RpcGenerator
                 var mappedSet = new HashSet<string>(mapped, StringComparer.Ordinal);
                 if (members.Any(member => !member.Assignable && !mappedSet.Contains(member.Symbol.Name)))
                     continue;
+                if (!CompilerRequiredMembersAreSatisfied(
+                        type,
+                        members,
+                        HasAttribute(
+                            constructor,
+                            "System.Diagnostics.CodeAnalysis",
+                            "SetsRequiredMembersAttribute")))
+                {
+                    continue;
+                }
                 constructorMembers = mapped;
                 return true;
             }
@@ -668,6 +687,22 @@ public partial class RpcGenerator
                 member = candidate!;
                 return candidate is not null;
             }
+        }
+
+        private static bool CompilerRequiredMembersAreSatisfied(
+            INamedTypeSymbol type,
+            List<AnalyzedMember> members,
+            bool setsRequiredMembers)
+        {
+            if (setsRequiredMembers)
+                return true;
+
+            var serializedMembers = new HashSet<ISymbol>(
+                members.Where(static member => member.Assignable).Select(static member => member.Symbol),
+                SymbolEqualityComparer.Default);
+            return type.GetMembers()
+                .Where(IsCompilerRequired)
+                .All(serializedMembers.Contains);
         }
 
         private bool IsConstructorAccessible(IMethodSymbol constructor)
@@ -968,7 +1003,11 @@ public partial class RpcGenerator
 
         private static bool IsRequired(ISymbol member)
             => HasAttribute(member, "SharpLink.Sdk", "RpcRequiredAttribute") ||
-               member is IPropertySymbol { IsRequired: true };
+               IsCompilerRequired(member);
+
+        private static bool IsCompilerRequired(ISymbol member)
+            => member is IFieldSymbol { IsRequired: true } or
+               IPropertySymbol { IsRequired: true };
 
         private static bool IsNonNullableReference(ISymbol member, ITypeSymbol type)
         {

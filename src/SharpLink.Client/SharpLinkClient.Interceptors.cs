@@ -93,7 +93,7 @@ internal sealed partial class SharpLinkClient
                     _context.Status = SharpLinkInvocationStatus.Succeeded;
                 return result;
             }
-            catch (OperationCanceledException exception)
+            catch (Exception exception) when (IsCancellationException(exception))
             {
                 _context.Status = SharpLinkInvocationStatus.Cancelled;
                 _context.ErrorCode = SharpLinkErrorCode.Cancelled;
@@ -151,7 +151,7 @@ internal sealed partial class SharpLinkClient
                 context.Status = SharpLinkInvocationStatus.Succeeded;
                 return result;
             }
-            catch (OperationCanceledException exception)
+            catch (Exception exception) when (IsCancellationException(exception))
             {
                 context.Status = SharpLinkInvocationStatus.Cancelled;
                 context.ErrorCode = SharpLinkErrorCode.Cancelled;
@@ -175,6 +175,10 @@ internal sealed partial class SharpLinkClient
 
         protected abstract ValueTask<SharpLinkClientInvocationResult> InvokeTerminalAsync(
             SharpLinkClientInvocationContext context);
+
+        private static bool IsCancellationException(Exception exception)
+            => exception is OperationCanceledException or
+               SharpLinkException { Code: SharpLinkErrorCode.Cancelled };
     }
 
     private sealed class UnaryInterceptorState<TRequest, TResponse> : ClientInterceptorState

@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.8.38] - 2026-07-27
+
+### Fixed
+
+- Service constructors whose dependencies cannot be supplied through the generated `IServiceProvider` activator now report `SHARPLINK019` instead of leaking generated `CS1620`, `CS0030`, `CS9193`, or unsafe/generic-shape failures.
+- Native DTO construction accounts for the C# required-member contract, including ignored required members, required fields, and `SetsRequiredMembersAttribute`, replacing generated `CS9035` with `SHARPLINK012` only when no compiler-valid plan exists.
+- DTO constructors requiring `ref`, `out`, or `ref readonly` storage are excluded from construction-plan selection; another valid value constructor may still be selected, otherwise `SHARPLINK012` replaces generated errors/warnings.
+- Pointer and function-pointer payloads report `SHARPLINK009` before the unmanaged fast path and suppress Proxy/Stub artifacts that cannot represent those values.
+- Client and Server interceptor contexts classify a structured `SharpLinkException` with code `Cancelled` as `SharpLinkInvocationStatus.Cancelled` instead of the contradictory `Failed` status.
+
+### Compatibility and validation
+
+- Valid Protocol v2 payloads, route hashes, service activators, and DTO Codecs are unchanged. `in` constructor dependencies, `SetsRequiredMembers` constructors, and fallback value constructors remain supported.
+- Real pre-fix projects produced service `CS1620`/`CS0030`/`CS9193`, DTO `CS9035`/`CS1620`, and ten pointer Proxy `CS0214`/`CS0306` errors. Post-fix they expose focused `SHARPLINK019`, `SHARPLINK012`, and `SHARPLINK009` diagnostics; the positive-control project builds cleanly.
+- Non-incremental Release build, Generator 117/117, Unit 483/483, Integration 241/241, NativeAOT, and 120-second shared-memory Chaos passed. Exact-baseline/candidate HostApplication build medians were 1.97 -> 1.92 seconds; intercepted RPC medians were 41.848 -> 41.831 microseconds with unchanged 1,584.03 B/op.
+
 ## [0.8.37] - 2026-07-27
 
 ### Fixed

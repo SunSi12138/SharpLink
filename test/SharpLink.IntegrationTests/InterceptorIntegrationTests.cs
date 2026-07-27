@@ -55,6 +55,36 @@ public class InterceptorIntegrationTests
     }
 
     [Test]
+    public async Task StructuredCancelledInterceptorFailuresShouldRecordCancelledStatus()
+    {
+        var clientInterceptor = new CancellingClientInterceptor();
+        await using (var clientHarness = await InterceptorHarness.CreateAsync(
+                         clientInterceptor: clientInterceptor))
+        {
+            var service = clientHarness.Client.Get<IInterceptorTestService>();
+            var exception = await CaptureSharpLinkException(service.DescribeNumberAsync(1).AsTask());
+            Ensure(exception.Code == SharpLinkErrorCode.Cancelled, "client structured cancellation code");
+            Ensure(clientInterceptor.Context?.Status == SharpLinkInvocationStatus.Cancelled,
+                "client structured cancellation status");
+            Ensure(ReferenceEquals(clientInterceptor.Context?.Exception, exception),
+                "client structured cancellation exception identity");
+        }
+
+        var serverInterceptor = new CancellingServerInterceptor();
+        await using (var serverHarness = await InterceptorHarness.CreateAsync(
+                         serverInterceptor: serverInterceptor))
+        {
+            var service = serverHarness.Client.Get<IInterceptorTestService>();
+            var exception = await CaptureSharpLinkException(service.DescribeNumberAsync(1).AsTask());
+            Ensure(exception.Code == SharpLinkErrorCode.Cancelled, "server structured cancellation code");
+            Ensure(serverInterceptor.Context?.Status == SharpLinkInvocationStatus.Cancelled,
+                "server structured cancellation status");
+            Ensure(serverInterceptor.Context?.ErrorCode == SharpLinkErrorCode.Cancelled,
+                "server structured cancellation context code");
+        }
+    }
+
+    [Test]
     public async Task AsyncServerInterceptorShouldOwnArgumentsUntilNextCompletes()
     {
         var interceptor = new DelayedFirstServerInterceptor();
@@ -223,6 +253,21 @@ public class InterceptorIntegrationTests
             => ValueTask.FromResult(new SharpLinkClientInvocationResult(value));
     }
 
+    private sealed class CancellingClientInterceptor : ISharpLinkClientInterceptor
+    {
+        public SharpLinkClientInvocationContext? Context { get; private set; }
+
+        public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+        {
+            Context = context;
+            return ValueTask.FromException<SharpLinkClientInvocationResult>(new SharpLinkException(
+                SharpLinkErrorCode.Cancelled,
+                "cancelled by client interceptor"));
+        }
+    }
+
     private sealed class DoubleNextClientInterceptor : ISharpLinkClientInterceptor
     {
         public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
@@ -258,6 +303,21 @@ public class InterceptorIntegrationTests
             => ValueTask.FromException(new SharpLinkException(
                 SharpLinkErrorCode.PermissionDenied,
                 "Rejected by policy."));
+    }
+
+    private sealed class CancellingServerInterceptor : ISharpLinkServerInterceptor
+    {
+        public SharpLinkServerInvocationContext? Context { get; private set; }
+
+        public ValueTask InvokeAsync(
+            SharpLinkServerInvocationContext context,
+            SharpLinkServerInvocationDelegate next)
+        {
+            Context = context;
+            return ValueTask.FromException(new SharpLinkException(
+                SharpLinkErrorCode.Cancelled,
+                "cancelled by server interceptor"));
+        }
     }
 
     private sealed class DoubleNextServerInterceptor : ISharpLinkServerInterceptor

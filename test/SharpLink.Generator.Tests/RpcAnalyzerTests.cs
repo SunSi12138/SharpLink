@@ -2374,6 +2374,184 @@ public interface IOperatorContract : SharpLink.Sdk.IService
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task ServiceConstructorsMustBeRepresentableByGeneratedDiActivation()
+    {
+        var source = BuildSource("""
+public sealed class Dependency;
+public ref struct StackDependency;
+
+[SharpLink.Sdk.RpcContract]
+public interface IRefConstructorService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class RefConstructorService : IRefConstructorService
+{
+    public RefConstructorService(ref Dependency dependency) { }
+    public ValueTask<int> Echo(int value, CancellationToken cancellationToken) => new(value);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IStackConstructorService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class StackConstructorService : IStackConstructorService
+{
+    public StackConstructorService(StackDependency dependency) { }
+    public ValueTask<int> Echo(int value, CancellationToken cancellationToken) => new(value);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IPointerConstructorService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class PointerConstructorService : IPointerConstructorService
+{
+    public unsafe PointerConstructorService(int* dependency) { }
+    public ValueTask<int> Echo(int value, CancellationToken cancellationToken) => new(value);
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IRefReadonlyConstructorService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class RefReadonlyConstructorService : IRefReadonlyConstructorService
+{
+    public RefReadonlyConstructorService(ref readonly Dependency dependency) { }
+    public ValueTask<int> Echo(int value, CancellationToken cancellationToken) => new(value);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK019", 4);
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(!generated.Contains("typeof(global::RefConstructorService)", StringComparison.Ordinal),
+            "a ref dependency must suppress its generated service descriptor");
+        Ensure(!generated.Contains("typeof(global::StackConstructorService)", StringComparison.Ordinal),
+            "a ref-like dependency must suppress its generated service descriptor");
+        Ensure(!generated.Contains("typeof(global::PointerConstructorService)", StringComparison.Ordinal),
+            "a pointer dependency must suppress its generated service descriptor");
+        Ensure(!generated.Contains("typeof(global::RefReadonlyConstructorService)", StringComparison.Ordinal),
+            "a ref-readonly dependency must suppress a generated call that requires addressable storage");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task IgnoredRequiredDtoMembersNeedACompilerValidConstructionPlan()
+    {
+        var invalid = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class IgnoredRequiredDto
+{
+    public int Value { get; set; }
+
+    [SharpLink.Sdk.RpcIgnore]
+    public required string Secret { get; init; }
+}
+""");
+
+        EnsureRuleCount(invalid, "SHARPLINK012", 1);
+
+        var valid = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class RequiredMembersSatisfiedDto
+{
+    public int Value { get; set; }
+
+    [SharpLink.Sdk.RpcIgnore]
+    public required string Secret { get; init; }
+
+    [System.Diagnostics.CodeAnalysis.SetsRequiredMembers]
+    public RequiredMembersSatisfiedDto() => Secret = string.Empty;
+}
+""");
+        EnsureDoesNotHaveRule(valid, "SHARPLINK012");
+
+        var requiredField = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class RequiredFieldDto
+{
+    public required int Value;
+
+    public RequiredFieldDto(int value) => Value = value;
+}
+""");
+        EnsureDoesNotHaveRule(requiredField, "SHARPLINK012");
+        Ensure(string.Join("\n", RunGeneratorAndGetSources(requiredField)).Contains(
+                "Value = local_Value",
+                StringComparison.Ordinal),
+            "a compiler-required field must remain in the generated object initializer even when constructor-bound");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ByReferenceDtoConstructorsMustNotBeSelectedForGeneratedCalls()
+    {
+        var invalid = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class RefConstructorDto
+{
+    public int Value { get; }
+
+    public RefConstructorDto(ref int value) => Value = value;
+}
+
+[SharpLink.Sdk.RpcSerializable]
+public sealed class RefReadonlyConstructorDto
+{
+    public int Value { get; }
+
+    public RefReadonlyConstructorDto(ref readonly int value) => Value = value;
+}
+""");
+        EnsureRuleCount(invalid, "SHARPLINK012", 2);
+
+        var validFallback = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class FallbackConstructorDto
+{
+    public int Value { get; }
+
+    public FallbackConstructorDto(ref int value) => Value = value;
+    public FallbackConstructorDto(int value) => Value = value;
+}
+""");
+        EnsureDoesNotHaveRule(validFallback, "SHARPLINK012");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task PointerPayloadDiagnosticsMustSuppressBrokenContractArtifacts()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public unsafe interface IPointerPayloadContract : SharpLink.Sdk.IService
+{
+    ValueTask<int> SendPointer(int* value, CancellationToken cancellationToken);
+    ValueTask<int> SendFunction(delegate*<int, int> callback, CancellationToken cancellationToken);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK009", 2);
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(!generated.Contains("IPointerPayloadContract_Proxy", StringComparison.Ordinal),
+            "pointer payloads must suppress a Proxy that cannot represent them");
+        Ensure(!generated.Contains("IPointerPayloadContract_Stub", StringComparison.Ordinal),
+            "pointer payloads must suppress a Stub that cannot represent them");
+        return Task.CompletedTask;
+    }
+
     private static string BuildSource(string contract)
     {
         return $$"""

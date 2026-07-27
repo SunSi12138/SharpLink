@@ -484,7 +484,7 @@ internal sealed partial class SharpLinkServer
         SharpLinkServerInvocationContext context)
     {
         context.Exception = exception;
-        context.Status = exception is OperationCanceledException
+        context.Status = IsCancellationException(exception)
             ? SharpLinkInvocationStatus.Cancelled
             : SharpLinkInvocationStatus.Failed;
         try
@@ -576,7 +576,7 @@ internal sealed partial class SharpLinkServer
                 if (context.Status == SharpLinkInvocationStatus.Pending)
                     context.Status = SharpLinkInvocationStatus.Succeeded;
             }
-            catch (OperationCanceledException exception)
+            catch (Exception exception) when (IsCancellationException(exception))
             {
                 context.Status = SharpLinkInvocationStatus.Cancelled;
                 context.ErrorCode = SharpLinkErrorCode.Cancelled;
@@ -646,4 +646,8 @@ internal sealed partial class SharpLinkServer
             }
         }
     }
+
+    private static bool IsCancellationException(Exception exception)
+        => exception is OperationCanceledException or
+           SharpLinkException { Code: SharpLinkErrorCode.Cancelled };
 }

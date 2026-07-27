@@ -150,7 +150,7 @@ public partial class RpcGenerator
 
     private static readonly DiagnosticDescriptor RpcServiceConstructorRule = new(
         id: "SHARPLINK019",
-        title: "RPC Service Constructor Is Ambiguous",
+        title: "RPC Service Constructor Cannot Be Activated",
         messageFormat: "RPC service '{0}' is invalid: {1}",
         category: "SharpLink.Generator",
         defaultSeverity: DiagnosticSeverity.Error,
