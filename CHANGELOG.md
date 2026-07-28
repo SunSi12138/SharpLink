@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [1.0.0-rc4] - 2026-07-28
+
 ### Fixed
 
 - Client and Server interceptor continuation-state caches now retain one exclusively owned state per physical thread instead of using mutable process-wide lock-free freelists. Concurrent pass-through interceptors can no longer hit an ABA reuse window that clears or replaces another invocation's owner and surfaces `The interceptor continuation has expired`.
