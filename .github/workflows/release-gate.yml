@@ -49,6 +49,8 @@ jobs:
           dotnet run -c Release --no-build
           --project test/SharpLink.IntegrationTests
           --
+          --maximum-parallel-tests 1
+          --parallelism-strategy fixed
           --timeout 120s
           --output Detailed
           --github-reporter-style full

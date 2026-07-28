@@ -40,7 +40,13 @@ jobs:
         run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
 
       - name: Integration Tests
-        run: dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --timeout 120s
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --parallelism-strategy fixed
+          --timeout 120s
 
       - name: Run Independent-process Shared-memory AOT Smoke
         env:

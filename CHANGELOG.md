@@ -9,12 +9,14 @@
 ### Fixed
 
 - Client and Server interceptor continuation-state caches now retain one exclusively owned state per physical thread instead of using mutable process-wide lock-free freelists. Concurrent pass-through interceptors can no longer hit an ABA reuse window that clears or replaces another invocation's owner and surfaces `The interceptor continuation has expired`.
+- PR, nightly, and release Integration gates now use fixed single-test execution. Adaptive suite parallelism produced unrelated TCP disconnect/deadline failures under host contention without shortening the 252-test wall time; release acceptance no longer depends on runner resource timing.
 
 ### Validation
 
 - Exact RC3 produced 103 continuation-expired failures in one 8-second c32 witness and 38 failures across 3/5 paired baseline processes. The candidate completed all five paired c32 processes and 19,843,630 successful intercepted calls with zero failures; deterministic Client and Server ownership tests each fail independently on exact RC3 and pass on the candidate.
 - Five c1 exact-baseline/candidate pairs measured paired-median QPS +0.74%, P50 +2.44% (one-microsecond histogram quantization), P99 -1.25%, allocation/operation -0.006%, and CPU/operation +2.35%. Five c32 pairs measured QPS +2.20%, P50 -1.69%, P99 -2.00%, allocation/operation +0.009%, and CPU/operation -3.33%, excluding a material regression.
 - Non-incremental Release built with zero warnings/errors; Generator 121/121, Unit 510/510, focused Interceptor Integration 18/18, and full Integration 252/252 passed.
+- Two adaptive-parallel full-suite runs failed in different tests, while each failure passed three focused repetitions and the fixed-serial full suite passed 252/252 in 28.0 seconds, matching the parallel suite's successful/failing wall-time range.
 
 ## [1.0.0-rc3] - 2026-07-28
 
