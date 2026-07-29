@@ -44,8 +44,10 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     // GetAsyncEnumerator 原子防御（审核 #4）：0/1
     private int _enumeratorTaken;
 
-    // 0 = leased, 1 = returning/in pool/discarded. A CAS prevents double-return.
-    private int _poolState;
+    // Odd values identify active leases; the following even value identifies their returned state.
+    // The monotonic generation prevents a delayed return contender from committing against a
+    // dispatcher that has already been rented again.
+    private long _leaseState;
     private int _producerOperations;
     private IStreamDispatchState? _dispatchState;
     private Exception? _error;
@@ -128,8 +130,22 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         else
             Interlocked.Decrement(ref s_retainedCount);
 
+        dispatcher.ActivateLease();
         dispatcher.Reset(enumerationToken, codec, payloadNullable);
         return dispatcher;
+    }
+
+    private void ActivateLease()
+    {
+        while (true)
+        {
+            var state = Volatile.Read(ref _leaseState);
+            if ((state & 1L) != 0)
+                throw new InvalidOperationException("The stream dispatcher already has an active lease.");
+            var activeState = unchecked(state + 1);
+            if (Interlocked.CompareExchange(ref _leaseState, activeState, state) == state)
+                return;
+        }
     }
 
     private void Reset(
@@ -166,7 +182,6 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         Volatile.Write(ref _disposeFinalized, 0);
 
         Volatile.Write(ref _enumeratorTaken, 0);
-        Volatile.Write(ref _poolState, 0);
         Volatile.Write(ref _producerOperations, 0);
         Volatile.Write(ref _dispatchState, null);
 
@@ -187,7 +202,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     /// <inheritdoc />
     public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
     {
-        if (!TryAcquireDispatch())
+        if (!TryAcquireDispatch(out var leaseState))
             return RejectedDispatch();
         try
         {
@@ -195,7 +210,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         }
         finally
         {
-            ReleaseDispatch();
+            ReleaseDispatch(leaseState);
         }
     }
 
@@ -259,38 +274,42 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
     void IStreamDispatchLease.OnDispatchesDrained() => TryReturnToPool();
 
-    private bool TryAcquireDispatch()
+    private bool TryAcquireDispatch(out long leaseState)
     {
-        if (Volatile.Read(ref _poolState) != 0)
+        leaseState = Volatile.Read(ref _leaseState);
+        if ((leaseState & 1L) == 0)
             return false;
 
         Interlocked.Increment(ref _producerOperations);
-        if (Volatile.Read(ref _poolState) == 0)
+        if (Volatile.Read(ref _leaseState) == leaseState)
             return true;
 
         Interlocked.Decrement(ref _producerOperations);
         return false;
     }
 
-    private void ReleaseDispatch()
+    private void ReleaseDispatch(long leaseState)
     {
+        if (Volatile.Read(ref _leaseState) != leaseState)
+            return;
         if (Interlocked.Decrement(ref _producerOperations) < 0)
             throw new InvalidOperationException("Stream dispatcher producer lease underflowed.");
-        TryReturnToPool();
+        TryReturnToPool(leaseState);
     }
 
     // A generated server-stream call can be handed to its consumer before an asynchronous
     // WaitForReady registration completes. Keep that unregistered lease out of the pool until
     // registration or failure has reached a terminal state.
-    internal void RetainForRegistration()
+    internal long RetainForRegistration()
     {
-        if (!TryAcquireDispatch())
+        if (!TryAcquireDispatch(out var leaseState))
             throw new ObjectDisposedException(
                 typeof(PooledAsyncStreamDispatcher<T>).FullName,
                 "The stream dispatcher was disposed before registration began.");
+        return leaseState;
     }
 
-    internal void ReleaseRegistrationRetention() => ReleaseDispatch();
+    internal void ReleaseRegistrationRetention(long leaseState) => ReleaseDispatch(leaseState);
 
     private static ValueTask RejectedDispatch()
     {
@@ -612,7 +631,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
                 Interlocked.Exchange(ref _waiterState, 0);
                 return ValueTask.FromResult(true);
             }
-            
+
             _waitSource.Reset();
             return new ValueTask<bool>(this, _waitSource.Version);
         }
@@ -643,7 +662,13 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     // --------------------------
 
     private void TryReturnToPool()
+        => TryReturnToPool(Volatile.Read(ref _leaseState));
+
+    private void TryReturnToPool(long leaseState)
     {
+        if ((leaseState & 1L) == 0 || Volatile.Read(ref _leaseState) != leaseState)
+            return;
+
         // 关键：不保证消费者 Dispose 后生产者停止 => 必须等 completed 才能安全回收
         if (!Volatile.Read(ref _completed) || !Volatile.Read(ref _disposed) ||
             Volatile.Read(ref _disposeFinalized) == 0 || !IsEmpty() ||
@@ -652,7 +677,8 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             (state.HasActiveDispatches || !state.IsDetached))
             return;
 
-        if (Interlocked.CompareExchange(ref _poolState, 1, 0) != 0)
+        var returnedState = unchecked(leaseState + 1);
+        if (Interlocked.CompareExchange(ref _leaseState, returnedState, leaseState) != leaseState)
             return;
 
         // Close the acquire-vs-return race before clearing lease state.
@@ -660,7 +686,8 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         if (Volatile.Read(ref _producerOperations) != 0 || !IsEmpty() ||
             dispatchState is { } && (dispatchState.HasActiveDispatches || !dispatchState.IsDetached))
         {
-            Volatile.Write(ref _poolState, 0);
+            if (Interlocked.CompareExchange(ref _leaseState, leaseState, returnedState) != returnedState)
+                throw new InvalidOperationException("The stream dispatcher return state changed unexpectedly.");
             return;
         }
 

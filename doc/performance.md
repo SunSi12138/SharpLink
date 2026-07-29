@@ -1,10 +1,10 @@
 # SharpLink 性能基线
 
-本文只发布 `1.0.0-rc4` 精确提交上的最终可复现实测。0.x 开发期的逐版本局部 A/B、临时 runner 结果和优化日志不属于稳定性能承诺，已从用户文档移除；代码历史仍保留在 Git 和 CHANGELOG。
+本文只发布 `1.0.0-rc5` 精确提交上的最终可复现实测。0.x 开发期的逐版本局部 A/B、临时 runner 结果和优化日志不属于稳定性能承诺，已从用户文档移除；代码历史仍保留在 Git 和 CHANGELOG。
 
 ## 当前状态
 
-`1.0.0-rc4` 的代码、公开 API、协议和包表面已进入本地冻结；最终 QPS、吞吐和延迟数字仍必须在该精确 RC 提交完成下述矩阵后发布。RC3 性能审计发现并修复了 interceptor continuation cache 的 ABA 所有权问题，因此此前数据不冒充最终 RC4 基线。
+`1.0.0-rc5` 候选修复了 RC4 云端 Duplex 冒烟暴露的 dispatcher 池归还 ABA 所有权问题；公开 API、协议和包表面不变。最终 QPS、吞吐和延迟数字必须在 RC5 精确提交完成下述矩阵后发布；RC4 与修复前的测试数据不冒充最终 RC5 基线。
 
 ## 环境记录
 
@@ -17,9 +17,9 @@
 - compression/admission/interceptor/topology 配置；
 - 同机后台进程与温控检查。
 
-原始 JSON、BenchmarkDotNet 报告和环境快照写入 `artifacts/performance/rc4-<short-sha>/`，不提交仓库；本文只保存汇总表、命令和解释。
+原始 JSON、BenchmarkDotNet 报告和环境快照写入 `artifacts/performance/rc5-<short-sha>/`，不提交仓库；本文只保存汇总表、命令和解释。
 
-## RC4 场景矩阵
+## RC5 场景矩阵
 
 | 维度 | 覆盖 |
 |---|---|
@@ -49,7 +49,7 @@ SHARPLINK_MATRIX_TIER=smoke ./eng/run-performance-matrix.sh
 ```bash
 SHARPLINK_MATRIX_TIER=full \
 SHARPLINK_MATRIX_RUNTIMES=jit,aot \
-SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/rc4-<short-sha>/matrix" \
+SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/rc5-<short-sha>/matrix" \
 ./eng/run-performance-matrix.sh
 ```
 
@@ -72,4 +72,4 @@ SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/rc4-<short-sha>/matrix" \
 
 ## 最终结果
 
-冻结 `1.0.0-rc4` 后填写。
+冻结 `1.0.0-rc5` 后填写。

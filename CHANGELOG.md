@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [1.0.0-rc5] - 2026-07-29
+
+### Fixed
+
+- Pooled response-stream dispatchers now use a monotonic lease generation instead of resetting a reusable leased/returned bit. A delayed return contender from an older stream can no longer commit after the same dispatcher has been rented again, reinsert the active lease into the process-wide pool, clear its codec and callbacks, or expose the active call to another consumer as `Only single consumer is supported`.
+
+### Compatibility
+
+- Public API, generated contracts, Protocol v2 bytes, package graph, and valid stream behavior are unchanged. The fix adds no per-call allocation or lock; it replaces the existing pool-state compare/exchange with a generation-aware 64-bit compare/exchange.
+
+### Validation
+
+- A deterministic two-contender regression fails on exact RC4 with `retained=1, referencesIntact=False`, proving that the delayed old return both repooled and cleared the reused lease. The RC5 candidate passes the same schedule and all 15 dispatcher lifecycle tests.
+- Unit 511/511 and Integration 252/252 pass in Release with zero test failures.
+- Five alternating exact-RC4/candidate Balanced TCP Duplex pairs (c8, 32 items, 10-second measurements) completed with zero failures. Paired-median candidate deltas were QPS +3.82%, P50 -3.24%, P99 -12.60%, allocation/operation -2.04%, and CPU/operation -2.81%; these local results exclude a measurable regression and are not claimed as a performance improvement.
+
 ## [1.0.0-rc4] - 2026-07-28
 
 ### Fixed
