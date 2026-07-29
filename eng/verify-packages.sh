@@ -46,13 +46,13 @@ for package_id in "${PACKAGES[@]}"; do
     exit 1
   fi
 
-  unzip -Z1 "$nupkg" | rg -Fxq "lib/net10.0/$package_id.dll"
-  unzip -Z1 "$nupkg" | rg -Fxq "lib/net10.0/$package_id.xml"
-  unzip -Z1 "$snupkg" | rg -Fxq "lib/net10.0/$package_id.pdb"
-  unzip -p "$nupkg" "$package_id.nuspec" | rg -Fq "commit=\"$EXPECTED_COMMIT\""
+  unzip -Z1 "$nupkg" | grep -Fx "lib/net10.0/$package_id.dll" >/dev/null
+  unzip -Z1 "$nupkg" | grep -Fx "lib/net10.0/$package_id.xml" >/dev/null
+  unzip -Z1 "$snupkg" | grep -Fx "lib/net10.0/$package_id.pdb" >/dev/null
+  unzip -p "$nupkg" "$package_id.nuspec" | grep -F "commit=\"$EXPECTED_COMMIT\"" >/dev/null
 done
 
 unzip -Z1 "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" |
-  rg -Fxq "analyzers/dotnet/cs/SharpLink.Generator.dll"
+  grep -Fx "analyzers/dotnet/cs/SharpLink.Generator.dll" >/dev/null
 
 echo "Verified ${#PACKAGES[@]} package and symbol pairs for $EXPECTED_VERSION at $EXPECTED_COMMIT."
