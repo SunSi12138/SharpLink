@@ -32,6 +32,7 @@
     <Project Path="test/SharpLink.LoadTestBase/SharpLink.LoadTestBase.csproj" />
     <Project Path="test/SharpLink.LoadTest/SharpLink.LoadTest.csproj" />
     <Project Path="test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj" />
+    <Project Path="test/SharpLink.StreamLoadTest.Tests/SharpLink.StreamLoadTest.Tests.csproj" />
     <Project Path="test/SharpLink.ChaosTests/SharpLink.ChaosTests.csproj" />
     <Project Path="test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj" />
     <Project Path="test/SharpLink.DynamicContracts/SharpLink.DynamicContracts.csproj" />

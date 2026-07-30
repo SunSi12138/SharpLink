@@ -21,4 +21,8 @@
   <ItemGroup>
     <PackageReference Include="SharpPack" />
   </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SharpLink.StreamLoadTest.Tests" />
+  </ItemGroup>
 </Project>
