@@ -49,6 +49,24 @@ public class EquivalentDuplexWorkloadTests
     }
 
     [Test]
+    [Arguments(4, 1)]
+    [Arguments(1_048_576, 64)]
+    [Arguments(16_384, 4096)]
+    public async Task ValidEquivalentDuplexBoundaryValuesArePreserved(
+        int messageBytes,
+        int messagesPerStream)
+    {
+        var options = StreamLoadOptions.Parse([
+            "--operation", "duplex-equivalent",
+            "--message-bytes", messageBytes.ToString(),
+            "--messages-per-stream", messagesPerStream.ToString()
+        ]);
+
+        await Assert.That(options.MessageBytes).IsEqualTo(messageBytes);
+        await Assert.That(options.MessagesPerStream).IsEqualTo(messagesPerStream);
+    }
+
+    [Test]
     public async Task Eight4096ByteMessagesPreserveOperationSequenceAndPayload()
     {
         const long operationId = 741;

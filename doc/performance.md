@@ -1,10 +1,10 @@
 # SharpLink 性能基线
 
-本文只发布 `1.0.0-rc5` 精确提交上的最终可复现实测。0.x 开发期的逐版本局部 A/B、临时 runner 结果和优化日志不属于稳定性能承诺，已从用户文档移除；代码历史仍保留在 Git 和 CHANGELOG。
+本文只发布 `1.0.0-rc6` 精确提交上的最终可复现实测。0.x 开发期的逐版本局部 A/B、临时 runner 结果和优化日志不属于稳定性能承诺，已从用户文档移除；代码历史仍保留在 Git 和 CHANGELOG。
 
 ## 当前状态
 
-`1.0.0-rc5` 候选修复了 RC4 云端 Duplex 冒烟暴露的 dispatcher 池归还 ABA 所有权问题；公开 API、协议和包表面不变。最终 QPS、吞吐和延迟数字必须在 RC5 精确提交完成下述矩阵后发布；RC4 与修复前的测试数据不冒充最终 RC5 基线。
+`1.0.0-rc6` 在 RC5 正确性基线上修复了 stream-backed transport 的系统性分段开销：默认 4 KiB PipeReader block 小于常见的 4096-byte 业务 payload 帧，使 SharpPack 经常进入跨段读取。RC6 使用经 A/B 接受的 16 KiB block；公开 API、协议、连接默认数和包表面不变。最终云端 QPS、吞吐和延迟数字仍必须在 RC6 精确发布提交完成下述矩阵后发布，本地优化 A/B 不冒充最终云端基线。
 
 ## 环境记录
 
@@ -17,9 +17,9 @@
 - compression/admission/interceptor/topology 配置；
 - 同机后台进程与温控检查。
 
-原始 JSON、BenchmarkDotNet 报告和环境快照写入 `artifacts/performance/rc5-<short-sha>/`，不提交仓库；本文只保存汇总表、命令和解释。
+原始 JSON、BenchmarkDotNet 报告和环境快照写入 `artifacts/performance/rc6-<short-sha>/`，不提交仓库；本文只保存汇总表、命令和解释。
 
-## RC5 场景矩阵
+## RC6 场景矩阵
 
 | 维度 | 覆盖 |
 |---|---|
@@ -49,7 +49,7 @@ SHARPLINK_MATRIX_TIER=smoke ./eng/run-performance-matrix.sh
 ```bash
 SHARPLINK_MATRIX_TIER=full \
 SHARPLINK_MATRIX_RUNTIMES=jit,aot \
-SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/rc5-<short-sha>/matrix" \
+SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/rc6-<short-sha>/matrix" \
 ./eng/run-performance-matrix.sh
 ```
 
@@ -72,4 +72,15 @@ SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/rc5-<short-sha>/matrix" \
 
 ## 最终结果
 
-冻结 `1.0.0-rc5` 后填写。
+最终云端矩阵在冻结 `1.0.0-rc6` 发布提交后填写。上云前的本机因果 A/B 仅用于决定是否接受 RC6 Runtime 改动：
+
+| 固定连接数 | RC5 validated msg/s | RC6 候选 validated msg/s | 吞吐变化 | P99 变化 | CPU/msg 变化 | allocation/msg 变化 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 105,513 | 134,910 | +27.86% | -24.78% | -22.00% | -2.96% |
+| 4 | 303,388 | 374,602 | +23.47% | -8.17% | -12.72% | -3.06% |
+| 16 | 569,858 | 592,295 | +3.94% | -4.83% | -4.38% | -0.42% |
+| 64 | 626,257 | 633,006 | +1.08% | -9.26% | -2.72% | -0.30% |
+
+环境为 Ryzen 9 7950X、Ubuntu 26.04、.NET 10.0.10、Server GC、TCP loopback、Throughput profile、c128、4096 bytes × 8 双向消息/流、固定 64 MiB send queue。每个连接数运行五对相邻 RC5/candidate 独立进程并交替 A/B 顺序，40 个进程均为零 transport/validation failure。原始证据对应 RC5 product `9a40218c73d51f470a54960a069df43c025cac78` 与 RC6 Runtime candidate `709471ab4ec2e67b714ad89eabec130f36925008`。
+
+这项改动减少单条有序 transport lane 的分段成本，但不把一个 PipeReader 并行化。多 lane 扩展仍由 transport-independent connection pool 提供；未来 QUIC 或原生多路复用 transport 需要单独设计 session/lane 抽象，不能从本表推导为 RC6 承诺。

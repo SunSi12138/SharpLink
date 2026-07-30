@@ -17,7 +17,9 @@ public class TransportCleanupTests
         var result = await connection.Input.ReadAsync();
         connection.Input.AdvanceTo(result.Buffer.End);
 
-        Ensure(stream.LargestReadBufferBytes == StreamTransportConnection.ReadBufferBytes,
+        Ensure(StreamTransportConnection.ReadBufferBytes == 16 * 1024,
+            "the profiled stream read block must remain fixed at the accepted 16 KiB A/B candidate");
+        Ensure(stream.LargestReadBufferBytes == 16 * 1024,
             "stream transports must request 16 KiB reads so common 4 KiB RPC frames do not systematically span every segment");
         Ensure(result.IsCompleted, "the recording stream must complete the deterministic read");
     }

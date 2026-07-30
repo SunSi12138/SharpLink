@@ -3,7 +3,7 @@
 本仓库当前有两套压测程序：
 
 - `test/SharpLink.LoadTest`：一元 RPC 压测（`add/echo`）
-- `test/SharpLink.StreamLoadTest`：流式 RPC 压测（`unary/c2s/s2c/duplex`）
+- `test/SharpLink.StreamLoadTest`：流式 RPC 压测（`unary/c2s/s2c/duplex/duplex-equivalent`）
 
 公共运行时与传输封装已下沉到：
 
@@ -149,8 +149,12 @@ LoadTest 专有：
 
 StreamLoadTest 专有：
 
-- `--operation`: `all | unary | c2s | s2c | duplex`（默认 `all`）
+- `--operation`: `all | unary | c2s | s2c | duplex | duplex-equivalent`（默认 `all`；`all` 保留原有四种场景，不隐式加入等价验证负载）
 - `--stream-size`: 单次流调用的元素数量（默认 `256`）
+- `--message-bytes`: `duplex-equivalent` 的每条业务消息字节数（默认 `4096`）
+- `--messages-per-stream`: `duplex-equivalent` 的每个已完成流双向消息数（默认 `8`）
+
+`duplex-equivalent` 为跨框架比较提供严格 oracle：每个响应都校验 operation ID、顺序、长度和完整 payload，缺失、重复、错序、额外或损坏响应均计为 validation failure，阶段结束时的部分流取消单独计数且不进入成功吞吐。正式连接数对比必须固定 `--min-connections` 与 `--max-connections` 为同一个值；`1/64` 动态池不能替代 `1/1` 与 `64/64` 两条独立证据。
 
 ## 默认传输标识
 
@@ -166,6 +170,7 @@ StreamLoadTest 专有：
 两者都会输出分阶段结果：
 
 - `qps`
+- `duplex-equivalent` 的 validated messages、messages/s 与每方向业务 MiB/s
 - `ok / fail`
 - `err`
 - `p50 / p95 / p99`

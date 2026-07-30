@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [1.0.0-rc6] - 2026-07-30
+
+### Performance
+
+- Stream-backed transports now read into 16 KiB PipeReader blocks instead of the 4 KiB framework default. Common 4096-byte business payload frames no longer cross nearly every receive segment, reducing segmented SharpPack reads without changing Protocol v2 bytes, RPC ordering, flow control, connection-pool defaults, or the public API.
+- `SharpLink.StreamLoadTest` adds a validated `duplex-equivalent` lane with exact message byte/count controls, operation-ID/order/full-payload verification, explicit validation/cancellation accounting, message throughput, and directional business MiB/s. A dedicated TUnit project covers corrupt, duplicate, missing, reordered, extra, cancelled, boundary, and generated-RPC round trips.
+
+### Compatibility
+
+- The 16 KiB block is rented from the existing shared PipeReader pool. It adds no per-message allocation and does not parallelize a single ordered byte-stream reader; multi-lane scaling continues to use the transport-independent connection pool.
+- Public API, generated contracts, valid Protocol v2 bytes, package graph, and connection defaults are unchanged.
+
+### Validation
+
+- On a Ryzen 9 7950X bare-metal Linux host, five adjacent RC5/candidate pairs used TCP loopback, Server GC, Throughput profile, c128, fixed 1/4/16/64 connections, 4096 bytes × 8 bidirectional messages per stream, and a fixed 64 MiB send queue. Median validated message throughput changed by +27.86%, +23.47%, +3.94%, and +1.08%; median P99 changed by -24.78%, -8.17%, -4.83%, and -9.26%. CPU/message and allocated bytes/message decreased in all four shapes, with zero transport or validation failures across 40 processes.
+- Candidate profiles reduced `SharpPackReader.GetNextSpan` exclusive samples from 1.53% to 0.36% at one connection and from 16.39% to 9.42% at 64 connections, confirming the intended segmented-read mechanism.
+- Release builds completed with zero warnings/errors on macOS arm64 and Linux x64. Unit 512/512, Generator 121/121, Integration 252/252, and validated-Duplex 21/21 pass; 120-second macOS SharedMemory and Linux TCP Chaos smokes completed 11 rolling restarts each with zero unexpected failures and all resources drained. Independent-process SharedMemory NativeAOT smoke passes on osx-arm64 and linux-x64.
+
 ## [1.0.0-rc5] - 2026-07-29
 
 ### Fixed
