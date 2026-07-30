@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [1.0.0-rc7] - 2026-07-30
+
+### Fixed
+
+- Pooled stream dispatchers now clear the previous lease while the object is still marked returned, then atomically activate the new lease. A delayed return callback can no longer land between activation and reset, republish the just-rented dispatcher, and hand one active response stream to two RPC calls as `Only single consumer is supported`.
+
+### Compatibility
+
+- Public API, generated contracts, valid Protocol v2 bytes, package graph, transport behavior, connection-pool defaults, and allocation shape are unchanged. The fix reorders the existing reset and lease compare/exchange; it adds no lock, allocation, or new transport/lane abstraction.
+- Fixed 1/4/16-connection validation confirms that TCP, UDS, NamedPipe, and SharedMemory already use the transport-independent connection pool as independent ordered lanes. Adaptive 1/4 pools converge to fixed 4/4 throughput after warmup, so RC7 does not add a second pooling abstraction.
+
+### Validation
+
+- Exact RC6 reproduced the same dispatcher failure in two independent Linux x64 runs, including one failure among 18,187,330 attempted high-churn duplex streams and one failure in the longer paired A/B set. A deterministic blocked-reset regression fails on the old ordering in 10 ms and passes on RC7.
+- The RC7 candidate completed 35,858,349 validated UDS streams in 60 seconds, then another 36,192,551 validated streams across 15-second TCP, UDS, NamedPipe, and SharedMemory runs, with zero transport or payload-validation failures. Post-fix fixed 1/4/16 runs also passed on all four transports.
+- Five longer adjacent RC6/candidate pairs used UDS, Server GC, Throughput profile, c128, four fixed connections, 4096 bytes × 8 messages, and alternating order. Candidate medians changed QPS -1.56%, P99 +1.06%, CPU/stream +1.90%, and allocation/stream +0.05%; pairwise QPS ranged from -5.27% to +4.96%, so no change exceeded the measured noise band. Three high-churn pairs changed median QPS -0.76% and P99 -0.85%.
+- Release builds completed with zero warnings/errors on macOS arm64 and Linux x64. Unit 513/513, Generator 121/121, Integration 252/252, and validated-Duplex 21/21 pass on both architectures.
+
 ## [1.0.0-rc6] - 2026-07-30
 
 ### Performance

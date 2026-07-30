@@ -8,9 +8,9 @@ SharpLink 是面向 .NET 10 的 Source Generator RPC 框架。契约、代理、
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="SharpLink.Sdk" Version="1.0.0-rc6" />
-  <PackageReference Include="SharpLink.Client" Version="1.0.0-rc6" />
-  <PackageReference Include="SharpLink.Server" Version="1.0.0-rc6" />
+  <PackageReference Include="SharpLink.Sdk" Version="1.0.0-rc7" />
+  <PackageReference Include="SharpLink.Client" Version="1.0.0-rc7" />
+  <PackageReference Include="SharpLink.Server" Version="1.0.0-rc7" />
 </ItemGroup>
 ```
 

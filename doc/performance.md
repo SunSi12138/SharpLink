@@ -1,10 +1,10 @@
 # SharpLink 性能基线
 
-本文只发布 `1.0.0-rc6` 精确提交上的最终可复现实测。0.x 开发期的逐版本局部 A/B、临时 runner 结果和优化日志不属于稳定性能承诺，已从用户文档移除；代码历史仍保留在 Git 和 CHANGELOG。
+本文只发布 `1.0.0-rc7` 精确提交上的最终可复现实测。0.x 开发期的逐版本局部 A/B、临时 runner 结果和优化日志不属于稳定性能承诺，已从用户文档移除；代码历史仍保留在 Git 和 CHANGELOG。
 
 ## 当前状态
 
-`1.0.0-rc6` 在 RC5 正确性基线上修复了 stream-backed transport 的系统性分段开销：默认 4 KiB PipeReader block 小于常见的 4096-byte 业务 payload 帧，使 SharpPack 经常进入跨段读取。RC6 使用经 A/B 接受的 16 KiB block；公开 API、协议、连接默认数和包表面不变。最终云端 QPS、吞吐和延迟数字仍必须在 RC6 精确发布提交完成下述矩阵后发布，本地优化 A/B 不冒充最终云端基线。
+`1.0.0-rc6` 在 RC5 正确性基线上修复了 stream-backed transport 的系统性分段开销：默认 4 KiB PipeReader block 小于常见的 4096-byte 业务 payload 帧，使 SharpPack 经常进入跨段读取。RC6 使用经 A/B 接受的 16 KiB block。RC7 进一步关闭 pooled stream dispatcher 从 returned 到 active 的租约转换窗口；它只调整既有 Reset/CAS 顺序，不改变公开 API、协议、连接默认数或包表面。最终云端 QPS、吞吐和延迟数字仍必须在 RC7 精确发布提交完成下述矩阵后发布，本地因果 A/B 不冒充最终云端基线。
 
 ## 环境记录
 
@@ -17,9 +17,9 @@
 - compression/admission/interceptor/topology 配置；
 - 同机后台进程与温控检查。
 
-原始 JSON、BenchmarkDotNet 报告和环境快照写入 `artifacts/performance/rc6-<short-sha>/`，不提交仓库；本文只保存汇总表、命令和解释。
+原始 JSON、BenchmarkDotNet 报告和环境快照写入 `artifacts/performance/rc7-<short-sha>/`，不提交仓库；本文只保存汇总表、命令和解释。
 
-## RC6 场景矩阵
+## RC7 场景矩阵
 
 | 维度 | 覆盖 |
 |---|---|
@@ -49,7 +49,7 @@ SHARPLINK_MATRIX_TIER=smoke ./eng/run-performance-matrix.sh
 ```bash
 SHARPLINK_MATRIX_TIER=full \
 SHARPLINK_MATRIX_RUNTIMES=jit,aot \
-SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/rc6-<short-sha>/matrix" \
+SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/rc7-<short-sha>/matrix" \
 ./eng/run-performance-matrix.sh
 ```
 
@@ -72,7 +72,7 @@ SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/rc6-<short-sha>/matrix" \
 
 ## 最终结果
 
-最终云端矩阵在冻结 `1.0.0-rc6` 发布提交后填写。上云前的本机因果 A/B 仅用于决定是否接受 RC6 Runtime 改动：
+最终云端矩阵在冻结 `1.0.0-rc7` 发布提交后填写。上云前的本机因果 A/B 仅用于决定是否接受 Runtime 改动。RC6 的分段读取优化接受结果保留如下：
 
 | 固定连接数 | RC5 validated msg/s | RC6 候选 validated msg/s | 吞吐变化 | P99 变化 | CPU/msg 变化 | allocation/msg 变化 |
 |---:|---:|---:|---:|---:|---:|---:|
@@ -83,4 +83,10 @@ SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/rc6-<short-sha>/matrix" \
 
 环境为 Ryzen 9 7950X、Ubuntu 26.04、.NET 10.0.10、Server GC、TCP loopback、Throughput profile、c128、4096 bytes × 8 双向消息/流、固定 64 MiB send queue。每个连接数运行五对相邻 RC5/candidate 独立进程并交替 A/B 顺序，40 个进程均为零 transport/validation failure。原始证据对应 RC5 product `9a40218c73d51f470a54960a069df43c025cac78` 与 RC6 Runtime candidate `709471ab4ec2e67b714ad89eabec130f36925008`。
 
-这项改动减少单条有序 transport lane 的分段成本，但不把一个 PipeReader 并行化。多 lane 扩展仍由 transport-independent connection pool 提供；未来 QUIC 或原生多路复用 transport 需要单独设计 session/lane 抽象，不能从本表推导为 RC6 承诺。
+这项改动减少单条有序 transport lane 的分段成本，但不把一个 PipeReader 并行化。多 lane 扩展仍由 transport-independent connection pool 提供；未来 QUIC 或原生多路复用 transport 需要单独设计 session/lane 抽象，不能从本表推导为 1.0 承诺。
+
+### RC7 transport-lane 与租约验证
+
+Ryzen 9 7950X、Ubuntu 26.04、.NET 10.0.10、Server GC、Throughput profile 上，TCP、UDS、NamedPipe 和 SharedMemory 均完成固定 1/4/16 连接的 `duplex-equivalent` 验证，零 transport/validation failure。并发 128、4096 bytes × 8 messages 时，UDS、NamedPipe 和 SharedMemory 的最佳点落在 4 connections 附近，TCP 在该负载继续扩展到 16；这证明 lane 数属于 transport/负载调优参数，不应成为统一的新默认值。自适应 1/4 pool 与固定 4/4 pool 的三轮中位吞吐差异均在本机噪声范围内。
+
+RC7 dispatcher 修复使用五对 8 秒相邻 RC6/candidate UDS 进程验证：candidate median QPS -1.56%、P99 +1.06%、CPU/stream +1.90%、allocation/stream +0.05%，pairwise QPS 范围 -5.27% 到 +4.96%。RC6 基线再次出现一次 `Only single consumer is supported`；candidate 为零。随后 candidate 在 60 秒 UDS high-churn 中完成 35,858,349 个已校验流，并在四种 transport 的四个 15 秒 high-churn 进程中再完成 36,192,551 个已校验流，全部零失败。原始 JSON 保留在任务级 artifacts，不作为最终云端成绩。
