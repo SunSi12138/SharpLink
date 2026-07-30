@@ -9,7 +9,7 @@ namespace SharpLink.UnitTests.Runtime;
 public class TransportCleanupTests
 {
     [Test]
-    public async Task StreamConnectionShouldReadIntoProfiled64KiBBlocks()
+    public async Task StreamConnectionShouldReadIntoProfiled16KiBBlocks()
     {
         var stream = new ReadSizeRecordingStream();
         await using var connection = new StreamTransportConnection(stream);
@@ -18,7 +18,7 @@ public class TransportCleanupTests
         connection.Input.AdvanceTo(result.Buffer.End);
 
         Ensure(stream.LargestReadBufferBytes == StreamTransportConnection.ReadBufferBytes,
-            "stream transports must request 64 KiB reads so common 4 KiB RPC frames do not systematically span segments");
+            "stream transports must request 16 KiB reads so common 4 KiB RPC frames do not systematically span every segment");
         Ensure(result.IsCompleted, "the recording stream must complete the deterministic read");
     }
 

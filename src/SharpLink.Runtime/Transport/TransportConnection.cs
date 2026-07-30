@@ -2,7 +2,7 @@ namespace SharpLink.Runtime;
 
 internal class StreamTransportConnection : ITransportConnection
 {
-    internal const int ReadBufferBytes = 64 * 1024;
+    internal const int ReadBufferBytes = 16 * 1024;
 
     private readonly Stream _stream;
     private readonly Lock _disposeGate = new();
