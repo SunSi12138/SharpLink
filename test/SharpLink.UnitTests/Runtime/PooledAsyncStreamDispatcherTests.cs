@@ -343,6 +343,82 @@ public class PooledAsyncStreamDispatcherTests
 
     [Test]
     [NotInParallel]
+    public async Task RentResetMustFinishBeforeNewLeaseCanBeReturned()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var codec = new ReferenceItemCodec();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, codec);
+        var delayedOldLease = (IStreamDispatchLease)dispatcher;
+        dispatcher.Complete(exception: null);
+        await dispatcher.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the completed old lease must begin in the pool");
+
+        var registrationField = typeof(PooledAsyncStreamDispatcher<ReferenceItem>).GetField(
+            "_enumerationCancellationRegistration",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find the dispatcher cancellation registration");
+        var leaseStateField = typeof(PooledAsyncStreamDispatcher<ReferenceItem>).GetField(
+            "_leaseState",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find the dispatcher lease state");
+        using var callbackEntered = new ManualResetEventSlim();
+        using var releaseCallback = new ManualResetEventSlim();
+        using var cancellation = new CancellationTokenSource();
+        var blockingRegistration = cancellation.Token.UnsafeRegister(
+            _ =>
+            {
+                callbackEntered.Set();
+                if (!releaseCallback.Wait(TimeSpan.FromSeconds(5)))
+                    throw new TimeoutException("the blocked cancellation callback was not released");
+            },
+            state: null);
+        registrationField.SetValue(dispatcher, blockingRegistration);
+        var cancellationTask = Task.Run(cancellation.Cancel);
+        Ensure(callbackEntered.Wait(TimeSpan.FromSeconds(3)),
+            "the synthetic old cancellation callback must be active");
+
+        PooledAsyncStreamDispatcher<ReferenceItem>? rented = null;
+        var rentTask = Task.Run(() =>
+        {
+            rented = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, codec);
+        });
+        Ensure(SpinWait.SpinUntil(
+                () => PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+                TimeSpan.FromSeconds(3)),
+            "the new rent must remove the dispatcher from the pool before reset blocks");
+
+        var delayedReturn = Task.Run(delayedOldLease.OnDispatchesDrained);
+        try
+        {
+            var preparingLeaseState = (long)(leaseStateField.GetValue(dispatcher)
+                ?? throw new Exception("cannot read the dispatcher lease state"));
+            Ensure((preparingLeaseState & 1L) == 0,
+                "reset must finish while the dispatcher is still marked returned");
+            await delayedReturn.WaitAsync(TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            releaseCallback.Set();
+            await Task.WhenAll(cancellationTask, rentTask, delayedReturn)
+                .WaitAsync(TimeSpan.FromSeconds(3));
+        }
+
+        var activeDispatcher = rented ?? throw new Exception("the new dispatcher rent did not complete");
+        Ensure(ReferenceEquals(dispatcher, activeDispatcher),
+            "the new rent must own the prepared dispatcher");
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+            "a delayed old return must not republish a dispatcher while its new lease is active");
+
+        activeDispatcher.Complete(exception: null);
+        await activeDispatcher.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "only disposal of the new lease may return the dispatcher");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task ConcurrentPoolLeasesShouldKeepItemsIsolated()
     {
         PooledAsyncStreamDispatcher<byte>.ClearPoolForTests();

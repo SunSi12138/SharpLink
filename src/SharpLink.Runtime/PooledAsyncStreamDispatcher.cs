@@ -130,8 +130,8 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         else
             Interlocked.Decrement(ref s_retainedCount);
 
-        dispatcher.ActivateLease();
         dispatcher.Reset(enumerationToken, codec, payloadNullable);
+        dispatcher.ActivateLease();
         return dispatcher;
     }
 
