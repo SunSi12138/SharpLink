@@ -9,6 +9,20 @@ namespace SharpLink.UnitTests.Runtime;
 public class TransportCleanupTests
 {
     [Test]
+    public async Task StreamConnectionShouldReadIntoProfiled64KiBBlocks()
+    {
+        var stream = new ReadSizeRecordingStream();
+        await using var connection = new StreamTransportConnection(stream);
+
+        var result = await connection.Input.ReadAsync();
+        connection.Input.AdvanceTo(result.Buffer.End);
+
+        Ensure(stream.LargestReadBufferBytes == StreamTransportConnection.ReadBufferBytes,
+            "stream transports must request 64 KiB reads so common 4 KiB RPC frames do not systematically span segments");
+        Ensure(result.IsCompleted, "the recording stream must complete the deterministic read");
+    }
+
+    [Test]
     public async Task StreamConnectionShouldDisposeOwnedStreamAfterWriterCompletionFailure()
     {
         var stream = new ThrowingWriteStream();
@@ -175,5 +189,31 @@ public class TransportCleanupTests
             Interlocked.Increment(ref _disposeCount);
             return ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class ReadSizeRecordingStream : Stream
+    {
+        internal int LargestReadBufferBytes { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => 0;
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            LargestReadBufferBytes = Math.Max(LargestReadBufferBytes, count);
+            return 0;
+        }
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            LargestReadBufferBytes = Math.Max(LargestReadBufferBytes, buffer.Length);
+            return ValueTask.FromResult(0);
+        }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) { }
     }
 }
