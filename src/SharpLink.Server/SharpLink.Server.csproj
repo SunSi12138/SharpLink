@@ -3,4 +3,14 @@
       <ProjectReference Include="..\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
       <ProjectReference Include="..\SharpLink.Runtime\SharpLink.Runtime.csproj" />
     </ItemGroup>
+    <ItemGroup>
+      <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+      <PackageReference Include="System.Threading.RateLimiting" />
+    </ItemGroup>
+    <ItemGroup>
+      <InternalsVisibleTo Include="SharpLink.Hosting" />
+      <InternalsVisibleTo Include="SharpLink.UnitTests" />
+      <InternalsVisibleTo Include="SharpLink.Benchmarks" />
+      <InternalsVisibleTo Include="SharpLink.ChaosTests" />
+    </ItemGroup>
 </Project>

@@ -8,7 +8,7 @@ internal sealed class RuneCodec : IRpcCodec<Rune>
     private const int Size = 4;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in Rune value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in Rune value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
@@ -17,14 +17,17 @@ internal sealed class RuneCodec : IRpcCodec<Rune>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Rune Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
-            return Unsafe.ReadUnaligned<Rune>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
+            return CodecHelpers.ValidateRune(
+                Unsafe.ReadUnaligned<Rune>(ref MemoryMarshal.GetReference(buffer.FirstSpan)));
         }
 
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
-        return Unsafe.ReadUnaligned<Rune>(ref MemoryMarshal.GetReference(temp));
+        return CodecHelpers.ValidateRune(
+            Unsafe.ReadUnaligned<Rune>(ref MemoryMarshal.GetReference(temp)));
     }
 }
 
@@ -34,7 +37,7 @@ internal sealed class NullableRuneCodec : IRpcCodec<Rune?>
     private const int Size = 5; // 1 Tag + 4 Value
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in Rune? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in Rune? value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
 
@@ -54,18 +57,21 @@ internal sealed class NullableRuneCodec : IRpcCodec<Rune?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Rune? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
-            if (start == 0) return null;
-            return Unsafe.ReadUnaligned<Rune>(ref Unsafe.Add(ref start, 1));
+            if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
+            return CodecHelpers.ValidateRune(
+                Unsafe.ReadUnaligned<Rune>(ref Unsafe.Add(ref start, 1)));
         }
 
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         
-        if (tempStart == 0) return null;
-        return Unsafe.ReadUnaligned<Rune>(ref Unsafe.Add(ref tempStart, 1));
+        if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
+        return CodecHelpers.ValidateRune(
+            Unsafe.ReadUnaligned<Rune>(ref Unsafe.Add(ref tempStart, 1)));
     }
 }

@@ -6,11 +6,12 @@ internal sealed class DoubleCodec : IRpcCodec<double>
     private const int Size = 8;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in double value, in ArrayBufferWriter<byte> writer) { Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value); writer.Advance(Size); }
+    public void Serialize(in double value, IBufferWriter<byte> writer) { Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value); writer.Advance(Size); }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public double Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size) 
             return Unsafe.ReadUnaligned<double>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
         Span<byte> temp = stackalloc byte[Size];
@@ -25,7 +26,7 @@ internal sealed class NullableDoubleCodec : IRpcCodec<double?>
     private const int Size = 9; // 1 byte Tag + 8 bytes Value
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in double? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in double? value, IBufferWriter<byte> writer)
     {
         var span = writer.GetSpan(Size);
         if (value.HasValue)
@@ -43,17 +44,18 @@ internal sealed class NullableDoubleCodec : IRpcCodec<double?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public double? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
-            if (start == 0) return null;
+            if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
             return Unsafe.ReadUnaligned<double>(ref Unsafe.Add(ref start, 1));
         }
 
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
         
-        if (temp[0] == 0) return null;
+        if (!CodecHelpers.ReadNullablePresence(ref MemoryMarshal.GetReference(temp), Size - 1)) return null;
         return Unsafe.ReadUnaligned<double>(ref Unsafe.Add(ref MemoryMarshal.GetReference(temp), 1));
     }
 }

@@ -6,7 +6,7 @@ internal sealed class UInt32Codec : IRpcCodec<uint>
     private const int Size = 4;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in uint value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in uint value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
@@ -15,6 +15,7 @@ internal sealed class UInt32Codec : IRpcCodec<uint>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public uint Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             return Unsafe.ReadUnaligned<uint>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
@@ -31,7 +32,7 @@ internal sealed class NullableUInt32Codec : IRpcCodec<uint?>
     private const int Size = 5;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in uint? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in uint? value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
         if (value.HasValue)
@@ -50,10 +51,11 @@ internal sealed class NullableUInt32Codec : IRpcCodec<uint?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public uint? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
-            if (start == 0) return null;
+            if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
             return Unsafe.ReadUnaligned<uint>(ref Unsafe.Add(ref start, 1));
         }
 
@@ -61,7 +63,7 @@ internal sealed class NullableUInt32Codec : IRpcCodec<uint?>
         buffer.CopyTo(temp);
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         
-        if (tempStart == 0) return null;
+        if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
         return Unsafe.ReadUnaligned<uint>(ref Unsafe.Add(ref tempStart, 1));
     }
 }

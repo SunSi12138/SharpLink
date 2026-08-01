@@ -7,7 +7,8 @@ internal interface IRpcOperation
 {
     // 在 IO 线程被调用
     public long Id { get; }
-    void SetResult(ref ReadOnlySequence<byte> payload);
+    Exception? TryDeserializeResponse(ref ReadOnlySequence<byte> payload);
+    void CompleteResponse(Exception? exception);
     void SetError(Exception ex);
 }
 
@@ -15,6 +16,10 @@ internal interface IRpcOperation
 internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperation 
 {
     private ManualResetValueTaskSourceCore<T> _core;
+    private IRpcCodec<T>? _codec;
+    private T? _response;
+    private bool _hasResponsePayload;
+    private bool _responseNullable;
     
     private readonly Action<RpcRequestOperation<T>> _returnAction;
 
@@ -25,13 +30,26 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     }
     
     public long Id { get; private set; }
-    public void Initialize(long id)
+    public void Initialize(long id, IRpcCodecProvider codecProvider)
     {
+        ArgumentNullException.ThrowIfNull(codecProvider);
+        Initialize(id, codecProvider.GetCodec<T>());
+    }
+
+    public void Initialize(
+        long id,
+        IRpcCodec<T> codec,
+        bool hasResponsePayload = true,
+        bool responseNullable = false)
+    {
+        ArgumentNullException.ThrowIfNull(codec);
         Id = id;
-        _core.Reset(); // 重置状态机
+        _codec = codec;
+        _hasResponsePayload = hasResponsePayload;
+        _responseNullable = responseNullable;
     }
     // 【新增】发送失败时的手动归还
-    public void ReturnError() => _returnAction(this);
+    public void ReturnError() => ReturnToPool();
     
     public T GetResult(short token)
     {
@@ -41,35 +59,71 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
         }
         finally
         {
-            _returnAction(this);
+            ReturnToPool();
         }
     }
     public ValueTaskSourceStatus GetStatus(short token) => _core.GetStatus(token);
     public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
     
-    public void SetResult(ref ReadOnlySequence<byte> payload)
+    public Exception? TryDeserializeResponse(ref ReadOnlySequence<byte> payload)
     {
         try
         {
-            if (payload.Length == 0)
+            if (!_hasResponsePayload)
             {
-                _core.SetResult(default!);
-                return;
+                if (!payload.IsEmpty)
+                {
+                    return new SharpLinkException(
+                        SharpLinkErrorCode.DataLoss,
+                        "A payload-less RPC response contains unexpected bytes.");
+                }
+                _response = default;
+                return null;
             }
             // 【IO线程反序列化】
             // 此时 payload 有效，直接转为 T 对象，不拷贝 bytes
-            var result = RpcCodec.Deserialize<T>(payload);
-            _core.SetResult(result!);
+            _response = (_codec ?? throw new InvalidOperationException("Request operation has no response codec."))
+                .Deserialize(payload);
+            if (!_responseNullable && default(T) is null && _response is null)
+            {
+                return new SharpLinkException(
+                    SharpLinkErrorCode.DataLoss,
+                    "A non-nullable RPC response was null.");
+            }
+            return null;
         }
         catch (Exception ex)
         {
-            _core.SetException(ex);
+            return ex;
         }
     }
+
+    public void CompleteResponse(Exception? exception)
+    {
+        if (exception is null)
+            _core.SetResult(_response!);
+        else
+            _core.SetException(exception);
+    }
+
     public void SetError(Exception ex)
     {
         _core.SetException(ex);
     }
     public ValueTask<T> AsValueTask() => new(this, _core.Version);
+
+    private void ReturnToPool()
+    {
+        _codec = null;
+        _response = default;
+        _hasResponsePayload = false;
+        _responseNullable = false;
+        // Clear the continuation and its state before this operation enters the
+        // process-wide generic pool. A continuation can close over request types
+        // from a collectible AssemblyLoadContext even when T itself is static.
+        _core.Reset();
+        _returnAction(this);
+    }
+
 }

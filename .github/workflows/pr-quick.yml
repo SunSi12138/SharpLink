@@ -1,22 +1,29 @@
 name: PR Quick
 
+permissions:
+  contents: read
+
 on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: pr-quick-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quick:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.x
 
@@ -26,26 +33,69 @@ jobs:
       - name: Build
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 
-      - name: Demo HelloWorld
-        run: dotnet run -c Release --project demo/HelloWorld
-
-      - name: Demo Streaming
-        run: dotnet run -c Release --project demo/Streaming
-
-      - name: Demo HostApplication
-        run: dotnet run -c Release --project demo/HostApplication
-
-      - name: Demo Cancel
-        run: dotnet run -c Release --project demo/Cancel
-
-      - name: Demo OnwWay
-        run: dotnet run -c Release --project demo/OnwWay
-
-      - name: Integration Tests
-        run: dotnet run -c Release --project test/SharpLink.IntegrationTests
-
       - name: Unit Tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 
+      - name: Generator Tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --parallelism-strategy fixed
+          --timeout 120s
+
+      - name: Run Independent-process Shared-memory AOT Smoke
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
+
+      - name: Pack
+        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Verify SDK Contains Generator
+        run: unzip -l artifacts/nuget/SharpLink.Sdk.*.nupkg | grep -q 'analyzers/dotnet/cs/SharpLink.Generator.dll'
+
+      - name: Verify package metadata, XML documentation, and symbols
+        run: ./eng/verify-packages.sh artifacts/nuget
+
+      - name: Restore Package Smoke
+        run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
+        env:
+          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+
+      - name: Run Package Smoke
+        run: dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
+        env:
+          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+
+      - name: Demo Oneway
+        run: dotnet run -c Release --no-build --project demo/Oneway
+
       - name: Load Smoke
-        run: dotnet run -c Release --project test/SharpLink.LoadTest -- --mode local --operation add --concurrency 1,4 --warmup 2 --duration 5 --metrics-port 0
+        run: dotnet run -c Release --no-build --project test/SharpLink.LoadTest -- --mode local --transport sharedmemory --operation add --concurrency 1,4 --warmup 2 --duration 5 --metrics-port 0
+
+      - name: Chaos Smoke
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.ChaosTests
+          --
+          --duration-seconds 120
+          --transport sharedmemory
+          --concurrency 16
+          --restart-interval-seconds 10
+          --json-output artifacts/chaos/pr-smoke.json
+
+      - name: Upload Chaos Report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: chaos-pr-smoke
+          path: |
+            artifacts/chaos/pr-smoke.json
+            artifacts/chaos/pr-smoke.dmp
+            artifacts/chaos/pr-smoke.dmp.crashreport.json
+          if-no-files-found: warn

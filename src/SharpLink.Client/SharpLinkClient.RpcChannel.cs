@@ -5,723 +5,451 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
-    private static readonly Action<object?> SRequestCancelCallback = static state =>
-    {
-        var cancelState = (RequestCancelState)state!;
-        if (!cancelState.TryBeginInvocation())
-            return;
-
-        try
-        {
-            cancelState.Client.OnRequestCancel(cancelState);
-        }
-        finally
-        {
-            cancelState.ReturnAfterInvocation();
-        }
-    };
-
-    private static readonly Action<object?> SStreamCancelCallback = static state =>
-    {
-        var cancelState = (StreamCancelState)state!;
-        if (!cancelState.TryBeginInvocation())
-            return;
-
-        try
-        {
-            cancelState.Client.OnStreamCancel(cancelState);
-        }
-        finally
-        {
-            cancelState.ReturnAfterInvocation();
-        }
-    };
-
-    private static readonly Action<object?> SRequestTimeoutCallback = static state =>
-    {
-        var timeoutState = (RequestTimeoutState)state!;
-        if (!timeoutState.TryBeginInvocation())
-            return;
-
-        try
-        {
-            timeoutState.Client.OnRequestTimeout(timeoutState);
-        }
-        finally
-        {
-            timeoutState.ReturnAfterInvocation();
-        }
-    };
-
-    private static readonly Action<object?> SStreamTimeoutCallback = static state =>
-    {
-        var timeoutState = (StreamTimeoutState)state!;
-        if (!timeoutState.TryBeginInvocation())
-            return;
-
-        try
-        {
-            timeoutState.Client.OnStreamTimeout(timeoutState);
-        }
-        finally
-        {
-            timeoutState.ReturnAfterInvocation();
-        }
-    };
-
-    public ValueTask<T> InvokeAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, true, false, null);
-
-    public ValueTask<T> InvokeNoPayloadAsync<T>(long interfaceHash, long methodHash)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, null, null, false, true, false, null);
-
-    public ValueTask<T> InvokeNoReturnAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, false, false, null);
-
-    public ValueTask<T> InvokeNoReturnNoPayloadAsync<T>(long interfaceHash, long methodHash)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, null, null, false, false, false, null);
-
-    public ValueTask<T> InvokeCancellableAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, true, cancellationToken, false, null);
-
-    public ValueTask<T> InvokeCancellableNoPayloadAsync<T>(long interfaceHash, long methodHash, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, null, null, false, true, cancellationToken, false, null);
-
-    public ValueTask<T> InvokeCancellableWithDefaultTimeoutAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, true, cancellationToken, true, null);
-
-    public ValueTask<T> InvokeCancellableWithDefaultTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, null, null, false, true, cancellationToken, true, null);
-
-    public ValueTask<T> InvokeCancellableWithTimeoutAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, true, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public ValueTask<T> InvokeCancellableWithTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, null, null, false, true, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public ValueTask<T> InvokeCancellableNoReturnAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, false, cancellationToken, false, null);
-
-    public ValueTask<T> InvokeCancellableNoReturnNoPayloadAsync<T>(long interfaceHash, long methodHash, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, null, null, false, false, cancellationToken, false, null);
-
-    public ValueTask<T> InvokeCancellableNoReturnWithDefaultTimeoutAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, false, cancellationToken, true, null);
-
-    public ValueTask<T> InvokeCancellableNoReturnWithDefaultTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, null, null, false, false, cancellationToken, true, null);
-
-    public ValueTask<T> InvokeCancellableNoReturnWithTimeoutAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, false, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public ValueTask<T> InvokeCancellableNoReturnWithTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, null, null, false, false, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public async ValueTask InvokeOneWayAsync(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter)
-        => await InvokeCoreAsync<byte>(interfaceHash, methodHash, payloadWriter, null, true, false, false, null);
-
-    public async ValueTask InvokeOneWayNoPayloadAsync(long interfaceHash, long methodHash)
-        => await InvokeCoreAsync<byte>(interfaceHash, methodHash, null, null, true, false, false, null);
-
-    public async ValueTask InvokeOneWayClientStreamAsync(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender)
-        => await InvokeCoreAsync<byte>(interfaceHash, methodHash, payloadWriter, streamSender, true, false, false, null);
-
-    public async ValueTask InvokeOneWayClientStreamNoPayloadAsync(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender)
-        => await InvokeCoreAsync<byte>(interfaceHash, methodHash, null, streamSender, true, false, false, null);
-
-    public async ValueTask InvokeCancellableOneWayAsync(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, CancellationToken cancellationToken = default)
-        => await InvokeCancellableCoreAsync<byte>(interfaceHash, methodHash, payloadWriter, null, true, false, cancellationToken, false, null);
-
-    public async ValueTask InvokeCancellableOneWayNoPayloadAsync(long interfaceHash, long methodHash, CancellationToken cancellationToken = default)
-        => await InvokeCancellableCoreAsync<byte>(interfaceHash, methodHash, null, null, true, false, cancellationToken, false, null);
-
-    public async ValueTask InvokeCancellableOneWayWithDefaultTimeoutAsync(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, CancellationToken cancellationToken = default)
-        => await InvokeCancellableCoreAsync<byte>(interfaceHash, methodHash, payloadWriter, null, true, false, cancellationToken, true, null);
-
-    public async ValueTask InvokeCancellableOneWayWithDefaultTimeoutNoPayloadAsync(long interfaceHash, long methodHash, CancellationToken cancellationToken = default)
-        => await InvokeCancellableCoreAsync<byte>(interfaceHash, methodHash, null, null, true, false, cancellationToken, true, null);
-
-    public async ValueTask InvokeCancellableOneWayWithTimeoutAsync(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => await InvokeCancellableCoreAsync<byte>(interfaceHash, methodHash, payloadWriter, null, true, false, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public async ValueTask InvokeCancellableOneWayWithTimeoutNoPayloadAsync(long interfaceHash, long methodHash, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => await InvokeCancellableCoreAsync<byte>(interfaceHash, methodHash, null, null, true, false, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public async ValueTask InvokeCancellableOneWayClientStreamAsync(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => await InvokeCancellableCoreAsync<byte>(interfaceHash, methodHash, payloadWriter, streamSender, true, false, cancellationToken, false, null);
-
-    public async ValueTask InvokeCancellableOneWayClientStreamNoPayloadAsync(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => await InvokeCancellableCoreAsync<byte>(interfaceHash, methodHash, null, streamSender, true, false, cancellationToken, false, null);
-
-    public async ValueTask InvokeCancellableOneWayClientStreamWithDefaultTimeoutAsync(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => await InvokeCancellableCoreAsync<byte>(interfaceHash, methodHash, payloadWriter, streamSender, true, false, cancellationToken, true, null);
-
-    public async ValueTask InvokeCancellableOneWayClientStreamWithDefaultTimeoutNoPayloadAsync(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => await InvokeCancellableCoreAsync<byte>(interfaceHash, methodHash, null, streamSender, true, false, cancellationToken, true, null);
-
-    public async ValueTask InvokeCancellableOneWayClientStreamWithTimeoutAsync(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => await InvokeCancellableCoreAsync<byte>(interfaceHash, methodHash, payloadWriter, streamSender, true, false, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public async ValueTask InvokeCancellableOneWayClientStreamWithTimeoutNoPayloadAsync(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => await InvokeCancellableCoreAsync<byte>(interfaceHash, methodHash, null, streamSender, true, false, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public ValueTask<T> InvokeClientStreamAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, true, false, null);
-
-    public ValueTask<T> InvokeClientStreamNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, true, false, null);
-
-    public ValueTask<T> InvokeClientStreamNoReturnAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, false, false, null);
-
-    public ValueTask<T> InvokeClientStreamNoReturnNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender)
-        => InvokeCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, false, false, null);
-
-    public ValueTask<T> InvokeCancellableClientStreamAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, true, cancellationToken, false, null);
-
-    public ValueTask<T> InvokeCancellableClientStreamNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, true, cancellationToken, false, null);
-
-    public ValueTask<T> InvokeCancellableClientStreamWithDefaultTimeoutAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, true, cancellationToken, true, null);
-
-    public ValueTask<T> InvokeCancellableClientStreamWithDefaultTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, true, cancellationToken, true, null);
-
-    public ValueTask<T> InvokeCancellableClientStreamWithTimeoutAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, true, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public ValueTask<T> InvokeCancellableClientStreamWithTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, true, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public ValueTask<T> InvokeCancellableClientStreamNoReturnAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, false, cancellationToken, false, null);
-
-    public ValueTask<T> InvokeCancellableClientStreamNoReturnNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, false, cancellationToken, false, null);
-
-    public ValueTask<T> InvokeCancellableClientStreamNoReturnWithDefaultTimeoutAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, false, cancellationToken, true, null);
-
-    public ValueTask<T> InvokeCancellableClientStreamNoReturnWithDefaultTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, false, cancellationToken, true, null);
-
-    public ValueTask<T> InvokeCancellableClientStreamNoReturnWithTimeoutAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, false, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public ValueTask<T> InvokeCancellableClientStreamNoReturnWithTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => InvokeCancellableCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, false, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public IAsyncEnumerable<T> InvokeServerStreamAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter)
-        => InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, false, null);
-
-    public IAsyncEnumerable<T> InvokeServerStreamNoPayloadAsync<T>(long interfaceHash, long methodHash)
-        => InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, null, null, false, null);
-
-    public IAsyncEnumerable<T> InvokeCancellableServerStreamAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, CancellationToken cancellationToken = default)
-        => InvokeCancellableServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, cancellationToken, false, null);
-
-    public IAsyncEnumerable<T> InvokeCancellableServerStreamNoPayloadAsync<T>(long interfaceHash, long methodHash, CancellationToken cancellationToken = default)
-        => InvokeCancellableServerStreamCoreAsync<T>(interfaceHash, methodHash, null, null, cancellationToken, false, null);
-
-    public IAsyncEnumerable<T> InvokeCancellableServerStreamWithDefaultTimeoutAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, CancellationToken cancellationToken = default)
-        => InvokeCancellableServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, cancellationToken, true, null);
-
-    public IAsyncEnumerable<T> InvokeCancellableServerStreamWithDefaultTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, CancellationToken cancellationToken = default)
-        => InvokeCancellableServerStreamCoreAsync<T>(interfaceHash, methodHash, null, null, cancellationToken, true, null);
-
-    public IAsyncEnumerable<T> InvokeCancellableServerStreamWithTimeoutAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => InvokeCancellableServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, null, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public IAsyncEnumerable<T> InvokeCancellableServerStreamWithTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => InvokeCancellableServerStreamCoreAsync<T>(interfaceHash, methodHash, null, null, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public IAsyncEnumerable<T> InvokeDuplexStreamAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender)
-        => InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, false, null);
-
-    public IAsyncEnumerable<T> InvokeDuplexStreamNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender)
-        => InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, null, streamSender, false, null);
-
-    public IAsyncEnumerable<T> InvokeCancellableDuplexStreamAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => InvokeCancellableServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, cancellationToken, false, null);
-
-    public IAsyncEnumerable<T> InvokeCancellableDuplexStreamNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => InvokeCancellableServerStreamCoreAsync<T>(interfaceHash, methodHash, null, streamSender, cancellationToken, false, null);
-
-    public IAsyncEnumerable<T> InvokeCancellableDuplexStreamWithDefaultTimeoutAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => InvokeCancellableServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, cancellationToken, true, null);
-
-    public IAsyncEnumerable<T> InvokeCancellableDuplexStreamWithDefaultTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, CancellationToken cancellationToken = default)
-        => InvokeCancellableServerStreamCoreAsync<T>(interfaceHash, methodHash, null, streamSender, cancellationToken, true, null);
-
-    public IAsyncEnumerable<T> InvokeCancellableDuplexStreamWithTimeoutAsync<T>(long interfaceHash, long methodHash, Action<ArrayBufferWriter<byte>> payloadWriter, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => InvokeCancellableServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    public IAsyncEnumerable<T> InvokeCancellableDuplexStreamWithTimeoutNoPayloadAsync<T>(long interfaceHash, long methodHash, Func<long, CancellationToken, Task> streamSender, TimeSpan timeout, CancellationToken cancellationToken = default)
-        => InvokeCancellableServerStreamCoreAsync<T>(interfaceHash, methodHash, null, streamSender, cancellationToken, false, EnsurePositiveTimeout(timeout));
-
-    private async ValueTask<T> InvokeCoreAsync<T>(
-        long interfaceHash,
-        long methodHash,
-        Action<ArrayBufferWriter<byte>>? payloadWriter,
-        Func<long, CancellationToken, Task>? streamSender,
-        bool isOneWay,
-        bool hasReturnPayload,
-        bool useDefaultTimeout,
-        TimeSpan? timeoutOverride)
-    {
-        var applyRequestTimeout = !isOneWay || streamSender is not null;
-        var hasTimeout = TryResolveRequestTimeout(applyRequestTimeout, useDefaultTimeout, timeoutOverride, out var timeout);
-
-        var requestId = isOneWay ? _requestManager.AllocateRequestId() : 0;
-        RpcRequestOperation<T>? op = null;
-        if (!isOneWay)
-        {
-            op = _requestManager.Rent<T>(out requestId);
-        }
-
-        if (!hasTimeout)
-        {
-            var fastFlags = isOneWay ? PacketFlags.IsOneWay : PacketFlags.None;
-            if (!isOneWay && hasReturnPayload)
-                fastFlags |= PacketFlags.HasReturn;
-            SendRpcCall(interfaceHash, methodHash, requestId, fastFlags, payloadWriter);
-
-            if (streamSender is not null)
-                _ = RunStreamSenderAsync(streamSender, requestId, CancellationToken.None);
-
-            if (isOneWay)
-                return default!;
-
-            return await op!.AsValueTask();
-        }
-
-        var packetFlags = isOneWay ? PacketFlags.IsOneWay : PacketFlags.IsCancellable;
-        if (!isOneWay && hasReturnPayload)
-            packetFlags |= PacketFlags.HasReturn;
-
-        using var timeoutRegistration = RegisterRequestTimeout(
-            hasTimeout,
-            timeout,
-            requestId,
-            isOneWay);
-        SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
-
-        if (streamSender is not null)
-            _ = RunStreamSenderAsync(streamSender, requestId, CancellationToken.None);
-
-        if (isOneWay)
-            return default!;
-
-        return await op!.AsValueTask();
-    }
-
-    private async ValueTask<T> InvokeCancellableCoreAsync<T>(
-        long interfaceHash,
-        long methodHash,
-        Action<ArrayBufferWriter<byte>>? payloadWriter,
-        Func<long, CancellationToken, Task>? streamSender,
-        bool isOneWay,
-        bool hasReturnPayload,
-        CancellationToken ct,
-        bool useDefaultTimeout,
-        TimeSpan? timeoutOverride)
-    {
-        if (!ct.CanBeCanceled)
-            return await InvokeCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, isOneWay, hasReturnPayload, useDefaultTimeout, timeoutOverride);
-
-        var applyRequestTimeout = !isOneWay || streamSender is not null;
-        var hasTimeout = TryResolveRequestTimeout(applyRequestTimeout, useDefaultTimeout, timeoutOverride, out var timeout);
-
-        var requestId = isOneWay ? _requestManager.AllocateRequestId() : 0;
-        RpcRequestOperation<T>? op = null;
-        if (!isOneWay)
-        {
-            op = _requestManager.Rent<T>(out requestId);
-        }
-
-        var packetFlags = isOneWay ? PacketFlags.IsOneWay : PacketFlags.None;
-        if (!isOneWay && hasReturnPayload)
-            packetFlags |= PacketFlags.HasReturn;
-        if (ct.CanBeCanceled || hasTimeout)
-            packetFlags |= PacketFlags.IsCancellable;
-
-        using var timeoutRegistration = RegisterRequestTimeout(
-            hasTimeout,
-            timeout,
-            requestId,
-            isOneWay);
-        await using var cancelRegistration = RegisterCancel(
-            ct,
-            requestId,
-            isOneWay,
-            ct);
-        SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
-
-        if (streamSender is not null)
-            _ = RunStreamSenderAsync(streamSender, requestId, ct);
-
-        if (isOneWay)
-            return default!;
-
-        return await op!.AsValueTask();
-    }
-
-    private IAsyncEnumerable<T> InvokeServerStreamCoreAsync<T>(
-        long interfaceHash,
-        long methodHash,
-        Action<ArrayBufferWriter<byte>>? payloadWriter,
-        Func<long, CancellationToken, Task>? streamSender,
-        bool useDefaultTimeout,
-        TimeSpan? timeoutOverride)
-    {
-        var requestId = _requestManager.AllocateRequestId();
-        _serverStreamRequestIds.Add(requestId);
-        var streamDispatcher = PooledAsyncStreamDispatcher<T>.Rent();
-        _session!.StreamManager.Register(requestId, 0, streamDispatcher);
-        _ = StartServerStreamRequestAsync(
-            interfaceHash,
-            methodHash,
-            requestId,
-            payloadWriter,
-            streamSender,
-            useDefaultTimeout,
-            timeoutOverride);
-
-        return streamDispatcher;
-    }
-
-    private IAsyncEnumerable<T> InvokeCancellableServerStreamCoreAsync<T>(
-        long interfaceHash,
-        long methodHash,
-        Action<ArrayBufferWriter<byte>>? payloadWriter,
-        Func<long, CancellationToken, Task>? streamSender,
-        CancellationToken cancellationToken,
-        bool useDefaultTimeout,
-        TimeSpan? timeoutOverride)
-    {
-        if (!cancellationToken.CanBeCanceled)
-            return InvokeServerStreamCoreAsync<T>(interfaceHash, methodHash, payloadWriter, streamSender, useDefaultTimeout, timeoutOverride);
-
-        var requestId = _requestManager.AllocateRequestId();
-        _serverStreamRequestIds.Add(requestId);
-        var streamDispatcher = PooledAsyncStreamDispatcher<T>.Rent(cancellationToken);
-        _session!.StreamManager.Register(requestId, 0, streamDispatcher);
-        _ = StartCancellableServerStreamRequestAsync(
-            interfaceHash,
-            methodHash,
-            requestId,
-            payloadWriter,
-            streamSender,
-            cancellationToken,
-            useDefaultTimeout,
-            timeoutOverride);
-
-        return streamDispatcher;
-    }
-
-    private async Task StartServerStreamRequestAsync(
+    private void SendRpcCall(
+        RpcSession session,
         long interfaceHash,
         long methodHash,
         long requestId,
-        Action<ArrayBufferWriter<byte>>? payloadWriter,
-        Func<long, CancellationToken, Task>? streamSender,
-        bool useDefaultTimeout,
-        TimeSpan? timeoutOverride)
+        ProtocolV2FrameFlags flags,
+        Action<IBufferWriter<byte>>? payloadWriter,
+        DateTimeOffset? deadline = null,
+        SharpLinkMetadata? metadata = null)
     {
-        var hasTimeout = TryResolveRequestTimeout(true, useDefaultTimeout, timeoutOverride, out var timeout);
-        if (!hasTimeout)
+        var hasMetadata = metadata is { Count: > 0 };
+        var metadataLength = 0;
+        if (deadline is not null)
+            flags |= ProtocolV2FrameFlags.HasDeadline;
+        if (hasMetadata)
         {
-            SendRpcCall(interfaceHash, methodHash, requestId, PacketFlags.None, payloadWriter);
-            if (streamSender is not null)
-                await streamSender(requestId, CancellationToken.None);
-            return;
-        }
-
-        using var timeoutRegistration = RegisterStreamTimeout(hasTimeout, timeout, requestId);
-        try
-        {
-            var packetFlags = PacketFlags.IsCancellable;
-            SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
-
-            if (streamSender is not null)
-                await streamSender(requestId, CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            _serverStreamRequestIds.Remove(requestId);
-            _session!.StreamManager.CompleteStream(requestId, 0, true, ex.Message);
-        }
-    }
-
-    private async Task StartCancellableServerStreamRequestAsync(
-        long interfaceHash,
-        long methodHash,
-        long requestId,
-        Action<ArrayBufferWriter<byte>>? payloadWriter,
-        Func<long, CancellationToken, Task>? streamSender,
-        CancellationToken cancellationToken,
-        bool useDefaultTimeout,
-        TimeSpan? timeoutOverride)
-    {
-        var hasTimeout = TryResolveRequestTimeout(true, useDefaultTimeout, timeoutOverride, out var timeout);
-
-        using var timeoutRegistration = RegisterStreamTimeout(hasTimeout, timeout, requestId);
-        try
-        {
-            await using var cancelRegistration = RegisterStreamCancel(
-                cancellationToken,
-                requestId,
-                cancellationToken);
-            var packetFlags = (cancellationToken.CanBeCanceled || hasTimeout)
-                ? PacketFlags.IsCancellable
-                : PacketFlags.None;
-            SendRpcCall(interfaceHash, methodHash, requestId, packetFlags, payloadWriter);
-
-            if (streamSender is not null)
-                await streamSender(requestId, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _serverStreamRequestIds.Remove(requestId);
-            _session!.StreamManager.CompleteStream(requestId, 0, true, ex.Message);
-        }
-    }
-
-    private PooledCancellationRegistration RegisterCancel(
-        CancellationToken ct,
-        long requestId,
-        bool isOneWay,
-        CancellationToken userToken)
-    {
-        if (!ct.CanBeCanceled)
-            return default;
-
-        var state = RequestCancelState.Rent(this, requestId, isOneWay, userToken);
-        var registration = ct.UnsafeRegister(SRequestCancelCallback, state);
-        return new PooledCancellationRegistration(registration, state);
-    }
-
-    private PooledCancellationRegistration RegisterStreamCancel(
-        CancellationToken ct,
-        long requestId,
-        CancellationToken userToken)
-    {
-        if (!ct.CanBeCanceled)
-            return default;
-
-        var state = StreamCancelState.Rent(this, requestId, userToken);
-        var registration = ct.UnsafeRegister(SStreamCancelCallback, state);
-        return new PooledCancellationRegistration(registration, state);
-    }
-
-    private static OperationCanceledException CreateCancellationException(CancellationToken userToken)
-    {
-        return userToken.CanBeCanceled
-            ? new OperationCanceledException(userToken)
-            : new OperationCanceledException();
-    }
-
-    private bool TryResolveRequestTimeout(bool shouldApply, bool useDefaultTimeout, TimeSpan? timeoutOverride, out TimeSpan timeout)
-    {
-        timeout = TimeSpan.Zero;
-        if (!shouldApply)
-            return false;
-
-        if (timeoutOverride is { } overrideTimeout)
-        {
-            timeout = overrideTimeout;
-            return true;
-        }
-
-        if (!useDefaultTimeout || !_hasRequestTimeout) return false;
-        timeout = _requestTimeoutValue;
-        return true;
-
-    }
-
-    private static TimeSpan EnsurePositiveTimeout(TimeSpan timeout)
-    {
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
-        return timeout;
-    }
-
-    private void SendRpcCall(long interfaceHash,
-        long methodHash,
-        long requestId,
-        PacketFlags flags,
-        Action<ArrayBufferWriter<byte>>? payloadWriter)
-    {
-        var writer = BufferWriterPool.Get();
-        using (writer.BeginPacketScope(PacketType.RpcCall, flags, requestId))
-        {
-            var span = writer.GetSpan(ProtocolConstants.RequestHeaderLength);
-            BinaryPrimitives.WriteInt64LittleEndian(span, interfaceHash);
-            BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodHash);
-            writer.Advance(ProtocolConstants.RequestHeaderLength);
-            payloadWriter?.Invoke(writer);
-        }
-
-        _session!.SendPacket(writer);
-    }
-
-    public async Task SendClientStreamAsync<T>(long requestId, sbyte streamId, IAsyncEnumerable<T> stream, CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            await foreach (var item in stream.WithCancellation(cancellationToken))
+            if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) == 0)
             {
-                _session!.SendStreamChunkAsync(requestId, streamId, item);
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.Unimplemented,
+                    "The connected server did not negotiate request metadata support.");
+            }
+            metadataLength = ProtocolV2PayloadCodec.GetMetadataPayloadLength(metadata!);
+            if (metadataLength > _protocolOptions.MaxMetadataBytes)
+            {
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.ResourceExhausted,
+                    $"Request metadata exceeds {_protocolOptions.MaxMetadataBytes} bytes.");
+            }
+            flags |= ProtocolV2FrameFlags.HasMetadata;
+        }
+
+        var writer = session.RentFrameWriter();
+        var ownsWriter = true;
+        try
+        {
+            using (writer.BeginPacketScope(
+                       ProtocolV2FrameType.Request, flags, unchecked((ulong)requestId)))
+            {
+                var span = writer.GetSpan(ProtocolV2Constants.RequestPrefixBytes);
+                BinaryPrimitives.WriteInt64LittleEndian(span, interfaceHash);
+                BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodHash);
+                writer.Advance(ProtocolV2Constants.RequestPrefixBytes);
+                if (deadline is { } absoluteDeadline)
+                {
+                    var deadlineSpan = writer.GetSpan(sizeof(long));
+                    BinaryPrimitives.WriteInt64LittleEndian(
+                        deadlineSpan,
+                        absoluteDeadline.ToUnixTimeMilliseconds());
+                    writer.Advance(sizeof(long));
+                }
+                if (hasMetadata)
+                {
+                    ProtocolV2PayloadCodec.WriteVarUInt32(writer, checked((uint)metadataLength));
+                    ProtocolV2PayloadCodec.WriteMetadata(writer, metadata!);
+                }
+                payloadWriter?.Invoke(writer);
             }
 
-            _session!.SendStreamCompleteAsync(requestId, streamId);
+            // SendPacket takes ownership even when enqueueing detects a terminal session.
+            ownsWriter = false;
+            session.SendPacket(writer);
         }
-        catch (Exception ex)
+        finally
         {
-            _session!.SendStreamErrorAsync(requestId, streamId, ex.Message);
-            throw;
+            if (ownsWriter)
+                _runtimeContext.Buffers.Return(writer);
         }
     }
 
-    private async Task RunStreamSenderAsync(Func<long, CancellationToken, Task> streamSender, long requestId, CancellationToken ct)
-    {
-        try
-        {
-            await streamSender(requestId, ct);
-        }
-        catch (Exception ex)
-        {
-            _requestManager.DispatchError(requestId, ex);
-        }
-    }
+    public Task SendClientStreamAsync<T>(
+        long requestId,
+        ushort streamId,
+        IAsyncEnumerable<T> stream,
+        CancellationToken cancellationToken = default)
+        => Task.FromException(new InvalidOperationException(
+            "Client streams must use the connection-bound sink supplied to generated stream writers."));
 
     private static ValueTask DispatchStreamChunkAsync(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
-        if(payload.IsEmpty)
-            return session.StreamManager.DispatchChunkAsync(requestId, payload);
-        
         var reader = new SequenceReader<byte>(payload);
-        
-        if (!reader.TryRead(out var streamIdRaw))
-            return session.StreamManager.DispatchChunkAsync(requestId, payload);
-        
-        var streamId = unchecked((sbyte)streamIdRaw);
-        var streamPayload = payload.Slice(sizeof(sbyte));
+        if (!reader.TryReadLittleEndian(out short streamIdBits))
+            throw CreateProtocolViolationException("StreamData stream ID is truncated.");
+        var streamId = unchecked((ushort)streamIdBits);
+        var streamPayload = payload.Slice(sizeof(ushort));
         return session.StreamManager.DispatchChunkAsync(requestId, streamId, streamPayload);
     }
 
-    private static void DispatchStreamComplete(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
+    private void DispatchStreamComplete(
+        ClientConnection connection,
+        long requestId,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload,
+        SharpLinkProtocolOptions limits)
     {
         var streamId = TryReadStreamId(ref payload);
-        session.StreamManager.CompleteStream(requestId, streamId, false, null);
+        if ((flags & ProtocolV2FrameFlags.Error) == 0)
+        {
+            if (streamId == 0)
+            {
+                connection.PendingCalls.TryComplete(
+                    requestId,
+                    PendingCallCompletionReason.RemoteStreamComplete);
+            }
+            else
+                connection.Session.StreamManager.CompleteStream(requestId, streamId, exception: null);
+            return;
+        }
+        var error = ProtocolV2PayloadCodec.ReadError(payload, flags, limits.MaxErrorMessageBytes);
+        var exception = new SharpLinkException(error.Code, error.Message);
+        if (streamId == 0)
+        {
+            connection.PendingCalls.TryComplete(
+                requestId,
+                PendingCallCompletionReason.RemoteStreamComplete,
+                exception);
+        }
+        else
+            connection.Session.StreamManager.CompleteStream(requestId, streamId, exception);
     }
 
-    private static void DispatchStreamError(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
-    {
-        var streamId = TryReadStreamId(ref payload);
-        var message = payload.Length > 0 ? Encoding.UTF8.GetString(payload) : "Remote Error";
-        session.StreamManager.CompleteStream(requestId, streamId, true, message);
-    }
-
-    private static sbyte TryReadStreamId(ref ReadOnlySequence<byte> payload)
+    private static ushort TryReadStreamId(ref ReadOnlySequence<byte> payload)
     {
         var firstSpan = payload.FirstSpan;
-        sbyte streamId;
-        if (firstSpan.Length > 0)
+        ushort streamId;
+        if (firstSpan.Length >= sizeof(ushort))
         {
-            streamId = unchecked((sbyte)firstSpan[0]);
+            streamId = BinaryPrimitives.ReadUInt16LittleEndian(firstSpan);
         }
         else
         {
             var reader = new SequenceReader<byte>(payload);
-            if (!reader.TryRead(out var streamIdRaw))
-                return 0;
-
-            streamId = unchecked((sbyte)streamIdRaw);
+            if (!reader.TryReadLittleEndian(out short streamIdBits))
+                throw CreateProtocolViolationException("StreamComplete stream ID is truncated.");
+            streamId = unchecked((ushort)streamIdBits);
         }
 
-        payload = payload.Slice(sizeof(sbyte));
+        payload = payload.Slice(sizeof(ushort));
         return streamId;
     }
 
-    private void HandleDisconnected(Exception? ex=null)
+    private void HandleDisconnected(ClientConnection connection, Exception ex)
     {
-        if (Interlocked.Exchange(ref _disconnectHandled, true))
+        if (!RemoveReadyConnection(connection))
             return;
 
-        using var sessionScope = _session is { } session
-            ? BeginSessionLogScope(_logger, session.Id)
-            : null;
-        if (ex is null)
-            LogClientDisconnected(_logger);
-        else
-            LogClientDisconnectedWithError(_logger, ex);
+        var session = connection.Session;
+        using var sessionScope = BeginSessionLogScope(_logger, session.Id);
+        LogClientDisconnectedWithError(_logger, ex);
 
-        var failEx = ex ?? new OperationCanceledException("client is shutting down");
-        _requestManager.FailAllPendingRequests(failEx);
-        _session?.StreamManager.CompleteAll(true,failEx.Message);
-        _serverStreamRequestIds.Clear();
-        _locallyCanceledRequestIds.Clear();
-    }
+        connection.Fail(ex);
+        TrackBackgroundTask(DisposeDisconnectedConnectionAsync(connection));
 
-    private void OnRequestCancel(RequestCancelState state)
-    {
-        if (!state.IsOneWay && !_locallyCanceledRequestIds.Add(state.RequestId))
+        if (_shutdownCts.IsCancellationRequested ||
+            State is SharpLinkConnectionState.Stopped)
             return;
 
-        _session?.SendCancelAsync(state.RequestId);
+        if (ReadyConnectionCount != 0)
+        {
+            TransitionTo(SharpLinkConnectionState.Ready);
+            EnsureReconnectLoop();
+            return;
+        }
 
-        if (state.IsOneWay) return;
-        var ex = CreateCancellationException(state.UserToken);
-        _requestManager.DispatchError(state.RequestId, ex);
+        ResetReadySignal();
+        var stableTicks = Stopwatch.GetTimestamp() - Volatile.Read(ref _readyTimestamp);
+        if (stableTicks >= 30L * Stopwatch.Frequency)
+            Volatile.Write(ref _reconnectDelayMilliseconds, 100);
+        TransitionTo(SharpLinkConnectionState.Reconnecting);
+        EnsureReconnectLoop();
     }
 
-    private void OnStreamCancel(StreamCancelState state)
+    private void EnsureReconnectLoop()
     {
-        if (!_locallyCanceledRequestIds.Add(state.RequestId))
+        lock (_stateGate)
+        {
+            if (_shutdownCts.IsCancellationRequested)
+                return;
+            if (_reconnectTask is not { IsCompleted: false })
+                _reconnectTask = ReconnectLoopAsync();
+            if (_reconnectSignal.CurrentCount == 0)
+                _reconnectSignal.Release();
+        }
+    }
+
+    private async Task ReconnectLoopAsync()
+    {
+        while (!_shutdownCts.IsCancellationRequested)
+        {
+            try
+            {
+                await _reconnectSignal.WaitAsync(_shutdownCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            while (!_shutdownCts.IsCancellationRequested &&
+                   ReadyConnectionCount < _connectionPoolOptions.MinConnections)
+            {
+                var baseDelay = Volatile.Read(ref _reconnectDelayMilliseconds);
+                var jitter = 0.8 + Random.Shared.NextDouble() * 0.4;
+                var delay = TimeSpan.FromMilliseconds(baseDelay * jitter);
+                try
+                {
+                    await Task.Delay(delay, _shutdownCts.Token).ConfigureAwait(false);
+                    SharpLinkTelemetry.ReconnectAttempt();
+                    await ConnectOneAsync(_shutdownCts.Token).ConfigureAwait(false);
+                    PublishReadyState();
+                }
+                catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    using var scope = BeginSessionLogScope(_logger, "reconnect");
+                    LogClientConnectionAttemptFailed(_logger, nameof(ReconnectLoopAsync), ex);
+                    var nextDelay = Math.Min(baseDelay * 2, 5000);
+                    Volatile.Write(ref _reconnectDelayMilliseconds, nextDelay);
+                    TransitionTo(SharpLinkConnectionState.Reconnecting);
+                }
+            }
+        }
+    }
+
+    private ClientConnection GetReadyConnection()
+    {
+        if (_cluster is not null)
+            return _cluster.GetReadyConnection(method: null, retrySelection: null, attemptOutcome: null);
+
+        var connections = Volatile.Read(ref _readyConnections);
+        if (!_shutdownCts.IsCancellationRequested && connections.Length != 0)
+        {
+            ClientConnection selected;
+            if (connections.Length == 1)
+            {
+                selected = connections[0];
+            }
+            else
+            {
+                var first = Random.Shared.Next(connections.Length);
+                var second = Random.Shared.Next(connections.Length - 1);
+                if (second >= first)
+                    second++;
+                selected = SelectLeastLoaded(connections, first, second);
+            }
+
+            if (selected.CanAcceptCalls)
+            {
+                if (selected.ActiveCallCount != 0)
+                    EnsureExpansion();
+                return selected;
+            }
+        }
+        if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
+            throw CreateConnectionClosedException("Client is not accepting new calls.");
+        throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink connection is ready.");
+    }
+
+    private ClientConnection GetReadyConnection(
+        RpcMethodDescriptor method,
+        EndpointRetrySelectionState? retrySelection,
+        AttemptOutcomeState? attemptOutcome)
+    {
+        if (_cluster is not null)
+            return _cluster.GetReadyConnection(method, retrySelection, attemptOutcome);
+
+        if (attemptOutcome is null || _fixedEndpoint is null)
+            return GetReadyConnection();
+
+        if (ReadyConnectionCount == 0)
+            return GetReadyConnection();
+
+        var candidate = new SharpLinkEndpointCandidate(
+            _fixedEndpoint,
+            ReadyConnectionCount,
+            ActiveClientCallCount,
+            generation: 0);
+        if (!attemptOutcome.TryAcquire(candidate))
+            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The configured endpoint admission policy rejected the endpoint.");
+        try
+        {
+            var connection = GetReadyConnection();
+            attemptOutcome.SetConnection(connection);
+            return connection;
+        }
+        catch (Exception exception)
+        {
+            attemptOutcome.CompleteLocalFailure(exception);
+            throw;
+        }
+    }
+
+    internal static ClientConnection SelectLeastLoaded(
+        ClientConnection[] connections,
+        int first,
+        int second)
+    {
+        ArgumentNullException.ThrowIfNull(connections);
+        ArgumentOutOfRangeException.ThrowIfNegative(first);
+        ArgumentOutOfRangeException.ThrowIfNegative(second);
+        if ((uint)first >= (uint)connections.Length || (uint)second >= (uint)connections.Length)
+            throw new ArgumentOutOfRangeException(nameof(first));
+        var firstConnection = connections[first];
+        var secondConnection = connections[second];
+        return firstConnection.ActiveCallCount <= secondConnection.ActiveCallCount
+            ? firstConnection
+            : secondConnection;
+    }
+
+    private bool RemoveReadyConnection(ClientConnection connection)
+    {
+        lock (_poolGate)
+        {
+            if (!_connections.Remove(connection))
+                return false;
+            PublishReadySnapshotLocked();
+            return true;
+        }
+    }
+
+    private void MarkConnectionDraining(ClientConnection connection)
+    {
+        if (!connection.MarkDraining())
+            return;
+        ReportGoAwayToCircuitBreaker(connection);
+        if (_cluster is not null)
+        {
+            _cluster.MarkConnectionDraining(connection);
+            return;
+        }
+        lock (_poolGate)
+            PublishReadySnapshotLocked();
+
+        RetireDrainingConnectionIfIdle(connection);
+
+        if (ReadyConnectionCount != 0)
+        {
+            EnsureReconnectLoop();
+            return;
+        }
+        ResetReadySignal();
+        TransitionTo(SharpLinkConnectionState.Draining);
+        EnsureReconnectLoop();
+    }
+
+    private void ReportGoAwayToCircuitBreaker(ClientConnection connection)
+    {
+        if (_endpointAdmissionPolicy is not SharpLinkCircuitBreaker breaker)
             return;
 
-        _session?.SendCancelAsync(state.RequestId);
-        var ex = CreateCancellationException(state.UserToken);
-        _session?.StreamManager.CompleteStream(state.RequestId, 0, true, ex.Message);
+        if (_cluster?.TryGetEndpointCandidate(connection, out var clusterEndpoint) == true)
+        {
+            breaker.ReportInfrastructureFailure(clusterEndpoint);
+            return;
+        }
+
+        if (_fixedEndpoint is { } fixedEndpoint)
+        {
+            var endpoint = new SharpLinkEndpointCandidate(
+                fixedEndpoint,
+                ReadyConnectionCount,
+                ActiveClientCallCount,
+                generation: 0);
+            breaker.ReportInfrastructureFailure(endpoint);
+        }
     }
 
-    private void OnRequestTimeout(RequestTimeoutState state)
+    internal void RetireDrainingConnectionIfIdle(ClientConnection connection)
     {
-        if (!state.IsOneWay && !_locallyCanceledRequestIds.Add(state.RequestId))
+        if (_cluster is not null)
+        {
+            _cluster.RetireDrainingConnectionIfIdle(connection);
+            return;
+        }
+        if (connection.State != ClientConnectionState.Draining ||
+            connection.ActiveCallCount != 0 ||
+            !RemoveReadyConnection(connection))
+        {
+            return;
+        }
+
+        TrackBackgroundTask(DisposeDisconnectedConnectionAsync(connection));
+    }
+
+    private void EnsureExpansion()
+    {
+        if (ReadyConnectionCount >= _connectionPoolOptions.MaxConnections)
             return;
 
-        _session?.SendCancelAsync(state.RequestId);
-        if (!state.IsOneWay)
-            _requestManager.DispatchError(state.RequestId, new TimeoutException("Request timed out."));
+        lock (_stateGate)
+        {
+            if (_shutdownCts.IsCancellationRequested ||
+                ReadyConnectionCount >= _connectionPoolOptions.MaxConnections ||
+                _expansionTask is { IsCompleted: false })
+            {
+                return;
+            }
+            _expansionTask = ExpandOneAsync();
+        }
     }
 
-    private void OnStreamTimeout(StreamTimeoutState state)
+    private async Task ExpandOneAsync()
     {
-        if (!_locallyCanceledRequestIds.Add(state.RequestId))
-            return;
+        try
+        {
+            if (ReadyConnectionCount >= _connectionPoolOptions.MaxConnections)
+                return;
+            await ConnectOneAsync(_shutdownCts.Token).ConfigureAwait(false);
+            PublishReadyState();
+        }
+        catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            using var scope = BeginSessionLogScope(_logger, "pool-expand");
+            LogClientConnectionAttemptFailed(_logger, nameof(ExpandOneAsync), ex);
 
-        _session?.SendCancelAsync(state.RequestId);
-        _session?.StreamManager.CompleteStream(state.RequestId, 0, true, "Request timed out.");
+            // Expansion is opportunistic while the pool still has a ready connection, but
+            // that connection can start draining while ConnectOneAsync is in flight. Once
+            // the failed expansion observes that the pool fell below its minimum it must
+            // hand ownership to the persistent reconnect worker. Otherwise a coalesced
+            // reconnect signal can leave the client permanently stranded with zero ready
+            // connections after a rolling restart.
+            if (!_shutdownCts.IsCancellationRequested &&
+                ReadyConnectionCount < _connectionPoolOptions.MinConnections)
+            {
+                TransitionTo(SharpLinkConnectionState.Reconnecting);
+                EnsureReconnectLoop();
+            }
+        }
     }
 
-    private TimeoutRegistration RegisterRequestTimeout(bool enabled, TimeSpan timeout, long requestId, bool isOneWay)
+    private static async Task DisposeDisconnectedConnectionAsync(ClientConnection connection)
     {
-        if (!enabled)
-            return default;
-
-        var state = RequestTimeoutState.Rent(this, requestId, isOneWay);
-        return _requestTimeoutScheduler.Schedule(timeout, SRequestTimeoutCallback, state);
-    }
-
-    private TimeoutRegistration RegisterStreamTimeout(bool enabled, TimeSpan timeout, long requestId)
-    {
-        if (!enabled)
-            return default;
-
-        var state = StreamTimeoutState.Rent(this, requestId);
-        return _requestTimeoutScheduler.Schedule(timeout, SStreamTimeoutCallback, state);
+        try
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or IOException or SocketException)
+        {
+        }
     }
 
 }

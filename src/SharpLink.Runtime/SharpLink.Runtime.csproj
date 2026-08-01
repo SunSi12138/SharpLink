@@ -10,4 +10,10 @@
       <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     </ItemGroup>
 
+    <ItemGroup>
+      <InternalsVisibleTo Include="SharpLink.UnitTests" />
+      <InternalsVisibleTo Include="SharpLink.Client" />
+      <InternalsVisibleTo Include="SharpLink.Server" />
+    </ItemGroup>
+
 </Project>

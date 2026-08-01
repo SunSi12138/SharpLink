@@ -1,15 +1,12 @@
 using SharpLink.Sdk;
 using System.Runtime.InteropServices;
 using DemoBase;
-using MemoryPack;
+using SharpPack;
 using SharpLink.Runtime;
 
 const int port = 19090;
 
 using var cts = new CancellationTokenSource();
-
-
-RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
 
 
 var server = DemoTcp.CreateServer<IHelloService, HelloService>(port);
@@ -71,7 +68,7 @@ try
 }
 finally
 {
-    await DemoTcp.ShutdownAsync(cts, serverTask, client as IDisposable, server as IDisposable);
+    await DemoTcp.ShutdownAsync(cts, serverTask, client, server);
 }
 
 [RpcService]
@@ -137,18 +134,31 @@ public class HelloService : IHelloService
 [RpcContract]
 public interface IHelloService : IService
 {
+    [NonCancellable]
     ValueTask Notify();
+    [NonCancellable]
     ValueTask<string> Ping();
+    [NonCancellable]
     ValueTask<int> Add(int left, int right);
+    [NonCancellable]
     ValueTask<string> ComposeGreeting(string name, int level, bool enabled, double score, DateTime timestamp);
+    [NonCancellable]
     ValueTask<int> GetServerCode();
+    [NonCancellable]
     ValueTask<int> SumPoint(BlittablePoint point);
+    [NonCancellable]
     ValueTask<long> SumTuple((int A, int B, long C) value);
+    [NonCancellable]
     ValueTask<long> MixPointAndTuple(BlittablePoint point, (int A, int B, long C) value);
+    [NonCancellable]
     ValueTask<int> SumArray(int[] values);
+    [NonCancellable]
     ValueTask<int> SumJaggedArray(int[][] values);
+    [NonCancellable]
     ValueTask<UserProfile> EchoUser(UserProfile user);
+    [NonCancellable]
     ValueTask<List<int>> ReverseList(List<int> values);
+    [NonCancellable]
     ValueTask<Memory<byte>> ProcessMemory(Memory<byte> data);
 }
 
@@ -159,7 +169,7 @@ public struct BlittablePoint
     public int Y;
 }
 
-[MemoryPackable]
+[SharpPackable]
 public partial class UserProfile
 {
     public string Name { get; set; } = string.Empty;

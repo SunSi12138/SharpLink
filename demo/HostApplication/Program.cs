@@ -9,8 +9,6 @@ using SharpLink.Server;
 
 const int port = 19191;
 
-RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
-
 var builder = Host.CreateApplicationBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddSimpleConsole(options =>
@@ -23,16 +21,15 @@ builder.Logging.SetMinimumLevel(LogLevel.Information);
 builder.Services.AddSharpLinkServer(server =>
 {
     server
-        .AddService<IHelloService, HelloService>()
         .UseTcp(port, "127.0.0.1")
-        .UseSerializer(MemoryPackCodec.Resolver);
+        ;
 });
 
 builder.Services.AddSharpLinkClient(client =>
 {
     client
         .UseTcp("127.0.0.1", port)
-        .UseSerializer(MemoryPackCodec.Resolver);
+        ;
 });
 
 builder.Services.AddHostedService<HostRpcDemoService>();
@@ -64,6 +61,7 @@ public sealed class HostRpcDemoService(
 [RpcContract]
 public interface IHelloService : IService
 {
+    [NonCancellable]
     ValueTask<string> Echo(string name);
 }
 

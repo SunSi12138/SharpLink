@@ -5,7 +5,7 @@
 ## 本地开发
 
 ### 环境要求
-- .NET SDK 10.0（与仓库当前目标框架一致）
+- .NET SDK 10.0（`global.json` 固定当前 feature band）
 - 建议使用最新稳定版 Rider / VS Code / Visual Studio
 
 ### 克隆与初始化
@@ -29,6 +29,10 @@ dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
 
 # 运行集成测试
 dotnet run --project test/SharpLink.IntegrationTests
+
+# 生成并验证 NuGet 主包、XML 文档和符号包
+dotnet pack Sharplink.slnx -c Release -o artifacts/nuget
+./eng/verify-packages.sh artifacts/nuget
 ```
 
 ## 测试约定
@@ -36,6 +40,8 @@ dotnet run --project test/SharpLink.IntegrationTests
 - 单元测试放在 `test/SharpLink.UnitTests`，优先覆盖纯逻辑与边界场景。
 - 集成测试用于验证端到端链路，不替代单元测试。
 - 新增/修改核心功能时，请至少补充一条对应测试。
+- `src/` 的所有编译器警告和公共 API 缺失 XML 注释均视为错误。
+- RPC 热路径、传输、生成代码或序列化变更需要记录精确基线和候选配置，并证明无实质性能回退。
 
 ## 代码与提交规范
 
@@ -65,3 +71,5 @@ PR 描述建议包含：
 
 - Bug 报告请尽量提供复现步骤、环境信息、期望结果与实际结果。
 - 功能建议请说明使用场景和预期收益。
+- 安全漏洞不得通过公开 Issue 报告，请使用 [`SECURITY.md`](SECURITY.md) 中的私有渠道。
+- 正式版本的冻结、包验证、Chaos、性能、标签和回滚规则见 [`doc/releasing.md`](doc/releasing.md)。

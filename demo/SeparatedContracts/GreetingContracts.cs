@@ -1,4 +1,4 @@
-using MemoryPack;
+using SharpPack;
 using SharpLink.Sdk;
 
 namespace SeparatedContracts;
@@ -6,11 +6,13 @@ namespace SeparatedContracts;
 [RpcContract]
 public interface IGreetingService : IService
 {
+    [NonCancellable]
     ValueTask<string> Greet(GreetRequest request);
+    [NonCancellable]
     ValueTask<int> Add(int left, int right);
 }
 
-[MemoryPackable]
+[SharpPackable]
 public partial class GreetRequest
 {
     public string Name { get; set; } = string.Empty;

@@ -5,9 +5,11 @@ namespace SharpLink.IntegrationTests;
 public class RpcChannelCallShapeIntegrationTests
 {
     [Test]
-    public async Task GeneratedProxyCallsShouldWorkWithRealRpcService()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task GeneratedProxyCallsShouldWorkWithRealRpcService(bool useSharedMemory)
     {
-        await using var harness = await CallShapeHarness.CreateAsync();
+        await using var harness = await CallShapeHarness.CreateAsync(useSharedMemory);
         var svc = harness.Client.Get<ICallShapeService>();
 
         Ensure(await svc.UnaryPayloadAsync(3) == 13, "UnaryPayloadAsync");
@@ -47,8 +49,9 @@ public class RpcChannelCallShapeIntegrationTests
         await svc.OneWayCancellableNoPayloadAsync(CancellationToken.None);
         await svc.OneWayCancellableDefaultTimeoutNoPayloadAsync(CancellationToken.None);
         await svc.OneWayCancellableTimeoutNoPayloadAsync(CancellationToken.None);
-        await Task.Delay(100);
-        Ensure(await svc.GetOneWayTotalAsync() == 2 + 1 + 3 + 4 + 5 + 6 + 1 + 7 + 1 + 1 + 1 + 1, "OneWay totals");
+        await EnsureEventuallyAsync(
+            async () => await svc.GetOneWayTotalAsync() == 2 + 1 + 3 + 4 + 5 + 6 + 1 + 7 + 1 + 1 + 1 + 1,
+            "OneWay totals");
 
         Ensure(await svc.ClientStreamPayloadAsync(10, ToAsyncEnumerable([1, 2, 3])) == 16, "ClientStreamPayloadAsync");
         Ensure(await svc.ClientStreamNoPayloadAsync(ToAsyncEnumerable([4, 5])) == 9, "ClientStreamNoPayloadAsync");
@@ -85,7 +88,9 @@ public class RpcChannelCallShapeIntegrationTests
         await svc.OneWayClientStreamCancellableWithDefaultTimeoutNoPayloadAsync(ToAsyncEnumerable([10]), CancellationToken.None);
         await svc.OneWayClientStreamCancellableWithTimeoutPayloadAsync(10, ToAsyncEnumerable([11]), CancellationToken.None);
         await svc.OneWayClientStreamCancellableWithTimeoutNoPayloadAsync(ToAsyncEnumerable([12]), CancellationToken.None);
-        Ensure(await svc.GetClientStreamNoReturnTotalAsync() == 103 + 3 + 71 + 2 + 83 + 4 + 91 + 2 + 103 + 4 + 115 + 6 + 6 + 2 + 9 + 4 + 12 + 6 + 15 + 8 + 18 + 10 + 21 + 12, "ClientStreamNoReturn totals");
+        await EnsureEventuallyAsync(
+            async () => await svc.GetClientStreamNoReturnTotalAsync() == 103 + 3 + 71 + 2 + 83 + 4 + 91 + 2 + 103 + 4 + 115 + 6 + 6 + 2 + 9 + 4 + 12 + 6 + 15 + 8 + 18 + 10 + 21 + 12,
+            "ClientStreamNoReturn totals");
 
         Ensure((await CollectAsync(svc.ServerStreamPayloadAsync(3), CancellationToken.None)).SequenceEqual([0, 1, 2]), "ServerStreamPayloadAsync");
         Ensure((await CollectAsync(svc.ServerStreamNoPayloadAsync(), CancellationToken.None)).SequenceEqual([9, 8]), "ServerStreamNoPayloadAsync");
@@ -127,14 +132,15 @@ public class RpcChannelCallShapeIntegrationTests
     }
 
     [Test]
-    public async Task GeneratedProxyTimeoutCallShouldThrowTimeoutException()
+    public async Task GeneratedProxyTimeoutCallShouldThrowDeadlineExceeded()
     {
         await using var harness = await CallShapeHarness.CreateAsync();
         var svc = harness.Client.Get<ICallShapeService>();
 
-        await EnsureThrows<TimeoutException>(
+        var exception = await EnsureThrows<SharpLinkException>(
             svc.UnaryAlwaysSlowWithTimeoutAsync().AsTask(),
             "UnaryAlwaysSlowWithTimeoutAsync");
+        Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded, "timeout error code");
     }
 
     private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> stream, CancellationToken ct)
@@ -160,15 +166,31 @@ public class RpcChannelCallShapeIntegrationTests
             throw new Exception($"assert failed: {name}");
     }
 
-    private static async Task EnsureThrows<TException>(Task task, string name) where TException : Exception
+    private static async Task EnsureEventuallyAsync(Func<Task<bool>> condition, string name)
+    {
+        var deadline = TimeProvider.System.GetTimestamp() + TimeProvider.System.TimestampFrequency;
+
+        while (TimeProvider.System.GetTimestamp() < deadline)
+        {
+            if (await condition())
+                return;
+
+            await Task.Delay(10);
+        }
+
+        Ensure(await condition(), name);
+    }
+
+    private static async Task<TException> EnsureThrows<TException>(Task task, string name) where TException : Exception
     {
         try
         {
             await task;
             throw new Exception($"assert failed: {name}, expected {typeof(TException).Name}");
         }
-        catch (TException)
+        catch (TException exception)
         {
+            return exception;
         }
     }
 
@@ -199,22 +221,29 @@ public class RpcChannelCallShapeIntegrationTests
             Client = client;
         }
 
-        public static async Task<CallShapeHarness> CreateAsync()
+        public static async Task<CallShapeHarness> CreateAsync(bool useSharedMemory = false)
         {
-            var port = GetFreePort();
             var cts = new CancellationTokenSource();
-            var server = SharpLinkServerBuilder.Create()
-                .AddService<ICallShapeService, CallShapeService>()
-                .UseTcp(port, IPAddress.Loopback.ToString())
-                .UseSerializer(MemoryPackCodec.Resolver)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
-                .Build();
+            var serverBuilder = SharpLinkServerBuilder.Create()
+
+                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
+
+            var sharedMemoryName = $"sharplink-call-shape-{Guid.NewGuid():N}";
+            var port = 0;
+            if (useSharedMemory)
+                serverBuilder.UseSharedMemory(sharedMemoryName);
+            else
+            {
+                serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+                port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+            }
+            var server = serverBuilder.Build();
 
             var serverTask = Task.Run(async () =>
             {
                 try
                 {
-                    await server.Start(cts.Token);
+                    await server.RunAsync(cts.Token);
                 }
                 catch (OperationCanceledException)
                 {
@@ -230,15 +259,18 @@ public class RpcChannelCallShapeIntegrationTests
                 }
             }, CancellationToken.None);
 
-            var client = SharpClientBuilder.Create()
-                .UseTcp(IPAddress.Loopback.ToString(), port)
-                .UseSerializer(MemoryPackCodec.Resolver)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
-                .UseRequestTimeout(TimeSpan.FromSeconds(5))
-                .Build();
+            var clientBuilder = SharpClientBuilder.Create()
 
-            var connected = await client.ConnectAsync(cts.Token);
-            return !connected ? throw new Exception("client connect failed") : new CallShapeHarness(server, serverTask, cts, client);
+                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
+                .UseRequestTimeout(TimeSpan.FromSeconds(5));
+            if (useSharedMemory)
+                clientBuilder.UseSharedMemory(sharedMemoryName);
+            else
+                clientBuilder.UseTcp(IPAddress.Loopback.ToString(), port);
+            var client = clientBuilder.Build();
+
+            await client.ConnectAsync(cts.Token);
+            return new CallShapeHarness(server, serverTask, cts, client);
         }
 
         public async ValueTask DisposeAsync()
@@ -246,14 +278,14 @@ public class RpcChannelCallShapeIntegrationTests
             if (!_clientDisposed)
             {
                 _clientDisposed = true;
-                (Client as IDisposable)?.Dispose();
+                await Client.StopAsync();
             }
 
             await _serverCts.CancelAsync();
             if (!_serverDisposed)
             {
                 _serverDisposed = true;
-                (_server as IDisposable)?.Dispose();
+                await _server.StopAsync(TimeSpan.Zero);
             }
 
             await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
@@ -265,7 +297,9 @@ public class RpcChannelCallShapeIntegrationTests
 [RpcContract]
 public interface ICallShapeService : IService
 {
+    [NonCancellable]
     ValueTask<int> UnaryPayloadAsync(int payload);
+    [NonCancellable]
     ValueTask<int> UnaryNoPayloadAsync();
     ValueTask<int> UnaryCancellableAsync(int payload, CancellationToken cancellationToken = default);
     [Timeout]
@@ -285,7 +319,9 @@ public interface ICallShapeService : IService
     [Timeout(0.2)]
     ValueTask<int> UnaryAlwaysSlowWithTimeoutAsync(CancellationToken cancellationToken = default);
 
+    [NonCancellable]
     ValueTask VoidPayloadAsync(int payload);
+    [NonCancellable]
     ValueTask VoidNoPayloadAsync();
     ValueTask VoidCancellableAsync(int payload, CancellationToken cancellationToken = default);
     [Timeout]
@@ -305,11 +341,14 @@ public interface ICallShapeService : IService
     ValueTask VoidCancellableDefaultTimeoutAsync(int payload, CancellationToken cancellationToken = default);
     [Timeout(1)]
     ValueTask VoidCancellableTimeoutAsync(int payload, CancellationToken cancellationToken = default);
+    [NonCancellable]
     ValueTask<int> GetVoidTotalAsync();
 
     [Oneway]
+    [NonCancellable]
     ValueTask OneWayPayloadAsync(int payload);
     [Oneway]
+    [NonCancellable]
     ValueTask OneWayNoPayloadAsync();
     [Oneway]
     ValueTask OneWayCancellableAsync(int payload, CancellationToken cancellationToken = default);
@@ -339,9 +378,12 @@ public interface ICallShapeService : IService
     [Oneway]
     [Timeout(1)]
     ValueTask OneWayCancellableTimeoutNoPayloadAsync(CancellationToken cancellationToken = default);
+    [NonCancellable]
     ValueTask<int> GetOneWayTotalAsync();
 
+    [NonCancellable]
     ValueTask<int> ClientStreamPayloadAsync(int marker, IAsyncEnumerable<int> stream);
+    [NonCancellable]
     ValueTask<int> ClientStreamNoPayloadAsync(IAsyncEnumerable<int> stream);
     [Timeout]
     ValueTask<int> ClientStreamDefaultTimeoutPayloadAsync(int marker, IAsyncEnumerable<int> stream, CancellationToken cancellationToken = default);
@@ -354,7 +396,9 @@ public interface ICallShapeService : IService
     ValueTask<int> ClientStreamCancellableNoPayloadAsync(IAsyncEnumerable<int> stream, CancellationToken cancellationToken = default);
     [Timeout(1)]
     ValueTask<int> ClientStreamCancellableWithTimeoutNoPayloadAsync(IAsyncEnumerable<int> stream, CancellationToken cancellationToken = default);
+    [NonCancellable]
     ValueTask ClientStreamNoReturnPayloadAsync(int marker, IAsyncEnumerable<int> stream);
+    [NonCancellable]
     ValueTask ClientStreamNoReturnNoPayloadAsync(IAsyncEnumerable<int> stream);
     [Timeout]
     ValueTask ClientStreamNoReturnWithDefaultTimeoutPayloadAsync(int marker, IAsyncEnumerable<int> stream, CancellationToken cancellationToken = default);
@@ -381,8 +425,10 @@ public interface ICallShapeService : IService
     ValueTask ClientStreamCancellableNoReturnWithTimeoutNoPayloadAsync(IAsyncEnumerable<int> stream, CancellationToken cancellationToken = default);
 
     [Oneway]
+    [NonCancellable]
     ValueTask OneWayClientStreamPayloadAsync(int marker, IAsyncEnumerable<int> stream);
     [Oneway]
+    [NonCancellable]
     ValueTask OneWayClientStreamNoPayloadAsync(IAsyncEnumerable<int> stream);
     [Oneway]
     [Timeout]
@@ -413,9 +459,12 @@ public interface ICallShapeService : IService
     [Timeout(1)]
     ValueTask OneWayClientStreamCancellableWithTimeoutNoPayloadAsync(IAsyncEnumerable<int> stream, CancellationToken cancellationToken = default);
 
+    [NonCancellable]
     ValueTask<int> GetClientStreamNoReturnTotalAsync();
 
+    [NonCancellable]
     IAsyncEnumerable<int> ServerStreamPayloadAsync(int count);
+    [NonCancellable]
     IAsyncEnumerable<int> ServerStreamNoPayloadAsync();
     [Timeout]
     IAsyncEnumerable<int> ServerStreamDefaultTimeoutPayloadAsync(int count, CancellationToken cancellationToken = default);
@@ -436,7 +485,9 @@ public interface ICallShapeService : IService
     [Timeout(1)]
     IAsyncEnumerable<int> ServerStreamCancellableTimeoutNoPayloadAsync(CancellationToken cancellationToken = default);
 
+    [NonCancellable]
     IAsyncEnumerable<int> DuplexPayloadAsync(int add, IAsyncEnumerable<int> stream);
+    [NonCancellable]
     IAsyncEnumerable<int> DuplexNoPayloadAsync(IAsyncEnumerable<int> stream);
     [Timeout]
     IAsyncEnumerable<int> DuplexDefaultTimeoutPayloadAsync(int add, IAsyncEnumerable<int> stream, CancellationToken cancellationToken = default);

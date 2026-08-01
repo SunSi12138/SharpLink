@@ -4,5 +4,7 @@ namespace SharpLink.Runtime;
 /// </summary>
 public interface IAnonymousPipeAllocator
 {
-    (string InHandle,string OutHandle) AllocateNewSession();
+    /// <summary>Offers one new anonymous-pipe connection to the bounded server accept queue.</summary>
+    /// <example><code>var offer = await allocator.AllocateAsync(cancellationToken);</code></example>
+    ValueTask<AnonymousPipeOffer> AllocateAsync(CancellationToken cancellationToken = default);
 }

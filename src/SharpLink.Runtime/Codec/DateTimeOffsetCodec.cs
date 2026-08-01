@@ -6,7 +6,7 @@ internal sealed class DateTimeOffsetCodec : IRpcCodec<DateTimeOffset>
     private const int Size = 10; 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in DateTimeOffset value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in DateTimeOffset value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
         
@@ -19,6 +19,7 @@ internal sealed class DateTimeOffsetCodec : IRpcCodec<DateTimeOffset>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public DateTimeOffset Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureExactSize(buffer, Size);
         long ticks;
         short offsetMinutes;
 
@@ -38,7 +39,7 @@ internal sealed class DateTimeOffsetCodec : IRpcCodec<DateTimeOffset>
             offsetMinutes = Unsafe.ReadUnaligned<short>(ref Unsafe.Add(ref start, 8));
         }
 
-        return new DateTimeOffset(ticks, TimeSpan.FromMinutes(offsetMinutes));
+        return CodecHelpers.CreateDateTimeOffset(ticks, offsetMinutes);
     }
 }
 
@@ -48,7 +49,7 @@ internal sealed class NullableDateTimeOffsetCodec : IRpcCodec<DateTimeOffset?>
     private const int Size = 11;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in DateTimeOffset? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in DateTimeOffset? value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
 
@@ -72,26 +73,27 @@ internal sealed class NullableDateTimeOffsetCodec : IRpcCodec<DateTimeOffset?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public DateTimeOffset? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
-            if (start == 0) return null;
+            if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
 
             var ticks = Unsafe.ReadUnaligned<long>(ref Unsafe.Add(ref start, 1));
             var offsetMinutes = Unsafe.ReadUnaligned<short>(ref Unsafe.Add(ref start, 9));
             
-            return new DateTimeOffset(ticks, TimeSpan.FromMinutes(offsetMinutes));
+            return CodecHelpers.CreateDateTimeOffset(ticks, offsetMinutes);
         }
 
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
 
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
-        if (tempStart == 0) return null;
+        if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
 
         var t = Unsafe.ReadUnaligned<long>(ref Unsafe.Add(ref tempStart, 1));
         var o = Unsafe.ReadUnaligned<short>(ref Unsafe.Add(ref tempStart, 9));
             
-        return new DateTimeOffset(t, TimeSpan.FromMinutes(o));
+        return CodecHelpers.CreateDateTimeOffset(t, o);
     }
 }

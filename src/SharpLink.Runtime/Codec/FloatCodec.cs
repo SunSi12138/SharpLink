@@ -6,7 +6,7 @@ internal sealed class FloatCodec : IRpcCodec<float>
     private const int Size = 4;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in float value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in float value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
@@ -15,6 +15,7 @@ internal sealed class FloatCodec : IRpcCodec<float>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size) 
             return Unsafe.ReadUnaligned<float>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
             
@@ -30,7 +31,7 @@ internal sealed class NullableFloatCodec : IRpcCodec<float?>
     private const int Size = 5; // 1 byte Tag + 4 bytes Value
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in float? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in float? value, IBufferWriter<byte> writer)
     {
         var span = writer.GetSpan(Size);
         if (value.HasValue)
@@ -48,17 +49,18 @@ internal sealed class NullableFloatCodec : IRpcCodec<float?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
-            if (start == 0) return null;
+            if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
             return Unsafe.ReadUnaligned<float>(ref Unsafe.Add(ref start, 1));
         }
 
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
         
-        if (temp[0] == 0) return null;
+        if (!CodecHelpers.ReadNullablePresence(ref MemoryMarshal.GetReference(temp), Size - 1)) return null;
         return Unsafe.ReadUnaligned<float>(ref Unsafe.Add(ref MemoryMarshal.GetReference(temp), 1));
     }
 }

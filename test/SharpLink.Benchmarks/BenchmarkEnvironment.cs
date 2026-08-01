@@ -5,8 +5,10 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Runtime;
+using SharpLink.Sdk;
 using SharpLink.Server;
 
 namespace SharpLink.Benchmarks;
@@ -15,8 +17,8 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
 {
     private readonly CancellationTokenSource _shutdown;
     private readonly Task _serverTask;
-    private readonly IDisposable? _serverDisposable;
-    private readonly IDisposable? _clientDisposable;
+    private readonly ISharpLinkServer _server;
+    private readonly ISharpLinkClient _client;
 
     public IBenchmarkRpc Rpc { get; }
     public BenchmarkRpcService LocalService { get; }
@@ -26,34 +28,40 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         BenchmarkRpcService localService,
         CancellationTokenSource shutdown,
         Task serverTask,
-        IDisposable? serverDisposable,
-        IDisposable? clientDisposable)
+        ISharpLinkServer server,
+        ISharpLinkClient client)
     {
         Rpc = rpc;
         LocalService = localService;
         _shutdown = shutdown;
         _serverTask = serverTask;
-        _serverDisposable = serverDisposable;
-        _clientDisposable = clientDisposable;
+        _server = server;
+        _client = client;
     }
 
-    public static async Task<BenchmarkEnvironment> CreateAsync()
+    public static async Task<BenchmarkEnvironment> CreateAsync(
+        Action<SharpLinkServerBuilder>? configureServer = null,
+        Action<SharpLinkRuntimeOptions>? configureServerRuntime = null,
+        Action<SharpLinkRuntimeOptions>? configureClientRuntime = null)
     {
-        var port = GetFreePort();
         var localService = new BenchmarkRpcService();
 
-        var server = SharpLinkServerBuilder.Create()
-            .AddService<IBenchmarkRpc, BenchmarkRpcService>()
-            .UseTcp(port, IPAddress.Loopback.ToString())
-            .UseSerializer(MemoryPackCodec.Resolver)
-            .Build();
+        var serverBuilder = SharpLinkServerBuilder.Create()
+            .UseTcp(0, IPAddress.Loopback.ToString())
+            ;
+        if (configureServerRuntime is not null)
+            serverBuilder.UseRuntime(configureServerRuntime);
+        configureServer?.Invoke(serverBuilder);
+
+        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        var server = serverBuilder.Build();
 
         var shutdown = new CancellationTokenSource();
         var serverTask = Task.Run(async () =>
         {
             try
             {
-                await server.Start(shutdown.Token);
+                await server.RunAsync(shutdown.Token);
             }
             catch (OperationCanceledException)
             {
@@ -62,29 +70,29 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
 
         var client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
-            .UseSerializer(MemoryPackCodec.Resolver)
-            .Build();
+            ;
+        if (configureClientRuntime is not null)
+            client.UseRuntime(configureClientRuntime);
+        var builtClient = client.Build();
 
-        var connected = await client.ConnectAsync(shutdown.Token);
-        if (!connected)
-            throw new InvalidOperationException("Failed to connect benchmark client.");
+        await builtClient.ConnectAsync(shutdown.Token);
 
-        var rpc = client.Get<IBenchmarkRpc>();
+        var rpc = builtClient.Get<IBenchmarkRpc>();
         return new BenchmarkEnvironment(
             rpc,
             localService,
             shutdown,
             serverTask,
-            server as IDisposable,
-            client as IDisposable);
+            server,
+            builtClient);
     }
 
     public async ValueTask DisposeAsync()
     {
         _shutdown.Cancel();
 
-        _clientDisposable?.Dispose();
-        _serverDisposable?.Dispose();
+        await _client.StopAsync();
+        await _server.StopAsync(TimeSpan.Zero);
 
         await Task.WhenAny(_serverTask, Task.Delay(500));
         _shutdown.Dispose();

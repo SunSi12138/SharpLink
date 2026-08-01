@@ -1,12 +1,14 @@
 using DemoBase;
 using SharpLink.Sdk;
-using MemoryPack;
+using SharpPack;
 using SharpLink.Runtime;
+
+[assembly: RpcCodecAdapter(
+    typeof(ValueTuple<int, string>),
+    typeof(SharpPackRpcCodecAdapter))]
 
 var port = DemoStream.GetFreePort();
 using var cts = new CancellationTokenSource();
-
-RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
 
 var server = DemoTcp.CreateServer<IStreamingService, StreamingService>(port);
 var serverTask = DemoTcp.StartServerAsync(server, cts.Token);
@@ -70,22 +72,33 @@ try
 }
 finally
 {
-    await DemoTcp.ShutdownAsync(cts, serverTask, client as IDisposable, server as IDisposable);
+    await DemoTcp.ShutdownAsync(cts, serverTask, client, server);
 }
 
 [RpcContract]
 public interface IStreamingService : IService
 {
+    [NonCancellable]
     ValueTask<int> UploadNumbers(IAsyncEnumerable<int> numbers);
+    [NonCancellable]
     IAsyncEnumerable<string> DownloadLabels(int count);
+    [NonCancellable]
     IAsyncEnumerable<string> Chat(IAsyncEnumerable<string> messages);
+    [NonCancellable]
     ValueTask<int> MergeSums(IAsyncEnumerable<int> left, IAsyncEnumerable<int> right);
+    [NonCancellable]
     ValueTask<int> ScaleAndSum(int factor, IAsyncEnumerable<int> numbers);
+    [NonCancellable]
     ValueTask<int> UploadClassItems(IAsyncEnumerable<BatchEnvelope> items);
+    [NonCancellable]
     IAsyncEnumerable<(int Index, string Label)> DownloadTupleItems(int count);
+    [NonCancellable]
     ValueTask<int> UploadStructPoints(IAsyncEnumerable<SamplePoint> points);
+    [NonCancellable]
     ValueTask<int> SumArrayBatches(IAsyncEnumerable<int[]> batches);
+    [NonCancellable]
     ValueTask<int> SumListBatches(IAsyncEnumerable<List<int>> batches);
+    [NonCancellable]
     ValueTask<int> SumMemoryBatches(IAsyncEnumerable<Memory<byte>> batches);
 }
 
@@ -218,7 +231,7 @@ public class StreamingService : IStreamingService
     }
 }
 
-[MemoryPackable]
+[SharpPackable]
 public partial class BatchEnvelope
 {
     public int BatchId { get; set; }
@@ -226,7 +239,7 @@ public partial class BatchEnvelope
     public List<int>? Values { get; set; }
 }
 
-[MemoryPackable]
+[SharpPackable]
 public partial struct SamplePoint
 {
     public int X { get; init; }

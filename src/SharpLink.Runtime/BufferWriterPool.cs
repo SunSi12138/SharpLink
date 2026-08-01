@@ -1,70 +1,101 @@
 namespace SharpLink.Runtime;
 
-public static class BufferWriterPool
+/// <summary>Instance-scoped pool for packet writers.</summary>
+public sealed class SharpLinkBufferWriterPool : IRpcBufferWriterPool, IDisposable
 {
-    private static readonly ConcurrentQueue<ArrayBufferWriter<byte>> Pool = [];
-    private static int _initialCapacity = 1024;
-    private static int _maxPooledWriters = 512;
-    private static int _maxRetainedCapacityBytes = 64 * 1024;
-    private static int _pooledCount;
+    private ConcurrentQueue<PooledByteBufferWriter>? _pool = [];
+    private readonly int _initialCapacity;
+    private readonly int _maxPooledWriters;
+    private readonly int _maxRetainedCapacityBytes;
+    private int _pooledCount;
 
-    public static void Configure(Action<BufferWriterPoolOptions> configure)
+    /// <summary>Gets the minimum array capacity rented for each new writer lease.</summary>
+    public int InitialCapacity => _initialCapacity;
+
+    /// <summary>Creates a pool from a validated immutable option snapshot.</summary>
+    /// <param name="options">Pool capacity and retention limits.</param>
+    public SharpLinkBufferWriterPool(BufferWriterPoolOptions options)
     {
-        ArgumentNullException.ThrowIfNull(configure);
-
-        var options = new BufferWriterPoolOptions
-        {
-            InitialCapacity = Volatile.Read(ref _initialCapacity),
-            MaxPooledWriters = Volatile.Read(ref _maxPooledWriters),
-            MaxRetainedCapacityBytes = Volatile.Read(ref _maxRetainedCapacityBytes)
-        };
-
-        configure(options);
-        options.Validate();
-
-        Interlocked.Exchange(ref _initialCapacity, options.InitialCapacity);
-        Interlocked.Exchange(ref _maxPooledWriters, options.MaxPooledWriters);
-        Interlocked.Exchange(ref _maxRetainedCapacityBytes, options.MaxRetainedCapacityBytes);
-
-        TrimPoolIfNeeded();
+        ArgumentNullException.ThrowIfNull(options);
+        var snapshot = options.CloneValidated();
+        _initialCapacity = snapshot.InitialCapacity;
+        _maxPooledWriters = snapshot.MaxPooledWriters;
+        _maxRetainedCapacityBytes = snapshot.MaxRetainedCapacityBytes;
     }
 
-    public static ArrayBufferWriter<byte> Get()
-    {
-        if (!Pool.TryDequeue(out var writer))
-            return new ArrayBufferWriter<byte>(Volatile.Read(ref _initialCapacity));
+    /// <inheritdoc />
+    public IRpcByteBufferWriter Rent()
+        => RentCore(int.MaxValue);
 
-        Interlocked.Decrement(ref _pooledCount);
+    /// <inheritdoc />
+    public IRpcByteBufferWriter Rent(int maxWrittenBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxWrittenBytes);
+        return RentCore(maxWrittenBytes);
+    }
+
+    private IRpcByteBufferWriter RentCore(int maxWrittenBytes)
+    {
+        var pool = Volatile.Read(ref _pool);
+        ObjectDisposedException.ThrowIf(pool is null, this);
+        if (!pool.TryDequeue(out var writer))
+            writer = PooledByteBufferWriter.CreateInactive();
+        else
+            Interlocked.Decrement(ref _pooledCount);
+
+        writer.Activate(Math.Min(_initialCapacity, maxWrittenBytes), maxWrittenBytes);
         return writer;
     }
 
-    public static void Return(ArrayBufferWriter<byte> writer)
+    /// <inheritdoc />
+    public void Return(IRpcByteBufferWriter writer)
     {
         ArgumentNullException.ThrowIfNull(writer);
-
-        if (writer.Capacity > Volatile.Read(ref _maxRetainedCapacityBytes))
+        if (writer is not PooledByteBufferWriter pooledWriter)
+        {
+            writer.Dispose();
             return;
-
-        writer.Clear();
+        }
+        if (!pooledWriter.TryReturnToPool(_maxRetainedCapacityBytes))
+            return;
+        var pool = Volatile.Read(ref _pool);
+        if (pool is null)
+        {
+            pooledWriter.ReleaseRetainedBuffer();
+            return;
+        }
         while (true)
         {
             var current = Volatile.Read(ref _pooledCount);
-            if (current >= Volatile.Read(ref _maxPooledWriters))
+            if (current >= _maxPooledWriters)
+            {
+                pooledWriter.ReleaseRetainedBuffer();
                 return;
-
-            if (Interlocked.CompareExchange(ref _pooledCount, current + 1, current) != current)
-                continue;
-
-            Pool.Enqueue(writer);
-            return;
+            }
+            if (Interlocked.CompareExchange(ref _pooledCount, current + 1, current) == current)
+                break;
         }
+
+        pool.Enqueue(pooledWriter);
+        if (Volatile.Read(ref _pool) is null)
+            DrainRetainedWriters(pool);
     }
 
-    private static void TrimPoolIfNeeded()
+    /// <summary>Releases every idle writer retained by this pool and rejects subsequent rents.</summary>
+    public void Dispose()
     {
-        while (Volatile.Read(ref _pooledCount) > Volatile.Read(ref _maxPooledWriters) && Pool.TryDequeue(out _))
+        var pool = Interlocked.Exchange(ref _pool, null);
+        if (pool is null)
+            return;
+        DrainRetainedWriters(pool);
+    }
+
+    private void DrainRetainedWriters(ConcurrentQueue<PooledByteBufferWriter> pool)
+    {
+        while (pool.TryDequeue(out var writer))
         {
             Interlocked.Decrement(ref _pooledCount);
+            writer.ReleaseRetainedBuffer();
         }
     }
 }

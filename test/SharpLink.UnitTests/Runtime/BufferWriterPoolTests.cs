@@ -1,110 +1,162 @@
-using System.Threading;
-
 namespace SharpLink.UnitTests.Runtime;
 
 public class BufferWriterPoolTests
 {
-    private static readonly Lock PoolSync = new();
-
     [Test]
-    public void ConfigureShouldThrowOnNullConfigure()
+    [NotInParallel]
+    public void ConcurrentReturnsMustNotPopulateDetachedQueueAfterDispose()
     {
-        AssertThrows<ArgumentNullException>(() => BufferWriterPool.Configure(null!));
-    }
+        const int writerCount = 256;
+        var poolField = typeof(SharpLinkBufferWriterPool).GetField(
+            "_pool",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new Exception("cannot inspect writer pool queue");
+        var detachedWriters = 0;
 
-    [Test]
-    public void ConfigureShouldThrowOnInvalidValues()
-    {
-        AssertThrows<ArgumentOutOfRangeException>(() =>
-            BufferWriterPool.Configure(options => options.InitialCapacity = 0));
-        AssertThrows<ArgumentOutOfRangeException>(() =>
-            BufferWriterPool.Configure(options => options.MaxPooledWriters = 0));
-        AssertThrows<ArgumentOutOfRangeException>(() =>
-            BufferWriterPool.Configure(options => options.MaxRetainedCapacityBytes = 0));
-    }
-
-    [Test]
-    public void ReturnShouldPoolSmallWriterAndClearContent()
-    {
-        lock (PoolSync)
+        for (var iteration = 0; iteration < 500 && detachedWriters == 0; iteration++)
         {
-            try
+            var pool = CreatePool(options =>
             {
-                ConfigurePool(initialCapacity: 111, maxPooledWriters: 1, maxRetainedCapacityBytes: 1024);
-                DrainPool();
+                options.InitialCapacity = 16;
+                options.MaxPooledWriters = writerCount;
+                options.MaxRetainedCapacityBytes = 256;
+            });
+            var writers = new IRpcByteBufferWriter[writerCount];
+            for (var index = 0; index < writers.Length; index++)
+                writers[index] = pool.Rent();
+            var queue = (System.Collections.Concurrent.ConcurrentQueue<PooledByteBufferWriter>)
+                (poolField.GetValue(pool) ?? throw new Exception("writer pool queue disappeared before disposal"));
 
-                var writer = new ArrayBufferWriter<byte>(128);
-                writer.GetSpan(4);
-                writer.Advance(4);
-                BufferWriterPool.Return(writer);
-                Ensure(writer.WrittenCount == 0, "writer should be cleared on return");
-            }
-            finally
+            Parallel.For(0, writerCount + 1, index =>
             {
-                ResetDefaults();
-            }
+                if (index == writerCount / 2)
+                    pool.Dispose();
+                else
+                    pool.Return(writers[index < writerCount / 2 ? index : index - 1]);
+            });
+
+            detachedWriters = queue.Count;
+            while (queue.TryDequeue(out var leaked))
+                leaked.ReleaseRetainedBuffer();
+            pool.Dispose();
         }
+
+        Ensure(detachedWriters == 0,
+            $"Dispose left {detachedWriters} writer(s) in a detached queue");
     }
 
     [Test]
-    public void ReturnShouldDropWriterAboveRetainedCapacity()
+    public void ConstructorShouldRejectNullOrInvalidOptions()
     {
-        lock (PoolSync)
-        {
-            try
-            {
-                ConfigurePool(initialCapacity: 123, maxPooledWriters: 1, maxRetainedCapacityBytes: 64);
-                DrainPool();
-
-                var tooLarge = new ArrayBufferWriter<byte>(256);
-                tooLarge.GetSpan(1);
-                tooLarge.Advance(1);
-                BufferWriterPool.Return(tooLarge);
-                Ensure(tooLarge.WrittenCount == 1, "oversized writer should not be cleared because it is not pooled");
-
-                var rented = BufferWriterPool.Get();
-                Ensure(!ReferenceEquals(tooLarge, rented), "oversized writer should not be pooled");
-                Ensure(rented.Capacity == 123, "pool should allocate using configured initial capacity");
-            }
-            finally
-            {
-                ResetDefaults();
-            }
-        }
+        AssertThrows<ArgumentNullException>(() => _ = new SharpLinkBufferWriterPool(null!));
+        AssertThrows<ArgumentOutOfRangeException>(() => CreatePool(options => options.InitialCapacity = 0));
+        AssertThrows<ArgumentOutOfRangeException>(() => CreatePool(options => options.MaxPooledWriters = 0));
+        AssertThrows<ArgumentOutOfRangeException>(() => CreatePool(options => options.MaxRetainedCapacityBytes = 0));
+        AssertThrows<ArgumentOutOfRangeException>(() => CreatePool(options =>
+            options.MaxRetainedCapacityBytes = BufferWriterPoolOptions.MaximumRetainedCapacityBytes + 1));
     }
 
-    private static void DrainPool()
+    [Test]
+    public void ReturnShouldReuseBoundedWriterStorage()
     {
-        for (var i = 0; i < 8; i++)
+        var pool = CreatePool(options =>
         {
-            _ = BufferWriterPool.Get();
-        }
-    }
-
-    private static void ResetDefaults()
-    {
-        ConfigurePool(initialCapacity: 1024, maxPooledWriters: 512, maxRetainedCapacityBytes: 64 * 1024);
-    }
-
-    private static void ConfigurePool(int initialCapacity, int maxPooledWriters, int maxRetainedCapacityBytes)
-    {
-        BufferWriterPool.Configure(options =>
-        {
-            options.InitialCapacity = initialCapacity;
-            options.MaxPooledWriters = maxPooledWriters;
-            options.MaxRetainedCapacityBytes = maxRetainedCapacityBytes;
+            options.InitialCapacity = 111;
+            options.MaxPooledWriters = 1;
+            options.MaxRetainedCapacityBytes = 1024;
         });
+        var writer = pool.Rent();
+        writer.GetSpan(4);
+        writer.Advance(4);
+
+        pool.Return(writer);
+        AssertThrows<ObjectDisposedException>(() => _ = writer.WrittenCount);
+        var rented = pool.Rent();
+
+        Ensure(ReferenceEquals(writer, rented), "the allocation-free writer shell should be reused");
+        Ensure(rented.WrittenCount == 0, "a new lease should not expose bytes from its previous use");
+        Ensure(rented.Capacity >= 111, "the new array lease should honor the configured initial capacity");
+        pool.Return(rented);
     }
 
-    private static void AssertThrows<TException>(Action action) where TException : Exception
+    [Test]
+    public void LargeLeaseShouldReturnStorageBeforeWriterShellIsReused()
+    {
+        var pool = CreatePool(options =>
+        {
+            options.InitialCapacity = 123;
+            options.MaxPooledWriters = 1;
+            options.MaxRetainedCapacityBytes = 64;
+        });
+        var tooLarge = pool.Rent();
+        tooLarge.GetSpan(256);
+        tooLarge.Advance(256);
+
+        pool.Return(tooLarge);
+        var rented = pool.Rent();
+
+        Ensure(ReferenceEquals(tooLarge, rented), "large storage must not prevent reuse of the writer shell");
+        Ensure(rented.WrittenCount == 0, "large frame bytes must not survive into the next lease");
+        Ensure(rented.Capacity < 256, "the large backing array must have been returned to ArrayPool");
+        pool.Return(rented);
+    }
+
+    [Test]
+    public void PooledWriterShouldGrowPreserveBytesAndDisposeIdempotently()
+    {
+        var writer = new PooledByteBufferWriter(16);
+        var first = writer.GetSpan(16);
+        for (var index = 0; index < 16; index++)
+            first[index] = (byte)index;
+        writer.Advance(16);
+
+        writer.GetSpan(80);
+        Ensure(writer.Capacity >= 96, "growth should satisfy the requested contiguous capacity");
+        for (var index = 0; index < 16; index++)
+            Ensure(writer.WrittenSpan[index] == (byte)index, "growth must preserve written bytes");
+
+        writer.Dispose();
+        writer.Dispose();
+        AssertThrows<ObjectDisposedException>(() => writer.GetSpan());
+    }
+
+    [Test]
+    public void BoundedLeaseShouldRejectGrowthAndRemainReusable()
+    {
+        var pool = CreatePool(options => options.InitialCapacity = 16);
+        var writer = pool.Rent(32);
+        writer.GetSpan(32).Clear();
+        writer.Advance(32);
+
+        var limit = AssertThrows<SharpLinkException>(() => writer.GetSpan(1));
+        Ensure(limit.Code == SharpLinkErrorCode.ResourceExhausted, "bounded writer error code");
+        AssertThrows<SharpLinkException>(() => writer.Advance(1));
+        pool.Return(writer);
+
+        var reused = pool.Rent();
+        reused.GetSpan(64).Clear();
+        reused.Advance(64);
+        Ensure(reused.WrittenCount == 64, "a later unbounded lease must not inherit the prior limit");
+        pool.Return(reused);
+    }
+
+    private static SharpLinkBufferWriterPool CreatePool(Action<BufferWriterPoolOptions> configure)
+    {
+        var options = new BufferWriterPoolOptions();
+        configure(options);
+        return new SharpLinkBufferWriterPool(options);
+    }
+
+    private static TException AssertThrows<TException>(Action action) where TException : Exception
     {
         try
         {
             action();
             throw new Exception($"expected {typeof(TException).Name}");
         }
-        catch (TException)
+        catch (TException exception)
         {
+            return exception;
         }
     }
 

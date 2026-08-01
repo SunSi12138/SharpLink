@@ -1,14 +1,19 @@
 namespace SharpLink.Runtime;
 
-public sealed class StripedLongMap<TValue> where TValue : class
+internal sealed class StripedLongMap<TValue> where TValue : class
 {
     private readonly Lock[] _locks;
     private readonly Dictionary<long, TValue>[] _maps;
     private readonly int _stripeMask;
 
-    public StripedLongMap()
+    public StripedLongMap() : this(new RuntimeConcurrencyOptions())
     {
-        var snapshot = RuntimeConcurrency.Snapshot();
+    }
+
+    public StripedLongMap(RuntimeConcurrencyOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        var snapshot = options.CloneValidated();
         _locks = new Lock[snapshot.StripeCount];
         _maps = new Dictionary<long, TValue>[snapshot.StripeCount];
         _stripeMask = snapshot.StripeCount - 1;
@@ -59,6 +64,18 @@ public sealed class StripedLongMap<TValue> where TValue : class
             return _maps[stripe].TryGetValue(key, out value!) && _maps[stripe].Remove(key);
     }
 
+    public bool TryRemove(long key, TValue expected)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        var stripe = GetStripe(key);
+        lock (_locks[stripe])
+        {
+            return _maps[stripe].TryGetValue(key, out var existing) &&
+                   ReferenceEquals(existing, expected) &&
+                   _maps[stripe].Remove(key);
+        }
+    }
+
     public List<TValue> DrainValues()
     {
         var values = new List<TValue>();
@@ -75,6 +92,30 @@ public sealed class StripedLongMap<TValue> where TValue : class
         }
 
         return values;
+    }
+
+    /// <summary>Copies a bounded point-in-time view of the current entries.</summary>
+    /// <param name="destination">A destination large enough for the map's configured upper bound.</param>
+    /// <returns>The number of copied entries.</returns>
+    internal int CopyEntries(Span<KeyValuePair<long, TValue>> destination)
+    {
+        var count = 0;
+        for (var index = 0; index < _maps.Length; index++)
+        {
+            lock (_locks[index])
+            {
+                var map = _maps[index];
+                if (map.Count > destination.Length - count)
+                {
+                    throw new ArgumentException(
+                        "The destination is smaller than the current map value count.",
+                        nameof(destination));
+                }
+                foreach (var entry in map)
+                    destination[count++] = entry;
+            }
+        }
+        return count;
     }
 
     private int GetStripe(long key)

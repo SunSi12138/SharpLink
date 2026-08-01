@@ -1,6 +1,7 @@
 ﻿using SharpLink.Runtime;
 using SharpLink.Abstractions;
 using System;
+using System.Threading.Tasks;
 using SharpLink.Client;
 using SharpLink.Server;
 
@@ -16,10 +17,20 @@ public static class LoadTestTransportFactory
         string pipeName,
         int heartbeatCheckIntervalSeconds,
         int heartbeatTimeoutSeconds,
-        Func<SharpLinkServerBuilder, SharpLinkServerBuilder> configure)
+        Func<SharpLinkServerBuilder, SharpLinkServerBuilder> configure,
+        SharpLinkPerformanceProfile performanceProfile = SharpLinkPerformanceProfile.Balanced,
+        string? sharedMemoryName = null,
+        int? sharedMemoryCapacity = null,
+        int? sharedMemorySpinCount = null,
+        Action<SharpLinkRuntimeOptions>? configureRuntime = null)
     {
         var builder = configure(SharpLinkServerBuilder.Create())
-            .UseSerializer(MemoryPackCodec.Resolver)
+
+            .UseRuntime(options =>
+            {
+                options.PerformanceProfile = performanceProfile;
+                configureRuntime?.Invoke(options);
+            })
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
 
         return transport switch
@@ -27,6 +38,9 @@ public static class LoadTestTransportFactory
             TransportMode.Tcp => builder.UseTcp(port, bindIp).Build(),
             TransportMode.Uds => builder.UseUds(udsPath).Build(),
             TransportMode.NamedPipe => builder.UseNamedPipe(pipeName).Build(),
+            TransportMode.SharedMemory => builder.UseSharedMemory(
+                RequireSharedMemoryName(sharedMemoryName),
+                options => ConfigureSharedMemory(options, sharedMemoryCapacity, sharedMemorySpinCount)).Build(),
             TransportMode.AnonymousPipe => throw new InvalidOperationException("Anonymous pipe transport only supports --mode local."),
             _ => throw new ArgumentOutOfRangeException(nameof(transport))
         };
@@ -39,23 +53,50 @@ public static class LoadTestTransportFactory
         string udsPath,
         string pipeName,
         int heartbeatIntervalSeconds,
-        int heartbeatTimeoutSeconds)
+        int heartbeatTimeoutSeconds,
+        int minConnections,
+        int maxConnections,
+        SharpLinkPerformanceProfile performanceProfile = SharpLinkPerformanceProfile.Balanced,
+        bool disableRequestTimeout = false,
+        TimeSpan? requestTimeout = null,
+        string? sharedMemoryName = null,
+        int? sharedMemoryCapacity = null,
+        int? sharedMemorySpinCount = null,
+        Action<SharpLinkRuntimeOptions>? configureRuntime = null)
     {
         var builder = SharpClientBuilder.Create()
-            .UseSerializer(MemoryPackCodec.Resolver)
+
+            .UseRuntime(options =>
+            {
+                options.PerformanceProfile = performanceProfile;
+                configureRuntime?.Invoke(options);
+            })
+            .UseConnectionPool(options =>
+            {
+                options.MinConnections = minConnections;
+                options.MaxConnections = maxConnections;
+            })
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
+
+        if (disableRequestTimeout)
+            builder.DisableRequestTimeout();
+        else if (requestTimeout is { } timeout)
+            builder.UseRequestTimeout(timeout);
 
         return transport switch
         {
             TransportMode.Tcp => builder.UseTcp(host, port).Build(),
             TransportMode.Uds => builder.UseUds(udsPath).Build(),
             TransportMode.NamedPipe => builder.UseNamedPipe(pipeName).Build(),
+            TransportMode.SharedMemory => builder.UseSharedMemory(
+                RequireSharedMemoryName(sharedMemoryName),
+                options => ConfigureSharedMemory(options, sharedMemoryCapacity, sharedMemorySpinCount)).Build(),
             TransportMode.AnonymousPipe => throw new InvalidOperationException("Anonymous pipe transport only supports --mode local."),
             _ => throw new ArgumentOutOfRangeException(nameof(transport))
         };
     }
 
-    public static LocalHarness CreateLocalHarness(
+    public static async Task<LocalHarness> CreateLocalHarness(
         TransportMode transport,
         string host,
         string bindIp,
@@ -65,29 +106,91 @@ public static class LoadTestTransportFactory
         int heartbeatIntervalSeconds,
         int heartbeatCheckIntervalSeconds,
         int heartbeatTimeoutSeconds,
-        Func<SharpLinkServerBuilder, SharpLinkServerBuilder> configure)
+        int minConnections,
+        int maxConnections,
+        Func<SharpLinkServerBuilder, SharpLinkServerBuilder> configure,
+        SharpLinkPerformanceProfile performanceProfile = SharpLinkPerformanceProfile.Balanced,
+        bool disableRequestTimeout = false,
+        TimeSpan? requestTimeout = null,
+        string? sharedMemoryName = null,
+        int? sharedMemoryCapacity = null,
+        int? sharedMemorySpinCount = null,
+        Action<SharpLinkRuntimeOptions>? configureServerRuntime = null,
+        Action<SharpLinkRuntimeOptions>? configureClientRuntime = null)
     {
         if (transport != TransportMode.AnonymousPipe)
         {
-            var server = CreateServer(transport, bindIp, port, udsPath, pipeName, heartbeatCheckIntervalSeconds, heartbeatTimeoutSeconds, configure);
-            var client = CreateClient(transport, host, port, udsPath, pipeName, heartbeatIntervalSeconds, heartbeatTimeoutSeconds);
+            var server = CreateServer(
+                transport, bindIp, port, udsPath, pipeName,
+                heartbeatCheckIntervalSeconds, heartbeatTimeoutSeconds, configure, performanceProfile,
+                sharedMemoryName, sharedMemoryCapacity, sharedMemorySpinCount, configureServerRuntime);
+            var client = CreateClient(
+                transport,
+                host,
+                port,
+                udsPath,
+                pipeName,
+                heartbeatIntervalSeconds,
+                heartbeatTimeoutSeconds,
+                minConnections,
+                maxConnections,
+                performanceProfile,
+                disableRequestTimeout,
+                requestTimeout,
+                sharedMemoryName,
+                sharedMemoryCapacity,
+                sharedMemorySpinCount,
+                configureClientRuntime);
             return new LocalHarness(server, client, static () => { });
         }
 
-        var anonymousPipeAllocator = new AnonymousPipeTransport();
         var serverBuilder = configure(SharpLinkServerBuilder.Create())
-            .UseSerializer(MemoryPackCodec.Resolver)
-            .UseTransport(anonymousPipeAllocator)
+
+            .UseRuntime(options =>
+            {
+                options.PerformanceProfile = performanceProfile;
+                configureServerRuntime?.Invoke(options);
+            })
+            .UseAnonymousPipe()
             .UseHeartbeat(TimeSpan.FromSeconds(heartbeatCheckIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
-        var serverAnonymous = serverBuilder.UseAnonymousPipe().Build();
-        
-        var (inHandler, outHandler) = anonymousPipeAllocator.AllocateNewSession();
+        var anonymousPipeAllocator = (IAnonymousPipeAllocator)serverBuilder.Transport!;
+        var serverAnonymous = serverBuilder.Build();
+
+        var (inHandler, outHandler) = await anonymousPipeAllocator.AllocateAsync();
         var clientAnonymous = SharpClientBuilder.Create()
-            .UseTransport(new AnonymousPipeTransport(inHandler, outHandler))
-            .UseSerializer(MemoryPackCodec.Resolver)
-            .UseHeartbeat(TimeSpan.FromSeconds(heartbeatIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds))
-            .Build();
-        
-        return new LocalHarness(serverAnonymous, clientAnonymous, static () => { });
+            .UseTransport(new AnonymousPipeClientTransportFactory(inHandler, outHandler))
+
+            .UseRuntime(options =>
+            {
+                options.PerformanceProfile = performanceProfile;
+                configureClientRuntime?.Invoke(options);
+            })
+            .UseConnectionPool(options =>
+            {
+                options.MinConnections = minConnections;
+                options.MaxConnections = maxConnections;
+            })
+            .UseHeartbeat(TimeSpan.FromSeconds(heartbeatIntervalSeconds), TimeSpan.FromSeconds(heartbeatTimeoutSeconds));
+
+        if (disableRequestTimeout)
+            clientAnonymous.DisableRequestTimeout();
+        else if (requestTimeout is { } timeout)
+            clientAnonymous.UseRequestTimeout(timeout);
+
+        return new LocalHarness(serverAnonymous, clientAnonymous.Build(), static () => { });
+    }
+
+    private static string RequireSharedMemoryName(string? name)
+        => !string.IsNullOrWhiteSpace(name)
+            ? name
+            : throw new ArgumentException("Shared-memory transport requires a logical endpoint name.");
+
+    private static void ConfigureSharedMemory(
+        SharedMemoryTransportOptions options,
+        int? capacity,
+        int? spinCount)
+    {
+        options.CapacityPerDirectionBytes = capacity;
+        options.SpinCount = spinCount;
     }
 }

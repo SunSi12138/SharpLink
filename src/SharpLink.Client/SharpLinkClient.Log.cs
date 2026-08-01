@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
@@ -12,10 +14,10 @@ internal sealed partial class SharpLinkClient
 
     private static IDisposable? BeginRequestLogScope(ILogger logger, long requestId) => SRequestScope(logger, requestId);
 
-    [System.Diagnostics.Conditional(CompileSymbols.Debug)]
+    [Conditional(CompileSymbols.Debug)]
     private static void DebugLogServerHeartbeatReceived(ILogger logger) => LogServerHeartbeatReceived(logger);
 
-    [System.Diagnostics.Conditional(CompileSymbols.Debug)]
+    [Conditional(CompileSymbols.Debug)]
     private static void DebugLogServerCancelIgnored(ILogger logger) => LogServerCancelIgnored(logger);
     
     
@@ -29,8 +31,8 @@ internal sealed partial class SharpLinkClient
     [LoggerMessage(EventId = LogEvents.Connection.HeartbeatTimeout, Level = LogLevel.Warning, Message = "Server disconnected due to heartbeat timeout.")]
     private static partial void LogServerHeartbeatTimeout(ILogger logger);
 
-    [LoggerMessage(EventId = LogEvents.Client.UnknownOrTimedOutResponse, Level = LogLevel.Warning, Message = "Response for unknown or timed-out request.")]
-    private static partial void LogUnknownOrTimedOutResponse(ILogger logger);
+    [LoggerMessage(EventId = LogEvents.Client.UnknownOrTimedOutResponse, Level = LogLevel.Warning, Message = "Response for unknown or timed-out request; {SuppressedCount} similar responses were suppressed since the previous warning.")]
+    private static partial void LogUnknownOrTimedOutResponse(ILogger logger, int suppressedCount);
 
     [LoggerMessage(EventId = LogEvents.Connection.ClientDisconnected, Level = LogLevel.Information, Message = "Client disconnected.")]
     private static partial void LogClientDisconnected(ILogger logger);
@@ -39,4 +41,13 @@ internal sealed partial class SharpLinkClient
 
     [LoggerMessage(EventId = LogEvents.Client.BackgroundLoopUnhandledException, Level = LogLevel.Error, Message = "Client background loop {LoopName} failed.")]
     private static partial void LogClientBackgroundLoopUnhandledException(ILogger logger, string loopName, Exception exception);
+
+    [LoggerMessage(EventId = LogEvents.Client.ConnectionAttemptFailed, Level = LogLevel.Warning, Message = "Client connection attempt in {LoopName} failed.")]
+    private static partial void LogClientConnectionAttemptFailed(ILogger logger, string loopName, Exception exception);
+
+    [LoggerMessage(EventId = LogEvents.Client.ResolverUpdateFailed, Level = LogLevel.Warning, Message = "Endpoint resolver update in {OperationName} failed and will be retried.")]
+    private static partial void LogClientResolverUpdateFailed(ILogger logger, string operationName, Exception exception);
+
+    [LoggerMessage(EventId = LogEvents.Transport.TlsEstablished, Level = LogLevel.Information, Message = "TLS established using {Protocol} and {CipherSuite}.")]
+    private static partial void LogTlsEstablished(ILogger logger, SslProtocols protocol, TlsCipherSuite cipherSuite);
 }

@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <SharpLinkContractBaseline Condition="'$(SharpLinkContractBaseline)' != ''">$([System.IO.Path]::GetFullPath('$(SharpLinkContractBaseline)', '$(MSBuildProjectDirectory)'))</SharpLinkContractBaseline>
+    <SharpLinkContractManifestOutput Condition="'$(SharpLinkContractManifestOutput)' == ''">$(IntermediateOutputPath)SharpLink.Contracts.sharplink.json</SharpLinkContractManifestOutput>
+    <SharpLinkContractManifestOutput>$([System.IO.Path]::GetFullPath('$(SharpLinkContractManifestOutput)', '$(MSBuildProjectDirectory)'))</SharpLinkContractManifestOutput>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <CompilerVisibleProperty Include="SharpLinkContractBaseline" />
+    <CompilerVisibleProperty Include="SharpLinkContractManifestOutput" />
+    <AdditionalFiles Include="$(SharpLinkContractBaseline)"
+                     Condition="'$(SharpLinkContractBaseline)' != '' and Exists('$(SharpLinkContractBaseline)')" />
+  </ItemGroup>
+</Project>

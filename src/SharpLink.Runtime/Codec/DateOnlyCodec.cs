@@ -6,7 +6,7 @@ internal sealed class DateOnlyCodec : IRpcCodec<DateOnly>
     private const int Size = 4; // DateOnly 内部是 int (DayNumber)
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in DateOnly value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in DateOnly value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value.DayNumber);
         writer.Advance(Size);
@@ -15,6 +15,7 @@ internal sealed class DateOnlyCodec : IRpcCodec<DateOnly>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public DateOnly Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureExactSize(buffer, Size);
         int dayNumber;
         if (buffer.FirstSpan.Length >= Size)
         {
@@ -27,7 +28,7 @@ internal sealed class DateOnlyCodec : IRpcCodec<DateOnly>
             dayNumber = Unsafe.ReadUnaligned<int>(ref MemoryMarshal.GetReference(temp));
         }
         
-        return DateOnly.FromDayNumber(dayNumber);
+        return CodecHelpers.CreateDateOnly(dayNumber);
     }
 }
 
@@ -37,7 +38,7 @@ internal sealed class NullableDateOnlyCodec : IRpcCodec<DateOnly?>
     private const int Size = 5; // 1 Tag + 4 Value
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in DateOnly? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in DateOnly? value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
 
@@ -57,22 +58,23 @@ internal sealed class NullableDateOnlyCodec : IRpcCodec<DateOnly?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public DateOnly? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
-            if (start == 0) return null;
+            if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
             
             var dayNumber = Unsafe.ReadUnaligned<int>(ref Unsafe.Add(ref start, 1));
-            return DateOnly.FromDayNumber(dayNumber);
+            return CodecHelpers.CreateDateOnly(dayNumber);
         }
 
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         
-        if (tempStart == 0) return null;
+        if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
         
         var tempDayNumber = Unsafe.ReadUnaligned<int>(ref Unsafe.Add(ref tempStart, 1));
-        return DateOnly.FromDayNumber(tempDayNumber);
+        return CodecHelpers.CreateDateOnly(tempDayNumber);
     }
 }

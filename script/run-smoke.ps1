@@ -18,7 +18,8 @@ $defaultDemos = @(
 
 $defaultTests = @(
     "test/SharpLink.IntegrationTests",
-    "test/SharpLink.UnitTests"
+    "test/SharpLink.UnitTests",
+    "test/SharpLink.Generator.Tests"
 )
 
 $demos = if ($Demo -and $Demo.Count -gt 0) { $Demo } else { $defaultDemos }
@@ -39,10 +40,7 @@ function Run-Step {
     Write-Host ""
     Write-Host "==> $Name :: $ProjectPath"
 
-    $args = @("run", "--project", $ProjectPath)
-    if ($UseNoBuild) {
-        $args += "--no-build"
-    }
+    $args = @("run", "-c", "Release", "--no-build", "--project", $ProjectPath)
 
     & dotnet @args
     if ($LASTEXITCODE -ne 0) {
@@ -52,7 +50,7 @@ function Run-Step {
 
 if (-not $NoBuild) {
     Write-Host "==> build :: Sharplink.slnx"
-    dotnet build "Sharplink.slnx" -v minimal
+    dotnet build "Sharplink.slnx" -c Release -v minimal
     if ($LASTEXITCODE -ne 0) {
         throw "Build failed."
     }
@@ -77,4 +75,3 @@ foreach ($item in $failed) {
     Write-Host "  - $item"
 }
 exit 1
-

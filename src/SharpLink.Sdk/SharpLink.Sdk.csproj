@@ -1,2 +1,20 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\SharpLink.Generator\SharpLink.Generator.csproj"
+                      Condition="'$(PublishAot)' != 'true'"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\SharpLink.Generator\bin\$(Configuration)\netstandard2.0\SharpLink.Generator.dll"
+          Pack="true"
+          PackagePath="analyzers/dotnet/cs"
+          Visible="false" />
+    <None Update="buildTransitive\SharpLink.Sdk.targets"
+          Pack="true"
+          PackagePath="build\SharpLink.Sdk.targets;buildTransitive\SharpLink.Sdk.targets"
+          Visible="false" />
+  </ItemGroup>
 </Project>

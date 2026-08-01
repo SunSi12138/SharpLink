@@ -6,7 +6,7 @@ internal sealed class BoolCodec : IRpcCodec<bool>
     private const int Size = 1;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in bool value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in bool value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned( ref MemoryMarshal.GetReference(writer.GetSpan(Size)), Unsafe.As<bool, byte>(ref Unsafe.AsRef(in value)));
         writer.Advance(Size);
@@ -15,7 +15,15 @@ internal sealed class BoolCodec : IRpcCodec<bool>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        return MemoryMarshal.GetReference(buffer.FirstSpan) != 0;
+        CodecHelpers.EnsureExactSize(buffer, Size);
+        return CodecHelpers.ReadUnmanaged<byte>(buffer) switch
+        {
+            0 => false,
+            1 => true,
+            var marker => throw new SharpLinkException(
+                SharpLinkErrorCode.DataLoss,
+                $"Boolean Codec marker {marker} is invalid.")
+        };
     }
 }
 
@@ -30,7 +38,7 @@ internal sealed class NullableBoolCodec : IRpcCodec<bool?>
     private const byte NullTag = 0xFF; 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in bool? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in bool? value, IBufferWriter<byte> writer)
     {
         ref var dest = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
 
@@ -50,8 +58,16 @@ internal sealed class NullableBoolCodec : IRpcCodec<bool?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool? Deserialize(in ReadOnlySequence<byte> buffer)
     {
-        var val = MemoryMarshal.GetReference(buffer.FirstSpan);
+        CodecHelpers.EnsureExactSize(buffer, Size);
+        var val = CodecHelpers.ReadUnmanaged<byte>(buffer);
         if (val == NullTag) return null;
-        return val != 0;
+        return val switch
+        {
+            0 => false,
+            1 => true,
+            _ => throw new SharpLinkException(
+                SharpLinkErrorCode.DataLoss,
+                $"Nullable Boolean Codec marker {val} is invalid.")
+        };
     }
 }

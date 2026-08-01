@@ -28,7 +28,7 @@ try
 }
 finally
 {
-    await DemoTcp.ShutdownAsync(appCts, serverTask, client as IDisposable, server as IDisposable);
+    await DemoTcp.ShutdownAsync(appCts, serverTask, client, server);
 }
 
 [RpcContract]

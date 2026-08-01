@@ -6,8 +6,6 @@ using SharpLink.Sdk;
 const int port = 19393;
 var appCts = new CancellationTokenSource();
 
-RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
-
 var loggerFactory = LoggerFactory.Create(builder =>
 {
     builder
@@ -49,11 +47,12 @@ try
 }
 finally
 {
-    await DemoTcp.ShutdownAsync(appCts, serverTask, silentClient as IDisposable, loggedClient as IDisposable, server as IDisposable);
+    await DemoTcp.ShutdownAsync(appCts, serverTask, silentClient, loggedClient, server);
 }
 [RpcContract]
 public interface ILogService : IService
 {
+    [NonCancellable]
     ValueTask<string> PingAsync();
 }
 

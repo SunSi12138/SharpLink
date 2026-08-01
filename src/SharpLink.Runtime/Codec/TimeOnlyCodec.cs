@@ -6,7 +6,7 @@ internal sealed class TimeOnlyCodec : IRpcCodec<TimeOnly>
     private const int Size = 8;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in TimeOnly value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in TimeOnly value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
@@ -15,14 +15,17 @@ internal sealed class TimeOnlyCodec : IRpcCodec<TimeOnly>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public TimeOnly Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
-            return Unsafe.ReadUnaligned<TimeOnly>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
+            return CodecHelpers.ValidateTimeOnly(
+                Unsafe.ReadUnaligned<TimeOnly>(ref MemoryMarshal.GetReference(buffer.FirstSpan)));
         }
 
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
-        return Unsafe.ReadUnaligned<TimeOnly>(ref MemoryMarshal.GetReference(temp));
+        return CodecHelpers.ValidateTimeOnly(
+            Unsafe.ReadUnaligned<TimeOnly>(ref MemoryMarshal.GetReference(temp)));
     }
 }
 
@@ -32,7 +35,7 @@ internal sealed class NullableTimeOnlyCodec : IRpcCodec<TimeOnly?>
     private const int Size = 9;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Serialize(in TimeOnly? value, in ArrayBufferWriter<byte> writer)
+    public void Serialize(in TimeOnly? value, IBufferWriter<byte> writer)
     {
         ref var start = ref MemoryMarshal.GetReference(writer.GetSpan(Size));
 
@@ -52,18 +55,21 @@ internal sealed class NullableTimeOnlyCodec : IRpcCodec<TimeOnly?>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public TimeOnly? Deserialize(in ReadOnlySequence<byte> buffer)
     {
+        CodecHelpers.EnsureExactSize(buffer, Size);
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
-            if (start == 0) return null;
-            return Unsafe.ReadUnaligned<TimeOnly>(ref Unsafe.Add(ref start, 1));
+            if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
+            return CodecHelpers.ValidateTimeOnly(
+                Unsafe.ReadUnaligned<TimeOnly>(ref Unsafe.Add(ref start, 1)));
         }
 
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
         
-        if (tempStart == 0) return null;
-        return Unsafe.ReadUnaligned<TimeOnly>(ref Unsafe.Add(ref tempStart, 1));
+        if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
+        return CodecHelpers.ValidateTimeOnly(
+            Unsafe.ReadUnaligned<TimeOnly>(ref Unsafe.Add(ref tempStart, 1)));
     }
 }

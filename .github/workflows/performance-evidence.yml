@@ -1,0 +1,50 @@
+name: Performance Matrix Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      repetitions:
+        description: Independent smoke repetitions
+        required: true
+        default: '1'
+
+permissions:
+  contents: read
+
+jobs:
+  performance-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_MATRIX_TIER: smoke
+      SHARPLINK_MATRIX_REPETITIONS: ${{ inputs.repetitions }}
+      SHARPLINK_MATRIX_OUTPUT: ${{ github.workspace }}/artifacts/performance/smoke/${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Record environment
+        shell: bash
+        run: |
+          mkdir -p artifacts/performance/smoke/${{ github.sha }}
+          dotnet --info > artifacts/performance/smoke/${{ github.sha }}/dotnet-info.txt
+          uname -a > artifacts/performance/smoke/${{ github.sha }}/uname.txt
+          lscpu > artifacts/performance/smoke/${{ github.sha }}/cpu.txt
+
+      - name: Run correctness-oriented performance smoke
+        run: ./eng/run-performance-matrix.sh
+
+      - name: Upload raw smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sharplink-performance-smoke-${{ github.sha }}
+          path: artifacts/performance/smoke/${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30

@@ -1,11 +1,11 @@
 using DemoBase;
+using SharpLink.Abstractions;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
 
 const int port = 19293;
 using var appCts = new CancellationTokenSource();
 
-RpcCodecRegistry.Initialize(MemoryPackCodec.Resolver);
 var server = DemoTcp.CreateServer<ITimeoutService, TimeoutService>(port);
 var serverTask = DemoTcp.StartServerAsync(server, appCts.Token);
 var client = DemoTcp.CreateClient(port, builder => builder.UseRequestTimeout(TimeSpan.FromMilliseconds(120)));
@@ -22,7 +22,7 @@ try
         _ = await service.WorkWithDefaultTimeout();
         Console.WriteLine("Unexpected success (default timeout).");
     }
-    catch (TimeoutException)
+    catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.DeadlineExceeded)
     {
         Console.WriteLine("Default timeout triggered as expected.");
     }
@@ -33,20 +33,20 @@ try
         _ = await service.WorkWithMethodTimeout();
         Console.WriteLine("Unexpected success ([Timeout]).");
     }
-    catch (TimeoutException)
+    catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.DeadlineExceeded)
     {
         Console.WriteLine("[Timeout] attribute triggered as expected.");
     }
 
     try
     {
-        Console.WriteLine("3) Invoke no-[Timeout] method (should ignore default timeout)...");
-        var noTimeoutResult = await service.WorkWithoutTimeoutAttribute();
-        Console.WriteLine($"No-[Timeout] method completed: {noTimeoutResult}");
+        Console.WriteLine("3) Invoke no-[Timeout] unary method (uses client default timeout)...");
+        _ = await service.WorkWithoutTimeoutAttribute();
+        Console.WriteLine("Unexpected success (client default timeout).");
     }
-    catch (TimeoutException)
+    catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.DeadlineExceeded)
     {
-        Console.WriteLine("Unexpected timeout for no-[Timeout] method.");
+        Console.WriteLine("Client default timeout applied as expected.");
     }
 
     try
@@ -61,7 +61,7 @@ try
 }
 finally
 {
-    await DemoTcp.ShutdownAsync(appCts, serverTask, client as IDisposable, server as IDisposable);
+    await DemoTcp.ShutdownAsync(appCts, serverTask, client, server);
 }
 
 [RpcContract]
@@ -73,8 +73,10 @@ public interface ITimeoutService : IService
     [Timeout(0.05)]
     ValueTask<int> WorkWithMethodTimeout(CancellationToken cancellationToken = default);
 
+    [NonCancellable]
     ValueTask<int> WorkWithoutTimeoutAttribute();
 
+    [NonCancellable]
     ValueTask<int> QuickSuccess();
 }
 
