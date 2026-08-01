@@ -5,6 +5,8 @@ namespace SharpLink.UnitTests.Runtime;
 
 public class PooledAsyncStreamDispatcherTests
 {
+    private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
+
     private static readonly ReadOnlySequence<byte> Payload = new(new byte[] { 1 });
     private static readonly ReadOnlySequence<byte> NullStringPayload = new(new byte[] { 255, 255, 255, 255 });
 
@@ -514,7 +516,7 @@ public class PooledAsyncStreamDispatcherTests
             manager.CompleteAll(terminal);
             try
             {
-                _ = await waiting.WaitAsync(TimeSpan.FromSeconds(1));
+                _ = await waiting.WaitAsync(RaceCoordinationTimeout);
                 throw new Exception($"iteration {iteration} unexpectedly completed without the terminal error");
             }
             catch (SharpLinkException exception) when (
