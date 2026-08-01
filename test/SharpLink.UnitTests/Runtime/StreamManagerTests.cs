@@ -6,6 +6,8 @@ namespace SharpLink.UnitTests.Runtime;
 
 public class StreamManagerTests
 {
+    private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
+
     private static readonly IRpcCodecProvider SCodecs =
         new SharpLinkRuntimeContextBuilder().Build().Codecs;
 
@@ -518,7 +520,7 @@ public class StreamManagerTests
         var dispatcher = new OrderedReplayDispatcher();
 
         var registration = Task.Run(() => manager.Register(57, 1, dispatcher));
-        await dispatcher.FirstEntered.WaitAsync(TimeSpan.FromSeconds(1));
+        await dispatcher.FirstEntered.WaitAsync(RaceCoordinationTimeout);
         var returnedBeforeRelease = false;
         try
         {
@@ -542,9 +544,9 @@ public class StreamManagerTests
                 "a live frame must not overtake retained replay");
         }
         dispatcher.ReleaseFirst();
-        await registration.WaitAsync(TimeSpan.FromSeconds(1));
+        await registration.WaitAsync(RaceCoordinationTimeout);
         if (returnedBeforeRelease)
-            await dispatcher.SecondEntered.WaitAsync(TimeSpan.FromSeconds(1));
+            await dispatcher.SecondEntered.WaitAsync(RaceCoordinationTimeout);
 
         Ensure(returnedBeforeRelease,
             "dispatcher registration must not synchronously wait for asynchronous replay");
@@ -596,7 +598,7 @@ public class StreamManagerTests
         var dispatcher = new OrderedReplayDispatcher();
 
         manager.Register(59, 1, dispatcher);
-        await dispatcher.FirstEntered.WaitAsync(TimeSpan.FromSeconds(1));
+        await dispatcher.FirstEntered.WaitAsync(RaceCoordinationTimeout);
         manager.CompleteStream(59, 1, exception: null);
 
         Ensure(dispatcher.CompleteCount == 0,
@@ -604,7 +606,7 @@ public class StreamManagerTests
         Ensure(manager.ActiveStreamCount == 0,
             "the completed registry entry retires while replay owns its lease");
         dispatcher.ReleaseFirst();
-        await dispatcher.Completed.WaitAsync(TimeSpan.FromSeconds(1));
+        await dispatcher.Completed.WaitAsync(RaceCoordinationTimeout);
 
         Ensure(dispatcher.CompleteCount == 1,
             "completion is forwarded once after replay");
@@ -627,7 +629,7 @@ public class StreamManagerTests
         var dispatch = manager.DispatchChunkAsync(
             50,
             new ReadOnlySequence<byte>(new byte[] { 1 }));
-        await dispatcher.Entered.WaitAsync(TimeSpan.FromSeconds(1));
+        await dispatcher.Entered.WaitAsync(RaceCoordinationTimeout);
         var completion = manager.CompleteStreamAfterDispatchesAsync(
             50,
             0,

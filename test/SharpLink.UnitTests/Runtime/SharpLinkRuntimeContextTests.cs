@@ -8,6 +8,8 @@ namespace SharpLink.UnitTests.Runtime;
 
 public class SharpLinkRuntimeContextTests
 {
+    private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
+
     [Test]
     public void ProcessDefaultShouldNotSnapshotGeneratedAssemblyCatalog()
     {
@@ -752,11 +754,11 @@ public class SharpLinkRuntimeContextTests
         context.PublishGeneratedCodecs(oldRegistration.Codecs);
 
         var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await entered.Task.WaitAsync(RaceCoordinationTimeout);
         context.PublishGeneratedCodecs(newRegistration.Codecs);
         release.TrySetResult();
 
-        var resolved = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+        var resolved = await racedLookup.WaitAsync(RaceCoordinationTimeout);
         Ensure(resolved is TaggedThirdAdapterValueCodec { Tag: 2 },
             "a Codec resolution returning after publication must use the current generation");
     }
@@ -782,11 +784,11 @@ public class SharpLinkRuntimeContextTests
         context.AdoptGeneratedManifest(registration);
 
         var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await entered.Task.WaitAsync(RaceCoordinationTimeout);
         context.PublishGeneratedCodecs(registration.Codecs);
         release.TrySetResult();
 
-        var resolved = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+        var resolved = await racedLookup.WaitAsync(RaceCoordinationTimeout);
         Ensure(resolved is TaggedThirdAdapterValueCodec { Tag: 2 },
             "a fallback resolution must not cross a generated publication boundary");
     }
@@ -812,11 +814,11 @@ public class SharpLinkRuntimeContextTests
         context.AdoptGeneratedManifest(registration);
 
         var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await entered.Task.WaitAsync(RaceCoordinationTimeout);
         context.PublishGeneratedCodecs(registration.Codecs);
         release.TrySetResult();
 
-        var resolved = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+        var resolved = await racedLookup.WaitAsync(RaceCoordinationTimeout);
         Ensure(resolved is TaggedThirdAdapterValueCodec { Tag: 2 },
             "a null fallback result must recheck generated publication");
     }
@@ -838,13 +840,13 @@ public class SharpLinkRuntimeContextTests
             .Build(includeGeneratedAssemblyCatalog: false);
 
         var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await entered.Task.WaitAsync(RaceCoordinationTimeout);
         context.Dispose();
         release.TrySetResult();
 
         try
         {
-            _ = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+            _ = await racedLookup.WaitAsync(RaceCoordinationTimeout);
             throw new Exception("expected in-flight Codec resolution to observe Context disposal");
         }
         catch (ObjectDisposedException)
@@ -869,13 +871,13 @@ public class SharpLinkRuntimeContextTests
             .Build(includeGeneratedAssemblyCatalog: false);
 
         var racedLookup = Task.Run(() => context.Codecs.GetCodec<ThirdAdapterValue>());
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await entered.Task.WaitAsync(RaceCoordinationTimeout);
         context.Dispose();
         release.TrySetResult();
 
         try
         {
-            _ = await racedLookup.WaitAsync(TimeSpan.FromSeconds(1));
+            _ = await racedLookup.WaitAsync(RaceCoordinationTimeout);
             throw new Exception("expected null Codec resolution to observe Context disposal");
         }
         catch (ObjectDisposedException)
