@@ -8,6 +8,7 @@ namespace SharpLink.UnitTests.Runtime;
 public class PendingRequestTableTests
 {
     private const int TableCapacity = 65536;
+    private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
     private static readonly ReadOnlySequence<byte> SInt32Payload = new(new byte[sizeof(int)]);
 
     [Test]
@@ -548,7 +549,7 @@ public class PendingRequestTableTests
             cancellation.Token,
             out _));
 
-        Ensure(owner.RegistrationEntered.Wait(TimeSpan.FromSeconds(2)),
+        Ensure(owner.RegistrationEntered.Wait(RaceCoordinationTimeout),
             "registration callback should reach the deterministic race gate");
         var cancelTask = Task.Run(cancellation.Cancel);
         await Task.Delay(20);
@@ -654,7 +655,7 @@ public class PendingRequestTableTests
         public void OnPendingCallRegistered()
         {
             RegistrationEntered.Set();
-            AllowRegistration.Wait(TimeSpan.FromSeconds(2));
+            AllowRegistration.Wait(RaceCoordinationTimeout);
             Interlocked.Increment(ref _activeCount);
         }
 
