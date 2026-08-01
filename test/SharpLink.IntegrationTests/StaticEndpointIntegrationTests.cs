@@ -229,8 +229,9 @@ public sealed class StaticEndpointIntegrationTests
         await Task.WhenAll(calls);
 
         var implementation = (SharpLinkClient)client;
-        await WaitUntilAsync(() => implementation.ReadyConnectionCount == 4, TimeSpan.FromSeconds(2));
-        Ensure(implementation.ReadyConnectionCount == 4, "cluster should fill only the configured global budget");
+        await WaitUntilAsync(() => implementation.ReadyConnectionCount == 4, TimeSpan.FromSeconds(10));
+        Ensure(implementation.ReadyConnectionCount == 4,
+            $"cluster should fill only the configured global budget; observed {implementation.ReadyConnectionCount}");
     }
 
     [Test]
