@@ -85,6 +85,12 @@ public sealed partial class RpcSession
         }
 
         public SendEnqueueResult TryEnqueue(OwnedFrame frame)
+            => TryEnqueue(frame, returnFrameWhenFull: true);
+
+        public SendEnqueueResult TryEnqueueForBackpressure(OwnedFrame frame)
+            => TryEnqueue(frame, returnFrameWhenFull: false);
+
+        private SendEnqueueResult TryEnqueue(OwnedFrame frame, bool returnFrameWhenFull)
         {
             if (Volatile.Read(ref _stopped) != 0)
             {
@@ -93,9 +99,12 @@ public sealed partial class RpcSession
             }
             if (!TryReserve(frame.Length))
             {
-                ReturnUnreserved(frame, new SharpLinkException(
-                    SharpLinkErrorCode.ResourceExhausted,
-                    $"Session send queue exceeded its {_maxQueuedBytes}-byte limit."));
+                if (returnFrameWhenFull)
+                {
+                    ReturnUnreserved(frame, new SharpLinkException(
+                        SharpLinkErrorCode.ResourceExhausted,
+                        $"Session send queue exceeded its {_maxQueuedBytes}-byte limit."));
+                }
                 return SendEnqueueResult.Full;
             }
             if (_queue.Writer.TryWrite(frame))

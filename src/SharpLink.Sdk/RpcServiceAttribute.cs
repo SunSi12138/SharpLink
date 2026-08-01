@@ -1,5 +1,10 @@
 namespace SharpLink.Sdk;
 
+/// <summary>Marks a concrete class for generated RPC service registration.</summary>
+/// <remarks>
+/// A service must implement exactly one generated RPC contract. Its constructor and configured
+/// <see cref="Lifetime"/> are validated at compile time.
+/// </remarks>
 [AttributeUsage(AttributeTargets.Class, Inherited = false)]
 public sealed class RpcServiceAttribute : Attribute
 {

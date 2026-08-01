@@ -200,6 +200,61 @@ public class PooledAsyncStreamDispatcherTests
 
     [Test]
     [NotInParallel]
+    public async Task DelayedOldPoolReturnShouldNotReturnOrClearReusedLease()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        using var dispatchState = new CoordinatedPoolReturnState();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        var oldLease = (IStreamDispatchLease)dispatcher;
+        oldLease.BindDispatchState(dispatchState);
+        dispatcher.Complete(exception: null);
+        await dispatcher.DisposeAsync();
+
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+            "the attached old lease must remain outside the pool before the coordinated returns");
+
+        dispatchState.CoordinateReturns();
+        var firstReturn = Task.Run(() => oldLease.OnDispatchesDrained());
+        var secondReturn = Task.Run(() => oldLease.OnDispatchesDrained());
+        Ensure(dispatchState.WaitForBothPrechecks(TimeSpan.FromSeconds(3)),
+            "both old-lease return contenders must reach the final eligibility precheck");
+
+        var winner = await Task.WhenAny(firstReturn, secondReturn).WaitAsync(TimeSpan.FromSeconds(3));
+        await winner;
+        var delayedReturn = ReferenceEquals(winner, firstReturn) ? secondReturn : firstReturn;
+        Ensure(!delayedReturn.IsCompleted,
+            "one old-lease contender must remain delayed while the other returns the dispatcher");
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the winning old-lease contender must return the dispatcher exactly once");
+
+        var reused = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec(new object()));
+        Ensure(ReferenceEquals(dispatcher, reused),
+            "the test must rent the exact dispatcher instance returned by the winning contender");
+
+        dispatchState.ReleaseDelayedReturn();
+        await Task.WhenAll(firstReturn, secondReturn).WaitAsync(TimeSpan.FromSeconds(3));
+
+        var retainedAfterDelayedReturn =
+            PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests;
+        var reusedLeaseReferencesIntact = reused.HasRetainedReferencesForTests;
+        if (retainedAfterDelayedReturn == 0)
+        {
+            reused.Complete(exception: null);
+            await reused.DisposeAsync();
+        }
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+
+        Ensure(retainedAfterDelayedReturn == 0 && reusedLeaseReferencesIntact,
+            $"a delayed old return must neither pool nor clear the reused lease " +
+            $"(retained={retainedAfterDelayedReturn}, referencesIntact={reusedLeaseReferencesIntact})");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task EarlyDisposeShouldNotPoolWhileProducerIsDecoding()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
@@ -268,7 +323,7 @@ public class PooledAsyncStreamDispatcherTests
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
         var first = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, new ReferenceItemCodec());
-        first.RetainForRegistration();
+        var registrationLease = first.RetainForRegistration();
         first.Complete(exception: null);
         await first.DisposeAsync();
 
@@ -278,11 +333,87 @@ public class PooledAsyncStreamDispatcherTests
         Ensure(!ReferenceEquals(first, second),
             "an unregistered dispatcher must not be reused while registration can still resume");
 
-        first.ReleaseRegistrationRetention();
+        first.ReleaseRegistrationRetention(registrationLease);
         Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
             "releasing the final registration owner should make the terminal dispatcher reusable");
         second.Complete(exception: null);
         await second.DisposeAsync();
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RentResetMustFinishBeforeNewLeaseCanBeReturned()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var codec = new ReferenceItemCodec();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, codec);
+        var delayedOldLease = (IStreamDispatchLease)dispatcher;
+        dispatcher.Complete(exception: null);
+        await dispatcher.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the completed old lease must begin in the pool");
+
+        var registrationField = typeof(PooledAsyncStreamDispatcher<ReferenceItem>).GetField(
+            "_enumerationCancellationRegistration",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find the dispatcher cancellation registration");
+        var leaseStateField = typeof(PooledAsyncStreamDispatcher<ReferenceItem>).GetField(
+            "_leaseState",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find the dispatcher lease state");
+        using var callbackEntered = new ManualResetEventSlim();
+        using var releaseCallback = new ManualResetEventSlim();
+        using var cancellation = new CancellationTokenSource();
+        var blockingRegistration = cancellation.Token.UnsafeRegister(
+            _ =>
+            {
+                callbackEntered.Set();
+                if (!releaseCallback.Wait(TimeSpan.FromSeconds(5)))
+                    throw new TimeoutException("the blocked cancellation callback was not released");
+            },
+            state: null);
+        registrationField.SetValue(dispatcher, blockingRegistration);
+        var cancellationTask = Task.Run(cancellation.Cancel);
+        Ensure(callbackEntered.Wait(TimeSpan.FromSeconds(3)),
+            "the synthetic old cancellation callback must be active");
+
+        PooledAsyncStreamDispatcher<ReferenceItem>? rented = null;
+        var rentTask = Task.Run(() =>
+        {
+            rented = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, codec);
+        });
+        Ensure(SpinWait.SpinUntil(
+                () => PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+                TimeSpan.FromSeconds(3)),
+            "the new rent must remove the dispatcher from the pool before reset blocks");
+
+        var delayedReturn = Task.Run(delayedOldLease.OnDispatchesDrained);
+        try
+        {
+            var preparingLeaseState = (long)(leaseStateField.GetValue(dispatcher)
+                ?? throw new Exception("cannot read the dispatcher lease state"));
+            Ensure((preparingLeaseState & 1L) == 0,
+                "reset must finish while the dispatcher is still marked returned");
+            await delayedReturn.WaitAsync(TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            releaseCallback.Set();
+            await Task.WhenAll(cancellationTask, rentTask, delayedReturn)
+                .WaitAsync(TimeSpan.FromSeconds(3));
+        }
+
+        var activeDispatcher = rented ?? throw new Exception("the new dispatcher rent did not complete");
+        Ensure(ReferenceEquals(dispatcher, activeDispatcher),
+            "the new rent must own the prepared dispatcher");
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+            "a delayed old return must not republish a dispatcher while its new lease is active");
+
+        activeDispatcher.Complete(exception: null);
+        await activeDispatcher.DisposeAsync();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "only disposal of the new lease may return the dispatcher");
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
     }
 
@@ -491,6 +622,56 @@ public class PooledAsyncStreamDispatcherTests
         }
 
         public byte Deserialize(in ReadOnlySequence<byte> buffer) => buffer.FirstSpan[0];
+    }
+
+    private sealed class CoordinatedPoolReturnState : IStreamDispatchState, IDisposable
+    {
+        private readonly ManualResetEventSlim _bothPrechecksEntered = new();
+        private readonly ManualResetEventSlim _releaseDelayedReturn = new();
+        private int _coordinateReturns;
+        private int _detachedReads;
+
+        public bool HasActiveDispatches => false;
+
+        public bool IsDetached
+        {
+            get
+            {
+                if (Volatile.Read(ref _coordinateReturns) == 0)
+                    return false;
+
+                switch (Interlocked.Increment(ref _detachedReads))
+                {
+                    case 1:
+                        if (!_bothPrechecksEntered.Wait(TimeSpan.FromSeconds(5)))
+                            throw new TimeoutException("The second pool-return contender did not enter its precheck.");
+                        return true;
+                    case 2:
+                        _bothPrechecksEntered.Set();
+                        if (!_releaseDelayedReturn.Wait(TimeSpan.FromSeconds(5)))
+                            throw new TimeoutException("The delayed pool-return contender was not released.");
+                        return true;
+                    default:
+                        return true;
+                }
+            }
+        }
+
+        public void Close()
+        {
+        }
+
+        public void CoordinateReturns() => Volatile.Write(ref _coordinateReturns, 1);
+
+        public bool WaitForBothPrechecks(TimeSpan timeout) => _bothPrechecksEntered.Wait(timeout);
+
+        public void ReleaseDelayedReturn() => _releaseDelayedReturn.Set();
+
+        public void Dispose()
+        {
+            _bothPrechecksEntered.Dispose();
+            _releaseDelayedReturn.Dispose();
+        }
     }
 
     private sealed class NullReferenceItemCodec : IRpcCodec<ReferenceItem>

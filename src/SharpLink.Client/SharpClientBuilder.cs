@@ -1,7 +1,9 @@
 namespace SharpLink.Client;
 
+/// <summary>Configures and creates an independently owned SharpLink RPC client.</summary>
 public class SharpClientBuilder
 {
+    /// <summary>Creates a client builder with safe default runtime, heartbeat, timeout, and resilience settings.</summary>
     public static SharpClientBuilder Create() => new();
     
     
@@ -71,6 +73,8 @@ public class SharpClientBuilder
         return this;
     }
 
+    /// <summary>Sets a fallback codec resolver scoped to clients built by this builder.</summary>
+    /// <param name="codecResolver">Returns a codec for a requested type, or <see langword="null"/> when unresolved.</param>
     public SharpClientBuilder UseSerializer(Func<Type,IRpcCodec?>? codecResolver)
     {
         _runtimeContextBuilder.UseCodecResolver(codecResolver);
@@ -84,6 +88,7 @@ public class SharpClientBuilder
         return this;
     }
 
+    /// <summary>Uses the supplied application-owned logger factory.</summary>
     public SharpClientBuilder UseLoggerFactory(ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
@@ -91,24 +96,28 @@ public class SharpClientBuilder
         return this;
     }
 
+    /// <summary>Configures the instance-owned outbound buffer pool.</summary>
     public SharpClientBuilder UseBufferWriterPool(Action<BufferWriterPoolOptions> configure)
     {
         _runtimeContextBuilder.ConfigureBufferPool(configure);
         return this;
     }
 
+    /// <summary>Configures striped state-store concurrency for this client.</summary>
     public SharpClientBuilder UseStateStoreConcurrency(Action<RuntimeConcurrencyOptions> configure)
     {
         _runtimeContextBuilder.ConfigureStateStores(configure);
         return this;
     }
 
+    /// <summary>Sets an application-owned logger factory only when none was explicitly configured.</summary>
     public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _loggerFactory ??= loggerFactory;
     }
 
+    /// <summary>Configures the heartbeat send interval and peer-liveness timeout.</summary>
     public SharpClientBuilder UseHeartbeat(TimeSpan interval, TimeSpan timeout)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
@@ -121,6 +130,7 @@ public class SharpClientBuilder
         return this;
     }
 
+    /// <summary>Configures how often the client sends heartbeat frames.</summary>
     public SharpClientBuilder UseHeartbeatInterval(TimeSpan interval)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
@@ -131,6 +141,7 @@ public class SharpClientBuilder
         return this;
     }
 
+    /// <summary>Configures how long peer inactivity is allowed before the connection is closed.</summary>
     public SharpClientBuilder UseHeartbeatTimeout(TimeSpan timeout)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
@@ -160,6 +171,7 @@ public class SharpClientBuilder
         return this;
     }
 
+    /// <summary>Enables bounded send coalescing by byte threshold and maximum latency.</summary>
     public SharpClientBuilder UseRpcSessionFlush(int flushSizeThreshold, TimeSpan maxLatency)
     {
         _rpcSessionFlushOptions = RpcSessionFlushOptions.Create(flushSizeThreshold, maxLatency);

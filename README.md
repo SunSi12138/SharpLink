@@ -1,5 +1,9 @@
 # SharpLink
 
+[![PR Quick](https://github.com/SunSi12138/SharpLink/actions/workflows/pr-quick.yml/badge.svg)](https://github.com/SunSi12138/SharpLink/actions/workflows/pr-quick.yml)
+[![Nightly Regression](https://github.com/SunSi12138/SharpLink/actions/workflows/nightly.yml/badge.svg)](https://github.com/SunSi12138/SharpLink/actions/workflows/nightly.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 一个面向 .NET 的高性能 RPC 框架（当前主目标框架为 `net10.0`），支持：
 
 - Source Generator 自动生成 `Proxy/Stub/Codec/Assembly Manifest`
@@ -33,6 +37,13 @@
 - `Timeout`：默认超时与显式超时示例
 - `Oneway`：单向调用示例
 - `Log`：日志配置示例
+- `Security`：TLS 身份、认证、授权和调用上下文
+- `Compression`：双向协商压缩
+- `AdmissionControl`：并发接入和拒绝行为
+- `InterceptorsTelemetry`：Client/Server Interceptor、Activity 与 Meter
+- `Resilience`：静态端点、Retry 与 Circuit Breaker
+- `TransportMatrix`：TCP、NamedPipe、UDS、SharedMemory 与 AnonymousPipe
+- `MultiCluster`：两个独立契约程序集与物理集群路由
 - `SeparatedContracts / SeparatedServer / SeparatedClient`：分离式契约与多进程示例
 
 测试与基准（`test/`）：
@@ -127,7 +138,7 @@ Dynamic contracts are registered against an explicit slot with
 `RegisterAssembly(cluster, assembly)`, `UnregisterAssemblyAsync(cluster, assembly, timeout)`, and
 `ReplaceAssemblyAsync(cluster, oldAssembly, newAssembly, timeout)`. There is no default cluster,
 per-call cluster override, cross-cluster retry, or cluster identifier on the wire. See
-`doc/architecture-0.7.10.md` and `doc/migration-0.7.10.md` for lifecycle and migration details.
+[`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md) for lifecycle and migration details.
 
 ## 契约 Manifest 与兼容性基线
 
@@ -198,7 +209,7 @@ public partial class PluginGraph
 
 Client/Server 不需要 resolver 或手工注册自动 Adapter Codec。高级自定义 formatter 可由调用方创建 `SharpPackSerializerContext`，再通过 `SharpPackRpcCodec.Create<T>(context)` 显式 `UseCodec`；该 Codec 仍保持最高优先级且 Context 所有权属于调用方。
 
-每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context；自动 Context 拥有独立 formatter graph，不使用进程级默认 formatter slot，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。详细设计见 [`doc/architecture-0.7.11.md`](doc/architecture-0.7.11.md)；升级 0.8.x 前请阅读 [`doc/migration-0.8.44.md`](doc/migration-0.8.44.md)。
+每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context；自动 Context 拥有独立 formatter graph，不使用进程级默认 formatter slot，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。当前设计和迁移约束见 [`doc/contracts-and-codecs.md`](doc/contracts-and-codecs.md) 与 [`doc/migration.md`](doc/migration.md)。
 
 ## 协商压缩
 
@@ -307,7 +318,7 @@ var client = SharpClientBuilder.Create()
 | Balanced | 8 MiB | 8 |
 | Throughput | 32 MiB | 0 |
 
-该传输不提供 TLS；同用户隔离依赖命名管道权限、用户私有映射目录、随机 nonce 和映射头校验。SharpLink RPC 认证、授权、deadline、流控和心跳照常生效。普通日志和性能报告不会记录映射路径、nonce 或 payload。正式支持状态以三平台 JIT/NativeAOT、性能与 24 小时 Chaos 门禁为准，当前实验结论见 [`doc/shared-memory-experiment.md`](doc/shared-memory-experiment.md)。
+该传输不提供 TLS；同用户隔离依赖命名管道权限、用户私有映射目录、随机 nonce 和映射头校验。SharpLink RPC 认证、授权、deadline、流控和心跳照常生效。普通日志和性能报告不会记录映射路径、nonce 或 payload。正式支持状态以三平台 JIT/NativeAOT、性能与长稳门禁为准；当前安全边界、容量和调优规则见 [`doc/transports.md`](doc/transports.md) 与 [`doc/limits-and-tuning.md`](doc/limits-and-tuning.md)。
 
 正式 NuGet 包中，`SharpLink.Sdk` 会携带 `SharpLink.Generator` Analyzer。通过 NuGet 使用时只需引用 SDK，无需再手工添加 Generator DLL 或 Analyzer 项目引用。
 
@@ -553,9 +564,9 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 
 `AnonymousPipe` 的一次句柄 offer 只支持一个客户端连接，因此其 `MaxConnections` 必须为 `1`。
 
-### 0.6.6 兼容入口迁移
+### 实例级配置与已移除的进程级入口
 
-0.6.6 删除了会跨 Client/Server 实例互相覆盖状态的进程级兼容入口：
+以下会跨 Client/Server 实例互相覆盖状态的旧进程级入口已删除：
 
 - `RpcCodecRegistry` / `RpcCodec`：业务配置迁移到 Client/Server Builder 的 `UseCodec<T>(...)` 或 `UseSerializer(...)`；底层组件从所属 `IRpcRuntimeContext.Codecs` 解析 Codec。
 - `BufferWriterPool`：容量和保留策略迁移到 Builder 的 `UseBufferWriterPool(...)`；框架内部从所属 Context 的 `Buffers` 租借和归还。独立工具代码可直接使用 `PooledByteBufferWriter`。
@@ -568,36 +579,21 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 
 ## 文档
 
-- 计划：`doc/plan.md`
-- 架构：`doc/architecture.md`
-- 待办与改进方向：`doc/todo.md`
-- 压测：`doc/loadtest.md`
-- Protocol v2：`doc/protocol-v2.md`
-- 0.6.10 迁移：`doc/migration-0.6.10.md`
-- 0.7.1 迁移：`doc/migration-0.7.1.md`
-- 0.7.2 性能与迁移：`doc/performance-0.7.2.md`、`doc/migration-0.7.2.md`
-- 0.7.4 压缩、接入控制与性能：`doc/migration-0.7.4.md`、`doc/performance-0.7.4.md`
-- 0.7.5 静态多 endpoint：`doc/architecture-0.7.5.md`、`doc/performance-0.7.5.md`
-- 0.7.6 动态 endpoint、Resolver 与 DNS Discovery：`doc/architecture-0.7.6.md`
-- 0.7.6 本地性能证据：`doc/performance-0.7.6.md`
-- 0.7.7 logical call、attempt 与 retry：`doc/architecture-0.7.7.md`
-- 0.7.8 endpoint admission 与 circuit breaker：`doc/architecture-0.7.8.md`
-- 0.7.9 迁移、组合验证与 API freeze：`doc/migration-0.7.9.md`
-- 0.7.9 本地性能与组合 smoke：`doc/performance-0.7.9.md`
-- 0.8.44 shutdown join、Server call admission 与 stream flow-control 终态清理审核：`doc/audit-0.8.44.md`、`doc/migration-0.8.44.md`、`doc/performance-0.8.44.md`
-- 0.8.43 共享内存创建、流控热路径、错误/遥测与动态退役审核：`doc/audit-0.8.43.md`、`doc/migration-0.8.43.md`、`doc/performance-0.8.43.md`
-- 0.8.42 SendPump、Codec 规范编码、本地写入校验与 DTO schema 审核：`doc/audit-0.8.42.md`、`doc/migration-0.8.42.md`、`doc/performance-0.8.42.md`
-- 0.8.41 scalar/stream nullability、runtime fingerprint 与 reserved error code 审核：`doc/audit-0.8.41.md`、`doc/migration-0.8.41.md`、`doc/performance-0.8.41.md`
-- 0.8.40 interceptor continuation、结构化错误与 response nullability 审核：`doc/audit-0.8.40.md`、`doc/migration-0.8.40.md`、`doc/performance-0.8.40.md`
-- 0.8.39 interceptor 调用边界、client stream context 与 malformed request 分类审核：`doc/audit-0.8.39.md`、`doc/migration-0.8.39.md`、`doc/performance-0.8.39.md`
-- 0.8.38 生成构造计划、指针工件与 interceptor 取消状态审核：`doc/audit-0.8.38.md`、`doc/migration-0.8.38.md`、`doc/performance-0.8.38.md`
-- 0.8.37 Generator 类型边界与合法 C# 产物审核：`doc/audit-0.8.37.md`、`doc/migration-0.8.37.md`、`doc/performance-0.8.37.md`
-- 0.8.36 Server 停止、配置优先级与协议/API 边界审核：`doc/audit-0.8.36.md`、`doc/migration-0.8.36.md`、`doc/performance-0.8.36.md`
-- 0.8.35 Resolver、协议终止与双端 Chaos 门禁审核：`doc/audit-0.8.35.md`、`doc/migration-0.8.35.md`、`doc/performance-0.8.35.md`
-- 0.8.34 共享内存、Chaos 门禁与继承契约审核：`doc/audit-0.8.34.md`、`doc/migration-0.8.34.md`、`doc/performance-0.8.34.md`
-- 0.8.33 生成器、Builder 回滚与 Hosted 生命周期审核：`doc/audit-0.8.33.md`、`doc/migration-0.8.33.md`、`doc/performance-0.8.33.md`
-- 0.8.32 运行时边界与 admission 热路径审核：`doc/audit-0.8.32.md`、`doc/migration-0.8.32.md`、`doc/performance-0.8.32.md`
-- 0.8.31 Transport 所有权与 API 边界审核：`doc/audit-0.8.31.md`、`doc/migration-0.8.31.md`、`doc/performance-0.8.31.md`
-- 0.6.10 性能与 Chaos：`doc/performance-0.6.10.md`、`doc/chaos-0.6.10.md`
-- 贡献指南：`CONTRIBUTING.md`
+- 文档首页与特性/Demo 覆盖矩阵：[`doc/index.md`](doc/index.md)
+- 快速开始：[`doc/getting-started.md`](doc/getting-started.md)
+- 契约、Codec 与压缩：[`doc/contracts-and-codecs.md`](doc/contracts-and-codecs.md)
+- 调用、Streaming、取消与 deadline：[`doc/calls-and-streaming.md`](doc/calls-and-streaming.md)
+- 传输与部署：[`doc/transports.md`](doc/transports.md)
+- 安全：[`doc/security.md`](doc/security.md)
+- 服务发现与韧性：[`doc/resilience.md`](doc/resilience.md)
+- 接入控制：[`doc/admission-control.md`](doc/admission-control.md)
+- Hosting 与服务生命周期：[`doc/hosting-and-services.md`](doc/hosting-and-services.md)
+- Interceptor 与可观测性：[`doc/observability.md`](doc/observability.md)
+- 多集群与动态模块：[`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md)
+- 限制与调优：[`doc/limits-and-tuning.md`](doc/limits-and-tuning.md)
+- 故障排查与迁移：[`doc/troubleshooting.md`](doc/troubleshooting.md)、[`doc/migration.md`](doc/migration.md)
+- 架构、Protocol、负载和性能：[`doc/architecture.md`](doc/architecture.md)、[`doc/protocol-v2.md`](doc/protocol-v2.md)、[`doc/loadtest.md`](doc/loadtest.md)、[`doc/performance.md`](doc/performance.md)
+- 发布流程：[`doc/releasing.md`](doc/releasing.md)
+- 贡献与社区：[`CONTRIBUTING.md`](CONTRIBUTING.md)、[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+- 安全漏洞请按 [`SECURITY.md`](SECURITY.md) 私下报告，不要创建公开 Issue。
 - 更新日志：`CHANGELOG.md`

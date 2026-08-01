@@ -1,15 +1,18 @@
 namespace SharpLink.Client;
 
+/// <summary>Provides built-in client transport configuration extensions.</summary>
 public static class TransportExtensions
 {
     extension(SharpClientBuilder builder)
     {
+        /// <summary>Connects through a local or Windows named pipe.</summary>
         public SharpClientBuilder UseNamedPipe(string name)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(name);
             return builder.UseTransport(new NamedPipeClientTransportFactory(name));
         }
 
+        /// <summary>Connects to a TCP endpoint without TLS.</summary>
         public SharpClientBuilder UseTcp(string ip, int port)
         {
             if (port is < 1 or > IPEndPoint.MaxPort)
@@ -41,6 +44,7 @@ public static class TransportExtensions
                 tlsHandshakeTimeout: tlsHandshakeTimeout));
         }
 
+        /// <summary>Connects through a Unix-domain socket.</summary>
         public SharpClientBuilder UseUds(string socketPath)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(socketPath);
@@ -48,6 +52,8 @@ public static class TransportExtensions
             return builder.UseTransport(new SocketClientTransportFactory(endPoint));
         }
 
+        /// <summary>Connects through a one-time anonymous-pipe handle pair.</summary>
+        /// <remarks>Handle values are secrets and must not be logged or reused.</remarks>
         public SharpClientBuilder UseAnonymousPipe(string inHandle, string outHandle)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(inHandle);

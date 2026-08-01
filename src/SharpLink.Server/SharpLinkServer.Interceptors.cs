@@ -690,36 +690,23 @@ internal sealed partial class SharpLinkServer
 
         private sealed class ServerContinuationState
         {
-            private const int MaxRetained = 4096;
-            private static ServerContinuationState? s_cached;
-            private static int s_retained;
+            // A cross-thread linked freelist is ABA-prone because its next pointer is mutable.
+            // Keep exclusive ownership in a physical-thread slot instead.
+            [ThreadStatic]
+            private static ServerContinuationState? t_cached;
 
             private ServerInterceptorPipeline? _owner;
-            private ServerContinuationState? _nextCached;
             private int _nextIndex;
             private ValueTask _completion;
             private int _completionAvailable;
 
             public static ServerContinuationState Rent(ServerInterceptorPipeline owner, int nextIndex)
             {
-                ServerContinuationState state;
-                while (true)
-                {
-                    state = Volatile.Read(ref s_cached)!;
-                    if (state is null)
-                    {
-                        state = new ServerContinuationState();
-                        break;
-                    }
-                    if (ReferenceEquals(
-                            Interlocked.CompareExchange(ref s_cached, state._nextCached, state),
-                            state))
-                    {
-                        Interlocked.Decrement(ref s_retained);
-                        break;
-                    }
-                }
-                state._nextCached = null;
+                var state = t_cached;
+                if (state is null)
+                    state = new ServerContinuationState();
+                else
+                    t_cached = null;
                 state._owner = owner;
                 state._nextIndex = nextIndex;
                 return state;
@@ -753,19 +740,7 @@ internal sealed partial class SharpLinkServer
                 _nextIndex = 0;
                 _completion = default;
                 Volatile.Write(ref _completionAvailable, 0);
-                if (Interlocked.Increment(ref s_retained) > MaxRetained)
-                {
-                    Interlocked.Decrement(ref s_retained);
-                    return;
-                }
-                ServerContinuationState? head;
-                do
-                {
-                    head = Volatile.Read(ref s_cached);
-                    _nextCached = head;
-                } while (!ReferenceEquals(
-                    Interlocked.CompareExchange(ref s_cached, this, head),
-                    head));
+                t_cached ??= this;
             }
 
             private static async ValueTask AwaitCompletionAndReturnAsync(

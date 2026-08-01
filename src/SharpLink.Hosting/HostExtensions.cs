@@ -2,11 +2,15 @@ using SharpLink.Runtime;
 
 namespace SharpLink.Hosting;
 
+/// <summary>Registers SharpLink servers, clients, health checks, and lifecycle services with a generic host.</summary>
 public static class HostExtensions
 {
     extension(IServiceCollection services)
     {
-        public SharpLinkServerBuilder AddSharpLinkServer(Action<SharpLinkServerBuilder>? configure=null)
+        /// <summary>Adds one hosted SharpLink server and its readiness health check.</summary>
+        /// <param name="configure">Optionally configures the registered server builder.</param>
+        /// <returns>The registered builder for additional configuration.</returns>
+        public SharpLinkServerBuilder AddSharpLinkServer(Action<SharpLinkServerBuilder>? configure = null)
         {
             var builder = SharpLinkServerBuilder.Create();
             configure?.Invoke(builder);
@@ -23,7 +27,10 @@ public static class HostExtensions
             return builder;
         }
 
-        public SharpClientBuilder AddSharpLinkClient(Action<SharpClientBuilder>? configure=null)
+        /// <summary>Adds one hosted SharpLink client and its remote readiness health check.</summary>
+        /// <param name="configure">Optionally configures the registered client builder.</param>
+        /// <returns>The registered builder for additional configuration.</returns>
+        public SharpClientBuilder AddSharpLinkClient(Action<SharpClientBuilder>? configure = null)
         {
             var builder = SharpClientBuilder.Create();
             configure?.Invoke(builder);

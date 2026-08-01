@@ -2,6 +2,8 @@ namespace SharpLink.Runtime;
 
 internal class StreamTransportConnection : ITransportConnection
 {
+    internal const int ReadBufferBytes = 16 * 1024;
+
     private readonly Stream _stream;
     private readonly Lock _disposeGate = new();
     private Task? _disposeTask;
@@ -12,7 +14,9 @@ internal class StreamTransportConnection : ITransportConnection
         Id = Guid.NewGuid().ToString("N");
         LocalEndPoint = localEndPoint;
         RemoteEndPoint = remoteEndPoint;
-        Input = PipeReader.Create(stream, new StreamPipeReaderOptions(leaveOpen: true));
+        Input = PipeReader.Create(
+            stream,
+            new StreamPipeReaderOptions(bufferSize: ReadBufferBytes, leaveOpen: true));
         Output = PipeWriter.Create(stream, new StreamPipeWriterOptions(leaveOpen: true));
     }
 

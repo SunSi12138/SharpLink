@@ -1,9 +1,11 @@
 namespace SharpLink.Runtime;
 
+/// <summary>Writes Protocol v2 control, response, and streaming frames through an RPC session.</summary>
 public static class RpcSessionExtensions
 {
     extension(IRpcSession session)
     {
+        /// <summary>Sends and flushes a client handshake request.</summary>
         public async ValueTask SendHandshakeRequestAndFlushAsync(
             ProtocolV2HandshakeRequest request,
             SharpLinkProtocolOptions limits,
@@ -29,6 +31,7 @@ public static class RpcSessionExtensions
             }
         }
 
+        /// <summary>Sends and flushes a successful server handshake response.</summary>
         public async ValueTask SendHandshakeResponseAndFlushAsync(
             ProtocolV2HandshakeResponse response,
             CancellationToken cancellationToken = default)
@@ -53,6 +56,7 @@ public static class RpcSessionExtensions
             }
         }
 
+        /// <summary>Sends and flushes a bounded handshake rejection.</summary>
         public ValueTask SendHandshakeErrorAndFlushAsync(
             SharpLinkErrorCode code,
             string? message,
@@ -67,6 +71,7 @@ public static class RpcSessionExtensions
                 maxMessageBytes,
                 cancellationToken);
 
+        /// <summary>Queues a payload-free protocol frame for sending.</summary>
         public void SendPacketAsync(ProtocolV2FrameType frameType, ProtocolV2FrameFlags flags, long requestId)
         {
             var writer = GetRuntimeSession(session).RentFrameWriter();
@@ -84,6 +89,30 @@ public static class RpcSessionExtensions
             }
         }
 
+        internal async ValueTask SendPacketWithBackpressureAsync(
+            ProtocolV2FrameType frameType,
+            ProtocolV2FrameFlags flags,
+            long requestId,
+            CancellationToken cancellationToken = default)
+        {
+            var writer = GetRuntimeSession(session).RentFrameWriter();
+            var ownsWriter = true;
+            try
+            {
+                writer.WritePacket(frameType, flags, unchecked((ulong)requestId));
+                ownsWriter = false;
+                await GetRuntimeSession(session)
+                    .SendPacketWithBackpressureAsync(writer, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                if (ownsWriter)
+                    session.RuntimeContext.Buffers.Return(writer);
+            }
+        }
+
+        /// <summary>Maps and sends a bounded RPC response error.</summary>
         public void SendRpcErrorAsync(long requestId, Exception exception)
         {
             ArgumentNullException.ThrowIfNull(exception);
@@ -98,6 +127,26 @@ public static class RpcSessionExtensions
                 code,
                 message,
                 GetMaxErrorMessageBytes(session));
+        }
+
+        internal ValueTask SendRpcErrorWithBackpressureAsync(
+            long requestId,
+            Exception exception,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(exception);
+            var code = exception is SharpLinkException sharpLinkException
+                ? sharpLinkException.Code
+                : SharpLinkErrorCode.Internal;
+            var message = exception is SharpLinkException ? exception.Message : "Internal service error.";
+            return SendErrorFrameWithBackpressureAsync(
+                session,
+                ProtocolV2FrameType.Response,
+                requestId,
+                code,
+                message,
+                GetMaxErrorMessageBytes(session),
+                cancellationToken);
         }
 
         /// <summary>Sends a negotiated protocol cancellation for one active request.</summary>
@@ -156,14 +205,32 @@ public static class RpcSessionExtensions
             return ProtocolV2PayloadCodec.ReadCancelReason(payload);
         }
 
+        /// <summary>Sends a ping containing the current monotonic timestamp.</summary>
         public void SendPingAsync()
             => SendTimestampFrame(session, ProtocolV2FrameType.Ping, Stopwatch.GetTimestamp());
 
+        internal ValueTask SendPingWithBackpressureAsync(CancellationToken cancellationToken = default)
+            => SendTimestampFrameWithBackpressureAsync(
+                session,
+                ProtocolV2FrameType.Ping,
+                Stopwatch.GetTimestamp(),
+                cancellationToken);
+
+        /// <summary>Sends a pong that echoes a received ping timestamp.</summary>
+        /// <param name="timestamp">The monotonic timestamp from the ping frame.</param>
         public void SendPongAsync(long timestamp)
             => SendTimestampFrame(session, ProtocolV2FrameType.Pong, timestamp);
 
+        internal ValueTask SendPongWithBackpressureAsync(
+            long timestamp,
+            CancellationToken cancellationToken = default)
+            => SendTimestampFrameWithBackpressureAsync(
+                session,
+                ProtocolV2FrameType.Pong,
+                timestamp,
+                cancellationToken);
+
         /// <summary>Sends a protocol-level health request on a negotiated session.</summary>
-        /// <param name="session">The negotiated session that owns the send queue.</param>
         /// <param name="requestId">The non-zero health request identifier.</param>
         public void SendHealthCheck(long requestId)
             => session.SendPacketAsync(
@@ -172,7 +239,6 @@ public static class RpcSessionExtensions
                 requestId);
 
         /// <summary>Sends a fixed-width protocol health response.</summary>
-        /// <param name="session">The negotiated session that owns the send queue.</param>
         /// <param name="requestId">The request identifier being answered.</param>
         /// <param name="status">The current server readiness state.</param>
         public void SendHealthResponse(long requestId, SharpLinkHealthStatus status)
@@ -198,6 +264,36 @@ public static class RpcSessionExtensions
             }
         }
 
+        internal async ValueTask SendHealthResponseWithBackpressureAsync(
+            long requestId,
+            SharpLinkHealthStatus status,
+            CancellationToken cancellationToken = default)
+        {
+            var writer = GetRuntimeSession(session).RentFrameWriter();
+            var ownsWriter = true;
+            try
+            {
+                using (writer.BeginPacketScope(
+                           ProtocolV2FrameType.HealthResponse,
+                           ProtocolV2FrameFlags.None,
+                           unchecked((ulong)requestId)))
+                {
+                    ProtocolV2PayloadCodec.WriteHealthResponse(writer, status);
+                }
+                ownsWriter = false;
+                await GetRuntimeSession(session)
+                    .SendPacketWithBackpressureAsync(writer, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                if (ownsWriter)
+                    session.RuntimeContext.Buffers.Return(writer);
+            }
+        }
+
+        /// <summary>Serializes and sends one flow-controlled stream item.</summary>
+        /// <typeparam name="T">The stream item type.</typeparam>
         public async ValueTask SendStreamChunkAsync<T>(
             long requestId,
             ushort streamId,
@@ -245,6 +341,7 @@ public static class RpcSessionExtensions
             }
         }
 
+        /// <summary>Sends successful completion for one request stream.</summary>
         public void SendStreamCompleteAsync(long requestId, ushort streamId)
         {
             var writer = GetRuntimeSession(session).RentFrameWriter();
@@ -278,6 +375,7 @@ public static class RpcSessionExtensions
             }
         }
 
+        /// <summary>Maps and sends terminal failure for one request stream.</summary>
         public void SendStreamErrorAsync(
             long requestId,
             ushort streamId,
@@ -326,6 +424,7 @@ public static class RpcSessionExtensions
             }
         }
 
+        /// <summary>Sends and flushes a connection-drain frame with the last accepted request.</summary>
         public async ValueTask SendGoAwayAsync(
             long lastAcceptedRequestId,
             SharpLinkErrorCode code,
@@ -407,6 +506,34 @@ public static class RpcSessionExtensions
         }
     }
 
+    private static async ValueTask SendTimestampFrameWithBackpressureAsync(
+        IRpcSession session,
+        ProtocolV2FrameType type,
+        long timestamp,
+        CancellationToken cancellationToken)
+    {
+        var writer = GetRuntimeSession(session).RentFrameWriter();
+        var ownsWriter = true;
+        try
+        {
+            using (writer.BeginPacketScope(type, ProtocolV2FrameFlags.None, 0))
+            {
+                var span = writer.GetSpan(sizeof(long));
+                BinaryPrimitives.WriteInt64LittleEndian(span, timestamp);
+                writer.Advance(sizeof(long));
+            }
+            ownsWriter = false;
+            await GetRuntimeSession(session)
+                .SendPacketWithBackpressureAsync(writer, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            if (ownsWriter)
+                session.RuntimeContext.Buffers.Return(writer);
+        }
+    }
+
     private static void SendErrorFrame(
         IRpcSession session,
         ProtocolV2FrameType frameType,
@@ -457,6 +584,37 @@ public static class RpcSessionExtensions
             ownsWriter = false;
             await GetRuntimeSession(session)
                 .SendPacketAndFlushAsync(writer, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            if (ownsWriter)
+                session.RuntimeContext.Buffers.Return(writer);
+        }
+    }
+
+    private static async ValueTask SendErrorFrameWithBackpressureAsync(
+        IRpcSession session,
+        ProtocolV2FrameType frameType,
+        long requestId,
+        SharpLinkErrorCode code,
+        string? message,
+        int maxMessageBytes,
+        CancellationToken cancellationToken)
+    {
+        var writer = GetRuntimeSession(session).RentFrameWriter();
+        var ownsWriter = true;
+        try
+        {
+            var token = writer.BeginPacket(
+                frameType, ProtocolV2FrameFlags.Error, unchecked((ulong)requestId));
+            ProtocolV2PayloadCodec.WriteError(writer, code, message, maxMessageBytes, out var truncated);
+            writer.EndPacket(token);
+            if (truncated)
+                SetTruncatedFlag(writer, token);
+            ownsWriter = false;
+            await GetRuntimeSession(session)
+                .SendPacketWithBackpressureAsync(writer, cancellationToken)
                 .ConfigureAwait(false);
         }
         finally

@@ -4,6 +4,177 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-02
+
+### Highlights
+
+- SharpLink 1.0 establishes the stable Protocol v2 minor-3, generated contract/codec surface, seven-package NuGet graph, transport-independent connection lanes, resilience, security, hosting, multi-cluster routing, dynamic modules, streaming, and NativeAOT support developed throughout the 0.7/0.8 series and release candidates.
+- The final performance matrix records SharpLink leads of 21.3%, 58.2%, and 12.6% over grpc-dotnet in the three primary published scenarios, 1.95 million QPS at four-server scale, and throughput comparable to gRPC C++ in the closest local Duplex A/B. See [the concise performance and stability report](doc/performance.md) for workload boundaries and exact results.
+- A 24-hour cross-machine mixed-load run completed 414,775,951 successful operations with zero RPC or payload-validation errors. Process restart recovery and cross-region capacity checks also completed with zero content errors.
+
+### Compatibility and validation
+
+- The stable release changes only version metadata and documentation from RC7; runtime code, public API, generated contracts, valid Protocol v2 bytes, package graph, transport behavior, and defaults are unchanged.
+- The tested product candidate is commit `36a80656be91822556942a2841750ba8555d2ead`. Release packaging and CI verify that every stable package is built from the final tagged commit, carries that repository identity, includes XML documentation and portable symbols, and passes clean-cache package consumption.
+
+## [1.0.0-rc7] - 2026-07-30
+
+### Fixed
+
+- Pooled stream dispatchers now clear the previous lease while the object is still marked returned, then atomically activate the new lease. A delayed return callback can no longer land between activation and reset, republish the just-rented dispatcher, and hand one active response stream to two RPC calls as `Only single consumer is supported`.
+
+### Compatibility
+
+- Public API, generated contracts, valid Protocol v2 bytes, package graph, transport behavior, connection-pool defaults, and allocation shape are unchanged. The fix reorders the existing reset and lease compare/exchange; it adds no lock, allocation, or new transport/lane abstraction.
+- Fixed 1/4/16-connection validation confirms that TCP, UDS, NamedPipe, and SharedMemory already use the transport-independent connection pool as independent ordered lanes. Adaptive 1/4 pools converge to fixed 4/4 throughput after warmup, so RC7 does not add a second pooling abstraction.
+
+### Validation
+
+- Exact RC6 reproduced the same dispatcher failure in two independent Linux x64 runs, including one failure among 18,187,330 attempted high-churn duplex streams and one failure in the longer paired A/B set. A deterministic blocked-reset regression fails on the old ordering in 10 ms and passes on RC7.
+- The RC7 candidate completed 35,858,349 validated UDS streams in 60 seconds, then another 36,192,551 validated streams across 15-second TCP, UDS, NamedPipe, and SharedMemory runs, with zero transport or payload-validation failures. Post-fix fixed 1/4/16 runs also passed on all four transports.
+- Five longer adjacent RC6/candidate pairs used UDS, Server GC, Throughput profile, c128, four fixed connections, 4096 bytes × 8 messages, and alternating order. Candidate medians changed QPS -1.56%, P99 +1.06%, CPU/stream +1.90%, and allocation/stream +0.05%; pairwise QPS ranged from -5.27% to +4.96%, so no change exceeded the measured noise band. Three high-churn pairs changed median QPS -0.76% and P99 -0.85%.
+- Release builds completed with zero warnings/errors on macOS arm64 and Linux x64. Unit 513/513, Generator 121/121, Integration 252/252, and validated-Duplex 21/21 pass on both architectures.
+
+## [1.0.0-rc6] - 2026-07-30
+
+### Performance
+
+- Stream-backed transports now read into 16 KiB PipeReader blocks instead of the 4 KiB framework default. Common 4096-byte business payload frames no longer cross nearly every receive segment, reducing segmented SharpPack reads without changing Protocol v2 bytes, RPC ordering, flow control, connection-pool defaults, or the public API.
+- `SharpLink.StreamLoadTest` adds a validated `duplex-equivalent` lane with exact message byte/count controls, operation-ID/order/full-payload verification, explicit validation/cancellation accounting, message throughput, and directional business MiB/s. A dedicated TUnit project covers corrupt, duplicate, missing, reordered, extra, cancelled, boundary, and generated-RPC round trips.
+
+### Compatibility
+
+- The 16 KiB block is rented from the existing shared PipeReader pool. It adds no per-message allocation and does not parallelize a single ordered byte-stream reader; multi-lane scaling continues to use the transport-independent connection pool.
+- Public API, generated contracts, valid Protocol v2 bytes, package graph, and connection defaults are unchanged.
+
+### Validation
+
+- On a Ryzen 9 7950X bare-metal Linux host, five adjacent RC5/candidate pairs used TCP loopback, Server GC, Throughput profile, c128, fixed 1/4/16/64 connections, 4096 bytes × 8 bidirectional messages per stream, and a fixed 64 MiB send queue. Median validated message throughput changed by +27.86%, +23.47%, +3.94%, and +1.08%; median P99 changed by -24.78%, -8.17%, -4.83%, and -9.26%. CPU/message and allocated bytes/message decreased in all four shapes, with zero transport or validation failures across 40 processes.
+- Candidate profiles reduced `SharpPackReader.GetNextSpan` exclusive samples from 1.53% to 0.36% at one connection and from 16.39% to 9.42% at 64 connections, confirming the intended segmented-read mechanism.
+- Release builds completed with zero warnings/errors on macOS arm64 and Linux x64. Unit 512/512, Generator 121/121, Integration 252/252, and validated-Duplex 21/21 pass; 120-second macOS SharedMemory and Linux TCP Chaos smokes completed 11 rolling restarts each with zero unexpected failures and all resources drained. Independent-process SharedMemory NativeAOT smoke passes on osx-arm64 and linux-x64.
+
+## [1.0.0-rc5] - 2026-07-29
+
+### Fixed
+
+- Pooled response-stream dispatchers now use a monotonic lease generation instead of resetting a reusable leased/returned bit. A delayed return contender from an older stream can no longer commit after the same dispatcher has been rented again, reinsert the active lease into the process-wide pool, clear its codec and callbacks, or expose the active call to another consumer as `Only single consumer is supported`.
+
+### Compatibility
+
+- Public API, generated contracts, Protocol v2 bytes, package graph, and valid stream behavior are unchanged. The fix adds no per-call allocation or lock; it replaces the existing pool-state compare/exchange with a generation-aware 64-bit compare/exchange.
+
+### Validation
+
+- A deterministic two-contender regression fails on exact RC4 with `retained=1, referencesIntact=False`, proving that the delayed old return both repooled and cleared the reused lease. The RC5 candidate passes the same schedule and all 15 dispatcher lifecycle tests.
+- Unit 511/511 and Integration 252/252 pass in Release with zero test failures.
+- Five alternating exact-RC4/candidate Balanced TCP Duplex pairs (c8, 32 items, 10-second measurements) completed with zero failures. Paired-median candidate deltas were QPS +3.82%, P50 -3.24%, P99 -12.60%, allocation/operation -2.04%, and CPU/operation -2.81%; these local results exclude a measurable regression and are not claimed as a performance improvement.
+
+## [1.0.0-rc4] - 2026-07-28
+
+### Fixed
+
+- Client and Server interceptor continuation-state caches now retain one exclusively owned state per physical thread instead of using mutable process-wide lock-free freelists. Concurrent pass-through interceptors can no longer hit an ABA reuse window that clears or replaces another invocation's owner and surfaces `The interceptor continuation has expired`.
+- PR, nightly, and release Integration gates now use fixed single-test execution. Adaptive suite parallelism produced unrelated TCP disconnect/deadline failures under host contention without shortening the 252-test wall time; release acceptance no longer depends on runner resource timing.
+
+### Validation
+
+- Exact RC3 produced 103 continuation-expired failures in one 8-second c32 witness and 38 failures across 3/5 paired baseline processes. The candidate completed all five paired c32 processes and 19,843,630 successful intercepted calls with zero failures; deterministic Client and Server ownership tests each fail independently on exact RC3 and pass on the candidate.
+- Five c1 exact-baseline/candidate pairs measured paired-median QPS +0.74%, P50 +2.44% (one-microsecond histogram quantization), P99 -1.25%, allocation/operation -0.006%, and CPU/operation +2.35%. Five c32 pairs measured QPS +2.20%, P50 -1.69%, P99 -2.00%, allocation/operation +0.009%, and CPU/operation -3.33%, excluding a material regression.
+- Non-incremental Release built with zero warnings/errors; Generator 121/121, Unit 510/510, focused Interceptor Integration 18/18, and full Integration 252/252 passed.
+- Two adaptive-parallel full-suite runs failed in different tests, while each failure passed three focused repetitions and the fixed-serial full suite passed 252/252 in 28.0 seconds, matching the parallel suite's successful/failing wall-time range.
+
+## [1.0.0-rc3] - 2026-07-28
+
+### Fixed
+
+- `SharpLink.PackageSmoke` now composes its restore-time package version directly from `VersionPrefix` and `VersionSuffix`. The previous `$(Version)` default was expanded before the SDK synthesized that property, leaving all four SharpLink `PackageReference` versions empty and making the NuGet release gate fail with `NU1015` for every prerelease candidate.
+- Client heartbeat Ping and peer Pong/HealthResponse control frames now wait for bounded send-queue capacity. Sustained OneWay saturation no longer turns a local heartbeat `ResourceExhausted` into a disconnected single-connection pool and a cascade of `Unavailable`; application OneWay sends retain their explicit fail-fast backpressure signal.
+- Response/control-frame capacity waiting first uses the original synchronous queue-admission path and creates an asynchronous waiter only when the queue is actually full, preserving normal-path throughput and allocation behavior.
+- Dispatch observers treat a `ConnectionClosed` raised while a capacity waiter is released by normal session shutdown as expected termination, while continuing to log internal and unexpected exceptions as errors. Rolling restarts no longer fail Chaos solely because an already-closing session cannot accept its final response.
+
+### Validation
+
+- MSBuild property evaluation reports `SharpLinkPackageVersion=1.0.0-rc3`. A fresh package cache restores exclusively from the locally packed SharpLink feed plus NuGet.org, compiles generated contracts without project references, and runs the package consumer over TCP and SharedMemory.
+- Deterministic heartbeat tests prove that a full queue keeps the connection healthy until capacity returns and that Ping, Pong, and HealthResponse retain synchronous completion and exact frames when capacity is available. The Unit suite passes 507/507.
+- A focused dispatch-observer test proves that only expected connection closure is suppressed and that internal or ordinary exceptions still produce the original error log. The Unit suite passes 508/508 after this shutdown-path coverage.
+- Twelve-second single-connection TCP and SharedMemory OneWay saturation witnesses cross the heartbeat interval with only expected `ResourceExhausted` results and zero `Unavailable`. Five exact RC1/RC3 response-load pairs completed without failures; median QPS changed -0.36%, P50 +0.77%, P99 -0.92%, CPU/operation -0.52%, and allocation/operation +0.02%, excluding a material normal-path regression.
+- RC2 was never tagged or published. It is retained locally as the exact response-backpressure fix checkpoint and is superseded because its clean-cache package-consumer gate could not restore the prerelease package graph.
+
+## [1.0.0-rc2] - 2026-07-28
+
+### Fixed
+
+- Server RPC success, service-error, admission-rejection, decode-error, cancellation, and module-drain responses now wait for bounded send-queue capacity instead of allowing a local `ResourceExhausted` enqueue failure to escape synchronous dispatch and terminate the connection. The synchronous fast path remains allocation-free when capacity is available.
+- Response backpressure retains the global and per-connection call-admission slots until the response enters the send queue, bounding queued response work instead of accepting unbounded replacement calls while a slow peer is saturated.
+- The formal performance matrix fixes both endpoints to the same 64 MiB send queue for normal throughput comparisons and uses payload-aware default concurrency. The dedicated OneWay backpressure workload retains profile defaults and reports saturation separately.
+
+### Validation
+
+- Deterministic full-queue regression tests cover mapped error and successful payload responses, connection health before and after recovery, retained admission while blocked, final resource release, exact response contents, and the non-full synchronous fast path. The full Unit suite passes 505/505 with zero build warnings or errors.
+- The original SharedMemory witness at 64 KiB payload and concurrency 128 completed 728,343 calls with 12 client-local default-queue `ResourceExhausted` signals and no `ConnectionClosed`/`Unavailable` cascade. Repeating with the matrix's fixed 64 MiB queue completed 734,065 calls with zero failures.
+- RC1 was never tagged or published. It is retained as a local reproducible checkpoint and superseded by RC2 because its default-queue load witness could amplify one server response enqueue failure into connection-wide failures.
+
+## [1.0.0-rc1] - 2026-07-28
+
+### Release candidate
+
+- Froze the documented public API, Protocol v2 minor-3 wire layout, generated contract surface, package graph, feature demos, operational limits, and release process for final scenario, soak, and performance validation.
+- Confirmed bidirectional independent-process TCP interoperability between the final 0.8 series and the RC code using generated DTO and scalar calls. Protocol v1 and handshake layouts other than minor 3 remain unsupported.
+- Publishes seven consistently versioned libraries with complete XML IntelliSense documentation and matching portable-PDB symbol packages; `SharpLink.Sdk` continues to carry the source generator rather than publishing it as an eighth package.
+
+### Publication status
+
+- This checkpoint is retained locally while the exact-RC performance matrix and long-running soak are completed. No tag, GitHub Release, or NuGet package has been created.
+- Public publication additionally requires the repository `release` Environment, NuGet.org Trusted Publishing policy, private vulnerability reporting, Dependabot alerts, and an initial clean CodeQL result described in `doc/releasing.md`.
+
+## [0.9.2] - 2026-07-28
+
+### Fixed
+
+- Separated semantic package versions from numeric CLR/file versions. `1.0.0-rc1` now builds as package/informational version `1.0.0-rc1` with assembly/file version `1.0.0.0`; previously the prerelease suffix caused compiler error `CS7034` and blocked every RC build.
+- Replaced the obsolete 0.7.4-only performance workflow and three version-bound evidence scripts with the current transport/profile/payload matrix smoke. The benchmark evidence runner no longer writes to a historical version directory.
+
+### Release engineering and security
+
+- Release builds now emit portable PDBs and all seven package projects produce matching `.snupkg` symbol packages while retaining package XML documentation. Package validation, Source Link source embedding, deterministic CI builds, transitive NuGet auditing, and zero-warning product builds are enforced centrally.
+- Added a clean-worktree package verifier for version consistency, exact repository commit, XML documentation, symbol PDBs, and the SDK-embedded Generator. Release Gate uploads verified `.nupkg`/`.snupkg` pairs.
+- Added gated NuGet.org OIDC Trusted Publishing. Main-targeting release PRs now automatically satisfy the repository's required `release-summary`; a `v*` tag publishes only after the complete three-platform build/test, NativeAOT, package-smoke, and Chaos gate succeeds and the protected `release` environment approves it. Manual workflow runs never publish and no long-lived API key is stored.
+- Added a pinned SDK feature band, security policy and private reporting path, Dependabot configuration, scheduled/PR CodeQL analysis, structured Issue/PR templates, least-privilege and commit-pinned workflow actions, PR concurrency control, and an explicit release/rollback checklist.
+- Corrected package copyright metadata and added package-specific descriptions and NativeAOT discovery tags.
+
+### Validation
+
+- A clean-cache 41-project Release rebuild completed with zero warnings/errors; Generator 121/121, Unit 503/503, and Integration 252/252 passed.
+- The pre-fix `1.0.0-rc1` build failed with `CS7034`; the fixed probe builds with zero warnings/errors and emits `1.0.0.0` assembly/file versions plus `1.0.0-rc1+<commit>` informational versions.
+- Seven `0.9.2` `.nupkg` and seven matching `.snupkg` files passed structural verification, and a fresh-cache package consumer restored, generated code, built, and ran successfully. NuGet reported no known vulnerable or deprecated direct/transitive package in the 41-project solution.
+
+## [0.9.1] - 2026-07-28
+
+### Documentation and demos
+
+- Replaced 301 version-specific architecture, audit, migration, performance, and chaos reports with 18 current topic documents covering setup, contracts/codecs, calls/streaming, transports, security, resilience, admission, hosting, observability, multi-cluster/dynamic modules, limits, troubleshooting, migration, architecture, Protocol v2, load testing, and the pending RC performance baseline.
+- Reworked the README documentation index and removed every link to superseded 0.x reports. Local links across README and the complete current documentation set validate without missing targets.
+- Added runnable Security, Compression, AdmissionControl, InterceptorsTelemetry, Resilience, TransportMatrix, and MultiCluster demos. The transport matrix executes TCP, NamedPipe, UDS where supported, SharedMemory, and AnonymousPipe; the multi-cluster demo uses two generated contract assemblies and two physical servers to prove compile-time route isolation.
+
+### Compatibility and validation
+
+- Product runtime behavior and public API are unchanged. The performance matrix default output path no longer embeds an obsolete development version.
+- The complete 41-project Release solution rebuild passes with zero warnings and errors. All seven new demos execute successfully and assert their advertised behavior, including negotiated bidirectional compression, overload rejection, ActivitySource emission, two-endpoint routing, five transports, and two generated cluster routes.
+
+## [0.9.0] - 2026-07-28
+
+### Documentation
+
+- Every public API in the published framework source now has compiler-validated XML documentation; CS1591 is an error for `src/` projects while tests, demos, and generated test contracts remain outside the product API gate.
+- All seven runtime NuGet packages now include their matching XML documentation file for IDE IntelliSense. Generator and SDK APIs are covered by the same source-build gate.
+- Corrected invalid existing XML parameter references and documented protocol values, error identities, authentication/authorization contracts, builders, transports, streaming lifecycle, sessions, and hosting accessors with behavior-specific guidance.
+
+### Compatibility and validation
+
+- Runtime behavior, public signatures, Protocol v2 bytes, generated identifiers, and hot paths are unchanged; this checkpoint changes comments and build/package policy only.
+- The compiler-backed pre-fix witness contained 266 unique missing public members across published source projects; the final count is zero with a non-incremental Release build at zero warnings and zero errors.
+- Generator 121/121, Unit 503/503, and Integration 252/252 passed. All seven `0.9.0` packages were inspected and contain their corresponding `lib/net10.0/*.xml` documentation file.
+
 ## [0.8.44] - 2026-07-28
 
 ### Fixed

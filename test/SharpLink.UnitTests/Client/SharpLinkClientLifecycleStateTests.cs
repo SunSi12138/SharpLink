@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.IO.Pipelines;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Threading;
@@ -51,6 +52,120 @@ public class SharpLinkClientLifecycleStateTests
         await WaitUntilAsync(
             () => connection.State == ClientConnectionState.Closed,
             () => $"heartbeat did not close the silent connection; state={connection.State}");
+    }
+
+    [Test]
+    public async Task FullSendQueueHeartbeatShouldWaitForCapacityWithoutClosingConnection()
+    {
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(static options => options.FlowControl.MaxSendQueueBytes = 1)
+            .Build();
+        await using var client = new SharpLinkClient(
+            new NonConnectingFactory(),
+            TimeSpan.FromHours(1),
+            TimeSpan.FromHours(2),
+            runtimeContext: context);
+        var input = new Pipe();
+        var output = new BlockingFlushPipeWriter();
+        var session = new RpcSession(
+            "heartbeat-backpressure",
+            input.Reader,
+            output,
+            static () => { },
+            static () => true);
+        session.BindRuntimeContext(context);
+        using var connectionCancellation = new CancellationTokenSource();
+        await using var connection = new ClientConnection(
+            client,
+            session,
+            connectionCancellation,
+            8,
+            context.Codecs);
+        var runHeartbeat = typeof(SharpLinkClient).GetMethod(
+            "RunHeartbeatSendLoopAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Client heartbeat wrapper");
+
+        session.SendHealthCheck(99);
+        await output.FirstFlushStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var heartbeat = (Task)runHeartbeat.Invoke(
+            client,
+            [connection, connectionCancellation.Token])!;
+
+        try
+        {
+            Ensure(!heartbeat.IsCompleted,
+                "a full send queue must leave Ping on the asynchronous capacity-wait path");
+            Ensure(connection.State == ClientConnectionState.Ready && session.IsConnected,
+                "heartbeat queue pressure must not close the ready client connection");
+
+            output.ReleaseFlush();
+            await output.SecondFlushStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            EnsureTimestampFrame(
+                output.WrittenMemory,
+                context.Protocol,
+                ProtocolV2FrameType.Ping,
+                expectedTimestamp: null);
+
+            connectionCancellation.Cancel();
+            await heartbeat.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(connection.State == ClientConnectionState.Ready && session.IsConnected,
+                "capacity recovery and expected loop cancellation must keep the connection healthy");
+        }
+        finally
+        {
+            output.ReleaseFlush();
+            connectionCancellation.Cancel();
+            try
+            {
+                await heartbeat.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            await input.Writer.CompleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task AvailableControlFrameQueueShouldKeepSynchronousFastPath()
+    {
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(static options => options.FlowControl.MaxSendQueueBytes = 1024)
+            .Build();
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = new RpcSession(
+            "control-frame-fast-path",
+            input.Reader,
+            output.Writer,
+            static () => { },
+            static () => true);
+        session.BindRuntimeContext(context);
+        const long pongTimestamp = 0x0102_0304_0506_0708;
+
+        var ping = session.SendPingWithBackpressureAsync();
+        var pong = session.SendPongWithBackpressureAsync(pongTimestamp);
+        var health = session.SendHealthResponseWithBackpressureAsync(17, SharpLinkHealthStatus.Ready);
+
+        Ensure(ping.IsCompletedSuccessfully,
+            "an available queue must preserve synchronous Ping completion");
+        Ensure(pong.IsCompletedSuccessfully,
+            "the shared timestamp primitive must preserve synchronous Pong completion");
+        Ensure(health.IsCompletedSuccessfully,
+            "the shared control-frame primitive must preserve synchronous HealthResponse completion");
+        await ping;
+        await pong;
+        await health;
+        await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+        var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        EnsureTimestampFrame(read.Buffer, context.Protocol, ProtocolV2FrameType.Ping, expectedTimestamp: null);
+        EnsureTimestampFrame(read.Buffer, context.Protocol, ProtocolV2FrameType.Pong, pongTimestamp);
+        EnsureHealthResponseFrame(read.Buffer, context.Protocol, 17, SharpLinkHealthStatus.Ready);
+        output.Reader.AdvanceTo(read.Buffer.End);
+        await output.Reader.CompleteAsync();
+        await input.Writer.CompleteAsync();
     }
 
     [Test]
@@ -741,6 +856,65 @@ public class SharpLinkClientLifecycleStateTests
         }
     }
 
+    private static void EnsureTimestampFrame(
+        ReadOnlyMemory<byte> bytes,
+        SharpLinkProtocolOptions limits,
+        ProtocolV2FrameType expectedType,
+        long? expectedTimestamp)
+        => EnsureTimestampFrame(
+            new ReadOnlySequence<byte>(bytes),
+            limits,
+            expectedType,
+            expectedTimestamp);
+
+    private static void EnsureTimestampFrame(
+        ReadOnlySequence<byte> bytes,
+        SharpLinkProtocolOptions limits,
+        ProtocolV2FrameType expectedType,
+        long? expectedTimestamp)
+    {
+        var remaining = bytes;
+        while (ProtocolV2FrameParser.TryReadFrame(ref remaining, limits, out var header, out var payload))
+        {
+            if (header.Type != expectedType)
+                continue;
+
+            Ensure(header.RequestId == 0 && header.Flags == ProtocolV2FrameFlags.None,
+                $"{expectedType} must retain its control-frame header");
+            Ensure(payload.Length == sizeof(long), $"{expectedType} must retain its timestamp payload");
+            var timestamp = BinaryPrimitives.ReadInt64LittleEndian(payload.ToArray());
+            Ensure(expectedTimestamp is { } expected
+                    ? timestamp == expected
+                    : timestamp > 0,
+                $"{expectedType} must retain the expected monotonic timestamp");
+            return;
+        }
+
+        throw new Exception($"{expectedType} frame was not emitted");
+    }
+
+    private static void EnsureHealthResponseFrame(
+        ReadOnlySequence<byte> bytes,
+        SharpLinkProtocolOptions limits,
+        ulong expectedRequestId,
+        SharpLinkHealthStatus expectedStatus)
+    {
+        var remaining = bytes;
+        while (ProtocolV2FrameParser.TryReadFrame(ref remaining, limits, out var header, out var payload))
+        {
+            if (header.Type != ProtocolV2FrameType.HealthResponse)
+                continue;
+
+            Ensure(header.RequestId == expectedRequestId && header.Flags == ProtocolV2FrameFlags.None,
+                "HealthResponse must retain its request identity and control-frame flags");
+            Ensure(ProtocolV2PayloadCodec.ReadHealthResponse(payload).Status == expectedStatus,
+                "HealthResponse must retain its exact status payload");
+            return;
+        }
+
+        throw new Exception($"HealthResponse frame {expectedRequestId} was not emitted");
+    }
+
     private static async Task EnsureCancelledAsync(Task operation)
     {
         try
@@ -805,6 +979,37 @@ public class SharpLinkClientLifecycleStateTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private sealed class BlockingFlushPipeWriter : PipeWriter
+    {
+        private readonly ArrayBufferWriter<byte> _buffer = new();
+        private readonly TaskCompletionSource<FlushResult> _flush =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _flushCount;
+
+        internal TaskCompletionSource FirstFlushStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource SecondFlushStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal ReadOnlyMemory<byte> WrittenMemory => _buffer.WrittenMemory;
+
+        public override void Advance(int bytes) => _buffer.Advance(bytes);
+        public override void CancelPendingFlush() => _flush.TrySetResult(new FlushResult(true, false));
+        public override void Complete(Exception? exception = null) => ReleaseFlush();
+        public override ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _flushCount) == 1)
+                FirstFlushStarted.TrySetResult();
+            else
+                SecondFlushStarted.TrySetResult();
+            return new ValueTask<FlushResult>(_flush.Task.WaitAsync(cancellationToken));
+        }
+        public override Memory<byte> GetMemory(int sizeHint = 0) => _buffer.GetMemory(sizeHint);
+        public override Span<byte> GetSpan(int sizeHint = 0) => _buffer.GetSpan(sizeHint);
+
+        internal void ReleaseFlush()
+            => _flush.TrySetResult(new FlushResult(isCanceled: false, isCompleted: false));
     }
 
     private static async Task ObserveFailureAsync(ValueTask<int> operation)

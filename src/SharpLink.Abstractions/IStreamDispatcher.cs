@@ -1,11 +1,17 @@
 namespace SharpLink.Abstractions;
 
-// 4. 流分发器抽象 (用于 StreamManager)
-// 允许网络层将二进制数据推送到具体类型的 Channel 中
+/// <summary>Dispatches encoded stream chunks to one typed stream consumer.</summary>
 public interface IStreamDispatcher
 {
+    /// <summary>Decodes and queues one stream payload.</summary>
+    /// <param name="payload">The complete encoded item payload.</param>
     ValueTask DispatchAsync(ReadOnlySequence<byte> payload);
+    /// <summary>Completes the consumer from a peer stream-completion frame.</summary>
+    /// <param name="isError">Whether the peer reported an error.</param>
+    /// <param name="errorMessage">The peer's error message, when present.</param>
     void Complete(bool isError, string? errorMessage);
+    /// <summary>Completes the consumer because local processing terminated.</summary>
+    /// <param name="exception">The terminal exception, or <see langword="null"/> for successful completion.</param>
     void Complete(Exception? exception);
 }
 

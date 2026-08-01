@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/SunSi12138/SharpLink/security/advisories/new
+    about: Report suspected vulnerabilities privately instead of opening a public Issue.
+  - name: Documentation
+    url: https://github.com/SunSi12138/SharpLink/tree/dev/doc
+    about: Check current feature behavior, limits, and troubleshooting guidance.

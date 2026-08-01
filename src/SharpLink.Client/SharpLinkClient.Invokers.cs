@@ -609,7 +609,7 @@ internal sealed partial class SharpLinkClient
         ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
-        dispatcher.RetainForRegistration();
+        var registrationLease = dispatcher.RetainForRegistration();
         ClientConnection? connection = null;
         var requestId = 0L;
         try
@@ -641,7 +641,7 @@ internal sealed partial class SharpLinkClient
         }
         finally
         {
-            dispatcher.ReleaseRegistrationRetention();
+            dispatcher.ReleaseRegistrationRetention(registrationLease);
         }
     }
 
@@ -657,7 +657,7 @@ internal sealed partial class SharpLinkClient
     {
         var moduleProducerLifetime = SharpLinkClientStreamModuleLeaseContext.Current;
         SharpLinkDynamicModuleLease producerLease = default;
-        dispatcher.RetainForRegistration();
+        var registrationLease = dispatcher.RetainForRegistration();
         ClientConnection? connection = null;
         var requestId = 0L;
         try
@@ -691,7 +691,7 @@ internal sealed partial class SharpLinkClient
         finally
         {
             producerLease.Dispose();
-            dispatcher.ReleaseRegistrationRetention();
+            dispatcher.ReleaseRegistrationRetention(registrationLease);
         }
     }
 

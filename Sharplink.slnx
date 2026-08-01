@@ -13,6 +13,15 @@
     <Project Path="demo/SeparatedContracts/SeparatedContracts.csproj" />
     <Project Path="demo/SeparatedServer/SeparatedServer.csproj" />
     <Project Path="demo/SeparatedClient/SeparatedClient.csproj" />
+    <Project Path="demo/Security/Security.csproj" />
+    <Project Path="demo/Compression/Compression.csproj" />
+    <Project Path="demo/AdmissionControl/AdmissionControl.csproj" />
+    <Project Path="demo/InterceptorsTelemetry/InterceptorsTelemetry.csproj" />
+    <Project Path="demo/Resilience/Resilience.csproj" />
+    <Project Path="demo/TransportMatrix/TransportMatrix.csproj" />
+    <Project Path="demo/MultiCluster/MultiCluster.csproj" />
+    <Project Path="demo/MultiCluster.Orders.Contracts/MultiCluster.Orders.Contracts.csproj" />
+    <Project Path="demo/MultiCluster.Payments.Contracts/MultiCluster.Payments.Contracts.csproj" />
     <Project Path="src/SharpLink.Client/SharpLink.Client.csproj" />
     <Project Path="src/SharpLink.Server/SharpLink.Server.csproj" />
     <Project Path="src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
@@ -23,6 +32,7 @@
     <Project Path="test/SharpLink.LoadTestBase/SharpLink.LoadTestBase.csproj" />
     <Project Path="test/SharpLink.LoadTest/SharpLink.LoadTest.csproj" />
     <Project Path="test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj" />
+    <Project Path="test/SharpLink.StreamLoadTest.Tests/SharpLink.StreamLoadTest.Tests.csproj" />
     <Project Path="test/SharpLink.ChaosTests/SharpLink.ChaosTests.csproj" />
     <Project Path="test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj" />
     <Project Path="test/SharpLink.DynamicContracts/SharpLink.DynamicContracts.csproj" />

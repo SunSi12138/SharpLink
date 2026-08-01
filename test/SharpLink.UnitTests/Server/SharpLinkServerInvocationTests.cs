@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using SharpLink.Server;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
@@ -14,6 +15,46 @@ namespace SharpLink.UnitTests.Server;
 
 public class SharpLinkServerInvocationTests
 {
+    [Test]
+    public async Task DispatchObserverShouldSuppressOnlyExpectedConnectionClosure()
+    {
+        var loggerFactory = new CaptureLoggerFactory();
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .DisableAutomaticServiceRegistration()
+            .UseLoggerFactory(loggerFactory)
+            .UseTransport(new IdleListener())
+            .Build();
+        var awaitDispatch = typeof(SharpLinkServer).GetMethod(
+            "AwaitDispatchAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Server dispatch observer");
+        var expectedClosure = new SharpLinkException(
+            SharpLinkErrorCode.ConnectionClosed,
+            "Session is stopping.");
+
+        await InvokeAwaitDispatchAsync(awaitDispatch, server, expectedClosure, requestId: 41);
+
+        Ensure(loggerFactory.ErrorEntries.Count == 0,
+            "normal session shutdown must not be reported as an unhandled dispatch error");
+
+        var internalFailure = new SharpLinkException(
+            SharpLinkErrorCode.Internal,
+            "dispatch failed internally");
+        await InvokeAwaitDispatchAsync(awaitDispatch, server, internalFailure, requestId: 42);
+        Ensure(loggerFactory.ErrorEntries is [{ EventId.Id: LogEvents.Rpc.DispatchFailed } internalEntry] &&
+               ReferenceEquals(internalEntry.Exception, internalFailure),
+            "non-terminal SharpLink failures must remain observable as dispatch errors");
+
+        var unexpectedFailure = new InvalidOperationException("unexpected dispatch failure");
+        await InvokeAwaitDispatchAsync(awaitDispatch, server, unexpectedFailure, requestId: 43);
+        Ensure(loggerFactory.ErrorEntries is
+               [
+                   { EventId.Id: LogEvents.Rpc.DispatchFailed },
+                   { EventId.Id: LogEvents.Rpc.DispatchFailed } unexpectedEntry
+               ] && ReferenceEquals(unexpectedEntry.Exception, unexpectedFailure),
+            "ordinary unexpected failures must remain observable as dispatch errors");
+    }
+
     [Test]
     [NotInParallel]
     public async Task CallAdmissionShouldNotCrossTheServerDrainBoundary()
@@ -213,98 +254,99 @@ public class SharpLinkServerInvocationTests
     }
 
     [Test]
-    public async Task FailedErrorResponseEnqueueShouldStillReleaseTheServerCall()
+    public async Task FullErrorResponseQueueShouldWaitForCapacityWithoutClosingConnection()
     {
-        var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
-            .DisableAutomaticServiceRegistration()
-            .UseRuntime(static options => options.FlowControl.MaxSendQueueBytes = 1)
-            .UseTransport(new IdleListener())
-            .Build();
-        var runtimeContext = (SharpLinkRuntimeContext)(
-            typeof(SharpLinkServer).GetField("_runtimeContext", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(server)!);
-        var input = new Pipe();
         var output = new BlockingFlushPipeWriter();
-        await using var session = new RpcSession(
-            "error-response-capacity",
-            input.Reader,
-            output,
-            static () => { },
-            static () => true);
-        session.BindRuntimeContext(runtimeContext);
-        var connection = new ServerConnectionState(
-            session,
-            new RuntimeConcurrencyOptions(),
-            CancellationToken.None);
-        Ensure(connection.MarkReady(null), "connection ready");
-        var stub = new SynchronouslyThrowingStub();
-        var registration = ServiceRegistration.CreateSingleton(
-            typeof(ThrowingService),
-            stub,
-            new ThrowingService(),
-            ownsService: false);
-        typeof(SharpLinkServer).GetField("_services", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .SetValue(server, new Dictionary<long, ServiceRegistration> { [stub.InterfaceHash] = registration }
-                .ToFrozenDictionary());
-        var setState = CreateInterlockedInt32Setter<SharpLinkServer>("_state");
-        const int running = 2;
-        setState(server, running);
-        session.SendHealthCheck(99);
+        await using var harness = new ServerDispatchHarness(
+            new SynchronouslyThrowingStub(), output, maxSendQueueBytes: 1);
+        harness.Session.SendHealthCheck(99);
         await output.FlushStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        var request = new byte[sizeof(long) * 2];
-        BinaryPrimitives.WriteInt64LittleEndian(request, stub.InterfaceHash);
-        BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), 1);
-        var dispatch = typeof(SharpLinkServer).GetMethod(
-            "DispatchRpcAsync",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find Server RPC dispatch path");
-        var globalActiveCalls = typeof(SharpLinkServer).GetField(
-            "_globalActiveCalls",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find global active-call counter");
-        var connectionActiveCalls = typeof(ServerConnectionState).GetField(
-            "_activeCalls",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find connection active-call counter");
 
-        Exception? failure = null;
-        try
-        {
-            try
-            {
-                var operation = (ValueTask)dispatch.Invoke(server,
-                [
-                    connection,
-                    1L,
-                    ProtocolV2FrameFlags.None,
-                    new ReadOnlySequence<byte>(request),
-                    connection.CallCancellations,
-                    CancellationToken.None,
-                    null,
-                    false
-                ])!;
-                await operation;
-            }
-            catch (Exception exception)
-            {
-                failure = exception is TargetInvocationException { InnerException: { } inner }
-                    ? inner
-                    : exception;
-            }
+        var operation = harness.Dispatch(1, ProtocolV2FrameFlags.None);
 
-            Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted },
-                $"the bounded send queue should reject the error response, actual: {failure}");
-            Ensure((int)globalActiveCalls.GetValue(server)! == 0 && connection.ActiveCalls == 0,
-                "a failed error-response enqueue must not leak the Server call admission counters");
-        }
-        finally
-        {
-            globalActiveCalls.SetValue(server, 0);
-            connectionActiveCalls.SetValue(connection, 0);
-            output.ReleaseFlush();
-            await connection.CloseAsync();
-            await server.DisposeAsync();
-        }
+        Ensure(!operation.IsCompleted,
+            "a full response queue must move synchronous error dispatch to the capacity-wait slow path");
+        Ensure(harness.Session.IsConnected,
+            "response backpressure must not close an otherwise healthy session");
+        Ensure(harness.GlobalActiveCalls == 1 && harness.Connection.ActiveCalls == 1,
+            "the error response must retain both admission slots while waiting for queue capacity");
+
+        output.ReleaseFlush();
+        await operation.AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        await harness.Session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(harness.Session.IsConnected,
+            "the session must remain usable after deferred error-response admission");
+        Ensure(harness.GlobalActiveCalls == 0 && harness.Connection.ActiveCalls == 0,
+            "deferred error-response completion must release both call counters");
+        EnsureResponseFrame(
+            output.WrittenMemory,
+            harness.Session.RuntimeContext.Protocol,
+            requestId: 1,
+            expectedError: SharpLinkErrorCode.Internal,
+            expectedPayloadByte: null);
+    }
+
+    [Test]
+    public async Task FullPayloadResponseQueueShouldWaitForCapacityWithoutClosingConnection()
+    {
+        var output = new BlockingFlushPipeWriter();
+        await using var harness = new ServerDispatchHarness(
+            new SynchronouslyRespondingStub(), output, maxSendQueueBytes: 1);
+        harness.Session.SendHealthCheck(99);
+        await output.FlushStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var operation = harness.Dispatch(2, ProtocolV2FrameFlags.HasReturn);
+
+        Ensure(!operation.IsCompleted,
+            "a full response queue must move synchronous payload dispatch to the capacity-wait slow path");
+        Ensure(harness.Session.IsConnected,
+            "payload-response backpressure must not close an otherwise healthy session");
+        Ensure(harness.GlobalActiveCalls == 1 && harness.Connection.ActiveCalls == 1,
+            "the payload response must retain both admission slots while waiting for queue capacity");
+
+        output.ReleaseFlush();
+        await operation.AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        await harness.Session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(harness.Session.IsConnected,
+            "the session must remain usable after deferred payload-response admission");
+        Ensure(harness.GlobalActiveCalls == 0 && harness.Connection.ActiveCalls == 0,
+            "deferred payload-response completion must release both call counters");
+        EnsureResponseFrame(
+            output.WrittenMemory,
+            harness.Session.RuntimeContext.Protocol,
+            requestId: 2,
+            expectedError: null,
+            expectedPayloadByte: SynchronouslyRespondingStub.ResponseByte);
+    }
+
+    [Test]
+    public async Task AvailableResponseQueueShouldKeepSynchronousDispatchFastPath()
+    {
+        var output = new Pipe();
+        await using var harness = new ServerDispatchHarness(
+            new SynchronouslyRespondingStub(), output.Writer, maxSendQueueBytes: 1024);
+
+        var operation = harness.Dispatch(3, ProtocolV2FrameFlags.HasReturn);
+
+        Ensure(operation.IsCompletedSuccessfully,
+            "an available response queue must preserve synchronous dispatch completion");
+        await operation;
+        Ensure(harness.Session.IsConnected, "the synchronous fast path must keep the session healthy");
+        Ensure(harness.GlobalActiveCalls == 0 && harness.Connection.ActiveCalls == 0,
+            "the synchronous fast path must release both call counters before returning");
+
+        await harness.Session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        EnsureResponseFrame(
+            read.Buffer,
+            harness.Session.RuntimeContext.Protocol,
+            requestId: 3,
+            expectedError: null,
+            expectedPayloadByte: SynchronouslyRespondingStub.ResponseByte);
+        output.Reader.AdvanceTo(read.Buffer.End);
+        await output.Reader.CompleteAsync();
     }
 
     [Test]
@@ -364,6 +406,62 @@ public class SharpLinkServerInvocationTests
         return exception.InnerException is { } nested && ContainsMessage(nested, message);
     }
 
+    private static Task InvokeAwaitDispatchAsync(
+        MethodInfo awaitDispatch,
+        SharpLinkServer server,
+        Exception exception,
+        long requestId)
+        => (Task)awaitDispatch.Invoke(
+            server,
+            [ValueTask.FromException(exception), requestId])!;
+
+    private static void EnsureResponseFrame(
+        ReadOnlyMemory<byte> bytes,
+        SharpLinkProtocolOptions limits,
+        ulong requestId,
+        SharpLinkErrorCode? expectedError,
+        byte? expectedPayloadByte)
+        => EnsureResponseFrame(
+            new ReadOnlySequence<byte>(bytes),
+            limits,
+            requestId,
+            expectedError,
+            expectedPayloadByte);
+
+    private static void EnsureResponseFrame(
+        ReadOnlySequence<byte> bytes,
+        SharpLinkProtocolOptions limits,
+        ulong requestId,
+        SharpLinkErrorCode? expectedError,
+        byte? expectedPayloadByte)
+    {
+        var remaining = bytes;
+        while (ProtocolV2FrameParser.TryReadFrame(ref remaining, limits, out var header, out var payload))
+        {
+            if (header.RequestId != requestId)
+                continue;
+
+            Ensure(header.Type == ProtocolV2FrameType.Response, "dispatch must emit a response frame");
+            if (expectedError is { } errorCode)
+            {
+                Ensure((header.Flags & ProtocolV2FrameFlags.Error) != 0,
+                    "service failure must emit an error response");
+                var error = ProtocolV2PayloadCodec.ReadError(payload, header.Flags, limits.MaxErrorMessageBytes);
+                Ensure(error.Code == errorCode, "deferred response must preserve the mapped service error");
+            }
+            else
+            {
+                Ensure(header.Flags == ProtocolV2FrameFlags.None,
+                    "successful response must not carry error flags");
+                Ensure(payload.Length == 1 && payload.FirstSpan[0] == expectedPayloadByte,
+                    "successful response must preserve its serialized payload");
+            }
+            return;
+        }
+
+        throw new Exception($"response frame {requestId} was not emitted");
+    }
+
     private static TDelegate CreatePrivateCall<TDelegate>(MethodInfo method)
         where TDelegate : Delegate
     {
@@ -410,6 +508,38 @@ public class SharpLinkServerInvocationTests
         if (!condition)
             throw new Exception(message);
     }
+
+    private sealed class CaptureLoggerFactory : ILoggerFactory
+    {
+        private readonly Lock _gate = new();
+
+        internal List<LogEntry> ErrorEntries { get; } = [];
+
+        public ILogger CreateLogger(string categoryName) => new CaptureLogger(this);
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+
+        private sealed class CaptureLogger(CaptureLoggerFactory owner) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                if (logLevel != LogLevel.Error)
+                    return;
+                lock (owner._gate)
+                    owner.ErrorEntries.Add(new LogEntry(eventId, exception));
+            }
+        }
+    }
+
+    private readonly record struct LogEntry(EventId EventId, Exception? Exception);
 
     private sealed class IdleListener : IServerTransportListener
     {
@@ -514,6 +644,142 @@ public class SharpLinkServerInvocationTests
             => throw new InvalidOperationException("handler failed synchronously");
     }
 
+    private sealed class SynchronouslyRespondingStub : IRpcStub
+    {
+        internal const byte ResponseByte = 0x2A;
+        public long InterfaceHash => 8;
+
+        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        {
+            descriptor = new RpcMethodDescriptor(
+                InterfaceHash,
+                methodHash,
+                RpcMethodKind.Unary,
+                HasResponsePayload: true,
+                HasClientStreams: false,
+                HasMethodTimeout: false,
+                MethodTimeout: null);
+            return true;
+        }
+
+        public ValueTask InvokeNoReturnAsync(object service, IRpcSession session, long methodHash,
+            long requestId, ReadOnlySequence<byte> args) => ValueTask.CompletedTask;
+
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcSession session, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+
+        public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output)
+        {
+            output.Write([ResponseByte]);
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask InvokeCancellableAsync(object service, IRpcSession session, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output,
+            CancellationToken cancellationToken)
+            => InvokeAsync(service, session, methodHash, requestId, args, output);
+    }
+
+    private sealed class ServerDispatchHarness : IAsyncDisposable
+    {
+        private static readonly MethodInfo DispatchMethod = typeof(SharpLinkServer).GetMethod(
+            "DispatchRpcAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Server RPC dispatch path");
+        private static readonly FieldInfo GlobalActiveCallsField = typeof(SharpLinkServer).GetField(
+            "_globalActiveCalls",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find global active-call counter");
+        private static readonly FieldInfo ConnectionActiveCallsField = typeof(ServerConnectionState).GetField(
+            "_activeCalls",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find connection active-call counter");
+        private static readonly Action<SharpLinkServer, int> SetServerState =
+            CreateInterlockedInt32Setter<SharpLinkServer>("_state");
+
+        private readonly Pipe _input = new();
+        private readonly PipeWriter _output;
+        private readonly IRpcStub _stub;
+
+        internal ServerDispatchHarness(IRpcStub stub, PipeWriter output, int maxSendQueueBytes)
+        {
+            _stub = stub;
+            _output = output;
+            Server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+                .DisableAutomaticServiceRegistration()
+                .UseRuntime(options => options.FlowControl.MaxSendQueueBytes = maxSendQueueBytes)
+                .UseTransport(new IdleListener())
+                .Build();
+            var runtimeContext = (SharpLinkRuntimeContext)(
+                typeof(SharpLinkServer).GetField(
+                    "_runtimeContext",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(Server)!);
+            Session = new RpcSession(
+                "response-capacity",
+                _input.Reader,
+                output,
+                static () => { },
+                static () => true);
+            Session.BindRuntimeContext(runtimeContext);
+            Connection = new ServerConnectionState(
+                Session,
+                new RuntimeConcurrencyOptions(),
+                CancellationToken.None);
+            Ensure(Connection.MarkReady(null), "connection ready");
+            var registration = ServiceRegistration.CreateSingleton(
+                typeof(ThrowingService),
+                stub,
+                new ThrowingService(),
+                ownsService: false);
+            typeof(SharpLinkServer).GetField(
+                    "_services",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(Server, new Dictionary<long, ServiceRegistration>
+                {
+                    [stub.InterfaceHash] = registration
+                }.ToFrozenDictionary());
+            const int running = 2;
+            SetServerState(Server, running);
+        }
+
+        internal SharpLinkServer Server { get; }
+        internal RpcSession Session { get; }
+        internal ServerConnectionState Connection { get; }
+        internal int GlobalActiveCalls => (int)GlobalActiveCallsField.GetValue(Server)!;
+
+        internal ValueTask Dispatch(long requestId, ProtocolV2FrameFlags flags)
+        {
+            var request = new byte[sizeof(long) * 2];
+            BinaryPrimitives.WriteInt64LittleEndian(request, _stub.InterfaceHash);
+            BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), 1);
+            return (ValueTask)DispatchMethod.Invoke(Server,
+            [
+                Connection,
+                requestId,
+                flags,
+                new ReadOnlySequence<byte>(request),
+                Connection.CallCancellations,
+                CancellationToken.None,
+                null,
+                false
+            ])!;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            GlobalActiveCallsField.SetValue(Server, 0);
+            ConnectionActiveCallsField.SetValue(Connection, 0);
+            if (_output is BlockingFlushPipeWriter blocking)
+                blocking.ReleaseFlush();
+            await Connection.CloseAsync();
+            await Server.DisposeAsync();
+            await _input.Writer.CompleteAsync();
+        }
+    }
+
     private sealed class BlockingFlushPipeWriter : PipeWriter
     {
         private readonly ArrayBufferWriter<byte> _buffer = new();
@@ -522,6 +788,8 @@ public class SharpLinkServerInvocationTests
 
         internal TaskCompletionSource FlushStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal ReadOnlyMemory<byte> WrittenMemory => _buffer.WrittenMemory;
 
         public override void Advance(int bytes) => _buffer.Advance(bytes);
         public override void CancelPendingFlush() => _flush.TrySetResult(new FlushResult(true, false));

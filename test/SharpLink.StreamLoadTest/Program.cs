@@ -52,11 +52,13 @@ public static class Program
         Console.WriteLine("  --transport tcp|uds|namedpipe|anonymous|sharedmemory");
         Console.WriteLine("  --host 127.0.0.1 --bind-ip 0.0.0.0 --port 19150");
         Console.WriteLine("  --duration 20 --warmup 5 --concurrency 1,2,4,8,16");
-        Console.WriteLine("  --operation all|unary|c2s|s2c|duplex");
+        Console.WriteLine("  --operation all|unary|c2s|s2c|duplex|duplex-equivalent");
         Console.WriteLine("  --stream-size 256");
+        Console.WriteLine("  --message-bytes 4096 --messages-per-stream 8 (duplex-equivalent)");
         Console.WriteLine("  --consumer-delay-ms 0 --early-break-after 0 --pause-after 0 --pause-ms 0");
         Console.WriteLine("  --min-connections 1 --max-connections 1");
         Console.WriteLine("  --profile balanced|lowlatency|throughput");
+        Console.WriteLine("  --max-send-queue-bytes 67108864 (optional bounded throughput-test override)");
         Console.WriteLine("  --shm-name sharplink-stream-loadtest --shm-capacity 8388608 --shm-spin-count 8");
         Console.WriteLine("  --detailed-shm-evidence (diagnostic counters; do not use for formal timing)");
         Console.WriteLine("  --json-output artifacts/perf/stream.json");
@@ -73,9 +75,12 @@ public static class Program
     private static void PrintConfig(StreamLoadOptions options)
     {
         Console.WriteLine($"[Config] mode={options.Mode} transport={options.Transport} op={options.Operation} duration={options.DurationSeconds}s warmup={options.WarmupSeconds}s streamSize={options.StreamSize}");
+        if (options.Operation == "duplex-equivalent")
+            Console.WriteLine($"[Config] equivalentDuplex={options.MessageBytes}B x {options.MessagesPerStream} messages/stream with full response validation");
         Console.WriteLine(
             $"[Config] concurrency=[{string.Join(',', options.ConcurrencyConfig)}] " +
             $"pool={options.MinConnections}/{options.MaxConnections} profile={options.PerformanceProfile} " +
+            $"sendQueue={options.MaxSendQueueBytes?.ToString() ?? "profile-default"}B " +
             $"delay={options.ConsumerDelayMilliseconds}ms earlyBreak={options.EarlyBreakAfter} " +
             $"pause={options.PauseAfter}/{options.PauseMilliseconds}ms");
 
@@ -109,7 +114,9 @@ public static class Program
             options.PerformanceProfile,
             sharedMemoryName: options.SharedMemoryName,
             sharedMemoryCapacity: options.SharedMemoryCapacity,
-            sharedMemorySpinCount: options.SharedMemorySpinCount);
+            sharedMemorySpinCount: options.SharedMemorySpinCount,
+            configureServerRuntime: runtime => ConfigureRuntime(runtime, options),
+            configureClientRuntime: runtime => ConfigureRuntime(runtime, options));
 
         using var serverCts = new CancellationTokenSource();
         var serverTask = RunServerLoopAsync(harness.Server, serverCts.Token);
@@ -161,7 +168,8 @@ public static class Program
             options.PerformanceProfile,
             options.SharedMemoryName,
             options.SharedMemoryCapacity,
-            options.SharedMemorySpinCount);
+            options.SharedMemorySpinCount,
+            runtime => ConfigureRuntime(runtime, options));
 
         Console.WriteLine("[Server] started");
         await server.RunAsync(cancel.Token);
@@ -185,7 +193,8 @@ public static class Program
             options.PerformanceProfile,
             sharedMemoryName: options.SharedMemoryName,
             sharedMemoryCapacity: options.SharedMemoryCapacity,
-            sharedMemorySpinCount: options.SharedMemorySpinCount);
+            sharedMemorySpinCount: options.SharedMemorySpinCount,
+            configureRuntime: runtime => ConfigureRuntime(runtime, options));
 
         try
         {
@@ -214,7 +223,9 @@ public static class Program
                 }
 
                 var result = await ExecuteStageAsync(rpc, operation, options, options.DurationSeconds, concurrency);
-                Console.WriteLine($"[Result] op={result.Operation} c={result.Concurrency} qps={result.Qps:F2} ok={result.Success} fail={result.Failure} err={result.ErrorRatePercent:F2}% p50={result.P50Us:F2}us p95={result.P95Us:F2}us p99={result.P99Us:F2}us avg={result.AvgUs:F2}us max={result.MaxUs:F2}us dur={result.ElapsedSeconds:F2}s");
+                Console.WriteLine($"[Result] op={result.Operation} c={result.Concurrency} qps={result.Qps:F2} ok={result.Success} fail={result.Failure} validationFail={result.ValidationFailure} cancelled={result.Cancelled} err={result.ErrorRatePercent:F2}% p50={result.P50Us:F2}us p95={result.P95Us:F2}us p99={result.P99Us:F2}us avg={result.AvgUs:F2}us max={result.MaxUs:F2}us dur={result.ElapsedSeconds:F2}s");
+                if (result.ValidatedMessages > 0)
+                    Console.WriteLine($"[EquivalentDuplex] messages={result.ValidatedMessages} msgps={result.MessagesPerSecond:F2} directionalMiBps={result.DirectionalBusinessMiBPerSecond:F2}");
                 if (!string.IsNullOrEmpty(result.TopFailures))
                     Console.WriteLine($"[Failures] {result.TopFailures}");
                 results.Add(result);
@@ -239,9 +250,16 @@ public static class Program
         var histogram = new LatencyHistogram();
         var failures = new FailureRecorder();
         var payload = Enumerable.Range(1, options.StreamSize).ToArray();
+        var equivalentMessages = operation == "duplex-equivalent"
+            ? EquivalentDuplexWorkload.CreateMessages(options.MessageBytes, options.MessagesPerStream)
+            : null;
 
         long success = 0;
         long failure = 0;
+        long validationFailure = 0;
+        long cancelled = 0;
+        long validatedMessages = 0;
+        long nextOperationId = 0;
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(durationSeconds));
         var token = cts.Token;
         var timer = Stopwatch.StartNew();
@@ -257,10 +275,30 @@ public static class Program
                     var start = Stopwatch.GetTimestamp();
                     try
                     {
-                        await InvokeOperationAsync(rpc, operation, payload, options, token);
+                        var operationId = Interlocked.Increment(ref nextOperationId);
+                        var messages = await InvokeOperationAsync(
+                            rpc,
+                            operation,
+                            operationId,
+                            payload,
+                            equivalentMessages,
+                            options,
+                            token);
                         var us = Stopwatch.GetElapsedTime(start).TotalMilliseconds * 1000.0;
                         histogram.Record(us);
+                        Interlocked.Add(ref validatedMessages, messages);
                         Interlocked.Increment(ref success);
+                    }
+                    catch (EquivalentDuplexValidationException ex)
+                    {
+                        failures.Record(ex);
+                        Interlocked.Increment(ref validationFailure);
+                        Interlocked.Increment(ref failure);
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        Interlocked.Increment(ref cancelled);
+                        break;
                     }
                     catch (Exception ex)
                     {
@@ -279,6 +317,12 @@ public static class Program
         var elapsed = Math.Max(0.001, timer.Elapsed.TotalSeconds);
         var total = success + failure;
         var errRate = total == 0 ? 0 : failure * 100.0 / total;
+        var equivalentRates = EquivalentDuplexRates.Calculate(
+            success,
+            failure,
+            validatedMessages,
+            elapsed,
+            options.MessageBytes);
         var evidence = PerformanceEvidenceCollector.Delta(
             evidenceBefore,
             s_evidenceCollector.Capture());
@@ -287,7 +331,12 @@ public static class Program
             concurrency,
             success,
             failure,
+            validationFailure,
+            cancelled,
             success / elapsed,
+            validatedMessages,
+            equivalentRates.MessagesPerSecond,
+            equivalentRates.DirectionalBusinessMiBPerSecond,
             histogram.Percentile(50),
             histogram.Percentile(95),
             histogram.Percentile(99),
@@ -299,10 +348,12 @@ public static class Program
             evidence);
     }
 
-    private static async Task InvokeOperationAsync(
+    private static async Task<int> InvokeOperationAsync(
         IStreamLoadService rpc,
         string operation,
+        long operationId,
         int[] payload,
+        byte[][]? equivalentMessages,
         StreamLoadOptions options,
         CancellationToken ct)
     {
@@ -310,16 +361,22 @@ public static class Program
         {
             case "unary":
                 _ = await rpc.AddAsync(7, 9);
-                return;
+                return 0;
             case "c2s":
                 _ = await rpc.UploadAsync(ToStream(payload, ct));
-                return;
+                return 0;
             case "s2c":
                 await DrainAsync(rpc.DownloadAsync(payload.Length), options, ct);
-                return;
+                return 0;
             case "duplex":
                 await DrainAsync(rpc.DuplexAsync(ToStream(payload, ct)), options, ct);
-                return;
+                return 0;
+            case "duplex-equivalent":
+                return await EquivalentDuplexWorkload.ExecuteValidatedAsync(
+                    rpc,
+                    operationId,
+                    equivalentMessages!,
+                    ct);
             default:
                 throw new ArgumentOutOfRangeException(nameof(operation), operation, "Unsupported operation");
         }
@@ -356,6 +413,14 @@ public static class Program
 
     private static IReadOnlyList<string> ResolveOperations(string op)
         => op == "all" ? ["unary", "c2s", "s2c", "duplex"] : [op];
+
+    private static void ConfigureRuntime(
+        SharpLinkRuntimeOptions runtime,
+        StreamLoadOptions options)
+    {
+        if (options.MaxSendQueueBytes is { } maxSendQueueBytes)
+            runtime.FlowControl.MaxSendQueueBytes = maxSendQueueBytes;
+    }
 }
 
 public sealed class StreamLoadOptions
@@ -376,6 +441,8 @@ public sealed class StreamLoadOptions
     public int[] ConcurrencyConfig { get; private init; } = [1, 2, 4, 8, 16];
     public string Operation { get; private init; } = "all";
     public int StreamSize { get; private init; } = 256;
+    public int MessageBytes { get; private init; } = EquivalentDuplexWorkload.DefaultMessageBytes;
+    public int MessagesPerStream { get; private init; } = EquivalentDuplexWorkload.DefaultMessagesPerStream;
     public int HeartbeatIntervalSeconds { get; private init; } = 10;
     public int HeartbeatCheckIntervalSeconds { get; private init; } = 10;
     public int HeartbeatTimeoutSeconds { get; private init; } = 120;
@@ -386,6 +453,7 @@ public sealed class StreamLoadOptions
     public int PauseAfter { get; private init; }
     public int PauseMilliseconds { get; private init; }
     public SharpLinkPerformanceProfile PerformanceProfile { get; private init; } = SharpLinkPerformanceProfile.Balanced;
+    public int? MaxSendQueueBytes { get; private init; }
     public string? JsonOutputPath { get; private init; }
 
     public static StreamLoadOptions Parse(string[] args)
@@ -409,8 +477,8 @@ public sealed class StreamLoadOptions
             : TransportMode.Tcp;
 
         var operation = map.GetValueOrDefault("operation", "all").ToLowerInvariant();
-        if (operation is not ("all" or "unary" or "c2s" or "s2c" or "duplex"))
-            throw new ArgumentException($"Unsupported operation: {operation}. Supported: all, unary, c2s, s2c, duplex.");
+        if (operation is not ("all" or "unary" or "c2s" or "s2c" or "duplex" or "duplex-equivalent"))
+            throw new ArgumentException($"Unsupported operation: {operation}. Supported: all, unary, c2s, s2c, duplex, duplex-equivalent.");
 
         var concurrencyConfig = map.TryGetValue("concurrency", out var concurrencyStr)
             ? concurrencyStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -449,6 +517,12 @@ public sealed class StreamLoadOptions
             "throughput" => SharpLinkPerformanceProfile.Throughput,
             _ => throw new ArgumentException($"Unsupported performance profile: {profileText}.")
         };
+        var maxSendQueueBytes = ParseOptionalInt(map, "max-send-queue-bytes");
+        if (maxSendQueueBytes is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxSendQueueBytes));
+        var messageBytes = int.Parse(map.GetValueOrDefault("message-bytes", EquivalentDuplexWorkload.DefaultMessageBytes.ToString()));
+        var messagesPerStream = int.Parse(map.GetValueOrDefault("messages-per-stream", EquivalentDuplexWorkload.DefaultMessagesPerStream.ToString()));
+        EquivalentDuplexWorkload.ValidateDimensions(messageBytes, messagesPerStream);
 
         return new StreamLoadOptions
         {
@@ -469,6 +543,8 @@ public sealed class StreamLoadOptions
             ConcurrencyConfig = concurrencyConfig.Length == 0 ? [1] : concurrencyConfig,
             Operation = operation,
             StreamSize = int.Parse(map.GetValueOrDefault("stream-size", "256")),
+            MessageBytes = messageBytes,
+            MessagesPerStream = messagesPerStream,
             HeartbeatIntervalSeconds = int.Parse(map.GetValueOrDefault("heartbeat-interval", "10")),
             HeartbeatCheckIntervalSeconds = int.Parse(map.GetValueOrDefault("heartbeat-check-interval", "10")),
             HeartbeatTimeoutSeconds = int.Parse(map.GetValueOrDefault("heartbeat-timeout", "120")),
@@ -479,6 +555,7 @@ public sealed class StreamLoadOptions
             PauseAfter = ParseNonNegative(map, "pause-after"),
             PauseMilliseconds = ParseNonNegative(map, "pause-ms"),
             PerformanceProfile = profile,
+            MaxSendQueueBytes = maxSendQueueBytes,
             JsonOutputPath = map.GetValueOrDefault("json-output")
         };
     }
@@ -498,7 +575,12 @@ public sealed record StageResult(
     int Concurrency,
     long Success,
     long Failure,
+    long ValidationFailure,
+    long Cancelled,
     double Qps,
+    long ValidatedMessages,
+    double MessagesPerSecond,
+    double DirectionalBusinessMiBPerSecond,
     double P50Us,
     double P95Us,
     double P99Us,
@@ -526,6 +608,10 @@ public interface IStreamLoadService : IService
     IAsyncEnumerable<int> DownloadAsync(int count);
     [NonCancellable]
     IAsyncEnumerable<int> DuplexAsync(IAsyncEnumerable<int> values);
+    [NonCancellable]
+    IAsyncEnumerable<(long OperationId, byte[] Payload)> DuplexEquivalentAsync(
+        long operationId,
+        IAsyncEnumerable<byte[]> payloads);
 }
 
 [RpcService]
@@ -555,6 +641,17 @@ public class StreamLoadService : IStreamLoadService
         await foreach (var value in values)
         {
             yield return value + 1;
+            await Task.CompletedTask;
+        }
+    }
+
+    public async IAsyncEnumerable<(long OperationId, byte[] Payload)> DuplexEquivalentAsync(
+        long operationId,
+        IAsyncEnumerable<byte[]> payloads)
+    {
+        await foreach (var payload in payloads)
+        {
+            yield return (operationId, payload);
             await Task.CompletedTask;
         }
     }

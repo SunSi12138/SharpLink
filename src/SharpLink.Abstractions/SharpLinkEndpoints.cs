@@ -8,11 +8,11 @@ namespace SharpLink.Abstractions;
 public abstract record SharpLinkTransportAddress;
 
 /// <summary>Represents a TCP host and port.</summary>
-/// <param name="host">A non-empty host name, IPv4 address, or IPv6 address.</param>
-/// <param name="port">A TCP port from 1 through 65535.</param>
 public sealed record SharpLinkTcpAddress : SharpLinkTransportAddress
 {
     /// <summary>Initializes a TCP address.</summary>
+    /// <param name="host">A non-empty host name, IPv4 address, or IPv6 address.</param>
+    /// <param name="port">A TCP port from 1 through 65535.</param>
     /// <exception cref="ArgumentException"><paramref name="host"/> is null, empty, or whitespace.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="port"/> is outside the TCP port range.</exception>
     public SharpLinkTcpAddress(string host, int port)
@@ -33,10 +33,10 @@ public sealed record SharpLinkTcpAddress : SharpLinkTransportAddress
 }
 
 /// <summary>Represents a Unix-domain socket path.</summary>
-/// <param name="path">A non-empty socket path.</param>
 public sealed record SharpLinkUnixDomainSocketAddress : SharpLinkTransportAddress
 {
     /// <summary>Initializes a Unix-domain socket address.</summary>
+    /// <param name="path">A non-empty socket path.</param>
     /// <exception cref="ArgumentException"><paramref name="path"/> is null, empty, or whitespace.</exception>
     public SharpLinkUnixDomainSocketAddress(string path)
     {
@@ -49,11 +49,11 @@ public sealed record SharpLinkUnixDomainSocketAddress : SharpLinkTransportAddres
 }
 
 /// <summary>Represents a named-pipe server and pipe name.</summary>
-/// <param name="pipeName">A non-empty pipe name.</param>
-/// <param name="serverName">The pipe server name. The default is the local server.</param>
 public sealed record SharpLinkNamedPipeAddress : SharpLinkTransportAddress
 {
     /// <summary>Initializes a named-pipe address.</summary>
+    /// <param name="pipeName">A non-empty pipe name.</param>
+    /// <param name="serverName">The pipe server name. The default is the local server.</param>
     /// <exception cref="ArgumentException"><paramref name="pipeName"/> is empty or contains path syntax, or <paramref name="serverName"/> is empty.</exception>
     public SharpLinkNamedPipeAddress(string pipeName, string serverName = ".")
     {
@@ -71,10 +71,10 @@ public sealed record SharpLinkNamedPipeAddress : SharpLinkTransportAddress
 }
 
 /// <summary>Represents a same-user, same-machine shared-memory transport name.</summary>
-/// <param name="name">A non-empty logical shared-memory name.</param>
 public sealed record SharpLinkSharedMemoryAddress : SharpLinkTransportAddress
 {
     /// <summary>Initializes a shared-memory address.</summary>
+    /// <param name="name">A non-empty logical shared-memory name.</param>
     /// <exception cref="ArgumentException"><paramref name="name"/> is empty or contains path syntax.</exception>
     public SharpLinkSharedMemoryAddress(string name)
     {
@@ -91,11 +91,11 @@ public sealed record SharpLinkSharedMemoryAddress : SharpLinkTransportAddress
 /// The handle values are intentionally never included in the string representation, diagnostics, or exceptions.
 /// A single offer cannot be reused to reconnect or create an automatic multi-endpoint pool.
 /// </remarks>
-/// <param name="inHandle">A non-empty inbound anonymous-pipe handle.</param>
-/// <param name="outHandle">A non-empty outbound anonymous-pipe handle.</param>
 public sealed record SharpLinkAnonymousPipeAddress : SharpLinkTransportAddress
 {
     /// <summary>Initializes an anonymous-pipe address.</summary>
+    /// <param name="inHandle">A non-empty inbound anonymous-pipe handle.</param>
+    /// <param name="outHandle">A non-empty outbound anonymous-pipe handle.</param>
     /// <exception cref="ArgumentException"><paramref name="inHandle"/> or <paramref name="outHandle"/> is null, empty, or whitespace.</exception>
     public SharpLinkAnonymousPipeAddress(string inHandle, string outHandle)
     {
@@ -143,7 +143,7 @@ public delegate IClientTransportFactory SharpLinkEndpointTransportFactory(SharpL
 /// <summary>Selects an endpoint from one immutable Ready candidate snapshot.</summary>
 /// <remarks>
 /// Implementations must be synchronous, non-blocking, allocation-free on their normal path, and must not
-/// modify topology. Return an index in <paramref name="context"/>; invalid, excluded, or unavailable results
+/// modify topology. Return an index in the supplied selection context; invalid, excluded, or unavailable results
 /// fail only the current call with <see cref="SharpLinkErrorCode.FailedPrecondition"/>.
 /// </remarks>
 public interface ISharpLinkEndpointSelector
