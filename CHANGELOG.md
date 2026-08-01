@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-02
+
+### Highlights
+
+- SharpLink 1.0 establishes the stable Protocol v2 minor-3, generated contract/codec surface, seven-package NuGet graph, transport-independent connection lanes, resilience, security, hosting, multi-cluster routing, dynamic modules, streaming, and NativeAOT support developed throughout the 0.7/0.8 series and release candidates.
+- The final performance matrix records SharpLink leads of 21.3%, 58.2%, and 12.6% over grpc-dotnet in the three primary published scenarios, 1.95 million QPS at four-server scale, and throughput comparable to gRPC C++ in the closest local Duplex A/B. See [the concise performance and stability report](doc/performance.md) for workload boundaries and exact results.
+- A 24-hour cross-machine mixed-load run completed 414,775,951 successful operations with zero RPC or payload-validation errors. Process restart recovery and cross-region capacity checks also completed with zero content errors.
+
+### Compatibility and validation
+
+- The stable release changes only version metadata and documentation from RC7; runtime code, public API, generated contracts, valid Protocol v2 bytes, package graph, transport behavior, and defaults are unchanged.
+- The tested product candidate is commit `36a80656be91822556942a2841750ba8555d2ead`. Release packaging and CI verify that every stable package is built from the final tagged commit, carries that repository identity, includes XML documentation and portable symbols, and passes clean-cache package consumption.
+
 ## [1.0.0-rc7] - 2026-07-30
 
 ### Fixed

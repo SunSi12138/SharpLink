@@ -1,6 +1,6 @@
 # SharpLink 文档
 
-本文档集以当前源码和 `1.0.0-rc7` 接受标准为准，不再按 0.x 小版本保存用户文档。公开 API 的精确参数、返回值和异常语义同时通过 NuGet 包内 XML 文档提供。
+本文档集以当前源码和 `1.0.0` 稳定版为准，不再按 0.x 小版本保存用户文档。公开 API 的精确参数、返回值和异常语义同时通过 NuGet 包内 XML 文档提供。
 
 ## 学习路径
 
@@ -16,7 +16,7 @@
 10. [多集群与动态模块](dynamic-modules-and-multicluster.md)：编译期路由、动态注册/替换/注销和 ALC 所有权。
 11. [限制与调优](limits-and-tuning.md)：默认值、硬上限和性能 Profile。
 12. [故障排查](troubleshooting.md)：常见配置、协议、资源和生命周期错误。
-13. [迁移到 1.0 RC](migration.md)：从 0.7/0.8 当前受支持表面迁移。
+13. [迁移到 1.0](migration.md)：从 0.7/0.8 当前受支持表面迁移。
 
 深入资料：[架构](architecture.md)、[Protocol v2](protocol-v2.md)、[负载工具](loadtest.md)、[性能基线](performance.md)、[发布流程](releasing.md)。
 

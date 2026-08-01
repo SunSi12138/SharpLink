@@ -2,7 +2,7 @@
 
 Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容或恢复扫描。任何 magic、长度、类型、标志或载荷结构错误都作为连接级 `ProtocolViolation` 处理并关闭连接。
 
-当前 protocol minor 为 3，能力包含 metadata、compression、flow control、health check 和 cancellation reason。minor 取双方较小值；当前 1.0 RC 只承诺与采用相同 minor-3 握手布局的对端互操作。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
+当前 protocol minor 为 3，能力包含 metadata、compression、flow control、health check 和 cancellation reason。minor 取双方较小值；1.0.0 只承诺与采用相同 minor-3 握手布局的对端互操作。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
 
 ## 固定帧头
 

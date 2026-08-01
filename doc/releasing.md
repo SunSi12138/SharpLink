@@ -4,7 +4,7 @@
 
 ## 版本与兼容性
 
-- NuGet 包版本由 `VersionPrefix` 和可选的 `VersionSuffix` 组成。例如 RC7 使用 `1.0.0` 与 `rc7`，得到 `1.0.0-rc7`。
+- NuGet 包版本由 `VersionPrefix` 和可选的 `VersionSuffix` 组成。稳定版 `1.0.0` 不设置后缀；预发布版本可使用例如 `rc7` 的后缀。
 - `AssemblyVersion` 与 `FileVersion` 始终使用四段纯数字；预发布后缀只进入包版本和 `InformationalVersion`。
 - 冻结前更新 `CHANGELOG.md`、包引用示例和迁移说明。公开 API、Protocol v2、生成代码、契约 Manifest 或默认行为的变化必须明确标注兼容性。
 - `1.0.0` 发布后保留其公开 API 包作为后续 `PackageValidationBaselineVersion`；不在补丁版本中进行破坏性 API 或 wire 变更。

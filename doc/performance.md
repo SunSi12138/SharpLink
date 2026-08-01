@@ -1,92 +1,54 @@
-# SharpLink 性能基线
+# SharpLink 1.0.0 性能与稳定性
 
-本文只发布 `1.0.0-rc7` 精确提交上的最终可复现实测。0.x 开发期的逐版本局部 A/B、临时 runner 结果和优化日志不属于稳定性能承诺，已从用户文档移除；代码历史仍保留在 Git 和 CHANGELOG。
+SharpLink 1.0.0 的核心结论：主要 .NET RPC 场景吞吐领先 grpc-dotnet，在合理并发下达到 gRPC C++ 等价实现的吞吐水平，四服务端可接近 195 万 QPS，并通过了 24 小时零错误稳定性测试。
 
-## 当前状态
+## 核心性能
 
-`1.0.0-rc6` 在 RC5 正确性基线上修复了 stream-backed transport 的系统性分段开销：默认 4 KiB PipeReader block 小于常见的 4096-byte 业务 payload 帧，使 SharpPack 经常进入跨段读取。RC6 使用经 A/B 接受的 16 KiB block。RC7 进一步关闭 pooled stream dispatcher 从 returned 到 active 的租约转换窗口；它只调整既有 Reset/CAS 顺序，不改变公开 API、协议、连接默认数或包表面。最终云端 QPS、吞吐和延迟数字仍必须在 RC7 精确发布提交完成下述矩阵后发布，本地因果 A/B 不冒充最终云端基线。
+| 场景 | SharpLink | grpc-dotnet | 结果 |
+|---|---:|---:|---:|
+| 256 B Unary，1S1C，c1 | 10,249 QPS | 8,450 QPS | SharpLink +21.3% |
+| 256 B Unary，1S3C，c128 | 748,915 QPS | 473,295 QPS | SharpLink +58.2% |
+| 4 KiB × 8 Duplex，1S2C，c32 | 21,379 RPC/s | 18,990 RPC/s | SharpLink +12.6% |
 
-## 环境记录
+小请求延迟方面，1S1C Unary 的 SharpLink P50/P99/P99.9 为 `97/127/203 µs`，grpc-dotnet 为 `115/142/631 µs`。
 
-最终报告必须包含：
+## gRPC C++ 对照
 
-- exact commit、版本和工作区是否干净；
-- OS、内核、CPU 型号/核心、内存、架构与电源模式；
-- .NET SDK/runtime、JIT/NativeAOT、GC 与 server GC 配置；
-- transport、profile、payload、operation、connections、concurrency、warmup、duration、repetitions；
-- compression/admission/interceptor/topology 配置；
-- 同机后台进程与温控检查。
+Ubuntu 7950X 裸机上，SharpLink 与 gRPC C++ 使用相同 4 KiB × 8 Duplex 契约、独立进程、相同绑核、16 transport lanes 和 c128，五轮中位数为：
 
-原始 JSON、BenchmarkDotNet 报告和环境快照写入 `artifacts/performance/rc7-<short-sha>/`，不提交仓库；本文只保存汇总表、命令和解释。
+| 框架 | 吞吐 | P99 |
+|---|---:|---:|
+| SharpLink | 734,421 message/s | 4.085 ms |
+| gRPC C++ 1.82.1 | 714,280 message/s | 2.293 ms |
 
-## RC7 场景矩阵
+SharpLink 吞吐高 `2.8%`，但 gRPC C++ 的尾延迟更低。这是最适合直接比较的 C++ A/B 数据。
 
-| 维度 | 覆盖 |
-|---|---|
-| Transport | TCP、UDS（适用平台）、NamedPipe、AnonymousPipe、SharedMemory |
-| Runtime | JIT；支持的发布入口另跑 NativeAOT smoke/代表负载 |
-| Profile | LowLatency、Balanced、Throughput |
-| Unary payload | 0、32、256、4096、65536、1048576 B |
-| Concurrency | 1、8、32、128、256、512 |
-| Pool | 1/1 与 1/4；静态 cluster 另测 2/8 endpoints |
-| Calls | Unary、async、OneWay、OneWay backpressure |
-| Streams | c2s、s2c、duplex，报告业务 MiB/s 与 item QPS |
-| Optional paths | Compression on/off、admission immediate/queued/rejected、interceptor on/off |
-| Topology | fixed、static endpoints、stable resolver snapshot |
+云端 gRPC C++ 参考结果为：等价 Unary c128 `255,407 QPS`、等价 Duplex c32 `142,683 message/s`、官方 Async Unary worker `144,521 QPS`、官方 Callback Duplex worker `154,019 QPS`。等价 Duplex 受自写 C++ 客户端负载器限制；官方 worker 和等价业务负载器调用方式也不同，因此这些结果只作环境参考，不与其他拓扑直接计算倍率。
 
-跨机器 TCP 另记录 client/server 两台机器、链路速率、MTU 和 RTT，不与本机 IPC 表混合。
+## 横向扩展
 
-## 运行命令
+| 服务端规模 | QPS | 相对 1S |
+|---|---:|---:|
+| 1S | 572,014 | 1.00× |
+| 2S | 975,253 | 1.70× |
+| 4S | 1,947,159 | 3.40× |
 
-快速可运行性：
+从一个服务端扩展到四个服务端后，SharpLink 达到约 `195 万 QPS`，扩展效率为 `85.1%`。
 
-```bash
-SHARPLINK_MATRIX_TIER=smoke ./eng/run-performance-matrix.sh
-```
+## 稳定性与恢复
 
-完整 RC 矩阵：
+| 项目 | 结果 |
+|---|---:|
+| 24 小时连续混合负载 | 414,775,951 次成功，0 RPC/校验错误 |
+| 2S2C 服务进程重启 | 6.467 秒恢复，0 内容错误 |
+| 上海—广州基础 RTT | 平均约 29.37 ms |
+| 上海—广州无节拍吞吐 | 79,350 QPS，0 错误；受 200 Mbps 公网链路限制 |
 
-```bash
-SHARPLINK_MATRIX_TIER=full \
-SHARPLINK_MATRIX_RUNTIMES=jit,aot \
-SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/rc7-<short-sha>/matrix" \
-./eng/run-performance-matrix.sh
-```
+## 结论与范围
 
-参数和异机模式见 [loadtest.md](loadtest.md)。
+- SharpLink 在三个主要 .NET 对照点分别领先 grpc-dotnet `21.3%`、`58.2%` 和 `12.6%`。
+- 在公平的 c128 Duplex A/B 中，SharpLink 吞吐达到 gRPC C++ 的 `102.8%`；gRPC C++ 仍有更好的 P99。
+- 四服务端正式测试达到约 `195 万 QPS`。
+- 24 小时累计超过 `4.14 亿` 次成功调用，没有 RPC 或内容校验错误。
 
-## 统计规则
-
-- 每个配置至少五个独立进程，交替或反转顺序，使用 process median 作为中心值并保留完整范围。
-- 报告 QPS、业务吞吐、P50/P95/P99/P99.9、错误数、allocated bytes/op、Gen0/1/2、CPU time/op 和峰值工作集。
-- 任一非注入错误、crash、timeout、资源未归零或后台异常都使该场景失败，不能只从成功样本计算性能。
-- warmup 与 measurement 分离；不得在采样窗口同时运行 trace、详细 SharedMemory evidence 或其他负载。
-- 不把不同日期/温度/电源状态的单次差异解释为优化。需要前后归因时，对基线和候选严格交替，并报告 paired median。
-
-## 接受标准
-
-- 所有 mandatory 场景零非注入失败。
-- 相对冻结前可信基线无可复现的 QPS/吞吐下降或尾延迟/分配上升；阈值按场景噪声带和工程影响判断，不用单一百分比掩盖异常。
-- SharedMemory 同时报告绝对结果及与适用本机 transports 的关系，不宣称对所有 payload/并发都更快。
-- Optional feature 的代价单独列出，不能把关闭 feature 的数字冒充启用后的结果。
-
-## 最终结果
-
-最终云端矩阵在冻结 `1.0.0-rc7` 发布提交后填写。上云前的本机因果 A/B 仅用于决定是否接受 Runtime 改动。RC6 的分段读取优化接受结果保留如下：
-
-| 固定连接数 | RC5 validated msg/s | RC6 候选 validated msg/s | 吞吐变化 | P99 变化 | CPU/msg 变化 | allocation/msg 变化 |
-|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 105,513 | 134,910 | +27.86% | -24.78% | -22.00% | -2.96% |
-| 4 | 303,388 | 374,602 | +23.47% | -8.17% | -12.72% | -3.06% |
-| 16 | 569,858 | 592,295 | +3.94% | -4.83% | -4.38% | -0.42% |
-| 64 | 626,257 | 633,006 | +1.08% | -9.26% | -2.72% | -0.30% |
-
-环境为 Ryzen 9 7950X、Ubuntu 26.04、.NET 10.0.10、Server GC、TCP loopback、Throughput profile、c128、4096 bytes × 8 双向消息/流、固定 64 MiB send queue。每个连接数运行五对相邻 RC5/candidate 独立进程并交替 A/B 顺序，40 个进程均为零 transport/validation failure。原始证据对应 RC5 product `9a40218c73d51f470a54960a069df43c025cac78` 与 RC6 Runtime candidate `709471ab4ec2e67b714ad89eabec130f36925008`。
-
-这项改动减少单条有序 transport lane 的分段成本，但不把一个 PipeReader 并行化。多 lane 扩展仍由 transport-independent connection pool 提供；未来 QUIC 或原生多路复用 transport 需要单独设计 session/lane 抽象，不能从本表推导为 1.0 承诺。
-
-### RC7 transport-lane 与租约验证
-
-Ryzen 9 7950X、Ubuntu 26.04、.NET 10.0.10、Server GC、Throughput profile 上，TCP、UDS、NamedPipe 和 SharedMemory 均完成固定 1/4/16 连接的 `duplex-equivalent` 验证，零 transport/validation failure。并发 128、4096 bytes × 8 messages 时，UDS、NamedPipe 和 SharedMemory 的最佳点落在 4 connections 附近，TCP 在该负载继续扩展到 16；这证明 lane 数属于 transport/负载调优参数，不应成为统一的新默认值。自适应 1/4 pool 与固定 4/4 pool 的三轮中位吞吐差异均在本机噪声范围内。
-
-RC7 dispatcher 修复使用五对 8 秒相邻 RC6/candidate UDS 进程验证：candidate median QPS -1.56%、P99 +1.06%、CPU/stream +1.90%、allocation/stream +0.05%，pairwise QPS 范围 -5.27% 到 +4.96%。RC6 基线再次出现一次 `Only single consumer is supported`；candidate 为零。随后 candidate 在 60 秒 UDS high-churn 中完成 35,858,349 个已校验流，并在四种 transport 的四个 15 秒 high-churn 进程中再完成 36,192,551 个已校验流，全部零失败。原始 JSON 保留在任务级 artifacts，不作为最终云端成绩。
+测试产品候选为 SharpLink `1.0.0-rc7`，commit `36a80656be91822556942a2841750ba8555d2ead`。稳定版只在该候选之上更新发布元数据和文档，不改变运行时代码。以上均为特定硬件、消息尺寸和并发下的实测结果，不代表所有环境的固定上限。
