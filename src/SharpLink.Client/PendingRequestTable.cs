@@ -732,7 +732,9 @@ internal sealed class PendingRequestTable : IDisposable
     }
 
     private static SharpLinkException CreateResourceExhaustedException()
-        => new(SharpLinkErrorCode.ResourceExhausted, "Pending request capacity is exhausted.");
+        => SharpLinkResourceExhaustion.Create(
+            SharpLinkResourceExhaustion.PendingRequestCapacity,
+            "Pending request capacity is exhausted (pending_request_capacity).");
 
     private static SharpLinkException CreateDeadlineExceededException()
         => new(SharpLinkErrorCode.DeadlineExceeded, "Timed out waiting for pending request capacity.");

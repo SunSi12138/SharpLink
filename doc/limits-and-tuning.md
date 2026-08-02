@@ -22,9 +22,25 @@
 | `StreamReceiveWindowBytes` | 1 MiB |
 | `ConnectionReceiveWindowBytes` | 16 MiB |
 | `MaxConcurrentCallsPerConnection` | 1,024 |
+| `MaxConcurrentCallsPerServer` | 65,536 |
 | `MaxSendQueueBytes` | LowLatency 1 MiB / Balanced 8 MiB / Throughput 32 MiB |
 
 Connection window 不得小于 stream window。窗口过小会增加 WindowUpdate 和等待，过大会放大每连接在途内存。Send queue 是硬字节边界，满时调用失败而不是无限增长。
+
+`MaxConcurrentCallsPerConnection` 与 `MaxConcurrentCallsPerServer` 是相互独立的硬边界：调用必须同时取得连接槽位和服务器槽位。两者合法范围均为 `1..1,048,576`，在 `Build()` 时验证并复制；已构建的 Client/Server 不受随后修改原 option 的影响。服务器级默认值固定为 65,536，不再根据逻辑 CPU 数量变化，因此异步等待型调用可以按容量证据显式调高，同时仍保留有界保护。
+
+提高调用上限会同时放大调用状态、请求 payload、Service scope、拦截器状态、pending request 与 send queue 的最坏内存占用。生产调优应逐级验证 `MaxPendingRequestsPerConnection`、每连接调用上限、服务器调用上限、admission 和 send queue，而不是一次性全部调到硬上限。
+
+服务器启动时会在 `LogEvents.Server.CallCapacityConfigured` 日志中记录两个实际生效值。`sharplink.resource_exhausted` 指标保留 `rpc.side`，并通过 `rpc.sharplink.resource_exhaustion_reason` 区分低基数来源：
+
+- `server_call_capacity`
+- `per_connection_call_capacity`
+- `admission_concurrency`
+- `admission_queue`
+- `pending_request_capacity`
+- `send_queue_capacity`
+
+wire error code 仍为 `ResourceExhausted`；容量拒绝不会关闭健康连接，释放槽位后同一连接可以继续调用。
 
 ## Profile
 

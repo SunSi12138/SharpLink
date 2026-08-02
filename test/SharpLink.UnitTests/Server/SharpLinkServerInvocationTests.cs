@@ -148,6 +148,185 @@ public class SharpLinkServerInvocationTests
     }
 
     [Test]
+    public async Task ConnectionAndServerCallCapacitiesShouldRejectIndependentlyAndRecover()
+    {
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .DisableAutomaticServiceRegistration()
+            .UseRuntime(options =>
+            {
+                options.FlowControl.MaxConcurrentCallsPerConnection = 1;
+                options.FlowControl.MaxConcurrentCallsPerServer = 2;
+            })
+            .UseTransport(new IdleListener())
+            .Build();
+        var firstInput = new Pipe();
+        var firstOutput = new Pipe();
+        var secondInput = new Pipe();
+        var secondOutput = new Pipe();
+        var thirdInput = new Pipe();
+        var thirdOutput = new Pipe();
+        await using var firstSession = new RpcSession(
+            "capacity-first", firstInput.Reader, firstOutput.Writer, static () => { }, static () => true);
+        await using var secondSession = new RpcSession(
+            "capacity-second", secondInput.Reader, secondOutput.Writer, static () => { }, static () => true);
+        await using var thirdSession = new RpcSession(
+            "capacity-third", thirdInput.Reader, thirdOutput.Writer, static () => { }, static () => true);
+        var firstConnection = new ServerConnectionState(
+            firstSession, new RuntimeConcurrencyOptions(), CancellationToken.None);
+        var secondConnection = new ServerConnectionState(
+            secondSession, new RuntimeConcurrencyOptions(), CancellationToken.None);
+        var thirdConnection = new ServerConnectionState(
+            thirdSession, new RuntimeConcurrencyOptions(), CancellationToken.None);
+        Ensure(firstConnection.MarkReady(null), "first connection ready");
+        Ensure(secondConnection.MarkReady(null), "second connection ready");
+        Ensure(thirdConnection.MarkReady(null), "third connection ready");
+
+        var tryAcquireMethod = typeof(SharpLinkServer).GetMethod(
+            "TryAcquireCall",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Server call admission path");
+        var tryAcquire = CreatePrivateCall<Func<SharpLinkServer, ServerConnectionState, int>>(
+            tryAcquireMethod);
+        var release = CreatePrivateCall<Action<SharpLinkServer, ServerConnectionState>>(
+            typeof(SharpLinkServer).GetMethod(
+                "ReleaseCall",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Server call release path"));
+        var setState = CreateInterlockedInt32Setter<SharpLinkServer>("_state");
+        const int running = 2;
+        const int draining = 3;
+        setState(server, running);
+        var firstAcquired = false;
+        var secondAcquired = false;
+        var thirdAcquired = false;
+
+        try
+        {
+            Ensure(server.MaxConcurrentCallsPerConnectionForDiagnostics == 1,
+                "configured per-connection capacity");
+            Ensure(server.MaxConcurrentCallsPerServerForDiagnostics == 2,
+                "configured server-wide capacity");
+
+            var belowCapacity = tryAcquire(server, firstConnection);
+            firstAcquired = Enum.GetName(tryAcquireMethod.ReturnType, belowCapacity) == "Acquired";
+            Ensure(firstAcquired, "the call below server capacity must be acquired");
+            Ensure(server.ActiveCallCountForDiagnostics == 1 && firstConnection.ActiveCalls == 1,
+                "below-capacity counters");
+
+            var perConnectionRejection = tryAcquire(server, firstConnection);
+            Ensure(Enum.GetName(tryAcquireMethod.ReturnType, perConnectionRejection) ==
+                   "PerConnectionCapacityExhausted",
+                "the same connection must report its own capacity reason");
+            Ensure(server.ActiveCallCountForDiagnostics == 1 && firstConnection.ActiveCalls == 1,
+                "per-connection rejection must not consume either counter");
+
+            var atCapacity = tryAcquire(server, secondConnection);
+            secondAcquired = Enum.GetName(tryAcquireMethod.ReturnType, atCapacity) == "Acquired";
+            Ensure(secondAcquired, "the call exactly at server capacity must be acquired");
+            Ensure(server.ActiveCallCountForDiagnostics == 2 && secondConnection.ActiveCalls == 1,
+                "at-capacity counters");
+
+            var serverRejection = tryAcquire(server, thirdConnection);
+            Ensure(Enum.GetName(tryAcquireMethod.ReturnType, serverRejection) ==
+                   "ServerCapacityExhausted",
+                "the first call above the server limit must report server capacity");
+            Ensure(server.ActiveCallCountForDiagnostics == 2 && thirdConnection.ActiveCalls == 0,
+                "server rejection must roll back the provisional connection slot");
+            Ensure(thirdConnection.LifecycleState == ServerConnectionLifecycleState.Ready,
+                "capacity rejection must keep the healthy connection ready");
+
+            release(server, firstConnection);
+            firstAcquired = false;
+            Ensure(server.ActiveCallCountForDiagnostics == 1 && firstConnection.ActiveCalls == 0,
+                "releasing one call must restore one server and connection slot");
+
+            var recovered = tryAcquire(server, thirdConnection);
+            thirdAcquired = Enum.GetName(tryAcquireMethod.ReturnType, recovered) == "Acquired";
+            Ensure(thirdAcquired,
+                "the same healthy connection must acquire after server capacity is released");
+
+            release(server, secondConnection);
+            secondAcquired = false;
+            release(server, thirdConnection);
+            thirdAcquired = false;
+            Ensure(server.ActiveCallCountForDiagnostics == 0 &&
+                   firstConnection.ActiveCalls == 0 &&
+                   secondConnection.ActiveCalls == 0 &&
+                   thirdConnection.ActiveCalls == 0,
+                "all capacity counters must return to zero after release");
+        }
+        finally
+        {
+            if (firstAcquired)
+                release(server, firstConnection);
+            if (secondAcquired)
+                release(server, secondConnection);
+            if (thirdAcquired)
+                release(server, thirdConnection);
+            setState(server, draining);
+            await firstConnection.CloseAsync();
+            await secondConnection.CloseAsync();
+            await thirdConnection.CloseAsync();
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CancelledOrDeadlineExceededCallsShouldReleaseCapacityAndRecover(
+        bool deadlineExceeded)
+    {
+        var output = new Pipe();
+        var stub = new CancelThenRecoverStub();
+        await using var harness = new ServerDispatchHarness(
+            stub, output.Writer, maxSendQueueBytes: 1024);
+        const long cancelledRequestId = 51;
+
+        var cancelledDispatch = harness.Dispatch(cancelledRequestId, ProtocolV2FrameFlags.Cancellable);
+        await stub.FirstInvocationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(harness.GlobalActiveCalls == 1 && harness.Connection.ActiveCalls == 1,
+            "an asynchronous invocation must hold both capacity slots");
+        Ensure(harness.Connection.CallCancellations.TryGetValue(cancelledRequestId, out var callState) &&
+               callState.TryAcquire(cancelledRequestId),
+            "the live invocation must publish cancellable call state");
+        try
+        {
+            var reason = deadlineExceeded
+                ? ServerCallCancellationReason.DeadlineExceeded
+                : ServerCallCancellationReason.RemoteCancel;
+            Ensure(callState.TryCancel(reason),
+                "the selected cancellation source must win the live invocation");
+            Ensure(callState.Reason == reason,
+                "the cancellation reason must be visible before invocation cleanup");
+        }
+        finally
+        {
+            callState.ReleaseUse();
+        }
+
+        await cancelledDispatch.AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(harness.GlobalActiveCalls == 0 && harness.Connection.ActiveCalls == 0,
+            "cancellation or deadline completion must release global and connection slots");
+        Ensure(!harness.Connection.CallCancellations.TryGetValue(cancelledRequestId, out _),
+            "completed cancellation state must be removed before capacity is reusable");
+        Ensure(harness.Connection.LifecycleState == ServerConnectionLifecycleState.Ready &&
+               harness.Session.IsConnected,
+            "cancellation or deadline must not close the healthy connection");
+
+        var recoveredDispatch = harness.Dispatch(52, ProtocolV2FrameFlags.None);
+        Ensure(recoveredDispatch.IsCompletedSuccessfully,
+            "the next invocation must reacquire the released capacity synchronously");
+        await recoveredDispatch;
+        Ensure(stub.InvocationCount == 2,
+            "a recovered call must reach the service on the same connection");
+        Ensure(harness.GlobalActiveCalls == 0 && harness.Connection.ActiveCalls == 0,
+            "the recovered call must also release both counters");
+
+        await harness.Session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        await output.Reader.CompleteAsync();
+    }
+
+    [Test]
     public async Task FailedInvocationShouldPreserveLeaseCleanupFailure()
     {
         await using var server = SharpLinkServerBuilder.Create()
@@ -682,6 +861,73 @@ public class SharpLinkServerInvocationTests
             => InvokeAsync(service, session, methodHash, requestId, args, output);
     }
 
+    private sealed class CancelThenRecoverStub : IRpcStub
+    {
+        private int _invocationCount;
+
+        internal TaskCompletionSource FirstInvocationStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal int InvocationCount => Volatile.Read(ref _invocationCount);
+
+        public long InterfaceHash => 9;
+
+        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        {
+            descriptor = new RpcMethodDescriptor(
+                InterfaceHash,
+                methodHash,
+                RpcMethodKind.Unary,
+                HasResponsePayload: false,
+                HasClientStreams: false,
+                HasMethodTimeout: false,
+                MethodTimeout: null);
+            return true;
+        }
+
+        public ValueTask InvokeNoReturnAsync(
+            object service,
+            IRpcSession session,
+            long methodHash,
+            long requestId,
+            ReadOnlySequence<byte> args)
+            => throw new InvalidOperationException("The test method must use cooperative cancellation.");
+
+        public ValueTask InvokeNoReturnCancellableAsync(
+            object service,
+            IRpcSession session,
+            long methodHash,
+            long requestId,
+            ReadOnlySequence<byte> args,
+            CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _invocationCount) != 1)
+                return ValueTask.CompletedTask;
+
+            FirstInvocationStarted.TrySetResult();
+            return new ValueTask(Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken));
+        }
+
+        public ValueTask InvokeAsync(
+            object service,
+            IRpcSession session,
+            long methodHash,
+            long requestId,
+            ReadOnlySequence<byte> args,
+            IRpcByteBufferWriter output)
+            => throw new NotSupportedException();
+
+        public ValueTask InvokeCancellableAsync(
+            object service,
+            IRpcSession session,
+            long methodHash,
+            long requestId,
+            ReadOnlySequence<byte> args,
+            IRpcByteBufferWriter output,
+            CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+    }
+
     private sealed class ServerDispatchHarness : IAsyncDisposable
     {
         private static readonly MethodInfo DispatchMethod = typeof(SharpLinkServer).GetMethod(
@@ -764,7 +1010,7 @@ public class SharpLinkServerInvocationTests
                 Connection.CallCancellations,
                 CancellationToken.None,
                 null,
-                false
+                (flags & ProtocolV2FrameFlags.Cancellable) != 0
             ])!;
         }
 

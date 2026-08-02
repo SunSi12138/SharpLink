@@ -7,6 +7,53 @@ namespace SharpLink.UnitTests.Abstractions;
 public class SharpLinkTelemetryTests
 {
     [Test]
+    public void ResourceExhaustedMetricsShouldExposeStableReasons()
+    {
+        const string side = "resource-exhaustion-reason-test";
+        var measurements = new Dictionary<string, long>(StringComparer.Ordinal);
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = static (instrument, meterListener) =>
+        {
+            if (instrument.Meter.Name == "SharpLink" &&
+                instrument.Name == "sharplink.resource_exhausted")
+            {
+                meterListener.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
+        {
+            if (FindTag(tags, "rpc.side") != side)
+                return;
+            var reason = FindTag(tags, "rpc.sharplink.resource_exhaustion_reason");
+            if (reason is null)
+                return;
+            measurements.TryGetValue(reason, out var current);
+            measurements[reason] = current + measurement;
+        });
+        listener.Start();
+
+        var expectedReasons = new[]
+        {
+            SharpLinkResourceExhaustion.ServerCallCapacity,
+            SharpLinkResourceExhaustion.PerConnectionCallCapacity,
+            SharpLinkResourceExhaustion.AdmissionConcurrency,
+            SharpLinkResourceExhaustion.AdmissionQueue,
+            SharpLinkResourceExhaustion.PendingRequestCapacity,
+            SharpLinkResourceExhaustion.SendQueueCapacity
+        };
+        foreach (var reason in expectedReasons)
+            SharpLinkTelemetry.RecordResourceExhausted(side, reason);
+
+        Ensure(measurements.Count == expectedReasons.Length,
+            "resource exhaustion must expose one stable series per requested capacity reason");
+        foreach (var reason in expectedReasons)
+        {
+            Ensure(measurements.TryGetValue(reason, out var count) && count == 1,
+                $"resource exhaustion reason {reason}");
+        }
+    }
+
+    [Test]
     public void AbandonedAndLateResponseMetricsShouldExposeStableTags()
     {
         const string side = "telemetry-unit-test";

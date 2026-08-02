@@ -35,7 +35,8 @@ internal sealed partial class SharpLinkServer(
     {
         Acquired,
         Unavailable,
-        CapacityExhausted
+        PerConnectionCapacityExhausted,
+        ServerCapacityExhausted
     }
 
     private readonly SharpLinkRuntimeContext _runtimeContext = runtimeContext ?? new SharpLinkRuntimeContextBuilder().Build();
@@ -69,6 +70,9 @@ internal sealed partial class SharpLinkServer(
         (protocolOptions ?? runtimeContext?.Protocol ?? new SharpLinkProtocolOptions()).CloneValidated();
     private readonly int _maxConcurrentCallsPerConnection =
         (runtimeContext?.FlowControl.MaxConcurrentCallsPerConnection ?? 1024);
+    private readonly int _maxConcurrentCallsPerServer =
+        (runtimeContext?.FlowControl.MaxConcurrentCallsPerServer ??
+         SharpLinkFlowControlOptions.DefaultMaxConcurrentCallsPerServer);
     private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions = rpcSessionFlushOptions;
     private readonly ISharpLinkServerInterceptor[] _serverInterceptors =
         serverInterceptors is { Length: > 0 } ? [.. serverInterceptors] : [];
@@ -83,9 +87,6 @@ internal sealed partial class SharpLinkServer(
     private int _globalActiveCalls;
     private long _rejectedOneWayCalls;
     private long _oneWayAdmissionLogTimestamp;
-    private readonly int _globalMaxConcurrentCalls = (int)Math.Min(
-        (long)Environment.ProcessorCount * 1024,
-        65_536L);
 
     public SharpLinkHealthStatus HealthStatus => CurrentState switch
     {
@@ -681,15 +682,15 @@ internal sealed partial class SharpLinkServer(
         if (!connection.TryAcquireCall(_maxConcurrentCallsPerConnection))
         {
             return connection.LifecycleState == ServerConnectionLifecycleState.Ready
-                ? ServerCallAdmissionResult.CapacityExhausted
+                ? ServerCallAdmissionResult.PerConnectionCapacityExhausted
                 : ServerCallAdmissionResult.Unavailable;
         }
 
-        if (Interlocked.Increment(ref _globalActiveCalls) > _globalMaxConcurrentCalls)
+        if (Interlocked.Increment(ref _globalActiveCalls) > _maxConcurrentCallsPerServer)
         {
             Interlocked.Decrement(ref _globalActiveCalls);
             connection.ReleaseCall();
-            return ServerCallAdmissionResult.CapacityExhausted;
+            return ServerCallAdmissionResult.ServerCapacityExhausted;
         }
 
         if (CurrentState == ServerState.Running)
@@ -698,6 +699,16 @@ internal sealed partial class SharpLinkServer(
         ReleaseCall(connection);
         return ServerCallAdmissionResult.Unavailable;
     }
+
+    private static string GetCallCapacityExhaustionReason(ServerCallAdmissionResult result)
+        => result switch
+        {
+            ServerCallAdmissionResult.PerConnectionCapacityExhausted =>
+                SharpLinkResourceExhaustion.PerConnectionCallCapacity,
+            ServerCallAdmissionResult.ServerCapacityExhausted =>
+                SharpLinkResourceExhaustion.ServerCallCapacity,
+            _ => throw new ArgumentOutOfRangeException(nameof(result), result, "A capacity result is required.")
+        };
 
     private bool TryAcceptRequest(ServerConnectionState connection, long requestId)
     {
@@ -718,6 +729,10 @@ internal sealed partial class SharpLinkServer(
     }
 
     internal int ActiveCallCountForDiagnostics => Volatile.Read(ref _globalActiveCalls);
+
+    internal int MaxConcurrentCallsPerConnectionForDiagnostics => _maxConcurrentCallsPerConnection;
+
+    internal int MaxConcurrentCallsPerServerForDiagnostics => _maxConcurrentCallsPerServer;
 
     internal ServerStopDiagnosticSnapshot? LastStopDiagnostics
         => Volatile.Read(ref _lastStopDiagnostics);
