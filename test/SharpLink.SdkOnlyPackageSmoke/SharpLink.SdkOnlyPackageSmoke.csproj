@@ -1,6 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -10,13 +9,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="SharpLink.Client" Version="$(SharpLinkPackageVersion)" />
-    <PackageReference Include="SharpLink.Server" Version="$(SharpLinkPackageVersion)" />
     <PackageReference Include="SharpLink.Sdk" Version="$(SharpLinkPackageVersion)" />
-    <PackageReference Include="SharpLink.Serializer.SharpPack" Version="$(SharpLinkPackageVersion)" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\SharpLink.SdkOnlyPackageSmoke\SharpLink.SdkOnlyPackageSmoke.csproj" />
   </ItemGroup>
 </Project>

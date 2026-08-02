@@ -48,11 +48,20 @@ for package_id in "${PACKAGES[@]}"; do
 
   unzip -Z1 "$nupkg" | grep -Fx "lib/net10.0/$package_id.dll" >/dev/null
   unzip -Z1 "$nupkg" | grep -Fx "lib/net10.0/$package_id.xml" >/dev/null
+  unzip -Z1 "$nupkg" | grep -Fx "sharplink-icon.png" >/dev/null
   unzip -Z1 "$snupkg" | grep -Fx "lib/net10.0/$package_id.pdb" >/dev/null
   unzip -p "$nupkg" "$package_id.nuspec" | grep -F "commit=\"$EXPECTED_COMMIT\"" >/dev/null
 done
 
 unzip -Z1 "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" |
   grep -Fx "analyzers/dotnet/cs/SharpLink.Generator.dll" >/dev/null
+unzip -p "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" SharpLink.Sdk.nuspec |
+  grep -F "<dependency id=\"SharpLink.Runtime\" version=\"$EXPECTED_VERSION\"" >/dev/null
+
+if unzip -p "$ARTIFACT_DIR/SharpLink.Abstractions.$EXPECTED_VERSION.nupkg" SharpLink.Abstractions.nuspec |
+   grep -F '<dependency id="SharpLink.Sdk"' >/dev/null; then
+  echo "SharpLink.Abstractions must not depend on SharpLink.Sdk." >&2
+  exit 1
+fi
 
 echo "Verified ${#PACKAGES[@]} package and symbol pairs for $EXPECTED_VERSION at $EXPECTED_COMMIT."
