@@ -17,6 +17,10 @@ internal sealed class StreamFlowController
     private readonly Dictionary<StreamKey, ReceiveState> _receiveStates = [];
     private readonly LinkedList<CreditWaiter> _waiters = [];
     private Queue<ConsumedCreditUpdate>? _consumedCreditUpdates;
+    // Completed states can remain as tombstones until their final in-flight credit arrives.
+    // They no longer own an active producer slot, and their retention is bounded by the
+    // outstanding connection credit rather than the negotiated concurrent-stream limit.
+    private int _activeSendStreamCount;
     private long _sendConnectionCredit;
     private long _receiveConnectionCredit;
     private long _pendingConnectionConsumed;
@@ -178,6 +182,8 @@ internal sealed class StreamFlowController
             var key = new StreamKey(requestId, streamId);
             if (_sendStates.TryGetValue(key, out var state))
             {
+                if (!state.Completed)
+                    _activeSendStreamCount--;
                 if (state.AbortException is not null)
                 {
                     state.Completed = true;
@@ -399,6 +405,7 @@ internal sealed class StreamFlowController
             for (var index = 0; index < waiters.Length; index++)
                 waiters[index].Node = null;
             _sendStates.Clear();
+            _activeSendStreamCount = 0;
             _receiveStates.Clear();
             _consumedCreditUpdates?.Clear();
             _consumedCreditUpdates = null;
@@ -417,11 +424,20 @@ internal sealed class StreamFlowController
         }
     }
 
+    internal int ActiveSendStreamCount
+    {
+        get
+        {
+            lock (_gate)
+                return _activeSendStreamCount;
+        }
+    }
+
     private SendState GetOrAddSendState(StreamKey key)
     {
         if (_sendStates.TryGetValue(key, out var state))
             return state;
-        if (_sendStates.Count >= _maxConcurrentStreams)
+        if (_activeSendStreamCount >= _maxConcurrentStreams)
         {
             throw new SharpLinkException(
                 SharpLinkErrorCode.ResourceExhausted,
@@ -429,6 +445,7 @@ internal sealed class StreamFlowController
         }
         state = new SendState(_streamWindow);
         _sendStates.Add(key, state);
+        _activeSendStreamCount++;
         return state;
     }
 

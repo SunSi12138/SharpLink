@@ -830,9 +830,28 @@ public class StreamManagerTests
             _ = callback;
             _ = attachedRequestId;
             _ = streamId;
-            var nestedRegistration = Task.Run(() =>
-                manager.Register(requestId, 2, new RecordingDispatcher()));
-            RegistryLockWasHeld = !nestedRegistration.Wait(TimeSpan.FromMilliseconds(200));
+            var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var nestedRegistration = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var thread = new Thread(() =>
+            {
+                started.TrySetResult();
+                try
+                {
+                    manager.Register(requestId, 2, new RecordingDispatcher());
+                    nestedRegistration.TrySetResult();
+                }
+                catch (Exception exception)
+                {
+                    nestedRegistration.TrySetException(exception);
+                }
+            })
+            {
+                IsBackground = true
+            };
+            thread.Start();
+            Ensure(started.Task.Wait(RaceCoordinationTimeout),
+                "nested registration worker did not start within the coordination timeout");
+            RegistryLockWasHeld = !nestedRegistration.Task.Wait(RaceCoordinationTimeout);
         }
     }
 }

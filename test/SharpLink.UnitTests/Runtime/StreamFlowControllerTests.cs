@@ -156,6 +156,37 @@ public class StreamFlowControllerTests
     }
 
     [Test]
+    public async Task CompletedSendTombstoneShouldNotConsumeActiveStreamCapacity()
+    {
+        var controller = new StreamFlowController(4, 8, 1024, maxConcurrentStreams: 1);
+        await controller.AcquireSendCreditAsync(1, 0, 1, CancellationToken.None);
+
+        try
+        {
+            await controller.AcquireSendCreditAsync(2, 0, 1, CancellationToken.None);
+            throw new Exception("expected active stream capacity exhaustion");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ResourceExhausted)
+        {
+        }
+
+        controller.CompleteSendStream(
+            1,
+            0,
+            new SharpLinkException(SharpLinkErrorCode.Cancelled, "consumer abandoned"));
+        controller.CompleteSendStream(1, 0);
+        Ensure(controller.ActiveSendStreamCount == 0,
+            "completion must idempotently release capacity while retaining in-flight credit state");
+
+        await controller.AcquireSendCreditAsync(2, 0, 1, CancellationToken.None);
+        Ensure(controller.ActiveSendStreamCount == 1,
+            "a new active stream must reuse capacity held only by a completed tombstone");
+        controller.ApplyWindowUpdate(1, 0, 1);
+        Ensure(controller.SendConnectionCredit == 7,
+            "the completed stream's late update must still restore its exact connection credit");
+    }
+
+    [Test]
     public async Task UnsentFrameShouldReturnCreditAndAdmitTheNextWaiter()
     {
         var controller = new StreamFlowController(4, 4, 1024);
