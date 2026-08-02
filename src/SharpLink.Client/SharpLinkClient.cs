@@ -38,6 +38,7 @@ internal sealed partial class SharpLinkClient :
     private Task? _expansionTask;
     private Task? _stopTask;
     private TaskCompletionSource<bool> _readySignal = CreateReadySignal();
+    private int _activeLogicalInvocations;
     private int _state = (int)SharpLinkConnectionState.Created;
     private int _reconnectDelayMilliseconds = 100;
     private long _readyTimestamp;
@@ -489,7 +490,7 @@ internal sealed partial class SharpLinkClient :
         }
     }
 
-    int ISharpLinkClientDrainInspector.ActiveCallCount => ActiveClientCallCount;
+    int ISharpLinkClientDrainInspector.ActiveCallCount => Volatile.Read(ref _activeLogicalInvocations);
 
     int ISharpLinkClientDrainInspector.ActiveStreamCount => ActiveClientStreamCount;
 

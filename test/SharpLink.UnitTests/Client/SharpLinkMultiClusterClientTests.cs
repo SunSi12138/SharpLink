@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Reflection.Emit;
 using System.Collections.Frozen;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -674,6 +675,7 @@ public sealed class SharpLinkMultiClusterClientTests
                 .AddCluster("orders", child => child.UseTransport(oldTransport))
                 .Build();
             var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
+            await client.ConnectAsync();
 
             var failure = await CaptureExceptionAsync(client.AddClusterAsync(
                 "conflict",
@@ -685,6 +687,8 @@ public sealed class SharpLinkMultiClusterClientTests
                 "runtime route conflict must reject the candidate before publication");
             Ensure(rejectedTransport.DisposeCount == 1,
                 "route-conflicting candidate must be stopped and disposed");
+            Ensure(rejectedTransport.ConnectCount == 0,
+                "an immutable route conflict must be rejected before the candidate connects");
             Ensure(ReferenceEquals(oldProxy.Channel, retainedProxy.Channel),
                 "route conflict rollback must preserve the original route generation");
             Ensure(oldTransport.DisposeCount == 0,
@@ -957,6 +961,60 @@ public sealed class SharpLinkMultiClusterClientTests
         }
         finally
         {
+            Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", null);
+            RollbackState.TestIsolation.Release();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task DynamicRegistrationShouldRejectASlotChangedWhileItsManifestLoads()
+    {
+        await RollbackState.TestIsolation.WaitAsync();
+        var manifestStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var manifestRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        RollbackState.ManifestConstructionStarted = manifestStarted;
+        RollbackState.ManifestConstructionRelease = manifestRelease;
+        Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
+        SharpLinkClusterKey cluster = "plugins";
+        var child = new BlockingRetiredClient();
+        var slot = new SharpLinkClusterSlot(cluster, child, AllowDynamicContracts: true);
+        var client = new SharpLinkMultiClusterClient(
+            new SharpLinkMultiClusterOptions(),
+            new Dictionary<SharpLinkClusterKey, SharpLinkClusterSlot> { [cluster] = slot }
+                .ToFrozenDictionary(),
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
+            []);
+        try
+        {
+            var registration = Task.Run(() =>
+                client.RegisterAssembly(cluster, typeof(RollbackMarker).Assembly));
+            await manifestStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+            var removal = await client.RemoveClusterAsync(cluster, TimeSpan.Zero);
+            Ensure(removal is { Succeeded: true, ForcedStop: true },
+                "the concurrent remove must publish while manifest loading is paused");
+            manifestRelease.TrySetResult();
+
+            var result = await registration.WaitAsync(TimeSpan.FromSeconds(2));
+            var registrations = (List<DynamicAssemblyRegistration>)typeof(SharpLinkMultiClusterClient)
+                .GetField("_dynamicRegistrations", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(client)!;
+            Ensure(!result.Succeeded &&
+                   result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                "registration must reject a slot that changed while its manifest loaded");
+            Ensure(child.RegisterAssemblyCallCount == 0 && registrations.Count == 0,
+                "registration must not reach or retain the retired child");
+
+            child.ReleaseStop();
+            await client.StopAsync();
+        }
+        finally
+        {
+            manifestRelease.TrySetResult();
+            child.ReleaseStop();
+            RollbackState.ManifestConstructionStarted = null;
+            RollbackState.ManifestConstructionRelease = null;
             Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", null);
             RollbackState.TestIsolation.Release();
         }
@@ -1240,6 +1298,40 @@ public sealed class SharpLinkMultiClusterClientTests
             "retired child cleanup must finish before coordinator StopAsync completes");
     }
 
+    [Test]
+    public async Task FaultedRetiredCleanupShouldBeReportedByCoordinatorStop()
+    {
+        SharpLinkClusterKey cluster = "retiring";
+        var child = new FaultingRetiredClient();
+        var slot = new SharpLinkClusterSlot(cluster, child, AllowDynamicContracts: true);
+        var client = new SharpLinkMultiClusterClient(
+            new SharpLinkMultiClusterOptions(),
+            new Dictionary<SharpLinkClusterKey, SharpLinkClusterSlot> { [cluster] = slot }
+                .ToFrozenDictionary(),
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
+            []);
+
+        var removal = await client.RemoveClusterAsync(cluster, TimeSpan.Zero);
+        Ensure(removal is { Succeeded: true, ReferencesReleased: false, ForcedStop: true },
+            "zero-timeout removal must leave the retired cleanup under coordinator ownership");
+        await child.StopStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        child.FailStop();
+
+        var retiredFailure = await CaptureExceptionAsync(
+            child.StopOperation.WaitAsync(TimeSpan.FromSeconds(2)));
+        Ensure(retiredFailure is InvalidOperationException exception &&
+               exception.Message.Contains("retired cleanup failed", StringComparison.Ordinal),
+            "the retired child must expose the controlled cleanup failure");
+        await WaitForConditionAsync(
+            () => GetRetiredCleanupOperations(client).Any(static operation => operation.IsFaulted),
+            "the coordinator must retain the faulted cleanup until shutdown consumes it");
+
+        var shutdownFailure = await CaptureExceptionAsync(client.StopAsync().AsTask());
+        Ensure(shutdownFailure is InvalidOperationException shutdownException &&
+               shutdownException.Message.Contains("retired cleanup failed", StringComparison.Ordinal),
+            "coordinator shutdown must report a previously faulted retired cleanup");
+    }
+
     private static async Task EnsureThrows<TException>(Func<Task> action) where TException : Exception
     {
         try
@@ -1264,6 +1356,19 @@ public sealed class SharpLinkMultiClusterClientTests
         {
             return exception;
         }
+    }
+
+    private static HashSet<Task> GetRetiredCleanupOperations(SharpLinkMultiClusterClient client)
+        => (HashSet<Task>)typeof(SharpLinkMultiClusterClient)
+            .GetField("_retiredCleanupOperations", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(client)!;
+
+    private static async Task WaitForConditionAsync(Func<bool> condition, string failureMessage)
+    {
+        var deadline = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * 2d);
+        while (!condition() && Stopwatch.GetTimestamp() < deadline)
+            await Task.Delay(10);
+        Ensure(condition(), failureMessage);
     }
 
     private static void Ensure(bool condition, string message)
@@ -1498,9 +1603,11 @@ public sealed class SharpLinkMultiClusterClientTests
         private readonly TaskCompletionSource _stop =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _activeCalls = 1;
+        private int _registerAssemblyCallCount;
 
         internal TaskCompletionSource StopStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal int RegisterAssemblyCallCount => Volatile.Read(ref _registerAssemblyCallCount);
 
         public SharpLinkConnectionState State { get; private set; } = SharpLinkConnectionState.Ready;
         int ISharpLinkClientDrainInspector.ActiveCallCount => Volatile.Read(ref _activeCalls);
@@ -1516,6 +1623,71 @@ public sealed class SharpLinkMultiClusterClientTests
             return cancellationToken.CanBeCanceled
                 ? new ValueTask(_stop.Task.WaitAsync(cancellationToken))
                 : new ValueTask(_stop.Task);
+        }
+
+        public ValueTask DisposeAsync() => StopAsync();
+
+        public TContract Get<TContract>() where TContract : IService
+            => throw new NotSupportedException();
+
+        public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Draining));
+
+        public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
+        {
+            Interlocked.Increment(ref _registerAssemblyCallCount);
+            return SharpLinkAssemblyRegistrationResult.Success();
+        }
+
+        public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
+            Assembly assembly,
+            TimeSpan gracefulTimeout,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = true });
+
+        public ValueTask<SharpLinkAssemblyReplacementResult> ReplaceAssemblyAsync(
+            Assembly oldAssembly,
+            Assembly newAssembly,
+            TimeSpan gracefulTimeout,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(
+                new SharpLinkAssemblyRegistrationError(
+                    SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                    "not supported")));
+
+        internal void ReleaseStop()
+        {
+            State = SharpLinkConnectionState.Stopped;
+            _stop.TrySetResult();
+        }
+
+        internal void ReleaseCalls() => Volatile.Write(ref _activeCalls, 0);
+    }
+
+    private sealed class FaultingRetiredClient : ISharpLinkClient, ISharpLinkClientDrainInspector
+    {
+        private readonly TaskCompletionSource _stopRelease =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private Task? _stopOperation;
+
+        internal TaskCompletionSource StopStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal Task StopOperation => _stopOperation ?? throw new InvalidOperationException("Stop has not started.");
+
+        public SharpLinkConnectionState State { get; private set; } = SharpLinkConnectionState.Ready;
+        int ISharpLinkClientDrainInspector.ActiveCallCount => 0;
+        int ISharpLinkClientDrainInspector.ActiveStreamCount => 0;
+
+        public ValueTask ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.CompletedTask;
+
+        public ValueTask StopAsync(CancellationToken cancellationToken = default)
+        {
+            _stopOperation ??= StopCoreAsync();
+            return cancellationToken.CanBeCanceled
+                ? new ValueTask(_stopOperation.WaitAsync(cancellationToken))
+                : new ValueTask(_stopOperation);
         }
 
         public ValueTask DisposeAsync() => StopAsync();
@@ -1546,13 +1718,16 @@ public sealed class SharpLinkMultiClusterClientTests
                     SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                     "not supported")));
 
-        internal void ReleaseStop()
-        {
-            State = SharpLinkConnectionState.Stopped;
-            _stop.TrySetResult();
-        }
+        internal void FailStop() => _stopRelease.TrySetResult();
 
-        internal void ReleaseCalls() => Volatile.Write(ref _activeCalls, 0);
+        private async Task StopCoreAsync()
+        {
+            State = SharpLinkConnectionState.Draining;
+            StopStarted.TrySetResult();
+            await _stopRelease.Task;
+            State = SharpLinkConnectionState.Faulted;
+            throw new InvalidOperationException("retired cleanup failed");
+        }
     }
 
     private sealed class CoordinatedUnregisterClient : ISharpLinkClient, IDynamicAssemblyRegistrationInspector

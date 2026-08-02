@@ -45,6 +45,7 @@ internal sealed partial class SharpLinkMultiClusterClient
                     throw new InvalidOperationException($"Cluster '{cluster}' was added by another operation.");
                 ValidateSteadyBudget(snapshot.ConfiguredConnectionBudget, candidate.Slot.ConfiguredConnectionBudget);
                 ValidateTransitionBudget(snapshot.ConfiguredConnectionBudget, candidate.Slot.ConfiguredConnectionBudget);
+                _ = MergeRoutes(snapshot.Routes, candidate.StaticRoutes);
             }
             failureStage = "candidate_connect";
             var candidateConnected = await ConnectCandidateWhenRequiredAsync(
@@ -445,10 +446,13 @@ internal sealed partial class SharpLinkMultiClusterClient
         lock (_gate)
             _retiredCleanupOperations.Add(cleanup);
         _ = cleanup.ContinueWith(
-            _ =>
+            completed =>
             {
-                lock (_gate)
-                    _retiredCleanupOperations.Remove(cleanup);
+                if (completed.Status == TaskStatus.RanToCompletion)
+                {
+                    lock (_gate)
+                        _retiredCleanupOperations.Remove(cleanup);
+                }
             },
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,

@@ -177,6 +177,12 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
             }
 
             var snapshot = Volatile.Read(ref _snapshot);
+            if (!snapshot.Clusters.TryGetValue(cluster, out var currentSlot) ||
+                !ReferenceEquals(currentSlot, slot))
+            {
+                return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                    $"Cluster '{cluster}' changed while its assembly manifest was loaded.", assembly);
+            }
             var currentRoutes = snapshot.Routes;
             foreach (var contract in manifest.Contracts)
             {
