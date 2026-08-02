@@ -7,6 +7,10 @@ using SharpLink.Sdk;
 using SharpLink.Server;
 using SharpPack;
 
+[assembly: SharpLinkClusterContractAssembly(
+    "runtime",
+    typeof(SharpLink.PackageSmoke.IPackageSmokeService))]
+
 namespace SharpLink.PackageSmoke;
 
 [RpcContract]
@@ -101,6 +105,9 @@ public static class Program
                 actual.Address.PostalCode != expected.Address.PostalCode ||
                 !actual.Values.SequenceEqual(expected.Values))
                 throw new InvalidOperationException("Package smoke generated DTO codec round-trip failed.");
+
+            if (!useSharedMemory)
+                await RunRuntimeMultiClusterSmokeAsync(localEndPoint!.Port, cancellationToken);
         }
         finally
         {
@@ -108,6 +115,41 @@ public static class Program
             await server.DisposeAsync();
             await Task.WhenAny(serverTask, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
         }
+    }
+
+    private static async Task RunRuntimeMultiClusterSmokeAsync(
+        int port,
+        CancellationToken cancellationToken)
+    {
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster(
+                "bootstrap",
+                child => child.UseTcp(IPAddress.Loopback.ToString(), port),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+        await client.ConnectAsync(cancellationToken);
+
+        await client.AddClusterAsync(
+            "runtime",
+            child => child.UseTcp(IPAddress.Loopback.ToString(), port),
+            cancellationToken: cancellationToken);
+        if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
+            throw new InvalidOperationException("Runtime multi-cluster Add package smoke failed.");
+
+        await client.ReplaceClusterAsync(
+            "runtime",
+            child => child.UseTcp(IPAddress.Loopback.ToString(), port),
+            TimeSpan.FromSeconds(2),
+            cancellationToken);
+        if (await client.Get<IPackageSmokeService>().AddAsync(19, 23) != 42)
+            throw new InvalidOperationException("Runtime multi-cluster Replace package smoke failed.");
+
+        var removal = await client.RemoveClusterAsync(
+            "runtime",
+            TimeSpan.FromSeconds(2),
+            cancellationToken);
+        if (!removal.Succeeded || !removal.ReferencesReleased || removal.ForcedStop)
+            throw new InvalidOperationException("Runtime multi-cluster Remove package smoke failed.");
     }
 
     private static async Task RunStaticEndpointSmokeAsync(CancellationToken cancellationToken)

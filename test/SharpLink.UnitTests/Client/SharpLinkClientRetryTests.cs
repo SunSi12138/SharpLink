@@ -109,6 +109,32 @@ public class SharpLinkClientRetryTests
     }
 
     [Test]
+    public async Task LogicalInvocationShouldRemainActiveBetweenRetryAttempts()
+    {
+        var transport = new TestClientTransportFactory();
+        var policy = new DelayingRetryPolicy(TimeSpan.MaxValue);
+        await using var client = CreateRetryClient(transport, policy, maxAttempts: 2);
+        await client.ConnectAsync();
+        using var cancellation = new CancellationTokenSource();
+
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
+            client, cancellationToken: cancellation.Token).AsTask();
+        var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+        await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
+        await policy.EvaluationStarted.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(client.ActiveClientCallCount == 0,
+            "no connection-level attempt should remain active during retry backoff");
+        Ensure(((ISharpLinkClientDrainInspector)client).ActiveCallCount == 1,
+            "the complete logical invocation must remain visible between retry attempts");
+
+        cancellation.Cancel();
+        await EnsureThrows<OperationCanceledException>(invocation);
+        Ensure(((ISharpLinkClientDrainInspector)client).ActiveCallCount == 0,
+            "the logical invocation count must be released after cancellation");
+    }
+
+    [Test]
     public async Task HugeBuiltInJitteredRetryDelayShouldRemainCancellable()
     {
         for (var iteration = 0; iteration < 32; iteration++)

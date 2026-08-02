@@ -134,7 +134,22 @@ var payments = client.Get<IPaymentService>();
     slot => slot.AllowDynamicContracts = true)
 ```
 
-动态契约必须注册到明确指定的槽位，相关 API 为 `RegisterAssembly(cluster, assembly)`、`UnregisterAssemblyAsync(cluster, assembly, timeout)` 和 `ReplaceAssemblyAsync(cluster, oldAssembly, newAssembly, timeout)`。当前不存在默认集群、逐调用集群覆盖、跨集群重试，线上协议也不携带集群标识。生命周期与迁移细节见 [`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md)。
+动态契约必须注册到明确指定的槽位，相关 API 为 `RegisterAssembly(cluster, assembly)`、`UnregisterAssemblyAsync(cluster, assembly, timeout)` 和 `ReplaceAssemblyAsync(cluster, oldAssembly, newAssembly, timeout)`。构建完成的协调器也可以原子地新增、替换和移除完整槽位：
+
+```csharp
+await client.AddClusterAsync("search",
+    child => child.UseTcp("127.0.0.1", 5201).UseRetry(),
+    slot => slot.AllowDynamicContracts = true);
+
+await client.ReplaceClusterAsync("search",
+    child => child.UseDnsEndpoints(
+        "search.internal", 5201, SharpLinkTransportFactories.Sockets()),
+    TimeSpan.FromSeconds(30));
+
+var removal = await client.RemoveClusterAsync("search", TimeSpan.FromSeconds(30));
+```
+
+协调器处于 Ready 状态时，候选槽位会在发布前建立连接。替换只影响之后的 `Get<T>()` 调用；已经创建的代理仍绑定到退役子客户端，不会被静默重绑。当前不存在默认集群、逐调用集群覆盖、跨集群重试，线上协议也不携带集群标识。生命周期与迁移细节见 [`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md)。
 
 ## 契约 Manifest 与兼容性基线
 

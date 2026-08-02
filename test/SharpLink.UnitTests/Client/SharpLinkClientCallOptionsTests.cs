@@ -41,11 +41,15 @@ public class SharpLinkClientCallOptionsTests
 
         await Task.Delay(50);
         Ensure(!invocation.IsCompleted, "call should wait while no connection is ready");
+        Ensure(((ISharpLinkClientDrainInspector)client).ActiveCallCount == 1,
+            "a wait-for-ready logical call must remain visible before it leases a connection");
         await client.ConnectAsync();
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
 
         Ensure(await invocation == 0, "zero-valued Int32 response");
+        Ensure(((ISharpLinkClientDrainInspector)client).ActiveCallCount == 0,
+            "the logical call count must be released when wait-for-ready completes");
     }
 
     [Test]

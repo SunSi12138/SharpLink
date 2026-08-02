@@ -93,5 +93,7 @@ public static class LogEvents
         public const int ConnectionAttemptFailed = 6101;
         /// <summary>A service resolver update failed.</summary>
         public const int ResolverUpdateFailed = 6102;
+        /// <summary>A multi-cluster slot lifecycle operation changed stage.</summary>
+        public const int MultiClusterMutationStage = 6003;
     }
 }

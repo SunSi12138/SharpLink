@@ -8,6 +8,59 @@ namespace SharpLink.IntegrationTests;
 public class TlsTransportIntegrationTests
 {
     [Test]
+    [NotInParallel]
+    public async Task RuntimeMultiClusterAddAndReplaceShouldPreserveTlsAndAuthenticationConfiguration()
+    {
+        using var certificate = CreateCertificate("localhost", serverAuthentication: true);
+        await using var firstServer = await StartServerAsync(
+            0,
+            CreateServerOptions(certificate),
+            expectedAuthenticationToken: "runtime-token");
+        await using var secondServer = await StartServerAsync(
+            0,
+            CreateServerOptions(certificate),
+            expectedAuthenticationToken: "runtime-token");
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster(
+                "bootstrap",
+                child => child
+                    .UseTcp(
+                        IPAddress.Loopback.ToString(),
+                        firstServer.Port,
+                        CreateClientOptions("localhost"),
+                        TimeSpan.FromSeconds(2))
+                    .UseAuthenticator(CreateClientAuthenticator("runtime-token")),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+        await client.ConnectAsync();
+
+        await client.AddClusterAsync(
+            "runtime",
+            child => child
+                .UseTcp(
+                    IPAddress.Loopback.ToString(),
+                    firstServer.Port,
+                    CreateClientOptions("localhost"),
+                    TimeSpan.FromSeconds(2))
+                .UseAuthenticator(CreateClientAuthenticator("runtime-token")));
+        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(20, 22) == 42,
+            "runtime Add must preserve TLS and client authentication configuration");
+
+        await client.ReplaceClusterAsync(
+            "runtime",
+            child => child
+                .UseTcp(
+                    IPAddress.Loopback.ToString(),
+                    secondServer.Port,
+                    CreateClientOptions("localhost"),
+                    TimeSpan.FromSeconds(2))
+                .UseAuthenticator(CreateClientAuthenticator("runtime-token")),
+            TimeSpan.FromSeconds(2));
+        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(19, 23) == 42,
+            "runtime Replace must preserve TLS and client authentication configuration");
+    }
+
+    [Test]
     public async Task TlsShouldProtectAllRpcShapesAndReconnect()
     {
         using var certificate = CreateCertificate("localhost", serverAuthentication: true);
@@ -208,11 +261,23 @@ public class TlsTransportIntegrationTests
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
             .Build();
 
-    private static async Task<TlsServerHarness> StartServerAsync(int port, SslServerAuthenticationOptions options)
+    private static async Task<TlsServerHarness> StartServerAsync(
+        int port,
+        SslServerAuthenticationOptions options,
+        string? expectedAuthenticationToken = null)
     {
         var builder = SharpLinkServerBuilder.Create()
             .UseTcp(port, options, IPAddress.Loopback.ToString(), tlsHandshakeTimeout: TimeSpan.FromSeconds(2))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
+        if (expectedAuthenticationToken is not null)
+        {
+            builder
+                .UseAuthenticator(SharpLinkAuthenticator.CreateServer((request, _) => ValueTask.FromResult(
+                    System.Text.Encoding.UTF8.GetString(request.Payload.Span) == expectedAuthenticationToken
+                        ? SharpLinkAuthenticationResult.Success
+                        : SharpLinkAuthenticationResult.Reject())))
+                .RequireAuthentication();
+        }
         var boundPort = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         var server = builder.Build();
         var cts = new CancellationTokenSource();
@@ -227,6 +292,13 @@ public class TlsTransportIntegrationTests
             TargetHost = targetHost,
             RemoteCertificateValidationCallback = ValidateTestCertificate
         };
+
+    private static ISharpLinkClientAuthenticator CreateClientAuthenticator(string token)
+    {
+        var payload = System.Text.Encoding.UTF8.GetBytes(token);
+        return SharpLinkAuthenticator.CreateClient(
+            _ => ValueTask.FromResult<ReadOnlyMemory<byte>>(payload));
+    }
 
     private static SslServerAuthenticationOptions CreateServerOptions(X509Certificate2 certificate)
         => new()
