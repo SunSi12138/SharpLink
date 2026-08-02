@@ -138,6 +138,7 @@ internal sealed partial class SharpLinkServer
                 _runtimeContext.Concurrency,
                 cancellationToken,
                 _maxConcurrentCallsPerConnection);
+            connectionState.MarkSessionLoopStarted();
             connection = null;
             session.SetTelemetrySide("server");
             session.BindRuntimeContext(_runtimeContext);
@@ -158,7 +159,10 @@ internal sealed partial class SharpLinkServer
         finally
         {
             if (connectionState is not null)
+            {
+                connectionState.MarkSessionLoopCompleted();
                 await connectionState.CloseAsync().ConfigureAwait(false);
+            }
             else if (connection is not null)
                 await connection.DisposeAsync().ConfigureAwait(false);
         }
@@ -234,6 +238,9 @@ internal sealed partial class SharpLinkServer
         }
         finally
         {
+            // Closing a session completes its PipeReader. Publish that this loop no longer
+            // owns a ReadResult before any concurrent stop path is allowed to dispose it.
+            connection.MarkSessionLoopCompleted();
             if (hasConnected)
                 LogClientDisconnected(_logger);
             await DisconnectConnectionAsync(connection).ConfigureAwait(false);

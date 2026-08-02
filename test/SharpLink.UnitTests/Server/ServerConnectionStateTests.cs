@@ -52,6 +52,29 @@ public class ServerConnectionStateTests
     }
 
     [Test]
+    public async Task CloseShouldWaitForSessionLoopToReleaseItsReadBuffer()
+    {
+        var disconnectCount = 0;
+        var state = CreateState(() => Interlocked.Increment(ref disconnectCount));
+        state.MarkSessionLoopStarted();
+
+        var close = state.CloseAsync().AsTask();
+
+        Ensure(state.ConnectionToken.IsCancellationRequested,
+            "close must cancel the session loop before waiting for its read buffer");
+        Ensure(!close.IsCompleted,
+            "close must not complete the PipeReader while the session loop still owns a ReadResult");
+        Ensure(disconnectCount == 0,
+            "session disposal must wait until the read buffer has been released");
+
+        state.MarkSessionLoopCompleted();
+        await close.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(disconnectCount == 1, "session disposal should resume after the loop releases its buffer");
+        Ensure(state.LifecycleState == ServerConnectionLifecycleState.Closed, "closed state");
+    }
+
+    [Test]
     public async Task DefaultCallContextShouldBeIsolatedPerConnectionAndSafeForConcurrentReads()
     {
         var first = CreateState(static () => { });
