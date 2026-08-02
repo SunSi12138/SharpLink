@@ -229,6 +229,37 @@ public class StreamFlowControllerTests
     }
 
     [Test]
+    public async Task TombstoneCapacityShouldRetainAtMostOneReplacementWaiter()
+    {
+        var controller = new StreamFlowController(4, 8, 1024, maxConcurrentStreams: 1);
+        await controller.AcquireSendCreditAsync(1, 0, 1, CancellationToken.None);
+        controller.CompleteSendStream(1, 0);
+
+        using var cancellation = new CancellationTokenSource();
+        var firstReplacement = controller.AcquireSendCreditAsync(2, 0, 1, cancellation.Token);
+        Ensure(!firstReplacement.IsCompleted,
+            "one replacement should backpressure until retained capacity is released");
+
+        try
+        {
+            await controller.AcquireSendCreditAsync(3, 0, 1, CancellationToken.None);
+            throw new Exception("expected pending replacement capacity exhaustion");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ResourceExhausted)
+        {
+        }
+
+        cancellation.Cancel();
+        await ExpectCancellation(firstReplacement);
+
+        var nextReplacement = controller.AcquireSendCreditAsync(3, 0, 1, CancellationToken.None);
+        Ensure(!nextReplacement.IsCompleted,
+            "canceling the bounded waiter should make its slot reusable");
+        controller.ApplyWindowUpdate(1, 0, 1);
+        await nextReplacement;
+    }
+
+    [Test]
     public async Task UnsentFrameShouldReturnCreditAndAdmitTheNextWaiter()
     {
         var controller = new StreamFlowController(4, 4, 1024);

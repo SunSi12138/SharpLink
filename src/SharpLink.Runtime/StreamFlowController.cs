@@ -6,6 +6,7 @@ namespace SharpLink.Runtime;
 /// </summary>
 internal sealed class StreamFlowController
 {
+    private const int MaxPendingSendStateWaiters = 1;
     private readonly Lock _gate = new();
     private readonly int _streamWindow;
     private readonly int _connectionWindow;
@@ -21,6 +22,7 @@ internal sealed class StreamFlowController
     // The active count distinguishes hard live-stream exhaustion from tombstone pressure;
     // the state dictionary itself remains bounded by the negotiated stream limit.
     private int _activeSendStreamCount;
+    private int _pendingSendStateWaiterCount;
     private long _sendConnectionCredit;
     private long _receiveConnectionCredit;
     private long _pendingConnectionConsumed;
@@ -133,7 +135,16 @@ internal sealed class StreamFlowController
                 }
             }
 
-            waiter = new CreditWaiter(this, key, encodedBytes, canCreateState: expectedState is null);
+            var waitsForStateCapacity = state is null;
+            if (waitsForStateCapacity &&
+                _pendingSendStateWaiterCount >= MaxPendingSendStateWaiters)
+            {
+                throw CreatePendingStreamCapacityLimitException();
+            }
+
+            waiter = new CreditWaiter(this, key, encodedBytes, waitsForStateCapacity);
+            if (waitsForStateCapacity)
+                _pendingSendStateWaiterCount++;
             waiter.Node = _waiters.AddLast(waiter);
             ready = AdmitWaiters();
         }
@@ -233,8 +244,7 @@ internal sealed class StreamFlowController
                 var next = node.Next;
                 if (node.Value.Key == key)
                 {
-                    _waiters.Remove(node);
-                    node.Value.Node = null;
+                    RemoveWaiter(node.Value);
                     (rejected ??= []).Add(node.Value);
                 }
                 node = next;
@@ -283,8 +293,7 @@ internal sealed class StreamFlowController
                 var next = node.Next;
                 if (node.Value.Key.RequestId == requestId)
                 {
-                    _waiters.Remove(node);
-                    node.Value.Node = null;
+                    RemoveWaiter(node.Value);
                     node.Value.Rejection = exception;
                     (rejected ??= []).Add(node.Value);
                 }
@@ -431,6 +440,7 @@ internal sealed class StreamFlowController
             _waiters.Clear();
             for (var index = 0; index < waiters.Length; index++)
                 waiters[index].Node = null;
+            _pendingSendStateWaiterCount = 0;
             _sendStates.Clear();
             _activeSendStreamCount = 0;
             _receiveStates.Clear();
@@ -505,8 +515,7 @@ internal sealed class StreamFlowController
             {
                 if (!waiter.CanCreateState)
                 {
-                    _waiters.Remove(node);
-                    waiter.Node = null;
+                    RemoveWaiter(waiter);
                     waiter.Rejection = CreateStreamClosedException();
                     (ready ??= []).Add(waiter);
                     node = next;
@@ -519,10 +528,10 @@ internal sealed class StreamFlowController
                 }
                 state = AddSendState(waiter.Key);
             }
+            ReleasePendingSendStateWaiter(waiter);
             if (state.Completed || state.AbortException is not null)
             {
-                _waiters.Remove(node);
-                waiter.Node = null;
+                RemoveWaiter(waiter);
                 waiter.Rejection = state.AbortException ?? CreateStreamClosedException();
                 (ready ??= []).Add(waiter);
                 node = next;
@@ -537,8 +546,7 @@ internal sealed class StreamFlowController
             }
 
             Reserve(state, waiter.EncodedBytes);
-            _waiters.Remove(node);
-            waiter.Node = null;
+            RemoveWaiter(waiter);
             (ready ??= []).Add(waiter);
             node = next;
         }
@@ -611,8 +619,7 @@ internal sealed class StreamFlowController
         {
             if (waiter.Node is null)
                 return;
-            _waiters.Remove(waiter.Node);
-            waiter.Node = null;
+            RemoveWaiter(waiter);
             ready = AdmitWaiters();
         }
         waiter.Completion.TrySetCanceled(cancellationToken);
@@ -642,10 +649,30 @@ internal sealed class StreamFlowController
     private static SharpLinkException CreateStreamClosedException()
         => new(SharpLinkErrorCode.ConnectionClosed, "The stream is closed.");
 
+    private static SharpLinkException CreatePendingStreamCapacityLimitException()
+        => new(
+            SharpLinkErrorCode.ResourceExhausted,
+            "The session is already waiting for completed stream capacity to be released.");
+
     private SharpLinkException CreateConcurrentStreamLimitException()
         => new(
             SharpLinkErrorCode.ResourceExhausted,
             $"The session already owns {_maxConcurrentStreams} active flow-controlled streams.");
+
+    private void RemoveWaiter(CreditWaiter waiter)
+    {
+        _waiters.Remove(waiter.Node!);
+        waiter.Node = null;
+        ReleasePendingSendStateWaiter(waiter);
+    }
+
+    private void ReleasePendingSendStateWaiter(CreditWaiter waiter)
+    {
+        if (!waiter.CanCreateState)
+            return;
+        waiter.CanCreateState = false;
+        _pendingSendStateWaiterCount--;
+    }
 
     private readonly record struct StreamKey(long RequestId, ushort StreamId);
 
@@ -676,7 +703,7 @@ internal sealed class StreamFlowController
         public readonly StreamFlowController Owner = owner;
         public readonly StreamKey Key = key;
         public readonly int EncodedBytes = encodedBytes;
-        public readonly bool CanCreateState = canCreateState;
+        public bool CanCreateState = canCreateState;
         public LinkedListNode<CreditWaiter>? Node;
         public Exception? Rejection;
 
