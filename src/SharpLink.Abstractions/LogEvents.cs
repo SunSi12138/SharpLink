@@ -74,6 +74,8 @@ public static class LogEvents
         public const int BackgroundLoopUnhandledException = 5001;
         /// <summary>The server heartbeat loop encountered an unhandled exception.</summary>
         public const int HeartbeatLoopUnhandledException = 5002;
+        /// <summary>The server published its effective active-call capacity limits.</summary>
+        public const int CallCapacityConfigured = 5003;
         /// <summary>Calls remained active after the graceful-drain interval and were forced to stop.</summary>
         public const int ForcedCallsRemaining = 5101;
         /// <summary>A deferred cleanup operation failed.</summary>

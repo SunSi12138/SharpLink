@@ -101,9 +101,9 @@ public sealed partial class RpcSession
             {
                 if (returnFrameWhenFull)
                 {
-                    ReturnUnreserved(frame, new SharpLinkException(
-                        SharpLinkErrorCode.ResourceExhausted,
-                        $"Session send queue exceeded its {_maxQueuedBytes}-byte limit."));
+                    ReturnUnreserved(frame, SharpLinkResourceExhaustion.Create(
+                        SharpLinkResourceExhaustion.SendQueueCapacity,
+                        $"Session send queue exceeded its {_maxQueuedBytes}-byte limit (send_queue_capacity)."));
                 }
                 return SendEnqueueResult.Full;
             }

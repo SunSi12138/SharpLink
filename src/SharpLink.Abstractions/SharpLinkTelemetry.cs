@@ -214,7 +214,17 @@ public static class SharpLinkTelemetry
     internal static void AddActiveStreams(long count) => RecordDelta(ActiveStreams, count);
     internal static void RecordProtocolFailure(string side) => Record(ProtocolFailures, 1, side);
     internal static void RecordAuthenticationFailure(string side) => Record(AuthenticationFailures, 1, side);
-    internal static void RecordResourceExhausted(string side) => Record(ResourceExhausted, 1, side);
+    internal static void RecordResourceExhausted(
+        string side,
+        string reason = SharpLinkResourceExhaustion.Unspecified)
+    {
+        if (!ResourceExhausted.Enabled)
+            return;
+        ResourceExhausted.Add(
+            1,
+            new KeyValuePair<string, object?>("rpc.side", side),
+            new KeyValuePair<string, object?>("rpc.sharplink.resource_exhaustion_reason", reason));
+    }
     internal static void RecordAbandonedCall(string side, string terminationReason)
     {
         if (!AbandonedCalls.Enabled)
@@ -490,7 +500,11 @@ public static class SharpLinkTelemetry
                 _activity?.SetStatus(ActivityStatusCode.Error, status?.ToString());
                 _activity?.SetTag("error.type", exception.GetType().FullName);
                 if (status == SharpLinkErrorCode.ResourceExhausted)
-                    RecordResourceExhausted(_side);
+                {
+                    var reason = SharpLinkResourceExhaustion.GetReason(exception);
+                    RecordResourceExhausted(_side, reason);
+                    _activity?.SetTag("rpc.sharplink.resource_exhaustion_reason", reason);
+                }
             }
             RecordCallDelta(ActiveCalls, -1, _side, _method);
             if (_started != 0 && RequestDuration.Enabled)

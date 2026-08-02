@@ -23,6 +23,12 @@ public sealed class SharpLinkFlowControlOptions
     /// <summary>The hard maximum active Server calls on one physical connection.</summary>
     public const int MaximumConcurrentCallsPerConnection = 1024 * 1024;
 
+    /// <summary>The default maximum active calls across one server instance.</summary>
+    public const int DefaultMaxConcurrentCallsPerServer = 65_536;
+
+    /// <summary>The hard maximum active calls across one server instance.</summary>
+    public const int MaximumConcurrentCallsPerServer = 1024 * 1024;
+
     /// <summary>Gets or sets the maximum queued outbound bytes.</summary>
     public int MaxSendQueueBytes
     {
@@ -43,6 +49,13 @@ public sealed class SharpLinkFlowControlOptions
     /// <summary>Gets or sets the maximum concurrent calls on one connection.</summary>
     public int MaxConcurrentCallsPerConnection { get; set; } = 1024;
 
+    /// <summary>Gets or sets the maximum concurrent calls across one server instance.</summary>
+    /// <remarks>
+    /// This is independent from <see cref="MaxConcurrentCallsPerConnection"/>. A call must fit
+    /// under both limits before it can execute.
+    /// </remarks>
+    public int MaxConcurrentCallsPerServer { get; set; } = DefaultMaxConcurrentCallsPerServer;
+
     /// <summary>Validates all flow-control limits.</summary>
     public void Validate()
     {
@@ -55,6 +68,12 @@ public sealed class SharpLinkFlowControlOptions
                 nameof(MaxConcurrentCallsPerConnection),
                 $"MaxConcurrentCallsPerConnection must be between 1 and {MaximumConcurrentCallsPerConnection}.");
         }
+        if (MaxConcurrentCallsPerServer is < 1 or > MaximumConcurrentCallsPerServer)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxConcurrentCallsPerServer),
+                $"MaxConcurrentCallsPerServer must be between 1 and {MaximumConcurrentCallsPerServer}.");
+        }
         if (ConnectionReceiveWindowBytes < StreamReceiveWindowBytes)
             throw new ArgumentException("ConnectionReceiveWindowBytes cannot be smaller than StreamReceiveWindowBytes.");
     }
@@ -66,7 +85,8 @@ public sealed class SharpLinkFlowControlOptions
         {
             StreamReceiveWindowBytes = StreamReceiveWindowBytes,
             ConnectionReceiveWindowBytes = ConnectionReceiveWindowBytes,
-            MaxConcurrentCallsPerConnection = MaxConcurrentCallsPerConnection
+            MaxConcurrentCallsPerConnection = MaxConcurrentCallsPerConnection,
+            MaxConcurrentCallsPerServer = MaxConcurrentCallsPerServer
         };
         clone._maxSendQueueBytes = _maxSendQueueBytes;
         clone._maxSendQueueBytesConfigured = _maxSendQueueBytesConfigured;
@@ -82,6 +102,7 @@ public sealed class SharpLinkFlowControlOptions
         destination.StreamReceiveWindowBytes = StreamReceiveWindowBytes;
         destination.ConnectionReceiveWindowBytes = ConnectionReceiveWindowBytes;
         destination.MaxConcurrentCallsPerConnection = MaxConcurrentCallsPerConnection;
+        destination.MaxConcurrentCallsPerServer = MaxConcurrentCallsPerServer;
     }
 }
 

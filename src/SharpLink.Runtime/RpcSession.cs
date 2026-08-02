@@ -281,9 +281,9 @@ public sealed partial class RpcSession : IRpcSession
         var result = GetOrCreatePump().TryEnqueue(new OwnedFrame(packet, forceFlush: false, flushCompletion: null));
         if (result == SendEnqueueResult.Full)
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ResourceExhausted,
-                $"Session send queue exceeded its {RuntimeContext.FlowControl.MaxSendQueueBytes}-byte limit.");
+            throw SharpLinkResourceExhaustion.Create(
+                SharpLinkResourceExhaustion.SendQueueCapacity,
+                $"Session send queue exceeded its {RuntimeContext.FlowControl.MaxSendQueueBytes}-byte limit (send_queue_capacity).");
         }
         if (result == SendEnqueueResult.Closed)
             throw GetTerminalException();
@@ -339,9 +339,9 @@ public sealed partial class RpcSession : IRpcSession
             : pump.TryEnqueue(frame);
         if (result == SendEnqueueResult.Full)
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ResourceExhausted,
-                $"Session send queue exceeded its {RuntimeContext.FlowControl.MaxSendQueueBytes}-byte limit.");
+            throw SharpLinkResourceExhaustion.Create(
+                SharpLinkResourceExhaustion.SendQueueCapacity,
+                $"Session send queue exceeded its {RuntimeContext.FlowControl.MaxSendQueueBytes}-byte limit (send_queue_capacity).");
         }
         if (result == SendEnqueueResult.Closed)
             throw GetTerminalException();

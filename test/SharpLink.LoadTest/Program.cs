@@ -67,6 +67,14 @@ public static class Program
             $"thresholds={options.CompressionMinimumPayloadBytes}B/{options.CompressionMinimumSavingsBytes}B/{options.CompressionMinimumSavingsRatio:P0} " +
             $"sendQueue={options.MaxSendQueueBytes?.ToString(CultureInfo.InvariantCulture) ?? "profile-default"}B " +
             $"pattern={options.PayloadPattern}");
+        if (options.Operation == "hold")
+        {
+            Console.WriteLine(
+                $"[Config] clients={options.ClientCount} connections/client={options.MinConnections} " +
+                $"concurrency/client={options.ConcurrencyPerClient} hold={options.HoldDurationSeconds}s " +
+                $"callCapacity={options.MaxConcurrentCallsPerConnection}/{options.MaxConcurrentCallsPerServer} " +
+                $"pendingCapacity={options.MaxPendingRequestsPerConnection}");
+        }
 
         if (options.Transport == TransportMode.Tcp)
             Console.WriteLine($"[Config] tcp://{options.Host}:{options.Port} (bind={options.BindIp})");
@@ -85,7 +93,10 @@ public static class Program
         Console.WriteLine("  --transport tcp|uds|namedpipe|anonymous|sharedmemory");
         Console.WriteLine("  --host 127.0.0.1 --bind-ip 0.0.0.0 --port 19100");
         Console.WriteLine("  --duration 20 --warmup 5 --concurrency 1,2,4,8,16,32");
-        Console.WriteLine("  --operation empty|add|echo|oneway|yield|delay --payload-size 64");
+        Console.WriteLine("  --operation empty|add|echo|oneway|yield|delay|hold --payload-size 64");
+        Console.WriteLine("  --client-count 4 --concurrency-per-client 2048 --hold-duration 30 (hold only)");
+        Console.WriteLine("  --max-concurrent-calls-per-connection 2048 --max-concurrent-calls-per-server 32768");
+        Console.WriteLine("  --max-pending-requests-per-connection 65536");
         Console.WriteLine("  --min-connections 1 --max-connections 1");
         Console.WriteLine("  --static-endpoints 1 | --dynamic-endpoints 1 --load-balancing p2c|random|roundrobin|leastpending (local TCP only)");
         Console.WriteLine("  --profile balanced|lowlatency|throughput");
@@ -136,8 +147,8 @@ public static class Program
             options.SharedMemoryName,
             options.SharedMemoryCapacity,
             options.SharedMemorySpinCount,
-            runtime => ConfigureCompression(runtime, options),
-            runtime => ConfigureCompression(runtime, options));
+            runtime => ConfigureRuntime(runtime, options),
+            runtime => ConfigureRuntime(runtime, options));
         var serverCts = new CancellationTokenSource();
         var serverToken = serverCts.Token;
         var serverTask = RunServerLoopAsync(harness.Server, serverToken);
@@ -170,7 +181,7 @@ public static class Program
                     .UseRuntime(runtime =>
                     {
                         runtime.PerformanceProfile = options.PerformanceProfile;
-                        ConfigureCompression(runtime, options);
+                        ConfigureRuntime(runtime, options);
                     })
                     .UseHeartbeat(
                         TimeSpan.FromSeconds(options.HeartbeatCheckIntervalSeconds),
@@ -192,7 +203,7 @@ public static class Program
                 .UseRuntime(runtime =>
                 {
                     runtime.PerformanceProfile = options.PerformanceProfile;
-                    ConfigureCompression(runtime, options);
+                    ConfigureRuntime(runtime, options);
                 })
                 .UseHeartbeat(
                     TimeSpan.FromSeconds(options.HeartbeatIntervalSeconds),
@@ -283,13 +294,25 @@ public static class Program
             options.SharedMemoryName,
             options.SharedMemoryCapacity,
             options.SharedMemorySpinCount,
-            runtime => ConfigureCompression(runtime, options));
+            runtime => ConfigureRuntime(runtime, options));
         Console.WriteLine("[Server] started.");
         await server.RunAsync(cancelScope.Token);
     }
 
     private static async Task RunClientOnlyAsync(LoadTestOptions options, MetricsRegistry metrics, ISharpLinkClient? clientOverride = null)
     {
+        if (options.Operation == "hold")
+        {
+            var result = await HoldCapacityRunner.RunAsync(options, clientOverride);
+            PerformanceReportWriter.Write(
+                options.JsonOutputPath,
+                "SharpLink.LoadTest.HoldCapacity",
+                options,
+                [result],
+                LoadTestJsonContext.Default);
+            return;
+        }
+
         var ownedClient = clientOverride is null
             ? LoadTestTransportFactory.CreateClient(
                 options.Transport,
@@ -307,7 +330,7 @@ public static class Program
                 options.SharedMemoryName,
                 options.SharedMemoryCapacity,
                 options.SharedMemorySpinCount,
-                runtime => ConfigureCompression(runtime, options))
+                runtime => ConfigureRuntime(runtime, options))
             : null;
         var client = clientOverride ?? ownedClient!;
         var results = new List<StageResult>();
@@ -532,6 +555,7 @@ public static class Program
         SharpLinkServerBuilder builder,
         LoadTestOptions options)
     {
+        builder.ReplaceService<ILoadTestService>(new LoadTestService());
         return options.AdmissionMode switch
         {
             "disabled" => builder,
@@ -550,12 +574,15 @@ public static class Program
         };
     }
 
-    private static void ConfigureCompression(
+    internal static void ConfigureRuntime(
         SharpLinkRuntimeOptions runtime,
         LoadTestOptions options)
     {
         if (options.MaxSendQueueBytes is { } maxSendQueueBytes)
             runtime.FlowControl.MaxSendQueueBytes = maxSendQueueBytes;
+        runtime.FlowControl.MaxConcurrentCallsPerConnection = options.MaxConcurrentCallsPerConnection;
+        runtime.FlowControl.MaxConcurrentCallsPerServer = options.MaxConcurrentCallsPerServer;
+        runtime.Protocol.MaxPendingRequestsPerConnection = options.MaxPendingRequestsPerConnection;
         runtime.Compression.MinimumPayloadBytes = options.CompressionMinimumPayloadBytes;
         runtime.Compression.MinimumSavingsBytes = options.CompressionMinimumSavingsBytes;
         runtime.Compression.MinimumSavingsRatio = options.CompressionMinimumSavingsRatio;
@@ -610,6 +637,12 @@ public sealed class LoadTestOptions
     public int HeartbeatTimeoutSeconds { get; private init; } = 120;
     public int MinConnections { get; private init; } = 1;
     public int MaxConnections { get; private init; } = 1;
+    public int ClientCount { get; private init; } = 1;
+    public int ConcurrencyPerClient { get; private init; } = 1024;
+    public int HoldDurationSeconds { get; private init; } = 30;
+    public int MaxConcurrentCallsPerConnection { get; private init; } = 1024;
+    public int MaxConcurrentCallsPerServer { get; private init; } = SharpLinkFlowControlOptions.DefaultMaxConcurrentCallsPerServer;
+    public int MaxPendingRequestsPerConnection { get; private init; } = 65_536;
     public bool UseStaticEndpoints { get; private init; }
     public int StaticEndpointCount { get; private init; } = 1;
     public bool UseDynamicResolver { get; private init; }
@@ -690,9 +723,9 @@ public sealed class LoadTestOptions
             : [1, 2, 4, 8, 16, 32];
 
         var operation = map.GetValueOrDefault("operation", "add").ToLowerInvariant();
-        if (operation is not ("empty" or "add" or "echo" or "oneway" or "yield" or "delay"))
+        if (operation is not ("empty" or "add" or "echo" or "oneway" or "yield" or "delay" or "hold"))
             throw new ArgumentException(
-                $"Unsupported operation: {operation}. Supported: empty, add, echo, oneway, yield, delay.");
+                $"Unsupported operation: {operation}. Supported: empty, add, echo, oneway, yield, delay, hold.");
 
         var profileText = map.GetValueOrDefault("profile", "balanced");
         var profile = profileText.ToLowerInvariant() switch
@@ -702,7 +735,9 @@ public sealed class LoadTestOptions
             "throughput" => SharpLinkPerformanceProfile.Throughput,
             _ => throw new ArgumentException($"Unsupported performance profile: {profileText}.")
         };
-        var requestTimeoutMode = map.GetValueOrDefault("request-timeout", "default").ToLowerInvariant();
+        var requestTimeoutMode = map.GetValueOrDefault(
+            "request-timeout",
+            operation == "hold" ? "disabled" : "default").ToLowerInvariant();
         if (requestTimeoutMode is not ("default" or "disabled" or "1ms" or "10ms" or "100ms"))
             throw new ArgumentException($"Unsupported request timeout mode: {requestTimeoutMode}.");
         var admissionMode = map.GetValueOrDefault("admission", "disabled").ToLowerInvariant();
@@ -747,6 +782,53 @@ public sealed class LoadTestOptions
         connectionPool.Validate();
         if (transport == TransportMode.AnonymousPipe && maxConnections != 1)
             throw new ArgumentException("Anonymous-pipe load tests require --max-connections 1.");
+
+        var clientCount = int.Parse(map.GetValueOrDefault("client-count", operation == "hold" ? "4" : "1"));
+        if (clientCount is < 1 or > 1024)
+            throw new ArgumentOutOfRangeException(nameof(clientCount));
+        var concurrencyPerClient = int.Parse(map.GetValueOrDefault("concurrency-per-client", "1024"));
+        if (concurrencyPerClient is < 1 or > SharpLinkProtocolOptions.MaximumPendingRequestsPerConnection)
+            throw new ArgumentOutOfRangeException(nameof(concurrencyPerClient));
+        var holdDurationSeconds = int.Parse(map.GetValueOrDefault("hold-duration", "30"));
+        if (holdDurationSeconds is < 1 or > 3600)
+            throw new ArgumentOutOfRangeException(nameof(holdDurationSeconds));
+        var maxConcurrentCallsPerConnection = int.Parse(
+            map.GetValueOrDefault("max-concurrent-calls-per-connection", "1024"));
+        var maxConcurrentCallsPerServer = int.Parse(
+            map.GetValueOrDefault(
+                "max-concurrent-calls-per-server",
+                SharpLinkFlowControlOptions.DefaultMaxConcurrentCallsPerServer.ToString(CultureInfo.InvariantCulture)));
+        var maxPendingRequestsPerConnection = int.Parse(
+            map.GetValueOrDefault("max-pending-requests-per-connection", "65536"));
+        new SharpLinkFlowControlOptions
+        {
+            MaxConcurrentCallsPerConnection = maxConcurrentCallsPerConnection,
+            MaxConcurrentCallsPerServer = maxConcurrentCallsPerServer
+        }.Validate();
+        new SharpLinkProtocolOptions
+        {
+            MaxPendingRequestsPerConnection = maxPendingRequestsPerConnection
+        }.Validate();
+        if (operation == "hold")
+        {
+            if (transport == TransportMode.AnonymousPipe)
+                throw new ArgumentException("The hold operation requires a transport that supports independent clients.");
+            if (minConnections != 1 || maxConnections != 1)
+                throw new ArgumentException("The hold operation requires exactly one connection per client so pooled routing cannot mask call capacity.");
+            if (useStaticEndpoints || useDynamicResolver)
+                throw new ArgumentException("The hold operation measures one server instance and cannot use endpoint-topology mode.");
+            if (admissionMode != "disabled")
+                throw new ArgumentException("The hold operation requires --admission disabled so admission limits do not mask call capacity.");
+            if (requestTimeoutMode != "disabled")
+                throw new ArgumentException("The hold operation requires --request-timeout disabled so client deadlines cannot expire before gate release.");
+            var attemptedCalls = checked(clientCount * concurrencyPerClient);
+            if (attemptedCalls > SharpLinkFlowControlOptions.MaximumConcurrentCallsPerServer)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(concurrencyPerClient),
+                    $"The hold operation supports at most {SharpLinkFlowControlOptions.MaximumConcurrentCallsPerServer} attempted calls per run.");
+            }
+        }
         var sharedMemoryCapacity = ParseOptionalInt(map, "shm-capacity");
         var sharedMemorySpinCount = ParseOptionalInt(map, "shm-spin-count");
         if (transport == TransportMode.SharedMemory)
@@ -783,6 +865,12 @@ public sealed class LoadTestOptions
             HeartbeatTimeoutSeconds = int.Parse(map.GetValueOrDefault("heartbeat-timeout", "120")),
             MinConnections = minConnections,
             MaxConnections = maxConnections,
+            ClientCount = clientCount,
+            ConcurrencyPerClient = concurrencyPerClient,
+            HoldDurationSeconds = holdDurationSeconds,
+            MaxConcurrentCallsPerConnection = maxConcurrentCallsPerConnection,
+            MaxConcurrentCallsPerServer = maxConcurrentCallsPerServer,
+            MaxPendingRequestsPerConnection = maxPendingRequestsPerConnection,
             UseStaticEndpoints = useStaticEndpoints,
             StaticEndpointCount = staticEndpointCount,
             UseDynamicResolver = useDynamicResolver,
@@ -840,6 +928,7 @@ public sealed record RealtimeResult(
     WriteIndented = true,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(PerformanceReport<LoadTestOptions, StageResult>))]
+[JsonSerializable(typeof(PerformanceReport<LoadTestOptions, HoldCapacityResult>))]
 internal sealed partial class LoadTestJsonContext : JsonSerializerContext;
 
 internal sealed class LatencyHistogram
@@ -1092,11 +1181,23 @@ public interface ILoadTestService : IService
     [Oneway]
     [NonCancellable]
     ValueTask NotifyAsync(int left, int right);
+    [NonCancellable]
+    ValueTask<int> ResetHoldProbeAsync();
+    [NonCancellable]
+    ValueTask HoldAsync(int generation, int expectedAcceptedCalls, int holdDurationMilliseconds);
+    [NonCancellable]
+    ValueTask<int> GetHoldActiveCallsAsync();
+    [NonCancellable]
+    ValueTask<int> GetHoldPeakActiveCallsAsync();
+    [NonCancellable]
+    ValueTask<string> GetSessionIdAsync();
 }
 
 [RpcService]
 public class LoadTestService : ILoadTestService
 {
+    private readonly HoldCapacityProbe _holdProbe = new();
+
     public ValueTask PingAsync() => ValueTask.CompletedTask;
     public ValueTask<int> AddAsync(int left, int right) => ValueTask.FromResult(left + right);
     public ValueTask<string> EchoAsync(string value) => ValueTask.FromResult(value);
@@ -1114,4 +1215,20 @@ public class LoadTestService : ILoadTestService
     }
 
     public ValueTask NotifyAsync(int left, int right) => ValueTask.CompletedTask;
+
+    public ValueTask<int> ResetHoldProbeAsync() => ValueTask.FromResult(_holdProbe.Reset());
+
+    public ValueTask HoldAsync(int generation, int expectedAcceptedCalls, int holdDurationMilliseconds)
+        => _holdProbe.HoldAsync(generation, expectedAcceptedCalls, holdDurationMilliseconds);
+
+    public ValueTask<int> GetHoldActiveCallsAsync()
+        => ValueTask.FromResult(_holdProbe.ActiveCalls);
+
+    public ValueTask<int> GetHoldPeakActiveCallsAsync()
+        => ValueTask.FromResult(_holdProbe.PeakActiveCalls);
+
+    public ValueTask<string> GetSessionIdAsync()
+        => ValueTask.FromResult(
+            SharpLinkCallContext.Current?.SessionId ??
+            throw new InvalidOperationException("The current RPC call has no server session identity."));
 }

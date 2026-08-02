@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- Servers can configure the independent `FlowControl.MaxConcurrentCallsPerServer` safety limit. The default is a stable 65,536 calls, the validated hard maximum is 1,048,576, and the value is frozen with the rest of the runtime snapshot at `Build()`.
+- `SharpLink.LoadTest --operation hold` creates multiple independent clients and fixed connection pools, holds Singleton-observed calls behind a shared gate, and reports attempted, accepted, peak, completed, exhausted, cancelled, failed, released, and post-release health counts.
+
+### Changed
+
+- Server-wide and per-connection call-capacity rejection remain wire-compatible `ResourceExhausted` results but now have distinct diagnostic messages. A bounded one-byte discriminator survives even the smallest valid error-message limit, new clients restore it while retaining legacy message recognition, and the `sharplink.resource_exhausted` metric adds the low-cardinality `rpc.sharplink.resource_exhaustion_reason` tag for server call, per-connection call, admission, pending-request, and send-queue capacity sources.
+- Server startup logs the effective per-connection and per-server call limits through `LogEvents.Server.CallCapacityConfigured`; capacity rejection continues to preserve healthy connections for reuse after slots are released.
+
 ## [1.1.0] - 2026-08-02
 
 ### Added

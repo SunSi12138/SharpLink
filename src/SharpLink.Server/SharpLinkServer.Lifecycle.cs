@@ -30,6 +30,10 @@ internal sealed partial class SharpLinkServer
             _acceptCts.Token);
         var acceptToken = runCts.Token;
         TransitionTo(ServerState.Running);
+        LogServerCallCapacityConfigured(
+            _logger,
+            _maxConcurrentCallsPerConnection,
+            _maxConcurrentCallsPerServer);
         TrackFrameworkTask(RunHeartbeatCheckLoopAsync(_forceStopCts.Token));
 
         try
@@ -629,7 +633,7 @@ internal sealed partial class SharpLinkServer
                                     if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
                                     {
                                         Interlocked.Increment(ref _rejectedOneWayCalls);
-                                        LogOnewayRpcResourceExhausted(_logger);
+                                        LogOnewayRpcResourceExhausted(_logger, "server_unavailable");
                                     }
                                     else
                                     {
@@ -890,10 +894,12 @@ internal sealed partial class SharpLinkServer
             if (admittedCallState is not null)
                 ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
             Interlocked.Increment(ref _rejectedOneWayCalls);
-            if (admission == ServerCallAdmissionResult.CapacityExhausted)
+            if (admission is ServerCallAdmissionResult.PerConnectionCapacityExhausted or
+                ServerCallAdmissionResult.ServerCapacityExhausted)
             {
-                SharpLinkTelemetry.RecordResourceExhausted("server");
-                LogOnewayRpcResourceExhausted(_logger);
+                var reason = GetCallCapacityExhaustionReason(admission);
+                SharpLinkTelemetry.RecordResourceExhausted("server", reason);
+                LogOnewayRpcResourceExhausted(_logger, reason);
             }
             return;
         }
@@ -1211,25 +1217,33 @@ internal sealed partial class SharpLinkServer
     {
         var scope = decision.Scope ?? "server";
         var reason = decision.Reason ?? "unknown";
+        var resourceExhaustionReason = GetAdmissionResourceExhaustionReason(reason);
         SharpLinkTelemetry.RecordAdmissionRejected(scope, reason);
         if (decision.ErrorCode == SharpLinkErrorCode.ResourceExhausted)
-            SharpLinkTelemetry.RecordResourceExhausted("server");
+            SharpLinkTelemetry.RecordResourceExhausted(
+                "server",
+                resourceExhaustionReason);
         if (oneWay)
         {
             Interlocked.Increment(ref _rejectedOneWayCalls);
             SharpLinkTelemetry.RecordAdmissionOneWayDropped(scope, reason);
             if (ShouldLogOneWayAdmissionRejection())
-                LogOnewayRpcResourceExhausted(_logger);
+                LogOnewayRpcResourceExhausted(
+                    _logger,
+                    resourceExhaustionReason);
             return ValueTask.CompletedTask;
         }
 
+        var rejection = decision.ErrorCode == SharpLinkErrorCode.ResourceExhausted
+            ? SharpLinkResourceExhaustion.CreateWire(
+                resourceExhaustionReason,
+                $"Server admission rejected the call ({resourceExhaustionReason}; {scope}/{reason}).")
+            : new SharpLinkException(
+                decision.ErrorCode,
+                "Server stopped accepting new calls.");
         return session.SendRpcErrorWithBackpressureAsync(
             requestId,
-            new SharpLinkException(
-                decision.ErrorCode,
-                decision.ErrorCode == SharpLinkErrorCode.ResourceExhausted
-                    ? $"Server admission rejected the call ({scope}/{reason})."
-                    : "Server stopped accepting new calls."),
+            rejection,
             cancellationToken);
     }
 
@@ -1246,6 +1260,16 @@ internal sealed partial class SharpLinkServer
                 return true;
         }
     }
+
+    private static string GetAdmissionResourceExhaustionReason(string reason)
+        => reason switch
+        {
+            "concurrency" => SharpLinkResourceExhaustion.AdmissionConcurrency,
+            "queue_count" or "queue_bytes" => SharpLinkResourceExhaustion.AdmissionQueue,
+            "rate" => SharpLinkResourceExhaustion.AdmissionRate,
+            "partition_capacity" => SharpLinkResourceExhaustion.AdmissionPartitionCapacity,
+            _ => SharpLinkResourceExhaustion.AdmissionOther
+        };
 
     private static AdmissionDecision CreateAdmissionCancellationDecision(
         ServerCallCancellationState callState)
@@ -1463,12 +1487,14 @@ internal sealed partial class SharpLinkServer
             if (admittedCallState is not null)
                 ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
             SharpLinkException rejection;
-            if (admission == ServerCallAdmissionResult.CapacityExhausted)
+            if (admission is ServerCallAdmissionResult.PerConnectionCapacityExhausted or
+                ServerCallAdmissionResult.ServerCapacityExhausted)
             {
-                SharpLinkTelemetry.RecordResourceExhausted("server");
-                rejection = new SharpLinkException(
-                    SharpLinkErrorCode.ResourceExhausted,
-                    "Server call capacity is exhausted.");
+                var reason = GetCallCapacityExhaustionReason(admission);
+                SharpLinkTelemetry.RecordResourceExhausted("server", reason);
+                rejection = SharpLinkResourceExhaustion.CreateWire(
+                    reason,
+                    $"Server call capacity is exhausted ({reason}).");
             }
             else
             {
