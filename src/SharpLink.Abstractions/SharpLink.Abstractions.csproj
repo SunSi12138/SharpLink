@@ -3,6 +3,6 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\SharpLink.Sdk\SharpLink.Sdk.csproj" />
+    <InternalsVisibleTo Include="SharpLink.Runtime" />
   </ItemGroup>
 </Project>

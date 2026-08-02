@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-08-02
+
+### Fixed
+
+- A standalone contract project can now reference only `SharpLink.Sdk`. The package brings the required runtime and abstractions transitively, so generated Proxy, Stub, Codec, and Manifest sources no longer fail with missing SharpLink namespaces or types.
+- Contract marker types now live in `SharpLink.Abstractions` while retaining the `SharpLink.Sdk` namespace. `SharpLink.Sdk` forwards every type published by 1.0.0, preserving existing compiled consumers without introducing a NuGet dependency cycle.
+
+### Changed
+
+- The README multi-cluster client section is now fully localized in Chinese, and the package graph, separated-contract guidance, architecture, and release order reflect the SDK-only contract reference model.
+- All SharpLink NuGet packages now include the transparent SharpLink icon, which is also displayed in the README.
+
+### Compatibility
+
+- Protocol v2 bytes, generated contract IDs, runtime routing, transport behavior, and public type names are unchanged. This patch only repairs package dependency closure, preserves old assembly references through type forwarding, and updates release assets and documentation.
+
 ## [1.0.0] - 2026-08-02
 
 ### Highlights
