@@ -623,11 +623,45 @@ public class IntegrationBehaviorTests
     {
         await using var harness = await TestHarness.CreateAsync();
         var service = harness.Client.Get<ITestService>();
+        var elapsed = Stopwatch.StartNew();
 
         for (var iteration = 0; iteration < 10_000; iteration++)
         {
-            await using var enumerator = service.DownloadAsync(32).GetAsyncEnumerator();
-            Ensure(await enumerator.MoveNextAsync(), "fast stream should produce its first item");
+            if (elapsed.Elapsed > TimeSpan.FromSeconds(30))
+            {
+                throw new TimeoutException(
+                    $"Fast early-break stress completed only {iteration}/10,000 streams in 30 seconds.");
+            }
+
+            var enumerator = service.DownloadAsync(32).GetAsyncEnumerator();
+            try
+            {
+                bool hasItem;
+                try
+                {
+                    hasItem = await enumerator.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                catch (TimeoutException exception)
+                {
+                    throw new TimeoutException(
+                        $"Fast stream {iteration}/10,000 did not produce its first item within 5 seconds.",
+                        exception);
+                }
+                Ensure(hasItem, "fast stream should produce its first item");
+            }
+            finally
+            {
+                try
+                {
+                    await enumerator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                catch (TimeoutException exception)
+                {
+                    throw new TimeoutException(
+                        $"Fast stream {iteration}/10,000 did not dispose within 5 seconds.",
+                        exception);
+                }
+            }
         }
 
         Ensure(await service.AddAsync(20, 22) == 42,
