@@ -142,7 +142,13 @@ internal sealed partial class SharpLinkServer
             session.SetTelemetrySide("server");
             session.BindRuntimeContext(_runtimeContext);
             session.ServiceExceptionMapper = (requestId, contractId, methodId, exception) =>
-                MapStreamServiceException(session, requestId, contractId, methodId, exception);
+                MapStreamServiceException(
+                    connectionState,
+                    session,
+                    requestId,
+                    contractId,
+                    methodId,
+                    exception);
             await ReplaceConnectionAsync(connectionState).ConfigureAwait(false);
             await HandleSessionLifecycleAsync(connectionState).ConfigureAwait(false);
         }
