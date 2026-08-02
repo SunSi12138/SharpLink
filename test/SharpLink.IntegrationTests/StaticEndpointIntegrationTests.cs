@@ -143,6 +143,8 @@ public sealed class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
+        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
+        Ensure(((SharpLinkClient)client).ReadyConnectionCount == 2, "both preferred-endpoint candidates should be ready");
         var service = client.Get<IConnectionBehaviorService>();
         Ensure(await service.GetEndpointIdAsync() == "first", "initial preferred endpoint");
 

@@ -13,23 +13,37 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
-        if (SharpLinkTelemetry.ClientCallsEnabled)
+        Interlocked.Increment(ref _activeLogicalInvocations);
+        try
         {
-            return InvokeUnaryWithTelemetryAsync(
-                method, request, requestCodec, responseCodec, options, cancellationToken);
+            ValueTask<TResponse> invocation;
+            if (SharpLinkTelemetry.ClientCallsEnabled)
+            {
+                invocation = InvokeUnaryWithTelemetryAsync(
+                    method, request, requestCodec, responseCodec, options, cancellationToken);
+            }
+            else if (_clientInterceptors.Length != 0)
+            {
+                invocation = InvokeUnaryInterceptedAsync(
+                    method, request, requestCodec, responseCodec, options, cancellationToken);
+            }
+            else
+            {
+                var control = ResolveCallControl(
+                    options,
+                    includeClientDefault: true,
+                    method.HasMethodTimeout,
+                    method.MethodTimeout);
+                invocation = InvokeUnaryWithOptionalRetryAsync(
+                    method, request, requestCodec, responseCodec, control, cancellationToken);
+            }
+            return CompleteLogicalInvocation(invocation);
         }
-        if (_clientInterceptors.Length != 0)
+        catch
         {
-            return InvokeUnaryInterceptedAsync(
-                method, request, requestCodec, responseCodec, options, cancellationToken);
+            Interlocked.Decrement(ref _activeLogicalInvocations);
+            throw;
         }
-        var control = ResolveCallControl(
-            options,
-            includeClientDefault: true,
-            method.HasMethodTimeout,
-            method.MethodTimeout);
-        return InvokeUnaryWithOptionalRetryAsync(
-            method, request, requestCodec, responseCodec, control, cancellationToken);
     }
 
     public ValueTask InvokeOneWayAsync<TRequest, TStreams>(
@@ -43,28 +57,42 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         cancellationToken.ThrowIfCancellationRequested();
-        if (SharpLinkTelemetry.ClientCallsEnabled)
+        Interlocked.Increment(ref _activeLogicalInvocations);
+        try
         {
-            return InvokeOneWayWithTelemetryAsync(
-                method, request, requestCodec, streams, options, cancellationToken);
+            ValueTask invocation;
+            if (SharpLinkTelemetry.ClientCallsEnabled)
+            {
+                invocation = InvokeOneWayWithTelemetryAsync(
+                    method, request, requestCodec, streams, options, cancellationToken);
+            }
+            else if (_clientInterceptors.Length != 0)
+            {
+                invocation = InvokeOneWayInterceptedAsync(
+                    method, request, requestCodec, streams, options, cancellationToken);
+            }
+            else
+            {
+                var control = ResolveCallControl(
+                    options,
+                    includeClientDefault: false,
+                    method.HasMethodTimeout,
+                    method.MethodTimeout);
+                invocation = InvokeOneWayCoreAsync(
+                    method,
+                    request,
+                    requestCodec,
+                    streams,
+                    control,
+                    cancellationToken);
+            }
+            return CompleteLogicalInvocation(invocation);
         }
-        if (_clientInterceptors.Length != 0)
+        catch
         {
-            return InvokeOneWayInterceptedAsync(
-                method, request, requestCodec, streams, options, cancellationToken);
+            Interlocked.Decrement(ref _activeLogicalInvocations);
+            throw;
         }
-        var control = ResolveCallControl(
-            options,
-            includeClientDefault: false,
-            method.HasMethodTimeout,
-            method.MethodTimeout);
-        return InvokeOneWayCoreAsync(
-            method,
-            request,
-            requestCodec,
-            streams,
-            control,
-            cancellationToken);
     }
 
     public ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(
@@ -80,29 +108,43 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
-        if (SharpLinkTelemetry.ClientCallsEnabled)
+        Interlocked.Increment(ref _activeLogicalInvocations);
+        try
         {
-            return InvokeClientStreamingWithTelemetryAsync(
-                method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+            ValueTask<TResponse> invocation;
+            if (SharpLinkTelemetry.ClientCallsEnabled)
+            {
+                invocation = InvokeClientStreamingWithTelemetryAsync(
+                    method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+            }
+            else if (_clientInterceptors.Length != 0)
+            {
+                invocation = InvokeClientStreamingInterceptedAsync(
+                    method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+            }
+            else
+            {
+                var control = ResolveCallControl(
+                    options,
+                    includeClientDefault: false,
+                    method.HasMethodTimeout,
+                    method.MethodTimeout);
+                invocation = InvokeClientStreamingCoreAsync(
+                    method,
+                    request,
+                    requestCodec,
+                    responseCodec,
+                    streams,
+                    control,
+                    cancellationToken);
+            }
+            return CompleteLogicalInvocation(invocation);
         }
-        if (_clientInterceptors.Length != 0)
+        catch
         {
-            return InvokeClientStreamingInterceptedAsync(
-                method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+            Interlocked.Decrement(ref _activeLogicalInvocations);
+            throw;
         }
-        var control = ResolveCallControl(
-            options,
-            includeClientDefault: false,
-            method.HasMethodTimeout,
-            method.MethodTimeout);
-        return InvokeClientStreamingCoreAsync(
-            method,
-            request,
-            requestCodec,
-            responseCodec,
-            streams,
-            control,
-            cancellationToken);
     }
 
     public IAsyncEnumerable<TResponse> InvokeServerStreamingAsync<TRequest, TResponse>(
@@ -115,17 +157,32 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
-        if (SharpLinkTelemetry.ClientCallsEnabled)
+        Interlocked.Increment(ref _activeLogicalInvocations);
+        try
         {
-            return InvokeServerStreamingWithTelemetry(
-                method, request, requestCodec, responseCodec, options, cancellationToken);
+            IAsyncEnumerable<TResponse> invocation;
+            if (SharpLinkTelemetry.ClientCallsEnabled)
+            {
+                invocation = InvokeServerStreamingWithTelemetry(
+                    method, request, requestCodec, responseCodec, options, cancellationToken);
+            }
+            else if (_clientInterceptors.Length != 0)
+            {
+                invocation = InvokeServerStreamingIntercepted(
+                    method, request, requestCodec, responseCodec, options, cancellationToken);
+            }
+            else
+            {
+                invocation = InvokeServerStreamingCore(
+                    method, request, requestCodec, responseCodec, options, cancellationToken);
+            }
+            return CompleteLogicalInvocation(invocation);
         }
-        if (_clientInterceptors.Length != 0)
+        catch
         {
-            return InvokeServerStreamingIntercepted(
-                method, request, requestCodec, responseCodec, options, cancellationToken);
+            Interlocked.Decrement(ref _activeLogicalInvocations);
+            throw;
         }
-        return InvokeServerStreamingCore(method, request, requestCodec, responseCodec, options, cancellationToken);
     }
 
     private IAsyncEnumerable<TResponse> InvokeServerStreamingCore<TRequest, TResponse>(
@@ -167,18 +224,177 @@ internal sealed partial class SharpLinkClient
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
-        if (SharpLinkTelemetry.ClientCallsEnabled)
+        Interlocked.Increment(ref _activeLogicalInvocations);
+        try
         {
-            return InvokeDuplexStreamingWithTelemetry(
-                method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+            IAsyncEnumerable<TResponse> invocation;
+            if (SharpLinkTelemetry.ClientCallsEnabled)
+            {
+                invocation = InvokeDuplexStreamingWithTelemetry(
+                    method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+            }
+            else if (_clientInterceptors.Length != 0)
+            {
+                invocation = InvokeDuplexStreamingIntercepted(
+                    method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+            }
+            else
+            {
+                invocation = InvokeDuplexStreamingCore(
+                    method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+            }
+            return CompleteLogicalInvocation(invocation);
         }
-        if (_clientInterceptors.Length != 0)
+        catch
         {
-            return InvokeDuplexStreamingIntercepted(
-                method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+            Interlocked.Decrement(ref _activeLogicalInvocations);
+            throw;
         }
-        return InvokeDuplexStreamingCore(
-            method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+    }
+
+    private ValueTask<T> CompleteLogicalInvocation<T>(ValueTask<T> invocation)
+    {
+        if (invocation.IsCompleted)
+        {
+            Interlocked.Decrement(ref _activeLogicalInvocations);
+            return invocation;
+        }
+        return AwaitLogicalInvocationAsync(invocation);
+    }
+
+    private ValueTask CompleteLogicalInvocation(ValueTask invocation)
+    {
+        if (invocation.IsCompleted)
+        {
+            Interlocked.Decrement(ref _activeLogicalInvocations);
+            return invocation;
+        }
+        return AwaitLogicalInvocationAsync(invocation);
+    }
+
+    private async ValueTask<T> AwaitLogicalInvocationAsync<T>(ValueTask<T> invocation)
+    {
+        try
+        {
+            return await invocation.ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _activeLogicalInvocations);
+        }
+    }
+
+    private async ValueTask AwaitLogicalInvocationAsync(ValueTask invocation)
+    {
+        try
+        {
+            await invocation.ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _activeLogicalInvocations);
+        }
+    }
+
+    private IAsyncEnumerable<T> CompleteLogicalInvocation<T>(IAsyncEnumerable<T> invocation)
+        => new LogicalInvocationAsyncEnumerable<T>(this, invocation);
+
+    private sealed class LogicalInvocationAsyncEnumerable<T>(
+        SharpLinkClient client,
+        IAsyncEnumerable<T> invocation) : IAsyncEnumerable<T>, IAsyncEnumerator<T>
+    {
+        private int _enumerated;
+        private int _completed;
+        private IAsyncEnumerator<T>? _enumerator;
+
+        public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Exchange(ref _enumerated, 1) != 0)
+                throw new InvalidOperationException("A logical RPC stream can only be enumerated once.");
+            try
+            {
+                _enumerator = invocation.GetAsyncEnumerator(cancellationToken);
+                return this;
+            }
+            catch
+            {
+                Complete();
+                throw;
+            }
+        }
+
+        public T Current => (_enumerator ?? throw new InvalidOperationException(
+            "The logical RPC stream has not been enumerated.")).Current;
+
+        public ValueTask<bool> MoveNextAsync()
+        {
+            try
+            {
+                var move = (_enumerator ?? throw new InvalidOperationException(
+                    "The logical RPC stream has not been enumerated.")).MoveNextAsync();
+                if (!move.IsCompletedSuccessfully)
+                    return AwaitMoveNextAsync(move);
+                if (!move.Result)
+                    Complete();
+                return move;
+            }
+            catch
+            {
+                Complete();
+                throw;
+            }
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            try
+            {
+                var dispose = _enumerator?.DisposeAsync() ?? ValueTask.CompletedTask;
+                if (!dispose.IsCompleted)
+                    return AwaitDisposeAsync(dispose);
+                Complete();
+                return dispose;
+            }
+            catch
+            {
+                Complete();
+                throw;
+            }
+        }
+
+        private async ValueTask<bool> AwaitMoveNextAsync(ValueTask<bool> move)
+        {
+            try
+            {
+                var hasNext = await move.ConfigureAwait(false);
+                if (!hasNext)
+                    Complete();
+                return hasNext;
+            }
+            catch
+            {
+                Complete();
+                throw;
+            }
+        }
+
+        private async ValueTask AwaitDisposeAsync(ValueTask dispose)
+        {
+            try
+            {
+                await dispose.ConfigureAwait(false);
+            }
+            finally
+            {
+                Complete();
+            }
+        }
+
+        private void Complete()
+        {
+            if (Interlocked.Exchange(ref _completed, 1) == 0)
+                Interlocked.Decrement(ref client._activeLogicalInvocations);
+        }
     }
 
     private IAsyncEnumerable<TResponse> InvokeDuplexStreamingCore<TRequest, TResponse, TStreams>(

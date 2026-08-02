@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 using SharpLink.Abstractions;
 
 [assembly: SharpLinkGeneratedAssemblyManifest(typeof(SharpLink.RollbackPlugin.RollbackManifest))]
@@ -14,11 +15,23 @@ public sealed class RollbackMarker;
 public static class RollbackState
 {
     public static int ScopeDisposeCount;
+    public static TaskCompletionSource? ManifestConstructionStarted;
+    public static TaskCompletionSource? ManifestConstructionRelease;
     public static SemaphoreSlim TestIsolation { get; } = new(1, 1);
 }
 
 public sealed class RollbackManifest : ISharpLinkGeneratedAssemblyManifest
 {
+    public RollbackManifest()
+    {
+        var started = RollbackState.ManifestConstructionStarted;
+        if (started is null)
+            return;
+
+        started.TrySetResult();
+        RollbackState.ManifestConstructionRelease?.Task.GetAwaiter().GetResult();
+    }
+
     public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
     public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
     public string GeneratorVersion => "rollback-test";

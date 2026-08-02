@@ -258,6 +258,48 @@ public class SharpLinkTelemetryTests
         Ensure(Volatile.Read(ref resolverFailures) == 1, "resolver failures metric");
     }
 
+    [Test]
+    public void MultiClusterMutationMetricsShouldExposeStableOperationAndResultTags()
+    {
+        var mutations = 0L;
+        var duration = 0d;
+        string? operation = null;
+        string? result = null;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = static (instrument, meterListener) =>
+        {
+            if (instrument.Meter.Name == "SharpLink" && instrument.Name.StartsWith(
+                    "sharplink.client.multicluster.", StringComparison.Ordinal))
+            {
+                meterListener.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            if (instrument.Name != "sharplink.client.multicluster.mutations")
+                return;
+            Interlocked.Add(ref mutations, measurement);
+            operation = FindTag(tags, "sharplink.multicluster.operation");
+            result = FindTag(tags, "sharplink.multicluster.result");
+        });
+        listener.SetMeasurementEventCallback<double>((instrument, measurement, _, _) =>
+        {
+            if (instrument.Name == "sharplink.client.multicluster.mutation.duration")
+                duration = measurement;
+        });
+        listener.Start();
+
+        SharpLinkTelemetry.RecordMultiClusterMutation(
+            "replace",
+            "success",
+            TimeSpan.FromMilliseconds(12.5));
+
+        Ensure(Volatile.Read(ref mutations) == 1, "multi-cluster mutation counter");
+        Ensure(Math.Abs(duration - 12.5d) < 0.0001d, "multi-cluster mutation duration milliseconds");
+        Ensure(operation == "replace" && result == "success",
+            "multi-cluster mutation low-cardinality tags");
+    }
+
     private static string? FindTag(
         ReadOnlySpan<KeyValuePair<string, object?>> tags,
         string key)
