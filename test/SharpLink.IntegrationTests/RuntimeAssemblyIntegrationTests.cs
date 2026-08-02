@@ -37,6 +37,23 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task MultiClusterRemoveShouldReleaseCollectibleContractContext()
+    {
+        var weakContext = await RegisterRemoveAndUnloadMultiClusterPluginAsync();
+        for (var attempt = 0; attempt < 20 && weakContext.IsAlive; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            await Task.Delay(20);
+        }
+
+        Ensure(!weakContext.IsAlive,
+            "runtime slot removal must release coordinator and child references to the collectible ALC");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task MultiClusterSharedConnectShouldSurviveFirstWaiterCancellation()
     {
         var child = new BlockingConnectClient();
@@ -1301,6 +1318,28 @@ public sealed class RuntimeAssemblyIntegrationTests
             TimeSpan.FromSeconds(2))).ReferencesReleased, "ALC client contract release");
         tracked.Add("AssemblyLoadContext", plugin.Unload());
         return tracked;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<WeakReference> RegisterRemoveAndUnloadMultiClusterPluginAsync()
+    {
+        var plugin = PluginBundle.Load("multi-cluster-runtime-remove", loadService: false);
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster(
+                "plugins",
+                child => child.UseTcp(IPAddress.Loopback.ToString(), 1),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+        Ensure(client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded,
+            "runtime-remove setup registration");
+        object? proxy = GetMultiClusterProxy(client, plugin.ContractType);
+        Ensure(proxy is not null, "runtime-remove setup proxy");
+
+        var removal = await client.RemoveClusterAsync("plugins", TimeSpan.FromSeconds(2));
+        Ensure(removal is { Succeeded: true, ReferencesReleased: true, ForcedStop: false },
+            "runtime-remove child cleanup must complete before unloading the plugin context");
+        proxy = null;
+        return plugin.Unload();
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

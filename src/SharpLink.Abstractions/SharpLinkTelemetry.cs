@@ -129,6 +129,10 @@ public static class SharpLinkTelemetry
         Meter.CreateCounter<long>("sharplink.client.selection.failures", unit: "{failure}");
     private static readonly Counter<long> BreakerOpen =
         Meter.CreateCounter<long>("sharplink.client.breaker.open", unit: "{rejection}");
+    private static readonly Counter<long> MultiClusterMutations =
+        Meter.CreateCounter<long>("sharplink.client.multicluster.mutations", unit: "{mutation}");
+    private static readonly Histogram<double> MultiClusterMutationDuration =
+        Meter.CreateHistogram<double>("sharplink.client.multicluster.mutation.duration", unit: "ms");
 
     internal static CallScope StartClientCall(RpcMethodDescriptor method)
         => StartCall(ClientActivitySource, ActivityKind.Client, "client", method, requestId: 0);
@@ -278,6 +282,18 @@ public static class SharpLinkTelemetry
     {
         if (BreakerOpen.Enabled)
             BreakerOpen.Add(1);
+    }
+    internal static void RecordMultiClusterMutation(string operation, string result, TimeSpan duration)
+    {
+        var tags = new TagList
+        {
+            { "sharplink.multicluster.operation", operation },
+            { "sharplink.multicluster.result", result }
+        };
+        if (MultiClusterMutations.Enabled)
+            MultiClusterMutations.Add(1, tags);
+        if (duration >= TimeSpan.Zero && MultiClusterMutationDuration.Enabled)
+            MultiClusterMutationDuration.Record(duration.TotalMilliseconds, tags);
     }
     internal static void RecordSharedMemoryConnection(string side, int capacity)
     {

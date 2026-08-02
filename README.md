@@ -136,7 +136,25 @@ Every slot is required by default. A slot intentionally reserved for plugins mus
 
 Dynamic contracts are registered against an explicit slot with
 `RegisterAssembly(cluster, assembly)`, `UnregisterAssemblyAsync(cluster, assembly, timeout)`, and
-`ReplaceAssemblyAsync(cluster, oldAssembly, newAssembly, timeout)`. There is no default cluster,
+`ReplaceAssemblyAsync(cluster, oldAssembly, newAssembly, timeout)`. A built coordinator can also
+atomically add, replace, and remove complete slots:
+
+```csharp
+await client.AddClusterAsync("search",
+    child => child.UseTcp("127.0.0.1", 5201).UseRetry(),
+    slot => slot.AllowDynamicContracts = true);
+
+await client.ReplaceClusterAsync("search",
+    child => child.UseDnsEndpoints(
+        "search.internal", 5201, SharpLinkTransportFactories.Sockets()),
+    TimeSpan.FromSeconds(30));
+
+var removal = await client.RemoveClusterAsync("search", TimeSpan.FromSeconds(30));
+```
+
+Candidates connect before publication on a ready coordinator. Replacement changes only future
+`Get<T>()` calls: previously created proxies stay bound to the retired child and are not silently
+rebound. There is no default cluster,
 per-call cluster override, cross-cluster retry, or cluster identifier on the wire. See
 [`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md) for lifecycle and migration details.
 

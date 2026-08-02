@@ -3,7 +3,11 @@ using System.Reflection;
 
 namespace SharpLink.Client;
 
-internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, IDynamicAssemblyRegistrationInspector
+internal sealed partial class SharpLinkClient :
+    IRpcChannel,
+    ISharpLinkClient,
+    IDynamicAssemblyRegistrationInspector,
+    ISharpLinkClientDrainInspector
 {
     private readonly IClientTransportFactory transportFactory;
     private readonly IEndpointClusterRuntime? _cluster;
@@ -484,5 +488,9 @@ internal sealed partial class SharpLinkClient : IRpcChannel, ISharpLinkClient, I
             return count;
         }
     }
+
+    int ISharpLinkClientDrainInspector.ActiveCallCount => ActiveClientCallCount;
+
+    int ISharpLinkClientDrainInspector.ActiveStreamCount => ActiveClientStreamCount;
 
 }

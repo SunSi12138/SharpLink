@@ -368,6 +368,31 @@ public class SharpClientBuilder
         return GetFixedConnectionBudget();
     }
 
+    internal void DisposeUnbuiltResources()
+    {
+        var directTransport = _transport;
+        var endpointResolver = _endpointResolver;
+        _transport = null;
+        _endpointResolver = null;
+
+        List<Exception>? failures = null;
+        if (directTransport is not null)
+        {
+            try { SharpLinkAsyncCleanup.DisposeSynchronously(directTransport); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+        }
+        if (endpointResolver is not null && !ReferenceEquals(endpointResolver, directTransport))
+        {
+            try { SharpLinkAsyncCleanup.DisposeSynchronously(endpointResolver); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+        }
+
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is { Count: > 1 })
+            throw new AggregateException(failures);
+    }
+
     // Multi-cluster construction supplies a filtered immutable manifest snapshot here. Keeping this
     // decision at construction time preserves the ordinary client's hot path unchanged.
     internal ISharpLinkClient BuildCore(IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests)

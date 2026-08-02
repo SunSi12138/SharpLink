@@ -9,6 +9,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
 {
     private readonly SharpLinkMultiClusterOptions _options = new();
     private readonly Dictionary<SharpLinkClusterKey, ClusterConfiguration> _clusters = [];
+    private ILoggerFactory? _loggerFactory;
 
     /// <summary>Creates a multi-cluster client builder.</summary>
     public static SharpLinkMultiClusterClientBuilder Create() => new();
@@ -56,9 +57,12 @@ public sealed class SharpLinkMultiClusterClientBuilder
             throw new InvalidOperationException($"Configured cluster count exceeds MaxClusters ({options.MaxClusters}).");
 
         var configuredConnections = 0;
+        var connectionBudgets = new Dictionary<SharpLinkClusterKey, int>();
         foreach (var configuration in _clusters.Values)
         {
-            configuredConnections = checked(configuredConnections + configuration.Builder.GetConfiguredMaximumConnections());
+            var connectionBudget = configuration.Builder.GetConfiguredMaximumConnections();
+            connectionBudgets.Add(configuration.Key, connectionBudget);
+            configuredConnections = checked(configuredConnections + connectionBudget);
         }
         if (configuredConnections > options.MaxTotalConfiguredConnections)
         {
@@ -128,12 +132,23 @@ public sealed class SharpLinkMultiClusterClientBuilder
                         : new DependencyManifestView(manifest))
                     .ToArray();
                 var child = configuration.Builder.BuildCore(staticManifests);
-                createdSlots.Add(new SharpLinkClusterSlot(configuration.Key, child, configuration.AllowDynamicContracts));
+                createdSlots.Add(new SharpLinkClusterSlot(
+                    configuration.Key,
+                    child,
+                    configuration.AllowDynamicContracts,
+                    connectionBudgets[configuration.Key],
+                    staticManifests));
             }
 
             var slots = createdSlots.ToFrozenDictionary(static slot => slot.Key);
             var routes = BuildStaticRoutes(slots, assemblyOwners, manifestByAssembly);
-            return new SharpLinkMultiClusterClient(options, slots, routes, routeManifestSnapshot);
+            return new SharpLinkMultiClusterClient(
+                options,
+                slots,
+                routes,
+                routeManifestSnapshot,
+                configuredConnections,
+                _loggerFactory);
         }
         catch (Exception buildException)
         {
@@ -154,8 +169,109 @@ public sealed class SharpLinkMultiClusterClientBuilder
     public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
+        _loggerFactory ??= loggerFactory;
         foreach (var configuration in _clusters.Values)
             configuration.Builder.UseLoggerFactoryIfUnset(loggerFactory);
+    }
+
+    internal static SharpLinkPreparedCluster PrepareRuntimeCluster(
+        SharpLinkClusterKey cluster,
+        SharpClientBuilder builder,
+        bool allowDynamicContracts)
+    {
+        ValidateCluster(cluster);
+        ArgumentNullException.ThrowIfNull(builder);
+
+        var connectionBudget = builder.GetConfiguredMaximumConnections();
+        var configuredRoutes = SharpLinkGeneratedClusterRouteCatalog.CreateSnapshot()
+            .SelectMany(static manifest => manifest.Routes)
+            .Where(route => route.Cluster == cluster)
+            .ToArray();
+        var routedAssemblies = new HashSet<Assembly>(ReferenceEqualityComparer.Instance);
+        foreach (var route in configuredRoutes)
+            routedAssemblies.Add(route.ContractAssembly);
+        var manifestsByAssembly = LoadRoutedManifestGraph(routedAssemblies);
+        var manifestsByCluster = new Dictionary<SharpLinkClusterKey, Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest>>
+        {
+            [cluster] = new(ReferenceEqualityComparer.Instance)
+        };
+        var assemblyOwners = new Dictionary<Assembly, SharpLinkClusterKey>(ReferenceEqualityComparer.Instance);
+        foreach (var route in configuredRoutes)
+        {
+            if (!manifestsByAssembly.TryGetValue(route.ContractAssembly, out var contractManifest))
+            {
+                throw new InvalidOperationException(
+                    $"Static route '{route.ContractAssemblyIdentity}' does not reference a compatible generated contract manifest.");
+            }
+            if (contractManifest.Contracts.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Static route '{route.ContractAssemblyIdentity}' must reference an assembly that owns at least one generated contract.");
+            }
+            if (!assemblyOwners.TryAdd(route.ContractAssembly, cluster))
+                continue;
+            AddManifestClosure(contractManifest, cluster, manifestsByCluster, manifestsByAssembly);
+        }
+
+        if (manifestsByCluster[cluster].Values.All(static manifest => manifest.Contracts.Count == 0) &&
+            !allowDynamicContracts)
+        {
+            throw new InvalidOperationException(
+                $"Cluster '{cluster}' has no static contract route. Configure AllowDynamicContracts to create a dynamic-only slot.");
+        }
+
+        var staticManifests = manifestsByCluster[cluster].Values
+            .OrderBy(static manifest => manifest.OwnerAssembly.FullName, StringComparer.Ordinal)
+            .Select(manifest => IsRoutedToCluster(manifest, cluster, assemblyOwners)
+                ? manifest
+                : new DependencyManifestView(manifest))
+            .ToArray();
+        var child = builder.BuildCore(staticManifests);
+        var slot = new SharpLinkClusterSlot(
+            cluster,
+            child,
+            allowDynamicContracts,
+            connectionBudget,
+            staticManifests);
+        try
+        {
+            var slots = new Dictionary<SharpLinkClusterKey, SharpLinkClusterSlot> { [cluster] = slot }
+                .ToFrozenDictionary();
+            var routes = BuildStaticRoutes(slots, assemblyOwners, manifestsByAssembly);
+            return new SharpLinkPreparedCluster(slot, routes);
+        }
+        catch (Exception buildException)
+        {
+            try
+            {
+                SharpLinkAsyncCleanup.DisposeSynchronously(child);
+            }
+            catch (Exception cleanupException)
+            {
+                throw new AggregateException(buildException, cleanupException);
+            }
+            throw;
+        }
+    }
+
+    internal static SharpLinkPreparedCluster PrepareReplacementCluster(
+        SharpLinkClusterSlot existingSlot,
+        SharpClientBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(existingSlot);
+        ArgumentNullException.ThrowIfNull(builder);
+        var connectionBudget = builder.GetConfiguredMaximumConnections();
+        var staticManifests = existingSlot.StaticManifests ?? [];
+        var child = builder.BuildCore(staticManifests);
+        var slot = new SharpLinkClusterSlot(
+            existingSlot.Key,
+            child,
+            existingSlot.AllowDynamicContracts,
+            connectionBudget,
+            staticManifests);
+        return new SharpLinkPreparedCluster(
+            slot,
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty);
     }
 
     private static FrozenDictionary<Type, SharpLinkClusterRouteRegistration> BuildStaticRoutes(
@@ -306,3 +422,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
         SharpClientBuilder Builder,
         bool AllowDynamicContracts);
 }
+
+internal sealed record SharpLinkPreparedCluster(
+    SharpLinkClusterSlot Slot,
+    FrozenDictionary<Type, SharpLinkClusterRouteRegistration> StaticRoutes);
