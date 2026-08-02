@@ -14,6 +14,10 @@
 - Server-wide and per-connection call-capacity rejection remain wire-compatible `ResourceExhausted` results but now have distinct diagnostic messages. A bounded one-byte discriminator survives even the smallest valid error-message limit, new clients restore it while retaining legacy message recognition, and the `sharplink.resource_exhausted` metric adds the low-cardinality `rpc.sharplink.resource_exhaustion_reason` tag for server call, per-connection call, admission, pending-request, and send-queue capacity sources.
 - Server startup logs the effective per-connection and per-server call limits through `LogEvents.Server.CallCapacityConfigured`; capacity rejection continues to preserve healthy connections for reuse after slots are released.
 
+### Fixed
+
+- Server applications now emit deterministic static bootstrap calls for referenced generated service manifests. A normal Server-to-Service project reference roots and registers even an internal service implementation before `Build()` snapshots the catalog, without marker types, runtime assembly scanning, or reflection discovery; the path is covered by clean-package, JIT, and NativeAOT process smokes.
+
 ## [1.1.0] - 2026-08-02
 
 ### Added

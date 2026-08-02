@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <SharpLinkPackageVersion Condition="'$(SharpLinkPackageVersion)' == '' and '$(VersionSuffix)' == ''">$(VersionPrefix)</SharpLinkPackageVersion>
+    <SharpLinkPackageVersion Condition="'$(SharpLinkPackageVersion)' == '' and '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix)</SharpLinkPackageVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpLink.ReferenceRooting.PackageContracts\SharpLink.ReferenceRooting.PackageContracts.csproj" />
+    <PackageReference Include="SharpLink.Sdk" Version="$(SharpLinkPackageVersion)" />
+  </ItemGroup>
+</Project>

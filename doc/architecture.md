@@ -138,7 +138,7 @@ SharpLink.Serializer.SharpPack
 
 - 默认内置基础类型与 blittable 容器 Codec；RPC 可达的封闭 DTO/集合由 Source Generator 生成字段 ID Codec
 - 进程 Catalog 只保存有界、可清理的弱 Manifest 引用，collectible ALC 不会被它强引用
-- 每个 Runtime Context 在 Build 时导入已加载 Manifest 快照；Build 后插件通过实例的 `RegisterAssembly` 原子发布新快照
+- Generator 为静态引用的 generated Manifest 发出 module bootstrap，应用入口在 Build 前确定性注册这些程序集；每个 Runtime Context 随后导入 Manifest 快照，Build 后插件仍通过实例的 `RegisterAssembly` 原子发布新快照
 - 普通 DTO 继续优先使用原生 Codec；`[SharpPackable]` 通过扩展包 registration 自动选择 SharpPack Adapter
 - 没有 selector Attribute 的类型使用类型级或程序集级 `[RpcCodecAdapter(...)]` 显式绑定；安装 Adapter 包不会自动 fallback 或改变 wire format
 - generated factory 直接发出闭合 `IRpcCodecAdapterScope.CreateCodec<T>()`；不使用 `MakeGenericType`、`Activator`、运行时类型扫描或非泛型序列化 API
