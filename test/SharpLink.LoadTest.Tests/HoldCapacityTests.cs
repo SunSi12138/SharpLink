@@ -216,11 +216,19 @@ public class HoldCapacityTests
             ResourceExhaustedReasons: "server_call_capacity:2",
             TopFailures: "SharpLinkException[ResourceExhausted]:2");
 
-        HoldCapacityRunner.ValidateResult(valid, expectedAcceptedCalls: 3);
+        var validReasons = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["server_call_capacity"] = 2
+        };
+        HoldCapacityRunner.ValidateResult(
+            valid,
+            expectedAcceptedCalls: 3,
+            resourceExhaustedReasons: validReasons);
 
         var peakFailure = CaptureFailure(() => HoldCapacityRunner.ValidateResult(
             valid with { AcceptedCalls = 2, PeakActiveCalls = 2 },
-            expectedAcceptedCalls: 3));
+            expectedAcceptedCalls: 3,
+            resourceExhaustedReasons: validReasons));
         Ensure(peakFailure is InvalidOperationException &&
                peakFailure.Message.Contains("Expected 3 accepted", StringComparison.Ordinal),
             "under-admission must fail the experiment");
@@ -232,16 +240,29 @@ public class HoldCapacityTests
                 ResourceExhaustedCalls = 1,
                 CancelledCalls = 2
             },
-            expectedAcceptedCalls: 3));
+            expectedAcceptedCalls: 3,
+            resourceExhaustedReasons: validReasons));
         Ensure(cancellationFailure is InvalidOperationException,
             "cancellation-contaminated evidence must fail the experiment");
 
         var healthFailure = CaptureFailure(() => HoldCapacityRunner.ValidateResult(
             valid with { HealthyCallsAfterRelease = 1 },
-            expectedAcceptedCalls: 3));
+            expectedAcceptedCalls: 3,
+            resourceExhaustedReasons: validReasons));
         Ensure(healthFailure is InvalidOperationException &&
                healthFailure.Message.Contains("healthy", StringComparison.Ordinal),
             "post-release connection failure must fail the experiment");
+
+        var unrelatedReasonFailure = CaptureFailure(() => HoldCapacityRunner.ValidateResult(
+            valid with { ResourceExhaustedReasons = "send_queue_capacity:2" },
+            expectedAcceptedCalls: 3,
+            resourceExhaustedReasons: new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                ["send_queue_capacity"] = 2
+            }));
+        Ensure(unrelatedReasonFailure is InvalidOperationException &&
+               unrelatedReasonFailure.Message.Contains("send_queue_capacity", StringComparison.Ordinal),
+            "send-queue exhaustion must not pass as call-capacity evidence");
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)

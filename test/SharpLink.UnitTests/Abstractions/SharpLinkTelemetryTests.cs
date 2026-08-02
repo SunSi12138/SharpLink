@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Diagnostics.Metrics;
+using System.Text;
 using System.Threading;
 
 namespace SharpLink.UnitTests.Abstractions;
@@ -9,6 +10,19 @@ public class SharpLinkTelemetryTests
     [Test]
     public void RemoteResourceExhaustionShouldRestoreKnownReasonFromWireMessage()
     {
+        var wire = SharpLinkResourceExhaustion.CreateWire(
+            SharpLinkResourceExhaustion.ServerCallCapacity,
+            "Server call capacity is exhausted (server_call_capacity).");
+        Ensure(Encoding.UTF8.GetByteCount(wire.Message.AsSpan(0, 1)) == 1,
+            "the stable discriminator must survive a one-byte error-message limit");
+        var truncated = SharpLinkResourceExhaustion.CreateRemote(
+            SharpLinkErrorCode.ResourceExhausted,
+            wire.Message[..1]);
+        Ensure(
+            SharpLinkResourceExhaustion.GetReason(truncated) ==
+            SharpLinkResourceExhaustion.ServerCallCapacity,
+            "a maximally truncated wire message must retain its stable reason");
+
         var restored = SharpLinkResourceExhaustion.CreateRemote(
             SharpLinkErrorCode.ResourceExhausted,
             "Server call capacity is exhausted (server_call_capacity).");

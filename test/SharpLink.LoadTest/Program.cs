@@ -1189,6 +1189,8 @@ public interface ILoadTestService : IService
     ValueTask<int> GetHoldActiveCallsAsync();
     [NonCancellable]
     ValueTask<int> GetHoldPeakActiveCallsAsync();
+    [NonCancellable]
+    ValueTask<string> GetSessionIdAsync();
 }
 
 [RpcService]
@@ -1224,4 +1226,9 @@ public class LoadTestService : ILoadTestService
 
     public ValueTask<int> GetHoldPeakActiveCallsAsync()
         => ValueTask.FromResult(_holdProbe.PeakActiveCalls);
+
+    public ValueTask<string> GetSessionIdAsync()
+        => ValueTask.FromResult(
+            SharpLinkCallContext.Current?.SessionId ??
+            throw new InvalidOperationException("The current RPC call has no server session identity."));
 }

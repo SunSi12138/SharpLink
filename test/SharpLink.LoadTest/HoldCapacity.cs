@@ -115,6 +115,8 @@ internal sealed class HoldCapacityProbe
 
 internal static class HoldCapacityRunner
 {
+    private static readonly TimeSpan s_controlRpcTimeout = TimeSpan.FromSeconds(10);
+
     internal static async Task<HoldCapacityResult> RunAsync(
         LoadTestOptions options,
         ISharpLinkClient? clientOverride)
@@ -135,7 +137,14 @@ internal static class HoldCapacityRunner
 
             await Task.WhenAll(clients.Select(static client => client.ConnectAsync().AsTask()));
             var services = clients.Select(static client => client.Get<ILoadTestService>()).ToArray();
-            var generation = await services[0].ResetHoldProbeAsync();
+            var originalSessionIds = await Task.WhenAll(services.Select(static service => service
+                .GetSessionIdAsync()
+                .AsTask()
+                .WaitAsync(s_controlRpcTimeout)));
+            var generation = await services[0]
+                .ResetHoldProbeAsync()
+                .AsTask()
+                .WaitAsync(s_controlRpcTimeout);
             var attemptedCalls = checked(options.ClientCount * options.ConcurrencyPerClient);
             var connectionCapacity = (long)options.ClientCount *
                                      options.MaxConnections *
@@ -205,14 +214,35 @@ internal static class HoldCapacityRunner
                 failures.Record(exception);
             }
 
-            var activeCallsAfterRelease = await services[0].GetHoldActiveCallsAsync();
-            var peakActiveCalls = await services[0].GetHoldPeakActiveCallsAsync();
+            var activeCallsAfterRelease = await services[0]
+                .GetHoldActiveCallsAsync()
+                .AsTask()
+                .WaitAsync(s_controlRpcTimeout);
+            var peakActiveCalls = await services[0]
+                .GetHoldPeakActiveCallsAsync()
+                .AsTask()
+                .WaitAsync(s_controlRpcTimeout);
             var healthyCallsAfterRelease = 0;
-            foreach (var service in services)
+            for (var index = 0; index < services.Length; index++)
             {
                 try
                 {
-                    await service.PingAsync();
+                    var currentSessionId = await services[index]
+                        .GetSessionIdAsync()
+                        .AsTask()
+                        .WaitAsync(s_controlRpcTimeout);
+                    if (!string.Equals(
+                            currentSessionId,
+                            originalSessionIds[index],
+                            StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"Client {index} reconnected from session {originalSessionIds[index]} to {currentSessionId}.");
+                    }
+                    await services[index]
+                        .PingAsync()
+                        .AsTask()
+                        .WaitAsync(s_controlRpcTimeout);
                     healthyCallsAfterRelease++;
                 }
                 catch (Exception exception)
@@ -249,7 +279,7 @@ internal static class HoldCapacityRunner
                 failures.Top(5));
 
             Print(result);
-            ValidateResult(result, expectedAcceptedCalls);
+            ValidateResult(result, expectedAcceptedCalls, resourceExhaustedReasons);
             return result;
         }
         finally
@@ -298,7 +328,8 @@ internal static class HoldCapacityRunner
 
     internal static void ValidateResult(
         HoldCapacityResult result,
-        int expectedAcceptedCalls)
+        int expectedAcceptedCalls,
+        IReadOnlyDictionary<string, int> resourceExhaustedReasons)
     {
         if (result.PeakActiveCalls != expectedAcceptedCalls ||
             result.AcceptedCalls != expectedAcceptedCalls)
@@ -317,6 +348,25 @@ internal static class HoldCapacityRunner
         {
             throw new InvalidOperationException(
                 $"Expected {expectedResourceExhaustedCalls} capacity rejections, but observed {result.ResourceExhaustedCalls}.");
+        }
+        if (resourceExhaustedReasons.Values.Sum() != result.ResourceExhaustedCalls)
+            throw new InvalidOperationException("Classified exhaustion reasons do not match the ResourceExhausted count.");
+
+        var callsPerClient = result.AttemptedCalls / result.ClientCount;
+        var allowedReasons = new HashSet<string>(StringComparer.Ordinal);
+        if (result.AttemptedCalls > result.MaxConcurrentCallsPerServer)
+            allowedReasons.Add("server_call_capacity");
+        if (callsPerClient > result.MaxConcurrentCallsPerConnection)
+            allowedReasons.Add("per_connection_call_capacity");
+        if (callsPerClient > result.MaxPendingRequestsPerConnection)
+            allowedReasons.Add("pending_request_capacity");
+        foreach (var reason in resourceExhaustedReasons.Keys)
+        {
+            if (!allowedReasons.Contains(reason))
+            {
+                throw new InvalidOperationException(
+                    $"The hold run was contaminated by unrelated ResourceExhausted reason {reason}.");
+            }
         }
         if (result.CancelledCalls != 0 || result.OtherFailedCalls != 0)
         {

@@ -1234,13 +1234,16 @@ internal sealed partial class SharpLinkServer
             return ValueTask.CompletedTask;
         }
 
+        var rejection = decision.ErrorCode == SharpLinkErrorCode.ResourceExhausted
+            ? SharpLinkResourceExhaustion.CreateWire(
+                resourceExhaustionReason,
+                $"Server admission rejected the call ({resourceExhaustionReason}; {scope}/{reason}).")
+            : new SharpLinkException(
+                decision.ErrorCode,
+                "Server stopped accepting new calls.");
         return session.SendRpcErrorWithBackpressureAsync(
             requestId,
-            new SharpLinkException(
-                decision.ErrorCode,
-                decision.ErrorCode == SharpLinkErrorCode.ResourceExhausted
-                    ? $"Server admission rejected the call ({resourceExhaustionReason}; {scope}/{reason})."
-                    : "Server stopped accepting new calls."),
+            rejection,
             cancellationToken);
     }
 
@@ -1489,7 +1492,7 @@ internal sealed partial class SharpLinkServer
             {
                 var reason = GetCallCapacityExhaustionReason(admission);
                 SharpLinkTelemetry.RecordResourceExhausted("server", reason);
-                rejection = SharpLinkResourceExhaustion.Create(
+                rejection = SharpLinkResourceExhaustion.CreateWire(
                     reason,
                     $"Server call capacity is exhausted ({reason}).");
             }

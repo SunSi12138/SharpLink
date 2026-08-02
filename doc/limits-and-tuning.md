@@ -40,7 +40,7 @@ Connection window 不得小于 stream window。窗口过小会增加 WindowUpdat
 - `pending_request_capacity`
 - `send_queue_capacity`
 
-wire error code 仍为 `ResourceExhausted`；稳定原因会保留在人类可读错误消息中，并由新客户端恢复到自身 metric 与 Activity tag。容量拒绝不会关闭健康连接，释放槽位后同一连接可以继续调用。
+wire error code 仍为 `ResourceExhausted`；一个单字节有界 discriminator 位于可截断文本之前，新客户端据此恢复自身 metric 与 Activity tag，同时仍兼容识别旧消息中的稳定原因。容量拒绝不会关闭健康连接，释放槽位后同一连接可以继续调用。
 
 ## Profile
 
