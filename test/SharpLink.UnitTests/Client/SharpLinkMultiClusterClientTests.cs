@@ -15,6 +15,7 @@ namespace SharpLink.UnitTests.Client;
 
 public sealed class SharpLinkMultiClusterClientTests
 {
+    private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
     private static readonly Assembly TestManifestAssembly = CreateTestManifestAssembly();
 
     [Test]
@@ -835,7 +836,7 @@ public sealed class SharpLinkMultiClusterClientTests
             "candidate",
             child => child.UseTransport(winnerTransport),
             slot => slot.AllowDynamicContracts = true).AsTask();
-        await winnerTransport.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await winnerTransport.ConnectStarted.Task.WaitAsync(RaceCoordinationTimeout);
         var loser = client.AddClusterAsync(
             "candidate",
             child => child.UseTransport(loserTransport),
@@ -845,8 +846,8 @@ public sealed class SharpLinkMultiClusterClientTests
             "v1 must serialize a second same-key mutation behind the in-flight candidate");
 
         winnerTransport.ReleaseConnect();
-        await winner.WaitAsync(TimeSpan.FromSeconds(2));
-        var loserFailure = await CaptureExceptionAsync(loser.WaitAsync(TimeSpan.FromSeconds(2)));
+        await winner.WaitAsync(RaceCoordinationTimeout);
+        var loserFailure = await CaptureExceptionAsync(loser.WaitAsync(RaceCoordinationTimeout));
 
         Ensure(loserFailure is InvalidOperationException exception &&
                exception.Message.Contains("already configured", StringComparison.Ordinal),

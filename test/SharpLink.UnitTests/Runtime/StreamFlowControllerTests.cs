@@ -156,6 +156,110 @@ public class StreamFlowControllerTests
     }
 
     [Test]
+    public async Task CompletedSendTombstoneShouldBackpressureReplacementUntilPeerReleasesCapacity()
+    {
+        var sender = new StreamFlowController(4, 8, 1024, maxConcurrentStreams: 1);
+        var receiver = new StreamFlowController(4, 8, 1024, maxConcurrentStreams: 1);
+        await sender.AcquireSendCreditAsync(1, 0, 1, CancellationToken.None);
+        receiver.AcceptReceived(1, 0, 1);
+
+        try
+        {
+            await sender.AcquireSendCreditAsync(2, 0, 1, CancellationToken.None);
+            throw new Exception("expected active stream capacity exhaustion");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ResourceExhausted)
+        {
+        }
+
+        sender.CompleteSendStream(
+            1,
+            0,
+            new SharpLinkException(SharpLinkErrorCode.Cancelled, "consumer abandoned"));
+        sender.CompleteSendStream(1, 0);
+        Ensure(sender.ActiveSendStreamCount == 0,
+            "completion must idempotently release the active count");
+        Ensure(sender.RetainedSendStreamCount == 1,
+            "the sender must retain the completed state until its final credit returns");
+
+        var replacement = sender.AcquireSendCreditAsync(2, 0, 1, CancellationToken.None);
+        Ensure(!replacement.IsCompleted,
+            "replacement must wait while the peer still counts the completed receive stream");
+
+        Ensure(receiver.RecordConsumed(1, 0, 1) == 0,
+            "sub-threshold credit should remain batched until receive completion");
+        var finalCredit = receiver.FlushConsumed(1, 0);
+        Ensure(finalCredit == 1, "receive completion must flush the final stream credit");
+        sender.ApplyWindowUpdate(1, 0, finalCredit);
+
+        await replacement;
+        Ensure(sender.ActiveSendStreamCount == 1,
+            "the replacement should become active only after the old state is released");
+        Ensure(sender.RetainedSendStreamCount == 1,
+            "the replacement should atomically reuse the released retained-state slot");
+        receiver.AcceptReceived(2, 0, 1);
+    }
+
+    [Test]
+    public async Task RetainedSendTombstonesShouldStayBoundedAndBackpressureNewStreams()
+    {
+        var controller = new StreamFlowController(4, 8, 1024, maxConcurrentStreams: 2);
+        await controller.AcquireSendCreditAsync(1, 0, 1, CancellationToken.None);
+        controller.CompleteSendStream(1, 0);
+        await controller.AcquireSendCreditAsync(2, 0, 1, CancellationToken.None);
+        controller.CompleteSendStream(2, 0);
+
+        Ensure(controller.ActiveSendStreamCount == 0,
+            "both completed streams should release their active counts");
+        Ensure(controller.RetainedSendStreamCount == 2,
+            "retained tombstones must stop at the negotiated stream limit");
+
+        var replacement = controller.AcquireSendCreditAsync(3, 0, 1, CancellationToken.None);
+        Ensure(!replacement.IsCompleted,
+            "a new stream must backpressure instead of growing retained state beyond the limit");
+        Ensure(controller.RetainedSendStreamCount == 2,
+            "waiting for capacity must not allocate another send state");
+
+        controller.ApplyWindowUpdate(1, 0, 1);
+        await replacement;
+        Ensure(controller.ActiveSendStreamCount == 1,
+            "returned terminal credit should admit one replacement");
+        Ensure(controller.RetainedSendStreamCount == 2,
+            "admission must reuse the released slot without exceeding the bound");
+    }
+
+    [Test]
+    public async Task TombstoneCapacityShouldRetainAtMostOneReplacementWaiter()
+    {
+        var controller = new StreamFlowController(4, 8, 1024, maxConcurrentStreams: 1);
+        await controller.AcquireSendCreditAsync(1, 0, 1, CancellationToken.None);
+        controller.CompleteSendStream(1, 0);
+
+        using var cancellation = new CancellationTokenSource();
+        var firstReplacement = controller.AcquireSendCreditAsync(2, 0, 1, cancellation.Token);
+        Ensure(!firstReplacement.IsCompleted,
+            "one replacement should backpressure until retained capacity is released");
+
+        try
+        {
+            await controller.AcquireSendCreditAsync(3, 0, 1, CancellationToken.None);
+            throw new Exception("expected pending replacement capacity exhaustion");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ResourceExhausted)
+        {
+        }
+
+        cancellation.Cancel();
+        await ExpectCancellation(firstReplacement);
+
+        var nextReplacement = controller.AcquireSendCreditAsync(3, 0, 1, CancellationToken.None);
+        Ensure(!nextReplacement.IsCompleted,
+            "canceling the bounded waiter should make its slot reusable");
+        controller.ApplyWindowUpdate(1, 0, 1);
+        await nextReplacement;
+    }
+
+    [Test]
     public async Task UnsentFrameShouldReturnCreditAndAdmitTheNextWaiter()
     {
         var controller = new StreamFlowController(4, 4, 1024);
