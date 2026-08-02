@@ -499,6 +499,8 @@ public static class Program
 
                         failures.Record(ex);
                         Interlocked.Increment(ref failure);
+                        if (ShouldYieldAfterBackpressure(operation, ex))
+                            await Task.Yield();
                     }
                 }
             }, CancellationToken.None);
@@ -550,6 +552,10 @@ public static class Program
 
         return result;
     }
+
+    internal static bool ShouldYieldAfterBackpressure(string operation, Exception exception)
+        => operation == "oneway" &&
+           exception is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted };
 
     private static SharpLinkServerBuilder ConfigureServer(
         SharpLinkServerBuilder builder,

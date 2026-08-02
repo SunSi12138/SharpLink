@@ -124,6 +124,26 @@ public class HoldCapacityTests
     }
 
     [Test]
+    public void OneWayResourceExhaustionShouldYieldWithoutChangingOtherFailureLoops()
+    {
+        Ensure(
+            Program.ShouldYieldAfterBackpressure(
+                "oneway",
+                new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "send queue full")),
+            "OneWay backpressure must yield so every worker and the stage timer can run");
+        Ensure(
+            !Program.ShouldYieldAfterBackpressure(
+                "echo",
+                new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "send queue full")),
+            "request-response throughput loops must retain their existing scheduling");
+        Ensure(
+            !Program.ShouldYieldAfterBackpressure(
+                "oneway",
+                new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "connection closed")),
+            "ordinary OneWay failures must retain their existing scheduling");
+    }
+
+    [Test]
     public void HoldOptionsShouldRejectCapacityMaskingConfigurations()
     {
         var anonymousFailure = CaptureFailure(() => LoadTestOptions.Parse([
