@@ -8,6 +8,7 @@
     <ProjectReference Include="..\..\src\SharpLink.Client\SharpLink.Client.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Hosting\SharpLink.Hosting.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Runtime\SharpLink.Runtime.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Sdk\SharpLink.Sdk.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Serializer.SharpPack\SharpLink.Serializer.SharpPack.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Server\SharpLink.Server.csproj" />
     <ProjectReference Include="..\SharpLink.RollbackPlugin\SharpLink.RollbackPlugin.csproj" />

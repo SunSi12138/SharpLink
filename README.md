@@ -1,5 +1,9 @@
 # SharpLink
 
+<p align="center">
+  <img src="assets/sharplink-icon.png" alt="SharpLink 图标" width="128" height="128" />
+</p>
+
 [![PR Quick](https://github.com/SunSi12138/SharpLink/actions/workflows/pr-quick.yml/badge.svg)](https://github.com/SunSi12138/SharpLink/actions/workflows/pr-quick.yml)
 [![Nightly Regression](https://github.com/SunSi12138/SharpLink/actions/workflows/nightly.yml/badge.svg)](https://github.com/SunSi12138/SharpLink/actions/workflows/nightly.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -19,9 +23,9 @@
 
 核心项目（`src/`）：
 
-- `SharpLink.Abstractions`：Protocol v2 公共模型、公共接口、通道与传输抽象
+- `SharpLink.Abstractions`：契约标记、Protocol v2 公共模型、公共接口、通道与传输抽象
 - `SharpLink.Runtime`：`RpcSession`、`StreamManager`、实例级 Codec Provider、传输实现与底层收发逻辑
-- `SharpLink.Sdk`：`IService`、`[RpcContract]`、`[RpcService]`、`[Oneway]`、`[Timeout]` 等契约标记
+- `SharpLink.Sdk`：契约项目的单一引用入口，提供分析器、源生成器及 1.0.0 类型转发兼容层
 - `SharpLink.Client`：客户端 Builder、连接生命周期、请求管理与代理调用通道
 - `SharpLink.Server`：服务端 Builder、连接管理、Stub 分发、心跳与取消处理
 - `SharpLink.Hosting`：`IServiceCollection` 扩展与 HostedService 集成
@@ -99,22 +103,18 @@ dotnet run --project demo/SeparatedClient/SeparatedClient.csproj
 [assembly: SharpLinkRpcContracts(typeof(MyContract1), typeof(MyContract2))]
 ```
 
-## Multi-cluster clients
+## 多集群客户端
 
-`SharpLinkMultiClusterClientBuilder` owns several isolated child clients. A contract is mapped to a
-single child while its proxy is created; RPC calls made through that proxy do not consult a
-coordinator, cluster name, or per-call routing context.
+`SharpLinkMultiClusterClientBuilder` 管理多个彼此隔离的子客户端。创建代理时，每个契约只映射到一个子客户端；之后通过该代理发起 RPC 调用时，不会再查询协调器、集群名称或逐调用路由上下文。
 
-Declare static contract-assembly routes in the application or host assembly, not in a reusable
-contract package:
+静态契约程序集路由应声明在应用或宿主程序集中，不要写入可复用的契约包：
 
 ```csharp
 [assembly: SharpLinkClusterContractAssembly("orders", typeof(OrderContractsMarker))]
 [assembly: SharpLinkClusterContractAssembly("payments", typeof(PaymentContractsMarker))]
 ```
 
-Configure each slot with the existing child builder API. The `UseCluster` method inside the delegate
-still configures endpoint topology for that one slot; it is not the multi-cluster coordinator API.
+每个槽位继续使用现有的子 Builder API 配置。委托内的 `UseCluster` 仍然只负责该槽位自身的端点拓扑，并不是多集群协调器 API。
 
 ```csharp
 var client = SharpLinkMultiClusterClientBuilder.Create()
@@ -127,17 +127,14 @@ var orders = client.Get<IOrderService>();
 var payments = client.Get<IPaymentService>();
 ```
 
-Every slot is required by default. A slot intentionally reserved for plugins must explicitly opt in:
+默认情况下，每个槽位都必须具有契约。专门预留给插件的槽位必须显式启用动态契约：
 
 ```csharp
 .AddCluster("plugins", child => child.UseTcp("127.0.0.1", 5103),
     slot => slot.AllowDynamicContracts = true)
 ```
 
-Dynamic contracts are registered against an explicit slot with
-`RegisterAssembly(cluster, assembly)`, `UnregisterAssemblyAsync(cluster, assembly, timeout)`, and
-`ReplaceAssemblyAsync(cluster, oldAssembly, newAssembly, timeout)`. A built coordinator can also
-atomically add, replace, and remove complete slots:
+动态契约必须注册到明确指定的槽位，相关 API 为 `RegisterAssembly(cluster, assembly)`、`UnregisterAssemblyAsync(cluster, assembly, timeout)` 和 `ReplaceAssemblyAsync(cluster, oldAssembly, newAssembly, timeout)`。构建完成的协调器也可以原子地新增、替换和移除完整槽位：
 
 ```csharp
 await client.AddClusterAsync("search",
@@ -152,11 +149,7 @@ await client.ReplaceClusterAsync("search",
 var removal = await client.RemoveClusterAsync("search", TimeSpan.FromSeconds(30));
 ```
 
-Candidates connect before publication on a ready coordinator. Replacement changes only future
-`Get<T>()` calls: previously created proxies stay bound to the retired child and are not silently
-rebound. There is no default cluster,
-per-call cluster override, cross-cluster retry, or cluster identifier on the wire. See
-[`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md) for lifecycle and migration details.
+协调器处于 Ready 状态时，候选槽位会在发布前建立连接。替换只影响之后的 `Get<T>()` 调用；已经创建的代理仍绑定到退役子客户端，不会被静默重绑。当前不存在默认集群、逐调用集群覆盖、跨集群重试，线上协议也不携带集群标识。生命周期与迁移细节见 [`doc/dynamic-modules-and-multicluster.md`](doc/dynamic-modules-and-multicluster.md)。
 
 ## 契约 Manifest 与兼容性基线
 

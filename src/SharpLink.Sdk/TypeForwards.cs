@@ -1,0 +1,22 @@
+using System.Runtime.CompilerServices;
+using SharpLink.Sdk;
+
+[assembly: TypeForwardedTo(typeof(IdempotentAttribute))]
+[assembly: TypeForwardedTo(typeof(IService))]
+[assembly: TypeForwardedTo(typeof(NonCancellableAttribute))]
+[assembly: TypeForwardedTo(typeof(OnewayAttribute))]
+[assembly: TypeForwardedTo(typeof(RpcCodecAdapterAttribute))]
+[assembly: TypeForwardedTo(typeof(RpcCodecAdapterRegistrationAttribute))]
+[assembly: TypeForwardedTo(typeof(RpcContractAttribute))]
+[assembly: TypeForwardedTo(typeof(RpcIgnoreAttribute))]
+[assembly: TypeForwardedTo(typeof(RpcMemberAttribute))]
+[assembly: TypeForwardedTo(typeof(RpcRequiredAttribute))]
+[assembly: TypeForwardedTo(typeof(RpcSerializableAttribute))]
+[assembly: TypeForwardedTo(typeof(RpcServiceAttribute))]
+[assembly: TypeForwardedTo(typeof(RpcUnionCaseAttribute))]
+[assembly: TypeForwardedTo(typeof(SharpLinkCallOptions))]
+[assembly: TypeForwardedTo(typeof(SharpLinkClusterContractAssemblyAttribute))]
+[assembly: TypeForwardedTo(typeof(SharpLinkMetadata))]
+[assembly: TypeForwardedTo(typeof(SharpLinkRpcContractsAttribute))]
+[assembly: TypeForwardedTo(typeof(SharpLinkServiceLifetime))]
+[assembly: TypeForwardedTo(typeof(TimeoutAttribute))]

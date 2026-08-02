@@ -4,7 +4,7 @@
 
 ## 版本与兼容性
 
-- NuGet 包版本由 `VersionPrefix` 和可选的 `VersionSuffix` 组成。稳定版 `1.0.0` 不设置后缀；预发布版本可使用例如 `rc7` 的后缀。
+- NuGet 包版本由 `VersionPrefix` 和可选的 `VersionSuffix` 组成。稳定版不设置后缀；预发布版本可使用例如 `rc7` 的后缀。
 - `AssemblyVersion` 与 `FileVersion` 始终使用四段纯数字；预发布后缀只进入包版本和 `InformationalVersion`。
 - 冻结前更新 `CHANGELOG.md`、包引用示例和迁移说明。公开 API、Protocol v2、生成代码、契约 Manifest 或默认行为的变化必须明确标注兼容性。
 - `1.0.0` 发布后保留其公开 API 包作为后续 `PackageValidationBaselineVersion`；不在补丁版本中进行破坏性 API 或 wire 变更。
@@ -47,7 +47,7 @@
 
 ## 发布与回滚
 
-`release-gate.yml` 只在 `v*` 标签触发、全部三平台测试/AOT/包安装/Chaos 门禁通过后进入受保护的 `release` Environment。发布 job 下载同一次运行产出的 `.nupkg` 和 `.snupkg`，使用 NuGet.org OIDC Trusted Publishing，不保存长期 API key；手工触发 Release Gate 只验证，不发布。推送前再次校验每个包的 ID、版本、SHA 和符号包配对关系，并按 `Sdk → Abstractions → Runtime/Serializer → Client/Server → Hosting` 顺序发布。
+`release-gate.yml` 只在 `v*` 标签触发、全部三平台测试/AOT/包安装/Chaos 门禁通过后进入受保护的 `release` Environment。发布 job 下载同一次运行产出的 `.nupkg` 和 `.snupkg`，使用 NuGet.org OIDC Trusted Publishing，不保存长期 API key；手工触发 Release Gate 只验证，不发布。推送前再次校验每个包的 ID、版本、SHA 和符号包配对关系，并按 `Abstractions → Runtime → Sdk/Serializer → Client/Server → Hosting` 顺序发布。
 
 NuGet 包不可覆盖或删除来替代修复。若发布内容有缺陷：
 

@@ -9,6 +9,24 @@
 - Multi-cluster coordinators can atomically add, replace, and remove complete runtime slots through Client-package extension methods that reuse the full `SharpClientBuilder` surface. Ready coordinators connect candidates before publication, replacements transactionally migrate dynamic registrations, and all public cluster/route/budget reads now share one immutable snapshot.
 - Runtime slot mutations enforce `MaxClusters`, steady and bounded transition connection budgets, serialize with shutdown and dynamic assembly lifecycle work, preserve the existing one-time Proxy routing model, and expose structured logs plus `sharplink.client.multicluster.*` metrics.
 
+## [1.0.1] - 2026-08-02
+
+### Fixed
+
+- A standalone contract project can now reference only `SharpLink.Sdk`. The package brings the required runtime and abstractions transitively, so generated Proxy, Stub, Codec, and Manifest sources no longer fail with missing SharpLink namespaces or types.
+- Contract marker types now live in `SharpLink.Abstractions` while retaining the `SharpLink.Sdk` namespace. `SharpLink.Sdk` forwards every type published by 1.0.0, preserving existing compiled consumers without introducing a NuGet dependency cycle.
+
+### Changed
+
+- The README multi-cluster client section is now fully localized in Chinese, and the package graph, separated-contract guidance, architecture, and release order reflect the SDK-only contract reference model.
+- All SharpLink NuGet packages now include the transparent SharpLink icon, which is also displayed in the README.
+- Runtime and build dependencies are refreshed together: Microsoft.Extensions, System.Text.Json, and System.Threading.RateLimiting move to 10.0.10, while Microsoft.CodeAnalysis.Analyzers moves to 5.6.0. The source-generator compiler API and TUnit remain pinned to their verified SDK-compatible baselines after the proposed major updates failed the release gate.
+- GitHub Actions remain pinned to exact commits while moving to checkout 7.0.1, setup-dotnet 6.0.0, upload-artifact 7.0.1, and download-artifact 8.0.1.
+
+### Compatibility
+
+- Protocol v2 bytes, generated contract IDs, runtime routing, transport behavior, and public type names are unchanged. This patch repairs package dependency closure, preserves old assembly references through type forwarding, updates release assets and documentation, and refreshes compatible build/runtime dependencies.
+
 ## [1.0.0] - 2026-08-02
 
 ### Highlights

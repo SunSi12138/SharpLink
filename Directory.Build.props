@@ -7,11 +7,12 @@
     </PropertyGroup>
     <!-- Nuget包信息 -->
     <PropertyGroup>
-        <VersionPrefix>1.0.0</VersionPrefix>
+        <VersionPrefix>1.0.1</VersionPrefix>
         <Authors>sunsi</Authors>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>sharplink-icon.png</PackageIcon>
         <PackageTags>rpc;dotnet;source-generator;streaming;ipc;tcp;shared-memory;nativeaot</PackageTags>
         <PackageReleaseNotes>https://github.com/SunSi12138/SharpLink/blob/v$(Version)/CHANGELOG.md</PackageReleaseNotes>
         <RepositoryUrl>https://github.com/SunSi12138/SharpLink</RepositoryUrl>
@@ -46,6 +47,7 @@
 
     <ItemGroup Condition="'$(IsPackable)' == 'true' and Exists('$(MSBuildThisFileDirectory)README.md')">
         <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
+        <None Include="$(MSBuildThisFileDirectory)assets/sharplink-icon.png" Pack="true" PackagePath="\" Visible="false" />
     </ItemGroup>
     <!-- 项目配置 -->
     <PropertyGroup>

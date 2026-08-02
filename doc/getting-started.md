@@ -60,7 +60,7 @@ Client 和 Server 都是异步可释放对象。生产代码必须在停止时�
 
 ## 分离部署
 
-推荐把契约放在独立程序集，由 Client 和 Server 共同引用。契约程序集也必须引用 SDK、Abstractions、Runtime 和 Generator，因为生成代理、Stub 与 Manifest 依赖这些类型。完整结构见：
+推荐把契约放在独立程序集，由 Client 和 Server 共同引用。契约程序集只需引用 `SharpLink.Sdk`；SDK 会传递引入生成 Proxy、Stub、Codec 与 Manifest 所需的 Runtime 和 Abstractions，并自动携带 Source Generator。Client 和 Server 项目再分别引用契约程序集及自身所需的 `SharpLink.Client` 或 `SharpLink.Server` 包。完整结构见：
 
 - `demo/SeparatedContracts`
 - `demo/SeparatedServer`

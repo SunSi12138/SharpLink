@@ -8,11 +8,14 @@ Application
     -> SharpLink.Runtime
       -> SharpLink.Abstractions
 
-SharpLink.Sdk
-  -> IService / RpcContract / RpcService / Oneway / Timeout / SharpLinkCallOptions
+Contract project
+  -> SharpLink.Sdk
+    -> SharpLink.Runtime
+      -> SharpLink.Abstractions
 
-SharpLink.Generator
-  -> 扫描契约与服务，生成 Proxy / Stub / Codec / Assembly Manifest
+SharpLink.Sdk
+  -> SharpLink.Generator（Analyzer）
+  -> 1.0.0 契约类型转发兼容层
 
 SharpLink.Serializer.SharpPack
   -> 声明通用 Codec Adapter registration，并为复杂对象图提供 manifest-scoped SharpPack Context
@@ -21,6 +24,7 @@ SharpLink.Serializer.SharpPack
 ## 各模块职责
 
 - `SharpLink.Abstractions`
+  - 保持 `SharpLink.Sdk` 命名空间的契约标记（`IService` / `RpcContract` / `RpcService` / `Oneway` / `Timeout` / `SharpLinkCallOptions`）
   - Protocol v2 模型（`ProtocolV2FrameType` / `ProtocolV2FrameFlags` / `ProtocolV2Constants`）
   - 核心抽象（`IRpcChannel`、`IRpcStub`、`IClientTransportFactory`、`IServerTransportListener`、`ITransportConnection`、`IRpcSession`、`IRpcCodec`）
   - 结构化错误模型（`SharpLinkException` / `SharpLinkErrorCode`）
@@ -33,8 +37,10 @@ SharpLink.Serializer.SharpPack
   - Protocol v2 帧编解码、发送泵、池化缓冲与并发容器
 
 - `SharpLink.Sdk`
-  - 只承载契约层标记和最小公共类型
-  - 当前不承载 Builder；Builder 位于 `SharpLink.Client` 和 `SharpLink.Server`
+  - 作为契约项目的单一包引用入口，传递引入 Runtime 和 Abstractions
+  - 携带编译期 Analyzer 与 Source Generator
+  - 将 1.0.0 发布过的契约类型转发到 Abstractions，保持旧二进制引用兼容
+  - 不承载 Builder；Builder 位于 `SharpLink.Client` 和 `SharpLink.Server`
 
 - `SharpLink.Client`
   - `SharpClientBuilder`
