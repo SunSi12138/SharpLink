@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using Microsoft.Extensions.Logging;
 using SharpLink.Client;
 using SharpLink.RollbackPlugin;
 using SharpLink.Sdk;
@@ -580,6 +581,7 @@ public sealed class SharpLinkMultiClusterClientTests
             .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
+        await client.ConnectAsync();
 
         var failure = await CaptureExceptionAsync(client.AddClusterAsync(
             "orders", child => child.UseTransport(rejectedTransport)).AsTask());
@@ -589,12 +591,14 @@ public sealed class SharpLinkMultiClusterClientTests
             "runtime add must enforce the published steady-state connection budget");
         Ensure(rejectedTransport.DisposeCount == 1,
             "a built candidate rejected by the budget check must be stopped and disposed");
+        Ensure(rejectedTransport.ConnectCount == 0,
+            "a budget-rejected candidate must not connect or authenticate before deterministic preflight rejection");
         await EnsureThrows<ArgumentException>(() =>
         {
             _ = client.GetClusterState("orders");
             return Task.CompletedTask;
         });
-        Ensure(client.GetClusterState("plugins") == SharpLinkConnectionState.Created,
+        Ensure(client.GetClusterState("plugins") == SharpLinkConnectionState.Ready,
             "budget rollback must retain the original slot");
     }
 
@@ -729,6 +733,9 @@ public sealed class SharpLinkMultiClusterClientTests
                 Enumerable.Range(0, 4).Select(index => Endpoint($"heavy-{index}", 6000 + index)),
                 static _ => new TestClientTransportFactory()),
             slot => slot.AllowDynamicContracts = true);
+        typeof(SharpLinkMultiClusterClient)
+            .GetField("_state", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(client, (int)SharpLinkMultiClusterState.Ready);
         var rejectedTransport = new ControlledMutationTransportFactory();
 
         var failure = await CaptureExceptionAsync(client.ReplaceClusterAsync(
@@ -741,6 +748,8 @@ public sealed class SharpLinkMultiClusterClientTests
             "replacement must reject a physical old/new overlap above twice the steady budget");
         Ensure(rejectedTransport.DisposeCount == 1,
             "transition-budget rejection must dispose the replacement candidate");
+        Ensure(rejectedTransport.ConnectCount == 0,
+            "transition-budget rejection must happen before the replacement can connect");
         Ensure(client.GetClusterState("heavy") == SharpLinkConnectionState.Created,
             "transition-budget rollback must preserve the published heavy slot");
 
@@ -842,6 +851,29 @@ public sealed class SharpLinkMultiClusterClientTests
             "the winning candidate must be connected once and remain coordinator-owned");
         Ensure(loserTransport.ConnectCount == 0 && loserTransport.DisposeCount == 1,
             "the losing unbuilt candidate must never connect and must release its transport");
+    }
+
+    [Test]
+    public async Task ThrowingMutationLoggerShouldNotFailOrStrandLaterMutations()
+    {
+        var builder = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
+                slot => slot.AllowDynamicContracts = true);
+        builder.UseLoggerFactoryIfUnset(new ThrowingWriteLoggerFactory());
+        await using var client = builder.Build();
+
+        await client.AddClusterAsync(
+            "first",
+            child => child.UseTransport(new TestClientTransportFactory()),
+            slot => slot.AllowDynamicContracts = true);
+        await client.AddClusterAsync(
+            "second",
+            child => child.UseTransport(new TestClientTransportFactory()),
+            slot => slot.AllowDynamicContracts = true);
+
+        Ensure(client.GetClusterState("first") == SharpLinkConnectionState.Created &&
+               client.GetClusterState("second") == SharpLinkConnectionState.Created,
+            "application logger failures must not change mutation results or strand the semaphore");
     }
 
     [Test]
@@ -1051,6 +1083,67 @@ public sealed class SharpLinkMultiClusterClientTests
         });
         Ensure(client.GetClusterState("bootstrap") == SharpLinkConnectionState.Ready,
             "candidate cancellation must leave the existing public snapshot unchanged");
+    }
+
+    [Test]
+    public async Task CreatedAddCancellationDuringPreparationShouldRollbackBeforePublication()
+    {
+        var candidateTransport = new ControlledMutationTransportFactory();
+        using var cancellation = new CancellationTokenSource();
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+
+        var failure = await CaptureExceptionAsync(client.AddClusterAsync(
+            "candidate",
+            child => child.UseEndpoints(
+                new CancellingEndpointEnumerable(
+                    cancellation,
+                    Endpoint("candidate", 6501)),
+                _ => candidateTransport),
+            slot => slot.AllowDynamicContracts = true,
+            cancellation.Token).AsTask());
+
+        Ensure(failure is OperationCanceledException,
+            "Created-state cancellation during synchronous preparation must reach the caller");
+        Ensure(candidateTransport.ConnectCount == 0 && candidateTransport.DisposeCount == 1,
+            "the prepared Created candidate must be disposed without connecting");
+        await EnsureThrows<ArgumentException>(() =>
+        {
+            _ = client.GetClusterState("candidate");
+            return Task.CompletedTask;
+        });
+    }
+
+    [Test]
+    public async Task CreatedReplaceCancellationDuringPreparationShouldKeepTheOldSlot()
+    {
+        var oldTransport = new ControlledMutationTransportFactory();
+        var candidateTransport = new ControlledMutationTransportFactory();
+        using var cancellation = new CancellationTokenSource();
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .AddCluster("dynamic", child => child.UseTransport(oldTransport),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+
+        var failure = await CaptureExceptionAsync(client.ReplaceClusterAsync(
+            "dynamic",
+            child => child.UseEndpoints(
+                new CancellingEndpointEnumerable(
+                    cancellation,
+                    Endpoint("candidate", 6502)),
+                _ => candidateTransport),
+            TimeSpan.Zero,
+            cancellation.Token).AsTask());
+
+        Ensure(failure is OperationCanceledException,
+            "Created-state replacement cancellation during preparation must reach the caller");
+        Ensure(candidateTransport.ConnectCount == 0 && candidateTransport.DisposeCount == 1,
+            "the cancelled replacement candidate must be disposed without connecting");
+        Ensure(oldTransport.DisposeCount == 0 &&
+               client.GetClusterState("dynamic") == SharpLinkConnectionState.Created,
+            "replacement cancellation must keep the old slot published and owned by the coordinator");
     }
 
     [Test]
@@ -1315,6 +1408,45 @@ public sealed class SharpLinkMultiClusterClientTests
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class CancellingEndpointEnumerable(
+        CancellationTokenSource cancellation,
+        SharpLinkEndpoint endpoint) : IEnumerable<SharpLinkEndpoint>
+    {
+        public IEnumerator<SharpLinkEndpoint> GetEnumerator()
+        {
+            cancellation.Cancel();
+            yield return endpoint;
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private sealed class ThrowingWriteLoggerFactory : ILoggerFactory
+    {
+        private static readonly ILogger Logger = new ThrowingWriteLogger();
+
+        public void AddProvider(ILoggerProvider provider) { }
+
+        public ILogger CreateLogger(string categoryName) => Logger;
+
+        public void Dispose() { }
+
+        private sealed class ThrowingWriteLogger : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+                => throw new InvalidOperationException("controlled logger write failure");
+        }
     }
 
     private sealed class ControlledMutationTransportFactory : IClientTransportFactory

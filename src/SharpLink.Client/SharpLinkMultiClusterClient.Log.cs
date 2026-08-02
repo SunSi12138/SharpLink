@@ -25,16 +25,34 @@ internal sealed partial class SharpLinkMultiClusterClient
         int configuredConnectionBudget,
         double elapsedMilliseconds,
         string? failureStage = null)
-        => LogMutationStageCore(
-            logger,
-            operation,
-            clusterKey,
-            stage,
-            result,
-            failureStage,
-            configuredConnectionBudget,
-            elapsedMilliseconds);
+    {
+        try
+        {
+            LogMutationStageCore(
+                logger,
+                operation,
+                clusterKey,
+                stage,
+                result,
+                failureStage,
+                configuredConnectionBudget,
+                elapsedMilliseconds);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            // Observability providers are application-owned and must not control mutation ownership.
+        }
+    }
 
     private static void RecordMutation(string operation, string result, TimeSpan duration)
-        => SharpLinkTelemetry.RecordMultiClusterMutation(operation, result, duration);
+    {
+        try
+        {
+            SharpLinkTelemetry.RecordMultiClusterMutation(operation, result, duration);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            // A MeterListener callback must not change a committed lifecycle result.
+        }
+    }
 }

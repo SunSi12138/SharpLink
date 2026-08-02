@@ -14,13 +14,13 @@ internal sealed partial class SharpLinkMultiClusterClient
         ArgumentNullException.ThrowIfNull(builder);
         var started = Stopwatch.GetTimestamp();
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        LogMutationStage(_logger, "add", cluster.Value, "started", "pending", 0, 0);
         SharpLinkPreparedCluster? candidate = null;
         var published = false;
         var publishedBudget = 0;
         var failureStage = "state_validation";
         try
         {
+            LogMutationStage(_logger, "add", cluster.Value, "started", "pending", 0, 0);
             builder.UseLoggerFactoryIfUnset(_loggerFactory);
             lock (_gate)
             {
@@ -36,6 +36,16 @@ internal sealed partial class SharpLinkMultiClusterClient
                 cluster,
                 builder,
                 allowDynamicContracts);
+            failureStage = "budget_preflight";
+            lock (_gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var snapshot = GetPublishableSnapshotLocked();
+                if (snapshot.Clusters.ContainsKey(cluster))
+                    throw new InvalidOperationException($"Cluster '{cluster}' was added by another operation.");
+                ValidateSteadyBudget(snapshot.ConfiguredConnectionBudget, candidate.Slot.ConfiguredConnectionBudget);
+                ValidateTransitionBudget(snapshot.ConfiguredConnectionBudget, candidate.Slot.ConfiguredConnectionBudget);
+            }
             failureStage = "candidate_connect";
             var candidateConnected = await ConnectCandidateWhenRequiredAsync(
                 candidate.Slot, cancellationToken).ConfigureAwait(false);
@@ -47,6 +57,7 @@ internal sealed partial class SharpLinkMultiClusterClient
             failureStage = "snapshot_validation";
             lock (_gate)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var snapshot = GetPublishableSnapshotLocked();
                 if (snapshot.Clusters.ContainsKey(cluster))
                     throw new InvalidOperationException($"Cluster '{cluster}' was added by another operation.");
@@ -97,7 +108,6 @@ internal sealed partial class SharpLinkMultiClusterClient
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
         var started = Stopwatch.GetTimestamp();
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        LogMutationStage(_logger, "replace", cluster.Value, "started", "pending", 0, 0);
         SharpLinkPreparedCluster? candidate = null;
         SharpLinkClusterSlot? existingSlot = null;
         DynamicAssemblyRegistration[] registrations = [];
@@ -106,6 +116,7 @@ internal sealed partial class SharpLinkMultiClusterClient
         var failureStage = "state_validation";
         try
         {
+            LogMutationStage(_logger, "replace", cluster.Value, "started", "pending", 0, 0);
             builder.UseLoggerFactoryIfUnset(_loggerFactory);
             lock (_gate)
             {
@@ -119,6 +130,13 @@ internal sealed partial class SharpLinkMultiClusterClient
 
             failureStage = "candidate_preparation";
             candidate = SharpLinkMultiClusterClientBuilder.PrepareReplacementCluster(existingSlot!, builder);
+            failureStage = "budget_preflight";
+            lock (_gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var snapshot = GetPublishableSnapshotLocked();
+                ValidateReplacementBudgetLocked(snapshot, cluster, existingSlot!, candidate.Slot);
+            }
             failureStage = "assembly_migration";
             foreach (var registration in registrations)
             {
@@ -141,21 +159,10 @@ internal sealed partial class SharpLinkMultiClusterClient
             failureStage = "snapshot_validation";
             lock (_gate)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var snapshot = GetPublishableSnapshotLocked();
-                if (!snapshot.Clusters.TryGetValue(cluster, out var currentSlot) ||
-                    !ReferenceEquals(currentSlot, existingSlot))
-                {
-                    throw new InvalidOperationException($"Cluster '{cluster}' changed while its replacement was prepared.");
-                }
-
-                var nextBudget = checked(snapshot.ConfiguredConnectionBudget - existingSlot!.ConfiguredConnectionBudget +
-                    candidate.Slot.ConfiguredConnectionBudget);
-                if (nextBudget > _options.MaxTotalConfiguredConnections)
-                {
-                    throw new InvalidOperationException(
-                        $"Replacement child connection budget ({nextBudget}) exceeds MaxTotalConfiguredConnections ({_options.MaxTotalConfiguredConnections}).");
-                }
-                ValidateTransitionBudget(snapshot.ConfiguredConnectionBudget, candidate.Slot.ConfiguredConnectionBudget);
+                var nextBudget = ValidateReplacementBudgetLocked(
+                    snapshot, cluster, existingSlot!, candidate.Slot);
 
                 var nextClusters = snapshot.Clusters.ToDictionary(static pair => pair.Key, static pair => pair.Value);
                 nextClusters[cluster] = candidate.Slot;
@@ -243,6 +250,7 @@ internal sealed partial class SharpLinkMultiClusterClient
                 Volatile.Read(ref _snapshot).ConfiguredConnectionBudget, 0);
             lock (_gate)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var snapshot = BeginSlotMutationLocked();
                 if (!snapshot.Clusters.TryGetValue(cluster, out existingSlot))
                     throw new ArgumentException($"Cluster '{cluster}' is not configured.", nameof(cluster));
@@ -367,6 +375,29 @@ internal sealed partial class SharpLinkMultiClusterClient
             throw new InvalidOperationException(
                 $"Configured child connection budget ({nextBudget}) exceeds MaxTotalConfiguredConnections ({_options.MaxTotalConfiguredConnections}).");
         }
+    }
+
+    private int ValidateReplacementBudgetLocked(
+        MultiClusterSnapshot snapshot,
+        SharpLinkClusterKey cluster,
+        SharpLinkClusterSlot existingSlot,
+        SharpLinkClusterSlot candidateSlot)
+    {
+        if (!snapshot.Clusters.TryGetValue(cluster, out var currentSlot) ||
+            !ReferenceEquals(currentSlot, existingSlot))
+        {
+            throw new InvalidOperationException($"Cluster '{cluster}' changed while its replacement was prepared.");
+        }
+
+        var nextBudget = checked(snapshot.ConfiguredConnectionBudget - existingSlot.ConfiguredConnectionBudget +
+            candidateSlot.ConfiguredConnectionBudget);
+        if (nextBudget > _options.MaxTotalConfiguredConnections)
+        {
+            throw new InvalidOperationException(
+                $"Replacement child connection budget ({nextBudget}) exceeds MaxTotalConfiguredConnections ({_options.MaxTotalConfiguredConnections}).");
+        }
+        ValidateTransitionBudget(snapshot.ConfiguredConnectionBudget, candidateSlot.ConfiguredConnectionBudget);
+        return nextBudget;
     }
 
     private void ValidateTransitionBudget(int currentBudget, int candidateBudget)
