@@ -18,8 +18,8 @@ internal sealed class StreamFlowController
     private readonly LinkedList<CreditWaiter> _waiters = [];
     private Queue<ConsumedCreditUpdate>? _consumedCreditUpdates;
     // Completed states can remain as tombstones until their final in-flight credit arrives.
-    // They no longer own an active producer slot, and their retention is bounded by the
-    // outstanding connection credit rather than the negotiated concurrent-stream limit.
+    // The active count distinguishes hard live-stream exhaustion from tombstone pressure;
+    // the state dictionary itself remains bounded by the negotiated stream limit.
     private int _activeSendStreamCount;
     private long _sendConnectionCredit;
     private long _receiveConnectionCredit;
@@ -59,19 +59,32 @@ internal sealed class StreamFlowController
         cancellationToken.ThrowIfCancellationRequested();
 
         var key = new StreamKey(requestId, streamId);
-        SendState state;
+        SendState? state;
         lock (_gate)
         {
             ThrowIfTerminated();
-            state = GetOrAddSendState(key);
-            if (state.AbortException is { } abortException)
-                throw abortException;
-            if (state.Completed)
-                throw CreateStreamClosedException();
-            if (_waiters.Count == 0 && CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
+            if (!_sendStates.TryGetValue(key, out state))
             {
-                Reserve(state, encodedBytes);
-                return ValueTask.CompletedTask;
+                if (_sendStates.Count < _maxConcurrentStreams)
+                {
+                    state = AddSendState(key);
+                }
+                else if (_activeSendStreamCount >= _maxConcurrentStreams)
+                {
+                    throw CreateConcurrentStreamLimitException();
+                }
+            }
+            if (state is not null)
+            {
+                if (state.AbortException is { } abortException)
+                    throw abortException;
+                if (state.Completed)
+                    throw CreateStreamClosedException();
+                if (_waiters.Count == 0 && CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
+                {
+                    Reserve(state, encodedBytes);
+                    return ValueTask.CompletedTask;
+                }
             }
         }
 
@@ -81,7 +94,7 @@ internal sealed class StreamFlowController
     [MethodImpl(MethodImplOptions.NoInlining)]
     private ValueTask AcquireContendedSendCreditAsync(
         StreamKey key,
-        SendState expectedState,
+        SendState? expectedState,
         int encodedBytes,
         CancellationToken cancellationToken)
     {
@@ -91,22 +104,36 @@ internal sealed class StreamFlowController
         lock (_gate)
         {
             ThrowIfTerminated();
-            if (!_sendStates.TryGetValue(key, out var state) ||
-                !ReferenceEquals(state, expectedState))
+            SendState? state = null;
+            if (_sendStates.TryGetValue(key, out var existingState))
+            {
+                if (expectedState is not null && !ReferenceEquals(existingState, expectedState))
+                    throw CreateStreamClosedException();
+                state = existingState;
+            }
+            else if (expectedState is not null)
             {
                 throw CreateStreamClosedException();
             }
-            if (state.AbortException is { } abortException)
-                throw abortException;
-            if (state.Completed)
-                throw CreateStreamClosedException();
-            if (_waiters.Count == 0 && CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
+            else if (_sendStates.Count < _maxConcurrentStreams)
             {
-                Reserve(state, encodedBytes);
-                return ValueTask.CompletedTask;
+                state = AddSendState(key);
             }
 
-            waiter = new CreditWaiter(this, key, encodedBytes);
+            if (state is not null)
+            {
+                if (state.AbortException is { } abortException)
+                    throw abortException;
+                if (state.Completed)
+                    throw CreateStreamClosedException();
+                if (_waiters.Count == 0 && CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
+                {
+                    Reserve(state, encodedBytes);
+                    return ValueTask.CompletedTask;
+                }
+            }
+
+            waiter = new CreditWaiter(this, key, encodedBytes, canCreateState: expectedState is null);
             waiter.Node = _waiters.AddLast(waiter);
             ready = AdmitWaiters();
         }
@@ -433,17 +460,18 @@ internal sealed class StreamFlowController
         }
     }
 
-    private SendState GetOrAddSendState(StreamKey key)
+    internal int RetainedSendStreamCount
     {
-        if (_sendStates.TryGetValue(key, out var state))
-            return state;
-        if (_activeSendStreamCount >= _maxConcurrentStreams)
+        get
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ResourceExhausted,
-                $"The session already owns {_maxConcurrentStreams} flow-controlled streams.");
+            lock (_gate)
+                return _sendStates.Count;
         }
-        state = new SendState(_streamWindow);
+    }
+
+    private SendState AddSendState(StreamKey key)
+    {
+        var state = new SendState(_streamWindow);
         _sendStates.Add(key, state);
         _activeSendStreamCount++;
         return state;
@@ -472,12 +500,30 @@ internal sealed class StreamFlowController
         {
             var next = node.Next;
             var waiter = node.Value;
-            if (!_sendStates.TryGetValue(waiter.Key, out var state) ||
-                state.Completed || state.AbortException is not null)
+            SendState? state = null;
+            if (!_sendStates.TryGetValue(waiter.Key, out state))
+            {
+                if (!waiter.CanCreateState)
+                {
+                    _waiters.Remove(node);
+                    waiter.Node = null;
+                    waiter.Rejection = CreateStreamClosedException();
+                    (ready ??= []).Add(waiter);
+                    node = next;
+                    continue;
+                }
+                if (_sendStates.Count >= _maxConcurrentStreams)
+                {
+                    node = next;
+                    continue;
+                }
+                state = AddSendState(waiter.Key);
+            }
+            if (state.Completed || state.AbortException is not null)
             {
                 _waiters.Remove(node);
                 waiter.Node = null;
-                waiter.Rejection = state?.AbortException ?? CreateStreamClosedException();
+                waiter.Rejection = state.AbortException ?? CreateStreamClosedException();
                 (ready ??= []).Add(waiter);
                 node = next;
                 continue;
@@ -596,6 +642,11 @@ internal sealed class StreamFlowController
     private static SharpLinkException CreateStreamClosedException()
         => new(SharpLinkErrorCode.ConnectionClosed, "The stream is closed.");
 
+    private SharpLinkException CreateConcurrentStreamLimitException()
+        => new(
+            SharpLinkErrorCode.ResourceExhausted,
+            $"The session already owns {_maxConcurrentStreams} active flow-controlled streams.");
+
     private readonly record struct StreamKey(long RequestId, ushort StreamId);
 
     private readonly record struct ConsumedCreditUpdate(StreamKey Key, int Credit);
@@ -617,13 +668,15 @@ internal sealed class StreamFlowController
     private sealed class CreditWaiter(
         StreamFlowController owner,
         StreamKey key,
-        int encodedBytes)
+        int encodedBytes,
+        bool canCreateState = false)
     {
         public readonly TaskCompletionSource<bool> Completion =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly StreamFlowController Owner = owner;
         public readonly StreamKey Key = key;
         public readonly int EncodedBytes = encodedBytes;
+        public readonly bool CanCreateState = canCreateState;
         public LinkedListNode<CreditWaiter>? Node;
         public Exception? Rejection;
 
