@@ -29,6 +29,8 @@ public class SharedMemoryTransportConnectionIntegrationTests
             var clientError = await client.StandardError.ReadToEndAsync();
             await client.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
             Ensure(client.ExitCode == 0, $"child client exit: {clientOutput} {clientError}");
+            Ensure(clientOutput.Contains("REFERENCED_SERVICE_PASS", StringComparison.Ordinal),
+                "referenced internal service result");
             Ensure(clientOutput.Contains("AOT_SMOKE_CLIENT_PASS", StringComparison.Ordinal), "child client result");
 
             var remainingServerOutput = await server.StandardOutput.ReadToEndAsync();

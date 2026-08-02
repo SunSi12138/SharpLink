@@ -52,6 +52,8 @@ public partial class RpcGenerator : IIncrementalGenerator
             AnalyzeStaticRouteConflicts(compilation, ct));
         var clusterRoutes = context.CompilationProvider.Select(static (compilation, ct) =>
             AnalyzeClusterRoutes(compilation, ct));
+        var referencedManifestBootstraps = context.CompilationProvider.Select(static (compilation, ct) =>
+            AnalyzeReferencedManifestBootstraps(compilation, ct));
 
         var invalidMethods = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcContractAttributeMetadataName,
@@ -252,6 +254,17 @@ public partial class RpcGenerator : IIncrementalGenerator
                 spc.AddSource(
                     "SharpLink.GeneratedClusterRouteManifest.g.cs",
                     SourceText.From(GenerateClusterRouteManifest(analysis.Routes), Encoding.UTF8));
+            }
+        });
+
+        context.RegisterSourceOutput(referencedManifestBootstraps, static (spc, manifests) =>
+        {
+            var code = GenerateReferencedManifestBootstrap(manifests);
+            if (!string.IsNullOrEmpty(code))
+            {
+                spc.AddSource(
+                    "SharpLink.GeneratedReferencedAssemblyBootstrap.g.cs",
+                    SourceText.From(code, Encoding.UTF8));
             }
         });
 

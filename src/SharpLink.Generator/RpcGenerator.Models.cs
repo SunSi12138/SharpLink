@@ -126,6 +126,11 @@ internal readonly record struct StaticRouteConflictModel(
     string IncomingFingerprint,
     Location? Location);
 
+internal readonly record struct ReferencedManifestBootstrapModel(
+    string AssemblyIdentity,
+    string ManifestTypeName,
+    bool HasRegisterMethod);
+
 internal sealed record RpcUnionModel(
     string TypeName,
     EquatableArray<RpcUnionCaseModel> Cases,

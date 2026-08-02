@@ -96,7 +96,7 @@ dotnet run --project demo/SeparatedClient/SeparatedClient.csproj
 - RPC route 必须是普通 instance method；`ref/out/in`、by-ref return、static method 与 abstract property/indexer/event 会在编译期报告错误
 - Contract 所在程序集生成 Descriptor、Proxy、contract-based Stub 和 Codec；Service 所在程序集生成 Activator、生命周期与显式依赖
 - 每个生成程序集只有一个可由程序集特性直接定位的 Manifest，不使用 `Assembly.GetTypes()` 扫描
-- Server `Build()` 默认快照当时已加载的 Manifest 并自动注册 `[RpcService]`；Build 后加载的插件需要显式 `RegisterAssembly`
+- Generator 会为静态引用的 generated Manifest 发出确定性 bootstrap；应用模块初始化时先注册这些 Manifest，Server `Build()` 再快照并自动注册 `[RpcService]`。Build 后加载的插件仍需显式 `RegisterAssembly`
 - 可以通过程序集级特性缩小扫描范围：
 
 ```csharp
@@ -488,7 +488,7 @@ meterProviderBuilder
 
 ## 自动服务注册、DI 与生命周期
 
-服务实现只需标记 `[RpcService]`。默认 `Singleton` 保留无调用 Scope 的快速路径；`Connection` 按认证成功的物理连接惰性创建，`Call` 为每次调用创建，并在完整 Unary、OneWay 或 Streaming 调用真正结束后释放：
+服务实现只需标记 `[RpcService]`。Server 对 Service 项目的普通 `ProjectReference` 会在编译期生成静态 Manifest bootstrap，不需要 marker type、`Assembly.Load` 或手动程序集注册；bootstrap 只引用 Service 程序集拥有的 generated public infrastructure，因此实现类型可以是 `internal`，且 trimming/NativeAOT 不需要运行时扫描。默认 `Singleton` 保留无调用 Scope 的快速路径；`Connection` 按认证成功的物理连接惰性创建，`Call` 为每次调用创建，并在完整 Unary、OneWay 或 Streaming 调用真正结束后释放：
 
 ```csharp
 [RpcService(Lifetime = SharpLinkServiceLifetime.Connection)]

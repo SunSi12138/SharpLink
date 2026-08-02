@@ -55,6 +55,8 @@ public partial class RpcGenerator
         sb.AppendLine($"    public static readonly {manifestTypeName} Instance = new();");
         sb.AppendLine();
         sb.AppendLine($"    public {manifestTypeName}() {{ }}");
+        sb.AppendLine("    public static void Register()");
+        sb.AppendLine("        => SharpLinkGeneratedAssemblyCatalog.Register(Instance);");
         sb.AppendLine("    public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;");
         sb.AppendLine("    public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;");
         sb.AppendLine($"    public string GeneratorVersion => \"{EscapeString(ExecutingGeneratorVersion)}\";");
@@ -83,7 +85,7 @@ public partial class RpcGenerator
         sb.AppendLine("{");
         sb.AppendLine("    [ModuleInitializer]");
         sb.AppendLine("    internal static void Register()");
-        sb.AppendLine($"        => SharpLinkGeneratedAssemblyCatalog.Register({manifestTypeName}.Instance);");
+        sb.AppendLine($"        => {manifestTypeName}.Register();");
         sb.AppendLine("}");
         return sb.ToString();
     }

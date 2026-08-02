@@ -25,6 +25,7 @@ if [[ "$RID" == win-* ]]; then
 fi
 
 SERVER_LOG="$OUTPUT/server.log"
+CLIENT_LOG="$OUTPUT/client.log"
 "$EXE" sharedmemory --role server --shm-name "$NAME" >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 cleanup() {
@@ -34,8 +35,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$EXE" sharedmemory --role client --shm-name "$NAME"
+"$EXE" sharedmemory --role client --shm-name "$NAME" | tee "$CLIENT_LOG"
 wait "$SERVER_PID"
+grep -q "REFERENCED_SERVICE_PASS" "$CLIENT_LOG"
+grep -q "AOT_SMOKE_CLIENT_PASS" "$CLIENT_LOG"
 grep -q "AOT_SMOKE_SERVER_PASS" "$SERVER_LOG"
 trap - EXIT
 
