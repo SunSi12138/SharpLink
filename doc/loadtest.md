@@ -68,7 +68,7 @@ dotnet run -c Release --project test/SharpLink.LoadTest -- \
   --metrics-port 0
 ```
 
-`hold` 为每个客户端创建独立 `SharpLinkClient` 和独立连接池，并一次性发起指定数量的未完成调用。服务端使用 Singleton 探针和共享 gate：达到预计可接纳容量后统一计时释放，另有有界兜底释放，因而不需要在服务器已满时再发送一个会被拒绝的控制 RPC。
+`hold` 为每个客户端创建独立 `SharpLinkClient` 和一条专用连接，并一次性发起指定数量的未完成调用。服务端使用 Singleton 探针和共享 gate：达到预计可接纳容量后统一计时释放，另有有界兜底释放，因而不需要在服务器已满时再发送一个会被拒绝的控制 RPC。该场景默认禁用请求超时，并拒绝显式有限超时，避免客户端 deadline 早于 gate 释放而污染容量证据。
 
 4. 命名管道（本机）
 
@@ -183,7 +183,7 @@ StreamLoadTest 专有：
 
 `duplex-equivalent` 为跨框架比较提供严格 oracle：每个响应都校验 operation ID、顺序、长度和完整 payload，缺失、重复、错序、额外或损坏响应均计为 validation failure，阶段结束时的部分流取消单独计数且不进入成功吞吐。正式连接数对比必须固定 `--min-connections` 与 `--max-connections` 为同一个值；`1/64` 动态池不能替代 `1/1` 与 `64/64` 两条独立证据。
 
-`hold` 同样要求 `--min-connections` 与 `--max-connections` 相等，并禁用 endpoint topology 与 admission，避免其他容量控制掩盖 call-capacity 结果。跨机运行时 Server 与 Client 应使用相同的调用上限参数；`hold` 不支持 anonymous pipe。
+`hold` 要求 `--min-connections 1 --max-connections 1`，避免多连接池的随机路由把理论连接容量误当成保证接纳容量；扩展总连接数应增加独立 `--client-count`。它还会禁用 endpoint topology 与 admission，并要求请求超时为 `disabled`，避免其他限制掩盖 call-capacity 结果。跨机运行时 Server 与 Client 应使用相同的调用上限参数；`hold` 不支持 anonymous pipe。
 
 ## 默认传输标识
 

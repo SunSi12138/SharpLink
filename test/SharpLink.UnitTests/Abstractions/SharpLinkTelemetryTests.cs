@@ -7,6 +7,26 @@ namespace SharpLink.UnitTests.Abstractions;
 public class SharpLinkTelemetryTests
 {
     [Test]
+    public void RemoteResourceExhaustionShouldRestoreKnownReasonFromWireMessage()
+    {
+        var restored = SharpLinkResourceExhaustion.CreateRemote(
+            SharpLinkErrorCode.ResourceExhausted,
+            "Server call capacity is exhausted (server_call_capacity).");
+        Ensure(
+            SharpLinkResourceExhaustion.GetReason(restored) ==
+            SharpLinkResourceExhaustion.ServerCallCapacity,
+            "the client must restore the server-provided stable reason after wire decoding");
+
+        var unspecified = SharpLinkResourceExhaustion.CreateRemote(
+            SharpLinkErrorCode.ResourceExhausted,
+            "An older peer reported an unclassified bounded-resource failure.");
+        Ensure(
+            SharpLinkResourceExhaustion.GetReason(unspecified) ==
+            SharpLinkResourceExhaustion.Unspecified,
+            "unknown peer messages must remain a bounded unspecified telemetry series");
+    }
+
+    [Test]
     public void ResourceExhaustedMetricsShouldExposeStableReasons()
     {
         const string side = "resource-exhaustion-reason-test";

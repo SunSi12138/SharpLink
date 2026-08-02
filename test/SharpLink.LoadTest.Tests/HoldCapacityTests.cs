@@ -79,8 +79,8 @@ public class HoldCapacityTests
             "--client-count", "4",
             "--concurrency-per-client", "8",
             "--hold-duration", "2",
-            "--min-connections", "2",
-            "--max-connections", "2",
+            "--min-connections", "1",
+            "--max-connections", "1",
             "--max-concurrent-calls-per-connection", "16",
             "--max-concurrent-calls-per-server", "24",
             "--max-pending-requests-per-connection", "32",
@@ -92,8 +92,8 @@ public class HoldCapacityTests
         Ensure(options.ClientCount == 4 && options.ConcurrencyPerClient == 8,
             "independent client count and one-shot calls per client");
         Ensure(options.HoldDurationSeconds == 2, "shared hold duration");
-        Ensure(options.MinConnections == 2 && options.MaxConnections == 2,
-            "fixed connections per independent client");
+        Ensure(options.MinConnections == 1 && options.MaxConnections == 1,
+            "one unambiguous connection per independent client");
         Ensure(options.MaxConcurrentCallsPerConnection == 16,
             "per-connection call capacity");
         Ensure(options.MaxConcurrentCallsPerServer == 24,
@@ -113,6 +113,17 @@ public class HoldCapacityTests
     }
 
     [Test]
+    public void HoldOptionsShouldDisableTimeoutByDefault()
+    {
+        var options = LoadTestOptions.Parse([
+            "--operation", "hold"
+        ]);
+
+        Ensure(options.DisableRequestTimeout,
+            "the default hold run must not race the gate against the normal 30-second timeout");
+    }
+
+    [Test]
     public void HoldOptionsShouldRejectCapacityMaskingConfigurations()
     {
         var anonymousFailure = CaptureFailure(() => LoadTestOptions.Parse([
@@ -129,8 +140,17 @@ public class HoldCapacityTests
             "--max-connections", "2"
         ]));
         Ensure(dynamicPoolFailure is ArgumentException &&
-               dynamicPoolFailure.Message.Contains("fixed", StringComparison.Ordinal),
-            "a dynamically growing pool would make connection capacity ambiguous");
+               dynamicPoolFailure.Message.Contains("exactly one", StringComparison.Ordinal),
+            "pooled connection routing would make theoretical capacity ambiguous");
+
+        var fixedMultiConnectionFailure = CaptureFailure(() => LoadTestOptions.Parse([
+            "--operation", "hold",
+            "--min-connections", "2",
+            "--max-connections", "2"
+        ]));
+        Ensure(fixedMultiConnectionFailure is ArgumentException &&
+               fixedMultiConnectionFailure.Message.Contains("exactly one", StringComparison.Ordinal),
+            "even a fixed multi-connection pool cannot guarantee even admission without pinning");
 
         var admissionFailure = CaptureFailure(() => LoadTestOptions.Parse([
             "--operation", "hold",
@@ -139,6 +159,14 @@ public class HoldCapacityTests
         Ensure(admissionFailure is ArgumentException &&
                admissionFailure.Message.Contains("admission disabled", StringComparison.Ordinal),
             "admission must not mask call-capacity exhaustion");
+
+        var timeoutFailure = CaptureFailure(() => LoadTestOptions.Parse([
+            "--operation", "hold",
+            "--request-timeout", "100ms"
+        ]));
+        Ensure(timeoutFailure is ArgumentException &&
+               timeoutFailure.Message.Contains("request-timeout disabled", StringComparison.Ordinal),
+            "finite client deadlines must not expire before the shared gate opens");
 
         var serverLimitFailure = CaptureFailure(() => LoadTestOptions.Parse([
             "--operation", "hold",
@@ -160,6 +188,60 @@ public class HoldCapacityTests
             ParamName: "concurrencyPerClient"
         },
             "one run must remain under the documented aggregate hard bound");
+    }
+
+    [Test]
+    public void HoldResultValidationShouldRejectContaminatedCapacityEvidence()
+    {
+        var valid = new HoldCapacityResult(
+            ClientCount: 2,
+            ConnectionCount: 2,
+            AttemptedCalls: 5,
+            AcceptedCalls: 3,
+            PeakActiveCalls: 3,
+            CompletedCalls: 3,
+            ResourceExhaustedCalls: 2,
+            CancelledCalls: 0,
+            OtherFailedCalls: 0,
+            ActiveCallsAfterRelease: 0,
+            HealthyCallsAfterRelease: 2,
+            MaxConcurrentCallsPerConnection: 2,
+            MaxConcurrentCallsPerServer: 3,
+            MaxPendingRequestsPerConnection: 4,
+            ProcessorCount: 1,
+            Runtime: ".NET test",
+            GcMode: "workstation",
+            Transport: "Tcp",
+            Profile: "Balanced",
+            ResourceExhaustedReasons: "server_call_capacity:2",
+            TopFailures: "SharpLinkException[ResourceExhausted]:2");
+
+        HoldCapacityRunner.ValidateResult(valid, expectedAcceptedCalls: 3);
+
+        var peakFailure = CaptureFailure(() => HoldCapacityRunner.ValidateResult(
+            valid with { AcceptedCalls = 2, PeakActiveCalls = 2 },
+            expectedAcceptedCalls: 3));
+        Ensure(peakFailure is InvalidOperationException &&
+               peakFailure.Message.Contains("Expected 3 accepted", StringComparison.Ordinal),
+            "under-admission must fail the experiment");
+
+        var cancellationFailure = CaptureFailure(() => HoldCapacityRunner.ValidateResult(
+            valid with
+            {
+                CompletedCalls = 2,
+                ResourceExhaustedCalls = 1,
+                CancelledCalls = 2
+            },
+            expectedAcceptedCalls: 3));
+        Ensure(cancellationFailure is InvalidOperationException,
+            "cancellation-contaminated evidence must fail the experiment");
+
+        var healthFailure = CaptureFailure(() => HoldCapacityRunner.ValidateResult(
+            valid with { HealthyCallsAfterRelease = 1 },
+            expectedAcceptedCalls: 3));
+        Ensure(healthFailure is InvalidOperationException &&
+               healthFailure.Message.Contains("healthy", StringComparison.Ordinal),
+            "post-release connection failure must fail the experiment");
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)

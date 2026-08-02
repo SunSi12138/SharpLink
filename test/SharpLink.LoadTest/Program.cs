@@ -735,7 +735,9 @@ public sealed class LoadTestOptions
             "throughput" => SharpLinkPerformanceProfile.Throughput,
             _ => throw new ArgumentException($"Unsupported performance profile: {profileText}.")
         };
-        var requestTimeoutMode = map.GetValueOrDefault("request-timeout", "default").ToLowerInvariant();
+        var requestTimeoutMode = map.GetValueOrDefault(
+            "request-timeout",
+            operation == "hold" ? "disabled" : "default").ToLowerInvariant();
         if (requestTimeoutMode is not ("default" or "disabled" or "1ms" or "10ms" or "100ms"))
             throw new ArgumentException($"Unsupported request timeout mode: {requestTimeoutMode}.");
         var admissionMode = map.GetValueOrDefault("admission", "disabled").ToLowerInvariant();
@@ -811,12 +813,14 @@ public sealed class LoadTestOptions
         {
             if (transport == TransportMode.AnonymousPipe)
                 throw new ArgumentException("The hold operation requires a transport that supports independent clients.");
-            if (minConnections != maxConnections)
-                throw new ArgumentException("The hold operation requires a fixed per-client connection count (--min-connections must equal --max-connections).");
+            if (minConnections != 1 || maxConnections != 1)
+                throw new ArgumentException("The hold operation requires exactly one connection per client so pooled routing cannot mask call capacity.");
             if (useStaticEndpoints || useDynamicResolver)
                 throw new ArgumentException("The hold operation measures one server instance and cannot use endpoint-topology mode.");
             if (admissionMode != "disabled")
                 throw new ArgumentException("The hold operation requires --admission disabled so admission limits do not mask call capacity.");
+            if (requestTimeoutMode != "disabled")
+                throw new ArgumentException("The hold operation requires --request-timeout disabled so client deadlines cannot expire before gate release.");
             var attemptedCalls = checked(clientCount * concurrencyPerClient);
             if (attemptedCalls > SharpLinkFlowControlOptions.MaximumConcurrentCallsPerServer)
             {

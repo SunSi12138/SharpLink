@@ -1217,11 +1217,12 @@ internal sealed partial class SharpLinkServer
     {
         var scope = decision.Scope ?? "server";
         var reason = decision.Reason ?? "unknown";
+        var resourceExhaustionReason = GetAdmissionResourceExhaustionReason(reason);
         SharpLinkTelemetry.RecordAdmissionRejected(scope, reason);
         if (decision.ErrorCode == SharpLinkErrorCode.ResourceExhausted)
             SharpLinkTelemetry.RecordResourceExhausted(
                 "server",
-                GetAdmissionResourceExhaustionReason(reason));
+                resourceExhaustionReason);
         if (oneWay)
         {
             Interlocked.Increment(ref _rejectedOneWayCalls);
@@ -1229,7 +1230,7 @@ internal sealed partial class SharpLinkServer
             if (ShouldLogOneWayAdmissionRejection())
                 LogOnewayRpcResourceExhausted(
                     _logger,
-                    GetAdmissionResourceExhaustionReason(reason));
+                    resourceExhaustionReason);
             return ValueTask.CompletedTask;
         }
 
@@ -1238,7 +1239,7 @@ internal sealed partial class SharpLinkServer
             new SharpLinkException(
                 decision.ErrorCode,
                 decision.ErrorCode == SharpLinkErrorCode.ResourceExhausted
-                    ? $"Server admission rejected the call ({scope}/{reason})."
+                    ? $"Server admission rejected the call ({resourceExhaustionReason}; {scope}/{reason})."
                     : "Server stopped accepting new calls."),
             cancellationToken);
     }

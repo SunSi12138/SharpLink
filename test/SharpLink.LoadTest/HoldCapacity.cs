@@ -249,10 +249,7 @@ internal static class HoldCapacityRunner
                 failures.Top(5));
 
             Print(result);
-            if (result.ActiveCallsAfterRelease != 0)
-                throw new InvalidOperationException("The server hold probe did not return to zero active calls.");
-            if (result.HealthyCallsAfterRelease != options.ClientCount)
-                throw new InvalidOperationException("At least one client connection was not healthy after capacity release.");
+            ValidateResult(result, expectedAcceptedCalls);
             return result;
         }
         finally
@@ -297,6 +294,41 @@ internal static class HoldCapacityRunner
                 return reason;
         }
         return "unspecified";
+    }
+
+    internal static void ValidateResult(
+        HoldCapacityResult result,
+        int expectedAcceptedCalls)
+    {
+        if (result.PeakActiveCalls != expectedAcceptedCalls ||
+            result.AcceptedCalls != expectedAcceptedCalls)
+        {
+            throw new InvalidOperationException(
+                $"Expected {expectedAcceptedCalls} accepted calls, but observed peak {result.PeakActiveCalls}.");
+        }
+        if (result.CompletedCalls != expectedAcceptedCalls)
+        {
+            throw new InvalidOperationException(
+                $"Expected {expectedAcceptedCalls} completed calls, but observed {result.CompletedCalls}.");
+        }
+
+        var expectedResourceExhaustedCalls = result.AttemptedCalls - expectedAcceptedCalls;
+        if (result.ResourceExhaustedCalls != expectedResourceExhaustedCalls)
+        {
+            throw new InvalidOperationException(
+                $"Expected {expectedResourceExhaustedCalls} capacity rejections, but observed {result.ResourceExhaustedCalls}.");
+        }
+        if (result.CancelledCalls != 0 || result.OtherFailedCalls != 0)
+        {
+            throw new InvalidOperationException(
+                $"Capacity runs require zero cancellations and unrelated failures; observed {result.CancelledCalls} cancelled and {result.OtherFailedCalls} other failures.");
+        }
+        if (result.CompletedCalls + result.ResourceExhaustedCalls != result.AttemptedCalls)
+            throw new InvalidOperationException("The terminal call counts do not match the attempted call count.");
+        if (result.ActiveCallsAfterRelease != 0)
+            throw new InvalidOperationException("The server hold probe did not return to zero active calls.");
+        if (result.HealthyCallsAfterRelease != result.ClientCount)
+            throw new InvalidOperationException("At least one client connection was not healthy after capacity release.");
     }
 
     private static void Print(HoldCapacityResult result)

@@ -615,7 +615,7 @@ internal sealed partial class SharpLinkClient
         if (isError)
         {
             var error = ProtocolV2PayloadCodec.ReadError(payload, flags, _protocolOptions.MaxErrorMessageBytes);
-            var remoteException = new SharpLinkException(error.Code, error.Message);
+            var remoteException = SharpLinkResourceExhaustion.CreateRemote(error.Code, error.Message);
             if (connection.PendingCalls.DispatchError(requestId, remoteException))
                 return;
         }

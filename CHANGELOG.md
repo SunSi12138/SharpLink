@@ -11,7 +11,7 @@
 
 ### Changed
 
-- Server-wide and per-connection call-capacity rejection remain wire-compatible `ResourceExhausted` results but now have distinct diagnostic messages. The `sharplink.resource_exhausted` metric adds the low-cardinality `rpc.sharplink.resource_exhaustion_reason` tag for server call, per-connection call, admission, pending-request, and send-queue capacity sources.
+- Server-wide and per-connection call-capacity rejection remain wire-compatible `ResourceExhausted` results but now have distinct diagnostic messages. New clients restore recognized reasons from those messages, and the `sharplink.resource_exhausted` metric adds the low-cardinality `rpc.sharplink.resource_exhaustion_reason` tag for server call, per-connection call, admission, pending-request, and send-queue capacity sources.
 - Server startup logs the effective per-connection and per-server call limits through `LogEvents.Server.CallCapacityConfigured`; capacity rejection continues to preserve healthy connections for reuse after slots are released.
 
 ## [1.1.0] - 2026-08-02

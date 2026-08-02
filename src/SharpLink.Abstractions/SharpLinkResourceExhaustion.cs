@@ -3,6 +3,18 @@ namespace SharpLink.Abstractions;
 internal static class SharpLinkResourceExhaustion
 {
     private const string ReasonDataKey = "SharpLink.ResourceExhaustionReason";
+    private static readonly string[] s_knownReasons =
+    [
+        ServerCallCapacity,
+        PerConnectionCallCapacity,
+        AdmissionConcurrency,
+        AdmissionQueue,
+        AdmissionRate,
+        AdmissionPartitionCapacity,
+        AdmissionOther,
+        PendingRequestCapacity,
+        SendQueueCapacity
+    ];
 
     internal const string Unspecified = "unspecified";
     internal const string ServerCallCapacity = "server_call_capacity";
@@ -21,6 +33,21 @@ internal static class SharpLinkResourceExhaustion
         var exception = new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, message);
         exception.Data[ReasonDataKey] = reason;
         return exception;
+    }
+
+    internal static SharpLinkException CreateRemote(
+        SharpLinkErrorCode code,
+        string message)
+    {
+        if (code != SharpLinkErrorCode.ResourceExhausted)
+            return new SharpLinkException(code, message);
+
+        foreach (var reason in s_knownReasons)
+        {
+            if (message.Contains(reason, StringComparison.Ordinal))
+                return Create(reason, message);
+        }
+        return new SharpLinkException(code, message);
     }
 
     internal static string GetReason(Exception exception)
