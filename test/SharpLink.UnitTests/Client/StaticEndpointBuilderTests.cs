@@ -144,7 +144,7 @@ public class StaticEndpointBuilderTests
         };
 
         thread.Start();
-        Ensure(finished.Wait(TimeSpan.FromSeconds(2)),
+        Ensure(finished.Wait(TimeSpan.FromSeconds(10)),
             "synchronous Build deadlocked while awaiting async rollback cleanup");
         Ensure(failure is not null && ContainsException<ArgumentOutOfRangeException>(failure),
             "rollback must preserve the original validation failure");

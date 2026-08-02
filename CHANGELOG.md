@@ -4,10 +4,16 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-02
+
 ### Added
 
 - Multi-cluster coordinators can atomically add, replace, and remove complete runtime slots through Client-package extension methods that reuse the full `SharpClientBuilder` surface. Ready coordinators connect candidates before publication, replacements transactionally migrate dynamic registrations, and all public cluster/route/budget reads now share one immutable snapshot.
 - Runtime slot mutations enforce `MaxClusters`, steady and bounded transition connection budgets, serialize with shutdown and dynamic assembly lifecycle work, preserve the existing one-time Proxy routing model, and expose structured logs plus `sharplink.client.multicluster.*` metrics.
+
+### Compatibility
+
+- The new Client APIs are additive. Existing static multi-cluster configuration, generated contract IDs, Protocol v2 bytes, server behavior, and one-time proxy routing remain unchanged; cluster identifiers are not added to the wire.
 
 ## [1.0.1] - 2026-08-02
 
