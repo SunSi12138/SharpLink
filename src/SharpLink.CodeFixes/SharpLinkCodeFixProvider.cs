@@ -77,9 +77,10 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                         context.Document, diagnostic, parsedMemberId, context.CancellationToken)
                         .ConfigureAwait(false))
                 {
-                    RegisterDocumentFix(context, diagnostic, $"Preserve published member ID {memberId}",
+                    RegisterSolutionFix(context, diagnostic, $"Preserve published member ID {memberId}",
                         "RestoreMemberId",
-                        (document, item, ct) => RestoreMemberIdAsync(document, item, memberId!, ct));
+                        (solution, documentId, item, ct) => RestoreMemberIdAsync(
+                            solution, documentId, item, memberId!, ct));
                 }
                 break;
             case "SHARPLINK031":
@@ -482,7 +483,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
 
         var canMakePublic = TryGetPublicizationClosure(
             type, context.Document.Project.Solution, out _);
-        if (!IsEffectivelyPublic(type) && !type.IsAbstract && canMakePublic)
+        if (!IsEffectivelyPublic(type) && !type.IsAbstract && canMakePublic &&
+            HasValidServiceActivationShape(type))
         {
             RegisterSolutionFix(context, diagnostic, "Make RPC service publicly reachable",
                 "MakeServicePublic", MakeContainingTypesPublicAcrossSolutionAsync);
@@ -890,64 +892,72 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         return solution.WithDocumentSyntaxRoot(document.Id, root.ReplaceNode(attribute, updated));
     }
 
-    private static async Task<Document> RestoreMemberIdAsync(
-        Document document,
+    private static async Task<Solution> RestoreMemberIdAsync(
+        Solution solution,
+        DocumentId documentId,
         Diagnostic diagnostic,
         string memberId,
         CancellationToken cancellationToken)
     {
+        var document = solution.GetDocument(documentId);
+        if (document is null)
+            return solution;
         var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
         var semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
         var node = root?.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true);
         if (node is null || semanticModel is null ||
-            !TryGetRpcMemberTarget(node, semanticModel, cancellationToken, out _, out var declaration))
+            !TryGetRpcMemberTarget(node, semanticModel, cancellationToken, out var target, out var declaration) ||
+            target is null)
         {
-            return document;
+            return solution;
+        }
+
+        var attributeReferences = GetRpcMemberAttributes(target)
+            .Select(static attribute => attribute.ApplicationSyntaxReference)
+            .Where(static reference => reference is not null)
+            .Select(static reference => reference!)
+            .ToImmutableArray();
+        if (!attributeReferences.IsDefaultOrEmpty)
+        {
+            foreach (var reference in attributeReferences)
+            {
+                var attributeDocument = solution.GetDocument(reference.SyntaxTree);
+                var attributeRoot = attributeDocument is null
+                    ? null
+                    : await attributeDocument.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+                var attribute = attributeRoot?.FindNode(reference.Span, getInnermostNodeForTie: true)
+                    .AncestorsAndSelf().OfType<AttributeSyntax>().FirstOrDefault();
+                if (attributeDocument is null || attributeRoot is null || attribute is null)
+                    return solution;
+
+                var restoredArgument = SyntaxFactory.AttributeArgument(SyntaxFactory.ParseExpression(memberId));
+                var updated = attribute.WithArgumentList(
+                        SyntaxFactory.AttributeArgumentList(
+                            SyntaxFactory.SingletonSeparatedList(restoredArgument)))
+                    .WithAdditionalAnnotations(Formatter.Annotation);
+                solution = solution.WithDocumentSyntaxRoot(
+                    attributeDocument.Id, attributeRoot.ReplaceNode(attribute, updated));
+            }
+            return solution;
         }
 
         if (declaration is ParameterSyntax parameter)
         {
-            var positionalAttribute = parameter.AttributeLists
-                .Where(static list => list.Target?.Identifier.IsKind(SyntaxKind.PropertyKeyword) == true)
-                .SelectMany(static list => list.Attributes)
-                .FirstOrDefault(item => AttributeMatches(
-                    semanticModel, item, "SharpLink.Sdk.RpcMemberAttribute", cancellationToken));
             var positionalArgument = SyntaxFactory.AttributeArgument(SyntaxFactory.ParseExpression(memberId));
-            if (positionalAttribute is not null)
-            {
-                var updated = positionalAttribute.WithArgumentList(
-                        SyntaxFactory.AttributeArgumentList(
-                            SyntaxFactory.SingletonSeparatedList(positionalArgument)))
-                    .WithAdditionalAnnotations(Formatter.Annotation);
-                return await ReplaceNodeAsync(document, positionalAttribute, updated, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-
             var positionalAttributeList = CreateRpcMemberAttributeList(positionalArgument).WithTarget(
                 SyntaxFactory.AttributeTargetSpecifier(SyntaxFactory.Token(SyntaxKind.PropertyKeyword)));
-            return await ReplaceNodeAsync(
+            var changed = await ReplaceNodeAsync(
                 document,
                 parameter,
                 parameter.AddAttributeLists(positionalAttributeList).WithAdditionalAnnotations(Formatter.Annotation),
                 cancellationToken).ConfigureAwait(false);
+            return changed.Project.Solution;
         }
 
         if (declaration is not MemberDeclarationSyntax member)
-            return document;
+            return solution;
 
-        var attribute = member.AttributeLists.SelectMany(static list => list.Attributes)
-            .FirstOrDefault(item => AttributeMatches(
-                semanticModel, item, "SharpLink.Sdk.RpcMemberAttribute", cancellationToken));
         var argument = SyntaxFactory.AttributeArgument(SyntaxFactory.ParseExpression(memberId));
-        if (attribute is not null)
-        {
-            var updated = attribute.WithArgumentList(
-                    SyntaxFactory.AttributeArgumentList(
-                        SyntaxFactory.SingletonSeparatedList(argument)))
-                .WithAdditionalAnnotations(Formatter.Annotation);
-            return await ReplaceNodeAsync(document, attribute, updated, cancellationToken).ConfigureAwait(false);
-        }
-
         var attributeList = CreateRpcMemberAttributeList(argument);
         var updatedMember = member switch
         {
@@ -955,9 +965,10 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             FieldDeclarationSyntax field => field.AddAttributeLists(attributeList),
             _ => member
         };
-        return await ReplaceNodeAsync(
+        var updatedDocument = await ReplaceNodeAsync(
             document, member, updatedMember.WithAdditionalAnnotations(Formatter.Annotation), cancellationToken)
             .ConfigureAwait(false);
+        return updatedDocument.Project.Solution;
     }
 
     private static async Task<bool> CanRestoreMemberIdAsync(
@@ -977,10 +988,54 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         if (target?.ContainingType is not { } containingType)
             return false;
 
+        var rpcMemberAttributes = GetRpcMemberAttributes(target);
+        if (rpcMemberAttributes.Length > 1 || rpcMemberAttributes.Any(attribute =>
+                attribute.ApplicationSyntaxReference is not { } reference ||
+                !IsRegularEditableDocument(document.Project.Solution, reference.SyntaxTree)))
+        {
+            return false;
+        }
+
         return !containingType.GetMembers()
             .Where(IsSerializableRpcMember)
             .Where(candidate => !SymbolEqualityComparer.Default.Equals(candidate, target))
             .Any(candidate => TryGetRpcMemberId(candidate, out var candidateId) && candidateId == memberId);
+    }
+
+    private static ImmutableArray<AttributeData> GetRpcMemberAttributes(ISymbol target)
+    {
+        var owners = new List<ISymbol> { target };
+        if (target is IPropertySymbol property)
+        {
+            if (property.PartialDefinitionPart is { } definition &&
+                !owners.Any(owner => SymbolEqualityComparer.Default.Equals(owner, definition)))
+            {
+                owners.Add(definition);
+            }
+            if (property.PartialImplementationPart is { } implementation &&
+                !owners.Any(owner => SymbolEqualityComparer.Default.Equals(owner, implementation)))
+            {
+                owners.Add(implementation);
+            }
+        }
+
+        var result = new List<AttributeData>();
+        foreach (var attribute in owners.SelectMany(static owner => owner.GetAttributes())
+                     .Where(static attribute => string.Equals(
+                         attribute.AttributeClass?.ToDisplayString(),
+                         "SharpLink.Sdk.RpcMemberAttribute",
+                         StringComparison.Ordinal)))
+        {
+            var reference = attribute.ApplicationSyntaxReference;
+            if (result.Any(existing =>
+                    existing.ApplicationSyntaxReference?.SyntaxTree == reference?.SyntaxTree &&
+                    existing.ApplicationSyntaxReference?.Span == reference?.Span))
+            {
+                continue;
+            }
+            result.Add(attribute);
+        }
+        return result.ToImmutableArray();
     }
 
     private static AttributeListSyntax CreateRpcMemberAttributeList(AttributeArgumentSyntax argument)
@@ -2157,8 +2212,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             !method.ReturnsByRef &&
             !method.ReturnsByRefReadonly &&
             method.Parameters.All(static parameter => parameter.RefKind == RefKind.None) &&
-            !ContainsContractRefLikeType(method.ReturnType) &&
-            method.Parameters.All(static parameter => !ContainsContractRefLikeType(parameter.Type)) &&
+            !ContainsRefLikeType(method.ReturnType) &&
+            method.Parameters.All(static parameter => !ContainsRefLikeType(parameter.Type)) &&
             !ContainsContractPointerOrFunctionPointer(method.ReturnType) &&
             method.Parameters.All(static parameter =>
                 !ContainsContractPointerOrFunctionPointer(parameter.Type)) &&
@@ -2349,13 +2404,13 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                _ => false
            };
 
-    private static bool ContainsContractRefLikeType(ITypeSymbol type)
+    private static bool ContainsRefLikeType(ITypeSymbol type)
         => type switch
         {
             INamedTypeSymbol { IsRefLikeType: true } => true,
-            IArrayTypeSymbol array => ContainsContractRefLikeType(array.ElementType),
-            IPointerTypeSymbol pointer => ContainsContractRefLikeType(pointer.PointedAtType),
-            INamedTypeSymbol named => named.TypeArguments.Any(ContainsContractRefLikeType),
+            IArrayTypeSymbol array => ContainsRefLikeType(array.ElementType),
+            IPointerTypeSymbol pointer => ContainsRefLikeType(pointer.PointedAtType),
+            INamedTypeSymbol named => named.TypeArguments.Any(ContainsRefLikeType),
             _ => false
         };
 
@@ -2616,7 +2671,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
            constructor.Parameters.All(static parameter =>
             parameter.RefKind is not (RefKind.Ref or RefKind.Out or RefKind.RefReadOnlyParameter) &&
             parameter.Type.TypeKind is not (TypeKind.Pointer or TypeKind.FunctionPointer) &&
-            !parameter.Type.IsRefLikeType);
+            !ContainsRefLikeType(parameter.Type));
 
     private static bool IsObsoleteWithError(ISymbol symbol)
         => symbol.GetAttributes().Any(static attribute =>
