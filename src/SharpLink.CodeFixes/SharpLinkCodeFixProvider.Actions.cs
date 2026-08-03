@@ -203,7 +203,7 @@ internal sealed partial class SharpLinkCodeFixProvider
                 .ConfigureAwait(false);
             if (declaration is null || semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not { } type)
                 return;
-            var validationTypes = await GetDtoTypesToValidateAfterSealingAsync(
+            var validationTypes = await GetDtoTypesToValidateAsync(
                 type, context.Document.Project, context.CancellationToken).ConfigureAwait(false);
             if (type.TypeKind != TypeKind.Class || type.IsAbstract ||
                 IsObsoleteWithError(type) ||
@@ -235,7 +235,8 @@ internal sealed partial class SharpLinkCodeFixProvider
                 diagnostic,
                 "Make DTO publicly reachable",
                 "MakeDtoAccessible",
-                SharpLink.Generator.RpcGenerator.CanGenerateDtoAfterPublicization).ConfigureAwait(false);
+                SharpLink.Generator.RpcGenerator.CanGenerateDtoAfterPublicization,
+                GetDtoTypesToValidateAsync).ConfigureAwait(false);
         }
     }
 

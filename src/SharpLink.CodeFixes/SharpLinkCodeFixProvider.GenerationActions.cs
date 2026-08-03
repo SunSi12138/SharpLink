@@ -48,12 +48,11 @@ internal sealed partial class SharpLinkCodeFixProvider
             return;
 
         if (unionType.GetAttributes().Where(IsRpcUnionCaseAttribute).Any(attribute =>
+                !IsAttributeApplication(attribute, targetAttribute) &&
                 attribute.ConstructorArguments.Length == 2 &&
-                attribute.ConstructorArguments[1].Value is ITypeSymbol existingCase &&
-                SymbolEqualityComparer.Default.Equals(existingCase, namedCase) &&
-                (attribute.ApplicationSyntaxReference is not { } reference ||
-                 reference.SyntaxTree != targetAttribute.SyntaxTree ||
-                 reference.Span != targetAttribute.Span)))
+                (attribute.ConstructorArguments[0].Value is int existingTag && existingTag == parsedTag ||
+                 attribute.ConstructorArguments[1].Value is ITypeSymbol existingCase &&
+                 SymbolEqualityComparer.Default.Equals(existingCase, namedCase))))
         {
             return;
         }
@@ -62,6 +61,11 @@ internal sealed partial class SharpLinkCodeFixProvider
             "RestoreUnionTag",
             (document, item, ct) => RestoreUnionTagAsync(document, item, tag!, type!, ct));
     }
+
+    private static bool IsAttributeApplication(AttributeData attribute, AttributeSyntax syntax)
+        => attribute.ApplicationSyntaxReference is { } reference &&
+           reference.SyntaxTree == syntax.SyntaxTree &&
+           reference.Span == syntax.Span;
 
     private static async Task RegisterRestoreServiceRouteFixAsync(CodeFixContext context, Diagnostic diagnostic)
     {

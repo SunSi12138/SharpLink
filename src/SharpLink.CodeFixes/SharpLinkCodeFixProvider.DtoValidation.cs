@@ -2,7 +2,7 @@ namespace SharpLink.CodeFixes;
 
 internal sealed partial class SharpLinkCodeFixProvider
 {
-    private static async Task<ImmutableArray<INamedTypeSymbol>> GetDtoTypesToValidateAfterSealingAsync(
+    private static async Task<ImmutableArray<INamedTypeSymbol>> GetDtoTypesToValidateAsync(
         INamedTypeSymbol type,
         Project project,
         CancellationToken cancellationToken)
@@ -20,7 +20,7 @@ internal sealed partial class SharpLinkCodeFixProvider
             foreach (var syntax in root.DescendantNodes().OfType<TypeSyntax>())
             {
                 if (semanticModel.GetTypeInfo(syntax, cancellationToken).Type is not INamedTypeSymbol candidate ||
-                    candidate.TypeArguments.Any(static argument => argument.TypeKind == TypeKind.TypeParameter) ||
+                    ContainsTypeParameter(candidate) ||
                     !SymbolEqualityComparer.Default.Equals(candidate.OriginalDefinition, type.OriginalDefinition) ||
                     result.Any(existing => SymbolEqualityComparer.Default.Equals(existing, candidate)))
                 {

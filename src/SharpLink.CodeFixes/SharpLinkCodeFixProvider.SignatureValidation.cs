@@ -381,6 +381,13 @@ internal sealed partial class SharpLinkCodeFixProvider
             return SymbolEqualityComparer.Default.Equals(
                        leftNamed.OriginalDefinition,
                        rightNamed.OriginalDefinition) &&
+                   (leftNamed.ContainingType is null && rightNamed.ContainingType is null ||
+                    leftNamed.ContainingType is not null && rightNamed.ContainingType is not null &&
+                    AreSignatureTypesEquivalent(
+                        leftNamed.ContainingType,
+                        leftMethod,
+                        rightNamed.ContainingType,
+                        rightMethod)) &&
                    leftNamed.TypeArguments.Length == rightNamed.TypeArguments.Length &&
                    leftNamed.TypeArguments.Zip(rightNamed.TypeArguments, (leftArgument, rightArgument) =>
                            AreSignatureTypesEquivalent(

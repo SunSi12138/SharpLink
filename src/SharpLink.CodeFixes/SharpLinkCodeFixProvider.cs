@@ -179,7 +179,9 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         string title,
         string equivalenceKey,
         Func<Compilation, INamedTypeSymbol, ImmutableArray<INamedTypeSymbol>, CancellationToken, bool>?
-            generationPreflight = null)
+            generationPreflight = null,
+        Func<INamedTypeSymbol, Project, CancellationToken, Task<ImmutableArray<INamedTypeSymbol>>>?
+            getGenerationTargets = null)
     {
         var declaration = await FindNodeAsync<BaseTypeDeclarationSyntax>(
             context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
@@ -189,11 +191,15 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not INamedTypeSymbol type ||
             IsObsoleteWithError(type) ||
             !TryGetPublicizationClosure(type, context.Document.Project.Solution, out var publicizedTypes) ||
-            generationPreflight?.Invoke(
+            generationPreflight is not null &&
+            !await CanGenerateAfterPublicizationAsync(
                 semanticModel.Compilation,
                 type,
                 publicizedTypes,
-                context.CancellationToken) == false)
+                context.Document.Project,
+                generationPreflight,
+                getGenerationTargets,
+                context.CancellationToken).ConfigureAwait(false))
         {
             return;
         }
@@ -204,6 +210,22 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             title,
             equivalenceKey,
             MakeContainingTypesPublicAcrossSolutionAsync);
+    }
+
+    private static async Task<bool> CanGenerateAfterPublicizationAsync(
+        Compilation compilation,
+        INamedTypeSymbol type,
+        ImmutableArray<INamedTypeSymbol> publicizedTypes,
+        Project project,
+        Func<Compilation, INamedTypeSymbol, ImmutableArray<INamedTypeSymbol>, CancellationToken, bool> preflight,
+        Func<INamedTypeSymbol, Project, CancellationToken, Task<ImmutableArray<INamedTypeSymbol>>>? getTargets,
+        CancellationToken cancellationToken)
+    {
+        var targets = getTargets is null
+            ? ImmutableArray.Create(type)
+            : await getTargets(type, project, cancellationToken).ConfigureAwait(false);
+        return !targets.IsDefaultOrEmpty && targets.All(target =>
+            preflight(compilation, target, publicizedTypes, cancellationToken));
     }
 
     private sealed class SharpLinkFixAllProvider : FixAllProvider
