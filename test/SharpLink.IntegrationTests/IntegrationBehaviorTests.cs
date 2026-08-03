@@ -621,7 +621,11 @@ public class IntegrationBehaviorTests
     [NotInParallel]
     public async Task FastEarlyBreakShouldReturnFlowCreditAndNotLeakCompletedSendStates()
     {
-        await using var harness = await TestHarness.CreateAsync();
+        await using var harness = await TestHarness.CreateAsync(
+            runtimeConfigure: static options =>
+                // Amplify completed-state pressure while leaving enough room for a canceled
+                // producer to observe its terminal token and retire its final in-flight frame.
+                options.Protocol.MaxConcurrentStreamsPerConnection = 8);
         var service = harness.Client.Get<ITestService>();
 
         for (var iteration = 0; iteration < 10_000; iteration++)

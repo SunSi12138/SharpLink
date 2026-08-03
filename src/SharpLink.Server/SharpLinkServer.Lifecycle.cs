@@ -349,7 +349,10 @@ internal sealed partial class SharpLinkServer
         {
             var result = await reader.ReadAsync(ct);
             var buffer =  result.Buffer;
-            while (ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var message))
+            while (session.IsConnected &&
+                   !ct.IsCancellationRequested &&
+                   ProtocolV2FrameParser.TryReadFrame(
+                       ref buffer, _protocolOptions, out var header, out var message))
             {
                 SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + message.Length);
                 SharpLinkAuthenticationResult authResult;
@@ -551,7 +554,10 @@ internal sealed partial class SharpLinkServer
                 try
                 {
                     // 2. 循环解析 buffer 中的数据包 (可能包含多个包)
-                    while (ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
+                    while (session.IsConnected &&
+                           !ct.IsCancellationRequested &&
+                           ProtocolV2FrameParser.TryReadFrame(
+                               ref buffer, _protocolOptions, out var header, out var payload))
                     {
                         SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                         session.MarkActive();

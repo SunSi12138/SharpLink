@@ -62,6 +62,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     private bool _payloadNullable;
     private Action<long, ushort, int>? _bytesConsumed;
     private Action<long>? _consumerAbandoned;
+    private Func<long, IStreamDispatchState?, ValueTask>? _consumerAbandonedAsync;
     private long _flowControlRequestId;
     private ushort _flowControlStreamId;
     private long _consumerAbandonedRequestId;
@@ -189,6 +190,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _current = default;
         _bytesConsumed = null;
         _consumerAbandoned = null;
+        _consumerAbandonedAsync = null;
         _flowControlRequestId = 0;
         _flowControlStreamId = 0;
         _consumerAbandonedRequestId = 0;
@@ -339,6 +341,16 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     public void SetConsumerAbandonedCallback(Action<long>? callback, long requestId)
     {
         _consumerAbandoned = callback;
+        _consumerAbandonedAsync = null;
+        _consumerAbandonedRequestId = requestId;
+    }
+
+    internal void SetConsumerAbandonedCallback(
+        Func<long, IStreamDispatchState?, ValueTask>? callback,
+        long requestId)
+    {
+        _consumerAbandoned = null;
+        _consumerAbandonedAsync = callback;
         _consumerAbandonedRequestId = requestId;
     }
 
@@ -472,8 +484,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         if (dispatchState?.HasActiveDispatches == true)
             return AwaitDispatchesAndFinishDisposeAsync(notifyConsumerAbandoned, dispatchState);
 
-        FinishDispose(notifyConsumerAbandoned);
-        return ValueTask.CompletedTask;
+        return FinishDisposeAsync(notifyConsumerAbandoned, dispatchState);
     }
 
     private async ValueTask AwaitConcurrentDisposeAsync()
@@ -489,10 +500,12 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         while (dispatchState.HasActiveDispatches)
             await Task.Yield();
 
-        FinishDispose(notifyConsumerAbandoned);
+        await FinishDisposeAsync(notifyConsumerAbandoned, dispatchState).ConfigureAwait(false);
     }
 
-    private void FinishDispose(bool notifyConsumerAbandoned)
+    private ValueTask FinishDisposeAsync(
+        bool notifyConsumerAbandoned,
+        IStreamDispatchState? dispatchState)
     {
         try
         {
@@ -504,13 +517,45 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             if (discardedBytes != 0)
                 NotifyBytesConsumed(discardedBytes);
             if (notifyConsumerAbandoned)
-                _consumerAbandoned?.Invoke(_consumerAbandonedRequestId);
+            {
+                if (_consumerAbandonedAsync is { } callback)
+                {
+                    var completion = callback(_consumerAbandonedRequestId, dispatchState);
+                    if (!completion.IsCompletedSuccessfully)
+                        return AwaitConsumerAbandonmentAndFinalizeAsync(completion);
+                    completion.GetAwaiter().GetResult();
+                }
+                else
+                {
+                    _consumerAbandoned?.Invoke(_consumerAbandonedRequestId);
+                }
+            }
+        }
+        catch
+        {
+            FinalizeDispose();
+            throw;
+        }
+
+        FinalizeDispose();
+        return ValueTask.CompletedTask;
+    }
+
+    private async ValueTask AwaitConsumerAbandonmentAndFinalizeAsync(ValueTask completion)
+    {
+        try
+        {
+            await completion.ConfigureAwait(false);
         }
         finally
         {
-            Volatile.Write(ref _disposeFinalized, 1);
+            FinalizeDispose();
         }
+    }
 
+    private void FinalizeDispose()
+    {
+        Volatile.Write(ref _disposeFinalized, 1);
         // Signal before publishing to the pool: no code may touch this lease after return.
         Signal();
         TryReturnToPool();
@@ -702,6 +747,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _payloadNullable = false;
         _bytesConsumed = null;
         _consumerAbandoned = null;
+        _consumerAbandonedAsync = null;
         _flowControlRequestId = 0;
         _flowControlStreamId = 0;
         _consumerAbandonedRequestId = 0;
@@ -763,6 +809,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         get
         {
             if (_codec is not null || _bytesConsumed is not null || _consumerAbandoned is not null ||
+                _consumerAbandonedAsync is not null ||
                 _current is not null || _enumerationToken.CanBeCanceled ||
                 _additionalEnumerationToken.CanBeCanceled ||
                 !_enumerationCancellationRegistration.Equals(default) ||
