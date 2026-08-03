@@ -847,8 +847,11 @@ public partial class RpcGenerator
         {
             for (var current = type; current is not null; current = current.ContainingType)
             {
-                if (current.IsFileLocal)
+                if (current.IsFileLocal &&
+                    assumedPublicTypes?.Contains(current.OriginalDefinition) != true)
+                {
                     return false;
+                }
                 if ((current.DeclaredAccessibility is Accessibility.Private or Accessibility.Protected or
                         Accessibility.ProtectedAndInternal) &&
                     assumedPublicTypes?.Contains(current.OriginalDefinition) != true)
@@ -915,16 +918,45 @@ public partial class RpcGenerator
         }
 
         private static bool IsValidAdapterType(INamedTypeSymbol type)
-            => IsEffectivelyPublic(type) &&
-               !IsObsoleteWithError(type) &&
-               type.IsSealed &&
-               type.InstanceConstructors.Any(static constructor =>
-                   constructor.DeclaredAccessibility == Accessibility.Public &&
-                   !IsObsoleteWithError(constructor) &&
-                   constructor.Parameters.All(static parameter => parameter.IsOptional || parameter.IsParams)) &&
-               type.AllInterfaces.Any(static item =>
-                   item.Name == "IRpcCodecAdapter" &&
-                   item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions");
+        {
+            if (!IsEffectivelyPublic(type) || IsObsoleteWithError(type) || !type.IsSealed ||
+                !type.AllInterfaces.Any(static item =>
+                    item.Name == "IRpcCodecAdapter" &&
+                    item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions"))
+            {
+                return false;
+            }
+
+            var constructor = GetPublicAdapterConstructionTarget(type);
+            return constructor is not null &&
+                   (!HasRequiredMembers(type) || HasAttribute(
+                       constructor,
+                       "System.Diagnostics.CodeAnalysis",
+                       "SetsRequiredMembersAttribute"));
+        }
+
+        private static IMethodSymbol? GetPublicAdapterConstructionTarget(INamedTypeSymbol type)
+        {
+            var constructors = type.InstanceConstructors.Where(static constructor =>
+                constructor.DeclaredAccessibility == Accessibility.Public &&
+                constructor.Parameters.All(static parameter => parameter.IsOptional || parameter.IsParams)).ToArray();
+            var parameterless = constructors.FirstOrDefault(static constructor => constructor.Parameters.Length == 0);
+            var selected = parameterless ?? (constructors.Length == 1 ? constructors[0] : null);
+            return selected is not null && !IsObsoleteWithError(selected) ? selected : null;
+        }
+
+        private static bool HasRequiredMembers(INamedTypeSymbol type)
+        {
+            for (var current = type; current is not null; current = current.BaseType)
+            {
+                if (current.GetMembers().Any(static member =>
+                        member is IFieldSymbol { IsRequired: true } or IPropertySymbol { IsRequired: true }))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
 
         private static bool IsEffectivelyPublic(INamedTypeSymbol type)
         {

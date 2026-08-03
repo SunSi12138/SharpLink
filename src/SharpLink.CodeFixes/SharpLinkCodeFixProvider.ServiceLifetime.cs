@@ -19,19 +19,25 @@ internal sealed partial class SharpLinkCodeFixProvider
 
         var serviceAttribute = service.GetAttributes().FirstOrDefault(IsRpcServiceAttribute);
         var attributeReference = serviceAttribute?.ApplicationSyntaxReference;
+        var attributeDocument = attributeReference is null
+            ? null
+            : context.Document.Project.Solution.GetDocument(attributeReference.SyntaxTree);
+        var attributeSemanticModel = attributeDocument is null
+            ? null
+            : await attributeDocument.GetSemanticModelAsync(context.CancellationToken).ConfigureAwait(false);
         var attributeSyntax = attributeReference is null
             ? null
             : await attributeReference.GetSyntaxAsync(context.CancellationToken).ConfigureAwait(false) as AttributeSyntax;
-        var lifetimeProperty = FindAttributeProperty(serviceAttribute?.AttributeClass, "Lifetime");
-        var lifetimeType = lifetimeProperty?.Type as INamedTypeSymbol;
+        var lifetimeType = GetAttributeMemberType(serviceAttribute, "Lifetime");
         var lifetimeTypeName = lifetimeType is null
             ? null
             : GetBindableTypeName(
                 lifetimeType,
-                semanticModel,
-                diagnostic.Location.SourceSpan.Start,
+                attributeSemanticModel!,
+                attributeReference!.Span.Start,
                 GetExternAlias(attributeSyntax));
-        if (attributeReference is null || lifetimeType?.TypeKind != TypeKind.Enum ||
+        if (attributeReference is null || attributeSemanticModel is null ||
+            lifetimeType?.TypeKind != TypeKind.Enum ||
             lifetimeTypeName is null ||
             !IsRegularEditableDocument(context.Document.Project.Solution, attributeReference.SyntaxTree))
         {
@@ -51,7 +57,7 @@ internal sealed partial class SharpLinkCodeFixProvider
                     Convert.ToDecimal(field.ConstantValue, CultureInfo.InvariantCulture) == lifetime.Value);
             if (member is null || member.DeclaredAccessibility != Accessibility.Public ||
                 IsObsoleteWithError(member) ||
-                !semanticModel.IsAccessible(diagnostic.Location.SourceSpan.Start, member))
+                !attributeSemanticModel.IsAccessible(attributeReference.Span.Start, member))
             {
                 continue;
             }
@@ -64,14 +70,45 @@ internal sealed partial class SharpLinkCodeFixProvider
         }
     }
 
-    private static IPropertySymbol? FindAttributeProperty(INamedTypeSymbol? attributeType, string name)
+    private static INamedTypeSymbol? GetAttributeMemberType(AttributeData? attribute, string name)
     {
-        for (var current = attributeType; current is not null; current = current.BaseType)
+        if (attribute is null)
+            return null;
+        var boundType = attribute.NamedArguments
+            .Where(argument => string.Equals(argument.Key, name, StringComparison.Ordinal))
+            .Select(static argument => argument.Value.Type)
+            .OfType<INamedTypeSymbol>()
+            .SingleOrDefault();
+        if (boundType is not null)
+            return boundType;
+
+        for (var current = attribute.AttributeClass; current is not null; current = current.BaseType)
         {
-            var property = current.GetMembers(name).OfType<IPropertySymbol>()
-                .SingleOrDefault(static candidate => !candidate.IsStatic && candidate.Parameters.Length == 0);
-            if (property is not null)
-                return property;
+            var members = current.GetMembers(name)
+                .Where(static member => member is IFieldSymbol or IPropertySymbol)
+                .ToArray();
+            if (members.Length == 0)
+                continue;
+            return members.Length == 1
+                ? members[0] switch
+                {
+                    IFieldSymbol
+                    {
+                        IsStatic: false,
+                        IsReadOnly: false,
+                        IsConst: false,
+                        DeclaredAccessibility: Accessibility.Public
+                    } field when !IsObsoleteWithError(field) => field.Type as INamedTypeSymbol,
+                    IPropertySymbol
+                    {
+                        IsStatic: false,
+                        Parameters.Length: 0,
+                        DeclaredAccessibility: Accessibility.Public,
+                        SetMethod.DeclaredAccessibility: Accessibility.Public
+                    } property when !IsObsoleteWithError(property) => property.Type as INamedTypeSymbol,
+                    _ => null
+                }
+                : null;
         }
         return null;
     }

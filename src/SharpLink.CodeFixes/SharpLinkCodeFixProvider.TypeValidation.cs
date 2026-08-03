@@ -39,6 +39,8 @@ internal sealed partial class SharpLinkCodeFixProvider
 
     private static bool CanExposePublicParameterlessConstructor(INamedTypeSymbol type)
     {
+        if (GetPublicParameterlessCallTarget(type) is not null)
+            return true;
         var callableConstructors = type.InstanceConstructors
             .Where(CanInvokeWithoutArguments)
             .ToArray();
@@ -46,8 +48,7 @@ internal sealed partial class SharpLinkCodeFixProvider
         {
             return callableConstructors.Any(static constructor =>
                 !IsObsoleteWithError(constructor) &&
-                (constructor.Parameters.Length == 0 ||
-                 constructor.DeclaredAccessibility == Accessibility.Public));
+                constructor.Parameters.Length == 0);
         }
         var baseType = type.BaseType;
         if (baseType is null)
@@ -66,12 +67,22 @@ internal sealed partial class SharpLinkCodeFixProvider
     {
         if (!HasRequiredMembers(type))
             return true;
-        var constructor = type.InstanceConstructors.FirstOrDefault(static candidate =>
-            CanInvokeWithoutArguments(candidate) &&
-            !candidate.IsStatic && !IsObsoleteWithError(candidate));
+        var constructor = GetPublicParameterlessCallTarget(type) ??
+                          type.InstanceConstructors.FirstOrDefault(static candidate =>
+                              candidate.Parameters.Length == 0 && !IsObsoleteWithError(candidate));
         return constructor is not null && HasAttribute(
             constructor,
             "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute");
+    }
+
+    private static IMethodSymbol? GetPublicParameterlessCallTarget(INamedTypeSymbol type)
+    {
+        var constructors = type.InstanceConstructors.Where(static constructor =>
+            constructor.DeclaredAccessibility == Accessibility.Public &&
+            CanInvokeWithoutArguments(constructor)).ToArray();
+        var parameterless = constructors.FirstOrDefault(static constructor => constructor.Parameters.Length == 0);
+        var selected = parameterless ?? (constructors.Length == 1 ? constructors[0] : null);
+        return selected is not null && !IsObsoleteWithError(selected) ? selected : null;
     }
 
     private static bool HasRequiredMembers(INamedTypeSymbol type)

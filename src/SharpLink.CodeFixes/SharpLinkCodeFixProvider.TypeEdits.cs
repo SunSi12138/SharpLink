@@ -319,9 +319,7 @@ internal sealed partial class SharpLinkCodeFixProvider
 
         var firstAdapterReference = adapter.DeclaringSyntaxReferences[0];
         var firstAdapterDocument = solution.GetDocument(firstAdapterReference.SyntaxTree)?.Id;
-        var needsPublicParameterlessConstructor = !adapter.InstanceConstructors.Any(static constructor =>
-            constructor.DeclaredAccessibility == Accessibility.Public &&
-            CanInvokeWithoutArguments(constructor));
+        var needsPublicParameterlessConstructor = GetPublicParameterlessCallTarget(adapter) is null;
         var hasExplicitParameterlessConstructor = adapter.InstanceConstructors.Any(static constructor =>
             !constructor.IsImplicitlyDeclared && constructor.Parameters.Length == 0);
 
