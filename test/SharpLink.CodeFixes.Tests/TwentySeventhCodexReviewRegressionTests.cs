@@ -63,4 +63,32 @@ public interface IContract : SharpLink.Sdk.IService
             "public sealed class Payload<T>", "closed generic DTO definition");
         await workspace.AssertCompilesAsync(changed);
     }
+
+    [Test]
+    public async Task SealDtoShouldSupportNestedClosedGenericPayloadUses()
+    {
+        using var workspace = CodeFixTestWorkspace.Create(("Payload.cs", """
+public sealed class Outer<T>
+{
+    [SharpLink.Sdk.RpcSerializable]
+    public class [|Payload|]
+    {
+        public T Value { get; set; } = default!;
+    }
+}
+
+public interface IContract : SharpLink.Sdk.IService
+{
+    [SharpLink.Sdk.NonCancellable]
+    Outer<int>.Payload Get();
+}
+"""));
+        await workspace.AssertCompilesAsync();
+        var diagnostic = await workspace.CreateDiagnosticAsync(
+            "SHARPLINK009", "Payload.cs",
+            new Dictionary<string, string?> { ["SharpLink.FixKind"] = "SealDto" });
+        var action = (await workspace.GetActionsAsync(diagnostic, "Payload.cs"))
+            .Single(static item => item.EquivalenceKey == "SealDto");
+        await workspace.AssertCompilesAsync(await workspace.ApplyAsync(action));
+    }
 }

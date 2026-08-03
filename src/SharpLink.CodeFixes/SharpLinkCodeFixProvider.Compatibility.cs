@@ -278,18 +278,47 @@ internal sealed partial class SharpLinkCodeFixProvider
         var references = timeoutAttributes
             .Select(static attribute => attribute.ApplicationSyntaxReference!)
             .ToImmutableArray();
-        RegisterSolutionFix(
-            context,
-            diagnostic,
-            "Use generated default timeout",
-            "UseDefaultTimeout",
-            (solution, _, _, ct) => UpdateTimeoutAttributesAsync(solution, references, remove: false, ct));
+        if (await CanUseParameterlessTimeoutAttributeAsync(
+                context.Document.Project.Solution, timeoutAttributes, context.CancellationToken)
+            .ConfigureAwait(false))
+        {
+            RegisterSolutionFix(
+                context,
+                diagnostic,
+                "Use generated default timeout",
+                "UseDefaultTimeout",
+                (solution, _, _, ct) => UpdateTimeoutAttributesAsync(solution, references, remove: false, ct));
+        }
         RegisterSolutionFix(
             context,
             diagnostic,
             "Remove [Timeout]",
             "RemoveTimeout",
             (solution, _, _, ct) => UpdateTimeoutAttributesAsync(solution, references, remove: true, ct));
+    }
+
+    private static async Task<bool> CanUseParameterlessTimeoutAttributeAsync(
+        Solution solution,
+        ImmutableArray<AttributeData> attributes,
+        CancellationToken cancellationToken)
+    {
+        foreach (var attribute in attributes)
+        {
+            var reference = attribute.ApplicationSyntaxReference;
+            var document = reference is null ? null : solution.GetDocument(reference.SyntaxTree);
+            var semanticModel = document is null
+                ? null
+                : await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
+            if (reference is null || semanticModel is null || attribute.AttributeClass is not { } attributeClass ||
+                !attributeClass.InstanceConstructors.Any(constructor =>
+                    constructor.Parameters.Length == 0 &&
+                    !IsObsoleteWithError(constructor) &&
+                    semanticModel.IsAccessible(reference.Span.Start, constructor)))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static async Task RegisterRemoveOnewayFixAsync(
