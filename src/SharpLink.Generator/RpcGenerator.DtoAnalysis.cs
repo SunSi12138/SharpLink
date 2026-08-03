@@ -919,7 +919,7 @@ public partial class RpcGenerator
                type.IsSealed &&
                type.InstanceConstructors.Any(static constructor =>
                    constructor.DeclaredAccessibility == Accessibility.Public &&
-                   constructor.Parameters.Length == 0) &&
+                   constructor.Parameters.All(static parameter => parameter.IsOptional)) &&
                type.AllInterfaces.Any(static item =>
                    item.Name == "IRpcCodecAdapter" &&
                    item.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions");

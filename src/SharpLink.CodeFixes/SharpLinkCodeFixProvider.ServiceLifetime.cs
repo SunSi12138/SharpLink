@@ -19,23 +19,20 @@ internal sealed partial class SharpLinkCodeFixProvider
 
         var serviceAttribute = service.GetAttributes().FirstOrDefault(IsRpcServiceAttribute);
         var attributeReference = serviceAttribute?.ApplicationSyntaxReference;
-        var lifetimeType = serviceAttribute?.AttributeClass?.GetMembers("Lifetime")
-            .OfType<IPropertySymbol>()
-            .Select(static property => property.Type)
-            .OfType<INamedTypeSymbol>()
-            .SingleOrDefault();
-        var lifetimeTypeName = lifetimeType?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        var parsedLifetimeType = string.IsNullOrWhiteSpace(lifetimeTypeName)
+        var attributeSyntax = attributeReference is null
             ? null
-            : SyntaxFactory.ParseTypeName(lifetimeTypeName!);
-        var boundLifetimeType = parsedLifetimeType is null || parsedLifetimeType.ContainsDiagnostics
+            : await attributeReference.GetSyntaxAsync(context.CancellationToken).ConfigureAwait(false) as AttributeSyntax;
+        var lifetimeProperty = FindAttributeProperty(serviceAttribute?.AttributeClass, "Lifetime");
+        var lifetimeType = lifetimeProperty?.Type as INamedTypeSymbol;
+        var lifetimeTypeName = lifetimeType is null
             ? null
-            : semanticModel.GetSpeculativeTypeInfo(
+            : GetBindableTypeName(
+                lifetimeType,
+                semanticModel,
                 diagnostic.Location.SourceSpan.Start,
-                parsedLifetimeType,
-                SpeculativeBindingOption.BindAsTypeOrNamespace).Type;
+                GetExternAlias(attributeSyntax));
         if (attributeReference is null || lifetimeType?.TypeKind != TypeKind.Enum ||
-            !SymbolEqualityComparer.Default.Equals(boundLifetimeType, lifetimeType) ||
+            lifetimeTypeName is null ||
             !IsRegularEditableDocument(context.Document.Project.Solution, attributeReference.SyntaxTree))
         {
             return;
@@ -66,6 +63,51 @@ internal sealed partial class SharpLinkCodeFixProvider
                     solution, attributeReference, lifetimeTypeName!, name, ct));
         }
     }
+
+    private static IPropertySymbol? FindAttributeProperty(INamedTypeSymbol? attributeType, string name)
+    {
+        for (var current = attributeType; current is not null; current = current.BaseType)
+        {
+            var property = current.GetMembers(name).OfType<IPropertySymbol>()
+                .SingleOrDefault(static candidate => !candidate.IsStatic && candidate.Parameters.Length == 0);
+            if (property is not null)
+                return property;
+        }
+        return null;
+    }
+
+    private static string? GetBindableTypeName(
+        INamedTypeSymbol type,
+        SemanticModel semanticModel,
+        int position,
+        string? externAlias)
+    {
+        var fullyQualifiedName = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var candidates = new List<string> { fullyQualifiedName };
+        if (externAlias is not null && fullyQualifiedName.StartsWith("global::", StringComparison.Ordinal))
+        {
+            candidates.Add(externAlias + "::" +
+                           fullyQualifiedName.Substring("global::".Length));
+        }
+        candidates.Add(type.ToMinimalDisplayString(semanticModel, position));
+        foreach (var candidate in candidates.Distinct(StringComparer.Ordinal))
+        {
+            var syntax = SyntaxFactory.ParseTypeName(candidate);
+            if (syntax.ContainsDiagnostics)
+                continue;
+            var boundType = semanticModel.GetSpeculativeTypeInfo(
+                position,
+                syntax,
+                SpeculativeBindingOption.BindAsTypeOrNamespace).Type;
+            if (SymbolEqualityComparer.Default.Equals(boundType, type))
+                return candidate;
+        }
+        return null;
+    }
+
+    private static string? GetExternAlias(AttributeSyntax? attribute)
+        => attribute?.Name.DescendantNodesAndSelf().OfType<AliasQualifiedNameSyntax>()
+            .FirstOrDefault()?.Alias.Identifier.ValueText;
 
     private static async Task<Solution> SetServiceLifetimeAsync(
         Solution solution,

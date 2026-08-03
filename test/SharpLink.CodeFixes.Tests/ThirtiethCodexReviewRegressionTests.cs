@@ -116,5 +116,11 @@ internal class Adapter : SharpLink.Abstractions.IRpcCodecAdapter
         EnsureContains(source, "public Adapter(int value = 42)", "optional adapter constructor");
         EnsureDoesNotContain(source, "public Adapter()", "synthetic adapter constructor");
         await workspace.AssertCompilesAsync(changed);
+        var compilation = await changed.GetProject(workspace.ProjectId)!.GetCompilationAsync()
+                          ?? throw new InvalidOperationException("Compilation was unavailable.");
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(new RpcGenerator());
+        var diagnostics = driver.RunGenerators(compilation).GetRunResult().Diagnostics;
+        Ensure(diagnostics.All(static item => item.Id != "SHARPLINK043"),
+            "The generator must accept a public adapter constructor whose parameters are all optional.");
     }
 }
