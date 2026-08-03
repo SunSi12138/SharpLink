@@ -507,6 +507,137 @@ internal sealed partial class SharpLinkCodeFixProvider
         return SymbolEqualityComparer.Default.Equals(left.OriginalDefinition, right.OriginalDefinition);
     }
 
+    private static bool CanApplySignatureEditWithoutCollisions(
+        ImmutableArray<IMethodSymbol> relatedMethods,
+        SignatureEditPlan plan)
+    {
+        foreach (var method in relatedMethods)
+        {
+            if (method.ExplicitInterfaceImplementations.Length != 0)
+                continue;
+
+            var proposedParameters = GetProposedParameters(method, plan);
+            foreach (var candidate in method.ContainingType.GetMembers(method.Name).OfType<IMethodSymbol>())
+            {
+                if (candidate.MethodKind != MethodKind.Ordinary ||
+                    candidate.ExplicitInterfaceImplementations.Length != 0 ||
+                    candidate.Arity != method.Arity ||
+                    candidate.Parameters.Length != proposedParameters.Length ||
+                    relatedMethods.Any(related => SymbolEqualityComparer.Default.Equals(related, candidate)))
+                {
+                    continue;
+                }
+
+                var collides = true;
+                for (var index = 0; index < proposedParameters.Length; index++)
+                {
+                    var proposed = proposedParameters[index];
+                    var existing = candidate.Parameters[index];
+                    if (proposed is null)
+                    {
+                        if (existing.RefKind != RefKind.None ||
+                            !IsControlParameter(existing, ControlParameterKind.CancellationToken))
+                        {
+                            collides = false;
+                            break;
+                        }
+                    }
+                    else if ((proposed.RefKind == RefKind.None) != (existing.RefKind == RefKind.None) ||
+                             !AreSignatureTypesEquivalent(
+                                 proposed.Type,
+                                 method,
+                                 existing.Type,
+                                 candidate))
+                    {
+                        collides = false;
+                        break;
+                    }
+                }
+
+                if (collides)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    private static ImmutableArray<IParameterSymbol?> GetProposedParameters(
+        IMethodSymbol method,
+        SignatureEditPlan plan)
+    {
+        IEnumerable<IParameterSymbol?> parameters = method.Parameters;
+        switch (plan.Kind)
+        {
+            case SignatureEditKind.AddCancellationToken:
+                {
+                    var flags = GetControlParameterFlags(method);
+                    parameters = GetControlParameterOrder(flags.CancellationTokens, flags.CallOptions)
+                        .Select(ordinal => (IParameterSymbol?)method.Parameters[ordinal])
+                        .Append(null);
+                    break;
+                }
+            case SignatureEditKind.KeepControlParameter:
+                parameters = method.Parameters.Where((parameter, ordinal) =>
+                    !IsControlParameter(parameter, plan.ControlKind) || ordinal == plan.KeptOrdinal);
+                break;
+            case SignatureEditKind.ReorderControlParameters:
+                {
+                    var flags = GetControlParameterFlags(method);
+                    parameters = GetControlParameterOrder(flags.CancellationTokens, flags.CallOptions)
+                        .Select(ordinal => (IParameterSymbol?)method.Parameters[ordinal]);
+                    break;
+                }
+        }
+        return parameters.ToImmutableArray();
+    }
+
+    private static bool AreSignatureTypesEquivalent(
+        ITypeSymbol left,
+        IMethodSymbol leftMethod,
+        ITypeSymbol right,
+        IMethodSymbol rightMethod)
+    {
+        if (left is ITypeParameterSymbol leftParameter &&
+            SymbolEqualityComparer.Default.Equals(leftParameter.ContainingSymbol, leftMethod))
+        {
+            return right is ITypeParameterSymbol rightParameter &&
+                   SymbolEqualityComparer.Default.Equals(rightParameter.ContainingSymbol, rightMethod) &&
+                   leftParameter.Ordinal == rightParameter.Ordinal;
+        }
+        if (left is IArrayTypeSymbol leftArray && right is IArrayTypeSymbol rightArray)
+        {
+            return leftArray.Rank == rightArray.Rank &&
+                   AreSignatureTypesEquivalent(
+                       leftArray.ElementType,
+                       leftMethod,
+                       rightArray.ElementType,
+                       rightMethod);
+        }
+        if (left is IPointerTypeSymbol leftPointer && right is IPointerTypeSymbol rightPointer)
+        {
+            return AreSignatureTypesEquivalent(
+                leftPointer.PointedAtType,
+                leftMethod,
+                rightPointer.PointedAtType,
+                rightMethod);
+        }
+        if (left is INamedTypeSymbol leftNamed && right is INamedTypeSymbol rightNamed)
+        {
+            return SymbolEqualityComparer.Default.Equals(
+                       leftNamed.OriginalDefinition,
+                       rightNamed.OriginalDefinition) &&
+                   leftNamed.TypeArguments.Length == rightNamed.TypeArguments.Length &&
+                   leftNamed.TypeArguments.Zip(rightNamed.TypeArguments, (leftArgument, rightArgument) =>
+                           AreSignatureTypesEquivalent(
+                               leftArgument,
+                               leftMethod,
+                               rightArgument,
+                               rightMethod))
+                       .All(static equivalent => equivalent);
+        }
+        return SymbolEqualityComparer.Default.Equals(left, right);
+    }
+
     private static ImmutableArray<int> GetControlParameterOrder(DeclarationEdit edit)
         => GetControlParameterOrder(edit.CancellationTokens, edit.CallOptions);
 

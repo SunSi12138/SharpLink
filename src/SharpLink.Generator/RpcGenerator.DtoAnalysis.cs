@@ -513,6 +513,7 @@ public partial class RpcGenerator
                     member.FixedType is null ? null : GetTypeName(member.FixedType),
                     member.FixedSize,
                     member.Required,
+                    HasAttribute(member.Symbol, "SharpLink.Sdk", "RpcRequiredAttribute"),
                     member.Nullable,
                     member.NonNullableReference,
                     constructorSet.Contains(member.Symbol.Name),
@@ -925,10 +926,10 @@ public partial class RpcGenerator
 
         private static ITypeSymbol NormalizeAdapterTarget(ITypeSymbol type)
             => type is INamedTypeSymbol
-               {
-                   IsTupleType: true,
-                   TupleUnderlyingType: { } underlying
-               }
+            {
+                IsTupleType: true,
+                TupleUnderlyingType: { } underlying
+            }
                 ? underlying
                 : type;
 

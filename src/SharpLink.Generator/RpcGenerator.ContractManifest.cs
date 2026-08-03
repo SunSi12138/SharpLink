@@ -302,6 +302,7 @@ public partial class RpcGenerator
                     WireFormatId = GetWireFormatId(member.TypeName, wireFormats),
                     Nullable = member.Nullable,
                     Required = member.Required,
+                    AttributeRequired = member.AttributeRequired,
                     ExplicitId = member.HasExplicitId,
                     SourceLocation = member.Location
                 });
@@ -604,8 +605,10 @@ public partial class RpcGenerator
                             $"{newDto.Name}.{newMember.Name}",
                             $"existing member {oldMember.Id} became required",
                             "keep the field optional and enforce requirements in application code",
-                            SharpLinkDiagnosticProperties.Create(
-                                SharpLinkDiagnosticProperties.FixKind, "RemoveRpcRequired")));
+                            newMember.AttributeRequired
+                                ? SharpLinkDiagnosticProperties.Create(
+                                    SharpLinkDiagnosticProperties.FixKind, "RemoveRpcRequired")
+                                : null));
                     }
                     continue;
                 }
@@ -665,8 +668,10 @@ public partial class RpcGenerator
                     $"{newDto.Name}.{newMember.Name}",
                     $"new member {newMember.Id} is required",
                     "make the new member optional so older payloads remain readable",
-                    SharpLinkDiagnosticProperties.Create(
-                        SharpLinkDiagnosticProperties.FixKind, "RemoveRpcRequired")));
+                    newMember.AttributeRequired
+                        ? SharpLinkDiagnosticProperties.Create(
+                            SharpLinkDiagnosticProperties.FixKind, "RemoveRpcRequired")
+                        : null));
             }
         }
 
@@ -1062,6 +1067,7 @@ internal static class __SharpLinkContractManifest
         public string WireFormatId { get; set; } = string.Empty;
         public bool Nullable { get; set; }
         public bool Required { get; set; }
+        [JsonIgnore] public bool AttributeRequired { get; set; }
         public bool ExplicitId { get; set; }
         [JsonIgnore] public Location? SourceLocation { get; set; }
     }

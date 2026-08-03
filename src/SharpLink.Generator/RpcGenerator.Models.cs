@@ -200,6 +200,7 @@ internal sealed record GeneratedMemberModel(
     string? FixedTypeName,
     int FixedSize,
     bool Required,
+    bool AttributeRequired,
     bool Nullable,
     bool NonNullableReference,
     bool ConstructorBound,

@@ -569,6 +569,35 @@ public string Code { get; set; } = string.Empty;
     }
 
     [Test]
+    public Task RequiredCompatibilityDiagnosticShouldOnlyOfferAttributeRemovalForRpcRequired()
+    {
+        var baseline = RunContractGenerator(DtoContract("""
+[SharpLink.Sdk.RpcMember(1)]
+public string Name { get; set; } = string.Empty;
+""")).Json;
+
+        var modifierChange = RunContractGenerator(DtoContract("""
+[SharpLink.Sdk.RpcMember(1)]
+public required string Name { get; set; }
+"""), baseline);
+        var modifierDiagnostic = modifierChange.Diagnostics.Single(static diagnostic =>
+            diagnostic.Id == "SHARPLINK031");
+        Ensure(!modifierDiagnostic.Properties.ContainsKey("SharpLink.FixKind"),
+            "a C# required modifier must not advertise the attribute-only RemoveRpcRequired fix");
+
+        var attributeChange = RunContractGenerator(DtoContract("""
+[SharpLink.Sdk.RpcRequired, SharpLink.Sdk.RpcMember(1)]
+public string Name { get; set; } = string.Empty;
+"""), baseline);
+        var attributeDiagnostic = attributeChange.Diagnostics.Single(static diagnostic =>
+            diagnostic.Id == "SHARPLINK031");
+        Ensure(attributeDiagnostic.Properties.TryGetValue("SharpLink.FixKind", out var fixKind) &&
+               fixKind == "RemoveRpcRequired",
+            "an RpcRequired attribute must retain the stable RemoveRpcRequired fix kind");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task CompatibleOptionalFieldAndExplicitIdRenameShouldBeAllowed()
     {
         var baselineSource = DtoContract("""

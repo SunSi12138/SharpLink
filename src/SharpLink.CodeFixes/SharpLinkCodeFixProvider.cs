@@ -92,7 +92,13 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 break;
             case "SHARPLINK031":
                 if (diagnostic.Properties.TryGetValue(SharpLinkDiagnosticProperties.FixKind, out var requiredKind) &&
-                    string.Equals(requiredKind, "RemoveRpcRequired", StringComparison.Ordinal))
+                    string.Equals(requiredKind, "RemoveRpcRequired", StringComparison.Ordinal) &&
+                    await FindAttributeAtDiagnosticAsync(
+                            context.Document,
+                            diagnostic,
+                            ["SharpLink.Sdk.RpcRequiredAttribute"],
+                            context.CancellationToken)
+                        .ConfigureAwait(false) is not null)
                 {
                     RegisterDocumentFix(context, diagnostic, "Remove [RpcRequired]", "RemoveRpcRequired",
                         (document, item, ct) => RemoveAttributeAsync(
@@ -242,7 +248,11 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             var relatedMethods = await FindRelatedMethodsAsync(
                 symbol, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false);
             canAddCancellationToken = !relatedMethods.Any(static related =>
-                related.Parameters.Any(static parameter => parameter.IsOptional || parameter.IsParams));
+                                          related.Parameters.Any(static parameter =>
+                                              parameter.IsOptional || parameter.IsParams)) &&
+                                      CanApplySignatureEditWithoutCollisions(
+                                          relatedMethods,
+                                          new SignatureEditPlan(SignatureEditKind.AddCancellationToken));
         }
 
         if (canAddCancellationToken)
@@ -279,9 +289,17 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             return;
         }
 
+        var relatedMethods = await FindRelatedMethodsAsync(
+            symbol, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false);
         foreach (var parameter in symbol.Parameters.Where(parameter => IsControlParameter(parameter, kind)))
         {
             var ordinal = parameter.Ordinal;
+            if (!CanApplySignatureEditWithoutCollisions(
+                    relatedMethods,
+                    new SignatureEditPlan(SignatureEditKind.KeepControlParameter, kind, ordinal)))
+            {
+                continue;
+            }
             var displayKind = kind == ControlParameterKind.CancellationToken
                 ? "CancellationToken"
                 : "SharpLinkCallOptions";
@@ -318,7 +336,10 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         var relatedMethods = await FindRelatedMethodsAsync(
             symbol, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false);
         if (relatedMethods.Any(static related =>
-                related.Parameters.Any(static parameter => parameter.IsOptional || parameter.IsParams)))
+                related.Parameters.Any(static parameter => parameter.IsOptional || parameter.IsParams)) ||
+            !CanApplySignatureEditWithoutCollisions(
+                relatedMethods,
+                new SignatureEditPlan(SignatureEditKind.ReorderControlParameters)))
         {
             return;
         }
@@ -611,6 +632,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             adapter.GetMembers().Any(static member =>
                 !member.IsImplicitlyDeclared && member.IsVirtual && !member.IsOverride) ||
             !CanExposePublicParameterlessConstructor(adapter) ||
+            !TryGetPublicizationClosure(adapter, out _) ||
             adapter.DeclaringSyntaxReferences.Length == 0 ||
             adapter.DeclaringSyntaxReferences.Any(reference =>
                 reference.GetSyntax(context.CancellationToken) is not ClassDeclarationSyntax))
@@ -935,22 +957,32 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         IReadOnlyCollection<string> metadataNames,
         CancellationToken cancellationToken)
     {
+        var attribute = await FindAttributeAtDiagnosticAsync(
+            document, diagnostic, metadataNames, cancellationToken).ConfigureAwait(false);
+        return attribute is null
+            ? document
+            : await RemoveAttributeNodeAsync(document, attribute, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<AttributeSyntax?> FindAttributeAtDiagnosticAsync(
+        Document document,
+        Diagnostic diagnostic,
+        IReadOnlyCollection<string> metadataNames,
+        CancellationToken cancellationToken)
+    {
         var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
         var semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
         if (root is null || semanticModel is null)
-            return document;
+            return null;
 
         var node = root.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true);
         var attribute = node.AncestorsAndSelf().SelectMany(static item => item.ChildNodes().OfType<AttributeListSyntax>())
             .SelectMany(static list => list.Attributes)
             .FirstOrDefault(item => metadataNames.Any(metadataName =>
                 AttributeMatches(semanticModel, item, metadataName, cancellationToken)));
-        attribute ??= node.AncestorsAndSelf().OfType<AttributeSyntax>()
+        return attribute ?? node.AncestorsAndSelf().OfType<AttributeSyntax>()
             .FirstOrDefault(item => metadataNames.Any(metadataName =>
                 AttributeMatches(semanticModel, item, metadataName, cancellationToken)));
-        return attribute is null
-            ? document
-            : await RemoveAttributeNodeAsync(document, attribute, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<Document> RemoveAttributeNodeAsync(
@@ -1184,10 +1216,13 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         INamedTypeSymbol adapter,
         CancellationToken cancellationToken)
     {
+        if (!TryGetPublicizationClosure(adapter, out var publicizedTypes))
+            return solution;
+
         var declarationsByDocument = new Dictionary<
             DocumentId,
             Dictionary<Microsoft.CodeAnalysis.Text.TextSpan, bool>>();
-        for (var current = adapter; current is not null; current = current.ContainingType)
+        foreach (var current in publicizedTypes)
         {
             var isAdapter = SymbolEqualityComparer.Default.Equals(current, adapter);
             foreach (var reference in current.DeclaringSyntaxReferences)
@@ -1431,6 +1466,27 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                     return false;
                 }
             }
+            foreach (var typeParameter in current.TypeParameters)
+            {
+                foreach (var constraint in typeParameter.ConstraintTypes)
+                {
+                    if (!AddAccessibilityDependency(constraint))
+                    {
+                        types = default;
+                        return false;
+                    }
+                }
+            }
+            foreach (var member in current.GetMembers().Where(static member =>
+                         member.DeclaredAccessibility is Accessibility.Public or Accessibility.Protected or
+                             Accessibility.ProtectedOrInternal))
+            {
+                if (!AddMemberAccessibilityDependencies(member))
+                {
+                    types = default;
+                    return false;
+                }
+            }
         }
 
         types = result.ToImmutableArray();
@@ -1452,6 +1508,10 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                     return AddAccessibilityDependency(array.ElementType);
                 case IPointerTypeSymbol pointer:
                     return AddAccessibilityDependency(pointer.PointedAtType);
+                case IFunctionPointerTypeSymbol functionPointer:
+                    return AddAccessibilityDependency(functionPointer.Signature.ReturnType) &&
+                           functionPointer.Signature.Parameters.All(parameter =>
+                               AddAccessibilityDependency(parameter.Type));
                 case IErrorTypeSymbol:
                     return false;
                 case INamedTypeSymbol named:
@@ -1459,8 +1519,12 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                         var definition = named.OriginalDefinition;
                         if (!IsEffectivelyPublic(definition))
                         {
-                            if (definition.DeclaringSyntaxReferences.Length == 0)
+                            if (definition.DeclaringSyntaxReferences.Length == 0 ||
+                                definition.DeclaringSyntaxReferences.Any(static reference =>
+                                    reference.GetSyntax() is not BaseTypeDeclarationSyntax))
+                            {
                                 return false;
+                            }
                             Add(definition);
                         }
                         foreach (var argument in named.TypeArguments)
@@ -1473,6 +1537,34 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 case ITypeParameterSymbol:
                 case IDynamicTypeSymbol:
                     return true;
+                default:
+                    return true;
+            }
+        }
+
+        bool AddMemberAccessibilityDependencies(ISymbol member)
+        {
+            switch (member)
+            {
+                case INamedTypeSymbol nestedType:
+                    return AddAccessibilityDependency(nestedType);
+                case IFieldSymbol field:
+                    return AddAccessibilityDependency(field.Type);
+                case IEventSymbol @event:
+                    return AddAccessibilityDependency(@event.Type);
+                case IPropertySymbol property:
+                    return AddAccessibilityDependency(property.Type) &&
+                           property.Parameters.All(parameter =>
+                               AddAccessibilityDependency(parameter.Type));
+                case IMethodSymbol method:
+                    if (!AddAccessibilityDependency(method.ReturnType) ||
+                        !method.Parameters.All(parameter =>
+                            AddAccessibilityDependency(parameter.Type)))
+                    {
+                        return false;
+                    }
+                    return method.TypeParameters.All(typeParameter =>
+                        typeParameter.ConstraintTypes.All(AddAccessibilityDependency));
                 default:
                     return true;
             }
