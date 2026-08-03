@@ -151,11 +151,12 @@ internal sealed partial class SharpLinkCodeFixProvider
         CodeFixContext context,
         Diagnostic diagnostic)
     {
-        var method = await FindNodeAsync<MethodDeclarationSyntax>(
-            context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
-        var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
-            .ConfigureAwait(false);
-        if (method is null || semanticModel?.GetDeclaredSymbol(method, context.CancellationToken) is not { } symbol ||
+        var symbol = await ResolveMethodSymbolAsync(
+            context.Document.Project.Solution,
+            context.Document.Id,
+            diagnostic,
+            context.CancellationToken).ConfigureAwait(false);
+        if (symbol is null ||
             IsObsoleteWithError(symbol) ||
             symbol.Parameters.Count(parameter =>
                 IsControlParameter(parameter, ControlParameterKind.CancellationToken)) > 1 ||
@@ -429,41 +430,6 @@ internal sealed partial class SharpLinkCodeFixProvider
 
         RegisterSolutionFix(context, diagnostic, "Remove [RpcRequired]", "RemoveRpcRequired",
             (solution, _, _, ct) => RemoveAttributeAtReferenceAsync(solution, reference, ct));
-    }
-
-    private static async Task RegisterServiceLifetimeFixesAsync(
-        CodeFixContext context,
-        Diagnostic diagnostic)
-    {
-        var declaration = await FindNodeAsync<TypeDeclarationSyntax>(
-            context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
-        var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
-            .ConfigureAwait(false);
-        var service = declaration is null
-            ? null
-            : semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken);
-        if (service?.TypeKind != TypeKind.Class || IsObsoleteWithError(service) ||
-            !HasValidServiceActivationShape(service))
-            return;
-        var serviceAttribute = service.GetAttributes().FirstOrDefault(IsRpcServiceAttribute);
-        var attributeReference = serviceAttribute?.ApplicationSyntaxReference;
-        var lifetimeTypeName = serviceAttribute?.AttributeClass?.GetMembers("Lifetime")
-            .OfType<IPropertySymbol>()
-            .Select(static property => property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
-            .SingleOrDefault();
-        if (attributeReference is null ||
-            string.IsNullOrWhiteSpace(lifetimeTypeName) ||
-            !IsRegularEditableDocument(context.Document.Project.Solution, attributeReference.SyntaxTree))
-            return;
-
-        foreach (var lifetime in new[] { "Singleton", "Connection", "Call" })
-        {
-            var value = lifetime;
-            RegisterSolutionFix(context, diagnostic, $"Set RPC service lifetime to {value}",
-                "SetLifetime:" + value,
-                (solution, _, _, ct) => SetServiceLifetimeAsync(
-                    solution, attributeReference, lifetimeTypeName!, value, ct));
-        }
     }
 
 }

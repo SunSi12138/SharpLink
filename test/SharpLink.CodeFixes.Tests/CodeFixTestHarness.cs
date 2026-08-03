@@ -134,7 +134,7 @@ namespace SharpLink.Abstractions
         Solution = project.WithCompilationOptions(options.WithAllowUnsafe(true)).Solution;
     }
 
-    internal void AddMetadataReferenceFromSource(string assemblyName, string source)
+    internal void AddMetadataReferenceFromSource(string assemblyName, string source, string? alias = null)
     {
         var syntaxTree = CSharpSyntaxTree.ParseText(
             source,
@@ -152,7 +152,11 @@ namespace SharpLink.Abstractions
             $"Expected metadata fixture '{assemblyName}' to compile. Actual: {FormatDiagnostics(emit.Diagnostics)}");
         Solution = Solution.AddMetadataReference(
             ProjectId,
-            MetadataReference.CreateFromImage(stream.ToArray()));
+            MetadataReference.CreateFromImage(
+                stream.ToArray(),
+                properties: alias is null
+                    ? default
+                    : new MetadataReferenceProperties(aliases: ImmutableArray.Create(alias))));
     }
 
     internal static CodeFixTestWorkspace Create(params (string Name, string Source)[] documents)

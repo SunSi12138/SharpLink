@@ -303,35 +303,4 @@ internal sealed partial class SharpLinkCodeFixProvider
         return solution;
     }
 
-    private static async Task<Solution> SetServiceLifetimeAsync(
-        Solution solution,
-        SyntaxReference attributeReference,
-        string lifetimeTypeName,
-        string lifetime,
-        CancellationToken cancellationToken)
-    {
-        var document = solution.GetDocument(attributeReference.SyntaxTree);
-        var root = document is null ? null : await document.GetSyntaxRootAsync(cancellationToken)
-            .ConfigureAwait(false);
-        var attribute = root?.FindNode(attributeReference.Span, getInnermostNodeForTie: true)
-            .AncestorsAndSelf().OfType<AttributeSyntax>().FirstOrDefault();
-        if (document is null || root is null || attribute is null)
-            return solution;
-
-        var value = SyntaxFactory.ParseExpression(lifetimeTypeName + "." + lifetime);
-        var arguments = attribute.ArgumentList?.Arguments ?? default;
-        var existing = arguments.FirstOrDefault(static item => item.NameEquals?.Name.Identifier.ValueText == "Lifetime");
-        var updatedArguments = existing is null
-            ? arguments.Add(SyntaxFactory.AttributeArgument(value)
-                .WithNameEquals(SyntaxFactory.NameEquals("Lifetime")))
-            : arguments.Replace(
-                existing,
-                existing.WithExpression(value.WithTriviaFrom(existing.Expression)));
-        var updatedArgumentList = attribute.ArgumentList is { } argumentList
-            ? argumentList.WithArguments(updatedArguments)
-            : SyntaxFactory.AttributeArgumentList(updatedArguments);
-        var updated = attribute.WithArgumentList(updatedArgumentList)
-            .WithAdditionalAnnotations(Formatter.Annotation);
-        return solution.WithDocumentSyntaxRoot(document.Id, root.ReplaceNode(attribute, updated));
-    }
 }

@@ -39,16 +39,21 @@ internal sealed partial class SharpLinkCodeFixProvider
 
     private static bool CanExposePublicParameterlessConstructor(INamedTypeSymbol type)
     {
-        var declaredParameterless = type.InstanceConstructors
-            .Where(static constructor => constructor.Parameters.Length == 0)
+        var callableConstructors = type.InstanceConstructors
+            .Where(CanInvokeWithoutArguments)
             .ToArray();
-        if (declaredParameterless.Length != 0)
-            return declaredParameterless.Any(static constructor => !IsObsoleteWithError(constructor));
+        if (callableConstructors.Length != 0)
+        {
+            return callableConstructors.Any(static constructor =>
+                !IsObsoleteWithError(constructor) &&
+                (constructor.Parameters.Length == 0 ||
+                 constructor.DeclaredAccessibility == Accessibility.Public));
+        }
         var baseType = type.BaseType;
         if (baseType is null)
             return true;
         return baseType.InstanceConstructors.Any(constructor =>
-            constructor.Parameters.Length == 0 &&
+            CanInvokeWithoutArguments(constructor) &&
             !IsObsoleteWithError(constructor) &&
             (constructor.DeclaredAccessibility is Accessibility.Public or Accessibility.Protected or
                  Accessibility.ProtectedOrInternal ||
@@ -62,7 +67,8 @@ internal sealed partial class SharpLinkCodeFixProvider
         if (!HasRequiredMembers(type))
             return true;
         var constructor = type.InstanceConstructors.FirstOrDefault(static candidate =>
-            candidate.Parameters.Length == 0 && !candidate.IsStatic && !IsObsoleteWithError(candidate));
+            CanInvokeWithoutArguments(candidate) &&
+            !candidate.IsStatic && !IsObsoleteWithError(candidate));
         return constructor is not null && HasAttribute(
             constructor,
             "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute");
@@ -108,12 +114,15 @@ internal sealed partial class SharpLinkCodeFixProvider
     private static bool HasPrimaryConstructorWithoutParameterlessAlternative(
         INamedTypeSymbol type,
         CancellationToken cancellationToken)
-        => !type.InstanceConstructors.Any(static constructor => constructor.Parameters.Length == 0) &&
+        => !type.InstanceConstructors.Any(CanInvokeWithoutArguments) &&
            type.DeclaringSyntaxReferences.Any(reference =>
                reference.GetSyntax(cancellationToken) is ClassDeclarationSyntax
                {
                    ParameterList.Parameters.Count: > 0
                });
+
+    private static bool CanInvokeWithoutArguments(IMethodSymbol constructor)
+        => constructor.Parameters.All(static parameter => parameter.IsOptional);
 
     private static bool HasOverride(INamedTypeSymbol type, ISymbol abstractMember)
     {

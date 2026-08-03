@@ -164,7 +164,12 @@ internal sealed partial class SharpLinkCodeFixProvider
         var declaration = await FindNodeAsync<MethodDeclarationSyntax>(document, diagnostic, cancellationToken)
             .ConfigureAwait(false);
         var semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
-        return declaration is null ? null : semanticModel?.GetDeclaredSymbol(declaration, cancellationToken);
+        var declaredMethod = declaration is null
+            ? null
+            : semanticModel?.GetDeclaredSymbol(declaration, cancellationToken);
+        return declaredMethod is null || semanticModel is null
+            ? null
+            : ResolveDiagnosticMethodSymbol(declaredMethod, semanticModel.Compilation, diagnostic);
     }
 
     private static async Task<ImmutableArray<IMethodSymbol>> FindRelatedMethodsAsync(

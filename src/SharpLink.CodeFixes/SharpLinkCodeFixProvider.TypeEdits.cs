@@ -320,7 +320,8 @@ internal sealed partial class SharpLinkCodeFixProvider
         var firstAdapterReference = adapter.DeclaringSyntaxReferences[0];
         var firstAdapterDocument = solution.GetDocument(firstAdapterReference.SyntaxTree)?.Id;
         var needsPublicParameterlessConstructor = !adapter.InstanceConstructors.Any(static constructor =>
-            constructor.DeclaredAccessibility == Accessibility.Public && constructor.Parameters.Length == 0);
+            constructor.DeclaredAccessibility == Accessibility.Public &&
+            CanInvokeWithoutArguments(constructor));
         var hasExplicitParameterlessConstructor = adapter.InstanceConstructors.Any(static constructor =>
             !constructor.IsImplicitlyDeclared && constructor.Parameters.Length == 0);
 
@@ -368,7 +369,7 @@ internal sealed partial class SharpLinkCodeFixProvider
                              original.Span == firstAdapterReference.Span)
                     {
                         adapterClass = adapterClass.AddMembers(
-                            SyntaxFactory.ConstructorDeclaration(adapter.Name)
+                            SyntaxFactory.ConstructorDeclaration(adapterClass.Identifier.WithoutTrivia())
                                 .WithModifiers(SyntaxFactory.TokenList(
                                     SyntaxFactory.Token(SyntaxKind.PublicKeyword)))
                                 .WithBody(SyntaxFactory.Block()));

@@ -12,7 +12,7 @@ public partial class RpcGenerator
     }
 
     private static string GetDiagnosticSymbolIdentity(IMethodSymbol method)
-        => method.ContainingAssembly.Identity + ":" + method.ToDisplayString(FullyQualifiedNullableFormat);
+        => method.ContainingAssembly.Identity + ":" + method.ToDisplayString(DiagnosticMethodIdentityFormat);
 
     private static RpcInterfaceModel? GetInterfaceModelOrNull(GeneratorAttributeSyntaxContext context, CancellationToken _)
     {
