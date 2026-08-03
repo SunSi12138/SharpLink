@@ -232,7 +232,7 @@ internal sealed partial class SharpLinkCodeFixProvider
         CancellationToken cancellationToken)
     {
         var related = await FindRelatedMethodsAsync(method, solution, cancellationToken).ConfigureAwait(false);
-        if (related.Any(static candidate => candidate.DeclaringSyntaxReferences.Length == 0))
+        if (related.Any(candidate => !HasOnlyRegularEditableDeclarations(candidate, solution)))
             return false;
         foreach (var candidate in related)
         {

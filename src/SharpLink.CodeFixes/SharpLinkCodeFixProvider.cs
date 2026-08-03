@@ -42,8 +42,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 await RegisterCancellationContractFixesAsync(context, diagnostic).ConfigureAwait(false);
                 break;
             case "SHARPLINK006":
-                RegisterDocumentFix(context, diagnostic, "Add IService to RPC contract", "AddIService",
-                    AddIServiceAsync);
+                await RegisterAddIServiceFixAsync(context, diagnostic).ConfigureAwait(false);
                 break;
             case "SHARPLINK007":
                 await RegisterKeepParameterFixesAsync(context, diagnostic, ControlParameterKind.CallOptions)
@@ -255,7 +254,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         var equivalentMethods = await FindEquivalentInterfaceMethodsAsync(
             symbol, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false);
         if (equivalentMethods.Length != 0 &&
-            equivalentMethods.All(static candidate => candidate.DeclaringSyntaxReferences.Length != 0))
+            equivalentMethods.All(candidate => HasOnlyRegularEditableDeclarations(
+                candidate, context.Document.Project.Solution)))
         {
             RegisterSolutionFix(context, diagnostic, "Annotate with [NonCancellable]", "AddNonCancellable",
                 (solution, _, _, ct) => AddNonCancellableAsync(solution, equivalentMethods, ct));
@@ -279,8 +279,11 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         var equivalentMethods = await FindEquivalentInterfaceMethodsAsync(
             method, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false);
         var attributedMethods = equivalentMethods.Where(HasNonCancellableAttribute).ToImmutableArray();
-        if (attributedMethods.Length == 0 ||
-            attributedMethods.Any(static candidate => candidate.DeclaringSyntaxReferences.Length == 0))
+        var attributes = attributedMethods.SelectMany(static candidate => candidate.GetAttributes())
+            .Where(IsNonCancellableAttribute).ToImmutableArray();
+        if (attributes.Length == 0 || attributes.Any(attribute =>
+                attribute.ApplicationSyntaxReference is not { } reference ||
+                !IsRegularEditableDocument(context.Document.Project.Solution, reference.SyntaxTree)))
         {
             return;
         }
@@ -290,7 +293,10 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             diagnostic,
             "Remove [NonCancellable]",
             "RemoveNonCancellable",
-            (solution, _, _, ct) => RemoveNonCancellableAsync(solution, attributedMethods, ct));
+            (solution, _, _, ct) => RemoveAttributesAsync(
+                solution,
+                attributes.Select(static attribute => attribute.ApplicationSyntaxReference!).ToImmutableArray(),
+                ct));
     }
 
     private static async Task RegisterKeepParameterFixesAsync(
@@ -528,7 +534,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .ToArray();
 
         if (allPublicConstructors.Length == 0 && nonPublicConstructors.Length == 1 &&
-            CanExposeAsPublic(nonPublicConstructors[0]))
+            CanExposeAsPublic(nonPublicConstructors[0]) &&
+            HasRegularEditableDeclaration(nonPublicConstructors[0], context.Document.Project.Solution))
         {
             var constructor = nonPublicConstructors[0];
             RegisterSolutionFix(context, diagnostic, $"Make {type.Name} constructor public",
@@ -586,7 +593,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 "SharpLink.Sdk.RpcServiceAttribute",
                 StringComparison.Ordinal))
             ?.ApplicationSyntaxReference;
-        if (attributeReference is null)
+        if (attributeReference is null ||
+            !IsRegularEditableDocument(context.Document.Project.Solution, attributeReference.SyntaxTree))
             return;
 
         foreach (var lifetime in new[] { "Singleton", "Connection", "Call" })
@@ -636,6 +644,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             targetAttribute is null ||
             namedCase.IsUnboundGenericType || ContainsTypeParameter(namedCase) ||
             namedCase.TypeKind is not (TypeKind.Class or TypeKind.Struct) || namedCase.IsAbstract ||
+            IsObsoleteWithError(namedCase) ||
             semanticModel.Compilation is not CSharpCompilation csharpCompilation ||
             !csharpCompilation.ClassifyConversion(namedCase, unionType).IsImplicit)
             return;
@@ -755,6 +764,26 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             SignatureKeyPrefix + "MakeInstance", MakeInstanceMethodAsync);
     }
 
+    private static async Task RegisterAddIServiceFixAsync(
+        CodeFixContext context,
+        Diagnostic diagnostic)
+    {
+        var declaration = await FindNodeAsync<InterfaceDeclarationSyntax>(
+            context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
+        var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
+            .ConfigureAwait(false);
+        if (declaration is null ||
+            semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not INamedTypeSymbol contract ||
+            contract.Arity != 0 ||
+            GetContainingTypes(contract).Any(static containing => containing.Arity != 0))
+        {
+            return;
+        }
+
+        RegisterDocumentFix(context, diagnostic, "Add IService to RPC contract", "AddIService",
+            AddIServiceAsync);
+    }
+
     private static async Task<Document> AddIServiceAsync(
         Document document,
         Diagnostic diagnostic,
@@ -829,56 +858,6 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 current.AddAttributeLists(CreateAttributeList("global::SharpLink.Sdk.NonCancellable"))
                     .WithAdditionalAnnotations(Formatter.Annotation));
             solution = solution.WithDocumentSyntaxRoot(pair.Key, updatedRoot);
-        }
-        return solution;
-    }
-
-    private static async Task<Solution> RemoveNonCancellableAsync(
-        Solution solution,
-        ImmutableArray<IMethodSymbol> methods,
-        CancellationToken cancellationToken)
-    {
-        var referencesByDocument = new Dictionary<
-            DocumentId,
-            HashSet<Microsoft.CodeAnalysis.Text.TextSpan>>();
-        foreach (var reference in methods
-                     .SelectMany(static method => method.GetAttributes())
-                     .Where(IsNonCancellableAttribute)
-                     .Select(static attribute => attribute.ApplicationSyntaxReference)
-                     .Where(static reference => reference is not null)
-                     .Select(static reference => reference!))
-        {
-            var document = solution.GetDocument(reference.SyntaxTree);
-            if (document is null)
-                continue;
-            if (!referencesByDocument.TryGetValue(document.Id, out var spans))
-            {
-                spans = [];
-                referencesByDocument.Add(document.Id, spans);
-            }
-            spans.Add(reference.Span);
-        }
-
-        foreach (var pair in referencesByDocument)
-        {
-            var document = solution.GetDocument(pair.Key);
-            var root = document is null
-                ? null
-                : await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
-            if (root is null)
-                continue;
-
-            foreach (var span in pair.Value.OrderByDescending(static span => span.Start))
-            {
-                var attribute = root.FindNode(span, getInnermostNodeForTie: true)
-                    .AncestorsAndSelf().OfType<AttributeSyntax>().FirstOrDefault();
-                if (attribute?.Parent is not AttributeListSyntax list)
-                    continue;
-                root = list.Attributes.Count == 1
-                    ? root.RemoveNode(list, SyntaxRemoveOptions.KeepExteriorTrivia) ?? root
-                    : root.ReplaceNode(list, list.WithAttributes(list.Attributes.Remove(attribute)));
-            }
-            solution = solution.WithDocumentSyntaxRoot(pair.Key, root);
         }
         return solution;
     }
@@ -1155,7 +1134,9 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .Where(IsTimeoutAttribute)
             .ToImmutableArray();
         if (timeoutAttributes.Length == 0 ||
-            timeoutAttributes.Any(static attribute => attribute.ApplicationSyntaxReference is null))
+            timeoutAttributes.Any(attribute =>
+                attribute.ApplicationSyntaxReference is not { } reference ||
+                !IsRegularEditableDocument(context.Document.Project.Solution, reference.SyntaxTree)))
         {
             return;
         }
@@ -1197,7 +1178,9 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .SelectMany(static candidate => candidate.GetAttributes())
             .Where(IsOnewayAttribute)
             .ToImmutableArray();
-        if (attributes.Length == 0 || attributes.Any(static attribute => attribute.ApplicationSyntaxReference is null))
+        if (attributes.Length == 0 || attributes.Any(attribute =>
+                attribute.ApplicationSyntaxReference is not { } reference ||
+                !IsRegularEditableDocument(context.Document.Project.Solution, reference.SyntaxTree)))
             return;
 
         var references = attributes.Select(static attribute => attribute.ApplicationSyntaxReference!)
@@ -1652,7 +1635,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         IMethodSymbol constructor,
         CancellationToken cancellationToken)
     {
-        var reference = constructor.DeclaringSyntaxReferences.FirstOrDefault();
+        var reference = constructor.DeclaringSyntaxReferences.FirstOrDefault(candidate =>
+            IsRegularEditableDocument(solution, candidate.SyntaxTree));
         var document = reference is null ? null : solution.GetDocument(reference.SyntaxTree);
         var root = document is null ? null : await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
         var declaration = root?.FindNode(reference!.Span, getInnermostNodeForTie: true)
@@ -1978,6 +1962,11 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
     private static bool HasRegularEditableDeclaration(ISymbol symbol, Solution solution)
         => symbol.DeclaringSyntaxReferences.Any(reference =>
             IsRegularEditableDocument(solution, reference.SyntaxTree));
+
+    private static bool HasOnlyRegularEditableDeclarations(ISymbol symbol, Solution solution)
+        => symbol.DeclaringSyntaxReferences.Length != 0 &&
+           symbol.DeclaringSyntaxReferences.All(reference =>
+               IsRegularEditableDocument(solution, reference.SyntaxTree));
 
     private static bool IsRegularEditableDocument(Solution solution, SyntaxTree syntaxTree)
     {
