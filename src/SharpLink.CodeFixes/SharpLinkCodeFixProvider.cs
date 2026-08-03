@@ -58,7 +58,13 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             case "SHARPLINK015":
                 RegisterDocumentFix(context, diagnostic, "Remove [NonCancellable]", "RemoveNonCancellable",
                     (document, item, ct) => RemoveAttributeAsync(
-                        document, item, "SharpLink.Sdk.NonCancellableAttribute", ct));
+                        document,
+                        item,
+                        [
+                            "SharpLink.Sdk.NonCancellableAttribute",
+                            "SharpLink.Abstractions.NonCancellableAttribute"
+                        ],
+                        ct));
                 break;
             case "SHARPLINK016":
                 await RegisterMissingContractFixAsync(context, diagnostic).ConfigureAwait(false);
@@ -126,7 +132,10 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                     UseDefaultTimeoutAsync);
                 RegisterDocumentFix(context, diagnostic, "Remove [Timeout]", "RemoveTimeout",
                     (document, item, ct) => RemoveAttributeAsync(
-                        document, item, "SharpLink.Sdk.TimeoutAttribute", ct));
+                        document,
+                        item,
+                        ["SharpLink.Sdk.TimeoutAttribute", "SharpLink.Abstractions.TimeoutAttribute"],
+                        ct));
                 break;
             case "SHARPLINK051":
                 RegisterDocumentFix(context, diagnostic, "Remove invalid RPC union case mapping",
@@ -136,13 +145,19 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 await RegisterMakeInstanceMethodFixAsync(context, diagnostic).ConfigureAwait(false);
                 break;
             case "SHARPLINK055":
-                RegisterSolutionFix(context, diagnostic, "Make RPC contract publicly reachable",
-                    "MakeContractPublic", MakeContainingTypesPublicAcrossSolutionAsync);
+                await RegisterMakePublicFixAsync(
+                    context,
+                    diagnostic,
+                    "Make RPC contract publicly reachable",
+                    "MakeContractPublic").ConfigureAwait(false);
                 break;
             case "SHARPLINK056":
                 RegisterDocumentFix(context, diagnostic, "Remove [Oneway]", "RemoveOneway",
                     (document, item, ct) => RemoveAttributeAsync(
-                        document, item, "SharpLink.Sdk.OnewayAttribute", ct));
+                        document,
+                        item,
+                        ["SharpLink.Sdk.OnewayAttribute", "SharpLink.Abstractions.OnewayAttribute"],
+                        ct));
                 break;
         }
     }
@@ -179,6 +194,31 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 equivalenceKey),
             diagnostic);
 
+    private static async Task RegisterMakePublicFixAsync(
+        CodeFixContext context,
+        Diagnostic diagnostic,
+        string title,
+        string equivalenceKey)
+    {
+        var declaration = await FindNodeAsync<BaseTypeDeclarationSyntax>(
+            context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
+        var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
+            .ConfigureAwait(false);
+        if (declaration is null ||
+            semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not INamedTypeSymbol type ||
+            !TryGetPublicizationClosure(type, out _))
+        {
+            return;
+        }
+
+        RegisterSolutionFix(
+            context,
+            diagnostic,
+            title,
+            equivalenceKey,
+            MakeContainingTypesPublicAcrossSolutionAsync);
+    }
+
     private static async Task RegisterCancellationContractFixesAsync(
         CodeFixContext context,
         Diagnostic diagnostic)
@@ -211,8 +251,14 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 SignatureKeyPrefix + "AddCancellationToken", AddCancellationTokenAsync);
         }
 
-        RegisterDocumentFix(context, diagnostic, "Annotate with [NonCancellable]", "AddNonCancellable",
-            AddNonCancellableAsync);
+        var equivalentMethods = await FindEquivalentInterfaceMethodsAsync(
+            symbol, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false);
+        if (equivalentMethods.Length != 0 &&
+            equivalentMethods.All(static candidate => candidate.DeclaringSyntaxReferences.Length != 0))
+        {
+            RegisterSolutionFix(context, diagnostic, "Annotate with [NonCancellable]", "AddNonCancellable",
+                (solution, _, _, ct) => AddNonCancellableAsync(solution, equivalentMethods, ct));
+        }
     }
 
     private static async Task RegisterKeepParameterFixesAsync(
@@ -295,7 +341,9 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             if (declaration is null || semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not { } type)
                 return;
             if (type.TypeKind != TypeKind.Class || type.IsAbstract || type.IsGenericType ||
-                type.BaseType?.SpecialType != SpecialType.System_Object)
+                type.BaseType?.SpecialType != SpecialType.System_Object ||
+                type.GetMembers().Any(static member =>
+                    !member.IsImplicitlyDeclared && member.IsVirtual && !member.IsOverride))
             {
                 return;
             }
@@ -312,14 +360,17 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         }
         else if (string.Equals(fixKind, "MakeDtoAccessible", StringComparison.Ordinal))
         {
-            RegisterSolutionFix(context, diagnostic, "Make DTO publicly reachable", "MakeDtoAccessible",
-                MakeContainingTypesPublicAcrossSolutionAsync);
+            await RegisterMakePublicFixAsync(
+                context,
+                diagnostic,
+                "Make DTO publicly reachable",
+                "MakeDtoAccessible").ConfigureAwait(false);
         }
     }
 
     private static async Task RegisterMissingContractFixAsync(CodeFixContext context, Diagnostic diagnostic)
     {
-        var declaration = await FindNodeAsync<ClassDeclarationSyntax>(
+        var declaration = await FindNodeAsync<TypeDeclarationSyntax>(
             context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
         var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
             .ConfigureAwait(false);
@@ -343,17 +394,18 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
 
     private static async Task RegisterServiceTypeFixesAsync(CodeFixContext context, Diagnostic diagnostic)
     {
-        var declaration = await FindNodeAsync<ClassDeclarationSyntax>(
+        var declaration = await FindNodeAsync<TypeDeclarationSyntax>(
             context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
         var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
             .ConfigureAwait(false);
         if (declaration is null || semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not { } type ||
-            type.IsGenericType)
+            type.TypeKind != TypeKind.Class || type.IsGenericType)
         {
             return;
         }
 
-        if (!IsEffectivelyPublic(type) && !type.IsAbstract)
+        var canMakePublic = TryGetPublicizationClosure(type, out _);
+        if (!IsEffectivelyPublic(type) && !type.IsAbstract && canMakePublic)
         {
             RegisterSolutionFix(context, diagnostic, "Make RPC service publicly reachable",
                 "MakeServicePublic", MakeContainingTypesPublicAcrossSolutionAsync);
@@ -365,7 +417,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 (solution, _, _, ct) => FixServiceShapeAcrossSolutionAsync(
                     solution, type, makePublic: false, ct));
         }
-        else if (type.IsAbstract && !IsEffectivelyPublic(type) && IsSafeToMakeConcrete(type))
+        else if (type.IsAbstract && !IsEffectivelyPublic(type) && IsSafeToMakeConcrete(type) && canMakePublic)
         {
             RegisterSolutionFix(context, diagnostic,
                 "Make RPC service concrete and publicly reachable",
@@ -377,11 +429,12 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
 
     private static async Task RegisterConstructorFixesAsync(CodeFixContext context, Diagnostic diagnostic)
     {
-        var declaration = await FindNodeAsync<ClassDeclarationSyntax>(
+        var declaration = await FindNodeAsync<TypeDeclarationSyntax>(
             context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
         var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
             .ConfigureAwait(false);
-        if (declaration is null || semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not { } type)
+        if (declaration is null || semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not { } type ||
+            type.TypeKind != TypeKind.Class)
             return;
 
         var allPublicConstructors = type.InstanceConstructors
@@ -395,7 +448,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .Where(IsSupportedServiceConstructor)
             .ToArray();
 
-        if (allPublicConstructors.Length == 0 && nonPublicConstructors.Length == 1)
+        if (allPublicConstructors.Length == 0 && nonPublicConstructors.Length == 1 &&
+            CanExposeAsPublic(nonPublicConstructors[0]))
         {
             var constructor = nonPublicConstructors[0];
             RegisterSolutionFix(context, diagnostic, $"Make {type.Name} constructor public",
@@ -411,7 +465,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 attribute.AttributeClass?.ToDisplayString(),
                 "Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructorAttribute",
                 StringComparison.Ordinal)));
-        if (publicConstructors.Length <= 1 || marker is null || alreadyMarked)
+        if (allPublicConstructors.Length <= 1 || publicConstructors.Length == 0 ||
+            marker is null || alreadyMarked)
             return;
 
         foreach (var constructor in publicConstructors)
@@ -433,13 +488,15 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         CodeFixContext context,
         Diagnostic diagnostic)
     {
-        var declaration = await FindNodeAsync<ClassDeclarationSyntax>(
+        var declaration = await FindNodeAsync<TypeDeclarationSyntax>(
             context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
         var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
             .ConfigureAwait(false);
         var service = declaration is null
             ? null
             : semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken);
+        if (service?.TypeKind != TypeKind.Class)
+            return;
         var attributeReference = service?.GetAttributes()
             .FirstOrDefault(static attribute => string.Equals(
                 attribute.AttributeClass?.ToDisplayString(),
@@ -623,18 +680,52 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<Document> AddNonCancellableAsync(
-        Document document,
-        Diagnostic diagnostic,
+    private static async Task<Solution> AddNonCancellableAsync(
+        Solution solution,
+        ImmutableArray<IMethodSymbol> methods,
         CancellationToken cancellationToken)
     {
-        var method = await FindNodeAsync<MethodDeclarationSyntax>(document, diagnostic, cancellationToken)
-            .ConfigureAwait(false);
-        if (method is null)
-            return document;
-        var updated = method.AddAttributeLists(CreateAttributeList("global::SharpLink.Sdk.NonCancellable"))
-            .WithAdditionalAnnotations(Formatter.Annotation);
-        return await ReplaceNodeAsync(document, method, updated, cancellationToken).ConfigureAwait(false);
+        var referencesByDocument = new Dictionary<
+            DocumentId,
+            List<Microsoft.CodeAnalysis.Text.TextSpan>>();
+        foreach (var method in methods.Where(static method => !HasNonCancellableAttribute(method)))
+        {
+            foreach (var reference in method.DeclaringSyntaxReferences)
+            {
+                var document = solution.GetDocument(reference.SyntaxTree);
+                if (document is null)
+                    continue;
+                if (!referencesByDocument.TryGetValue(document.Id, out var spans))
+                {
+                    spans = [];
+                    referencesByDocument.Add(document.Id, spans);
+                }
+                if (!spans.Contains(reference.Span))
+                    spans.Add(reference.Span);
+            }
+        }
+
+        foreach (var pair in referencesByDocument)
+        {
+            var document = solution.GetDocument(pair.Key);
+            var root = document is null
+                ? null
+                : await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+            if (root is null)
+                continue;
+            var declarations = pair.Value
+                .Select(span => root.FindNode(span, getInnermostNodeForTie: true)
+                    .AncestorsAndSelf().OfType<MethodDeclarationSyntax>().FirstOrDefault())
+                .Where(static declaration => declaration is not null)
+                .Select(static declaration => declaration!)
+                .Distinct()
+                .ToArray();
+            var updatedRoot = root.ReplaceNodes(declarations, static (_, current) =>
+                current.AddAttributeLists(CreateAttributeList("global::SharpLink.Sdk.NonCancellable"))
+                    .WithAdditionalAnnotations(Formatter.Annotation));
+            solution = solution.WithDocumentSyntaxRoot(pair.Key, updatedRoot);
+        }
+        return solution;
     }
 
     private static async Task<Solution> SetServiceLifetimeAsync(
@@ -835,6 +926,14 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         Diagnostic diagnostic,
         string metadataName,
         CancellationToken cancellationToken)
+        => await RemoveAttributeAsync(document, diagnostic, [metadataName], cancellationToken)
+            .ConfigureAwait(false);
+
+    private static async Task<Document> RemoveAttributeAsync(
+        Document document,
+        Diagnostic diagnostic,
+        IReadOnlyCollection<string> metadataNames,
+        CancellationToken cancellationToken)
     {
         var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
         var semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
@@ -844,9 +943,11 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         var node = root.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true);
         var attribute = node.AncestorsAndSelf().SelectMany(static item => item.ChildNodes().OfType<AttributeListSyntax>())
             .SelectMany(static list => list.Attributes)
-            .FirstOrDefault(item => AttributeMatches(semanticModel, item, metadataName, cancellationToken));
+            .FirstOrDefault(item => metadataNames.Any(metadataName =>
+                AttributeMatches(semanticModel, item, metadataName, cancellationToken)));
         attribute ??= node.AncestorsAndSelf().OfType<AttributeSyntax>()
-            .FirstOrDefault(item => AttributeMatches(semanticModel, item, metadataName, cancellationToken));
+            .FirstOrDefault(item => metadataNames.Any(metadataName =>
+                AttributeMatches(semanticModel, item, metadataName, cancellationToken)));
         return attribute is null
             ? document
             : await RemoveAttributeNodeAsync(document, attribute, cancellationToken).ConfigureAwait(false);
@@ -911,8 +1012,11 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             return solution;
         }
 
+        if (!TryGetPublicizationClosure(symbol, out var publicizedTypes))
+            return solution;
+
         var referencesByDocument = new Dictionary<DocumentId, List<Microsoft.CodeAnalysis.Text.TextSpan>>();
-        for (var current = symbol; current is not null; current = current.ContainingType)
+        foreach (var current in publicizedTypes)
         {
             foreach (var reference in current.DeclaringSyntaxReferences)
             {
@@ -958,11 +1062,19 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         var referencesByDocument = new Dictionary<
             DocumentId,
             Dictionary<Microsoft.CodeAnalysis.Text.TextSpan, bool>>();
-        for (var current = type; current is not null; current = current.ContainingType)
+        ImmutableArray<INamedTypeSymbol> typesToUpdate;
+        if (makePublic)
+        {
+            if (!TryGetPublicizationClosure(type, out typesToUpdate))
+                return solution;
+        }
+        else
+        {
+            typesToUpdate = ImmutableArray.Create(type);
+        }
+        foreach (var current in typesToUpdate)
         {
             var isService = SymbolEqualityComparer.Default.Equals(current, type);
-            if (!makePublic && !isService)
-                continue;
             foreach (var reference in current.DeclaringSyntaxReferences)
             {
                 var document = solution.GetDocument(reference.SyntaxTree);
@@ -1195,6 +1307,81 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         => symbol.GetAttributes().Any(item =>
             string.Equals(item.AttributeClass?.ToDisplayString(), metadataName, StringComparison.Ordinal));
 
+    private static bool HasNonCancellableAttribute(IMethodSymbol method)
+        => HasAttribute(method, "SharpLink.Sdk.NonCancellableAttribute") ||
+           HasAttribute(method, "SharpLink.Abstractions.NonCancellableAttribute");
+
+    private static async Task<ImmutableArray<IMethodSymbol>> FindEquivalentInterfaceMethodsAsync(
+        IMethodSymbol method,
+        Solution solution,
+        CancellationToken cancellationToken)
+    {
+        if (method.ContainingType.TypeKind != TypeKind.Interface)
+            return ImmutableArray.Create(method);
+
+        var contractTypes = new List<INamedTypeSymbol>();
+        if (HasRpcContractAttribute(method.ContainingType))
+            contractTypes.Add(method.ContainingType);
+
+        var derivedInterfaces = await SymbolFinder.FindDerivedInterfacesAsync(
+            method.ContainingType,
+            solution,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        foreach (var derived in derivedInterfaces.Where(HasRpcContractAttribute))
+        {
+            if (!contractTypes.Any(existing => SymbolEqualityComparer.Default.Equals(existing, derived)))
+                contractTypes.Add(derived);
+        }
+
+        if (contractTypes.Count == 0)
+            contractTypes.Add(method.ContainingType);
+
+        var methods = new List<IMethodSymbol>();
+        foreach (var contract in contractTypes)
+        {
+            foreach (var @interface in new[] { contract }.Concat(contract.AllInterfaces)
+                         .Where(static candidate => !IsIService(candidate)))
+            {
+                foreach (var candidate in @interface.GetMembers(method.Name).OfType<IMethodSymbol>()
+                             .Where(static candidate => candidate.MethodKind == MethodKind.Ordinary &&
+                                                        candidate.DeclaredAccessibility == Accessibility.Public))
+                {
+                    if (!HasEquivalentContractSignature(method, candidate) ||
+                        methods.Any(existing => SymbolEqualityComparer.Default.Equals(existing, candidate)))
+                    {
+                        continue;
+                    }
+                    methods.Add(candidate);
+                }
+            }
+        }
+        return methods.ToImmutableArray();
+    }
+
+    private static bool HasRpcContractAttribute(INamedTypeSymbol type)
+        => HasAttribute(type, "SharpLink.Sdk.RpcContractAttribute") ||
+           HasAttribute(type, "SharpLink.Abstractions.RpcContractAttribute");
+
+    private static bool HasEquivalentContractSignature(IMethodSymbol left, IMethodSymbol right)
+    {
+        if (!string.Equals(left.Name, right.Name, StringComparison.Ordinal) ||
+            left.Arity != right.Arity || left.Parameters.Length != right.Parameters.Length)
+        {
+            return false;
+        }
+        for (var index = 0; index < left.Parameters.Length; index++)
+        {
+            if (left.Parameters[index].RefKind != right.Parameters[index].RefKind ||
+                !SymbolEqualityComparer.Default.Equals(
+                    left.Parameters[index].Type,
+                    right.Parameters[index].Type))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static bool IsIService(INamedTypeSymbol type)
         => type.Name == "IService" && type.ContainingNamespace.ToDisplayString() == "SharpLink.Sdk";
 
@@ -1218,9 +1405,83 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         return true;
     }
 
+    private static bool TryGetPublicizationClosure(
+        INamedTypeSymbol root,
+        out ImmutableArray<INamedTypeSymbol> types)
+    {
+        var result = new List<INamedTypeSymbol>();
+        var pending = new Queue<INamedTypeSymbol>();
+        Add(root.OriginalDefinition);
+
+        while (pending.Count != 0)
+        {
+            var current = pending.Dequeue();
+            if (current.ContainingType is { } containing)
+                Add(containing.OriginalDefinition);
+            if (current.BaseType is { } baseType && !AddAccessibilityDependency(baseType))
+            {
+                types = default;
+                return false;
+            }
+            foreach (var @interface in current.Interfaces)
+            {
+                if (!AddAccessibilityDependency(@interface))
+                {
+                    types = default;
+                    return false;
+                }
+            }
+        }
+
+        types = result.ToImmutableArray();
+        return true;
+
+        void Add(INamedTypeSymbol candidate)
+        {
+            if (result.Any(existing => SymbolEqualityComparer.Default.Equals(existing, candidate)))
+                return;
+            result.Add(candidate);
+            pending.Enqueue(candidate);
+        }
+
+        bool AddAccessibilityDependency(ITypeSymbol dependency)
+        {
+            switch (dependency)
+            {
+                case IArrayTypeSymbol array:
+                    return AddAccessibilityDependency(array.ElementType);
+                case IPointerTypeSymbol pointer:
+                    return AddAccessibilityDependency(pointer.PointedAtType);
+                case IErrorTypeSymbol:
+                    return false;
+                case INamedTypeSymbol named:
+                    {
+                        var definition = named.OriginalDefinition;
+                        if (!IsEffectivelyPublic(definition))
+                        {
+                            if (definition.DeclaringSyntaxReferences.Length == 0)
+                                return false;
+                            Add(definition);
+                        }
+                        foreach (var argument in named.TypeArguments)
+                        {
+                            if (!AddAccessibilityDependency(argument))
+                                return false;
+                        }
+                        return true;
+                    }
+                case ITypeParameterSymbol:
+                case IDynamicTypeSymbol:
+                    return true;
+                default:
+                    return true;
+            }
+        }
+    }
+
     private static bool IsSafeToMakeConcrete(INamedTypeSymbol type)
     {
-        if (type.GetMembers().Any(static member => member.IsAbstract))
+        if (type.GetMembers().Any(static member => member.IsAbstract && !member.IsImplicitlyDeclared))
             return false;
         foreach (var @interface in type.AllInterfaces)
         {
@@ -1296,6 +1557,23 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             parameter.RefKind is not (RefKind.Ref or RefKind.Out or RefKind.RefReadOnlyParameter) &&
             parameter.Type.TypeKind is not (TypeKind.Pointer or TypeKind.FunctionPointer) &&
             !parameter.Type.IsRefLikeType);
+
+    private static bool CanExposeAsPublic(IMethodSymbol constructor)
+        => constructor.Parameters.All(static parameter => IsPubliclyAccessible(parameter.Type));
+
+    private static bool IsPubliclyAccessible(ITypeSymbol type)
+        => type switch
+        {
+            IArrayTypeSymbol array => IsPubliclyAccessible(array.ElementType),
+            IPointerTypeSymbol => false,
+            IFunctionPointerTypeSymbol => false,
+            ITypeParameterSymbol => false,
+            IErrorTypeSymbol => false,
+            INamedTypeSymbol named => IsEffectivelyPublic(named.OriginalDefinition) &&
+                                     named.TypeArguments.All(IsPubliclyAccessible),
+            IDynamicTypeSymbol => true,
+            _ => true
+        };
 
     private static bool HasValidServiceActivationShape(INamedTypeSymbol service)
     {

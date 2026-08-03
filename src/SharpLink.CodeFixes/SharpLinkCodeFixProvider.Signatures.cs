@@ -234,8 +234,19 @@ internal sealed partial class SharpLinkCodeFixProvider
                 var node = root?.FindNode(location.Location.SourceSpan, getInnermostNodeForTie: true);
                 if (node is null)
                     continue;
-                if (allowInvocations && node.AncestorsAndSelf().OfType<InvocationExpressionSyntax>().Any())
-                    continue;
+                if (allowInvocations)
+                {
+                    var invocation = node.AncestorsAndSelf().OfType<InvocationExpressionSyntax>().FirstOrDefault();
+                    var semanticModel = invocation is null
+                        ? null
+                        : await location.Document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
+                    if (invocation is not null &&
+                        semanticModel?.GetOperation(invocation, cancellationToken) is IInvocationOperation operation &&
+                        related.Any(relatedMethod => IsSameMethod(operation.TargetMethod, relatedMethod)))
+                    {
+                        continue;
+                    }
+                }
                 if (node.AncestorsAndSelf().Any(static item => item is CrefSyntax) ||
                     node.AncestorsAndSelf().OfType<InvocationExpressionSyntax>().Any(static invocation =>
                         invocation.Expression is IdentifierNameSyntax identifier &&
@@ -316,7 +327,10 @@ internal sealed partial class SharpLinkCodeFixProvider
                     DeclarationEdit declaration => UpdateDeclaration(
                         (MethodDeclarationSyntax)current, declaration, plan),
                     InvocationEdit invocation => UpdateInvocation(
-                        (InvocationExpressionSyntax)current, invocation, plan),
+                        (InvocationExpressionSyntax)original,
+                        (InvocationExpressionSyntax)current,
+                        invocation,
+                        plan),
                     _ => current
                 };
             });
@@ -346,7 +360,8 @@ internal sealed partial class SharpLinkCodeFixProvider
                 var invocation = root?.FindNode(location.Location.SourceSpan, getInnermostNodeForTie: true)
                     .AncestorsAndSelf().OfType<InvocationExpressionSyntax>().FirstOrDefault();
                 if (invocation is null || semanticModel?.GetOperation(invocation, cancellationToken)
-                    is not IInvocationOperation operation)
+                    is not IInvocationOperation operation ||
+                    !methods.Any(candidate => IsSameMethod(operation.TargetMethod, candidate)))
                 {
                     continue;
                 }
@@ -416,14 +431,24 @@ internal sealed partial class SharpLinkCodeFixProvider
     }
 
     private static InvocationExpressionSyntax UpdateInvocation(
-        InvocationExpressionSyntax invocation,
+        InvocationExpressionSyntax originalInvocation,
+        InvocationExpressionSyntax rewrittenInvocation,
         InvocationEdit edit,
         SignatureEditPlan plan)
     {
         if (plan.Kind == SignatureEditKind.MakeInstance)
-            return invocation;
+            return rewrittenInvocation;
 
-        var arguments = invocation.ArgumentList.Arguments;
+        var originalArguments = originalInvocation.ArgumentList.Arguments;
+        var arguments = rewrittenInvocation.ArgumentList.Arguments;
+        if (originalArguments.Count != arguments.Count)
+            return rewrittenInvocation;
+
+        int GetArgumentOrdinal(int index)
+            => edit.ArgumentOrdinals.TryGetValue(originalArguments[index].Span, out var ordinal)
+                ? ordinal
+                : int.MaxValue - arguments.Count + index;
+
         SeparatedSyntaxList<ArgumentSyntax> updatedArguments;
         switch (plan.Kind)
         {
@@ -437,9 +462,7 @@ internal sealed partial class SharpLinkCodeFixProvider
                 updatedArguments = SyntaxFactory.SeparatedList(arguments
                         .Select((argument, index) =>
                         {
-                            var ordinal = edit.ArgumentOrdinals.TryGetValue(argument.Span, out var parameterOrdinal)
-                                ? parameterOrdinal
-                                : int.MaxValue - arguments.Count + index;
+                            var ordinal = GetArgumentOrdinal(index);
                             return (argument, ordinal);
                         })
                         .OrderBy(item => addOrder.TryGetValue(item.ordinal, out var index) ? index : int.MaxValue)
@@ -447,10 +470,13 @@ internal sealed partial class SharpLinkCodeFixProvider
                     .Add(added);
                 break;
             case SignatureEditKind.KeepControlParameter:
-                updatedArguments = SyntaxFactory.SeparatedList(arguments.Where(argument =>
-                    !edit.ArgumentOrdinals.TryGetValue(argument.Span, out var ordinal) ||
-                    !IsControlParameter(edit, plan.ControlKind, ordinal) ||
-                    ordinal == plan.KeptOrdinal));
+                updatedArguments = SyntaxFactory.SeparatedList(arguments.Where((_, index) =>
+                {
+                    if (!edit.ArgumentOrdinals.TryGetValue(originalArguments[index].Span, out var ordinal))
+                        return true;
+                    return !IsControlParameter(edit, plan.ControlKind, ordinal) ||
+                           ordinal == plan.KeptOrdinal;
+                }));
                 break;
             case SignatureEditKind.ReorderControlParameters:
                 var order = GetControlParameterOrder(edit)
@@ -459,20 +485,26 @@ internal sealed partial class SharpLinkCodeFixProvider
                 updatedArguments = SyntaxFactory.SeparatedList(arguments
                     .Select((argument, index) =>
                     {
-                        var ordinal = edit.ArgumentOrdinals.TryGetValue(argument.Span, out var parameterOrdinal)
-                            ? parameterOrdinal
-                            : int.MaxValue - arguments.Count + index;
+                        var ordinal = GetArgumentOrdinal(index);
                         return (argument, ordinal);
                     })
                     .OrderBy(item => order.TryGetValue(item.ordinal, out var index) ? index : int.MaxValue)
                     .Select(static item => item.argument));
                 break;
             default:
-                return invocation;
+                return rewrittenInvocation;
         }
 
-        return invocation.WithArgumentList(invocation.ArgumentList.WithArguments(updatedArguments))
+        return rewrittenInvocation.WithArgumentList(
+                rewrittenInvocation.ArgumentList.WithArguments(updatedArguments))
             .WithAdditionalAnnotations(Formatter.Annotation);
+    }
+
+    private static bool IsSameMethod(IMethodSymbol left, IMethodSymbol right)
+    {
+        left = left.ReducedFrom ?? left;
+        right = right.ReducedFrom ?? right;
+        return SymbolEqualityComparer.Default.Equals(left.OriginalDefinition, right.OriginalDefinition);
     }
 
     private static ImmutableArray<int> GetControlParameterOrder(DeclarationEdit edit)

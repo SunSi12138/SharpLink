@@ -201,7 +201,7 @@ namespace External
 
         Ensure(actions.Select(static item => (item.Title, item.EquivalenceKey)).SequenceEqual(
                 [("Annotate with [NonCancellable]", "AddNonCancellable")]),
-            $"A metadata-only interface obligation must suppress signature edits. Actual: {string.Join(", ", actions.Select(static item => item.Title))}");
+            $"A metadata-only interface obligation must suppress only signature edits. Actual: {string.Join(", ", actions.Select(static item => item.Title))}");
         var changed = await workspace.ApplyAsync(actions[0]);
         await workspace.AssertCompilesAsync(changed);
     }

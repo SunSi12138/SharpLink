@@ -74,6 +74,19 @@ namespace SharpLink.Sdk
 namespace SharpLink.Abstractions
 {
     public interface IRpcCodecAdapter { }
+
+    [AttributeUsage(AttributeTargets.Method)]
+    public sealed class NonCancellableAttribute : Attribute { }
+
+    [AttributeUsage(AttributeTargets.Method)]
+    public sealed class OnewayAttribute : Attribute { }
+
+    [AttributeUsage(AttributeTargets.Method)]
+    public sealed class TimeoutAttribute : Attribute
+    {
+        public TimeoutAttribute() { }
+        public TimeoutAttribute(double seconds) { }
+    }
 }
 """;
 
