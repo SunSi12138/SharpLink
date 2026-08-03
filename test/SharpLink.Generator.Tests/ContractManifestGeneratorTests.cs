@@ -623,7 +623,9 @@ public int OptionalCount { get; set; }
 public enum Status : byte { None, Ready }
 public sealed class FirstCase { }
 public sealed class SecondCase { }
+public sealed class ThirdCase { }
 [SharpLink.Sdk.RpcUnionCase(1, typeof(FirstCase))]
+[SharpLink.Sdk.RpcUnionCase(2, typeof(ThirdCase))]
 public interface IResultUnion { }
 [SharpLink.Sdk.RpcContract]
 public interface IHelloService : SharpLink.Sdk.IService
@@ -647,6 +649,9 @@ public interface IHelloService : SharpLink.Sdk.IService
         Ensure(unionDiagnostic.Properties.TryGetValue("SharpLink.PreviousUnionType", out var previousUnionType) &&
                previousUnionType == "FirstCase",
             "SHARPLINK033 previous union type property");
+        Ensure(unionDiagnostic.Properties.TryGetValue("SharpLink.PublishedUnionTags", out var publishedUnionTags) &&
+               publishedUnionTags == "1,2",
+            "SHARPLINK033 complete published union tag property");
         return Task.CompletedTask;
     }
 

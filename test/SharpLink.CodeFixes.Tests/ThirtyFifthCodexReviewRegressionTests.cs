@@ -55,7 +55,8 @@ public interface IResult { }
             new Dictionary<string, string?>
             {
                 ["SharpLink.PreviousUnionTag"] = "1",
-                ["SharpLink.PreviousUnionType"] = "OldCase"
+                ["SharpLink.PreviousUnionType"] = "OldCase",
+                ["SharpLink.PublishedUnionTags"] = "1"
             });
         var action = (await workspace.GetActionsAsync(diagnostic, "Union.cs"))
             .Single(static item => item.EquivalenceKey == "RestoreUnionTag");

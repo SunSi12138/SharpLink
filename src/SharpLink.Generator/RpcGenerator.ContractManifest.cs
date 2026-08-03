@@ -740,7 +740,13 @@ public partial class RpcGenerator
                             SharpLinkDiagnosticProperties.PreviousUnionTag,
                             oldCase.Tag.ToString(CultureInfo.InvariantCulture),
                             SharpLinkDiagnosticProperties.PreviousUnionType,
-                            oldCase.Type)));
+                            oldCase.Type,
+                            SharpLinkDiagnosticProperties.PublishedUnionTags,
+                            string.Join(",", oldUnion.Cases
+                                .Select(static item => item.Tag)
+                                .Distinct()
+                                .OrderBy(static item => item)
+                                .Select(static item => item.ToString(CultureInfo.InvariantCulture))))));
                 }
             }
         }

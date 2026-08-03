@@ -159,7 +159,8 @@ namespace Cases
             new Dictionary<string, string?>
             {
                 ["SharpLink.PreviousUnionTag"] = "7",
-                ["SharpLink.PreviousUnionType"] = "Cases.GenericCase<System.Int32>"
+                ["SharpLink.PreviousUnionType"] = "Cases.GenericCase<System.Int32>",
+                ["SharpLink.PublishedUnionTags"] = "7"
             });
 
         var actions = await workspace.GetActionsAsync(diagnostic, "Union.cs");

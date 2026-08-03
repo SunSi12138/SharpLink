@@ -203,7 +203,8 @@ public interface IResult { }
             new Dictionary<string, string?>
             {
                 ["SharpLink.PreviousUnionTag"] = "7",
-                ["SharpLink.PreviousUnionType"] = "OldCase"
+                ["SharpLink.PreviousUnionType"] = "OldCase",
+                ["SharpLink.PublishedUnionTags"] = "7"
             });
 
         var action = await GetOnlyActionAsync(workspace, diagnostic, "Union.cs", "Restore tag 7 to OldCase", "RestoreUnionTag");

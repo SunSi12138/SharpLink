@@ -8,6 +8,7 @@ internal static class SharpLinkDiagnosticProperties
     internal const string PreviousEnumUnderlyingType = "SharpLink.PreviousEnumUnderlyingType";
     internal const string PreviousUnionTag = "SharpLink.PreviousUnionTag";
     internal const string PreviousUnionType = "SharpLink.PreviousUnionType";
+    internal const string PublishedUnionTags = "SharpLink.PublishedUnionTags";
 
     internal static ImmutableDictionary<string, string?> Create(string key, string? value)
         => ImmutableDictionary<string, string?>.Empty.Add(key, value);
@@ -20,4 +21,16 @@ internal static class SharpLinkDiagnosticProperties
         => ImmutableDictionary<string, string?>.Empty
             .Add(firstKey, firstValue)
             .Add(secondKey, secondValue);
+
+    internal static ImmutableDictionary<string, string?> Create(
+        string firstKey,
+        string? firstValue,
+        string secondKey,
+        string? secondValue,
+        string thirdKey,
+        string? thirdValue)
+        => ImmutableDictionary<string, string?>.Empty
+            .Add(firstKey, firstValue)
+            .Add(secondKey, secondValue)
+            .Add(thirdKey, thirdValue);
 }

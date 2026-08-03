@@ -8,4 +8,5 @@ internal static class SharpLinkDiagnosticProperties
     internal const string PreviousEnumUnderlyingType = "SharpLink.PreviousEnumUnderlyingType";
     internal const string PreviousUnionTag = "SharpLink.PreviousUnionTag";
     internal const string PreviousUnionType = "SharpLink.PreviousUnionType";
+    internal const string PublishedUnionTags = "SharpLink.PublishedUnionTags";
 }

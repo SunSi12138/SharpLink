@@ -331,12 +331,13 @@ public interface IContract
             "SHARPLINK015",
             "RemoveNonCancellable",
             """
+using System.Threading;
 using System.Threading.Tasks;
 
 public interface IContract
 {
     [SharpLink.Sdk.NonCancellable]
-    ValueTask<int> [|RunAsync|]();
+    ValueTask<int> [|RunAsync|](CancellationToken cancellationToken);
 }
 """);
     }
@@ -446,7 +447,8 @@ public interface IResult { }
         => new Dictionary<string, string?>
         {
             ["SharpLink.PreviousUnionTag"] = "7",
-            ["SharpLink.PreviousUnionType"] = "OldCase"
+            ["SharpLink.PreviousUnionType"] = "OldCase",
+            ["SharpLink.PublishedUnionTags"] = "7"
         };
 
     private static async Task AssertOrdinaryPolicyActionAsync(
