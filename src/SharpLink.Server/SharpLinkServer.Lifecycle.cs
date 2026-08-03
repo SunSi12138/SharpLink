@@ -348,105 +348,112 @@ internal sealed partial class SharpLinkServer
         while (session.IsConnected && !ct.IsCancellationRequested)
         {
             var result = await reader.ReadAsync(ct);
-            var buffer =  result.Buffer;
-            while (session.IsConnected &&
-                   !ct.IsCancellationRequested &&
-                   ProtocolV2FrameParser.TryReadFrame(
-                       ref buffer, _protocolOptions, out var header, out var message))
+            var buffer = result.Buffer;
+            try
             {
-                SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + message.Length);
-                SharpLinkAuthenticationResult authResult;
-                ProtocolV2HandshakeRequest request = default;
-                var supportedCapabilities =
-                    ProtocolV2Capabilities.Metadata |
-                    ProtocolV2Capabilities.FlowControl |
-                    ProtocolV2Capabilities.HealthCheck |
-                    ProtocolV2Capabilities.CancellationReason;
-                if (_runtimeContext.Compression.ProviderBindings.Count != 0)
-                    supportedCapabilities |= ProtocolV2Capabilities.Compression;
-                if (header.Type != ProtocolV2FrameType.HandshakeRequest)
+                while (session.IsConnected &&
+                       !ct.IsCancellationRequested &&
+                       ProtocolV2FrameParser.TryReadFrame(
+                           ref buffer, _protocolOptions, out var header, out var message))
                 {
-                    authResult = SharpLinkAuthenticationResult.Reject(
-                        SharpLinkErrorCode.ProtocolViolation,
-                        "Expected HandshakeRequest frame.");
-                }
-                else
-                {
-                    request = ProtocolV2PayloadCodec.ReadHandshakeRequest(message, _protocolOptions);
-                    var unsupportedRequired = request.RequiredCapabilities & ~supportedCapabilities;
-                    if (unsupportedRequired != ProtocolV2Capabilities.None)
+                    SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + message.Length);
+                    SharpLinkAuthenticationResult authResult;
+                    ProtocolV2HandshakeRequest request = default;
+                    var supportedCapabilities =
+                        ProtocolV2Capabilities.Metadata |
+                        ProtocolV2Capabilities.FlowControl |
+                        ProtocolV2Capabilities.HealthCheck |
+                        ProtocolV2Capabilities.CancellationReason;
+                    if (_runtimeContext.Compression.ProviderBindings.Count != 0)
+                        supportedCapabilities |= ProtocolV2Capabilities.Compression;
+                    if (header.Type != ProtocolV2FrameType.HandshakeRequest)
                     {
                         authResult = SharpLinkAuthenticationResult.Reject(
-                            SharpLinkErrorCode.Unimplemented,
-                            $"Required capabilities are unsupported: {unsupportedRequired}.");
-                    }
-                    else if ((request.RequiredCapabilities & ProtocolV2Capabilities.Compression) != 0 &&
-                             SelectCompressionProvider(request) is null)
-                    {
-                        authResult = SharpLinkAuthenticationResult.Reject(
-                            SharpLinkErrorCode.Unimplemented,
-                            "Required compression has no mutually supported profile.");
+                            SharpLinkErrorCode.ProtocolViolation,
+                            "Expected HandshakeRequest frame.");
                     }
                     else
                     {
-                        authResult = await AuthenticateAsync(session, request.AuthenticationPayload, ct)
-                            .ConfigureAwait(false);
+                        request = ProtocolV2PayloadCodec.ReadHandshakeRequest(message, _protocolOptions);
+                        var unsupportedRequired = request.RequiredCapabilities & ~supportedCapabilities;
+                        if (unsupportedRequired != ProtocolV2Capabilities.None)
+                        {
+                            authResult = SharpLinkAuthenticationResult.Reject(
+                                SharpLinkErrorCode.Unimplemented,
+                                $"Required capabilities are unsupported: {unsupportedRequired}.");
+                        }
+                        else if ((request.RequiredCapabilities & ProtocolV2Capabilities.Compression) != 0 &&
+                                 SelectCompressionProvider(request) is null)
+                        {
+                            authResult = SharpLinkAuthenticationResult.Reject(
+                                SharpLinkErrorCode.Unimplemented,
+                                "Required compression has no mutually supported profile.");
+                        }
+                        else
+                        {
+                            authResult = await AuthenticateAsync(session, request.AuthenticationPayload, ct)
+                                .ConfigureAwait(false);
+                        }
                     }
-                }
 
-                if (authResult.IsAuthenticated)
-                {
-                    var compressionBinding = SelectCompressionProvider(request);
-                    var negotiatedCapabilities = request.SupportedCapabilities & supportedCapabilities;
-                    if (compressionBinding is null)
-                        negotiatedCapabilities &= ~ProtocolV2Capabilities.Compression;
-                    var response = new ProtocolV2HandshakeResponse(
-                        Math.Min(request.MinorVersion, ProtocolV2Constants.MinorVersion),
-                        negotiatedCapabilities,
-                        Math.Min(request.MaxFramePayloadBytes, _protocolOptions.MaxFramePayloadBytes),
-                        Math.Min(request.StreamReceiveWindowBytes, _runtimeContext.FlowControl.StreamReceiveWindowBytes),
-                        Math.Min(request.ConnectionReceiveWindowBytes, _runtimeContext.FlowControl.ConnectionReceiveWindowBytes),
-                        compressionBinding?.WireProfile);
-                    var runtimeSession = (RpcSession)session;
-                    runtimeSession.NegotiatedCapabilities = response.NegotiatedCapabilities;
-                    runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
-                    if (compressionBinding is { } binding)
-                        runtimeSession.EnableCompression(binding.Provider, binding.WireProfile);
-                    if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
+                    if (authResult.IsAuthenticated)
                     {
-                        runtimeSession.EnableStreamFlowControl(
-                            response.StreamReceiveWindowBytes,
-                            response.ConnectionReceiveWindowBytes);
+                        var compressionBinding = SelectCompressionProvider(request);
+                        var negotiatedCapabilities = request.SupportedCapabilities & supportedCapabilities;
+                        if (compressionBinding is null)
+                            negotiatedCapabilities &= ~ProtocolV2Capabilities.Compression;
+                        var response = new ProtocolV2HandshakeResponse(
+                            Math.Min(request.MinorVersion, ProtocolV2Constants.MinorVersion),
+                            negotiatedCapabilities,
+                            Math.Min(request.MaxFramePayloadBytes, _protocolOptions.MaxFramePayloadBytes),
+                            Math.Min(request.StreamReceiveWindowBytes, _runtimeContext.FlowControl.StreamReceiveWindowBytes),
+                            Math.Min(request.ConnectionReceiveWindowBytes, _runtimeContext.FlowControl.ConnectionReceiveWindowBytes),
+                            compressionBinding?.WireProfile);
+                        var runtimeSession = (RpcSession)session;
+                        runtimeSession.NegotiatedCapabilities = response.NegotiatedCapabilities;
+                        runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
+                        if (compressionBinding is { } binding)
+                            runtimeSession.EnableCompression(binding.Provider, binding.WireProfile);
+                        if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
+                        {
+                            runtimeSession.EnableStreamFlowControl(
+                                response.StreamReceiveWindowBytes,
+                                response.ConnectionReceiveWindowBytes);
+                        }
+                        await session.SendHandshakeResponseAndFlushAsync(response, ct).ConfigureAwait(false);
                     }
-                    await session.SendHandshakeResponseAndFlushAsync(response, ct).ConfigureAwait(false);
+                    else
+                    {
+                        if (authResult.ErrorCode == SharpLinkErrorCode.ProtocolViolation)
+                            SharpLinkTelemetry.RecordProtocolFailure("server");
+                        else if (authResult.ErrorCode is SharpLinkErrorCode.AuthenticationRejected or
+                                 SharpLinkErrorCode.AuthenticationExpired or
+                                 SharpLinkErrorCode.AuthorizationDenied or
+                                 SharpLinkErrorCode.PermissionDenied)
+                            SharpLinkTelemetry.RecordAuthenticationFailure("server");
+                        await session.SendHandshakeErrorAndFlushAsync(
+                            authResult.ErrorCode,
+                            authResult.ErrorMessage,
+                            _protocolOptions.MaxErrorMessageBytes,
+                            ct).ConfigureAwait(false);
+                    }
+
+                    handshakeResult = authResult;
+                    break;
                 }
-                else
-                {
-                    if (authResult.ErrorCode == SharpLinkErrorCode.ProtocolViolation)
-                        SharpLinkTelemetry.RecordProtocolFailure("server");
-                    else if (authResult.ErrorCode is SharpLinkErrorCode.AuthenticationRejected or
-                             SharpLinkErrorCode.AuthenticationExpired or
-                             SharpLinkErrorCode.AuthorizationDenied or
-                             SharpLinkErrorCode.PermissionDenied)
-                        SharpLinkTelemetry.RecordAuthenticationFailure("server");
-                    await session.SendHandshakeErrorAndFlushAsync(
-                        authResult.ErrorCode,
-                        authResult.ErrorMessage,
-                        _protocolOptions.MaxErrorMessageBytes,
-                        ct).ConfigureAwait(false);
-                }
-            
-                handshakeResult = authResult;
-                break;
             }
-            // The first request can be coalesced with the handshake request. Preserve the
-            // unconsumed remainder as unexamined when handing the reader to the request loop.
-            reader.AdvanceTo(buffer.Start, handshakeResult.HasValue ? buffer.Start : buffer.End);
-            
+            finally
+            {
+                // The first request can be coalesced with the handshake request. Preserve the
+                // unconsumed remainder as unexamined when handing the reader to the request loop.
+                // The finally also releases transport read ownership when parsing throws.
+                reader.AdvanceTo(buffer.Start, handshakeResult.HasValue ? buffer.Start : buffer.End);
+            }
+
             if (handshakeResult.HasValue)
                 return handshakeResult.Value;
-            
-            if(result.IsCompleted)
+
+            if (result.IsCompleted)
                 break;
         }
 
