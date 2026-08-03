@@ -179,11 +179,19 @@ namespace SharpLink.Abstractions
     internal async Task<IReadOnlyList<CodeAction>> GetActionsAsync(
         Diagnostic diagnostic,
         string documentName)
+        => await GetActionsAsync([diagnostic], documentName).ConfigureAwait(false);
+
+    internal async Task<IReadOnlyList<CodeAction>> GetActionsAsync(
+        ImmutableArray<Diagnostic> diagnostics,
+        string documentName)
     {
         var actions = new List<CodeAction>();
+        if (diagnostics.IsDefaultOrEmpty)
+            return actions;
         var context = new CodeFixContext(
             GetDocument(documentName),
-            diagnostic,
+            diagnostics[0].Location.SourceSpan,
+            diagnostics,
             (action, _) => actions.Add(action),
             CancellationToken.None);
         await CreateProvider().RegisterCodeFixesAsync(context).ConfigureAwait(false);

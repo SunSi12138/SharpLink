@@ -18,10 +18,19 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
 
     public override async Task RegisterCodeFixesAsync(CodeFixContext context)
     {
-        var diagnostic = context.Diagnostics.First();
-        if (diagnostic.Location == Location.None || !diagnostic.Location.IsInSource)
-            return;
+        foreach (var diagnostic in context.Diagnostics)
+        {
+            if (diagnostic.Location == Location.None || !diagnostic.Location.IsInSource)
+                continue;
 
+            await RegisterCodeFixesForDiagnosticAsync(context, diagnostic).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task RegisterCodeFixesForDiagnosticAsync(
+        CodeFixContext context,
+        Diagnostic diagnostic)
+    {
         switch (diagnostic.Id)
         {
             case "SHARPLINK002":
@@ -72,7 +81,9 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             case "SHARPLINK028":
                 if (diagnostic.Properties.TryGetValue(SharpLinkDiagnosticProperties.PreviousMemberId, out var memberId) &&
                     uint.TryParse(memberId, NumberStyles.None, CultureInfo.InvariantCulture, out var parsedMemberId) &&
-                    parsedMemberId is > 0 and <= 536_870_911)
+                    parsedMemberId is > 0 and <= 536_870_911 &&
+                    await CanRestoreMemberIdAsync(
+                        context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false))
                 {
                     RegisterDocumentFix(context, diagnostic, $"Preserve published member ID {memberId}",
                         "RestoreMemberId:" + memberId,
@@ -183,15 +194,26 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
             .ConfigureAwait(false);
         var symbol = semanticModel?.GetDeclaredSymbol(method, context.CancellationToken);
-        if (symbol is null || !await CanSafelyChangeSignatureAsync(
-                symbol, context.Document.Project.Solution, allowInvocations: true, context.CancellationToken)
-            .ConfigureAwait(false))
-        {
+        if (symbol is null)
             return;
+
+        var canAddCancellationToken = await CanSafelyChangeSignatureAsync(
+                symbol, context.Document.Project.Solution, allowInvocations: true, context.CancellationToken)
+            .ConfigureAwait(false);
+        if (canAddCancellationToken)
+        {
+            var relatedMethods = await FindRelatedMethodsAsync(
+                symbol, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false);
+            canAddCancellationToken = !relatedMethods.Any(static related =>
+                related.Parameters.Any(static parameter => parameter.IsOptional || parameter.IsParams));
         }
 
-        RegisterSolutionFix(context, diagnostic, "Add CancellationToken",
-            SignatureKeyPrefix + "AddCancellationToken", AddCancellationTokenAsync);
+        if (canAddCancellationToken)
+        {
+            RegisterSolutionFix(context, diagnostic, "Add CancellationToken",
+                SignatureKeyPrefix + "AddCancellationToken", AddCancellationTokenAsync);
+        }
+
         RegisterDocumentFix(context, diagnostic, "Annotate with [NonCancellable]", "AddNonCancellable",
             AddNonCancellableAsync);
     }
@@ -334,9 +356,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
 
         if (type.IsAbstract && IsEffectivelyPublic(type) && IsSafeToMakeConcrete(type))
         {
-            RegisterDocumentFix(context, diagnostic, "Make RPC service concrete", "MakeServiceConcrete",
-                (document, item, ct) => UpdateTypeAtDiagnosticAsync(
-                    document, item, static node => RemoveModifier(node, SyntaxKind.AbstractKeyword), ct));
+            RegisterSolutionFix(context, diagnostic, "Make RPC service concrete", "MakeServiceConcrete",
+                (solution, _, _, ct) => MakeTypeConcreteAcrossSolutionAsync(solution, type, ct));
         }
     }
 
@@ -407,15 +428,14 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         if (semanticModel is null)
             return;
         var expected = type!.StartsWith("global::", StringComparison.Ordinal) ? type : "global::" + type;
-        var simpleName = type.Split('.').Last();
-        var resolves = semanticModel.Compilation.GetSymbolsWithName(
-                simpleName, SymbolFilter.Type, context.CancellationToken)
-            .OfType<INamedTypeSymbol>()
-            .Any(candidate => string.Equals(
-                candidate.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                expected,
-                StringComparison.Ordinal));
-        if (!resolves)
+        var typeSyntax = SyntaxFactory.ParseTypeName(expected);
+        var resolvedType = typeSyntax.ContainsDiagnostics
+            ? null
+            : semanticModel.GetSpeculativeTypeInfo(
+                diagnostic.Location.SourceSpan.Start,
+                typeSyntax,
+                SpeculativeBindingOption.BindAsTypeOrNamespace).Type;
+        if (resolvedType is null || resolvedType.TypeKind == TypeKind.Error)
             return;
 
         RegisterDocumentFix(context, diagnostic, $"Restore tag {tag} to {type}",
@@ -475,10 +495,19 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             GetContainingTypes(adapter).Any(static item => item.IsGenericType) ||
             (adapter.IsAbstract && !IsSafeToMakeConcrete(adapter)) ||
             !CanExposePublicParameterlessConstructor(adapter) ||
-            adapter.DeclaringSyntaxReferences.Length == 0)
+            adapter.DeclaringSyntaxReferences.Length == 0 ||
+            adapter.DeclaringSyntaxReferences.Any(reference =>
+                reference.GetSyntax(context.CancellationToken) is not ClassDeclarationSyntax))
         {
             return;
         }
+
+        var derivedTypes = await SymbolFinder.FindDerivedClassesAsync(
+            adapter,
+            context.Document.Project.Solution,
+            cancellationToken: context.CancellationToken).ConfigureAwait(false);
+        if (derivedTypes.Any(static type => type.Locations.Any(static location => location.IsInSource)))
+            return;
 
         RegisterSolutionFix(context, diagnostic, $"Fix {adapter.Name} Codec adapter shape", "FixAdapterShape",
             (solution, _, _, ct) => FixAdapterShapeAsync(solution, adapter, ct));
@@ -620,6 +649,23 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         return await ReplaceNodeAsync(
             document, member, updatedMember.WithAdditionalAnnotations(Formatter.Annotation), cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    private static async Task<bool> CanRestoreMemberIdAsync(
+        Document document,
+        Diagnostic diagnostic,
+        CancellationToken cancellationToken)
+    {
+        var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+        var member = root?.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true)
+            .AncestorsAndSelf().OfType<MemberDeclarationSyntax>()
+            .FirstOrDefault(static item => item is PropertyDeclarationSyntax or FieldDeclarationSyntax);
+        return member switch
+        {
+            PropertyDeclarationSyntax => true,
+            FieldDeclarationSyntax field => field.Declaration.Variables.Count == 1,
+            _ => false
+        };
     }
 
     private static async Task<Document> RestoreEnumUnderlyingTypeAsync(
@@ -811,6 +857,47 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         return solution;
     }
 
+    private static async Task<Solution> MakeTypeConcreteAcrossSolutionAsync(
+        Solution solution,
+        INamedTypeSymbol type,
+        CancellationToken cancellationToken)
+    {
+        var referencesByDocument = new Dictionary<DocumentId, List<Microsoft.CodeAnalysis.Text.TextSpan>>();
+        foreach (var reference in type.DeclaringSyntaxReferences)
+        {
+            var document = solution.GetDocument(reference.SyntaxTree);
+            if (document is null)
+                continue;
+            if (!referencesByDocument.TryGetValue(document.Id, out var spans))
+            {
+                spans = [];
+                referencesByDocument.Add(document.Id, spans);
+            }
+            spans.Add(reference.Span);
+        }
+
+        foreach (var pair in referencesByDocument)
+        {
+            var document = solution.GetDocument(pair.Key);
+            var root = document is null ? null : await document.GetSyntaxRootAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (root is null)
+                continue;
+            var declarations = pair.Value
+                .Select(span => root.FindNode(span, getInnermostNodeForTie: true)
+                    .AncestorsAndSelf().OfType<TypeDeclarationSyntax>().FirstOrDefault())
+                .Where(static declaration => declaration is not null)
+                .Select(static declaration => declaration!)
+                .Distinct()
+                .ToArray();
+            var updatedRoot = root.ReplaceNodes(declarations, static (_, current) =>
+                RemoveModifier(current, SyntaxKind.AbstractKeyword)
+                    .WithAdditionalAnnotations(Formatter.Annotation));
+            solution = solution.WithDocumentSyntaxRoot(pair.Key, updatedRoot);
+        }
+        return solution;
+    }
+
     private static async Task<Document> UpdateTypeAtDiagnosticAsync(
         Document document,
         Diagnostic diagnostic,
@@ -877,42 +964,74 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         INamedTypeSymbol adapter,
         CancellationToken cancellationToken)
     {
-        var reference = adapter.DeclaringSyntaxReferences.FirstOrDefault();
-        var document = reference is null ? null : solution.GetDocument(reference.SyntaxTree);
-        var root = document is null ? null : await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
-        var declaration = root?.FindNode(reference!.Span, getInnermostNodeForTie: true)
-            .AncestorsAndSelf().OfType<ClassDeclarationSyntax>().FirstOrDefault();
-        if (document is null || declaration is null)
-            return solution;
-
-        var declarations = declaration.AncestorsAndSelf().OfType<BaseTypeDeclarationSyntax>().ToArray();
-        var updatedRoot = root!.ReplaceNodes(declarations, (original, current) =>
+        var declarationsByDocument = new Dictionary<
+            DocumentId,
+            Dictionary<Microsoft.CodeAnalysis.Text.TextSpan, bool>>();
+        for (var current = adapter; current is not null; current = current.ContainingType)
         {
-            var accessible = MakePublic(current);
-            if (original == declaration && accessible is ClassDeclarationSyntax adapterClass)
+            var isAdapter = SymbolEqualityComparer.Default.Equals(current, adapter);
+            foreach (var reference in current.DeclaringSyntaxReferences)
             {
-                var modifiers = adapterClass.Modifiers;
-                modifiers = RemoveModifier(modifiers, SyntaxKind.AbstractKeyword);
-                if (!modifiers.Any(SyntaxKind.SealedKeyword))
-                    modifiers = modifiers.Add(SyntaxFactory.Token(SyntaxKind.SealedKeyword));
+                var document = solution.GetDocument(reference.SyntaxTree);
+                if (document is null)
+                    continue;
+                if (!declarationsByDocument.TryGetValue(document.Id, out var spans))
+                {
+                    spans = [];
+                    declarationsByDocument.Add(document.Id, spans);
+                }
+                spans[reference.Span] = isAdapter;
+            }
+        }
+
+        var firstAdapterReference = adapter.DeclaringSyntaxReferences[0];
+        var firstAdapterDocument = solution.GetDocument(firstAdapterReference.SyntaxTree)?.Id;
+        var needsPublicParameterlessConstructor = !adapter.InstanceConstructors.Any(static constructor =>
+            constructor.DeclaredAccessibility == Accessibility.Public && constructor.Parameters.Length == 0);
+        var hasExplicitParameterlessConstructor = adapter.InstanceConstructors.Any(static constructor =>
+            !constructor.IsImplicitlyDeclared && constructor.Parameters.Length == 0);
+
+        foreach (var pair in declarationsByDocument)
+        {
+            var document = solution.GetDocument(pair.Key);
+            var root = document is null ? null : await document.GetSyntaxRootAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (root is null)
+                continue;
+
+            var declarations = new Dictionary<BaseTypeDeclarationSyntax, bool>();
+            foreach (var item in pair.Value)
+            {
+                var declaration = root.FindNode(item.Key, getInnermostNodeForTie: true)
+                    .AncestorsAndSelf().OfType<BaseTypeDeclarationSyntax>().FirstOrDefault();
+                if (declaration is not null)
+                    declarations[declaration] = item.Value;
+            }
+
+            var updatedRoot = root.ReplaceNodes(declarations.Keys, (original, rewritten) =>
+            {
+                var accessible = MakePublic(rewritten);
+                if (!declarations[original] || accessible is not ClassDeclarationSyntax adapterClass)
+                    return accessible.WithAdditionalAnnotations(Formatter.Annotation);
+
+                var modifiers = AddModifier(
+                    RemoveModifier(adapterClass.Modifiers, SyntaxKind.AbstractKeyword),
+                    SyntaxKind.SealedKeyword);
                 adapterClass = adapterClass.WithModifiers(modifiers);
 
-                var parameterless = adapter.InstanceConstructors.FirstOrDefault(static item =>
-                    !item.IsImplicitlyDeclared && item.Parameters.Length == 0);
-                if (!adapter.InstanceConstructors.Any(static item =>
-                        item.DeclaredAccessibility == Accessibility.Public && item.Parameters.Length == 0))
+                if (needsPublicParameterlessConstructor)
                 {
-                    if (parameterless?.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax(cancellationToken)
-                        is ConstructorDeclarationSyntax &&
-                        adapterClass.Members.OfType<ConstructorDeclarationSyntax>()
-                            .FirstOrDefault(static item => item.ParameterList.Parameters.Count == 0)
-                        is { } currentConstructor)
+                    var constructor = adapterClass.Members.OfType<ConstructorDeclarationSyntax>()
+                        .FirstOrDefault(static item => item.ParameterList.Parameters.Count == 0);
+                    if (constructor is not null)
                     {
-                        adapterClass = adapterClass.ReplaceNode(currentConstructor,
-                            currentConstructor.WithModifiers(WithAccessibility(
-                                currentConstructor.Modifiers, SyntaxKind.PublicKeyword)));
+                        adapterClass = adapterClass.ReplaceNode(constructor,
+                            constructor.WithModifiers(WithAccessibility(
+                                constructor.Modifiers, SyntaxKind.PublicKeyword)));
                     }
-                    else
+                    else if (!hasExplicitParameterlessConstructor &&
+                             pair.Key == firstAdapterDocument &&
+                             original.Span == firstAdapterReference.Span)
                     {
                         adapterClass = adapterClass.AddMembers(
                             SyntaxFactory.ConstructorDeclaration(adapter.Name)
@@ -921,11 +1040,12 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                                 .WithBody(SyntaxFactory.Block()));
                     }
                 }
+
                 return adapterClass.WithAdditionalAnnotations(Formatter.Annotation);
-            }
-            return accessible.WithAdditionalAnnotations(Formatter.Annotation);
-        });
-        return solution.WithDocumentSyntaxRoot(document.Id, updatedRoot);
+            });
+            solution = solution.WithDocumentSyntaxRoot(pair.Key, updatedRoot);
+        }
+        return solution;
     }
 
     private static async Task<TNode?> FindNodeAsync<TNode>(
@@ -1026,11 +1146,11 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             return true;
         return baseType.InstanceConstructors.Any(constructor =>
             constructor.Parameters.Length == 0 &&
-            constructor.DeclaredAccessibility is Accessibility.Public or Accessibility.Protected or
-                Accessibility.ProtectedOrInternal ||
-            constructor.DeclaredAccessibility == Accessibility.Internal &&
-            SymbolEqualityComparer.Default.Equals(
-                constructor.ContainingAssembly, type.ContainingAssembly));
+            (constructor.DeclaredAccessibility is Accessibility.Public or Accessibility.Protected or
+                 Accessibility.ProtectedOrInternal ||
+             constructor.DeclaredAccessibility == Accessibility.Internal &&
+             SymbolEqualityComparer.Default.Equals(
+                 constructor.ContainingAssembly, type.ContainingAssembly)));
     }
 
     private static bool HasOverride(INamedTypeSymbol type, ISymbol abstractMember)
@@ -1092,7 +1212,16 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         => declaration.WithModifiers(AddModifier(declaration.Modifiers, modifier));
 
     private static SyntaxTokenList AddModifier(SyntaxTokenList modifiers, SyntaxKind modifier)
-        => modifiers.Any(modifier) ? modifiers : modifiers.Add(SyntaxFactory.Token(modifier));
+    {
+        if (modifiers.Any(modifier))
+            return modifiers;
+        for (var index = 0; index < modifiers.Count; index++)
+        {
+            if (modifiers[index].IsKind(SyntaxKind.PartialKeyword))
+                return modifiers.Insert(index, SyntaxFactory.Token(modifier));
+        }
+        return modifiers.Add(SyntaxFactory.Token(modifier));
+    }
 
     private static TypeDeclarationSyntax RemoveModifier(TypeDeclarationSyntax declaration, SyntaxKind modifier)
         => declaration.WithModifiers(RemoveModifier(declaration.Modifiers, modifier));

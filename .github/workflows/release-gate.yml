@@ -80,6 +80,7 @@ jobs:
         run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
 
       - name: Load packed Code Fixes in workspace host
+        shell: bash
         run: dotnet run -c Release --no-restore --project test/SharpLink.CodeFixHostSmoke -- artifacts/nuget/SharpLink.Sdk.*.nupkg
 
       - name: Restore Package Smoke
