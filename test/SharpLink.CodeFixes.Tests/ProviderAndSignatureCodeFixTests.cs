@@ -94,8 +94,8 @@ public static class Caller
             "RunAsync(int cancellationToken, int cancellationToken1, SharpLinkCallOptions options, global::System.Threading.CancellationToken cancellationToken2)",
             "implementation declaration");
         EnsureContains(caller,
-            "RunAsync(20, 22, default, cancellationToken2: global::System.Threading.CancellationToken.None)",
-            "positional call site");
+            "RunAsync(cancellationToken: 20, cancellationToken1: 22, options: default, cancellationToken2: global::System.Threading.CancellationToken.None)",
+            "evaluation-order-preserving call site");
         await workspace.AssertCompilesAsync(changed);
 
         var annotated = await GetChangedSolutionAsync(actions[1]);
@@ -150,7 +150,7 @@ public static class Caller
             "IContract.RunAsync(int value, global::System.Threading.CancellationToken cancellationToken)",
             "explicit interface implementation");
         EnsureContains(caller,
-            "RunAsync(42, cancellationToken: global::System.Threading.CancellationToken.None)",
+            "RunAsync(value: 42, cancellationToken: global::System.Threading.CancellationToken.None)",
             "interface call site");
         await workspace.AssertCompilesAsync(changed);
     }
@@ -355,8 +355,8 @@ public static class Caller
             "RunAsync(int value, string name, SharpLinkCallOptions options, CancellationToken token)",
             "implementation declaration");
         EnsureContains(caller,
-            "RunAsync(40, \"ok\", default, CancellationToken.None)",
-            "positional call site");
+            "RunAsync(token: CancellationToken.None, value: 40, options: default, name: \"ok\")",
+            "evaluation-order-preserving call site");
         await workspace.AssertCompilesAsync(changed);
     }
 

@@ -58,17 +58,20 @@ internal sealed partial class SharpLinkCodeFixProvider
         internal InvocationEdit(
             Microsoft.CodeAnalysis.Text.TextSpan span,
             Dictionary<Microsoft.CodeAnalysis.Text.TextSpan, int> argumentOrdinals,
+            ImmutableArray<string> parameterNames,
             ImmutableArray<bool> cancellationTokens,
             ImmutableArray<bool> callOptions)
         {
             Span = span;
             ArgumentOrdinals = argumentOrdinals;
+            ParameterNames = parameterNames;
             CancellationTokens = cancellationTokens;
             CallOptions = callOptions;
         }
 
         internal Microsoft.CodeAnalysis.Text.TextSpan Span { get; }
         internal Dictionary<Microsoft.CodeAnalysis.Text.TextSpan, int> ArgumentOrdinals { get; }
+        internal ImmutableArray<string> ParameterNames { get; }
         internal ImmutableArray<bool> CancellationTokens { get; }
         internal ImmutableArray<bool> CallOptions { get; }
     }
@@ -171,6 +174,13 @@ internal sealed partial class SharpLinkCodeFixProvider
         var methods = new List<IMethodSymbol>();
         var pending = new Queue<IMethodSymbol>();
         Add(method);
+        if (method.ContainingType.TypeKind == TypeKind.Interface)
+        {
+            var equivalentInterfaceMethods = await FindEquivalentInterfaceMethodsAsync(
+                method, solution, cancellationToken).ConfigureAwait(false);
+            foreach (var equivalent in equivalentInterfaceMethods)
+                Add(equivalent);
+        }
 
         while (pending.Count != 0)
         {
@@ -382,7 +392,11 @@ internal sealed partial class SharpLinkCodeFixProvider
                     result.Add(document.Id, edits);
                 }
                 edits.Add(new InvocationEdit(
-                    invocation.Span, ordinals, flags.CancellationTokens, flags.CallOptions));
+                    invocation.Span,
+                    ordinals,
+                    operation.TargetMethod.Parameters.Select(static parameter => parameter.Name).ToImmutableArray(),
+                    flags.CancellationTokens,
+                    flags.CallOptions));
             }
         }
         return result;
@@ -455,18 +469,9 @@ internal sealed partial class SharpLinkCodeFixProvider
             case SignatureEditKind.AddCancellationToken:
                 var added = SyntaxFactory.Argument(
                         SyntaxFactory.ParseExpression("global::System.Threading.CancellationToken.None"))
-                    .WithNameColon(SyntaxFactory.NameColon(plan.AddedParameterName!));
-                var addOrder = GetControlParameterOrder(edit)
-                    .Select((ordinal, index) => (ordinal, index))
-                    .ToDictionary(static item => item.ordinal, static item => item.index);
+                    .WithNameColon(CreateNameColon(plan.AddedParameterName!));
                 updatedArguments = SyntaxFactory.SeparatedList(arguments
-                        .Select((argument, index) =>
-                        {
-                            var ordinal = GetArgumentOrdinal(index);
-                            return (argument, ordinal);
-                        })
-                        .OrderBy(item => addOrder.TryGetValue(item.ordinal, out var index) ? index : int.MaxValue)
-                        .Select(static item => item.argument))
+                        .Select((argument, index) => NameArgument(argument, GetArgumentOrdinal(index), edit)))
                     .Add(added);
                 break;
             case SignatureEditKind.KeepControlParameter:
@@ -479,17 +484,8 @@ internal sealed partial class SharpLinkCodeFixProvider
                 }));
                 break;
             case SignatureEditKind.ReorderControlParameters:
-                var order = GetControlParameterOrder(edit)
-                    .Select((ordinal, index) => (ordinal, index))
-                    .ToDictionary(static item => item.ordinal, static item => item.index);
                 updatedArguments = SyntaxFactory.SeparatedList(arguments
-                    .Select((argument, index) =>
-                    {
-                        var ordinal = GetArgumentOrdinal(index);
-                        return (argument, ordinal);
-                    })
-                    .OrderBy(item => order.TryGetValue(item.ordinal, out var index) ? index : int.MaxValue)
-                    .Select(static item => item.argument));
+                    .Select((argument, index) => NameArgument(argument, GetArgumentOrdinal(index), edit)));
                 break;
             default:
                 return rewrittenInvocation;
@@ -498,6 +494,23 @@ internal sealed partial class SharpLinkCodeFixProvider
         return rewrittenInvocation.WithArgumentList(
                 rewrittenInvocation.ArgumentList.WithArguments(updatedArguments))
             .WithAdditionalAnnotations(Formatter.Annotation);
+    }
+
+    private static ArgumentSyntax NameArgument(
+        ArgumentSyntax argument,
+        int ordinal,
+        InvocationEdit edit)
+        => ordinal >= 0 && ordinal < edit.ParameterNames.Length
+            ? argument.WithNameColon(CreateNameColon(edit.ParameterNames[ordinal]))
+            : argument;
+
+    private static NameColonSyntax CreateNameColon(string parameterName)
+    {
+        var escaped = SyntaxFacts.GetKeywordKind(parameterName) == SyntaxKind.None
+            ? parameterName
+            : "@" + parameterName;
+        return SyntaxFactory.NameColon(
+            SyntaxFactory.IdentifierName(SyntaxFactory.ParseToken(escaped)));
     }
 
     private static bool IsSameMethod(IMethodSymbol left, IMethodSymbol right)
@@ -559,6 +572,57 @@ internal sealed partial class SharpLinkCodeFixProvider
             }
         }
         return true;
+    }
+
+    private static bool CanRemoveControlParametersWithoutBreakingNameReferences(
+        ImmutableArray<IMethodSymbol> relatedMethods,
+        ControlParameterKind kind,
+        int keptOrdinal)
+    {
+        foreach (var method in relatedMethods)
+        {
+            var removedNames = method.Parameters
+                .Where((parameter, ordinal) =>
+                    IsControlParameter(parameter, kind) && ordinal != keptOrdinal)
+                .Select(static parameter => parameter.Name)
+                .ToImmutableHashSet(StringComparer.Ordinal);
+            if (removedNames.Count == 0)
+                continue;
+
+            foreach (var attribute in method.Parameters.SelectMany(static parameter => parameter.GetAttributes()))
+            {
+                var metadataName = attribute.AttributeClass?.ToDisplayString();
+                if (metadataName is not (
+                        "System.Runtime.CompilerServices.InterpolatedStringHandlerArgumentAttribute" or
+                        "System.Runtime.CompilerServices.CallerArgumentExpressionAttribute"))
+                {
+                    continue;
+                }
+
+                if (attribute.ConstructorArguments.SelectMany(GetReferencedParameterNames)
+                    .Any(removedNames.Contains))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static IEnumerable<string> GetReferencedParameterNames(TypedConstant argument)
+    {
+        if (argument.Kind == TypedConstantKind.Array)
+        {
+            foreach (var item in argument.Values)
+            {
+                foreach (var name in GetReferencedParameterNames(item))
+                    yield return name;
+            }
+        }
+        else if (argument.Value is string name)
+        {
+            yield return name;
+        }
     }
 
     private static ImmutableArray<IParameterSymbol?> GetProposedParameters(

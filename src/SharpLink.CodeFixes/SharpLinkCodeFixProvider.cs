@@ -56,15 +56,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 await RegisterDtoFixesAsync(context, diagnostic).ConfigureAwait(false);
                 break;
             case "SHARPLINK015":
-                RegisterDocumentFix(context, diagnostic, "Remove [NonCancellable]", "RemoveNonCancellable",
-                    (document, item, ct) => RemoveAttributeAsync(
-                        document,
-                        item,
-                        [
-                            "SharpLink.Sdk.NonCancellableAttribute",
-                            "SharpLink.Abstractions.NonCancellableAttribute"
-                        ],
-                        ct));
+                await RegisterRemoveNonCancellableFixAsync(context, diagnostic).ConfigureAwait(false);
                 break;
             case "SHARPLINK016":
                 await RegisterMissingContractFixAsync(context, diagnostic).ConfigureAwait(false);
@@ -271,6 +263,37 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         }
     }
 
+    private static async Task RegisterRemoveNonCancellableFixAsync(
+        CodeFixContext context,
+        Diagnostic diagnostic)
+    {
+        var declaration = await FindNodeAsync<MethodDeclarationSyntax>(
+            context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
+        var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
+            .ConfigureAwait(false);
+        if (declaration is null ||
+            semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not IMethodSymbol method)
+        {
+            return;
+        }
+
+        var equivalentMethods = await FindEquivalentInterfaceMethodsAsync(
+            method, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false);
+        var attributedMethods = equivalentMethods.Where(HasNonCancellableAttribute).ToImmutableArray();
+        if (attributedMethods.Length == 0 ||
+            attributedMethods.Any(static candidate => candidate.DeclaringSyntaxReferences.Length == 0))
+        {
+            return;
+        }
+
+        RegisterSolutionFix(
+            context,
+            diagnostic,
+            "Remove [NonCancellable]",
+            "RemoveNonCancellable",
+            (solution, _, _, ct) => RemoveNonCancellableAsync(solution, attributedMethods, ct));
+    }
+
     private static async Task RegisterKeepParameterFixesAsync(
         CodeFixContext context,
         Diagnostic diagnostic,
@@ -296,7 +319,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             var ordinal = parameter.Ordinal;
             if (!CanApplySignatureEditWithoutCollisions(
                     relatedMethods,
-                    new SignatureEditPlan(SignatureEditKind.KeepControlParameter, kind, ordinal)))
+                    new SignatureEditPlan(SignatureEditKind.KeepControlParameter, kind, ordinal)) ||
+                !CanRemoveControlParametersWithoutBreakingNameReferences(relatedMethods, kind, ordinal))
             {
                 continue;
             }
@@ -632,6 +656,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             adapter.GetMembers().Any(static member =>
                 !member.IsImplicitlyDeclared && member.IsVirtual && !member.IsOverride) ||
             !CanExposePublicParameterlessConstructor(adapter) ||
+            !CanCallParameterlessConstructorWithRequiredMembers(adapter) ||
+            HasPrimaryConstructorWithoutParameterlessAlternative(adapter, context.CancellationToken) ||
             !TryGetPublicizationClosure(adapter, out _) ||
             adapter.DeclaringSyntaxReferences.Length == 0 ||
             adapter.DeclaringSyntaxReferences.Any(reference =>
@@ -746,6 +772,56 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 current.AddAttributeLists(CreateAttributeList("global::SharpLink.Sdk.NonCancellable"))
                     .WithAdditionalAnnotations(Formatter.Annotation));
             solution = solution.WithDocumentSyntaxRoot(pair.Key, updatedRoot);
+        }
+        return solution;
+    }
+
+    private static async Task<Solution> RemoveNonCancellableAsync(
+        Solution solution,
+        ImmutableArray<IMethodSymbol> methods,
+        CancellationToken cancellationToken)
+    {
+        var referencesByDocument = new Dictionary<
+            DocumentId,
+            HashSet<Microsoft.CodeAnalysis.Text.TextSpan>>();
+        foreach (var reference in methods
+                     .SelectMany(static method => method.GetAttributes())
+                     .Where(IsNonCancellableAttribute)
+                     .Select(static attribute => attribute.ApplicationSyntaxReference)
+                     .Where(static reference => reference is not null)
+                     .Select(static reference => reference!))
+        {
+            var document = solution.GetDocument(reference.SyntaxTree);
+            if (document is null)
+                continue;
+            if (!referencesByDocument.TryGetValue(document.Id, out var spans))
+            {
+                spans = [];
+                referencesByDocument.Add(document.Id, spans);
+            }
+            spans.Add(reference.Span);
+        }
+
+        foreach (var pair in referencesByDocument)
+        {
+            var document = solution.GetDocument(pair.Key);
+            var root = document is null
+                ? null
+                : await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+            if (root is null)
+                continue;
+
+            foreach (var span in pair.Value.OrderByDescending(static span => span.Start))
+            {
+                var attribute = root.FindNode(span, getInnermostNodeForTie: true)
+                    .AncestorsAndSelf().OfType<AttributeSyntax>().FirstOrDefault();
+                if (attribute?.Parent is not AttributeListSyntax list)
+                    continue;
+                root = list.Attributes.Count == 1
+                    ? root.RemoveNode(list, SyntaxRemoveOptions.KeepExteriorTrivia) ?? root
+                    : root.ReplaceNode(list, list.WithAttributes(list.Attributes.Remove(attribute)));
+            }
+            solution = solution.WithDocumentSyntaxRoot(pair.Key, root);
         }
         return solution;
     }
@@ -1184,6 +1260,9 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         var attributeList = CreateAttributeList(attributeName);
         MemberDeclarationSyntax updated = declaration switch
         {
+            RecordDeclarationSyntax record when symbol is IMethodSymbol { MethodKind: MethodKind.Constructor } =>
+                record.AddAttributeLists(attributeList.WithTarget(
+                    SyntaxFactory.AttributeTargetSpecifier(SyntaxFactory.Token(SyntaxKind.MethodKeyword)))),
             BaseTypeDeclarationSyntax type => type.AddAttributeLists(attributeList),
             MethodDeclarationSyntax method => method.AddAttributeLists(attributeList),
             ConstructorDeclarationSyntax constructor => constructor.AddAttributeLists(attributeList),
@@ -1343,8 +1422,17 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             string.Equals(item.AttributeClass?.ToDisplayString(), metadataName, StringComparison.Ordinal));
 
     private static bool HasNonCancellableAttribute(IMethodSymbol method)
-        => HasAttribute(method, "SharpLink.Sdk.NonCancellableAttribute") ||
-           HasAttribute(method, "SharpLink.Abstractions.NonCancellableAttribute");
+        => method.GetAttributes().Any(IsNonCancellableAttribute);
+
+    private static bool IsNonCancellableAttribute(AttributeData attribute)
+        => string.Equals(
+               attribute.AttributeClass?.ToDisplayString(),
+               "SharpLink.Sdk.NonCancellableAttribute",
+               StringComparison.Ordinal) ||
+           string.Equals(
+               attribute.AttributeClass?.ToDisplayString(),
+               "SharpLink.Abstractions.NonCancellableAttribute",
+               StringComparison.Ordinal);
 
     private static async Task<ImmutableArray<IMethodSymbol>> FindEquivalentInterfaceMethodsAsync(
         IMethodSymbol method,
@@ -1527,6 +1615,11 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                             }
                             Add(definition);
                         }
+                        if (named.ContainingType is { } containingType &&
+                            !AddAccessibilityDependency(containingType))
+                        {
+                            return false;
+                        }
                         foreach (var argument in named.TypeArguments)
                         {
                             if (!AddAccessibilityDependency(argument))
@@ -1622,6 +1715,33 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                  constructor.ContainingAssembly, type.ContainingAssembly)));
     }
 
+    private static bool CanCallParameterlessConstructorWithRequiredMembers(INamedTypeSymbol type)
+    {
+        var hasRequiredMembers = new[] { type }.Concat(GetBaseTypes(type))
+            .SelectMany(static current => current.GetMembers())
+            .Any(static member => member is IFieldSymbol { IsRequired: true } or
+                IPropertySymbol { IsRequired: true });
+        if (!hasRequiredMembers)
+            return true;
+
+        var constructor = type.InstanceConstructors.FirstOrDefault(static candidate =>
+            candidate.Parameters.Length == 0 && !candidate.IsStatic);
+        return constructor is not null &&
+               HasAttribute(
+                   constructor,
+                   "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute");
+    }
+
+    private static bool HasPrimaryConstructorWithoutParameterlessAlternative(
+        INamedTypeSymbol type,
+        CancellationToken cancellationToken)
+        => !type.InstanceConstructors.Any(static constructor => constructor.Parameters.Length == 0) &&
+           type.DeclaringSyntaxReferences.Any(reference =>
+               reference.GetSyntax(cancellationToken) is ClassDeclarationSyntax
+               {
+                   ParameterList.Parameters.Count: > 0
+               });
+
     private static bool HasOverride(INamedTypeSymbol type, ISymbol abstractMember)
     {
         foreach (var candidate in type.GetMembers(abstractMember.Name))
@@ -1662,6 +1782,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             ITypeParameterSymbol => false,
             IErrorTypeSymbol => false,
             INamedTypeSymbol named => IsEffectivelyPublic(named.OriginalDefinition) &&
+                                     (named.ContainingType is null ||
+                                      IsPubliclyAccessible(named.ContainingType)) &&
                                      named.TypeArguments.All(IsPubliclyAccessible),
             IDynamicTypeSymbol => true,
             _ => true
