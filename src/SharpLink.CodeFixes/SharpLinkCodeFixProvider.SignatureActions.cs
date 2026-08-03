@@ -6,14 +6,11 @@ internal sealed partial class SharpLinkCodeFixProvider
         CodeFixContext context,
         Diagnostic diagnostic)
     {
-        var method = await FindNodeAsync<MethodDeclarationSyntax>(
-            context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
-        if (method is null)
-            return;
-
-        var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
-            .ConfigureAwait(false);
-        var symbol = semanticModel?.GetDeclaredSymbol(method, context.CancellationToken);
+        var symbol = await ResolveMethodSymbolAsync(
+            context.Document.Project.Solution,
+            context.Document.Id,
+            diagnostic,
+            context.CancellationToken).ConfigureAwait(false);
         if (symbol is null || IsObsoleteWithError(symbol))
             return;
 

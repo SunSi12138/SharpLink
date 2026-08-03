@@ -916,9 +916,11 @@ public partial class RpcGenerator
 
         private static bool IsValidAdapterType(INamedTypeSymbol type)
             => IsEffectivelyPublic(type) &&
+               !IsObsoleteWithError(type) &&
                type.IsSealed &&
                type.InstanceConstructors.Any(static constructor =>
                    constructor.DeclaredAccessibility == Accessibility.Public &&
+                   !IsObsoleteWithError(constructor) &&
                    constructor.Parameters.All(static parameter => parameter.IsOptional)) &&
                type.AllInterfaces.Any(static item =>
                    item.Name == "IRpcCodecAdapter" &&
