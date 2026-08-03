@@ -494,10 +494,12 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .ToArray();
         var publicConstructors = allPublicConstructors
             .Where(IsSupportedServiceConstructor)
+            .Where(constructor => ConstructorSatisfiesRequiredMembers(type, constructor))
             .ToArray();
         var nonPublicConstructors = type.InstanceConstructors
             .Where(static item => !item.IsImplicitlyDeclared && item.DeclaredAccessibility != Accessibility.Public)
             .Where(IsSupportedServiceConstructor)
+            .Where(constructor => ConstructorSatisfiesRequiredMembers(type, constructor))
             .ToArray();
 
         if (allPublicConstructors.Length == 0 && nonPublicConstructors.Length == 1 &&
@@ -2019,15 +2021,25 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
 
     private static bool HasOverride(INamedTypeSymbol type, ISymbol abstractMember)
     {
-        foreach (var candidate in type.GetMembers(abstractMember.Name))
+        foreach (var currentType in new[] { type }.Concat(GetBaseTypes(type)))
+        {
+            var overrides = currentType.GetMembers(abstractMember.Name)
+                .Where(candidate => Overrides(candidate, abstractMember))
+                .ToArray();
+            if (overrides.Length != 0)
+                return overrides.Any(static candidate => !candidate.IsAbstract);
+        }
+        return false;
+
+        static bool Overrides(ISymbol candidate, ISymbol abstractMember)
         {
             for (var current = candidate; current is not null; current = GetOverriddenMember(current))
             {
                 if (SymbolEqualityComparer.Default.Equals(current, abstractMember))
                     return true;
             }
+            return false;
         }
-        return false;
     }
 
     private static ISymbol? GetOverriddenMember(ISymbol symbol)

@@ -620,6 +620,30 @@ internal sealed partial class SharpLinkCodeFixProvider
                     return false;
                 }
             }
+
+            foreach (var declaration in method.DeclaringSyntaxReferences
+                         .Select(static reference => reference.GetSyntax())
+                         .OfType<MethodDeclarationSyntax>())
+            {
+                var documentation = declaration.GetLeadingTrivia()
+                    .Select(static trivia => trivia.GetStructure())
+                    .OfType<DocumentationCommentTriviaSyntax>();
+                foreach (var nameAttribute in documentation
+                             .SelectMany(static comment => comment.DescendantNodes().OfType<XmlNameAttributeSyntax>()))
+                {
+                    var elementName = nameAttribute.Parent switch
+                    {
+                        XmlElementStartTagSyntax startTag => startTag.Name.LocalName.ValueText,
+                        XmlEmptyElementSyntax emptyElement => emptyElement.Name.LocalName.ValueText,
+                        _ => string.Empty
+                    };
+                    if (elementName is ("param" or "paramref") &&
+                        removedNames.Contains(nameAttribute.Identifier.Identifier.ValueText))
+                    {
+                        return false;
+                    }
+                }
+            }
         }
         return true;
     }
