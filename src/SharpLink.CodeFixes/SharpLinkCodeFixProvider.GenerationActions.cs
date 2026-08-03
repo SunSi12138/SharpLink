@@ -37,6 +37,8 @@ internal sealed partial class SharpLinkCodeFixProvider
             .AncestorsAndSelf().OfType<AttributeSyntax>().FirstOrDefault();
         if (resolvedType is not INamedTypeSymbol namedCase || unionType is null ||
             targetAttribute is null ||
+            !TryGetUnionCaseArguments(
+                targetAttribute, semanticModel, context.CancellationToken, out _, out _) ||
             namedCase.IsUnboundGenericType || ContainsTypeParameter(namedCase) ||
             namedCase.TypeKind is not (TypeKind.Class or TypeKind.Struct) || namedCase.IsAbstract ||
             IsObsoleteWithError(namedCase) ||
@@ -92,7 +94,7 @@ internal sealed partial class SharpLinkCodeFixProvider
                 item, context.Document.Project.Solution))
             .Where(item => HasDeclarationInProject(
                 item, context.Document.Project.Solution, context.Document.Project.Id))
-            .Where(IsEffectivelyPublic)
+            .Where(IsAccessibleFromGeneratedCode)
             .Where(static item => !HasRpcServiceAttribute(item))
             .Where(static item => item.AllInterfaces.Count(HasRpcContractAttribute) == 1)
             .Where(HasValidServiceActivationShape)

@@ -201,51 +201,6 @@ internal sealed partial class SharpLinkCodeFixProvider
             .ConfigureAwait(false);
     }
 
-    private static async Task<Document> RestoreUnionTagAsync(
-        Document document,
-        Diagnostic diagnostic,
-        string tag,
-        string type,
-        CancellationToken cancellationToken)
-    {
-        var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
-        var attribute = root?.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true)
-            .AncestorsAndSelf().OfType<AttributeSyntax>().FirstOrDefault();
-        if (attribute is null)
-            return document;
-
-        var typeName = type.StartsWith("global::", StringComparison.Ordinal) ? type : "global::" + type;
-        SeparatedSyntaxList<AttributeArgumentSyntax> arguments;
-        if (attribute.ArgumentList is { Arguments.Count: 2 } argumentList)
-        {
-            var existingTag = argumentList.Arguments[0];
-            var existingType = argumentList.Arguments[1];
-            var restoredTag = existingTag.WithExpression(
-                SyntaxFactory.ParseExpression(tag).WithTriviaFrom(existingTag.Expression));
-            var restoredTypeExpression = existingType.Expression is TypeOfExpressionSyntax typeOf
-                ? typeOf.WithType(SyntaxFactory.ParseTypeName(typeName).WithTriviaFrom(typeOf.Type))
-                : SyntaxFactory.TypeOfExpression(SyntaxFactory.ParseTypeName(typeName))
-                    .WithTriviaFrom(existingType.Expression);
-            arguments = argumentList.Arguments.Replace(existingTag, restoredTag);
-            arguments = arguments.Replace(
-                arguments[1],
-                arguments[1].WithExpression(restoredTypeExpression));
-        }
-        else
-        {
-            arguments = SyntaxFactory.SeparatedList(new[]
-            {
-                SyntaxFactory.AttributeArgument(SyntaxFactory.ParseExpression(tag)),
-                SyntaxFactory.AttributeArgument(
-                    SyntaxFactory.TypeOfExpression(SyntaxFactory.ParseTypeName(typeName)))
-            });
-        }
-        var updated = attribute.WithArgumentList(
-                (attribute.ArgumentList ?? SyntaxFactory.AttributeArgumentList()).WithArguments(arguments))
-            .WithAdditionalAnnotations(Formatter.Annotation);
-        return await ReplaceNodeAsync(document, attribute, updated, cancellationToken).ConfigureAwait(false);
-    }
-
     private static async Task RegisterTimeoutFixesAsync(CodeFixContext context, Diagnostic diagnostic)
     {
         var declaration = await FindNodeAsync<MethodDeclarationSyntax>(

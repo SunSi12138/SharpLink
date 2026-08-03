@@ -207,7 +207,7 @@ namespace External
     }
 
     [Test]
-    public async Task Sharplink037ShouldWithholdAnnotateOnlyRestoreForIneffectivelyPublicService()
+    public async Task Sharplink037ShouldRestoreServicesAccessibleToGeneratedCode()
     {
         var scenarios = new[]
         {
@@ -242,8 +242,13 @@ internal static class Container
 
             var actions = await workspace.GetActionsAsync(diagnostic, "Contract.cs");
 
-            Ensure(actions.Count == 0,
-                $"An annotate-only route restoration cannot make an {scenario.Name} publicly activatable.");
+            Ensure(actions.Select(static action => (action.Title, action.EquivalenceKey)).SequenceEqual(
+                    [("Add [RpcService] to Service", "RestoreServiceRoute")]),
+                $"An {scenario.Name} must remain accessible to generated code in the same assembly.");
+            var changed = await workspace.ApplyAsync(actions[0]);
+            EnsureContains(await workspace.GetTextAsync("Contract.cs", changed),
+                "[global::SharpLink.Sdk.RpcService]", scenario.Name);
+            await workspace.AssertCompilesAsync(changed);
         }
     }
 

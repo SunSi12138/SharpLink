@@ -43,13 +43,6 @@ internal sealed partial class SharpLinkCodeFixProvider
                 StringComparison.Ordinal));
             if (usage is null)
                 continue;
-            if (!SymbolEqualityComparer.Default.Equals(current, marker) &&
-                usage.NamedArguments.Any(static argument =>
-                    string.Equals(argument.Key, "Inherited", StringComparison.Ordinal) &&
-                    argument.Value.Value is false))
-            {
-                return true;
-            }
             return usage.ConstructorArguments.Length == 1 &&
                    usage.ConstructorArguments[0].Value is int targets &&
                    (targets & (int)AttributeTargets.Constructor) != 0;
