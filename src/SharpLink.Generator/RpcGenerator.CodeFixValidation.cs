@@ -15,4 +15,12 @@ public partial class RpcGenerator
         CancellationToken cancellationToken)
         => new DtoAnalysisState(compilation, cancellationToken)
             .CanGenerateDtoAfterSealing(type);
+
+    internal static bool CanGenerateDtoAfterPublicization(
+        Compilation compilation,
+        INamedTypeSymbol type,
+        ImmutableArray<INamedTypeSymbol> publicizedTypes,
+        CancellationToken cancellationToken)
+        => new DtoAnalysisState(compilation, cancellationToken)
+            .CanGenerateDtoAfterPublicization(type, publicizedTypes);
 }

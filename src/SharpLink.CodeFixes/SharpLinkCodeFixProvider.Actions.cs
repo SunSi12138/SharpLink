@@ -230,7 +230,8 @@ internal sealed partial class SharpLinkCodeFixProvider
                 context,
                 diagnostic,
                 "Make DTO publicly reachable",
-                "MakeDtoAccessible").ConfigureAwait(false);
+                "MakeDtoAccessible",
+                SharpLink.Generator.RpcGenerator.CanGenerateDtoAfterPublicization).ConfigureAwait(false);
         }
     }
 

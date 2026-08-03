@@ -74,6 +74,19 @@ public partial class RpcGenerator
                    _models.ContainsKey(GetTypeName(type));
         }
 
+        public bool CanGenerateDtoAfterPublicization(
+            INamedTypeSymbol type,
+            ImmutableArray<INamedTypeSymbol> publicizedTypes)
+        {
+            var unrelatedDiagnosticCount = _diagnostics.Count;
+            var assumedPublicTypes = new HashSet<INamedTypeSymbol>(
+                publicizedTypes,
+                SymbolEqualityComparer.Default);
+            Visit(type, [], 0, assumedPublicTypes: assumedPublicTypes);
+            return _diagnostics.Count == unrelatedDiagnosticCount &&
+                   _models.ContainsKey(GetTypeName(type));
+        }
+
         private void CollectCurrentAssemblyRoots(
             INamespaceSymbol namespaceSymbol,
             Dictionary<string, ITypeSymbol> roots)
@@ -314,7 +327,8 @@ public partial class RpcGenerator
             ITypeSymbol type,
             List<ITypeSymbol> stack,
             int depth,
-            ITypeSymbol? assumedSealedRoot = null)
+            ITypeSymbol? assumedSealedRoot = null,
+            HashSet<INamedTypeSymbol>? assumedPublicTypes = null)
         {
             _cancellationToken.ThrowIfCancellationRequested();
             CollectEnums(type);
@@ -337,7 +351,8 @@ public partial class RpcGenerator
                     _failed.Add(typeName);
                     return;
                 }
-                if (!IsAccessibleFromGeneratedCode(namedArtifact))
+                if (!IsAccessibleFromGeneratedCode(namedArtifact) &&
+                    !IsAccessibleAfterPublicization(namedArtifact, assumedPublicTypes))
                 {
                     Report(DtoDiagnosticKind.Unsupported, type,
                         "the DTO type and every containing type must be accessible from generated code",
@@ -405,11 +420,11 @@ public partial class RpcGenerator
             {
                 stack.Add(type);
                 if (elementType is not null)
-                    Visit(elementType, stack, depth + 1, assumedSealedRoot);
+                    Visit(elementType, stack, depth + 1, assumedSealedRoot, assumedPublicTypes);
                 if (keyType is not null)
-                    Visit(keyType, stack, depth + 1, assumedSealedRoot);
+                    Visit(keyType, stack, depth + 1, assumedSealedRoot, assumedPublicTypes);
                 if (valueType is not null)
-                    Visit(valueType, stack, depth + 1, assumedSealedRoot);
+                    Visit(valueType, stack, depth + 1, assumedSealedRoot, assumedPublicTypes);
                 stack.RemoveAt(stack.Count - 1);
                 if (_failed.Contains(typeName))
                     return;
@@ -445,14 +460,16 @@ public partial class RpcGenerator
                 type,
                 stack,
                 depth,
-                SymbolEqualityComparer.Default.Equals(type, assumedSealedRoot));
+                SymbolEqualityComparer.Default.Equals(type, assumedSealedRoot),
+                assumedPublicTypes);
         }
 
         private void AnalyzeDto(
             ITypeSymbol type,
             List<ITypeSymbol> stack,
             int depth,
-            bool assumeSealed)
+            bool assumeSealed,
+            HashSet<INamedTypeSymbol>? assumedPublicTypes)
         {
             var typeName = GetTypeName(type);
             if (type is not INamedTypeSymbol named)
@@ -492,11 +509,16 @@ public partial class RpcGenerator
             stack.Add(type);
             foreach (var member in memberSymbols)
             {
-                if (IsObsoleteWithError(member))
+                var obsoleteReadSymbol = IsObsoleteWithError(member)
+                    ? member
+                    : member is IPropertySymbol { GetMethod: { } getter } && IsObsoleteWithError(getter)
+                        ? getter
+                        : null;
+                if (obsoleteReadSymbol is not null)
                 {
                     Report(DtoDiagnosticKind.Unsupported, type,
-                        $"member '{member.Name}' is error-obsolete and cannot be referenced by generated Codec",
-                        member.Locations.FirstOrDefault());
+                        $"member '{member.Name}' or its getter is error-obsolete and cannot be referenced by generated Codec",
+                        obsoleteReadSymbol.Locations.FirstOrDefault());
                     _failed.Add(typeName);
                     continue;
                 }
@@ -523,7 +545,12 @@ public partial class RpcGenerator
 
                 var kind = GetMemberKind(memberType, out var fixedType, out var fixedSize);
                 if (kind == GeneratedMemberKind.Complex)
-                    Visit(memberType, stack, depth + 1, assumedSealedRoot: null);
+                    Visit(
+                        memberType,
+                        stack,
+                        depth + 1,
+                        assumedSealedRoot: null,
+                        assumedPublicTypes);
                 analyzedMembers.Add(new AnalyzedMember(
                     member,
                     memberType,
@@ -556,6 +583,23 @@ public partial class RpcGenerator
             }
 
             var constructorSet = new HashSet<string>(constructorMembers, StringComparer.Ordinal);
+            foreach (var member in analyzedMembers)
+            {
+                var assignAfterConstruction = member.Assignable &&
+                    (!constructorSet.Contains(member.Symbol.Name) || member.Required);
+                if (assignAfterConstruction &&
+                    member.Symbol is IPropertySymbol { SetMethod: { } setter } &&
+                    IsObsoleteWithError(setter))
+                {
+                    Report(DtoDiagnosticKind.Unsupported, type,
+                        $"setter for member '{member.Symbol.Name}' is error-obsolete and cannot be referenced by generated Codec",
+                        setter.Locations.FirstOrDefault());
+                    _failed.Add(typeName);
+                }
+            }
+            if (_failed.Contains(typeName))
+                return;
+
             var generatedMembers = analyzedMembers
                 .OrderBy(static member => member.FieldId)
                 .Select(member => new GeneratedMemberModel(
@@ -795,6 +839,24 @@ public partial class RpcGenerator
                 }
             }
             return false;
+        }
+
+        private static bool IsAccessibleAfterPublicization(
+            INamedTypeSymbol type,
+            HashSet<INamedTypeSymbol>? assumedPublicTypes)
+        {
+            for (var current = type; current is not null; current = current.ContainingType)
+            {
+                if (current.IsFileLocal)
+                    return false;
+                if ((current.DeclaredAccessibility is Accessibility.Private or Accessibility.Protected or
+                        Accessibility.ProtectedAndInternal) &&
+                    assumedPublicTypes?.Contains(current) != true)
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private bool TrySelectAdapter(ITypeSymbol type, out AdapterRegistration? selected)

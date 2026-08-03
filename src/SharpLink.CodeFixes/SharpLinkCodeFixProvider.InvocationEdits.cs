@@ -87,7 +87,7 @@ internal sealed partial class SharpLinkCodeFixProvider
                 }
 
                 var query = invocation?.Ancestors().OfType<QueryExpressionSyntax>().FirstOrDefault();
-                if (query is not null && UsesQueryableTranslation(
+                if (query is not null && UsesExpressionTreeTranslation(
                         query, semanticModel, cancellationToken))
                 {
                     return false;
@@ -100,7 +100,10 @@ internal sealed partial class SharpLinkCodeFixProvider
             AnonymousFunctionExpressionSyntax lambda,
             SemanticModel semanticModel,
             CancellationToken cancellationToken)
-            => semanticModel.GetTypeInfo(lambda, cancellationToken).ConvertedType is INamedTypeSymbol
+            => IsExpressionTreeType(semanticModel.GetTypeInfo(lambda, cancellationToken).ConvertedType);
+
+        static bool IsExpressionTreeType(ITypeSymbol? type)
+            => type is INamedTypeSymbol
             {
                 Name: "Expression",
                 Arity: 1,
@@ -111,31 +114,22 @@ internal sealed partial class SharpLinkCodeFixProvider
                    "System.Linq.Expressions",
                    StringComparison.Ordinal);
 
-        static bool UsesQueryableTranslation(
+        static bool UsesExpressionTreeTranslation(
             QueryExpressionSyntax query,
             SemanticModel semanticModel,
             CancellationToken cancellationToken)
-            => ContainsQueryableInvocation(semanticModel.GetOperation(query, cancellationToken));
+            => ContainsExpressionTreeArgument(semanticModel.GetOperation(query, cancellationToken));
 
-        static bool ContainsQueryableInvocation(IOperation? operation)
+        static bool ContainsExpressionTreeArgument(IOperation? operation)
         {
-            if (operation is IInvocationOperation
-                {
-                    TargetMethod.ContainingType:
-                    {
-                        Name: "Queryable",
-                        ContainingNamespace: { } containingNamespace
-                    }
-                } &&
-                string.Equals(
-                    containingNamespace.ToDisplayString(),
-                    "System.Linq",
-                    StringComparison.Ordinal))
+            if (operation is IArgumentOperation argument &&
+                (IsExpressionTreeType(argument.Parameter?.Type) ||
+                 IsExpressionTreeType(argument.Value.Type)))
             {
                 return true;
             }
 
-            return operation?.ChildOperations.Any(ContainsQueryableInvocation) == true;
+            return operation?.ChildOperations.Any(ContainsExpressionTreeArgument) == true;
         }
     }
 

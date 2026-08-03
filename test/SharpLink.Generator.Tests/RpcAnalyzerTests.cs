@@ -2457,7 +2457,7 @@ internal sealed class InternalDto
     }
 
     [Test]
-    public Task ErrorObsoleteDtoTypesAndMembersShouldSuppressGeneratedCodecs()
+    public Task ErrorObsoleteDtoTypesMembersAndAccessorsShouldSuppressGeneratedCodecs()
     {
         var source = BuildSource("""
 [System.Obsolete("Removed DTO", true)]
@@ -2473,14 +2473,30 @@ public sealed class RemovedMemberDto
     [System.Obsolete("Removed member", true)]
     public int Value { get; set; }
 }
+
+[SharpLink.Sdk.RpcSerializable]
+public sealed class RemovedGetterDto
+{
+    public int Value { [System.Obsolete("Removed getter", true)] get; set; }
+}
+
+[SharpLink.Sdk.RpcSerializable]
+public sealed class RemovedSetterDto
+{
+    public int Value { get; [System.Obsolete("Removed setter", true)] set; }
+}
 """);
 
-        EnsureRuleCount(source, "SHARPLINK009", 2);
+        EnsureRuleCount(source, "SHARPLINK009", 4);
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(!generated.Contains("global::RemovedDto", StringComparison.Ordinal),
             "an error-obsolete DTO type must not appear in generated Codec code");
         Ensure(!generated.Contains("global::RemovedMemberDto", StringComparison.Ordinal),
             "a DTO with an error-obsolete serialized member must not appear in generated Codec code");
+        Ensure(!generated.Contains("global::RemovedGetterDto", StringComparison.Ordinal),
+            "a DTO with an error-obsolete getter must not appear in generated Codec code");
+        Ensure(!generated.Contains("global::RemovedSetterDto", StringComparison.Ordinal),
+            "a DTO with an error-obsolete setter used by generated assignment must not appear in generated Codec code");
         return Task.CompletedTask;
     }
 

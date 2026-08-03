@@ -177,7 +177,9 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         CodeFixContext context,
         Diagnostic diagnostic,
         string title,
-        string equivalenceKey)
+        string equivalenceKey,
+        Func<Compilation, INamedTypeSymbol, ImmutableArray<INamedTypeSymbol>, CancellationToken, bool>?
+            generationPreflight = null)
     {
         var declaration = await FindNodeAsync<BaseTypeDeclarationSyntax>(
             context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
@@ -186,7 +188,12 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         if (declaration is null ||
             semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not INamedTypeSymbol type ||
             IsObsoleteWithError(type) ||
-            !TryGetPublicizationClosure(type, context.Document.Project.Solution, out _))
+            !TryGetPublicizationClosure(type, context.Document.Project.Solution, out var publicizedTypes) ||
+            generationPreflight?.Invoke(
+                semanticModel.Compilation,
+                type,
+                publicizedTypes,
+                context.CancellationToken) == false)
         {
             return;
         }
