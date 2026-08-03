@@ -70,13 +70,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 await RegisterConstructorFixesAsync(context, diagnostic).ConfigureAwait(false);
                 break;
             case "SHARPLINK020":
-                foreach (var lifetime in new[] { "Singleton", "Connection", "Call" })
-                {
-                    var value = lifetime;
-                    RegisterDocumentFix(context, diagnostic, $"Set RPC service lifetime to {value}",
-                        "SetLifetime:" + value,
-                        (document, item, ct) => SetServiceLifetimeAsync(document, item, value, ct));
-                }
+                await RegisterServiceLifetimeFixesAsync(context, diagnostic).ConfigureAwait(false);
                 break;
             case "SHARPLINK028":
                 if (diagnostic.Properties.TryGetValue(SharpLinkDiagnosticProperties.PreviousMemberId, out var memberId) &&
@@ -86,7 +80,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                         context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false))
                 {
                     RegisterDocumentFix(context, diagnostic, $"Preserve published member ID {memberId}",
-                        "RestoreMemberId:" + memberId,
+                        "RestoreMemberId",
                         (document, item, ct) => RestoreMemberIdAsync(document, item, memberId!, ct));
                 }
                 break;
@@ -103,10 +97,13 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 if (diagnostic.Properties.TryGetValue(
                         SharpLinkDiagnosticProperties.PreviousEnumUnderlyingType, out var underlyingType) &&
                     !string.IsNullOrWhiteSpace(underlyingType) &&
-                    TryGetEnumUnderlyingTypeSyntax(underlyingType!, out _))
+                    TryGetEnumUnderlyingTypeSyntax(underlyingType!, out _) &&
+                    await CanRestoreEnumUnderlyingTypeAsync(
+                        context.Document, diagnostic, underlyingType!, context.CancellationToken)
+                        .ConfigureAwait(false))
                 {
                     RegisterDocumentFix(context, diagnostic, $"Restore published enum underlying type {underlyingType}",
-                        "RestoreEnumType:" + underlyingType,
+                        "RestoreEnumType",
                         (document, item, ct) => RestoreEnumUnderlyingTypeAsync(
                             document, item, underlyingType!, ct));
                 }
@@ -272,6 +269,14 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             return;
         }
 
+        var relatedMethods = await FindRelatedMethodsAsync(
+            symbol, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false);
+        if (relatedMethods.Any(static related =>
+                related.Parameters.Any(static parameter => parameter.IsOptional || parameter.IsParams)))
+        {
+            return;
+        }
+
         RegisterSolutionFix(context, diagnostic, "Reorder RPC control parameters",
             SignatureKeyPrefix + "ReorderControlParameters", ReorderControlParametersAsync);
     }
@@ -357,7 +362,16 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         if (type.IsAbstract && IsEffectivelyPublic(type) && IsSafeToMakeConcrete(type))
         {
             RegisterSolutionFix(context, diagnostic, "Make RPC service concrete", "MakeServiceConcrete",
-                (solution, _, _, ct) => MakeTypeConcreteAcrossSolutionAsync(solution, type, ct));
+                (solution, _, _, ct) => FixServiceShapeAcrossSolutionAsync(
+                    solution, type, makePublic: false, ct));
+        }
+        else if (type.IsAbstract && !IsEffectivelyPublic(type) && IsSafeToMakeConcrete(type))
+        {
+            RegisterSolutionFix(context, diagnostic,
+                "Make RPC service concrete and publicly reachable",
+                "MakeServiceConcreteAndPublic",
+                (solution, _, _, ct) => FixServiceShapeAcrossSolutionAsync(
+                    solution, type, makePublic: true, ct));
         }
     }
 
@@ -370,8 +384,10 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         if (declaration is null || semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not { } type)
             return;
 
-        var publicConstructors = type.InstanceConstructors
+        var allPublicConstructors = type.InstanceConstructors
             .Where(static item => !item.IsImplicitlyDeclared && item.DeclaredAccessibility == Accessibility.Public)
+            .ToArray();
+        var publicConstructors = allPublicConstructors
             .Where(IsSupportedServiceConstructor)
             .ToArray();
         var nonPublicConstructors = type.InstanceConstructors
@@ -379,7 +395,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .Where(IsSupportedServiceConstructor)
             .ToArray();
 
-        if (publicConstructors.Length == 0 && nonPublicConstructors.Length == 1)
+        if (allPublicConstructors.Length == 0 && nonPublicConstructors.Length == 1)
         {
             var constructor = nonPublicConstructors[0];
             RegisterSolutionFix(context, diagnostic, $"Make {type.Name} constructor public",
@@ -390,7 +406,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
 
         var marker = semanticModel.Compilation.GetTypeByMetadataName(
             "Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructorAttribute");
-        var alreadyMarked = publicConstructors.Any(static constructor => constructor.GetAttributes().Any(attribute =>
+        var alreadyMarked = allPublicConstructors.Any(static constructor => constructor.GetAttributes().Any(attribute =>
             string.Equals(
                 attribute.AttributeClass?.ToDisplayString(),
                 "Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructorAttribute",
@@ -413,6 +429,36 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         }
     }
 
+    private static async Task RegisterServiceLifetimeFixesAsync(
+        CodeFixContext context,
+        Diagnostic diagnostic)
+    {
+        var declaration = await FindNodeAsync<ClassDeclarationSyntax>(
+            context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
+        var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
+            .ConfigureAwait(false);
+        var service = declaration is null
+            ? null
+            : semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken);
+        var attributeReference = service?.GetAttributes()
+            .FirstOrDefault(static attribute => string.Equals(
+                attribute.AttributeClass?.ToDisplayString(),
+                "SharpLink.Sdk.RpcServiceAttribute",
+                StringComparison.Ordinal))
+            ?.ApplicationSyntaxReference;
+        if (attributeReference is null)
+            return;
+
+        foreach (var lifetime in new[] { "Singleton", "Connection", "Call" })
+        {
+            var value = lifetime;
+            RegisterSolutionFix(context, diagnostic, $"Set RPC service lifetime to {value}",
+                "SetLifetime:" + value,
+                (solution, _, _, ct) => SetServiceLifetimeAsync(
+                    solution, attributeReference, value, ct));
+        }
+    }
+
     private static async Task RegisterUnionTagFixAsync(CodeFixContext context, Diagnostic diagnostic)
     {
         if (!diagnostic.Properties.TryGetValue(SharpLinkDiagnosticProperties.PreviousUnionTag, out var tag) ||
@@ -429,17 +475,27 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             return;
         var expected = type!.StartsWith("global::", StringComparison.Ordinal) ? type : "global::" + type;
         var typeSyntax = SyntaxFactory.ParseTypeName(expected);
-        var resolvedType = typeSyntax.ContainsDiagnostics
+        var resolvedType = typeSyntax.ContainsDiagnostics ||
+                           typeSyntax.DescendantNodesAndSelf().OfType<OmittedTypeArgumentSyntax>().Any()
             ? null
             : semanticModel.GetSpeculativeTypeInfo(
                 diagnostic.Location.SourceSpan.Start,
                 typeSyntax,
                 SpeculativeBindingOption.BindAsTypeOrNamespace).Type;
-        if (resolvedType is null || resolvedType.TypeKind == TypeKind.Error)
+        var unionDeclaration = await FindNodeAsync<TypeDeclarationSyntax>(
+            context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
+        var unionType = unionDeclaration is null
+            ? null
+            : semanticModel.GetDeclaredSymbol(unionDeclaration, context.CancellationToken);
+        if (resolvedType is not INamedTypeSymbol namedCase || unionType is null ||
+            namedCase.IsUnboundGenericType || ContainsTypeParameter(namedCase) ||
+            namedCase.TypeKind is not (TypeKind.Class or TypeKind.Struct) || namedCase.IsAbstract ||
+            semanticModel.Compilation is not CSharpCompilation csharpCompilation ||
+            !csharpCompilation.ClassifyConversion(namedCase, unionType).IsImplicit)
             return;
 
         RegisterDocumentFix(context, diagnostic, $"Restore tag {tag} to {type}",
-            "RestoreUnionTag:" + tag + ":" + type,
+            "RestoreUnionTag",
             (document, item, ct) => RestoreUnionTagAsync(document, item, tag!, type!, ct));
     }
 
@@ -459,6 +515,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .OfType<INamedTypeSymbol>()
             .Where(static item => item.TypeKind == TypeKind.Class && !item.IsAbstract && !item.IsGenericType)
             .Where(static item => item.Locations.Any(static location => location.IsInSource))
+            .Where(IsEffectivelyPublic)
             .Where(static item => !HasAttribute(item, "SharpLink.Sdk.RpcServiceAttribute"))
             .Where(static item => item.AllInterfaces.Count(candidate =>
                 HasAttribute(candidate, "SharpLink.Sdk.RpcContractAttribute")) == 1)
@@ -494,6 +551,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             adapter.TypeKind != TypeKind.Class || adapter.IsGenericType ||
             GetContainingTypes(adapter).Any(static item => item.IsGenericType) ||
             (adapter.IsAbstract && !IsSafeToMakeConcrete(adapter)) ||
+            adapter.GetMembers().Any(static member =>
+                !member.IsImplicitlyDeclared && member.IsVirtual && !member.IsOverride) ||
             !CanExposePublicParameterlessConstructor(adapter) ||
             adapter.DeclaringSyntaxReferences.Length == 0 ||
             adapter.DeclaringSyntaxReferences.Any(reference =>
@@ -578,23 +637,19 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         return await ReplaceNodeAsync(document, method, updated, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<Document> SetServiceLifetimeAsync(
-        Document document,
-        Diagnostic diagnostic,
+    private static async Task<Solution> SetServiceLifetimeAsync(
+        Solution solution,
+        SyntaxReference attributeReference,
         string lifetime,
         CancellationToken cancellationToken)
     {
-        var declaration = await FindNodeAsync<ClassDeclarationSyntax>(document, diagnostic, cancellationToken)
+        var document = solution.GetDocument(attributeReference.SyntaxTree);
+        var root = document is null ? null : await document.GetSyntaxRootAsync(cancellationToken)
             .ConfigureAwait(false);
-        var semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
-        if (declaration is null || semanticModel is null)
-            return document;
-
-        var attribute = declaration.AttributeLists.SelectMany(static list => list.Attributes)
-            .FirstOrDefault(item => AttributeMatches(
-                semanticModel, item, "SharpLink.Sdk.RpcServiceAttribute", cancellationToken));
-        if (attribute is null)
-            return document;
+        var attribute = root?.FindNode(attributeReference.Span, getInnermostNodeForTie: true)
+            .AncestorsAndSelf().OfType<AttributeSyntax>().FirstOrDefault();
+        if (document is null || root is null || attribute is null)
+            return solution;
 
         var value = SyntaxFactory.ParseExpression(
             "global::SharpLink.Sdk.SharpLinkServiceLifetime." + lifetime);
@@ -605,7 +660,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         var updatedArguments = existing is null ? arguments.Add(argument) : arguments.Replace(existing, argument);
         var updated = attribute.WithArgumentList(SyntaxFactory.AttributeArgumentList(updatedArguments))
             .WithAdditionalAnnotations(Formatter.Annotation);
-        return await ReplaceNodeAsync(document, attribute, updated, cancellationToken).ConfigureAwait(false);
+        return solution.WithDocumentSyntaxRoot(document.Id, root.ReplaceNode(attribute, updated));
     }
 
     private static async Task<Document> RestoreMemberIdAsync(
@@ -666,6 +721,43 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             FieldDeclarationSyntax field => field.Declaration.Variables.Count == 1,
             _ => false
         };
+    }
+
+    private static async Task<bool> CanRestoreEnumUnderlyingTypeAsync(
+        Document document,
+        Diagnostic diagnostic,
+        string underlyingType,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetEnumUnderlyingTypeRange(underlyingType, out var minimum, out var maximum))
+            return false;
+        var declaration = await FindNodeAsync<EnumDeclarationSyntax>(
+            document, diagnostic, cancellationToken).ConfigureAwait(false);
+        var semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
+        var symbol = declaration is null
+            ? null
+            : semanticModel?.GetDeclaredSymbol(declaration, cancellationToken);
+        if (symbol is null)
+            return false;
+
+        foreach (var member in symbol.GetMembers().OfType<IFieldSymbol>()
+                     .Where(static field => field.HasConstantValue))
+        {
+            if (member.ConstantValue is null)
+                return false;
+            decimal value;
+            try
+            {
+                value = Convert.ToDecimal(member.ConstantValue, CultureInfo.InvariantCulture);
+            }
+            catch (Exception exception) when (exception is InvalidCastException or FormatException or OverflowException)
+            {
+                return false;
+            }
+            if (value < minimum || value > maximum)
+                return false;
+        }
+        return true;
     }
 
     private static async Task<Document> RestoreEnumUnderlyingTypeAsync(
@@ -857,23 +949,32 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         return solution;
     }
 
-    private static async Task<Solution> MakeTypeConcreteAcrossSolutionAsync(
+    private static async Task<Solution> FixServiceShapeAcrossSolutionAsync(
         Solution solution,
         INamedTypeSymbol type,
+        bool makePublic,
         CancellationToken cancellationToken)
     {
-        var referencesByDocument = new Dictionary<DocumentId, List<Microsoft.CodeAnalysis.Text.TextSpan>>();
-        foreach (var reference in type.DeclaringSyntaxReferences)
+        var referencesByDocument = new Dictionary<
+            DocumentId,
+            Dictionary<Microsoft.CodeAnalysis.Text.TextSpan, bool>>();
+        for (var current = type; current is not null; current = current.ContainingType)
         {
-            var document = solution.GetDocument(reference.SyntaxTree);
-            if (document is null)
+            var isService = SymbolEqualityComparer.Default.Equals(current, type);
+            if (!makePublic && !isService)
                 continue;
-            if (!referencesByDocument.TryGetValue(document.Id, out var spans))
+            foreach (var reference in current.DeclaringSyntaxReferences)
             {
-                spans = [];
-                referencesByDocument.Add(document.Id, spans);
+                var document = solution.GetDocument(reference.SyntaxTree);
+                if (document is null)
+                    continue;
+                if (!referencesByDocument.TryGetValue(document.Id, out var spans))
+                {
+                    spans = [];
+                    referencesByDocument.Add(document.Id, spans);
+                }
+                spans[reference.Span] = isService;
             }
-            spans.Add(reference.Span);
         }
 
         foreach (var pair in referencesByDocument)
@@ -883,16 +984,23 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 .ConfigureAwait(false);
             if (root is null)
                 continue;
-            var declarations = pair.Value
-                .Select(span => root.FindNode(span, getInnermostNodeForTie: true)
-                    .AncestorsAndSelf().OfType<TypeDeclarationSyntax>().FirstOrDefault())
-                .Where(static declaration => declaration is not null)
-                .Select(static declaration => declaration!)
-                .Distinct()
-                .ToArray();
-            var updatedRoot = root.ReplaceNodes(declarations, static (_, current) =>
-                RemoveModifier(current, SyntaxKind.AbstractKeyword)
-                    .WithAdditionalAnnotations(Formatter.Annotation));
+            var declarations = new Dictionary<BaseTypeDeclarationSyntax, bool>();
+            foreach (var item in pair.Value)
+            {
+                var declaration = root.FindNode(item.Key, getInnermostNodeForTie: true)
+                    .AncestorsAndSelf().OfType<BaseTypeDeclarationSyntax>().FirstOrDefault();
+                if (declaration is not null)
+                    declarations[declaration] = item.Value;
+            }
+            var updatedRoot = root.ReplaceNodes(declarations.Keys, (original, current) =>
+            {
+                BaseTypeDeclarationSyntax updated = current;
+                if (declarations[original] && updated is TypeDeclarationSyntax service)
+                    updated = RemoveModifier(service, SyntaxKind.AbstractKeyword);
+                if (makePublic)
+                    updated = MakePublic(updated);
+                return updated.WithAdditionalAnnotations(Formatter.Annotation);
+            });
             solution = solution.WithDocumentSyntaxRoot(pair.Key, updatedRoot);
         }
         return solution;
@@ -1022,7 +1130,9 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 if (needsPublicParameterlessConstructor)
                 {
                     var constructor = adapterClass.Members.OfType<ConstructorDeclarationSyntax>()
-                        .FirstOrDefault(static item => item.ParameterList.Parameters.Count == 0);
+                        .FirstOrDefault(static item =>
+                            item.ParameterList.Parameters.Count == 0 &&
+                            !item.Modifiers.Any(SyntaxKind.StaticKeyword));
                     if (constructor is not null)
                     {
                         adapterClass = adapterClass.ReplaceNode(constructor,
@@ -1091,6 +1201,12 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
     private static bool IsCodecAdapter(INamedTypeSymbol type)
         => type.Name == "IRpcCodecAdapter" &&
            type.ContainingNamespace.ToDisplayString() == "SharpLink.Abstractions";
+
+    private static bool ContainsTypeParameter(ITypeSymbol type)
+        => type.TypeKind == TypeKind.TypeParameter ||
+           type is INamedTypeSymbol named &&
+           (named.TypeArguments.Any(ContainsTypeParameter) ||
+            named.ContainingType is not null && ContainsTypeParameter(named.ContainingType));
 
     private static bool IsEffectivelyPublic(INamedTypeSymbol type)
     {
@@ -1245,6 +1361,60 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         };
         syntax = SyntaxFactory.ParseTypeName(keyword);
         return keyword.Length != 0;
+    }
+
+    private static bool TryGetEnumUnderlyingTypeRange(
+        string type,
+        out decimal minimum,
+        out decimal maximum)
+    {
+        switch (type)
+        {
+            case "System.SByte":
+            case "sbyte":
+                minimum = sbyte.MinValue;
+                maximum = sbyte.MaxValue;
+                return true;
+            case "System.Byte":
+            case "byte":
+                minimum = byte.MinValue;
+                maximum = byte.MaxValue;
+                return true;
+            case "System.Int16":
+            case "short":
+                minimum = short.MinValue;
+                maximum = short.MaxValue;
+                return true;
+            case "System.UInt16":
+            case "ushort":
+                minimum = ushort.MinValue;
+                maximum = ushort.MaxValue;
+                return true;
+            case "System.Int32":
+            case "int":
+                minimum = int.MinValue;
+                maximum = int.MaxValue;
+                return true;
+            case "System.UInt32":
+            case "uint":
+                minimum = uint.MinValue;
+                maximum = uint.MaxValue;
+                return true;
+            case "System.Int64":
+            case "long":
+                minimum = long.MinValue;
+                maximum = long.MaxValue;
+                return true;
+            case "System.UInt64":
+            case "ulong":
+                minimum = ulong.MinValue;
+                maximum = ulong.MaxValue;
+                return true;
+            default:
+                minimum = 0;
+                maximum = 0;
+                return false;
+        }
     }
 
     private sealed class SharpLinkFixAllProvider : FixAllProvider

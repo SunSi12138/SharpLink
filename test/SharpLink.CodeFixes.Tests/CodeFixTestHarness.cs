@@ -99,6 +99,27 @@ namespace SharpLink.Abstractions
 
     internal ProjectId ProjectId { get; }
 
+    internal void AddMetadataReferenceFromSource(string assemblyName, string source)
+    {
+        var syntaxTree = CSharpSyntaxTree.ParseText(
+            source,
+            new CSharpParseOptions(LanguageVersion.Preview));
+        var compilation = CSharpCompilation.Create(
+            assemblyName,
+            [syntaxTree],
+            GetPlatformReferences(),
+            new CSharpCompilationOptions(
+                OutputKind.DynamicallyLinkedLibrary,
+                nullableContextOptions: NullableContextOptions.Enable));
+        using var stream = new MemoryStream();
+        var emit = compilation.Emit(stream);
+        Ensure(emit.Success,
+            $"Expected metadata fixture '{assemblyName}' to compile. Actual: {FormatDiagnostics(emit.Diagnostics)}");
+        Solution = Solution.AddMetadataReference(
+            ProjectId,
+            MetadataReference.CreateFromImage(stream.ToArray()));
+    }
+
     internal static CodeFixTestWorkspace Create(params (string Name, string Source)[] documents)
     {
         var workspace = new AdhocWorkspace();

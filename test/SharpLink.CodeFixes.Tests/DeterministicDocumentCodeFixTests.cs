@@ -106,7 +106,7 @@ public sealed class Payload
             "Dto.cs",
             new Dictionary<string, string?> { ["SharpLink.PreviousMemberId"] = "7" });
 
-        var action = await GetOnlyActionAsync(workspace, diagnostic, "Dto.cs", "Preserve published member ID 7", "RestoreMemberId:7");
+        var action = await GetOnlyActionAsync(workspace, diagnostic, "Dto.cs", "Preserve published member ID 7", "RestoreMemberId");
         var changed = await workspace.ApplyAsync(action);
         var source = await workspace.GetTextAsync("Dto.cs", changed);
 
@@ -179,7 +179,7 @@ public enum [|Status|] : int
             diagnostic,
             "Status.cs",
             "Restore published enum underlying type System.Byte",
-            "RestoreEnumType:System.Byte");
+            "RestoreEnumType");
         var changed = await workspace.ApplyAsync(action);
         var source = await workspace.GetTextAsync("Status.cs", changed);
 
@@ -206,7 +206,7 @@ public interface IResult { }
                 ["SharpLink.PreviousUnionType"] = "OldCase"
             });
 
-        var action = await GetOnlyActionAsync(workspace, diagnostic, "Union.cs", "Restore tag 7 to OldCase", "RestoreUnionTag:7:OldCase");
+        var action = await GetOnlyActionAsync(workspace, diagnostic, "Union.cs", "Restore tag 7 to OldCase", "RestoreUnionTag");
         var changed = await workspace.ApplyAsync(action);
         var source = await workspace.GetTextAsync("Union.cs", changed);
 
@@ -375,7 +375,7 @@ public sealed class Payload
             new Dictionary<string, string?> { ["SharpLink.PreviousMemberId"] = "19" });
 
         var action = await GetOnlyActionAsync(
-            workspace, diagnostic, "Dto.cs", "Preserve published member ID 19", "RestoreMemberId:19");
+            workspace, diagnostic, "Dto.cs", "Preserve published member ID 19", "RestoreMemberId");
         var changed = await workspace.ApplyAsync(action);
         var source = await workspace.GetTextAsync("Dto.cs", changed);
 

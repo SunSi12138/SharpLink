@@ -202,9 +202,7 @@ internal sealed partial class SharpLinkCodeFixProvider
             }
         }
 
-        return methods
-            .Where(static item => item.DeclaringSyntaxReferences.Length != 0)
-            .ToImmutableArray();
+        return methods.ToImmutableArray();
 
         void Add(IMethodSymbol candidate)
         {
@@ -222,6 +220,8 @@ internal sealed partial class SharpLinkCodeFixProvider
         CancellationToken cancellationToken)
     {
         var related = await FindRelatedMethodsAsync(method, solution, cancellationToken).ConfigureAwait(false);
+        if (related.Any(static candidate => candidate.DeclaringSyntaxReferences.Length == 0))
+            return false;
         foreach (var candidate in related)
         {
             var referencedSymbols = await SymbolFinder.FindReferencesAsync(
