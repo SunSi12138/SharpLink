@@ -277,6 +277,11 @@ internal sealed class ServerConnectionState
             (failures ??= []).Add(exception);
         }
 
+        // Stop stream dispatch and the send pump before joining the read loop. The loop can
+        // itself be awaiting bounded stream delivery; completing those dispatchers releases
+        // it without completing or reclaiming its active PipeReader buffer.
+        Session.BeginShutdown();
+
         try
         {
             // Cancellation is normally sufficient, but CancelPendingRead also wakes custom
