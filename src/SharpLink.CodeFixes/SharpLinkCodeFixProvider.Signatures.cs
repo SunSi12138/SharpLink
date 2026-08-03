@@ -439,17 +439,22 @@ internal sealed partial class SharpLinkCodeFixProvider
             case SignatureEditKind.AddCancellationToken:
                 var added = SyntaxFactory.Parameter(SyntaxFactory.Identifier(plan.AddedParameterName!))
                     .WithType(SyntaxFactory.ParseTypeName("global::System.Threading.CancellationToken"));
-                updatedParameters = SyntaxFactory.SeparatedList(GetControlParameterOrder(edit)
-                    .Select(ordinal => parameters[ordinal]))
-                    .Add(added);
+                updatedParameters = RebuildSeparatedListPreservingTrivia(
+                    parameters,
+                    GetControlParameterOrder(edit).Select(ordinal => (ordinal, parameters[ordinal])),
+                    added);
                 break;
             case SignatureEditKind.KeepControlParameter:
-                updatedParameters = SyntaxFactory.SeparatedList(parameters.Where((_, ordinal) =>
-                    !IsControlParameter(edit, plan.ControlKind, ordinal) || ordinal == plan.KeptOrdinal));
+                updatedParameters = RebuildSeparatedListPreservingTrivia(
+                    parameters,
+                    parameters.Select((parameter, ordinal) => (ordinal, parameter)).Where(item =>
+                        !IsControlParameter(edit, plan.ControlKind, item.ordinal) ||
+                        item.ordinal == plan.KeptOrdinal));
                 break;
             case SignatureEditKind.ReorderControlParameters:
-                updatedParameters = SyntaxFactory.SeparatedList(GetControlParameterOrder(edit)
-                    .Select(ordinal => parameters[ordinal]));
+                updatedParameters = RebuildSeparatedListPreservingTrivia(
+                    parameters,
+                    GetControlParameterOrder(edit).Select(ordinal => (ordinal, parameters[ordinal])));
                 break;
             default:
                 return declaration;
@@ -485,22 +490,31 @@ internal sealed partial class SharpLinkCodeFixProvider
                 var added = SyntaxFactory.Argument(
                         SyntaxFactory.ParseExpression("global::System.Threading.CancellationToken.None"))
                     .WithNameColon(CreateNameColon(plan.AddedParameterName!));
-                updatedArguments = SyntaxFactory.SeparatedList(arguments
-                        .Select((argument, index) => NameArgument(argument, GetArgumentOrdinal(index), edit)))
-                    .Add(added);
+                updatedArguments = RebuildSeparatedListPreservingTrivia(
+                    arguments,
+                    arguments.Select((argument, index) =>
+                        (index, NameArgument(argument, GetArgumentOrdinal(index), edit))),
+                    added);
                 break;
             case SignatureEditKind.KeepControlParameter:
-                updatedArguments = SyntaxFactory.SeparatedList(arguments.Where((_, index) =>
-                {
-                    if (!edit.ArgumentOrdinals.TryGetValue(originalArguments[index].Span, out var ordinal))
-                        return true;
-                    return !IsControlParameter(edit, plan.ControlKind, ordinal) ||
-                           ordinal == plan.KeptOrdinal;
-                }));
+                updatedArguments = RebuildSeparatedListPreservingTrivia(
+                    arguments,
+                    arguments.Select((argument, index) => (index, argument)).Where(item =>
+                    {
+                        if (!edit.ArgumentOrdinals.TryGetValue(
+                                originalArguments[item.index].Span, out var ordinal))
+                        {
+                            return true;
+                        }
+                        return !IsControlParameter(edit, plan.ControlKind, ordinal) ||
+                               ordinal == plan.KeptOrdinal;
+                    }));
                 break;
             case SignatureEditKind.ReorderControlParameters:
-                updatedArguments = SyntaxFactory.SeparatedList(arguments
-                    .Select((argument, index) => NameArgument(argument, GetArgumentOrdinal(index), edit)));
+                updatedArguments = RebuildSeparatedListPreservingTrivia(
+                    arguments,
+                    arguments.Select((argument, index) =>
+                        (index, NameArgument(argument, GetArgumentOrdinal(index), edit))));
                 break;
             default:
                 return rewrittenInvocation;
@@ -509,6 +523,120 @@ internal sealed partial class SharpLinkCodeFixProvider
         return rewrittenInvocation.WithArgumentList(
                 rewrittenInvocation.ArgumentList.WithArguments(updatedArguments))
             .WithAdditionalAnnotations(Formatter.Annotation);
+    }
+
+    private static SeparatedSyntaxList<TNode> RebuildSeparatedListPreservingTrivia<TNode>(
+        SeparatedSyntaxList<TNode> original,
+        IEnumerable<(int ordinal, TNode node)> retained,
+        TNode? appended = null)
+        where TNode : SyntaxNode
+    {
+        var items = retained.ToArray();
+        var positions = items
+            .Select(static (item, position) => (item.ordinal, position))
+            .ToDictionary(static item => item.ordinal, static item => item.position);
+        var nodes = items.Select(static item => item.node).ToList();
+        if (appended is not null)
+            nodes.Add(appended);
+
+        var separators = new SyntaxToken[Math.Max(0, nodes.Count - 1)];
+        var separatorSources = Enumerable.Repeat(-1, separators.Length).ToArray();
+        var usedSeparators = new bool[original.SeparatorCount];
+        for (var boundary = 0; boundary < separators.Length; boundary++)
+        {
+            if (boundary < items.Length && items[boundary].ordinal < original.SeparatorCount)
+            {
+                var separatorIndex = items[boundary].ordinal;
+                separators[boundary] = original.GetSeparator(separatorIndex);
+                separatorSources[boundary] = separatorIndex;
+                usedSeparators[separatorIndex] = true;
+            }
+            else
+            {
+                separators[boundary] = SyntaxFactory.Token(SyntaxKind.CommaToken);
+            }
+        }
+
+        for (var separatorIndex = 0; separatorIndex < original.SeparatorCount; separatorIndex++)
+        {
+            if (usedSeparators[separatorIndex])
+                continue;
+            var orphaned = original.GetSeparator(separatorIndex);
+            if (separators.Length == 0)
+            {
+                if (nodes.Count != 0)
+                {
+                    nodes[0] = (TNode)nodes[0].WithTrailingTrivia(
+                        nodes[0].GetTrailingTrivia()
+                            .AddRange(orphaned.LeadingTrivia)
+                            .AddRange(orphaned.TrailingTrivia));
+                }
+                continue;
+            }
+
+            int boundary;
+            if (positions.TryGetValue(separatorIndex, out var leftPosition))
+            {
+                boundary = Math.Min(leftPosition, separators.Length - 1);
+            }
+            else
+            {
+                var nextOrdinal = positions.Keys
+                    .Where(ordinal => ordinal > separatorIndex)
+                    .DefaultIfEmpty(int.MaxValue)
+                    .Min();
+                boundary = nextOrdinal == int.MaxValue
+                    ? separators.Length - 1
+                    : Math.Max(0, positions[nextOrdinal] - 1);
+            }
+
+            if (separatorSources[boundary] < 0)
+            {
+                separators[boundary] = orphaned;
+                separatorSources[boundary] = separatorIndex;
+            }
+            else
+            {
+                separators[boundary] = separators[boundary]
+                    .WithLeadingTrivia(separators[boundary].LeadingTrivia.AddRange(orphaned.LeadingTrivia))
+                    .WithTrailingTrivia(MergeSeparatorTrailingTrivia(
+                        separators[boundary].TrailingTrivia,
+                        orphaned.TrailingTrivia));
+            }
+        }
+
+        var nodesAndTokens = new List<SyntaxNodeOrToken>(nodes.Count + separators.Length);
+        for (var index = 0; index < nodes.Count; index++)
+        {
+            nodesAndTokens.Add(nodes[index]);
+            if (index < separators.Length)
+                nodesAndTokens.Add(separators[index]);
+        }
+        return SyntaxFactory.SeparatedList<TNode>(nodesAndTokens);
+    }
+
+    private static SyntaxTriviaList MergeSeparatorTrailingTrivia(
+        SyntaxTriviaList existing,
+        SyntaxTriviaList additional)
+    {
+        var merged = existing.AddRange(additional).ToArray();
+        var commentIndex = Array.FindIndex(merged, static trivia =>
+            trivia.IsKind(SyntaxKind.SingleLineCommentTrivia) ||
+            trivia.IsKind(SyntaxKind.MultiLineCommentTrivia));
+        if (commentIndex < 0 || !merged.Take(commentIndex).Any(static trivia =>
+                trivia.IsKind(SyntaxKind.EndOfLineTrivia)))
+        {
+            return SyntaxFactory.TriviaList(merged);
+        }
+
+        var reordered = new List<SyntaxTrivia>(merged.Length);
+        reordered.AddRange(merged.Take(commentIndex).Where(static trivia =>
+            !trivia.IsKind(SyntaxKind.EndOfLineTrivia)));
+        reordered.Add(merged[commentIndex]);
+        reordered.AddRange(merged.Take(commentIndex).Where(static trivia =>
+            trivia.IsKind(SyntaxKind.EndOfLineTrivia)));
+        reordered.AddRange(merged.Skip(commentIndex + 1));
+        return SyntaxFactory.TriviaList(reordered);
     }
 
     private static ArgumentSyntax NameArgument(

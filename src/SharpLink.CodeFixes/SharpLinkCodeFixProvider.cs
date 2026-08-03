@@ -196,7 +196,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .ConfigureAwait(false);
         if (declaration is null ||
             semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not INamedTypeSymbol type ||
-            !TryGetPublicizationClosure(type, out _))
+            !TryGetPublicizationClosure(type, context.Document.Project.Solution, out _))
         {
             return;
         }
@@ -461,7 +461,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             return;
         }
 
-        var canMakePublic = TryGetPublicizationClosure(type, out _);
+        var canMakePublic = TryGetPublicizationClosure(
+            type, context.Document.Project.Solution, out _);
         if (!IsEffectivelyPublic(type) && !type.IsAbstract && canMakePublic)
         {
             RegisterSolutionFix(context, diagnostic, "Make RPC service publicly reachable",
@@ -690,7 +691,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             !CanExposePublicParameterlessConstructor(adapter) ||
             !CanCallParameterlessConstructorWithRequiredMembers(adapter) ||
             HasPrimaryConstructorWithoutParameterlessAlternative(adapter, context.CancellationToken) ||
-            !TryGetPublicizationClosure(adapter, out _) ||
+            !TryGetPublicizationClosure(adapter, context.Document.Project.Solution, out _) ||
             adapter.DeclaringSyntaxReferences.Length == 0 ||
             adapter.DeclaringSyntaxReferences.Any(reference =>
                 reference.GetSyntax(context.CancellationToken) is not ClassDeclarationSyntax))
@@ -1389,7 +1390,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             return solution;
         }
 
-        if (!TryGetPublicizationClosure(symbol, out var publicizedTypes))
+        if (!TryGetPublicizationClosure(symbol, solution, out var publicizedTypes))
             return solution;
 
         var referencesByDocument = new Dictionary<DocumentId, List<Microsoft.CodeAnalysis.Text.TextSpan>>();
@@ -1442,7 +1443,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         ImmutableArray<INamedTypeSymbol> typesToUpdate;
         if (makePublic)
         {
-            if (!TryGetPublicizationClosure(type, out typesToUpdate))
+            if (!TryGetPublicizationClosure(type, solution, out typesToUpdate))
                 return solution;
         }
         else
@@ -1564,7 +1565,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         INamedTypeSymbol adapter,
         CancellationToken cancellationToken)
     {
-        if (!TryGetPublicizationClosure(adapter, out var publicizedTypes))
+        if (!TryGetPublicizationClosure(adapter, solution, out var publicizedTypes))
             return solution;
 
         var declarationsByDocument = new Dictionary<
@@ -1866,6 +1867,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
 
     private static bool TryGetPublicizationClosure(
         INamedTypeSymbol root,
+        Solution solution,
         out ImmutableArray<INamedTypeSymbol> types)
     {
         var result = new List<INamedTypeSymbol>();
@@ -1875,7 +1877,15 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         while (pending.Count != 0)
         {
             var current = pending.Dequeue();
-            if (HasFileLocalNameCollision(current))
+            if (HasFileLocalNameCollision(current) ||
+                current.DeclaringSyntaxReferences.Length == 0 ||
+                current.DeclaringSyntaxReferences.Any(reference =>
+                {
+                    var document = solution.GetDocument(reference.SyntaxTree);
+                    return document is null ||
+                           !document.Project.Documents.Any(candidate => candidate.Id == document.Id) ||
+                           reference.GetSyntax() is not BaseTypeDeclarationSyntax;
+                }))
             {
                 types = default;
                 return false;
@@ -2052,13 +2062,17 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
 
     private static bool CanExposePublicParameterlessConstructor(INamedTypeSymbol type)
     {
-        if (type.InstanceConstructors.Any(static constructor => constructor.Parameters.Length == 0))
-            return true;
+        var declaredParameterless = type.InstanceConstructors
+            .Where(static constructor => constructor.Parameters.Length == 0)
+            .ToArray();
+        if (declaredParameterless.Length != 0)
+            return declaredParameterless.Any(static constructor => !IsObsoleteWithError(constructor));
         var baseType = type.BaseType;
         if (baseType is null)
             return true;
         return baseType.InstanceConstructors.Any(constructor =>
             constructor.Parameters.Length == 0 &&
+            !IsObsoleteWithError(constructor) &&
             (constructor.DeclaredAccessibility is Accessibility.Public or Accessibility.Protected or
                  Accessibility.ProtectedOrInternal ||
              constructor.DeclaredAccessibility == Accessibility.Internal &&
@@ -2071,7 +2085,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         if (!HasRequiredMembers(type))
             return true;
         var constructor = type.InstanceConstructors.FirstOrDefault(static candidate =>
-            candidate.Parameters.Length == 0 && !candidate.IsStatic);
+            candidate.Parameters.Length == 0 && !candidate.IsStatic && !IsObsoleteWithError(candidate));
         return constructor is not null && HasAttribute(
             constructor,
             "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute");
