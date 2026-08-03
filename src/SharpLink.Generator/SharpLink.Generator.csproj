@@ -21,7 +21,8 @@
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
-        <PackageReference Include="Microsoft.CodeAnalysis.CSharp"/>
+        <!-- Published analyzers must remain loadable by the compiler bundled with the pinned SDK. -->
+        <PackageReference Include="Microsoft.CodeAnalysis.CSharp" VersionOverride="5.0.0" />
         <PackageReference Include="System.Text.Json" PrivateAssets="all" />
     </ItemGroup>
 
