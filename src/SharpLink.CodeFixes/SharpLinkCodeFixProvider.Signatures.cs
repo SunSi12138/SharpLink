@@ -227,6 +227,7 @@ internal sealed partial class SharpLinkCodeFixProvider
         IMethodSymbol method,
         Solution solution,
         bool allowInvocations,
+        bool allowSignatureQualifiedCrefs,
         CancellationToken cancellationToken)
     {
         var related = await FindRelatedMethodsAsync(method, solution, cancellationToken).ConfigureAwait(false);
@@ -241,7 +242,10 @@ internal sealed partial class SharpLinkCodeFixProvider
                 if (!location.Location.IsInSource || location.Document is null)
                     continue;
                 var root = await location.Document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
-                var node = root?.FindNode(location.Location.SourceSpan, getInnermostNodeForTie: true);
+                var node = root?.FindNode(
+                    location.Location.SourceSpan,
+                    findInsideTrivia: true,
+                    getInnermostNodeForTie: true);
                 if (node is null)
                     continue;
                 if (allowInvocations)
@@ -257,8 +261,19 @@ internal sealed partial class SharpLinkCodeFixProvider
                         continue;
                     }
                 }
-                if (node.AncestorsAndSelf().Any(static item => item is CrefSyntax) ||
-                    node.AncestorsAndSelf().OfType<InvocationExpressionSyntax>().Any(static invocation =>
+                var cref = node.AncestorsAndSelf().OfType<CrefSyntax>().FirstOrDefault() ??
+                           node.DescendantNodesAndSelf().OfType<CrefSyntax>().FirstOrDefault();
+                if (cref is not null)
+                {
+                    if (!allowSignatureQualifiedCrefs &&
+                        cref.DescendantTokens().Any(static token =>
+                            token.IsKind(SyntaxKind.OpenParenToken) && !token.IsMissing))
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+                if (node.AncestorsAndSelf().OfType<InvocationExpressionSyntax>().Any(static invocation =>
                         invocation.Expression is IdentifierNameSyntax identifier &&
                         identifier.Identifier.ValueText == "nameof"))
                 {

@@ -126,14 +126,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                     "RemoveBuiltinAdapterBinding", RemoveContainingAttributeAsync);
                 break;
             case "SHARPLINK050":
-                RegisterDocumentFix(context, diagnostic, "Use generated default timeout", "UseDefaultTimeout",
-                    UseDefaultTimeoutAsync);
-                RegisterDocumentFix(context, diagnostic, "Remove [Timeout]", "RemoveTimeout",
-                    (document, item, ct) => RemoveAttributeAsync(
-                        document,
-                        item,
-                        ["SharpLink.Sdk.TimeoutAttribute", "SharpLink.Abstractions.TimeoutAttribute"],
-                        ct));
+                await RegisterTimeoutFixesAsync(context, diagnostic).ConfigureAwait(false);
                 break;
             case "SHARPLINK051":
                 RegisterDocumentFix(context, diagnostic, "Remove invalid RPC union case mapping",
@@ -233,7 +226,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             return;
 
         var canAddCancellationToken = await CanSafelyChangeSignatureAsync(
-                symbol, context.Document.Project.Solution, allowInvocations: true, context.CancellationToken)
+                symbol, context.Document.Project.Solution, allowInvocations: true,
+                allowSignatureQualifiedCrefs: false, context.CancellationToken)
             .ConfigureAwait(false);
         if (canAddCancellationToken)
         {
@@ -306,7 +300,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         if (method is null || semanticModel?.GetDeclaredSymbol(method, context.CancellationToken) is not { } symbol)
             return;
         if (!await CanSafelyChangeSignatureAsync(
-                symbol, context.Document.Project.Solution, allowInvocations: true, context.CancellationToken)
+                symbol, context.Document.Project.Solution, allowInvocations: true,
+                allowSignatureQualifiedCrefs: false, context.CancellationToken)
             .ConfigureAwait(false))
         {
             return;
@@ -351,7 +346,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             symbol.Parameters.Count(parameter =>
                 IsControlParameter(parameter, ControlParameterKind.CallOptions)) > 1 ||
             !await CanSafelyChangeSignatureAsync(
-                symbol, context.Document.Project.Solution, allowInvocations: true, context.CancellationToken)
+                symbol, context.Document.Project.Solution, allowInvocations: true,
+                allowSignatureQualifiedCrefs: false, context.CancellationToken)
                 .ConfigureAwait(false))
         {
             return;
@@ -431,6 +427,19 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             return;
 
         var candidate = candidates[0];
+        var implementations = await SymbolFinder.FindImplementationsAsync(
+            candidate,
+            context.Document.Project.Solution,
+            cancellationToken: context.CancellationToken).ConfigureAwait(false);
+        if (implementations.OfType<INamedTypeSymbol>().Any(implementation =>
+                implementation.TypeKind == TypeKind.Class &&
+                !SymbolEqualityComparer.Default.Equals(implementation, service) &&
+                HasAttribute(implementation, "SharpLink.Sdk.RpcServiceAttribute") &&
+                implementation.AllInterfaces.Any(HasRpcContractAttribute)))
+        {
+            return;
+        }
+
         RegisterSolutionFix(context, diagnostic, $"Annotate {candidate.Name} with [RpcContract]",
             "AnnotateRpcContract",
             (solution, _, _, ct) => AddAttributeToSymbolAsync(
@@ -688,7 +697,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             symbol.DeclaringSyntaxReferences.Any(static reference =>
                 reference.GetSyntax() is not MethodDeclarationSyntax) ||
             !await CanSafelyChangeSignatureAsync(
-                symbol, context.Document.Project.Solution, allowInvocations: false, context.CancellationToken)
+                symbol, context.Document.Project.Solution, allowInvocations: false,
+                allowSignatureQualifiedCrefs: true, context.CancellationToken)
                 .ConfigureAwait(false))
         {
             return;
@@ -926,8 +936,23 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         var symbol = declaration is null
             ? null
             : semanticModel?.GetDeclaredSymbol(declaration, cancellationToken);
-        if (symbol is null)
+        if (symbol is null || semanticModel is null ||
+            !TryGetEnumUnderlyingSpecialType(underlyingType, out var specialType))
             return false;
+
+        var targetType = semanticModel.Compilation.GetSpecialType(specialType);
+        foreach (var member in declaration!.Members)
+        {
+            var initializer = member.EqualsValue?.Value;
+            if (initializer is null)
+                continue;
+            var initializerType = semanticModel.GetTypeInfo(initializer, cancellationToken).Type;
+            if (!SymbolEqualityComparer.Default.Equals(initializerType, symbol) &&
+                !semanticModel.ClassifyConversion(initializer, targetType).IsImplicit)
+            {
+                return false;
+            }
+        }
 
         foreach (var member in symbol.GetMembers().OfType<IFieldSymbol>()
                      .Where(static field => field.HasConstantValue))
@@ -991,19 +1016,91 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         return await ReplaceNodeAsync(document, attribute, updated, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<Document> UseDefaultTimeoutAsync(
-        Document document,
-        Diagnostic diagnostic,
+    private static async Task RegisterTimeoutFixesAsync(CodeFixContext context, Diagnostic diagnostic)
+    {
+        var declaration = await FindNodeAsync<MethodDeclarationSyntax>(
+            context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
+        var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
+            .ConfigureAwait(false);
+        if (declaration is null ||
+            semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not IMethodSymbol method)
+        {
+            return;
+        }
+
+        var equivalentMethods = await FindEquivalentInterfaceMethodsAsync(
+            method, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false);
+        var timeoutAttributes = equivalentMethods
+            .SelectMany(static candidate => candidate.GetAttributes())
+            .Where(IsTimeoutAttribute)
+            .ToImmutableArray();
+        if (timeoutAttributes.Length == 0 ||
+            timeoutAttributes.Any(static attribute => attribute.ApplicationSyntaxReference is null))
+        {
+            return;
+        }
+
+        var references = timeoutAttributes
+            .Select(static attribute => attribute.ApplicationSyntaxReference!)
+            .ToImmutableArray();
+        RegisterSolutionFix(
+            context,
+            diagnostic,
+            "Use generated default timeout",
+            "UseDefaultTimeout",
+            (solution, _, _, ct) => UpdateTimeoutAttributesAsync(solution, references, remove: false, ct));
+        RegisterSolutionFix(
+            context,
+            diagnostic,
+            "Remove [Timeout]",
+            "RemoveTimeout",
+            (solution, _, _, ct) => UpdateTimeoutAttributesAsync(solution, references, remove: true, ct));
+    }
+
+    private static async Task<Solution> UpdateTimeoutAttributesAsync(
+        Solution solution,
+        ImmutableArray<SyntaxReference> references,
+        bool remove,
         CancellationToken cancellationToken)
     {
-        var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
-        var attribute = root?.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true)
-            .AncestorsAndSelf().OfType<AttributeSyntax>().FirstOrDefault();
-        if (attribute is null)
-            return document;
-        return await ReplaceNodeAsync(document, attribute,
-            attribute.WithArgumentList(null).WithAdditionalAnnotations(Formatter.Annotation), cancellationToken)
-            .ConfigureAwait(false);
+        var referencesByDocument = references
+            .Select(reference => (Reference: reference, Document: solution.GetDocument(reference.SyntaxTree)))
+            .Where(static item => item.Document is not null)
+            .GroupBy(static item => item.Document!.Id);
+        foreach (var group in referencesByDocument)
+        {
+            var document = solution.GetDocument(group.Key);
+            var root = document is null ? null : await document.GetSyntaxRootAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (root is null)
+                continue;
+
+            var attributes = group
+                .Select(item => root.FindNode(item.Reference.Span, getInnermostNodeForTie: true)
+                    .AncestorsAndSelf().OfType<AttributeSyntax>().FirstOrDefault())
+                .Where(static attribute => attribute is not null)
+                .Select(static attribute => attribute!)
+                .Distinct()
+                .ToArray();
+            if (remove)
+            {
+                foreach (var attribute in attributes.OrderByDescending(static attribute => attribute.SpanStart))
+                {
+                    if (attribute.Parent is not AttributeListSyntax list)
+                        continue;
+                    root = list.Attributes.Count == 1
+                        ? root.RemoveNode(list, SyntaxRemoveOptions.KeepExteriorTrivia) ?? root
+                        : root.ReplaceNode(list, list.WithAttributes(list.Attributes.Remove(attribute)));
+                }
+            }
+            else
+            {
+                root = root.ReplaceNodes(attributes, static (_, current) =>
+                    current.WithArgumentList(null).WithAdditionalAnnotations(Formatter.Annotation));
+            }
+            solution = solution.WithDocumentSyntaxRoot(group.Key, root);
+        }
+        return solution;
     }
 
     private static async Task<Document> RemoveContainingAttributeAsync(
@@ -1421,6 +1518,16 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         => symbol.GetAttributes().Any(item =>
             string.Equals(item.AttributeClass?.ToDisplayString(), metadataName, StringComparison.Ordinal));
 
+    private static bool IsTimeoutAttribute(AttributeData attribute)
+        => string.Equals(
+               attribute.AttributeClass?.ToDisplayString(),
+               "SharpLink.Sdk.TimeoutAttribute",
+               StringComparison.Ordinal) ||
+           string.Equals(
+               attribute.AttributeClass?.ToDisplayString(),
+               "SharpLink.Abstractions.TimeoutAttribute",
+               StringComparison.Ordinal);
+
     private static bool HasNonCancellableAttribute(IMethodSymbol method)
         => method.GetAttributes().Any(IsNonCancellableAttribute);
 
@@ -1539,6 +1646,11 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         while (pending.Count != 0)
         {
             var current = pending.Dequeue();
+            if (HasFileLocalNameCollision(current))
+            {
+                types = default;
+                return false;
+            }
             if (current.ContainingType is { } containing)
                 Add(containing.OriginalDefinition);
             if (current.BaseType is { } baseType && !AddAccessibilityDependency(baseType))
@@ -1664,6 +1776,16 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         }
     }
 
+    private static bool HasFileLocalNameCollision(INamedTypeSymbol type)
+    {
+        var isFileLocal = type.DeclaringSyntaxReferences.Any(static reference =>
+            reference.GetSyntax() is BaseTypeDeclarationSyntax declaration &&
+            declaration.Modifiers.Any(SyntaxKind.FileKeyword));
+        return isFileLocal && type.ContainingType is null &&
+               type.ContainingNamespace.GetTypeMembers(type.Name, type.Arity).Any(candidate =>
+                   !SymbolEqualityComparer.Default.Equals(candidate.OriginalDefinition, type.OriginalDefinition));
+    }
+
     private static bool IsSafeToMakeConcrete(INamedTypeSymbol type)
     {
         if (type.GetMembers().Any(static member => member.IsAbstract && !member.IsImplicitlyDeclared))
@@ -1717,20 +1839,28 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
 
     private static bool CanCallParameterlessConstructorWithRequiredMembers(INamedTypeSymbol type)
     {
-        var hasRequiredMembers = new[] { type }.Concat(GetBaseTypes(type))
+        if (!HasRequiredMembers(type))
+            return true;
+        var constructor = type.InstanceConstructors.FirstOrDefault(static candidate =>
+            candidate.Parameters.Length == 0 && !candidate.IsStatic);
+        return constructor is not null && HasAttribute(
+            constructor,
+            "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute");
+    }
+
+    private static bool HasRequiredMembers(INamedTypeSymbol type)
+        => new[] { type }.Concat(GetBaseTypes(type))
             .SelectMany(static current => current.GetMembers())
             .Any(static member => member is IFieldSymbol { IsRequired: true } or
                 IPropertySymbol { IsRequired: true });
-        if (!hasRequiredMembers)
-            return true;
 
-        var constructor = type.InstanceConstructors.FirstOrDefault(static candidate =>
-            candidate.Parameters.Length == 0 && !candidate.IsStatic);
-        return constructor is not null &&
-               HasAttribute(
-                   constructor,
-                   "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute");
-    }
+    private static bool ConstructorSatisfiesRequiredMembers(
+        INamedTypeSymbol type,
+        IMethodSymbol constructor)
+        => !HasRequiredMembers(type) ||
+           HasAttribute(
+               constructor,
+               "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute");
 
     private static bool HasPrimaryConstructorWithoutParameterlessAlternative(
         INamedTypeSymbol type,
@@ -1802,7 +1932,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         var selected = marked.Length == 1
             ? marked[0]
             : marked.Length == 0 && constructors.Length == 1 ? constructors[0] : null;
-        return selected is not null && IsSupportedServiceConstructor(selected);
+        return selected is not null && IsSupportedServiceConstructor(selected) &&
+               ConstructorSatisfiesRequiredMembers(service, selected);
     }
 
     private static BaseTypeDeclarationSyntax MakePublic(BaseTypeDeclarationSyntax declaration)
@@ -1853,6 +1984,23 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         };
         syntax = SyntaxFactory.ParseTypeName(keyword);
         return keyword.Length != 0;
+    }
+
+    private static bool TryGetEnumUnderlyingSpecialType(string type, out SpecialType specialType)
+    {
+        specialType = type switch
+        {
+            "System.SByte" or "sbyte" => SpecialType.System_SByte,
+            "System.Byte" or "byte" => SpecialType.System_Byte,
+            "System.Int16" or "short" => SpecialType.System_Int16,
+            "System.UInt16" or "ushort" => SpecialType.System_UInt16,
+            "System.Int32" or "int" => SpecialType.System_Int32,
+            "System.UInt32" or "uint" => SpecialType.System_UInt32,
+            "System.Int64" or "long" => SpecialType.System_Int64,
+            "System.UInt64" or "ulong" => SpecialType.System_UInt64,
+            _ => SpecialType.None
+        };
+        return specialType != SpecialType.None;
     }
 
     private static bool TryGetEnumUnderlyingTypeRange(
