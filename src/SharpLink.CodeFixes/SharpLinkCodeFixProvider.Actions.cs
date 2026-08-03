@@ -234,7 +234,7 @@ internal sealed partial class SharpLinkCodeFixProvider
             .Where(static item => item.Locations.Any(static location => location.IsInSource))
             .Where(static item => item.AllInterfaces.Any(IsIService))
             .Where(static item => !HasAttribute(item, "SharpLink.Sdk.RpcContractAttribute"))
-            .Where(item => HasRegularEditableDeclaration(
+            .Where(item => HasOnlyRegularEditableDeclarations(
                 item, context.Document.Project.Solution))
             .Where(HasValidRpcContractShapeForAnnotation)
             .Where(static item => !item.IsGenericType &&
@@ -511,7 +511,7 @@ internal sealed partial class SharpLinkCodeFixProvider
             .OfType<INamedTypeSymbol>()
             .Where(static item => item.TypeKind == TypeKind.Class && !item.IsAbstract && !item.IsGenericType)
             .Where(static item => item.Locations.Any(static location => location.IsInSource))
-            .Where(item => HasRegularEditableDeclaration(
+            .Where(item => HasOnlyRegularEditableDeclarations(
                 item, context.Document.Project.Solution))
             .Where(item => HasDeclarationInProject(
                 item, context.Document.Project.Solution, context.Document.Project.Id))

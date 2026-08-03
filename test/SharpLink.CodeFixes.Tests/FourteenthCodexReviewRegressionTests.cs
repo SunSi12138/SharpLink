@@ -59,6 +59,43 @@ public sealed class Service : IContract
     }
 
     [Test]
+    public async Task RestoreServiceRouteShouldRejectMixedGeneratedPartialService()
+    {
+        using var workspace = CodeFixTestWorkspace.Create(
+            ("Contract.cs", """
+[SharpLink.Sdk.RpcContract]
+public interface [|IContract|] : SharpLink.Sdk.IService { }
+"""),
+            ("Service.cs", """
+public partial class Service
+{
+    public Service() { }
+}
+
+internal sealed class FourteenthMixedServiceScenario { }
+"""));
+        AddGeneratedService(workspace);
+        await workspace.AssertCompilesAsync();
+        var project = workspace.Solution.GetProject(workspace.ProjectId)
+                      ?? throw new InvalidOperationException("Test project was unavailable.");
+        var compilation = await project.GetCompilationAsync()
+                          ?? throw new InvalidOperationException("Compilation was unavailable.");
+        var service = compilation.GetTypeByMetadataName("Service")
+                      ?? throw new InvalidOperationException("Mixed partial service was unavailable.");
+        var regularTrees = await Task.WhenAll(project.Documents.Select(static document =>
+            document.GetSyntaxTreeAsync()));
+        Ensure(service.DeclaringSyntaxReferences.Any(reference => regularTrees.Contains(reference.SyntaxTree)) &&
+               service.DeclaringSyntaxReferences.Any(reference => !regularTrees.Contains(reference.SyntaxTree)),
+            "The fixture must combine regular and generated service declarations.");
+        var diagnostic = await workspace.CreateDiagnosticAsync("SHARPLINK037", "Contract.cs");
+
+        var actions = await workspace.GetActionsAsync(diagnostic, "Contract.cs");
+
+        Ensure(actions.All(static action => action.EquivalenceKey != "RestoreServiceRoute"),
+            "RestoreServiceRoute must be withheld when a generated partial declaration supplies the contract implementation.");
+    }
+
+    [Test]
     public async Task MakeServiceConcreteShouldRequireUsablePublicActivationConstructor()
     {
         using (var unavailable = CodeFixTestWorkspace.Create(("Service.cs", """
@@ -397,7 +434,16 @@ public sealed class FourteenthGeneratedServiceGenerator : ISourceGenerator
     public void Initialize(GeneratorInitializationContext context) { }
 
     public void Execute(GeneratorExecutionContext context)
-        => context.AddSource("GeneratedService.g.cs", """
+    {
+        if (context.Compilation.GetTypeByMetadataName("FourteenthMixedServiceScenario") is not null)
+        {
+            context.AddSource("MixedService.g.cs", """
+public partial class Service : IContract { }
+""");
+            return;
+        }
+
+        context.AddSource("GeneratedService.g.cs", """
 namespace GeneratedApi;
 
 public sealed class GeneratedService : IContract
@@ -405,5 +451,6 @@ public sealed class GeneratedService : IContract
     public GeneratedService() { }
 }
 """);
+    }
 }
 #pragma warning restore RS1036, RS1038, RS1041, RS1042

@@ -66,6 +66,98 @@ public sealed class [|Service|] : IContract
     }
 
     [Test]
+    public async Task MissingContractFixShouldRejectMixedGeneratedPartialContract()
+    {
+        using (var mixed = CodeFixTestWorkspace.Create(
+                   ("Contract.cs", """
+namespace Mixed;
+
+public partial interface IContract { }
+"""),
+                   ("Service.cs", """
+namespace Mixed;
+
+[SharpLink.Sdk.RpcService]
+public sealed class [|Service|] : IContract
+{
+    public Service() { }
+
+    public System.Threading.Tasks.ValueTask<int> RunAsync() =>
+        System.Threading.Tasks.ValueTask.FromResult(42);
+}
+""")))
+        {
+            AddGeneratedSource(mixed, """
+namespace Mixed;
+
+public partial interface IContract : SharpLink.Sdk.IService
+{
+    [SharpLink.Sdk.NonCancellable]
+    System.Threading.Tasks.ValueTask<int> RunAsync();
+}
+""");
+            await mixed.AssertCompilesAsync();
+            var project = mixed.Solution.GetProject(mixed.ProjectId)
+                          ?? throw new InvalidOperationException("Test project was unavailable.");
+            var compilation = await project.GetCompilationAsync()
+                              ?? throw new InvalidOperationException("Compilation was unavailable.");
+            var contract = compilation.GetTypeByMetadataName("Mixed.IContract")
+                           ?? throw new InvalidOperationException("Mixed partial contract was unavailable.");
+            var regularTrees = await Task.WhenAll(project.Documents.Select(static document =>
+                document.GetSyntaxTreeAsync()));
+            Ensure(contract.DeclaringSyntaxReferences.Any(reference => regularTrees.Contains(reference.SyntaxTree)) &&
+                   contract.DeclaringSyntaxReferences.Any(reference => !regularTrees.Contains(reference.SyntaxTree)),
+                "The fixture must combine regular and generated partial declarations.");
+            var diagnostic = await mixed.CreateDiagnosticAsync("SHARPLINK016", "Service.cs");
+
+            var actions = await mixed.GetActionsAsync(diagnostic, "Service.cs");
+
+            Ensure(actions.All(static action => action.EquivalenceKey != "AnnotateRpcContract"),
+                "AnnotateRpcContract must be withheld when generated partial declarations provide the candidate shape.");
+        }
+
+        using var regular = CodeFixTestWorkspace.Create(
+            ("Contract.Declaration.cs", """
+namespace Regular;
+
+public partial interface IContract { }
+"""),
+            ("Contract.Shape.cs", """
+namespace Regular;
+
+public partial interface IContract : SharpLink.Sdk.IService
+{
+    [SharpLink.Sdk.NonCancellable]
+    System.Threading.Tasks.ValueTask<int> RunAsync();
+}
+"""),
+            ("Service.cs", """
+namespace Regular;
+
+[SharpLink.Sdk.RpcService]
+public sealed class [|Service|] : IContract
+{
+    public Service() { }
+
+    public System.Threading.Tasks.ValueTask<int> RunAsync() =>
+        System.Threading.Tasks.ValueTask.FromResult(42);
+}
+"""));
+        await regular.AssertCompilesAsync();
+        var regularDiagnostic = await regular.CreateDiagnosticAsync("SHARPLINK016", "Service.cs");
+
+        var regularActions = await regular.GetActionsAsync(regularDiagnostic, "Service.cs");
+        var regularAction = regularActions.Single(static action =>
+            action.EquivalenceKey == "AnnotateRpcContract");
+        var regularChanged = await regular.ApplyAsync(regularAction);
+        var regularContract = await regular.GetTextAsync("Contract.Declaration.cs", regularChanged) +
+                              await regular.GetTextAsync("Contract.Shape.cs", regularChanged);
+
+        EnsureContains(regularContract, "[global::SharpLink.Sdk.RpcContract]", "regular partial contract");
+        await regular.AssertCompilesAsync(regularChanged);
+    }
+
+    [Test]
     public async Task RestoreServiceRouteShouldExcludeErrorObsoleteImplementations()
     {
         using (var obsoleteOnly = CodeFixTestWorkspace.Create(("Services.cs", """
