@@ -187,7 +187,8 @@ internal sealed partial class SharpLinkCodeFixProvider
             ILiteralOperation => true,
             ILocalReferenceOperation => true,
             IParameterReferenceOperation => true,
-            IConversionOperation conversion => CanDiscardWithoutObservableSideEffects(conversion.Operand),
+            IConversionOperation { OperatorMethod: null } conversion when conversion.Conversion.IsImplicit =>
+                CanDiscardWithoutObservableSideEffects(conversion.Operand),
             IParenthesizedOperation parenthesized =>
                 CanDiscardWithoutObservableSideEffects(parenthesized.Operand),
             IPropertyReferenceOperation

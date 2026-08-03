@@ -203,13 +203,17 @@ internal sealed partial class SharpLinkCodeFixProvider
                 .ConfigureAwait(false);
             if (declaration is null || semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not { } type)
                 return;
-            if (type.TypeKind != TypeKind.Class || type.IsAbstract || type.IsGenericType ||
+            var validationTypes = await GetDtoTypesToValidateAfterSealingAsync(
+                type, context.Document.Project, context.CancellationToken).ConfigureAwait(false);
+            if (type.TypeKind != TypeKind.Class || type.IsAbstract ||
                 IsObsoleteWithError(type) ||
                 type.BaseType?.SpecialType != SpecialType.System_Object ||
                 HasMembersIncompatibleWithSealing(type) ||
                 !HasOnlyRegularEditableDeclarations(type, context.Document.Project.Solution) ||
-                !SharpLink.Generator.RpcGenerator.CanGenerateDtoAfterSealing(
-                    semanticModel.Compilation, type, context.CancellationToken))
+                validationTypes.IsDefaultOrEmpty ||
+                validationTypes.Any(candidate =>
+                    !SharpLink.Generator.RpcGenerator.CanGenerateDtoAfterSealing(
+                        semanticModel.Compilation, candidate, context.CancellationToken)))
             {
                 return;
             }

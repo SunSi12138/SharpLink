@@ -69,7 +69,12 @@ internal sealed partial class SharpLinkCodeFixProvider
             context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
         var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
             .ConfigureAwait(false);
-        if (declaration is null || semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not { } contract)
+        if (declaration is null ||
+            semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not { } contract ||
+            IsObsoleteWithError(contract) ||
+            !HasValidRpcContractShapeForAnnotation(contract) ||
+            !SharpLink.Generator.RpcGenerator.CanGenerateContractPayloadCodecs(
+                semanticModel.Compilation, contract, context.CancellationToken))
             return;
 
         var implementations = await SymbolFinder.FindImplementationsAsync(
@@ -85,8 +90,7 @@ internal sealed partial class SharpLinkCodeFixProvider
                 item, context.Document.Project.Solution, context.Document.Project.Id))
             .Where(IsEffectivelyPublic)
             .Where(static item => !HasRpcServiceAttribute(item))
-            .Where(static item => item.AllInterfaces.Count(candidate =>
-                HasAttribute(candidate, "SharpLink.Sdk.RpcContractAttribute")) == 1)
+            .Where(static item => item.AllInterfaces.Count(HasRpcContractAttribute) == 1)
             .Where(HasValidServiceActivationShape)
             .ToArray();
         if (candidates.Length != 1)
