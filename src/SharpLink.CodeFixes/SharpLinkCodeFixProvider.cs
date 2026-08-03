@@ -585,7 +585,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         var service = declaration is null
             ? null
             : semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken);
-        if (service?.TypeKind != TypeKind.Class)
+        if (service?.TypeKind != TypeKind.Class || IsObsoleteWithError(service))
             return;
         var attributeReference = service?.GetAttributes()
             .FirstOrDefault(static attribute => string.Equals(
@@ -683,6 +683,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .Where(static item => item.Locations.Any(static location => location.IsInSource))
             .Where(item => HasRegularEditableDeclaration(
                 item, context.Document.Project.Solution))
+            .Where(item => HasDeclarationInProject(
+                item, context.Document.Project.Solution, context.Document.Project.Id))
             .Where(IsEffectivelyPublic)
             .Where(static item => !HasAttribute(item, "SharpLink.Sdk.RpcServiceAttribute"))
             .Where(static item => item.AllInterfaces.Count(candidate =>
@@ -1968,6 +1970,13 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
            symbol.DeclaringSyntaxReferences.All(reference =>
                IsRegularEditableDocument(solution, reference.SyntaxTree));
 
+    private static bool HasDeclarationInProject(
+        ISymbol symbol,
+        Solution solution,
+        ProjectId projectId)
+        => symbol.DeclaringSyntaxReferences.Any(reference =>
+            solution.GetDocument(reference.SyntaxTree)?.Project.Id == projectId);
+
     private static bool IsRegularEditableDocument(Solution solution, SyntaxTree syntaxTree)
     {
         var document = solution.GetDocument(syntaxTree);
@@ -2161,6 +2170,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             method.Parameters.Count(static parameter =>
                 IsControlParameter(parameter, ControlParameterKind.CallOptions)) <= 1 &&
             HasValidRpcControlParameterOrder(method) &&
+            HasValidRpcCancellationPolicy(method) &&
             method.Parameters.Count(static parameter => IsAsyncEnumerableType(parameter.Type)) <= sbyte.MaxValue &&
             !HasInvalidRpcMethodAttributes(method));
     }
@@ -2379,6 +2389,18 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                IsControlParameter(method.Parameters[method.Parameters.Length - 1],
                    ControlParameterKind.CancellationToken);
     }
+
+    private static bool HasValidRpcCancellationPolicy(IMethodSymbol method)
+        => method.Parameters.Any(static parameter =>
+               IsControlParameter(parameter, ControlParameterKind.CancellationToken)) !=
+           method.GetAttributes().Any(static attribute => string.Equals(
+                   attribute.AttributeClass?.ToDisplayString(),
+                   "SharpLink.Sdk.NonCancellableAttribute",
+                   StringComparison.Ordinal) ||
+               string.Equals(
+                   attribute.AttributeClass?.ToDisplayString(),
+                   "SharpLink.Abstractions.NonCancellableAttribute",
+                   StringComparison.Ordinal));
 
     private static bool IsAsyncEnumerableType(ITypeSymbol type)
         => type is INamedTypeSymbol named &&

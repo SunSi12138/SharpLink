@@ -147,8 +147,11 @@ using System.Threading.Tasks;
 
 public interface IContract : SharpLink.Sdk.IService
 {
+    [SharpLink.Sdk.NonCancellable]
     Task Ping();
+    [SharpLink.Sdk.NonCancellable]
     ValueTask<int> Echo(int value);
+    [SharpLink.Sdk.NonCancellable]
     IAsyncEnumerable<int> Stream();
 }
 

@@ -259,6 +259,11 @@ internal sealed partial class SharpLinkCodeFixProvider
                         semanticModel?.GetOperation(invocation, cancellationToken) is IInvocationOperation operation &&
                         related.Any(relatedMethod => IsSameMethod(operation.TargetMethod, relatedMethod)))
                     {
+                        if (location.Location.SourceTree is not { } invocationTree ||
+                            !IsRegularEditableDocument(solution, invocationTree))
+                        {
+                            return false;
+                        }
                         continue;
                     }
                 }
