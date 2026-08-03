@@ -75,7 +75,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                     uint.TryParse(memberId, NumberStyles.None, CultureInfo.InvariantCulture, out var parsedMemberId) &&
                     parsedMemberId is > 0 and <= 536_870_911 &&
                     await CanRestoreMemberIdAsync(
-                        context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false))
+                        context.Document, diagnostic, parsedMemberId, context.CancellationToken)
+                        .ConfigureAwait(false))
                 {
                     RegisterDocumentFix(context, diagnostic, $"Preserve published member ID {memberId}",
                         "RestoreMemberId",
@@ -143,12 +144,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                     "MakeContractPublic").ConfigureAwait(false);
                 break;
             case "SHARPLINK056":
-                RegisterDocumentFix(context, diagnostic, "Remove [Oneway]", "RemoveOneway",
-                    (document, item, ct) => RemoveAttributeAsync(
-                        document,
-                        item,
-                        ["SharpLink.Sdk.OnewayAttribute", "SharpLink.Abstractions.OnewayAttribute"],
-                        ct));
+                await RegisterRemoveOnewayFixAsync(context, diagnostic).ConfigureAwait(false);
                 break;
         }
     }
@@ -359,7 +355,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 related.Parameters.Any(static parameter => parameter.IsOptional || parameter.IsParams)) ||
             !CanApplySignatureEditWithoutCollisions(
                 relatedMethods,
-                new SignatureEditPlan(SignatureEditKind.ReorderControlParameters)))
+                new SignatureEditPlan(SignatureEditKind.ReorderControlParameters)) ||
+            !CanReorderControlParametersWithoutBreakingHandlerDependencies(relatedMethods))
         {
             return;
         }
@@ -423,7 +420,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .Where(static item => item.AllInterfaces.Any(IsIService))
             .Where(static item => !HasAttribute(item, "SharpLink.Sdk.RpcContractAttribute"))
             .ToArray();
-        if (candidates.Length != 1 || candidates[0].DeclaringSyntaxReferences.Length == 0)
+        if (candidates.Length != 1 || candidates[0].DeclaringSyntaxReferences.Length == 0 ||
+            !IsEffectivelyPublic(candidates[0]))
             return;
 
         var candidate = candidates[0];
@@ -598,12 +596,29 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         var unionType = unionDeclaration is null
             ? null
             : semanticModel.GetDeclaredSymbol(unionDeclaration, context.CancellationToken);
+        var root = await context.Document.GetSyntaxRootAsync(context.CancellationToken).ConfigureAwait(false);
+        var targetAttribute = root?.FindNode(
+                diagnostic.Location.SourceSpan,
+                getInnermostNodeForTie: true)
+            .AncestorsAndSelf().OfType<AttributeSyntax>().FirstOrDefault();
         if (resolvedType is not INamedTypeSymbol namedCase || unionType is null ||
+            targetAttribute is null ||
             namedCase.IsUnboundGenericType || ContainsTypeParameter(namedCase) ||
             namedCase.TypeKind is not (TypeKind.Class or TypeKind.Struct) || namedCase.IsAbstract ||
             semanticModel.Compilation is not CSharpCompilation csharpCompilation ||
             !csharpCompilation.ClassifyConversion(namedCase, unionType).IsImplicit)
             return;
+
+        if (unionType.GetAttributes().Where(IsRpcUnionCaseAttribute).Any(attribute =>
+                attribute.ConstructorArguments.Length == 2 &&
+                attribute.ConstructorArguments[1].Value is ITypeSymbol existingCase &&
+                SymbolEqualityComparer.Default.Equals(existingCase, namedCase) &&
+                (attribute.ApplicationSyntaxReference is not { } reference ||
+                 reference.SyntaxTree != targetAttribute.SyntaxTree ||
+                 reference.Span != targetAttribute.Span)))
+        {
+            return;
+        }
 
         RegisterDocumentFix(context, diagnostic, $"Restore tag {tag} to {type}",
             "RestoreUnionTag",
@@ -908,18 +923,37 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
     private static async Task<bool> CanRestoreMemberIdAsync(
         Document document,
         Diagnostic diagnostic,
+        uint memberId,
         CancellationToken cancellationToken)
     {
         var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+        var semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
         var member = root?.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true)
             .AncestorsAndSelf().OfType<MemberDeclarationSyntax>()
             .FirstOrDefault(static item => item is PropertyDeclarationSyntax or FieldDeclarationSyntax);
-        return member switch
+        var validDeclaration = member switch
         {
             PropertyDeclarationSyntax => true,
             FieldDeclarationSyntax field => field.Declaration.Variables.Count == 1,
             _ => false
         };
+        if (!validDeclaration || semanticModel is null)
+            return false;
+
+        ISymbol? target = member switch
+        {
+            PropertyDeclarationSyntax property => semanticModel.GetDeclaredSymbol(property, cancellationToken),
+            FieldDeclarationSyntax field => semanticModel.GetDeclaredSymbol(
+                field.Declaration.Variables[0], cancellationToken),
+            _ => null
+        };
+        if (target?.ContainingType is not { } containingType)
+            return false;
+
+        return !containingType.GetMembers()
+            .Where(IsSerializableRpcMember)
+            .Where(candidate => !SymbolEqualityComparer.Default.Equals(candidate, target))
+            .Any(candidate => TryGetRpcMemberId(candidate, out var candidateId) && candidateId == memberId);
     }
 
     private static async Task<bool> CanRestoreEnumUnderlyingTypeAsync(
@@ -1057,12 +1091,48 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             (solution, _, _, ct) => UpdateTimeoutAttributesAsync(solution, references, remove: true, ct));
     }
 
+    private static async Task RegisterRemoveOnewayFixAsync(
+        CodeFixContext context,
+        Diagnostic diagnostic)
+    {
+        var declaration = await FindNodeAsync<MethodDeclarationSyntax>(
+            context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
+        var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
+            .ConfigureAwait(false);
+        if (declaration is null ||
+            semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not IMethodSymbol method)
+        {
+            return;
+        }
+
+        var equivalentMethods = await FindEquivalentInterfaceMethodsAsync(
+            method, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false);
+        var attributes = equivalentMethods
+            .SelectMany(static candidate => candidate.GetAttributes())
+            .Where(IsOnewayAttribute)
+            .ToImmutableArray();
+        if (attributes.Length == 0 || attributes.Any(static attribute => attribute.ApplicationSyntaxReference is null))
+            return;
+
+        var references = attributes.Select(static attribute => attribute.ApplicationSyntaxReference!)
+            .ToImmutableArray();
+        RegisterSolutionFix(
+            context,
+            diagnostic,
+            "Remove [Oneway]",
+            "RemoveOneway",
+            (solution, _, _, ct) => RemoveAttributesAsync(solution, references, ct));
+    }
+
     private static async Task<Solution> UpdateTimeoutAttributesAsync(
         Solution solution,
         ImmutableArray<SyntaxReference> references,
         bool remove,
         CancellationToken cancellationToken)
     {
+        if (remove)
+            return await RemoveAttributesAsync(solution, references, cancellationToken).ConfigureAwait(false);
+
         var referencesByDocument = references
             .Select(reference => (Reference: reference, Document: solution.GetDocument(reference.SyntaxTree)))
             .Where(static item => item.Document is not null)
@@ -1082,21 +1152,39 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 .Select(static attribute => attribute!)
                 .Distinct()
                 .ToArray();
-            if (remove)
+            root = root.ReplaceNodes(attributes, static (_, current) =>
+                current.WithArgumentList(null).WithAdditionalAnnotations(Formatter.Annotation));
+            solution = solution.WithDocumentSyntaxRoot(group.Key, root);
+        }
+        return solution;
+    }
+
+    private static async Task<Solution> RemoveAttributesAsync(
+        Solution solution,
+        ImmutableArray<SyntaxReference> references,
+        CancellationToken cancellationToken)
+    {
+        var spansByDocument = references
+            .Select(reference => (Reference: reference, Document: solution.GetDocument(reference.SyntaxTree)))
+            .Where(static item => item.Document is not null)
+            .GroupBy(static item => item.Document!.Id, static item => item.Reference.Span);
+        foreach (var group in spansByDocument)
+        {
+            var document = solution.GetDocument(group.Key);
+            var root = document is null ? null : await document.GetSyntaxRootAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (root is null)
+                continue;
+
+            foreach (var span in group.Distinct().OrderByDescending(static span => span.Start))
             {
-                foreach (var attribute in attributes.OrderByDescending(static attribute => attribute.SpanStart))
-                {
-                    if (attribute.Parent is not AttributeListSyntax list)
-                        continue;
-                    root = list.Attributes.Count == 1
-                        ? root.RemoveNode(list, SyntaxRemoveOptions.KeepExteriorTrivia) ?? root
-                        : root.ReplaceNode(list, list.WithAttributes(list.Attributes.Remove(attribute)));
-                }
-            }
-            else
-            {
-                root = root.ReplaceNodes(attributes, static (_, current) =>
-                    current.WithArgumentList(null).WithAdditionalAnnotations(Formatter.Annotation));
+                var attribute = root.FindNode(span, getInnermostNodeForTie: true)
+                    .AncestorsAndSelf().OfType<AttributeSyntax>().FirstOrDefault();
+                if (attribute?.Parent is not AttributeListSyntax list)
+                    continue;
+                root = list.Attributes.Count == 1
+                    ? root.RemoveNode(list, SyntaxRemoveOptions.KeepExteriorTrivia) ?? root
+                    : root.ReplaceNode(list, list.WithAttributes(list.Attributes.Remove(attribute)));
             }
             solution = solution.WithDocumentSyntaxRoot(group.Key, root);
         }
@@ -1527,6 +1615,63 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                attribute.AttributeClass?.ToDisplayString(),
                "SharpLink.Abstractions.TimeoutAttribute",
                StringComparison.Ordinal);
+
+    private static bool IsOnewayAttribute(AttributeData attribute)
+        => string.Equals(
+               attribute.AttributeClass?.ToDisplayString(),
+               "SharpLink.Sdk.OnewayAttribute",
+               StringComparison.Ordinal) ||
+           string.Equals(
+               attribute.AttributeClass?.ToDisplayString(),
+               "SharpLink.Abstractions.OnewayAttribute",
+               StringComparison.Ordinal);
+
+    private static bool IsRpcUnionCaseAttribute(AttributeData attribute)
+        => string.Equals(
+            attribute.AttributeClass?.ToDisplayString(),
+            "SharpLink.Sdk.RpcUnionCaseAttribute",
+            StringComparison.Ordinal);
+
+    private static bool IsSerializableRpcMember(ISymbol member)
+        => !member.IsStatic && member.DeclaredAccessibility == Accessibility.Public &&
+           !HasAttribute(member, "SharpLink.Sdk.RpcIgnoreAttribute") &&
+           (member is IFieldSymbol { IsConst: false } ||
+            member is IPropertySymbol
+            {
+                IsIndexer: false,
+                GetMethod.DeclaredAccessibility: Accessibility.Public
+            });
+
+    private static bool TryGetRpcMemberId(ISymbol member, out uint id)
+    {
+        var attribute = member.GetAttributes().FirstOrDefault(item => string.Equals(
+            item.AttributeClass?.ToDisplayString(),
+            "SharpLink.Sdk.RpcMemberAttribute",
+            StringComparison.Ordinal));
+        if (attribute is not null)
+        {
+            if (attribute.ConstructorArguments.Length == 1 &&
+                attribute.ConstructorArguments[0].Value is int explicitId &&
+                explicitId is > 0 and <= 0x1FFF_FFFF)
+            {
+                id = (uint)explicitId;
+                return true;
+            }
+            id = 0;
+            return false;
+        }
+
+        var hash = 2166136261U;
+        foreach (var character in member.Name)
+        {
+            hash ^= character;
+            hash *= 16777619U;
+        }
+        id = hash & 0x1FFF_FFFFU;
+        if (id == 0)
+            id = 1;
+        return true;
+    }
 
     private static bool HasNonCancellableAttribute(IMethodSymbol method)
         => method.GetAttributes().Any(IsNonCancellableAttribute);

@@ -624,6 +624,40 @@ internal sealed partial class SharpLinkCodeFixProvider
         return true;
     }
 
+    private static bool CanReorderControlParametersWithoutBreakingHandlerDependencies(
+        ImmutableArray<IMethodSymbol> relatedMethods)
+    {
+        foreach (var method in relatedMethods)
+        {
+            var flags = GetControlParameterFlags(method);
+            var order = GetControlParameterOrder(flags.CancellationTokens, flags.CallOptions);
+            var proposedOrdinals = new int[order.Length];
+            for (var ordinal = 0; ordinal < order.Length; ordinal++)
+                proposedOrdinals[order[ordinal]] = ordinal;
+
+            foreach (var handler in method.Parameters)
+            {
+                foreach (var attribute in handler.GetAttributes().Where(static attribute => string.Equals(
+                             attribute.AttributeClass?.ToDisplayString(),
+                             "System.Runtime.CompilerServices.InterpolatedStringHandlerArgumentAttribute",
+                             StringComparison.Ordinal)))
+                {
+                    foreach (var name in attribute.ConstructorArguments.SelectMany(GetReferencedParameterNames))
+                    {
+                        var dependency = method.Parameters.FirstOrDefault(parameter =>
+                            string.Equals(parameter.Name, name, StringComparison.Ordinal));
+                        if (dependency is not null &&
+                            proposedOrdinals[dependency.Ordinal] >= proposedOrdinals[handler.Ordinal])
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
     private static IEnumerable<string> GetReferencedParameterNames(TypedConstant argument)
     {
         if (argument.Kind == TypedConstantKind.Array)
