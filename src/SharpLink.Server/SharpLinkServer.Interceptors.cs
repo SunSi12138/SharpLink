@@ -503,12 +503,29 @@ internal sealed partial class SharpLinkServer
     }
 
     private SharpLinkException MapStreamServiceException(
+        ServerConnectionState connection,
         IRpcSession session,
         long requestId,
         long contractId,
         long methodId,
         Exception exception)
     {
+        if (exception is OperationCanceledException &&
+            connection.CallCancellations.TryGetValue(requestId, out var callState) &&
+            callState.TryAcquire(requestId))
+        {
+            try
+            {
+                exception = CreateServerCancellationException(
+                    callState,
+                    callState.DeadlineTimestamp);
+            }
+            finally
+            {
+                callState.ReleaseUse();
+            }
+        }
+
         if (SharpLinkCallContext.Current is SharpLinkServerInvocationContext context)
             return MapServiceException(exception, context);
         if (SharpLinkCallContext.Current is { } callContext &&

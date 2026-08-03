@@ -321,6 +321,46 @@ public class PooledAsyncStreamDispatcherTests
 
     [Test]
     [NotInParallel]
+    public async Task AsyncConsumerAbandonmentShouldJoinTerminalCleanupBeforeDisposeReturns()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var manager = new StreamManager();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        manager.Register(92, dispatcher);
+        var callbackEntered = new TaskCompletionSource<IStreamDispatchState>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCallback = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        dispatcher.SetConsumerAbandonedCallback(
+            async (requestId, dispatchState) =>
+            {
+                callbackEntered.TrySetResult(dispatchState ?? throw new Exception(
+                    "registered dispatcher must expose its dispatch state"));
+                await releaseCallback.Task.ConfigureAwait(false);
+                manager.Unregister(requestId);
+            },
+            92);
+
+        var disposing = dispatcher.DisposeAsync().AsTask();
+        var state = await callbackEntered.Task.WaitAsync(RaceCoordinationTimeout);
+        Ensure(!disposing.IsCompleted && !state.IsDetached,
+            "disposal must join asynchronous terminal cleanup before finalizing its lease");
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+            "an asynchronously cleaning dispatcher must not enter the pool");
+
+        releaseCallback.TrySetResult();
+        await disposing.WaitAsync(RaceCoordinationTimeout);
+        Ensure(state.IsDetached,
+            "the terminal callback must detach the completed stream before disposal returns");
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the dispatcher should become reusable only after terminal cleanup completes");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task RegistrationRetentionShouldPreventUnregisteredDispatcherReuse()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();

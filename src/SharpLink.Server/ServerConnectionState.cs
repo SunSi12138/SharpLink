@@ -17,12 +17,15 @@ internal sealed class ServerConnectionState
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _callsDrained =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _sessionLoopCompleted =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ConcurrentDictionary<ServiceRegistration, ConnectionServiceEntry> _services = [];
     private SharpLinkAuthenticationContext? _authenticationContext;
     private SharpLinkCallContextSnapshot? _defaultCallContext;
     private long _lastAcceptedRequestId;
     private int _activeCalls;
     private int _lifecycleState = (int)ServerConnectionLifecycleState.Handshaking;
+    private int _sessionLoopState;
     private int _closeStarted;
     private Task? _serviceCleanupTask;
 
@@ -81,6 +84,18 @@ internal sealed class ServerConnectionState
 
     internal ServerConnectionLifecycleState LifecycleState
         => (ServerConnectionLifecycleState)Volatile.Read(ref _lifecycleState);
+
+    internal void MarkSessionLoopStarted()
+    {
+        if (Interlocked.CompareExchange(ref _sessionLoopState, 1, 0) != 0)
+            throw new InvalidOperationException("Server connection session loop was already started.");
+    }
+
+    internal void MarkSessionLoopCompleted()
+    {
+        if (Interlocked.Exchange(ref _sessionLoopState, 2) == 1)
+            _sessionLoopCompleted.TrySetResult();
+    }
 
     internal bool MarkReady(SharpLinkAuthenticationContext? authenticationContext)
     {
@@ -261,6 +276,30 @@ internal sealed class ServerConnectionState
         {
             (failures ??= []).Add(exception);
         }
+
+        // Stop stream dispatch and the send pump before joining the read loop. The loop can
+        // itself be awaiting bounded stream delivery; completing those dispatchers releases
+        // it without completing or reclaiming its active PipeReader buffer.
+        Session.BeginShutdown();
+
+        try
+        {
+            // Cancellation is normally sufficient, but CancelPendingRead also wakes custom
+            // PipeReader implementations that do not complete a pending read from the token.
+            // It does not release an already returned ReadResult; the session loop still owns
+            // that buffer until it calls AdvanceTo and publishes completion below.
+            Session.Input.CancelPendingRead();
+        }
+        catch (Exception exception) when (exception is ObjectDisposedException or InvalidOperationException)
+        {
+        }
+        catch (Exception exception)
+        {
+            (failures ??= []).Add(exception);
+        }
+
+        if (Volatile.Read(ref _sessionLoopState) == 1)
+            await _sessionLoopCompleted.Task.ConfigureAwait(false);
 
         try
         {

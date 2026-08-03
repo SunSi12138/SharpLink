@@ -702,6 +702,101 @@ public interface IHelloService : SharpLink.Sdk.IService
     }
 
     [Test]
+    public Task GeneratedManifestShouldExposeAnAssemblyOwnedBootstrapForInternalServices()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IInternalService : SharpLink.Sdk.IService
+{
+    ValueTask<string> Identify();
+}
+
+[SharpLink.Sdk.RpcService]
+internal sealed class InternalService : IInternalService
+{
+    public InternalService() { }
+    public ValueTask<string> Identify() => new("internal");
+}
+""");
+
+        var manifest = GetGeneratedManifest(source);
+        Ensure(manifest.Contains("typeof(global::InternalService)", StringComparison.Ordinal),
+            "the assembly-owned manifest must retain its internal service implementation");
+        Ensure(manifest.Contains("public static void Register()", StringComparison.Ordinal),
+            "the generated manifest must expose a public static bootstrap entry point");
+        Ensure(manifest.Contains(
+                "=> SharpLinkGeneratedAssemblyCatalog.Register(Instance);",
+                StringComparison.Ordinal),
+            "the public bootstrap must register the assembly-owned manifest instance");
+        Ensure(manifest.Contains("=> __SharpLinkGeneratedAssemblyManifest_", StringComparison.Ordinal) &&
+               manifest.Contains(".Register();", StringComparison.Ordinal),
+            "the producer module initializer must delegate to the public bootstrap");
+        Ensure(CountOccurrences(manifest, "SharpLinkGeneratedAssemblyCatalog.Register") == 1,
+            "registration logic must have one assembly-owned implementation");
+        Ensure(!manifest.Contains("Register(global::InternalService", StringComparison.Ordinal),
+            "the public bootstrap must not expose the internal implementation type");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ReferencedAssemblyManifestsShouldEmitDeterministicStaticBootstrapCalls()
+    {
+        var infrastructure = CreateManifestInfrastructureReference();
+        var alpha = CreateGeneratedManifestReference(
+            "AlphaServices",
+            "AlphaManifest",
+            "HiddenAlphaService",
+            infrastructure);
+        var zeta = CreateGeneratedManifestReference(
+            "ZetaServices",
+            "ZetaManifest",
+            "HiddenZetaService",
+            infrastructure);
+        var legacy = CreateLegacyGeneratedManifestReference(infrastructure);
+        var malformed = CreateMalformedManifestReference(infrastructure);
+        var ordinary = CreateMetadataReference(
+            "OrdinaryDependency",
+            "namespace OrdinaryDependency { public sealed class OrdinaryType { } }");
+        const string consumer = "namespace Consumer { internal sealed class Marker { } }";
+
+        var first = GetReferencedManifestBootstrap(
+            RunGeneratorAndGetSources(consumer, infrastructure, zeta, ordinary, legacy, malformed, alpha));
+        var second = GetReferencedManifestBootstrap(
+            RunGeneratorAndGetSources(consumer, infrastructure, alpha, malformed, legacy, ordinary, zeta));
+
+        Ensure(string.Equals(first, second, StringComparison.Ordinal),
+            "referenced manifest bootstrap output must not depend on metadata-reference order");
+        Ensure(CountOccurrences(first, ".Register();") == 2,
+            "each current referenced generated manifest must receive exactly one bootstrap call");
+        var alphaCall = first.IndexOf("global::SharpLink.Generated.AlphaManifest.Register();", StringComparison.Ordinal);
+        var zetaCall = first.IndexOf("global::SharpLink.Generated.ZetaManifest.Register();", StringComparison.Ordinal);
+        Ensure(alphaCall >= 0 && zetaCall > alphaCall,
+            "bootstrap calls must use public fully qualified entry points in assembly-identity order");
+        Ensure(first.Contains(
+                "SharpLinkGeneratedAssemblyCatalog.Register(global::SharpLink.Generated.LegacyManifest.Instance);",
+                StringComparison.Ordinal),
+            "referenced manifests generated before the public Register entry point must use the Instance fallback");
+        Ensure(first.Contains("ModuleInitializer", StringComparison.Ordinal),
+            "the consumer bootstrap must execute before application entry and server Build");
+        Ensure(!first.Contains("OrdinaryDependency", StringComparison.Ordinal) &&
+               !first.Contains("MalformedManifest", StringComparison.Ordinal) &&
+               !first.Contains("HiddenAlphaService", StringComparison.Ordinal) &&
+               !first.Contains("HiddenZetaService", StringComparison.Ordinal),
+            "ordinary references and internal implementation types must not leak into the bootstrap");
+        foreach (var forbidden in new[]
+                 {
+                     "Assembly.Load", "Assembly.LoadFrom", "GetCustomAttributes", "Directory.", "GetFiles("
+                 })
+        {
+            Ensure(!first.Contains(forbidden, StringComparison.Ordinal),
+                $"the static bootstrap must not use runtime discovery token '{forbidden}'");
+        }
+
+        EnsureGeneratorOutputCompiles(consumer, infrastructure, zeta, ordinary, legacy, malformed, alpha);
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task SemanticDtoMembersShouldUseValidatedCodecs()
     {
         var source = BuildSource("""
@@ -2865,6 +2960,33 @@ namespace SharpLink.Abstractions
             .ToArray();
     }
 
+    private static void EnsureGeneratorOutputCompiles(
+        string source,
+        params MetadataReference[] additionalReferences)
+    {
+        var syntaxTree = CSharpSyntaxTree.ParseText(source, CSharpParseOptions.Default);
+        var compilation = CSharpCompilation.Create(
+            assemblyName: "GeneratedBootstrapCompilationTest",
+            syntaxTrees: [syntaxTree],
+            references: GetPlatformReferences().Concat(additionalReferences),
+            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        IIncrementalGenerator generator = new RpcGenerator();
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out var generatorDiagnostics);
+        var errors = generatorDiagnostics
+            .Concat(outputCompilation.GetDiagnostics())
+            .Where(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
+            .ToArray();
+        Ensure(errors.Length == 0,
+            $"Generated consumer bootstrap did not compile: {FormatDiagnostics(errors)}");
+    }
+
+    private static string GetReferencedManifestBootstrap(string[] generated)
+        => generated.FirstOrDefault(static text =>
+                text.Contains("__SharpLinkGeneratedReferencedAssemblyBootstrap", StringComparison.Ordinal))
+            ?? throw new Exception("Expected a referenced-assembly bootstrap source.");
+
     private static string GetGeneratedManifest(string source)
     {
         var generated = RunGeneratorAndGetSources(source);
@@ -2915,6 +3037,90 @@ namespace SharpLink.Abstractions
             $"Failed to build metadata fixture '{assemblyName}': {FormatDiagnostics(emit.Diagnostics)}");
         return MetadataReference.CreateFromImage(image.ToArray());
     }
+
+    private static MetadataReference CreateManifestInfrastructureReference()
+        => CreateMetadataReference(
+            "SharpLink.ManifestFixture.Abstractions",
+            """
+using System;
+
+namespace SharpLink.Abstractions
+{
+    public interface ISharpLinkGeneratedAssemblyManifest { }
+
+    [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = false)]
+    public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
+    {
+        public SharpLinkGeneratedAssemblyManifestAttribute(Type manifestType) { }
+    }
+
+    public static class SharpLinkGeneratedAssemblyCatalog
+    {
+        public static void Register(ISharpLinkGeneratedAssemblyManifest manifest) { }
+    }
+}
+""");
+
+    private static MetadataReference CreateGeneratedManifestReference(
+        string assemblyName,
+        string manifestTypeName,
+        string internalServiceTypeName,
+        MetadataReference infrastructure)
+        => CreateMetadataReference(
+            assemblyName,
+            $$"""
+using SharpLink.Abstractions;
+
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}))]
+
+namespace SharpLink.Generated
+{
+    public sealed class {{manifestTypeName}} : ISharpLinkGeneratedAssemblyManifest
+    {
+        public static readonly {{manifestTypeName}} Instance = new();
+        public static void Register() => SharpLinkGeneratedAssemblyCatalog.Register(Instance);
+    }
+}
+
+namespace {{assemblyName}}
+{
+    internal sealed class {{internalServiceTypeName}} { }
+}
+""",
+            infrastructure);
+
+    private static MetadataReference CreateLegacyGeneratedManifestReference(MetadataReference infrastructure)
+        => CreateMetadataReference(
+            "LegacyServices",
+            """
+using SharpLink.Abstractions;
+
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.LegacyManifest))]
+
+namespace SharpLink.Generated
+{
+    public sealed class LegacyManifest : ISharpLinkGeneratedAssemblyManifest
+    {
+        public static readonly LegacyManifest Instance = new();
+    }
+}
+""",
+            infrastructure);
+
+    private static MetadataReference CreateMalformedManifestReference(MetadataReference infrastructure)
+        => CreateMetadataReference(
+            "MalformedServices",
+            """
+using SharpLink.Abstractions;
+
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.MalformedManifest))]
+
+namespace SharpLink.Generated
+{
+    public sealed class MalformedManifest : ISharpLinkGeneratedAssemblyManifest { }
+}
+""",
+            infrastructure);
 
     private static MetadataReference CreateAdapterPackageReference(
         string assemblyName,

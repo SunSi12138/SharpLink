@@ -48,6 +48,9 @@ public class SharpLinkRuntimeContextTests
         Ensure(options.FlowControl.StreamReceiveWindowBytes == 1024 * 1024, "stream window");
         Ensure(options.FlowControl.ConnectionReceiveWindowBytes == 16 * 1024 * 1024, "connection window");
         Ensure(options.FlowControl.MaxConcurrentCallsPerConnection == 1024, "call limit");
+        Ensure(options.FlowControl.MaxConcurrentCallsPerServer ==
+               SharpLinkFlowControlOptions.DefaultMaxConcurrentCallsPerServer,
+            "server-wide call limit");
     }
 
     [Test]
@@ -217,6 +220,76 @@ public class SharpLinkRuntimeContextTests
 
         Ensure(failure is ArgumentOutOfRangeException,
             "Server call concurrency must bound its per-deadline-scan snapshot");
+    }
+
+    [Test]
+    public void ServerCallCapacityShouldValidateInclusiveHardRange()
+    {
+        foreach (var valid in new[]
+                 {
+                     1,
+                     SharpLinkFlowControlOptions.MaximumConcurrentCallsPerServer
+                 })
+        {
+            var options = new SharpLinkFlowControlOptions
+            {
+                MaxConcurrentCallsPerServer = valid
+            };
+
+            options.Validate();
+            Ensure(options.MaxConcurrentCallsPerServer == valid,
+                $"server-wide call capacity boundary {valid}");
+        }
+
+        foreach (var invalid in new[]
+                 {
+                     0,
+                     SharpLinkFlowControlOptions.MaximumConcurrentCallsPerServer + 1
+                 })
+        {
+            var failure = CaptureFailure(new SharpLinkFlowControlOptions
+            {
+                MaxConcurrentCallsPerServer = invalid
+            }.Validate);
+
+            Ensure(failure is ArgumentOutOfRangeException
+            {
+                ParamName: nameof(SharpLinkFlowControlOptions.MaxConcurrentCallsPerServer)
+            },
+                $"server-wide call capacity {invalid} must fail its own public validation");
+        }
+    }
+
+    [Test]
+    public void ConnectionAndServerCallCapacitySnapshotsShouldRemainIndependent()
+    {
+        var builder = new SharpLinkRuntimeContextBuilder()
+            .Configure(options =>
+            {
+                options.FlowControl.MaxConcurrentCallsPerConnection = 7;
+                options.FlowControl.MaxConcurrentCallsPerServer = 11;
+            });
+        using var first = builder.Build();
+
+        builder.Configure(options =>
+        {
+            options.FlowControl.MaxConcurrentCallsPerConnection = 13;
+            options.FlowControl.MaxConcurrentCallsPerServer = 17;
+        });
+        using var second = builder.Build();
+
+        var leakedFirstCopy = first.Options;
+        leakedFirstCopy.FlowControl.MaxConcurrentCallsPerConnection = 19;
+        leakedFirstCopy.FlowControl.MaxConcurrentCallsPerServer = 23;
+
+        Ensure(first.Options.FlowControl.MaxConcurrentCallsPerConnection == 7,
+            "first per-connection call-capacity snapshot");
+        Ensure(first.Options.FlowControl.MaxConcurrentCallsPerServer == 11,
+            "first server-wide call-capacity snapshot");
+        Ensure(second.Options.FlowControl.MaxConcurrentCallsPerConnection == 13,
+            "second per-connection call-capacity snapshot");
+        Ensure(second.Options.FlowControl.MaxConcurrentCallsPerServer == 17,
+            "second server-wide call-capacity snapshot");
     }
 
     [Test]

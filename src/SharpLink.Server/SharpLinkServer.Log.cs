@@ -44,8 +44,8 @@ internal sealed partial class SharpLinkServer
     [LoggerMessage(EventId = LogEvents.Rpc.OneWayDispatchFailed, Level = LogLevel.Warning, Message = "One-way RPC dispatch failed.")]
     private static partial void LogOnewayRpcDispatchFailed(ILogger logger, Exception e);
 
-    [LoggerMessage(EventId = LogEvents.Rpc.ResourceExhausted, Level = LogLevel.Warning, Message = "One-way RPC was rejected because server call capacity is exhausted.")]
-    private static partial void LogOnewayRpcResourceExhausted(ILogger logger);
+    [LoggerMessage(EventId = LogEvents.Rpc.ResourceExhausted, Level = LogLevel.Warning, Message = "One-way RPC was rejected because a bounded resource is exhausted ({Reason}).")]
+    private static partial void LogOnewayRpcResourceExhausted(ILogger logger, string reason);
 
     [LoggerMessage(EventId = LogEvents.Rpc.DispatchFailed, Level = LogLevel.Error, Message = "Unhandled exception in RPC dispatch.")]
     private static partial void LogRpcDispatchUnhandledException(ILogger logger, Exception e);
@@ -55,6 +55,12 @@ internal sealed partial class SharpLinkServer
 
     [LoggerMessage(EventId = LogEvents.Server.BackgroundLoopUnhandledException, Level = LogLevel.Error, Message = "Server background loop {LoopName} failed.")]
     private static partial void LogServerBackgroundLoopUnhandledException(ILogger logger, string loopName, Exception e);
+
+    [LoggerMessage(EventId = LogEvents.Server.CallCapacityConfigured, Level = LogLevel.Information, Message = "Server call capacity configured: per_connection={MaxConcurrentCallsPerConnection}, per_server={MaxConcurrentCallsPerServer}.")]
+    private static partial void LogServerCallCapacityConfigured(
+        ILogger logger,
+        int maxConcurrentCallsPerConnection,
+        int maxConcurrentCallsPerServer);
 
     [LoggerMessage(EventId = LogEvents.Server.ForcedCallsRemaining, Level = LogLevel.Warning, Message = "Server grace period expired with {ActiveCalls} user calls still running; their service graph will be released after they finish.")]
     private static partial void LogForcedCallsRemaining(ILogger logger, int activeCalls);

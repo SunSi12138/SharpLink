@@ -15,7 +15,7 @@ Host 启动 Client/Server，停止时执行有界排空和异步释放。通过 
 
 ## 自动服务注册
 
-Generator 为 `[RpcService]` 产生 Manifest。Server `Build()` 获取 immutable snapshot，并按 contract id 注册服务。默认自动暴露当前 Manifest 中的服务；可用：
+Generator 为 `[RpcService]` 产生 Manifest，并在引用它的应用编译中生成确定性的静态 bootstrap。应用模块初始化会先执行这些 assembly-owned bootstrap，随后 Server `Build()` 获取 immutable snapshot，并按 contract id 注册服务。因此 Server 到 Service 的普通 `ProjectReference` 足以注册服务，不需要 marker type、`Assembly.Load`、输出目录扫描或手动 `RegisterAssembly`；Service 实现仍可为 `internal`，该路径兼容 trimming/NativeAOT。默认自动暴露当前 Manifest 中的服务；可用：
 
 - `DisableAutomaticServiceRegistration()`
 - `EnableService<TContract>()`

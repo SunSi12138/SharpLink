@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using SharpLink.Abstractions;
@@ -55,6 +56,7 @@ public static class Program
         await RunTransportSmokeAsync(useSharedMemory: false, timeout.Token);
         await RunTransportSmokeAsync(useSharedMemory: true, timeout.Token);
         await RunStaticEndpointSmokeAsync(timeout.Token);
+        await RunReferencedAssemblyPackageSmokeAsync(timeout.Token);
     }
 
     private static async Task RunTransportSmokeAsync(
@@ -240,6 +242,78 @@ public static class Program
         catch (SocketException) when (cancellationToken.IsCancellationRequested)
         {
         }
+    }
+
+    private static async Task RunReferencedAssemblyPackageSmokeAsync(CancellationToken cancellationToken)
+    {
+        var sharedMemoryName = $"sharplink-package-reference-rooting-{Guid.NewGuid():N}";
+        var serverAssembly = FindReferenceRootingAssembly(
+            "SharpLink.ReferenceRooting.PackageServer",
+            "SharpLink.ReferenceRooting.PackageServer.dll");
+        var clientAssembly = FindReferenceRootingAssembly(
+            "SharpLink.ReferenceRooting.PackageClient",
+            "SharpLink.ReferenceRooting.PackageClient.dll");
+        using var server = StartReferenceRootingProcess(serverAssembly, sharedMemoryName);
+        try
+        {
+            var ready = await server.StandardOutput.ReadLineAsync(cancellationToken);
+            if (!string.Equals(ready, "PACKAGE_REFERENCE_ROOTING_SERVER_READY", StringComparison.Ordinal))
+                throw new InvalidOperationException($"Referenced package server did not become ready: '{ready}'.");
+
+            using var client = StartReferenceRootingProcess(clientAssembly, sharedMemoryName);
+            var clientOutput = await client.StandardOutput.ReadToEndAsync(cancellationToken);
+            var clientError = await client.StandardError.ReadToEndAsync(cancellationToken);
+            await client.WaitForExitAsync(cancellationToken);
+            if (client.ExitCode != 0 ||
+                !clientOutput.Contains("PACKAGE_REFERENCE_ROOTING_PASS", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Referenced package client failed ({client.ExitCode}): {clientOutput} {clientError}");
+            }
+            Console.WriteLine("PACKAGE_REFERENCE_ROOTING_PASS");
+        }
+        finally
+        {
+            if (!server.HasExited)
+                server.Kill(entireProcessTree: true);
+            await server.WaitForExitAsync(CancellationToken.None);
+        }
+    }
+
+    private static Process StartReferenceRootingProcess(string assemblyPath, string sharedMemoryName)
+    {
+        var start = new ProcessStartInfo("dotnet")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        start.ArgumentList.Add(assemblyPath);
+        start.ArgumentList.Add(sharedMemoryName);
+        return Process.Start(start) ?? throw new InvalidOperationException(
+            $"Could not start reference-rooting package process '{assemblyPath}'.");
+    }
+
+    private static string FindReferenceRootingAssembly(string projectName, string assemblyName)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Sharplink.slnx")))
+            directory = directory.Parent;
+        if (directory is null)
+            throw new DirectoryNotFoundException("Could not locate the SharpLink repository root.");
+
+        var path = Path.Combine(
+            directory.FullName,
+            "test",
+            projectName,
+            "bin",
+            "Release",
+            "net10.0",
+            assemblyName);
+        if (!File.Exists(path))
+            throw new FileNotFoundException("The reference-rooting package smoke assembly was not built.", path);
+        return path;
     }
 
     private static void ConfigureCompression(SharpLinkRuntimeOptions options)

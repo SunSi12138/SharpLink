@@ -371,6 +371,33 @@ public class ProtocolV2Tests
     }
 
     [Test]
+    public void BinaryErrorShouldPreserveResourceReasonAtOneByteMessageLimit()
+    {
+        var wireException = SharpLinkResourceExhaustion.CreateWire(
+            SharpLinkResourceExhaustion.ServerCallCapacity,
+            "Server call capacity is exhausted (server_call_capacity).");
+        using var payload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteError(
+            payload,
+            wireException.Code,
+            wireException.Message,
+            maxMessageBytes: 1,
+            out var truncated);
+
+        var error = ProtocolV2PayloadCodec.ReadError(
+            new ReadOnlySequence<byte>(payload.WrittenMemory),
+            ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Truncated,
+            maxMessageBytes: 1);
+        var restored = SharpLinkResourceExhaustion.CreateRemote(error.Code, error.Message);
+
+        Ensure(truncated, "the human-readable suffix should be truncated");
+        Ensure(
+            SharpLinkResourceExhaustion.GetReason(restored) ==
+            SharpLinkResourceExhaustion.ServerCallCapacity,
+            "the one-byte wire discriminator must restore the stable reason");
+    }
+
+    [Test]
     public void BinaryErrorWriterShouldRejectUndefinedErrorCodes()
     {
         using var payload = new PooledByteBufferWriter();

@@ -31,6 +31,7 @@
     <Project Path="test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" />
     <Project Path="test/SharpLink.LoadTestBase/SharpLink.LoadTestBase.csproj" />
     <Project Path="test/SharpLink.LoadTest/SharpLink.LoadTest.csproj" />
+    <Project Path="test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj" />
     <Project Path="test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj" />
     <Project Path="test/SharpLink.StreamLoadTest.Tests/SharpLink.StreamLoadTest.Tests.csproj" />
     <Project Path="test/SharpLink.ChaosTests/SharpLink.ChaosTests.csproj" />
@@ -41,5 +42,6 @@
     <Project Path="test/SharpLink.UnitTests/SharpLink.UnitTests.csproj" />
     <Project Path="test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj" />
     <Project Path="test/SharpLink.AotContracts/SharpLink.AotContracts.csproj" />
+    <Project Path="test/SharpLink.AotServices/SharpLink.AotServices.csproj" />
     <Project Path="test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj" />
 </Solution>

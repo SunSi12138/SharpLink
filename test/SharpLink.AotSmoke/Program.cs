@@ -60,6 +60,7 @@ public static class Program
         var port = useSharedMemory
             ? 0
             : ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+        VerifyReferencedServiceManifestIsRootedBeforeBuild();
         var server = serverBuilder.Build();
         VerifyRuntimeAssemblyBoundary(server);
 
@@ -127,6 +128,7 @@ public static class Program
     private static async Task<int> RunServerOnlyAsync(string name)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        VerifyReferencedServiceManifestIsRootedBeforeBuild();
         await using var server = SharpLinkServerBuilder.Create()
             .UseSharedMemory(name)
             .UseRuntime(ConfigureCompression)
@@ -182,6 +184,12 @@ public static class Program
         var result = await svc.PingAsync().ConfigureAwait(false);
         if (result != "pong")
             throw new Exception($"unexpected result: {result}");
+
+        var referencedService = client.Get<IReferencedAssemblyService>();
+        var referencedResult = await referencedService.IdentifyAsync().ConfigureAwait(false);
+        if (referencedResult != "internal-referenced-service")
+            throw new Exception($"unexpected referenced service result: {referencedResult}");
+        Console.WriteLine("REFERENCED_SERVICE_PASS");
 
         var profileName = new string('a', 4096);
         var profile = new UserProfile
@@ -298,6 +306,25 @@ public static class Program
         var result = server.RegisterAssembly(typeof(Program).Assembly);
         if (result.Succeeded || result.Error?.Code != SharpLinkAssemblyRegistrationErrorCode.PlatformNotSupported)
             throw new Exception($"unexpected NativeAOT server registration result: {result.Error}");
+    }
+
+    private static void VerifyReferencedServiceManifestIsRootedBeforeBuild()
+    {
+        var manifests = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot()
+            .Where(static manifest =>
+                string.Equals(
+                    manifest.OwnerAssembly.GetName().Name,
+                    "SharpLink.AotServices",
+                    StringComparison.Ordinal))
+            .ToArray();
+        if (manifests.Length != 1)
+            throw new Exception($"expected one rooted SharpLink.AotServices manifest, found {manifests.Length}");
+
+        var services = manifests[0].Services
+            .Where(static service => service.ContractType == typeof(IReferencedAssemblyService))
+            .ToArray();
+        if (services.Length != 1 || services[0].ImplementationType.IsPublic)
+            throw new Exception("referenced internal service manifest was not rooted before server Build");
     }
 
     private static void ConfigureCompression(SharpLinkRuntimeOptions options)

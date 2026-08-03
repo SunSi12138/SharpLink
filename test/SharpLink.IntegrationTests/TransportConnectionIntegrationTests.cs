@@ -157,6 +157,80 @@ public class TransportConnectionIntegrationTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task ServerMalformedHandshakeShouldReleaseItsReadBeforeCompletingTheReader()
+    {
+        using var serverCts = new CancellationTokenSource();
+        var connection = new CompletionJoiningTransportConnection();
+        var listener = new SingleConnectionListener(connection);
+        var server = SharpLinkServerBuilder.Create()
+            .UseTransport(listener)
+            .Build();
+        var serverTask = server.RunAsync(serverCts.Token).AsTask();
+
+        try
+        {
+            using var frame = new PooledByteBufferWriter();
+            var token = ProtocolV2FrameWriter.BeginFrame(
+                frame,
+                ProtocolV2FrameType.HandshakeRequest,
+                ProtocolV2FrameFlags.None,
+                0);
+            frame.Write(new byte[32]);
+            ProtocolV2FrameWriter.EndFrame(frame, token);
+            await connection.InjectAsync(frame.WrittenMemory);
+
+            await connection.Reader.CompleteStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(!connection.Reader.CompleteObservedOutstandingRead,
+                "malformed server handshake teardown must AdvanceTo before awaiting reader completion");
+        }
+        finally
+        {
+            connection.Reader.ReleaseCompletion();
+            await serverCts.CancelAsync();
+            await server.DisposeAsync();
+            await serverTask.WaitAsync(TimeSpan.FromSeconds(2));
+            await connection.DisposeAsync();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task ClientMalformedHandshakeShouldReleaseItsReadBeforeCompletingTheReader()
+    {
+        var connection = new CompletionJoiningTransportConnection();
+        var client = SharpClientBuilder.Create()
+            .UseTransport(new SingleConnectionClientFactory(connection))
+            .Build();
+
+        try
+        {
+            using var frame = new PooledByteBufferWriter();
+            var token = ProtocolV2FrameWriter.BeginFrame(
+                frame,
+                ProtocolV2FrameType.HandshakeResponse,
+                ProtocolV2FrameFlags.None,
+                0);
+            frame.Write(new byte[23]);
+            ProtocolV2FrameWriter.EndFrame(frame, token);
+            await connection.InjectAsync(frame.WrittenMemory);
+
+            var connectTask = client.ConnectAsync().AsTask();
+            await connection.Reader.CompleteStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(!connection.Reader.CompleteObservedOutstandingRead,
+                "malformed client handshake teardown must AdvanceTo before awaiting reader completion");
+            connection.Reader.ReleaseCompletion();
+            await EnsureThrows<SharpLinkException>(connectTask, "malformed client handshake");
+        }
+        finally
+        {
+            connection.Reader.ReleaseCompletion();
+            await client.DisposeAsync();
+            await connection.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task TcpShouldEnforceNegotiatedFrameLimitInBothDirections()
     {
         await VerifyNegotiatedFrameLimitAsync(
@@ -1681,6 +1755,21 @@ internal sealed class SingleConnectionListener(ITransportConnection connection) 
             return connection;
         await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         throw new UnreachableException();
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+internal sealed class SingleConnectionClientFactory(ITransportConnection connection) : IClientTransportFactory
+{
+    private int _connected;
+
+    public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Interlocked.CompareExchange(ref _connected, 1, 0) != 0)
+            throw new InvalidOperationException("The test transport only supports one connection.");
+        return ValueTask.FromResult(connection);
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

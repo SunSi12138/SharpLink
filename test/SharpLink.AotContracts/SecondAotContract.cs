@@ -10,3 +10,10 @@ public interface ISecondAotService : IService
     [NonCancellable]
     ValueTask<int> MultiplyAsync(int value);
 }
+
+[RpcContract]
+public interface IReferencedAssemblyService : IService
+{
+    [NonCancellable]
+    ValueTask<string> IdentifyAsync();
+}
