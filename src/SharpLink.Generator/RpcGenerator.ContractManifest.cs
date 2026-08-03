@@ -303,6 +303,7 @@ public partial class RpcGenerator
                     Nullable = member.Nullable,
                     Required = member.Required,
                     AttributeRequired = member.AttributeRequired,
+                    CompilerRequired = member.CompilerRequired,
                     ExplicitId = member.HasExplicitId,
                     SourceLocation = member.Location
                 });
@@ -605,7 +606,7 @@ public partial class RpcGenerator
                             $"{newDto.Name}.{newMember.Name}",
                             $"existing member {oldMember.Id} became required",
                             "keep the field optional and enforce requirements in application code",
-                            newMember.AttributeRequired
+                            newMember.AttributeRequired && !newMember.CompilerRequired
                                 ? SharpLinkDiagnosticProperties.Create(
                                     SharpLinkDiagnosticProperties.FixKind, "RemoveRpcRequired")
                                 : null));
@@ -668,7 +669,7 @@ public partial class RpcGenerator
                     $"{newDto.Name}.{newMember.Name}",
                     $"new member {newMember.Id} is required",
                     "make the new member optional so older payloads remain readable",
-                    newMember.AttributeRequired
+                    newMember.AttributeRequired && !newMember.CompilerRequired
                         ? SharpLinkDiagnosticProperties.Create(
                             SharpLinkDiagnosticProperties.FixKind, "RemoveRpcRequired")
                         : null));
@@ -1068,6 +1069,7 @@ internal static class __SharpLinkContractManifest
         public bool Nullable { get; set; }
         public bool Required { get; set; }
         [JsonIgnore] public bool AttributeRequired { get; set; }
+        [JsonIgnore] public bool CompilerRequired { get; set; }
         public bool ExplicitId { get; set; }
         [JsonIgnore] public Location? SourceLocation { get; set; }
     }

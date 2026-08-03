@@ -2150,10 +2150,20 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         };
 
     private static bool IsSupportedServiceConstructor(IMethodSymbol constructor)
-        => constructor.Parameters.All(static parameter =>
+        => !IsObsoleteWithError(constructor) &&
+           constructor.Parameters.All(static parameter =>
             parameter.RefKind is not (RefKind.Ref or RefKind.Out or RefKind.RefReadOnlyParameter) &&
             parameter.Type.TypeKind is not (TypeKind.Pointer or TypeKind.FunctionPointer) &&
             !parameter.Type.IsRefLikeType);
+
+    private static bool IsObsoleteWithError(ISymbol symbol)
+        => symbol.GetAttributes().Any(static attribute =>
+            string.Equals(
+                attribute.AttributeClass?.ToDisplayString(),
+                "System.ObsoleteAttribute",
+                StringComparison.Ordinal) &&
+            attribute.ConstructorArguments.Length > 1 &&
+            attribute.ConstructorArguments[1].Value is true);
 
     private static bool CanExposeAsPublic(IMethodSymbol constructor)
         => constructor.Parameters.All(static parameter => IsPubliclyAccessible(parameter.Type));
@@ -2319,7 +2329,9 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         public override Task<CodeAction?> GetFixAsync(FixAllContext fixAllContext)
         {
             if (fixAllContext.CodeActionEquivalenceKey?.StartsWith(
-                    SignatureKeyPrefix, StringComparison.Ordinal) == true)
+                    SignatureKeyPrefix, StringComparison.Ordinal) == true ||
+                fixAllContext.CodeActionEquivalenceKey is
+                    "RemoveInvalidUnionCase" or "RemoveBuiltinAdapterBinding")
             {
                 return Task.FromResult<CodeAction?>(null);
             }

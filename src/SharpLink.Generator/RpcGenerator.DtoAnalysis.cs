@@ -514,6 +514,7 @@ public partial class RpcGenerator
                     member.FixedSize,
                     member.Required,
                     HasAttribute(member.Symbol, "SharpLink.Sdk", "RpcRequiredAttribute"),
+                    IsCompilerRequired(member.Symbol),
                     member.Nullable,
                     member.NonNullableReference,
                     constructorSet.Contains(member.Symbol.Name),
