@@ -48,7 +48,6 @@ jobs:
           --project test/SharpLink.IntegrationTests
           --
           --maximum-parallel-tests 1
-          --parallelism-strategy fixed
           --timeout 120s
 
       - name: Run Independent-process Shared-memory AOT Smoke

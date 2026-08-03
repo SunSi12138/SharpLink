@@ -173,46 +173,94 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private static async IAsyncEnumerable<T> ObserveStream<T>(
+    private static IAsyncEnumerable<T> ObserveStream<T>(
         RpcMethodDescriptor method,
-        IAsyncEnumerable<T> stream,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        IAsyncEnumerable<T> stream)
+        => new TelemetryAsyncEnumerable<T>(method, stream);
+
+    private sealed class TelemetryAsyncEnumerable<T>(
+        RpcMethodDescriptor method,
+        IAsyncEnumerable<T> stream) : IAsyncEnumerable<T>
     {
-        var scope = SharpLinkTelemetry.StartClientCall(method);
-        await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
-        var terminalObserved = false;
-        try
+        public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
         {
-            while (true)
+            var scope = SharpLinkTelemetry.StartClientCall(method);
+            try
             {
-                T item;
-                try
-                {
-                    if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
-                    {
-                        terminalObserved = true;
-                        scope.Complete();
-                        yield break;
-                    }
-                    item = enumerator.Current;
-                }
-                catch (Exception exception)
-                {
-                    terminalObserved = true;
-                    scope.Complete(exception);
-                    throw;
-                }
-                yield return item;
+                return new TelemetryAsyncEnumerator<T>(
+                    stream.GetAsyncEnumerator(cancellationToken),
+                    scope);
+            }
+            catch (Exception exception)
+            {
+                scope.Complete(exception);
+                throw;
             }
         }
-        finally
+    }
+
+    private sealed class TelemetryAsyncEnumerator<T>(
+        IAsyncEnumerator<T> enumerator,
+        SharpLinkTelemetry.CallScope scope) : IAsyncEnumerator<T>
+    {
+        private int _terminalObserved;
+
+        public T Current => enumerator.Current;
+
+        public ValueTask<bool> MoveNextAsync()
         {
-            if (!terminalObserved)
+            try
             {
-                scope.Complete(new OperationCanceledException(
-                    "The response stream consumer stopped before remote completion."));
-                SharpLinkTelemetry.RecordAbandonedCall("client", "consumer_abandoned");
+                var move = enumerator.MoveNextAsync();
+                if (!move.IsCompletedSuccessfully)
+                    return AwaitMoveNextAsync(move);
+                if (!move.Result)
+                    Complete();
+                return move;
             }
+            catch (Exception exception)
+            {
+                Complete(exception);
+                throw;
+            }
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            CompleteAbandoned();
+            return enumerator.DisposeAsync();
+        }
+
+        private async ValueTask<bool> AwaitMoveNextAsync(ValueTask<bool> move)
+        {
+            try
+            {
+                var hasNext = await move.ConfigureAwait(false);
+                if (!hasNext)
+                    Complete();
+                return hasNext;
+            }
+            catch (Exception exception)
+            {
+                Complete(exception);
+                throw;
+            }
+        }
+
+        private void Complete(Exception? exception = null)
+        {
+            if (Interlocked.Exchange(ref _terminalObserved, 1) == 0)
+                scope.Complete(exception);
+        }
+
+        private void CompleteAbandoned()
+        {
+            if (Interlocked.Exchange(ref _terminalObserved, 1) != 0)
+                return;
+
+            scope.Complete(new OperationCanceledException(
+                "The response stream consumer stopped before remote completion."));
+            SharpLinkTelemetry.RecordAbandonedCall("client", "consumer_abandoned");
         }
     }
 }
