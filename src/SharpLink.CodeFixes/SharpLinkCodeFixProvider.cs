@@ -185,6 +185,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .ConfigureAwait(false);
         if (declaration is null ||
             semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not INamedTypeSymbol type ||
+            IsObsoleteWithError(type) ||
             !TryGetPublicizationClosure(type, context.Document.Project.Solution, out _))
         {
             return;

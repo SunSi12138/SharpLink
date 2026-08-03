@@ -422,9 +422,16 @@ internal sealed partial class SharpLinkCodeFixProvider
             reference.GetSyntax(cancellationToken).AncestorsAndSelf().Any(static syntax =>
                 syntax is ConstructorDeclarationSyntax or RecordDeclarationSyntax));
 
-    private static bool HasMembersIncompatibleWithSealing(INamedTypeSymbol type)
-        => type.GetMembers().Any(static member =>
+    private static bool HasMembersIncompatibleWithSealing(
+        INamedTypeSymbol type,
+        bool allowParameterlessConstructorPublicization = false)
+        => type.GetMembers().Any(member =>
             !member.IsImplicitlyDeclared &&
+            !(allowParameterlessConstructorPublicization && member is IMethodSymbol
+            {
+                MethodKind: MethodKind.Constructor,
+                Parameters.Length: 0
+            }) &&
             (member.IsVirtual && !member.IsOverride ||
              !member.IsOverride && member.DeclaredAccessibility is
                  Accessibility.Protected or
@@ -580,6 +587,17 @@ internal sealed partial class SharpLinkCodeFixProvider
 
     private static BaseTypeDeclarationSyntax MakePublic(BaseTypeDeclarationSyntax declaration)
         => declaration.WithModifiers(WithAccessibility(declaration.Modifiers, SyntaxKind.PublicKeyword));
+
+    private static DelegateDeclarationSyntax MakePublic(DelegateDeclarationSyntax declaration)
+        => declaration.WithModifiers(WithAccessibility(declaration.Modifiers, SyntaxKind.PublicKeyword));
+
+    private static MemberDeclarationSyntax MakePublic(MemberDeclarationSyntax declaration)
+        => declaration switch
+        {
+            BaseTypeDeclarationSyntax type => MakePublic(type),
+            DelegateDeclarationSyntax @delegate => MakePublic(@delegate),
+            _ => declaration
+        };
 
     private static SyntaxTokenList WithAccessibility(SyntaxTokenList modifiers, SyntaxKind accessibility)
     {

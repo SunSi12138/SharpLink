@@ -67,8 +67,7 @@ internal sealed partial class SharpLinkCodeFixProvider
             if (root is null)
                 continue;
             var declarations = pair.Value
-                .Select(span => root.FindNode(span, getInnermostNodeForTie: true)
-                    .AncestorsAndSelf().OfType<BaseTypeDeclarationSyntax>().FirstOrDefault())
+                .Select(span => FindPublicizableTypeDeclaration(root, span))
                 .Where(static item => item is not null)
                 .Select(static item => item!)
                 .Distinct()
@@ -123,17 +122,16 @@ internal sealed partial class SharpLinkCodeFixProvider
                 .ConfigureAwait(false);
             if (root is null)
                 continue;
-            var declarations = new Dictionary<BaseTypeDeclarationSyntax, bool>();
+            var declarations = new Dictionary<MemberDeclarationSyntax, bool>();
             foreach (var item in pair.Value)
             {
-                var declaration = root.FindNode(item.Key, getInnermostNodeForTie: true)
-                    .AncestorsAndSelf().OfType<BaseTypeDeclarationSyntax>().FirstOrDefault();
+                var declaration = FindPublicizableTypeDeclaration(root, item.Key);
                 if (declaration is not null)
                     declarations[declaration] = item.Value;
             }
             var updatedRoot = root.ReplaceNodes(declarations.Keys, (original, current) =>
             {
-                BaseTypeDeclarationSyntax updated = current;
+                MemberDeclarationSyntax updated = current;
                 if (declarations[original] && updated is TypeDeclarationSyntax service)
                     updated = RemoveModifier(service, SyntaxKind.AbstractKeyword);
                 if (makePublic)
@@ -334,11 +332,10 @@ internal sealed partial class SharpLinkCodeFixProvider
             if (root is null)
                 continue;
 
-            var declarations = new Dictionary<BaseTypeDeclarationSyntax, bool>();
+            var declarations = new Dictionary<MemberDeclarationSyntax, bool>();
             foreach (var item in pair.Value)
             {
-                var declaration = root.FindNode(item.Key, getInnermostNodeForTie: true)
-                    .AncestorsAndSelf().OfType<BaseTypeDeclarationSyntax>().FirstOrDefault();
+                var declaration = FindPublicizableTypeDeclaration(root, item.Key);
                 if (declaration is not null)
                     declarations[declaration] = item.Value;
             }
@@ -384,4 +381,12 @@ internal sealed partial class SharpLinkCodeFixProvider
         }
         return solution;
     }
+
+    private static MemberDeclarationSyntax? FindPublicizableTypeDeclaration(
+        SyntaxNode root,
+        Microsoft.CodeAnalysis.Text.TextSpan span)
+        => root.FindNode(span, getInnermostNodeForTie: true)
+            .AncestorsAndSelf()
+            .OfType<MemberDeclarationSyntax>()
+            .FirstOrDefault(IsPublicizableTypeDeclaration);
 }

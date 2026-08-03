@@ -258,7 +258,7 @@ internal sealed partial class SharpLinkCodeFixProvider
                 current.DeclaringSyntaxReferences.Length == 0 ||
                 current.DeclaringSyntaxReferences.Any(reference =>
                     !IsRegularEditableDocument(solution, reference.SyntaxTree) ||
-                    reference.GetSyntax() is not BaseTypeDeclarationSyntax))
+                    !IsPublicizableTypeDeclaration(reference.GetSyntax())))
             {
                 types = default;
                 return false;
@@ -333,7 +333,7 @@ internal sealed partial class SharpLinkCodeFixProvider
                         {
                             if (definition.DeclaringSyntaxReferences.Length == 0 ||
                                 definition.DeclaringSyntaxReferences.Any(static reference =>
-                                    reference.GetSyntax() is not BaseTypeDeclarationSyntax))
+                                    !IsPublicizableTypeDeclaration(reference.GetSyntax())))
                             {
                                 return false;
                             }
@@ -391,10 +391,17 @@ internal sealed partial class SharpLinkCodeFixProvider
     private static bool HasFileLocalNameCollision(INamedTypeSymbol type)
     {
         var isFileLocal = type.DeclaringSyntaxReferences.Any(static reference =>
-            reference.GetSyntax() is BaseTypeDeclarationSyntax declaration &&
-            declaration.Modifiers.Any(SyntaxKind.FileKeyword));
+            reference.GetSyntax() switch
+            {
+                BaseTypeDeclarationSyntax declaration => declaration.Modifiers.Any(SyntaxKind.FileKeyword),
+                DelegateDeclarationSyntax declaration => declaration.Modifiers.Any(SyntaxKind.FileKeyword),
+                _ => false
+            });
         return isFileLocal && type.ContainingType is null &&
                type.ContainingNamespace.GetTypeMembers(type.Name, type.Arity).Any(candidate =>
                    !SymbolEqualityComparer.Default.Equals(candidate.OriginalDefinition, type.OriginalDefinition));
     }
+
+    private static bool IsPublicizableTypeDeclaration(SyntaxNode declaration)
+        => declaration is BaseTypeDeclarationSyntax or DelegateDeclarationSyntax;
 }

@@ -252,8 +252,7 @@ internal sealed partial class SharpLinkCodeFixProvider
         if (implementations.OfType<INamedTypeSymbol>().Any(implementation =>
                 implementation.TypeKind == TypeKind.Class &&
                 !SymbolEqualityComparer.Default.Equals(implementation, service) &&
-                HasAttribute(implementation, "SharpLink.Sdk.RpcServiceAttribute") &&
-                implementation.AllInterfaces.Any(HasRpcContractAttribute)))
+                HasAttribute(implementation, "SharpLink.Sdk.RpcServiceAttribute")))
         {
             return;
         }
@@ -552,7 +551,7 @@ internal sealed partial class SharpLinkCodeFixProvider
             adapter.TypeKind != TypeKind.Class || adapter.IsGenericType ||
             GetContainingTypes(adapter).Any(static item => item.IsGenericType) ||
             (adapter.IsAbstract && !IsSafeToMakeConcrete(adapter)) ||
-            HasMembersIncompatibleWithSealing(adapter) ||
+            HasMembersIncompatibleWithSealing(adapter, allowParameterlessConstructorPublicization: true) ||
             !CanExposePublicParameterlessConstructor(adapter) ||
             !CanCallParameterlessConstructorWithRequiredMembers(adapter) ||
             HasPrimaryConstructorWithoutParameterlessAlternative(adapter, context.CancellationToken) ||
