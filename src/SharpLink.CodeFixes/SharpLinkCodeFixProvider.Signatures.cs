@@ -417,6 +417,56 @@ internal sealed partial class SharpLinkCodeFixProvider
         return result;
     }
 
+    private static async Task<bool> CanIntroduceNamedArgumentsAtInvocationSitesAsync(
+        ImmutableArray<IMethodSymbol> methods,
+        Solution solution,
+        CancellationToken cancellationToken)
+    {
+        var edits = await FindInvocationEditsAsync(methods, solution, cancellationToken).ConfigureAwait(false);
+        foreach (var pair in edits)
+        {
+            var document = solution.GetDocument(pair.Key);
+            if (document?.Project.ParseOptions is not CSharpParseOptions parseOptions ||
+                parseOptions.LanguageVersion is LanguageVersion.Default or
+                    LanguageVersion.Latest or LanguageVersion.LatestMajor or LanguageVersion.Preview ||
+                parseOptions.LanguageVersion > LanguageVersion.CSharp13)
+            {
+                continue;
+            }
+
+            var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+            var semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
+            if (root is null || semanticModel is null)
+                return false;
+            foreach (var edit in pair.Value)
+            {
+                var invocation = root.FindNode(edit.Span, getInnermostNodeForTie: true)
+                    .AncestorsAndSelf().OfType<InvocationExpressionSyntax>().FirstOrDefault();
+                if (invocation?.Ancestors().OfType<AnonymousFunctionExpressionSyntax>().Any(lambda =>
+                        IsExpressionTree(lambda, semanticModel, cancellationToken)) == true)
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+
+        static bool IsExpressionTree(
+            AnonymousFunctionExpressionSyntax lambda,
+            SemanticModel semanticModel,
+            CancellationToken cancellationToken)
+            => semanticModel.GetTypeInfo(lambda, cancellationToken).ConvertedType is INamedTypeSymbol
+            {
+                Name: "Expression",
+                Arity: 1,
+                ContainingNamespace: { } containingNamespace
+            } &&
+               string.Equals(
+                   containingNamespace.ToDisplayString(),
+                   "System.Linq.Expressions",
+                   StringComparison.Ordinal);
+    }
+
     private static MethodDeclarationSyntax UpdateDeclaration(
         MethodDeclarationSyntax declaration,
         DeclarationEdit edit,

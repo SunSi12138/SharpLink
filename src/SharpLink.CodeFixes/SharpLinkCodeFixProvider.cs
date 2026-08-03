@@ -238,7 +238,12 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                                       CanApplySignatureEditWithoutCollisions(
                                           relatedMethods,
                                           new SignatureEditPlan(SignatureEditKind.AddCancellationToken)) &&
-                                      CanReorderControlParametersWithoutBreakingHandlerDependencies(relatedMethods);
+                                      CanReorderControlParametersWithoutBreakingHandlerDependencies(relatedMethods) &&
+                                      await CanIntroduceNamedArgumentsAtInvocationSitesAsync(
+                                              relatedMethods,
+                                              context.Document.Project.Solution,
+                                              context.CancellationToken)
+                                          .ConfigureAwait(false);
         }
 
         if (canAddCancellationToken)
@@ -360,7 +365,12 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             !CanApplySignatureEditWithoutCollisions(
                 relatedMethods,
                 new SignatureEditPlan(SignatureEditKind.ReorderControlParameters)) ||
-            !CanReorderControlParametersWithoutBreakingHandlerDependencies(relatedMethods))
+            !CanReorderControlParametersWithoutBreakingHandlerDependencies(relatedMethods) ||
+            !await CanIntroduceNamedArgumentsAtInvocationSitesAsync(
+                    relatedMethods,
+                    context.Document.Project.Solution,
+                    context.CancellationToken)
+                .ConfigureAwait(false))
         {
             return;
         }
@@ -422,6 +432,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .Where(static item => item.Locations.Any(static location => location.IsInSource))
             .Where(static item => item.AllInterfaces.Any(IsIService))
             .Where(static item => !HasAttribute(item, "SharpLink.Sdk.RpcContractAttribute"))
+            .Where(item => HasRegularEditableDeclaration(
+                item, context.Document.Project.Solution))
             .Where(static item => !item.IsGenericType &&
                                   !GetContainingTypes(item).Any(static containing => containing.IsGenericType))
             .ToArray();
@@ -1517,7 +1529,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         string attributeName,
         CancellationToken cancellationToken)
     {
-        var reference = symbol.DeclaringSyntaxReferences.FirstOrDefault();
+        var reference = symbol.DeclaringSyntaxReferences.FirstOrDefault(candidate =>
+            IsRegularEditableDocument(solution, candidate.SyntaxTree));
         if (reference is null)
             return solution;
         var document = solution.GetDocument(reference.SyntaxTree);
@@ -1865,6 +1878,17 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         return true;
     }
 
+    private static bool HasRegularEditableDeclaration(ISymbol symbol, Solution solution)
+        => symbol.DeclaringSyntaxReferences.Any(reference =>
+            IsRegularEditableDocument(solution, reference.SyntaxTree));
+
+    private static bool IsRegularEditableDocument(Solution solution, SyntaxTree syntaxTree)
+    {
+        var document = solution.GetDocument(syntaxTree);
+        return document is not null &&
+               document.Project.Documents.Any(candidate => candidate.Id == document.Id);
+    }
+
     private static bool TryGetPublicizationClosure(
         INamedTypeSymbol root,
         Solution solution,
@@ -1880,12 +1904,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             if (HasFileLocalNameCollision(current) ||
                 current.DeclaringSyntaxReferences.Length == 0 ||
                 current.DeclaringSyntaxReferences.Any(reference =>
-                {
-                    var document = solution.GetDocument(reference.SyntaxTree);
-                    return document is null ||
-                           !document.Project.Documents.Any(candidate => candidate.Id == document.Id) ||
-                           reference.GetSyntax() is not BaseTypeDeclarationSyntax;
-                }))
+                    !IsRegularEditableDocument(solution, reference.SyntaxTree) ||
+                    reference.GetSyntax() is not BaseTypeDeclarationSyntax))
             {
                 types = default;
                 return false;
@@ -2200,6 +2220,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
 
     private static bool HasValidServiceActivationShape(INamedTypeSymbol service)
     {
+        if (IsObsoleteWithError(service))
+            return false;
         var constructors = service.InstanceConstructors
             .Where(static item => item.DeclaredAccessibility == Accessibility.Public)
             .ToArray();
