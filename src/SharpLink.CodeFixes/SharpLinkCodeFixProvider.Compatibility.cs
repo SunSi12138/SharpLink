@@ -41,11 +41,18 @@ internal sealed partial class SharpLinkCodeFixProvider
                 if (attributeDocument is null || attributeRoot is null || attribute is null)
                     return solution;
 
-                var restoredArgument = SyntaxFactory.AttributeArgument(SyntaxFactory.ParseExpression(memberId));
-                var updated = attribute.WithArgumentList(
-                        SyntaxFactory.AttributeArgumentList(
-                            SyntaxFactory.SingletonSeparatedList(restoredArgument)))
-                    .WithAdditionalAnnotations(Formatter.Annotation);
+                var existingArgument = attribute.ArgumentList is { Arguments.Count: 1 } argumentList
+                    ? argumentList.Arguments[0]
+                    : null;
+                var updated = existingArgument is null
+                    ? attribute.WithArgumentList(SyntaxFactory.AttributeArgumentList(
+                        SyntaxFactory.SingletonSeparatedList(
+                            SyntaxFactory.AttributeArgument(SyntaxFactory.ParseExpression(memberId)))))
+                    : attribute.ReplaceNode(
+                        existingArgument,
+                        existingArgument.WithExpression(
+                            SyntaxFactory.ParseExpression(memberId).WithTriviaFrom(existingArgument.Expression)));
+                updated = updated.WithAdditionalAnnotations(Formatter.Annotation);
                 solution = solution.WithDocumentSyntaxRoot(
                     attributeDocument.Id, attributeRoot.ReplaceNode(attribute, updated));
             }
@@ -112,82 +119,6 @@ internal sealed partial class SharpLinkCodeFixProvider
             .Where(IsSerializableRpcMember)
             .Where(candidate => !SymbolEqualityComparer.Default.Equals(candidate, target))
             .Any(candidate => TryGetRpcMemberId(candidate, out var candidateId) && candidateId == memberId);
-    }
-
-    private static ImmutableArray<AttributeData> GetAttributesAcrossPartialPropertyParts(
-        ISymbol target,
-        string metadataName)
-    {
-        var owners = new List<ISymbol> { target };
-        if (target is IPropertySymbol property)
-        {
-            if (property.PartialDefinitionPart is { } definition &&
-                !owners.Any(owner => SymbolEqualityComparer.Default.Equals(owner, definition)))
-            {
-                owners.Add(definition);
-            }
-            if (property.PartialImplementationPart is { } implementation &&
-                !owners.Any(owner => SymbolEqualityComparer.Default.Equals(owner, implementation)))
-            {
-                owners.Add(implementation);
-            }
-        }
-
-        var result = new List<AttributeData>();
-        foreach (var attribute in owners.SelectMany(static owner => owner.GetAttributes())
-                     .Where(attribute => string.Equals(
-                         attribute.AttributeClass?.ToDisplayString(), metadataName, StringComparison.Ordinal)))
-        {
-            var reference = attribute.ApplicationSyntaxReference;
-            if (result.Any(existing =>
-                    existing.ApplicationSyntaxReference?.SyntaxTree == reference?.SyntaxTree &&
-                    existing.ApplicationSyntaxReference?.Span == reference?.Span))
-            {
-                continue;
-            }
-            result.Add(attribute);
-        }
-        return result.ToImmutableArray();
-    }
-
-    private static AttributeListSyntax CreateRpcMemberAttributeList(AttributeArgumentSyntax argument)
-        => SyntaxFactory.AttributeList(
-            SyntaxFactory.SingletonSeparatedList(
-                SyntaxFactory.Attribute(SyntaxFactory.ParseName("global::SharpLink.Sdk.RpcMember"))
-                    .WithArgumentList(SyntaxFactory.AttributeArgumentList(
-                        SyntaxFactory.SingletonSeparatedList(argument)))));
-
-    private static bool TryGetRpcMemberTarget(
-        SyntaxNode node,
-        SemanticModel semanticModel,
-        CancellationToken cancellationToken,
-        out ISymbol? target,
-        out SyntaxNode? declaration)
-    {
-        var member = node.AncestorsAndSelf().OfType<MemberDeclarationSyntax>()
-            .FirstOrDefault(static item => item is PropertyDeclarationSyntax or FieldDeclarationSyntax);
-        switch (member)
-        {
-            case PropertyDeclarationSyntax property:
-                target = semanticModel.GetDeclaredSymbol(property, cancellationToken);
-                declaration = property;
-                return target is not null;
-            case FieldDeclarationSyntax { Declaration.Variables.Count: 1 } field:
-                target = semanticModel.GetDeclaredSymbol(field.Declaration.Variables[0], cancellationToken);
-                declaration = field;
-                return target is not null;
-        }
-
-        var parameter = node.AncestorsAndSelf().OfType<ParameterSyntax>().FirstOrDefault();
-        var record = parameter?.Parent?.Parent as RecordDeclarationSyntax;
-        var recordType = record is null
-            ? null
-            : semanticModel.GetDeclaredSymbol(record, cancellationToken);
-        target = parameter is null || recordType is null
-            ? null
-            : recordType.GetMembers(parameter.Identifier.ValueText).OfType<IPropertySymbol>().FirstOrDefault();
-        declaration = target is null ? null : parameter;
-        return target is not null;
     }
 
     private static async Task<bool> CanRestoreEnumUnderlyingTypeAsync(
@@ -284,12 +215,33 @@ internal sealed partial class SharpLinkCodeFixProvider
             return document;
 
         var typeName = type.StartsWith("global::", StringComparison.Ordinal) ? type : "global::" + type;
-        var arguments = SyntaxFactory.SeparatedList(new[]
+        SeparatedSyntaxList<AttributeArgumentSyntax> arguments;
+        if (attribute.ArgumentList is { Arguments.Count: 2 } argumentList)
         {
-            SyntaxFactory.AttributeArgument(SyntaxFactory.ParseExpression(tag)),
-            SyntaxFactory.AttributeArgument(SyntaxFactory.TypeOfExpression(SyntaxFactory.ParseTypeName(typeName)))
-        });
-        var updated = attribute.WithArgumentList(SyntaxFactory.AttributeArgumentList(arguments))
+            var existingTag = argumentList.Arguments[0];
+            var existingType = argumentList.Arguments[1];
+            var restoredTag = existingTag.WithExpression(
+                SyntaxFactory.ParseExpression(tag).WithTriviaFrom(existingTag.Expression));
+            var restoredTypeExpression = existingType.Expression is TypeOfExpressionSyntax typeOf
+                ? typeOf.WithType(SyntaxFactory.ParseTypeName(typeName).WithTriviaFrom(typeOf.Type))
+                : SyntaxFactory.TypeOfExpression(SyntaxFactory.ParseTypeName(typeName))
+                    .WithTriviaFrom(existingType.Expression);
+            arguments = argumentList.Arguments.Replace(existingTag, restoredTag);
+            arguments = arguments.Replace(
+                arguments[1],
+                arguments[1].WithExpression(restoredTypeExpression));
+        }
+        else
+        {
+            arguments = SyntaxFactory.SeparatedList(new[]
+            {
+                SyntaxFactory.AttributeArgument(SyntaxFactory.ParseExpression(tag)),
+                SyntaxFactory.AttributeArgument(
+                    SyntaxFactory.TypeOfExpression(SyntaxFactory.ParseTypeName(typeName)))
+            });
+        }
+        var updated = attribute.WithArgumentList(
+                (attribute.ArgumentList ?? SyntaxFactory.AttributeArgumentList()).WithArguments(arguments))
             .WithAdditionalAnnotations(Formatter.Annotation);
         return await ReplaceNodeAsync(document, attribute, updated, cancellationToken).ConfigureAwait(false);
     }

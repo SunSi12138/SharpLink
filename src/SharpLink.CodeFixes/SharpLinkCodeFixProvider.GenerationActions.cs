@@ -309,11 +309,14 @@ internal sealed partial class SharpLinkCodeFixProvider
             return solution;
 
         var value = SyntaxFactory.ParseExpression(lifetimeTypeName + "." + lifetime);
-        var argument = SyntaxFactory.AttributeArgument(value)
-            .WithNameEquals(SyntaxFactory.NameEquals("Lifetime"));
         var arguments = attribute.ArgumentList?.Arguments ?? default;
         var existing = arguments.FirstOrDefault(static item => item.NameEquals?.Name.Identifier.ValueText == "Lifetime");
-        var updatedArguments = existing is null ? arguments.Add(argument) : arguments.Replace(existing, argument);
+        var updatedArguments = existing is null
+            ? arguments.Add(SyntaxFactory.AttributeArgument(value)
+                .WithNameEquals(SyntaxFactory.NameEquals("Lifetime")))
+            : arguments.Replace(
+                existing,
+                existing.WithExpression(value.WithTriviaFrom(existing.Expression)));
         var updated = attribute.WithArgumentList(SyntaxFactory.AttributeArgumentList(updatedArguments))
             .WithAdditionalAnnotations(Formatter.Annotation);
         return solution.WithDocumentSyntaxRoot(document.Id, root.ReplaceNode(attribute, updated));

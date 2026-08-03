@@ -374,7 +374,10 @@ internal sealed partial class SharpLinkCodeFixProvider
             publicConstructors.Any(constructor =>
                 SymbolEqualityComparer.Default.Equals(constructor, markedConstructors[0]));
         if (allPublicConstructors.Length <= 1 || publicConstructors.Length == 0 ||
-            marker is null || hasValidSelectedConstructor ||
+            marker is null ||
+            !CanApplyConstructorSelectionMarker(
+                marker, semanticModel, diagnostic.Location.SourceSpan.Start) ||
+            hasValidSelectedConstructor ||
             markerReferences.Any(reference => reference is null ||
                 !IsRegularEditableDocument(context.Document.Project.Solution, reference.SyntaxTree)))
             return;
