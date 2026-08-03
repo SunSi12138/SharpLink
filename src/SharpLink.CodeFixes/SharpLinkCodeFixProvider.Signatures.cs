@@ -87,7 +87,8 @@ internal sealed partial class SharpLinkCodeFixProvider
         if (method is null)
             return solution;
         var related = await FindRelatedMethodsAsync(method, solution, cancellationToken).ConfigureAwait(false);
-        var name = GetCollisionFreeParameterName(related, "cancellationToken");
+        var name = GetCollisionFreeParameterName(
+            related, "cancellationToken", cancellationToken);
         return await ApplySignatureEditAsync(
             solution,
             related,
@@ -1024,11 +1025,21 @@ internal sealed partial class SharpLinkCodeFixProvider
 
     private static string GetCollisionFreeParameterName(
         ImmutableArray<IMethodSymbol> methods,
-        string baseName)
+        string baseName,
+        CancellationToken cancellationToken)
     {
         var names = new HashSet<string>(
             methods.SelectMany(static item => item.Parameters).Select(static item => item.Name),
             StringComparer.Ordinal);
+        foreach (var reference in methods.SelectMany(static method => method.DeclaringSyntaxReferences))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (var token in reference.GetSyntax(cancellationToken).DescendantTokens()
+                         .Where(static token => token.IsKind(SyntaxKind.IdentifierToken)))
+            {
+                names.Add(token.ValueText);
+            }
+        }
         if (!names.Contains(baseName))
             return baseName;
         for (var suffix = 1; ; suffix++)

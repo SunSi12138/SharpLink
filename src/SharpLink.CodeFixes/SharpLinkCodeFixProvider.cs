@@ -434,6 +434,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .Where(static item => !HasAttribute(item, "SharpLink.Sdk.RpcContractAttribute"))
             .Where(item => HasRegularEditableDeclaration(
                 item, context.Document.Project.Solution))
+            .Where(HasValidRpcContractShapeForAnnotation)
             .Where(static item => !item.IsGenericType &&
                                   !GetContainingTypes(item).Any(static containing => containing.IsGenericType))
             .ToArray();
@@ -481,13 +482,15 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 "MakeServicePublic", MakeContainingTypesPublicAcrossSolutionAsync);
         }
 
-        if (type.IsAbstract && IsEffectivelyPublic(type) && IsSafeToMakeConcrete(type))
+        if (type.IsAbstract && IsEffectivelyPublic(type) && IsSafeToMakeConcrete(type) &&
+            HasValidServiceActivationShapeAfterMakingConcrete(type))
         {
             RegisterSolutionFix(context, diagnostic, "Make RPC service concrete", "MakeServiceConcrete",
                 (solution, _, _, ct) => FixServiceShapeAcrossSolutionAsync(
                     solution, type, makePublic: false, ct));
         }
-        else if (type.IsAbstract && !IsEffectivelyPublic(type) && IsSafeToMakeConcrete(type) && canMakePublic)
+        else if (type.IsAbstract && !IsEffectivelyPublic(type) && IsSafeToMakeConcrete(type) && canMakePublic &&
+                 HasValidServiceActivationShapeAfterMakingConcrete(type))
         {
             RegisterSolutionFix(context, diagnostic,
                 "Make RPC service concrete and publicly reachable",
@@ -515,6 +518,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .Where(constructor => ConstructorSatisfiesRequiredMembers(type, constructor))
             .Where(constructor => CanApplyConstructorSelectionAttribute(
                 constructor, context.CancellationToken))
+            .Where(constructor => HasRegularEditableDeclaration(
+                constructor, context.Document.Project.Solution))
             .ToArray();
         var nonPublicConstructors = type.InstanceConstructors
             .Where(static item => !item.IsImplicitlyDeclared && item.DeclaredAccessibility != Accessibility.Public)
@@ -534,13 +539,17 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
 
         var marker = semanticModel.Compilation.GetTypeByMetadataName(
             "Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructorAttribute");
-        var alreadyMarked = allPublicConstructors.Any(static constructor => constructor.GetAttributes().Any(attribute =>
-            string.Equals(
-                attribute.AttributeClass?.ToDisplayString(),
-                "Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructorAttribute",
-                StringComparison.Ordinal)));
+        var markedConstructors = allPublicConstructors.Where(static constructor =>
+            constructor.GetAttributes().Any(IsActivatorUtilitiesConstructorAttribute)).ToArray();
+        var markerReferences = markedConstructors
+            .SelectMany(static constructor => constructor.GetAttributes())
+            .Where(IsActivatorUtilitiesConstructorAttribute)
+            .Select(static attribute => attribute.ApplicationSyntaxReference)
+            .ToArray();
         if (allPublicConstructors.Length <= 1 || publicConstructors.Length == 0 ||
-            marker is null || alreadyMarked)
+            marker is null || markedConstructors.Length == 1 ||
+            markerReferences.Any(reference => reference is null ||
+                !IsRegularEditableDocument(context.Document.Project.Solution, reference.SyntaxTree)))
             return;
 
         foreach (var constructor in publicConstructors)
@@ -550,10 +559,10 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 item.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)));
             RegisterSolutionFix(context, diagnostic, $"Select constructor {type.Name}({signature})",
                 "SelectConstructor:" + constructor.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
-                (solution, _, _, ct) => AddAttributeToSymbolAsync(
+                (solution, _, _, ct) => SelectServiceConstructorAsync(
                     solution,
+                    markerReferences.Select(static reference => reference!).ToImmutableArray(),
                     selected,
-                    "global::Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor",
                     ct));
         }
     }
@@ -663,6 +672,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .OfType<INamedTypeSymbol>()
             .Where(static item => item.TypeKind == TypeKind.Class && !item.IsAbstract && !item.IsGenericType)
             .Where(static item => item.Locations.Any(static location => location.IsInSource))
+            .Where(item => HasRegularEditableDeclaration(
+                item, context.Document.Project.Solution))
             .Where(IsEffectivelyPublic)
             .Where(static item => !HasAttribute(item, "SharpLink.Sdk.RpcServiceAttribute"))
             .Where(static item => item.AllInterfaces.Count(candidate =>
@@ -1556,6 +1567,86 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         return solution.WithDocumentSyntaxRoot(document.Id, updatedRoot);
     }
 
+    private static async Task<Solution> SelectServiceConstructorAsync(
+        Solution solution,
+        ImmutableArray<SyntaxReference> markerReferences,
+        IMethodSymbol selectedConstructor,
+        CancellationToken cancellationToken)
+    {
+        var selectedReference = selectedConstructor.DeclaringSyntaxReferences.FirstOrDefault(reference =>
+            IsRegularEditableDocument(solution, reference.SyntaxTree) &&
+            reference.GetSyntax(cancellationToken).AncestorsAndSelf().Any(static syntax =>
+                syntax is ConstructorDeclarationSyntax or RecordDeclarationSyntax));
+        var selectedDocument = selectedReference is null
+            ? null
+            : solution.GetDocument(selectedReference.SyntaxTree);
+        if (selectedReference is null || selectedDocument is null)
+            return solution;
+
+        var markerSpansByDocument = markerReferences
+            .Select(reference => (Reference: reference, Document: solution.GetDocument(reference.SyntaxTree)))
+            .Where(static item => item.Document is not null)
+            .GroupBy(static item => item.Document!.Id, static item => item.Reference.Span)
+            .ToDictionary(static group => group.Key, static group => group.Distinct().ToArray());
+        var documentIds = markerSpansByDocument.Keys.Append(selectedDocument.Id).Distinct().ToArray();
+        foreach (var documentId in documentIds)
+        {
+            var document = solution.GetDocument(documentId);
+            var root = document is null
+                ? null
+                : await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+            if (root is null)
+                continue;
+
+            SyntaxAnnotation? selectedAnnotation = null;
+            if (documentId == selectedDocument.Id)
+            {
+                var declaration = root.FindNode(selectedReference.Span, getInnermostNodeForTie: true)
+                    .AncestorsAndSelf().OfType<MemberDeclarationSyntax>().FirstOrDefault();
+                if (declaration is null)
+                    return solution;
+                selectedAnnotation = new SyntaxAnnotation();
+                root = root.ReplaceNode(declaration, declaration.WithAdditionalAnnotations(selectedAnnotation));
+            }
+
+            if (markerSpansByDocument.TryGetValue(documentId, out var markerSpans))
+            {
+                foreach (var span in markerSpans.OrderByDescending(static span => span.Start))
+                {
+                    var attribute = root.FindNode(span, getInnermostNodeForTie: true)
+                        .AncestorsAndSelf().OfType<AttributeSyntax>().FirstOrDefault();
+                    if (attribute?.Parent is not AttributeListSyntax list)
+                        continue;
+                    root = list.Attributes.Count == 1
+                        ? root.RemoveNode(list, SyntaxRemoveOptions.KeepExteriorTrivia) ?? root
+                        : root.ReplaceNode(list, list.WithAttributes(list.Attributes.Remove(attribute)));
+                }
+            }
+
+            if (selectedAnnotation is not null)
+            {
+                var declaration = root.GetAnnotatedNodes(selectedAnnotation)
+                    .OfType<MemberDeclarationSyntax>().SingleOrDefault();
+                if (declaration is null)
+                    return solution;
+                var attributeList = CreateAttributeList(
+                    "global::Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor");
+                MemberDeclarationSyntax updated = declaration switch
+                {
+                    RecordDeclarationSyntax record => record.AddAttributeLists(attributeList.WithTarget(
+                        SyntaxFactory.AttributeTargetSpecifier(SyntaxFactory.Token(SyntaxKind.MethodKeyword)))),
+                    ConstructorDeclarationSyntax constructor => constructor.AddAttributeLists(attributeList),
+                    _ => declaration
+                };
+                root = root.ReplaceNode(
+                    declaration, updated.WithAdditionalAnnotations(Formatter.Annotation));
+            }
+
+            solution = solution.WithDocumentSyntaxRoot(documentId, root);
+        }
+        return solution;
+    }
+
     private static async Task<Solution> MakeConstructorPublicAsync(
         Solution solution,
         IMethodSymbol constructor,
@@ -1723,6 +1814,12 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                attribute.AttributeClass?.ToDisplayString(),
                "SharpLink.Abstractions.OnewayAttribute",
                StringComparison.Ordinal);
+
+    private static bool IsActivatorUtilitiesConstructorAttribute(AttributeData attribute)
+        => string.Equals(
+            attribute.AttributeClass?.ToDisplayString(),
+            "Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructorAttribute",
+            StringComparison.Ordinal);
 
     private static bool IsRpcUnionCaseAttribute(AttributeData attribute)
         => string.Equals(
@@ -2045,6 +2142,326 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                    !SymbolEqualityComparer.Default.Equals(candidate.OriginalDefinition, type.OriginalDefinition));
     }
 
+    private static bool HasValidRpcContractShapeForAnnotation(INamedTypeSymbol contract)
+    {
+        if (contract.Arity > 0 ||
+            GetContainingTypes(contract).Any(static containing => containing.Arity > 0) ||
+            !IsEffectivelyPublic(contract) ||
+            HasUnsupportedRpcContractMember(contract) ||
+            HasConflictingInheritedRpcSignatures(contract))
+        {
+            return false;
+        }
+
+        return GetRpcContractMethods(contract).All(static method =>
+            IsSupportedRpcReturnType(method.ReturnType) &&
+            !method.IsStatic &&
+            !method.ReturnsByRef &&
+            !method.ReturnsByRefReadonly &&
+            method.Parameters.All(static parameter => parameter.RefKind == RefKind.None) &&
+            !ContainsContractRefLikeType(method.ReturnType) &&
+            method.Parameters.All(static parameter => !ContainsContractRefLikeType(parameter.Type)) &&
+            !ContainsContractPointerOrFunctionPointer(method.ReturnType) &&
+            method.Parameters.All(static parameter =>
+                !ContainsContractPointerOrFunctionPointer(parameter.Type)) &&
+            !method.IsGenericMethod &&
+            !ContainsContractTypeParameter(method.ReturnType) &&
+            method.Parameters.All(static parameter => !ContainsContractTypeParameter(parameter.Type)) &&
+            method.Parameters.Count(static parameter =>
+                IsControlParameter(parameter, ControlParameterKind.CancellationToken)) <= 1 &&
+            method.Parameters.Count(static parameter =>
+                IsControlParameter(parameter, ControlParameterKind.CallOptions)) <= 1 &&
+            HasValidRpcControlParameterOrder(method) &&
+            method.Parameters.Count(static parameter => IsAsyncEnumerableType(parameter.Type)) <= sbyte.MaxValue &&
+            !HasInvalidRpcMethodAttributes(method));
+    }
+
+    private static bool HasUnsupportedRpcContractMember(INamedTypeSymbol contract)
+        => HasUnsupportedRpcContractMemberDirect(contract) ||
+           contract.AllInterfaces.Any(static inherited =>
+               !IsIService(inherited) && HasUnsupportedRpcContractMemberDirect(inherited));
+
+    private static bool HasUnsupportedRpcContractMemberDirect(INamedTypeSymbol contract)
+        => contract.GetMembers().Any(static member =>
+            member is IPropertySymbol { IsAbstract: true } or IEventSymbol { IsAbstract: true } ||
+            member is IMethodSymbol
+            {
+                IsAbstract: true,
+                MethodKind: MethodKind.UserDefinedOperator or MethodKind.Conversion
+            } ||
+            member is IMethodSymbol
+            {
+                MethodKind: MethodKind.Ordinary,
+                IsAbstract: true,
+                DeclaredAccessibility: not Accessibility.Public
+            });
+
+    private static IEnumerable<IMethodSymbol> GetRpcContractMethods(INamedTypeSymbol contract)
+    {
+        var methods = new List<IMethodSymbol>();
+        foreach (var method in contract.GetMembers().OfType<IMethodSymbol>().Where(static method =>
+                     method.MethodKind == MethodKind.Ordinary &&
+                     method.DeclaredAccessibility == Accessibility.Public))
+        {
+            methods.Add(method);
+        }
+
+        foreach (var method in contract.AllInterfaces
+                     .Where(static inherited => !IsIService(inherited))
+                     .OrderBy(static inherited => inherited.ToDisplayString(), StringComparer.Ordinal)
+                     .SelectMany(static inherited => inherited.GetMembers().OfType<IMethodSymbol>())
+                     .Where(static method => method.MethodKind == MethodKind.Ordinary &&
+                                             method.DeclaredAccessibility == Accessibility.Public))
+        {
+            if (!methods.Any(existing => HasEquivalentContractSignature(existing, method)))
+                methods.Add(method);
+        }
+        return methods;
+    }
+
+    private static bool HasConflictingInheritedRpcSignatures(INamedTypeSymbol contract)
+    {
+        if (!contract.AllInterfaces.Any(static inherited => !IsIService(inherited)))
+            return false;
+
+        var directMethods = contract.GetMembers().OfType<IMethodSymbol>().Where(static method =>
+            method.MethodKind == MethodKind.Ordinary &&
+            method.DeclaredAccessibility == Accessibility.Public).ToArray();
+        var methods = directMethods.Concat(contract.AllInterfaces
+                .Where(static inherited => !IsIService(inherited))
+                .SelectMany(static inherited => inherited.GetMembers().OfType<IMethodSymbol>()))
+            .Where(static method => method.MethodKind == MethodKind.Ordinary &&
+                                    method.DeclaredAccessibility == Accessibility.Public)
+            .ToArray();
+        var groups = new List<(IMethodSymbol Representative,
+            (bool Oneway, bool Idempotent, bool NonCancellable, bool HasTimeout, double? Timeout) Policy,
+            bool HasDirectDeclaration)>();
+        for (var index = 0; index < methods.Length; index++)
+        {
+            var method = methods[index];
+            var groupIndex = groups.FindIndex(group =>
+                HasEquivalentContractSignature(group.Representative, method));
+            if (groupIndex < 0)
+            {
+                var hasDirectDeclaration = index < directMethods.Length;
+                groups.Add((
+                    method,
+                    hasDirectDeclaration ? default : GetInheritedRpcPolicy(method),
+                    hasDirectDeclaration));
+                continue;
+            }
+
+            var group = groups[groupIndex];
+            if (!SymbolEqualityComparer.IncludeNullability.Equals(
+                    group.Representative.ReturnType, method.ReturnType) ||
+                !group.HasDirectDeclaration && !HasCompatibleInheritedRpcSemantics(
+                    group.Representative,
+                    method,
+                    group.Policy,
+                    GetInheritedRpcPolicy(method)))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool HasCompatibleInheritedRpcSemantics(
+        IMethodSymbol left,
+        IMethodSymbol right,
+        (bool Oneway, bool Idempotent, bool NonCancellable, bool HasTimeout, double? Timeout) leftPolicy,
+        (bool Oneway, bool Idempotent, bool NonCancellable, bool HasTimeout, double? Timeout) rightPolicy)
+    {
+        for (var index = 0; index < left.Parameters.Length; index++)
+        {
+            var leftParameter = left.Parameters[index];
+            var rightParameter = right.Parameters[index];
+            if (IsControlParameter(leftParameter, ControlParameterKind.CancellationToken) ||
+                IsControlParameter(leftParameter, ControlParameterKind.CallOptions))
+            {
+                continue;
+            }
+            if (!string.Equals(leftParameter.Name, rightParameter.Name, StringComparison.Ordinal) ||
+                !SymbolEqualityComparer.IncludeNullability.Equals(leftParameter.Type, rightParameter.Type))
+            {
+                return false;
+            }
+        }
+        return leftPolicy == rightPolicy;
+    }
+
+    private static (bool Oneway, bool Idempotent, bool NonCancellable, bool HasTimeout, double? Timeout)
+        GetInheritedRpcPolicy(IMethodSymbol method)
+    {
+        var oneway = false;
+        var idempotent = false;
+        var nonCancellable = false;
+        var hasTimeout = false;
+        double? timeout = null;
+        foreach (var attribute in method.GetAttributes())
+        {
+            var metadataName = attribute.AttributeClass?.ToDisplayString();
+            switch (metadataName)
+            {
+                case "SharpLink.Sdk.OnewayAttribute":
+                case "SharpLink.Abstractions.OnewayAttribute":
+                    oneway = true;
+                    break;
+                case "SharpLink.Sdk.IdempotentAttribute":
+                case "SharpLink.Abstractions.IdempotentAttribute":
+                    idempotent = true;
+                    break;
+                case "SharpLink.Sdk.NonCancellableAttribute":
+                case "SharpLink.Abstractions.NonCancellableAttribute":
+                    nonCancellable = true;
+                    break;
+                case "SharpLink.Sdk.TimeoutAttribute":
+                case "SharpLink.Abstractions.TimeoutAttribute":
+                    hasTimeout = true;
+                    if (TryGetTimeoutSeconds(attribute, out var seconds))
+                        timeout = seconds;
+                    break;
+            }
+        }
+        return (oneway, idempotent, nonCancellable, hasTimeout, timeout);
+    }
+
+    private static bool IsSupportedRpcReturnType(ITypeSymbol type)
+    {
+        if (type is not INamedTypeSymbol named)
+            return false;
+        var original = named.OriginalDefinition;
+        var @namespace = original.ContainingNamespace.ToDisplayString();
+        return @namespace == "System.Threading.Tasks" &&
+               original is { Name: "Task", Arity: 0 or 1 } or
+                   { Name: "ValueTask", Arity: 0 or 1 } ||
+               @namespace == "System.Collections.Generic" &&
+               original is { Name: "IAsyncEnumerable", Arity: 1 };
+    }
+
+    private static bool ContainsContractTypeParameter(ITypeSymbol type)
+        => type.TypeKind == TypeKind.TypeParameter ||
+           type switch
+           {
+               IArrayTypeSymbol array => ContainsContractTypeParameter(array.ElementType),
+               IPointerTypeSymbol pointer => ContainsContractTypeParameter(pointer.PointedAtType),
+               INamedTypeSymbol named => named.IsUnboundGenericType ||
+                                        named.TypeArguments.Any(ContainsContractTypeParameter),
+               _ => false
+           };
+
+    private static bool ContainsContractRefLikeType(ITypeSymbol type)
+        => type switch
+        {
+            INamedTypeSymbol { IsRefLikeType: true } => true,
+            IArrayTypeSymbol array => ContainsContractRefLikeType(array.ElementType),
+            IPointerTypeSymbol pointer => ContainsContractRefLikeType(pointer.PointedAtType),
+            INamedTypeSymbol named => named.TypeArguments.Any(ContainsContractRefLikeType),
+            _ => false
+        };
+
+    private static bool ContainsContractPointerOrFunctionPointer(ITypeSymbol type)
+        => type switch
+        {
+            IPointerTypeSymbol or IFunctionPointerTypeSymbol => true,
+            IArrayTypeSymbol array => ContainsContractPointerOrFunctionPointer(array.ElementType),
+            INamedTypeSymbol named => named.TypeArguments.Any(ContainsContractPointerOrFunctionPointer),
+            _ => false
+        };
+
+    private static bool HasValidRpcControlParameterOrder(IMethodSymbol method)
+    {
+        var controls = method.Parameters.Where(static parameter =>
+            IsControlParameter(parameter, ControlParameterKind.CancellationToken) ||
+            IsControlParameter(parameter, ControlParameterKind.CallOptions)).ToArray();
+        if (controls.Length == 0)
+            return true;
+        var firstControl = method.Parameters.Length - controls.Length;
+        for (var index = firstControl; index < method.Parameters.Length; index++)
+        {
+            if (!IsControlParameter(method.Parameters[index], ControlParameterKind.CancellationToken) &&
+                !IsControlParameter(method.Parameters[index], ControlParameterKind.CallOptions))
+            {
+                return false;
+            }
+        }
+        return !method.Parameters.Any(static parameter =>
+                   IsControlParameter(parameter, ControlParameterKind.CancellationToken)) ||
+               IsControlParameter(method.Parameters[method.Parameters.Length - 1],
+                   ControlParameterKind.CancellationToken);
+    }
+
+    private static bool IsAsyncEnumerableType(ITypeSymbol type)
+        => type is INamedTypeSymbol named &&
+           named.OriginalDefinition is { Name: "IAsyncEnumerable", Arity: 1 } &&
+           named.OriginalDefinition.ContainingNamespace.ToDisplayString() ==
+           "System.Collections.Generic";
+
+    private static bool HasInvalidRpcMethodAttributes(IMethodSymbol method)
+    {
+        var oneway = false;
+        foreach (var attribute in method.GetAttributes())
+        {
+            if (IsOnewayAttribute(attribute))
+            {
+                oneway = true;
+            }
+            else if (IsTimeoutAttribute(attribute) &&
+                     TryGetTimeoutSeconds(attribute, out var seconds) &&
+                     !IsValidTimeoutSeconds(seconds))
+            {
+                return true;
+            }
+        }
+        return oneway && !IsValidOnewayReturnType(method.ReturnType);
+    }
+
+    private static bool IsValidOnewayReturnType(ITypeSymbol type)
+        => type is INamedTypeSymbol { Arity: 0 } named &&
+           named.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks" &&
+           named.Name is "Task" or "ValueTask";
+
+    private static bool TryGetTimeoutSeconds(AttributeData attribute, out double seconds)
+    {
+        seconds = default;
+        if (attribute.ConstructorArguments.Length == 0 ||
+            attribute.ConstructorArguments[0].Value is null)
+        {
+            return false;
+        }
+        switch (attribute.ConstructorArguments[0].Value)
+        {
+            case double value:
+                seconds = value;
+                return true;
+            case float value:
+                seconds = value;
+                return true;
+            case int value:
+                seconds = value;
+                return true;
+            case long value:
+                seconds = value;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool IsValidTimeoutSeconds(double seconds)
+    {
+        if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds <= 0)
+            return false;
+        try
+        {
+            return TimeSpan.FromSeconds(seconds) > TimeSpan.Zero;
+        }
+        catch (Exception exception) when (exception is OverflowException or ArgumentOutOfRangeException)
+        {
+            return false;
+        }
+    }
+
     private static bool IsSafeToMakeConcrete(INamedTypeSymbol type)
     {
         if (type.GetMembers().Any(static member => member.IsAbstract && !member.IsImplicitlyDeclared))
@@ -2235,6 +2652,16 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             : marked.Length == 0 && constructors.Length == 1 ? constructors[0] : null;
         return selected is not null && IsSupportedServiceConstructor(selected) &&
                ConstructorSatisfiesRequiredMembers(service, selected);
+    }
+
+    private static bool HasValidServiceActivationShapeAfterMakingConcrete(INamedTypeSymbol service)
+    {
+        if (service.InstanceConstructors.All(static constructor => constructor.IsImplicitlyDeclared) &&
+            service.InstanceConstructors.Any(static constructor => constructor.Parameters.Length == 0))
+        {
+            return !IsObsoleteWithError(service) && !HasRequiredMembers(service);
+        }
+        return HasValidServiceActivationShape(service);
     }
 
     private static BaseTypeDeclarationSyntax MakePublic(BaseTypeDeclarationSyntax declaration)
