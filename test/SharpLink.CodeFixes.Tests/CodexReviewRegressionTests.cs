@@ -9,7 +9,7 @@ public sealed class CodexReviewRegressionTests
     {
         using var workspace = CodeFixTestWorkspace.Create(("Contract.cs", """
 [SharpLink.Sdk.RpcContract]
-internal interface [|IContract|]
+public interface [|IContract|]
 {
 }
 """));
