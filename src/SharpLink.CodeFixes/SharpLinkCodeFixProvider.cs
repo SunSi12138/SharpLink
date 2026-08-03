@@ -86,6 +86,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             case "SHARPLINK031":
                 if (diagnostic.Properties.TryGetValue(SharpLinkDiagnosticProperties.FixKind, out var requiredKind) &&
                     string.Equals(requiredKind, "RemoveRpcRequired", StringComparison.Ordinal) &&
+                    await CanRemoveAttributeFromSingleMemberAsync(
+                        context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false) &&
                     await FindAttributeAtDiagnosticAsync(
                             context.Document,
                             diagnostic,
@@ -419,6 +421,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .Where(static item => item.Locations.Any(static location => location.IsInSource))
             .Where(static item => item.AllInterfaces.Any(IsIService))
             .Where(static item => !HasAttribute(item, "SharpLink.Sdk.RpcContractAttribute"))
+            .Where(static item => !item.IsGenericType &&
+                                  !GetContainingTypes(item).Any(static containing => containing.IsGenericType))
             .ToArray();
         if (candidates.Length != 1 || candidates[0].DeclaringSyntaxReferences.Length == 0 ||
             !IsEffectivelyPublic(candidates[0]))
@@ -887,10 +891,41 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
     {
         var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
         var semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
-        var member = root?.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true)
-            .AncestorsAndSelf().OfType<MemberDeclarationSyntax>()
-            .FirstOrDefault(static item => item is PropertyDeclarationSyntax or FieldDeclarationSyntax);
-        if (member is null || semanticModel is null)
+        var node = root?.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true);
+        if (node is null || semanticModel is null ||
+            !TryGetRpcMemberTarget(node, semanticModel, cancellationToken, out _, out var declaration))
+        {
+            return document;
+        }
+
+        if (declaration is ParameterSyntax parameter)
+        {
+            var positionalAttribute = parameter.AttributeLists
+                .Where(static list => list.Target?.Identifier.IsKind(SyntaxKind.PropertyKeyword) == true)
+                .SelectMany(static list => list.Attributes)
+                .FirstOrDefault(item => AttributeMatches(
+                    semanticModel, item, "SharpLink.Sdk.RpcMemberAttribute", cancellationToken));
+            var positionalArgument = SyntaxFactory.AttributeArgument(SyntaxFactory.ParseExpression(memberId));
+            if (positionalAttribute is not null)
+            {
+                var updated = positionalAttribute.WithArgumentList(
+                        SyntaxFactory.AttributeArgumentList(
+                            SyntaxFactory.SingletonSeparatedList(positionalArgument)))
+                    .WithAdditionalAnnotations(Formatter.Annotation);
+                return await ReplaceNodeAsync(document, positionalAttribute, updated, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            var positionalAttributeList = CreateRpcMemberAttributeList(positionalArgument).WithTarget(
+                SyntaxFactory.AttributeTargetSpecifier(SyntaxFactory.Token(SyntaxKind.PropertyKeyword)));
+            return await ReplaceNodeAsync(
+                document,
+                parameter,
+                parameter.AddAttributeLists(positionalAttributeList).WithAdditionalAnnotations(Formatter.Annotation),
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        if (declaration is not MemberDeclarationSyntax member)
             return document;
 
         var attribute = member.AttributeLists.SelectMany(static list => list.Attributes)
@@ -906,11 +941,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             return await ReplaceNodeAsync(document, attribute, updated, cancellationToken).ConfigureAwait(false);
         }
 
-        var attributeList = SyntaxFactory.AttributeList(
-            SyntaxFactory.SingletonSeparatedList(
-                SyntaxFactory.Attribute(SyntaxFactory.ParseName("global::SharpLink.Sdk.RpcMember"))
-                    .WithArgumentList(SyntaxFactory.AttributeArgumentList(
-                        SyntaxFactory.SingletonSeparatedList(argument)))));
+        var attributeList = CreateRpcMemberAttributeList(argument);
         var updatedMember = member switch
         {
             PropertyDeclarationSyntax property => property.AddAttributeLists(attributeList),
@@ -930,25 +961,12 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
     {
         var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
         var semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
-        var member = root?.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true)
-            .AncestorsAndSelf().OfType<MemberDeclarationSyntax>()
-            .FirstOrDefault(static item => item is PropertyDeclarationSyntax or FieldDeclarationSyntax);
-        var validDeclaration = member switch
+        var node = root?.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true);
+        if (node is null || semanticModel is null ||
+            !TryGetRpcMemberTarget(node, semanticModel, cancellationToken, out var target, out _))
         {
-            PropertyDeclarationSyntax => true,
-            FieldDeclarationSyntax field => field.Declaration.Variables.Count == 1,
-            _ => false
-        };
-        if (!validDeclaration || semanticModel is null)
             return false;
-
-        ISymbol? target = member switch
-        {
-            PropertyDeclarationSyntax property => semanticModel.GetDeclaredSymbol(property, cancellationToken),
-            FieldDeclarationSyntax field => semanticModel.GetDeclaredSymbol(
-                field.Declaration.Variables[0], cancellationToken),
-            _ => null
-        };
+        }
         if (target?.ContainingType is not { } containingType)
             return false;
 
@@ -956,6 +974,46 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             .Where(IsSerializableRpcMember)
             .Where(candidate => !SymbolEqualityComparer.Default.Equals(candidate, target))
             .Any(candidate => TryGetRpcMemberId(candidate, out var candidateId) && candidateId == memberId);
+    }
+
+    private static AttributeListSyntax CreateRpcMemberAttributeList(AttributeArgumentSyntax argument)
+        => SyntaxFactory.AttributeList(
+            SyntaxFactory.SingletonSeparatedList(
+                SyntaxFactory.Attribute(SyntaxFactory.ParseName("global::SharpLink.Sdk.RpcMember"))
+                    .WithArgumentList(SyntaxFactory.AttributeArgumentList(
+                        SyntaxFactory.SingletonSeparatedList(argument)))));
+
+    private static bool TryGetRpcMemberTarget(
+        SyntaxNode node,
+        SemanticModel semanticModel,
+        CancellationToken cancellationToken,
+        out ISymbol? target,
+        out SyntaxNode? declaration)
+    {
+        var member = node.AncestorsAndSelf().OfType<MemberDeclarationSyntax>()
+            .FirstOrDefault(static item => item is PropertyDeclarationSyntax or FieldDeclarationSyntax);
+        switch (member)
+        {
+            case PropertyDeclarationSyntax property:
+                target = semanticModel.GetDeclaredSymbol(property, cancellationToken);
+                declaration = property;
+                return target is not null;
+            case FieldDeclarationSyntax { Declaration.Variables.Count: 1 } field:
+                target = semanticModel.GetDeclaredSymbol(field.Declaration.Variables[0], cancellationToken);
+                declaration = field;
+                return target is not null;
+        }
+
+        var parameter = node.AncestorsAndSelf().OfType<ParameterSyntax>().FirstOrDefault();
+        var record = parameter?.Parent?.Parent as RecordDeclarationSyntax;
+        var recordType = record is null
+            ? null
+            : semanticModel.GetDeclaredSymbol(record, cancellationToken);
+        target = parameter is null || recordType is null
+            ? null
+            : recordType.GetMembers(parameter.Identifier.ValueText).OfType<IPropertySymbol>().FirstOrDefault();
+        declaration = target is null ? null : parameter;
+        return target is not null;
     }
 
     private static async Task<bool> CanRestoreEnumUnderlyingTypeAsync(
@@ -1246,6 +1304,19 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         return attribute ?? node.AncestorsAndSelf().OfType<AttributeSyntax>()
             .FirstOrDefault(item => metadataNames.Any(metadataName =>
                 AttributeMatches(semanticModel, item, metadataName, cancellationToken)));
+    }
+
+    private static async Task<bool> CanRemoveAttributeFromSingleMemberAsync(
+        Document document,
+        Diagnostic diagnostic,
+        CancellationToken cancellationToken)
+    {
+        var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+        var member = root?.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true)
+            .AncestorsAndSelf().OfType<MemberDeclarationSyntax>()
+            .FirstOrDefault(static item => item is PropertyDeclarationSyntax or FieldDeclarationSyntax);
+        return member is PropertyDeclarationSyntax or
+               FieldDeclarationSyntax { Declaration.Variables.Count: 1 };
     }
 
     private static async Task<Document> RemoveAttributeNodeAsync(

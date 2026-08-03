@@ -625,6 +625,14 @@ internal sealed partial class SharpLinkCodeFixProvider
                          .Select(static reference => reference.GetSyntax())
                          .OfType<MethodDeclarationSyntax>())
             {
+                if ((declaration.Body?.DescendantNodes().OfType<IdentifierNameSyntax>() ?? [])
+                        .Concat(declaration.ExpressionBody?.Expression.DescendantNodesAndSelf()
+                            .OfType<IdentifierNameSyntax>() ?? [])
+                        .Any(identifier => removedNames.Contains(identifier.Identifier.ValueText)))
+                {
+                    return false;
+                }
+
                 var documentation = declaration.GetLeadingTrivia()
                     .Select(static trivia => trivia.GetStructure())
                     .OfType<DocumentationCommentTriviaSyntax>();
