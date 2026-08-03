@@ -199,7 +199,9 @@ public partial class RpcGenerator
                     if (!IsValidAdapterType(adapterType))
                     {
                         Report(DtoDiagnosticKind.AdapterTypeInvalid, adapterType,
-                            "Adapter must implement IRpcCodecAdapter, be public sealed, and expose a public parameterless constructor", location);
+                            "Adapter must implement IRpcCodecAdapter, be public sealed, and expose a public parameterless constructor",
+                            location,
+                            "FixAdapterShape");
                         continue;
                     }
                     if (selector is not null && !InheritsFromAttribute(selector))
@@ -266,7 +268,9 @@ public partial class RpcGenerator
                 if (IsNonOverridableBuiltin(target))
                 {
                     Report(DtoDiagnosticKind.BuiltinAdapterOverride, target,
-                        "built-in primitive Codecs cannot be rebound to an Adapter", location);
+                        "built-in primitive Codecs cannot be rebound to an Adapter",
+                        location,
+                        "RemoveBuiltinAdapterBinding");
                     continue;
                 }
                 AddAssemblyBinding(target, adapter, location);
@@ -304,7 +308,8 @@ public partial class RpcGenerator
                 if (!IsAccessibleFromGeneratedCode(namedArtifact))
                 {
                     Report(DtoDiagnosticKind.Unsupported, type,
-                        "the DTO type and every containing type must be accessible from generated code");
+                        "the DTO type and every containing type must be accessible from generated code",
+                        fixKind: "MakeDtoAccessible");
                     _failed.Add(typeName);
                     return;
                 }
@@ -429,7 +434,8 @@ public partial class RpcGenerator
             if (named.TypeKind == TypeKind.Class && !named.IsSealed)
             {
                 Report(DtoDiagnosticKind.Unsupported, type,
-                    "classes must be sealed; add an installed serializer selector Attribute or [RpcCodecAdapter(typeof(...))] for polymorphic graphs");
+                    "classes must be sealed; add an installed serializer selector Attribute or [RpcCodecAdapter(typeof(...))] for polymorphic graphs",
+                    fixKind: "SealDto");
                 _failed.Add(typeName);
                 return;
             }
@@ -1079,7 +1085,8 @@ public partial class RpcGenerator
             DtoDiagnosticKind kind,
             ITypeSymbol type,
             string detail,
-            Location? location = null)
+            Location? location = null,
+            string? fixKind = null)
         {
             var typeName = GetTypeName(type);
             var key = $"{kind}|{typeName}|{detail}";
@@ -1089,14 +1096,16 @@ public partial class RpcGenerator
                 kind,
                 typeName,
                 detail,
-                location ?? type.Locations.FirstOrDefault()));
+                location ?? type.Locations.FirstOrDefault(),
+                fixKind));
         }
 
         private void Report(
             DtoDiagnosticKind kind,
             IAssemblySymbol assembly,
             string detail,
-            Location? location = null)
+            Location? location = null,
+            string? fixKind = null)
         {
             var key = $"{kind}|{assembly.Identity}|{detail}";
             if (!_diagnosticKeys.Add(key))
@@ -1105,7 +1114,8 @@ public partial class RpcGenerator
                 kind,
                 assembly.Identity.ToString(),
                 detail,
-                location));
+                location,
+                fixKind));
         }
 
         private static bool HasAttribute(ISymbol symbol, string ns, string name)

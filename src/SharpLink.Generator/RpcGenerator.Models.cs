@@ -75,7 +75,9 @@ internal readonly record struct InvalidRpcMethodModel(
     InvalidRpcMethodKind Kind,
     string MethodName,
     string Detail,
-    Location? Location);
+    Location? Location,
+    string? FixKind = null,
+    string? SymbolIdentity = null);
 internal enum InvalidRpcMethodKind
 {
     ReturnType,
@@ -86,13 +88,31 @@ internal enum InvalidRpcMethodKind
     OnewayReturn,
     InheritedSignatureConflict
 }
-internal readonly record struct InvalidCancellationTokenMethodModel(string MethodName, Location? Location);
-internal readonly record struct InvalidCallOptionsMethodModel(string MethodName, Location? Location);
-internal readonly record struct InvalidControlParameterOrderModel(string MethodName, Location? Location);
+internal readonly record struct InvalidCancellationTokenMethodModel(
+    string MethodName,
+    Location? Location,
+    string SymbolIdentity);
+internal readonly record struct InvalidCallOptionsMethodModel(
+    string MethodName,
+    Location? Location,
+    string SymbolIdentity);
+internal readonly record struct InvalidControlParameterOrderModel(
+    string MethodName,
+    Location? Location,
+    string SymbolIdentity);
 internal readonly record struct InvalidStreamCountMethodModel(string MethodName, int StreamParameterCount, Location? Location);
-internal readonly record struct NonCancellableRpcMethodModel(string MethodName, Location? Location);
-internal readonly record struct StreamingWithoutCancellationModel(string MethodName, Location? Location);
-internal readonly record struct ConflictingCancellationContractModel(string MethodName, Location? Location);
+internal readonly record struct NonCancellableRpcMethodModel(
+    string MethodName,
+    Location? Location,
+    string SymbolIdentity);
+internal readonly record struct StreamingWithoutCancellationModel(
+    string MethodName,
+    Location? Location,
+    string SymbolIdentity);
+internal readonly record struct ConflictingCancellationContractModel(
+    string MethodName,
+    Location? Location,
+    string SymbolIdentity);
 internal readonly record struct InvalidGenericUsageModel(string SymbolName, string TypeName, Location? Location);
 internal readonly record struct RpcContractDiagnosticModel(
     RpcContractDiagnosticKind Kind,
@@ -107,7 +127,8 @@ internal readonly record struct RpcServiceDiagnosticModel(
     RpcServiceDiagnosticKind Kind,
     string ServiceName,
     string Detail,
-    Location? Location);
+    Location? Location,
+    string? FixKind = null);
 
 internal enum RpcServiceDiagnosticKind
 {
@@ -225,7 +246,8 @@ internal readonly record struct DtoDiagnosticModel(
     DtoDiagnosticKind Kind,
     string TypeName,
     string Detail,
-    Location? Location);
+    Location? Location,
+    string? FixKind = null);
 
 internal sealed record DtoGenerationResult(
     ImmutableArray<GeneratedCodecModel> Codecs,

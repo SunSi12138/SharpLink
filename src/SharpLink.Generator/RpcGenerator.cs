@@ -123,6 +123,14 @@ public partial class RpcGenerator : IIncrementalGenerator
                 var diagnostic = Diagnostic.Create(
                     descriptor,
                     method.Location,
+                    method.FixKind is null
+                        ? null
+                        : method.SymbolIdentity is null
+                            ? SharpLinkDiagnosticProperties.Create(
+                                SharpLinkDiagnosticProperties.FixKind, method.FixKind)
+                            : SharpLinkDiagnosticProperties.Create(
+                                SharpLinkDiagnosticProperties.FixKind, method.FixKind,
+                                SharpLinkDiagnosticProperties.SymbolIdentity, method.SymbolIdentity),
                     method.MethodName,
                     method.Detail);
                 spc.ReportDiagnostic(diagnostic);
@@ -135,6 +143,9 @@ public partial class RpcGenerator : IIncrementalGenerator
                 var diagnostic = Diagnostic.Create(
                     MultipleCancellationTokensRule,
                     method.Location,
+                    SharpLinkDiagnosticProperties.Create(
+                        SharpLinkDiagnosticProperties.FixKind, "KeepCancellationToken",
+                        SharpLinkDiagnosticProperties.SymbolIdentity, method.SymbolIdentity),
                     method.MethodName);
                 spc.ReportDiagnostic(diagnostic);
             }
@@ -142,12 +153,24 @@ public partial class RpcGenerator : IIncrementalGenerator
         context.RegisterSourceOutput(invalidCallOptionsMethods, static (spc, methods) =>
         {
             foreach (var method in methods)
-                spc.ReportDiagnostic(Diagnostic.Create(MultipleCallOptionsRule, method.Location, method.MethodName));
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    MultipleCallOptionsRule,
+                    method.Location,
+                    SharpLinkDiagnosticProperties.Create(
+                        SharpLinkDiagnosticProperties.FixKind, "KeepCallOptions",
+                        SharpLinkDiagnosticProperties.SymbolIdentity, method.SymbolIdentity),
+                    method.MethodName));
         });
         context.RegisterSourceOutput(invalidControlParameterOrderMethods, static (spc, methods) =>
         {
             foreach (var method in methods)
-                spc.ReportDiagnostic(Diagnostic.Create(ControlParameterOrderRule, method.Location, method.MethodName));
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    ControlParameterOrderRule,
+                    method.Location,
+                    SharpLinkDiagnosticProperties.Create(
+                        SharpLinkDiagnosticProperties.FixKind, "ReorderControlParameters",
+                        SharpLinkDiagnosticProperties.SymbolIdentity, method.SymbolIdentity),
+                    method.MethodName));
         });
         context.RegisterSourceOutput(invalidStreamCountMethods, static (spc, methods) =>
         {
@@ -164,7 +187,13 @@ public partial class RpcGenerator : IIncrementalGenerator
         context.RegisterSourceOutput(nonCancellableRpcMethods, static (spc, methods) =>
         {
             foreach (var method in methods)
-                spc.ReportDiagnostic(Diagnostic.Create(MissingCancellationTokenRule, method.Location, method.MethodName));
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    MissingCancellationTokenRule,
+                    method.Location,
+                    SharpLinkDiagnosticProperties.Create(
+                        SharpLinkDiagnosticProperties.FixKind, "ChooseCancellationContract",
+                        SharpLinkDiagnosticProperties.SymbolIdentity, method.SymbolIdentity),
+                    method.MethodName));
         });
         context.RegisterSourceOutput(streamingWithoutCancellationMethods, static (spc, methods) =>
         {
@@ -172,6 +201,9 @@ public partial class RpcGenerator : IIncrementalGenerator
                 spc.ReportDiagnostic(Diagnostic.Create(
                     StreamingMissingCancellationTokenRule,
                     method.Location,
+                    SharpLinkDiagnosticProperties.Create(
+                        SharpLinkDiagnosticProperties.FixKind, "ChooseCancellationContract",
+                        SharpLinkDiagnosticProperties.SymbolIdentity, method.SymbolIdentity),
                     method.MethodName));
         });
         context.RegisterSourceOutput(conflictingCancellationContractMethods, static (spc, methods) =>
@@ -180,6 +212,9 @@ public partial class RpcGenerator : IIncrementalGenerator
                 spc.ReportDiagnostic(Diagnostic.Create(
                     ConflictingCancellationContractRule,
                     method.Location,
+                    SharpLinkDiagnosticProperties.Create(
+                        SharpLinkDiagnosticProperties.FixKind, "RemoveNonCancellable",
+                        SharpLinkDiagnosticProperties.SymbolIdentity, method.SymbolIdentity),
                     method.MethodName));
         });
         context.RegisterSourceOutput(invalidGenericUsage, static (spc, models) =>
@@ -202,6 +237,11 @@ public partial class RpcGenerator : IIncrementalGenerator
             var diagnostic = Diagnostic.Create(
                 descriptor,
                 model.Value.Location,
+                SharpLinkDiagnosticProperties.Create(
+                    SharpLinkDiagnosticProperties.FixKind,
+                    model.Value.Kind == RpcContractDiagnosticKind.Accessibility
+                        ? "MakeContractPublic"
+                        : "AddIService"),
                 model.Value.InterfaceName);
             spc.ReportDiagnostic(diagnostic);
         });
@@ -220,6 +260,10 @@ public partial class RpcGenerator : IIncrementalGenerator
             spc.ReportDiagnostic(Diagnostic.Create(
                 descriptor,
                 value.Location,
+                value.FixKind is null
+                    ? null
+                    : SharpLinkDiagnosticProperties.Create(
+                        SharpLinkDiagnosticProperties.FixKind, value.FixKind),
                 value.ServiceName,
                 value.Detail));
         });
@@ -299,6 +343,10 @@ public partial class RpcGenerator : IIncrementalGenerator
                 spc.ReportDiagnostic(Diagnostic.Create(
                     descriptor,
                     diagnostic.Location,
+                    diagnostic.FixKind is null
+                        ? null
+                        : SharpLinkDiagnosticProperties.Create(
+                            SharpLinkDiagnosticProperties.FixKind, diagnostic.FixKind),
                     diagnostic.TypeName,
                     diagnostic.Detail));
             }
@@ -373,6 +421,7 @@ public partial class RpcGenerator : IIncrementalGenerator
                 spc.ReportDiagnostic(Diagnostic.Create(
                     descriptor,
                     item.Location,
+                    item.Properties,
                     item.Item,
                     item.Detail,
                     item.Fix));

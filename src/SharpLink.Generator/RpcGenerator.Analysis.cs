@@ -11,6 +11,9 @@ public partial class RpcGenerator
         return true;
     }
 
+    private static string GetDiagnosticSymbolIdentity(IMethodSymbol method)
+        => method.ContainingAssembly.Identity + ":" + method.ToDisplayString(FullyQualifiedNullableFormat);
+
     private static RpcInterfaceModel? GetInterfaceModelOrNull(GeneratorAttributeSyntaxContext context, CancellationToken _)
     {
         if (context.TargetSymbol is not INamedTypeSymbol symbol || symbol.TypeKind != TypeKind.Interface)
@@ -122,7 +125,8 @@ public partial class RpcGenerator
                 RpcServiceDiagnosticKind.MissingContract,
                 symbol.Name,
                 "the service does not implement an interface annotated with [RpcContract]",
-                location);
+                location,
+                "AnnotateSingleIServiceInterface");
         }
         if (contracts.Length > 1)
         {
@@ -142,7 +146,10 @@ public partial class RpcGenerator
                     : symbol.IsGenericType
                         ? "open generic RPC services are not supported"
                         : "the service type and every containing type must be accessible from generated code",
-                location);
+                location,
+                symbol.IsAbstract
+                    ? "MakeServiceConcrete"
+                    : symbol.IsGenericType ? null : "MakeServiceAccessible");
         }
 
         var invalidLifetime = GetServiceLifetime(symbol, out var validLifetime);
@@ -152,7 +159,8 @@ public partial class RpcGenerator
                 RpcServiceDiagnosticKind.InvalidLifetime,
                 symbol.Name,
                 $"Lifetime value '{invalidLifetime}' must be Singleton, Connection, or Call",
-                location);
+                location,
+                "ChooseServiceLifetime");
         }
 
         var constructors = symbol.InstanceConstructors
@@ -171,7 +179,8 @@ public partial class RpcGenerator
                 constructors.Length == 0
                     ? "no public constructor can be called by the generated activator"
                     : "constructor selection is ambiguous; expose one public constructor or mark exactly one with [ActivatorUtilitiesConstructor]",
-                location);
+                location,
+                "SelectServiceConstructor");
         }
 
         var selectedConstructor = markedConstructors.Length == 1
@@ -240,7 +249,9 @@ public partial class RpcGenerator
                     InvalidRpcMethodKind.Static,
                     method.Name,
                     "RPC routes must be instance methods",
-                    method.Locations.FirstOrDefault()));
+                    method.Locations.FirstOrDefault(),
+                    "MakeInstanceMethod",
+                    GetDiagnosticSymbolIdentity(method)));
             }
             if (HasByReferenceSignature(method))
             {
@@ -271,7 +282,8 @@ public partial class RpcGenerator
                         InvalidRpcMethodKind.Timeout,
                         method.Name,
                         detail,
-                        attribute.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? method.Locations.FirstOrDefault()));
+                        attribute.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? method.Locations.FirstOrDefault(),
+                        "FixInvalidTimeout"));
                 }
             }
             if (isOneWay && !IsValidOnewayReturnType(method.ReturnType))
@@ -280,7 +292,8 @@ public partial class RpcGenerator
                     InvalidRpcMethodKind.OnewayReturn,
                     method.Name,
                     "only non-generic Task or ValueTask returns are supported",
-                    method.Locations.FirstOrDefault()));
+                    method.Locations.FirstOrDefault(),
+                    "RemoveOneway"));
             }
         }
 
@@ -305,7 +318,8 @@ public partial class RpcGenerator
 
             list.Add(new InvalidCancellationTokenMethodModel(
                 method.Name,
-                method.Locations.FirstOrDefault()));
+                method.Locations.FirstOrDefault(),
+                GetDiagnosticSymbolIdentity(method)));
         }
 
         return list.ToImmutable();
@@ -354,7 +368,10 @@ public partial class RpcGenerator
                 continue;
             }
 
-            list.Add(new NonCancellableRpcMethodModel(method.Name, method.Locations.FirstOrDefault()));
+            list.Add(new NonCancellableRpcMethodModel(
+                method.Name,
+                method.Locations.FirstOrDefault(),
+                GetDiagnosticSymbolIdentity(method)));
         }
         return list.ToImmutable();
     }
@@ -379,7 +396,10 @@ public partial class RpcGenerator
                 continue;
             }
 
-            list.Add(new StreamingWithoutCancellationModel(method.Name, method.Locations.FirstOrDefault()));
+            list.Add(new StreamingWithoutCancellationModel(
+                method.Name,
+                method.Locations.FirstOrDefault(),
+                GetDiagnosticSymbolIdentity(method)));
         }
         return list.ToImmutable();
     }
@@ -403,7 +423,10 @@ public partial class RpcGenerator
                 continue;
             }
 
-            list.Add(new ConflictingCancellationContractModel(method.Name, method.Locations.FirstOrDefault()));
+            list.Add(new ConflictingCancellationContractModel(
+                method.Name,
+                method.Locations.FirstOrDefault(),
+                GetDiagnosticSymbolIdentity(method)));
         }
         return list.ToImmutable();
     }
@@ -425,7 +448,10 @@ public partial class RpcGenerator
         {
             if (method.Parameters.Count(IsCallOptionsParameter) <= 1)
                 continue;
-            list.Add(new InvalidCallOptionsMethodModel(method.Name, method.Locations.FirstOrDefault()));
+            list.Add(new InvalidCallOptionsMethodModel(
+                method.Name,
+                method.Locations.FirstOrDefault(),
+                GetDiagnosticSymbolIdentity(method)));
         }
         return list.ToImmutable();
     }
@@ -457,7 +483,10 @@ public partial class RpcGenerator
                 : -1;
             if (cancellationIndex == expectedCancellationIndex && optionsIndex == expectedOptionsIndex)
                 continue;
-            list.Add(new InvalidControlParameterOrderModel(method.Name, method.Locations.FirstOrDefault()));
+            list.Add(new InvalidControlParameterOrderModel(
+                method.Name,
+                method.Locations.FirstOrDefault(),
+                GetDiagnosticSymbolIdentity(method)));
         }
         return list.ToImmutable();
     }

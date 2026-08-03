@@ -44,6 +44,9 @@ jobs:
       - name: Generator Tests
         run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
 
+      - name: Code Fix Tests
+        run: dotnet test --project test/SharpLink.CodeFixes.Tests/SharpLink.CodeFixes.Tests.csproj -c Release --no-build
+
       - name: Load Test Tests
         run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
 
@@ -75,6 +78,9 @@ jobs:
 
       - name: Pack
         run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Load packed Code Fixes in workspace host
+        run: dotnet run -c Release --no-restore --project test/SharpLink.CodeFixHostSmoke -- artifacts/nuget/SharpLink.Sdk.*.nupkg
 
       - name: Restore Package Smoke
         run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
@@ -137,11 +143,16 @@ jobs:
       - name: Pack
         run: dotnet pack Sharplink.slnx --no-restore -c Release -o artifacts/nuget -v minimal
 
-      - name: Verify SDK Contains Generator
-        run: unzip -l artifacts/nuget/SharpLink.Sdk.*.nupkg | grep -q 'analyzers/dotnet/cs/SharpLink.Generator.dll'
+      - name: Verify SDK Contains Generator and Code Fixes
+        run: |
+          unzip -l artifacts/nuget/SharpLink.Sdk.*.nupkg | grep -q 'analyzers/dotnet/cs/SharpLink.Generator.dll'
+          unzip -l artifacts/nuget/SharpLink.Sdk.*.nupkg | grep -q 'analyzers/dotnet/cs/SharpLink.CodeFixes.dll'
 
       - name: Verify package metadata, XML documentation, and symbols
         run: ./eng/verify-packages.sh artifacts/nuget
+
+      - name: Load packed Code Fixes in workspace host
+        run: dotnet run -c Release --no-restore --project test/SharpLink.CodeFixHostSmoke -- artifacts/nuget/SharpLink.Sdk.*.nupkg
 
       - name: Restore Package Smoke
         run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config

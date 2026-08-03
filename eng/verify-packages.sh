@@ -55,8 +55,16 @@ done
 
 unzip -Z1 "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" |
   grep -Fx "analyzers/dotnet/cs/SharpLink.Generator.dll" >/dev/null
+unzip -Z1 "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" |
+  grep -Fx "analyzers/dotnet/cs/SharpLink.CodeFixes.dll" >/dev/null
 unzip -p "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" SharpLink.Sdk.nuspec |
   grep -F "<dependency id=\"SharpLink.Runtime\" version=\"$EXPECTED_VERSION\"" >/dev/null
+
+if unzip -p "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" SharpLink.Sdk.nuspec |
+   grep -E 'Microsoft\.CodeAnalysis\.(CSharp\.)?Workspaces|System\.Composition' >/dev/null; then
+  echo "SharpLink.Sdk must not expose workspace-only code-fix dependencies as runtime package dependencies." >&2
+  exit 1
+fi
 
 if unzip -p "$ARTIFACT_DIR/SharpLink.Abstractions.$EXPECTED_VERSION.nupkg" SharpLink.Abstractions.nuspec |
    grep -F '<dependency id="SharpLink.Sdk"' >/dev/null; then

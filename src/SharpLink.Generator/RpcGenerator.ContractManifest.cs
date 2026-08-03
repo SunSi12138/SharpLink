@@ -603,7 +603,9 @@ public partial class RpcGenerator
                             newMember.SourceLocation,
                             $"{newDto.Name}.{newMember.Name}",
                             $"existing member {oldMember.Id} became required",
-                            "keep the field optional and enforce requirements in application code"));
+                            "keep the field optional and enforce requirements in application code",
+                            SharpLinkDiagnosticProperties.Create(
+                                SharpLinkDiagnosticProperties.FixKind, "RemoveRpcRequired")));
                     }
                     continue;
                 }
@@ -616,7 +618,10 @@ public partial class RpcGenerator
                         newMember.SourceLocation,
                         $"{newDto.Name}.{newMember.Name}",
                         $"member ID changed from {oldMember.Id} to {newMember.Id}",
-                        $"annotate the member with [RpcMember({oldMember.Id})]"));
+                        $"annotate the member with [RpcMember({oldMember.Id})]",
+                        SharpLinkDiagnosticProperties.Create(
+                            SharpLinkDiagnosticProperties.PreviousMemberId,
+                            oldMember.Id.ToString(CultureInfo.InvariantCulture))));
                     continue;
                 }
 
@@ -635,7 +640,10 @@ public partial class RpcGenerator
                         renamed[0].SourceLocation,
                         $"{newDto.Name}.{renamed[0].Name}",
                         $"renaming '{oldMember.Name}' changed the default member ID {oldMember.Id} to {renamed[0].Id}",
-                        $"annotate the renamed member with [RpcMember({oldMember.Id})]"));
+                        $"annotate the renamed member with [RpcMember({oldMember.Id})]",
+                        SharpLinkDiagnosticProperties.Create(
+                            SharpLinkDiagnosticProperties.PreviousMemberId,
+                            oldMember.Id.ToString(CultureInfo.InvariantCulture))));
                 }
                 else if (oldMember.Required)
                 {
@@ -656,7 +664,9 @@ public partial class RpcGenerator
                     newMember.SourceLocation,
                     $"{newDto.Name}.{newMember.Name}",
                     $"new member {newMember.Id} is required",
-                    "make the new member optional so older payloads remain readable"));
+                    "make the new member optional so older payloads remain readable",
+                    SharpLinkDiagnosticProperties.Create(
+                        SharpLinkDiagnosticProperties.FixKind, "RemoveRpcRequired")));
             }
         }
 
@@ -696,7 +706,10 @@ public partial class RpcGenerator
                     newEnum.SourceLocation,
                     newEnum.Name,
                     $"enum underlying type changed from {oldEnum.UnderlyingType} to {newEnum.UnderlyingType}",
-                    "restore the original enum underlying type"));
+                    "restore the original enum underlying type",
+                    SharpLinkDiagnosticProperties.Create(
+                        SharpLinkDiagnosticProperties.PreviousEnumUnderlyingType,
+                        oldEnum.UnderlyingType)));
             }
         }
 
@@ -716,7 +729,12 @@ public partial class RpcGenerator
                         newCase.SourceLocation,
                         newUnion.Name,
                         $"union tag {oldCase.Tag} was reassigned from {oldCase.Type} to {newCase.Type}",
-                        "restore the original mapping and allocate a new tag"));
+                        "restore the original mapping and allocate a new tag",
+                        SharpLinkDiagnosticProperties.Create(
+                            SharpLinkDiagnosticProperties.PreviousUnionTag,
+                            oldCase.Tag.ToString(CultureInfo.InvariantCulture),
+                            SharpLinkDiagnosticProperties.PreviousUnionType,
+                            oldCase.Type)));
                 }
             }
         }
@@ -736,7 +754,9 @@ public partial class RpcGenerator
                 location,
                 oldService.ContractName,
                 $"service route for contract ID {oldService.ContractId} no longer has an [RpcService] implementation",
-                "restore a service implementation for the published contract route"));
+                "restore a service implementation for the published contract route",
+                SharpLinkDiagnosticProperties.Create(
+                    SharpLinkDiagnosticProperties.FixKind, "RestoreServiceRoute")));
         }
         return diagnostics;
     }
@@ -821,8 +841,9 @@ public partial class RpcGenerator
         Location? location,
         string item,
         string detail,
-        string fix)
-        => new(kind, location ?? Location.None, item, detail, fix);
+        string fix,
+        ImmutableDictionary<string, string?>? properties = null)
+        => new(kind, location ?? Location.None, item, detail, fix, properties);
 
     private static AdditionalText? FindBaseline(ImmutableArray<AdditionalText> files, string configuredPath)
     {
@@ -949,7 +970,8 @@ internal static class __SharpLinkContractManifest
         Location? Location,
         string Item,
         string Detail,
-        string Fix);
+        string Fix,
+        ImmutableDictionary<string, string?>? Properties = null);
 
     private enum ContractCompatibilityKind
     {

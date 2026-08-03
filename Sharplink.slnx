@@ -3,6 +3,7 @@
     <Project Path="src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
     <Project Path="src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
     <Project Path="src/SharpLink.Generator/SharpLink.Generator.csproj" />
+    <Project Path="src/SharpLink.CodeFixes/SharpLink.CodeFixes.csproj" />
     <Project Path="demo/HelloWorld/HelloWorld.csproj" />
     <Project Path="demo/HostApplication/HostApplication.csproj" />
     <Project Path="demo/Oneway/Oneway.csproj" />
@@ -41,6 +42,8 @@
     <Project Path="test/SharpLink.RollbackPlugin/SharpLink.RollbackPlugin.csproj" />
     <Project Path="test/SharpLink.UnitTests/SharpLink.UnitTests.csproj" />
     <Project Path="test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj" />
+    <Project Path="test/SharpLink.CodeFixes.Tests/SharpLink.CodeFixes.Tests.csproj" />
+    <Project Path="test/SharpLink.CodeFixHostSmoke/SharpLink.CodeFixHostSmoke.csproj" />
     <Project Path="test/SharpLink.AotContracts/SharpLink.AotContracts.csproj" />
     <Project Path="test/SharpLink.AotServices/SharpLink.AotServices.csproj" />
     <Project Path="test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj" />

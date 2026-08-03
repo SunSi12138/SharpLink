@@ -6,10 +6,19 @@
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false"
                       GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile" />
+    <ProjectReference Include="..\SharpLink.CodeFixes\SharpLink.CodeFixes.csproj"
+                      Condition="'$(PublishAot)' != 'true'"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile" />
   </ItemGroup>
 
   <ItemGroup>
     <None Include="..\SharpLink.Generator\bin\$(Configuration)\netstandard2.0\SharpLink.Generator.dll"
+          Pack="true"
+          PackagePath="analyzers/dotnet/cs"
+          Visible="false" />
+    <None Include="..\SharpLink.CodeFixes\bin\$(Configuration)\netstandard2.0\SharpLink.CodeFixes.dll"
           Pack="true"
           PackagePath="analyzers/dotnet/cs"
           Visible="false" />

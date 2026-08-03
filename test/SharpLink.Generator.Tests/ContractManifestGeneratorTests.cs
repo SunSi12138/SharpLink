@@ -548,10 +548,23 @@ public int Total { get; set; }
 [SharpLink.Sdk.RpcRequired, SharpLink.Sdk.RpcMember(2)]
 public string Code { get; set; } = string.Empty;
 """), baseline);
-        Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK028"),
-            "default member ID rename diagnostic");
+        var memberIdDiagnostic = changed.Diagnostics.Single(static diagnostic => diagnostic.Id == "SHARPLINK028");
+        Ensure(memberIdDiagnostic.Properties.TryGetValue("SharpLink.PreviousMemberId", out var previousId) &&
+               uint.TryParse(previousId, out var parsedPreviousId) && parsedPreviousId > 0,
+            "SHARPLINK028 previous member ID property");
         Ensure(changed.Diagnostics.Count(static diagnostic => diagnostic.Id == "SHARPLINK031") >= 2,
             "required member removal and addition diagnostics");
+        var sourceRequiredDiagnostic = changed.Diagnostics.Single(diagnostic =>
+            diagnostic.Id == "SHARPLINK031" &&
+            diagnostic.Properties.ContainsKey("SharpLink.FixKind"));
+        Ensure(sourceRequiredDiagnostic.Properties.TryGetValue("SharpLink.FixKind", out var requiredFixKind) &&
+               requiredFixKind == "RemoveRpcRequired",
+            "source-located SHARPLINK031 stable FixKind property");
+        var removedRequiredDiagnostic = changed.Diagnostics.Single(diagnostic =>
+            diagnostic.Id == "SHARPLINK031" &&
+            !diagnostic.Properties.ContainsKey("SharpLink.FixKind"));
+        Ensure(!removedRequiredDiagnostic.Properties.ContainsKey("SharpLink.FixKind"),
+            "removed required member must not advertise a source fix kind");
         return Task.CompletedTask;
     }
 
@@ -594,10 +607,17 @@ public interface IHelloService : SharpLink.Sdk.IService
             .Replace("Status : byte", "Status : int", StringComparison.Ordinal)
             .Replace("RpcUnionCase(1, typeof(FirstCase))", "RpcUnionCase(1, typeof(SecondCase))", StringComparison.Ordinal);
         var changed = RunContractGenerator(currentSource, baseline);
-        Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK032"),
-            "enum underlying type diagnostic");
-        Ensure(changed.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK033"),
-            "union tag reuse diagnostic");
+        var enumDiagnostic = changed.Diagnostics.Single(static diagnostic => diagnostic.Id == "SHARPLINK032");
+        Ensure(enumDiagnostic.Properties.TryGetValue("SharpLink.PreviousEnumUnderlyingType", out var previousType) &&
+               previousType is "System.Byte" or "byte",
+            "SHARPLINK032 previous enum underlying type property");
+        var unionDiagnostic = changed.Diagnostics.Single(static diagnostic => diagnostic.Id == "SHARPLINK033");
+        Ensure(unionDiagnostic.Properties.TryGetValue("SharpLink.PreviousUnionTag", out var previousTag) &&
+               previousTag == "1",
+            "SHARPLINK033 previous union tag property");
+        Ensure(unionDiagnostic.Properties.TryGetValue("SharpLink.PreviousUnionType", out var previousUnionType) &&
+               previousUnionType == "FirstCase",
+            "SHARPLINK033 previous union type property");
         return Task.CompletedTask;
     }
 

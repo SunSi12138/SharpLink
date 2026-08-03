@@ -439,7 +439,13 @@ public interface IHelloService : SharpLink.Sdk.IService
 """);
         source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
 
-        EnsureHasRule(source, "SHARPLINK002");
+        var diagnostic = RunGenerator(source).Single(static item => item.Id == "SHARPLINK002");
+        Ensure(diagnostic.Properties.TryGetValue("SharpLink.FixKind", out var fixKind) &&
+               fixKind == "KeepCancellationToken",
+            "SHARPLINK002 stable FixKind property");
+        Ensure(diagnostic.Properties.TryGetValue("SharpLink.SymbolIdentity", out var symbolIdentity) &&
+               symbolIdentity?.Contains("Echo", StringComparison.Ordinal) == true,
+            "SHARPLINK002 stable method identity property");
         return Task.CompletedTask;
     }
 
@@ -472,7 +478,12 @@ public interface IHelloService : SharpLink.Sdk.IService
 """);
         source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
 
-        EnsureHasRule(source, "SHARPLINK004");
+        var diagnostic = RunGenerator(source).Single(static item => item.Id == "SHARPLINK004");
+        Ensure(diagnostic.Properties.TryGetValue("SharpLink.FixKind", out var fixKind) &&
+               fixKind == "ChooseCancellationContract",
+            "SHARPLINK004 stable FixKind property");
+        Ensure(diagnostic.Properties.ContainsKey("SharpLink.SymbolIdentity"),
+            "SHARPLINK004 stable method identity property");
         return Task.CompletedTask;
     }
 
@@ -551,7 +562,12 @@ public interface IHelloService : SharpLink.Sdk.IService
 """);
         source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
 
-        EnsureHasRule(source, "SHARPLINK007");
+        var diagnostic = RunGenerator(source).Single(static item => item.Id == "SHARPLINK007");
+        Ensure(diagnostic.Properties.TryGetValue("SharpLink.FixKind", out var fixKind) &&
+               fixKind == "KeepCallOptions",
+            "SHARPLINK007 stable FixKind property");
+        Ensure(diagnostic.Properties.ContainsKey("SharpLink.SymbolIdentity"),
+            "SHARPLINK007 stable method identity property");
         return Task.CompletedTask;
     }
 
@@ -566,7 +582,12 @@ public interface IHelloService : SharpLink.Sdk.IService
 """);
         source = source.Replace("public interface IHelloService : SharpLink.Sdk.IService", "[SharpLink.Sdk.RpcContract]\npublic interface IHelloService : SharpLink.Sdk.IService");
 
-        EnsureHasRule(source, "SHARPLINK008");
+        var diagnostic = RunGenerator(source).Single(static item => item.Id == "SHARPLINK008");
+        Ensure(diagnostic.Properties.TryGetValue("SharpLink.FixKind", out var fixKind) &&
+               fixKind == "ReorderControlParameters",
+            "SHARPLINK008 stable FixKind property");
+        Ensure(diagnostic.Properties.ContainsKey("SharpLink.SymbolIdentity"),
+            "SHARPLINK008 stable method identity property");
         return Task.CompletedTask;
     }
 

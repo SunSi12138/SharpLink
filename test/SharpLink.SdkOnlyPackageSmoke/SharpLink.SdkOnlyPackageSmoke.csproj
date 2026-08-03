@@ -3,6 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <WarningsAsErrors>$(WarningsAsErrors);CS8032;CS8033;CS8034</WarningsAsErrors>
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
     <SharpLinkPackageVersion Condition="'$(SharpLinkPackageVersion)' == '' and '$(VersionSuffix)' == ''">$(VersionPrefix)</SharpLinkPackageVersion>
     <SharpLinkPackageVersion Condition="'$(SharpLinkPackageVersion)' == '' and '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix)</SharpLinkPackageVersion>
