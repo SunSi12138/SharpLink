@@ -146,7 +146,7 @@ internal sealed partial class SharpLinkCodeFixProvider
         var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
             .ConfigureAwait(false);
         if (method is null || semanticModel?.GetDeclaredSymbol(method, context.CancellationToken) is not { } symbol ||
-            !symbol.IsStatic || symbol.MethodKind != MethodKind.Ordinary ||
+            !symbol.IsStatic || symbol.MethodKind != MethodKind.Ordinary || IsObsoleteWithError(symbol) ||
             symbol.DeclaringSyntaxReferences.Any(static reference =>
                 reference.GetSyntax() is not MethodDeclarationSyntax) ||
             !await CanSafelyChangeSignatureAsync(

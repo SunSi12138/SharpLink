@@ -8,6 +8,7 @@ internal sealed partial class SharpLinkCodeFixProvider
             GetContainingTypes(contract).Any(static containing => containing.Arity > 0) ||
             !IsEffectivelyPublic(contract) ||
             HasUnsupportedRpcContractMember(contract) ||
+            HasErrorObsoleteRpcMethod(contract) ||
             HasConflictingInheritedRpcSignatures(contract))
         {
             return false;
@@ -36,6 +37,16 @@ internal sealed partial class SharpLinkCodeFixProvider
             method.Parameters.Count(static parameter => IsAsyncEnumerableType(parameter.Type)) <= sbyte.MaxValue &&
             !HasInvalidRpcMethodAttributes(method));
     }
+
+    private static bool HasErrorObsoleteRpcMethod(INamedTypeSymbol contract)
+        => contract.GetMembers().OfType<IMethodSymbol>()
+               .Concat(contract.AllInterfaces
+                   .Where(static inherited => !IsIService(inherited))
+                   .SelectMany(static inherited => inherited.GetMembers().OfType<IMethodSymbol>()))
+               .Any(static method =>
+                   method.MethodKind == MethodKind.Ordinary &&
+                   method.DeclaredAccessibility == Accessibility.Public &&
+                   IsObsoleteWithError(method));
 
     private static bool HasUnsupportedRpcContractMember(INamedTypeSymbol contract)
         => HasUnsupportedRpcContractMemberDirect(contract) ||

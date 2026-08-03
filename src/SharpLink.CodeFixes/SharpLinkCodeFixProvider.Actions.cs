@@ -14,7 +14,7 @@ internal sealed partial class SharpLinkCodeFixProvider
         var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
             .ConfigureAwait(false);
         var symbol = semanticModel?.GetDeclaredSymbol(method, context.CancellationToken);
-        if (symbol is null)
+        if (symbol is null || IsObsoleteWithError(symbol))
             return;
 
         var canAddCancellationToken = await CanSafelyChangeSignatureAsync(
@@ -25,7 +25,8 @@ internal sealed partial class SharpLinkCodeFixProvider
         {
             var relatedMethods = await FindRelatedMethodsAsync(
                 symbol, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false);
-            canAddCancellationToken = !relatedMethods.Any(static related =>
+            canAddCancellationToken = !relatedMethods.Any(HasNonCancellableAttribute) &&
+                                      !relatedMethods.Any(static related =>
                                           related.Parameters.Any(static parameter =>
                                               parameter.IsOptional || parameter.IsParams)) &&
                                       CanApplySignatureEditWithoutCollisions(
@@ -65,7 +66,8 @@ internal sealed partial class SharpLinkCodeFixProvider
         var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
             .ConfigureAwait(false);
         if (declaration is null ||
-            semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not IMethodSymbol method)
+            semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not IMethodSymbol method ||
+            IsObsoleteWithError(method))
         {
             return;
         }
@@ -102,7 +104,8 @@ internal sealed partial class SharpLinkCodeFixProvider
             context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false);
         var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
             .ConfigureAwait(false);
-        if (method is null || semanticModel?.GetDeclaredSymbol(method, context.CancellationToken) is not { } symbol)
+        if (method is null || semanticModel?.GetDeclaredSymbol(method, context.CancellationToken) is not { } symbol ||
+            IsObsoleteWithError(symbol))
             return;
         if (!await CanSafelyChangeSignatureAsync(
                 symbol, context.Document.Project.Solution, allowInvocations: true,
@@ -146,6 +149,7 @@ internal sealed partial class SharpLinkCodeFixProvider
         var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
             .ConfigureAwait(false);
         if (method is null || semanticModel?.GetDeclaredSymbol(method, context.CancellationToken) is not { } symbol ||
+            IsObsoleteWithError(symbol) ||
             symbol.Parameters.Count(parameter =>
                 IsControlParameter(parameter, ControlParameterKind.CancellationToken)) > 1 ||
             symbol.Parameters.Count(parameter =>

@@ -101,6 +101,41 @@ public interface IContract : SharpLink.Sdk.IService
         }
     }
 
+    [Test]
+    public async Task AddCancellationTokenShouldPreserveValidNonCancellableBasePolicy()
+    {
+        using var workspace = CodeFixTestWorkspace.Create(
+            ("Base.cs", """
+public interface IBaseContract
+{
+    [SharpLink.Sdk.NonCancellable]
+    int Run(int value);
+}
+"""),
+            ("Derived.cs", """
+[SharpLink.Sdk.RpcContract]
+public interface IDerivedContract : IBaseContract, SharpLink.Sdk.IService
+{
+    new int [|Run|](int value);
+}
+"""));
+        await workspace.AssertCompilesAsync();
+        var diagnostic = await workspace.CreateDiagnosticAsync("SHARPLINK004", "Derived.cs");
+        var actions = await workspace.GetActionsAsync(diagnostic, "Derived.cs");
+
+        Ensure(actions.Select(static action => action.EquivalenceKey).SequenceEqual(
+                ["AddNonCancellable"],
+                StringComparer.Ordinal),
+            "A valid inherited NonCancellable policy must suppress AddCancellationToken only.");
+        var changed = await workspace.ApplyAsync(actions[0]);
+        var baseSource = await workspace.GetTextAsync("Base.cs", changed);
+        var derivedSource = await workspace.GetTextAsync("Derived.cs", changed);
+
+        EnsureContains(baseSource, "NonCancellable", "valid base cancellation policy");
+        EnsureContains(derivedSource, "NonCancellable", "derived cancellation repair");
+        await workspace.AssertCompilesAsync(changed);
+    }
+
     private static void SetLanguageVersion(
         CodeFixTestWorkspace workspace,
         LanguageVersion languageVersion)

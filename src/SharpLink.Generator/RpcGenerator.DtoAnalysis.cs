@@ -74,7 +74,8 @@ public partial class RpcGenerator
                     GetMemberType(member),
                     IsAssignable(member)))
                 .ToArray();
-            return TrySelectConstructor(type, members, out _);
+            return members.All(static member => !IsObsoleteWithError(member.Symbol)) &&
+                   TrySelectConstructor(type, members, out _);
         }
 
         private void CollectCurrentAssemblyRoots(
@@ -322,6 +323,13 @@ public partial class RpcGenerator
                 return;
             if (type is INamedTypeSymbol namedArtifact)
             {
+                if (IsObsoleteWithError(namedArtifact))
+                {
+                    Report(DtoDiagnosticKind.Unsupported, type,
+                        "error-obsolete DTOs cannot be referenced by generated Codec or RPC artifacts");
+                    _failed.Add(typeName);
+                    return;
+                }
                 if (namedArtifact.IsRefLikeType)
                 {
                     Report(DtoDiagnosticKind.Unsupported, type,
@@ -476,6 +484,14 @@ public partial class RpcGenerator
             stack.Add(type);
             foreach (var member in memberSymbols)
             {
+                if (IsObsoleteWithError(member))
+                {
+                    Report(DtoDiagnosticKind.Unsupported, type,
+                        $"member '{member.Name}' is error-obsolete and cannot be referenced by generated Codec",
+                        member.Locations.FirstOrDefault());
+                    _failed.Add(typeName);
+                    continue;
+                }
                 var memberType = GetMemberType(member);
                 CollectEnums(memberType);
                 var fieldId = GetMemberId(member, out var validId, out var hasExplicitId);
@@ -759,10 +775,19 @@ public partial class RpcGenerator
         }
 
         private static bool IsObsoleteWithError(ISymbol symbol)
-            => symbol.GetAttributes().Any(static attribute =>
-                IsAttribute(attribute, "System", "ObsoleteAttribute") &&
-                attribute.ConstructorArguments.Length > 1 &&
-                attribute.ConstructorArguments[1].Value is true);
+        {
+            for (var current = symbol; current is not null; current = current.ContainingType)
+            {
+                if (current.GetAttributes().Any(static attribute =>
+                        IsAttribute(attribute, "System", "ObsoleteAttribute") &&
+                        attribute.ConstructorArguments.Length > 1 &&
+                        attribute.ConstructorArguments[1].Value is true))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
 
         private bool TrySelectAdapter(ITypeSymbol type, out AdapterRegistration? selected)
         {

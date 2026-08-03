@@ -291,7 +291,8 @@ internal sealed partial class SharpLinkCodeFixProvider
         var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
             .ConfigureAwait(false);
         if (declaration is null ||
-            semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not IMethodSymbol method)
+            semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not IMethodSymbol method ||
+            IsObsoleteWithError(method))
         {
             return;
         }
@@ -338,7 +339,8 @@ internal sealed partial class SharpLinkCodeFixProvider
         var semanticModel = await context.Document.GetSemanticModelAsync(context.CancellationToken)
             .ConfigureAwait(false);
         if (declaration is null ||
-            semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not IMethodSymbol method)
+            semanticModel?.GetDeclaredSymbol(declaration, context.CancellationToken) is not IMethodSymbol method ||
+            IsObsoleteWithError(method))
         {
             return;
         }
