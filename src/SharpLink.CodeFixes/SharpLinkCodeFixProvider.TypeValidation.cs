@@ -198,6 +198,8 @@ internal sealed partial class SharpLinkCodeFixProvider
                 (requirePublic
                     ? IsEffectivelyPublic(named.OriginalDefinition)
                     : IsAccessibleFromAssembly(named.OriginalDefinition, serviceAssembly)) &&
+                (named.ContainingType is null || IsAccessibleAtServiceVisibility(
+                    named.ContainingType, requirePublic, serviceAssembly)) &&
                 named.TypeArguments.All(argument => IsAccessibleAtServiceVisibility(
                     argument, requirePublic, serviceAssembly)),
             IDynamicTypeSymbol => true,
@@ -312,77 +314,6 @@ internal sealed partial class SharpLinkCodeFixProvider
         }
         return true;
     }
-
-    private static BaseTypeDeclarationSyntax MakePublic(BaseTypeDeclarationSyntax declaration)
-        => declaration.WithModifiers(WithAccessibility(declaration.Modifiers, SyntaxKind.PublicKeyword));
-
-    private static DelegateDeclarationSyntax MakePublic(DelegateDeclarationSyntax declaration)
-        => declaration.WithModifiers(WithAccessibility(declaration.Modifiers, SyntaxKind.PublicKeyword));
-
-    private static MemberDeclarationSyntax MakePublic(MemberDeclarationSyntax declaration)
-        => declaration switch
-        {
-            BaseTypeDeclarationSyntax type => MakePublic(type),
-            DelegateDeclarationSyntax @delegate => MakePublic(@delegate),
-            _ => declaration
-        };
-
-    private static SyntaxTokenList WithAccessibility(SyntaxTokenList modifiers, SyntaxKind accessibility)
-    {
-        var accessibilityModifiers = modifiers.Where(IsAccessibilityModifier).ToArray();
-        if (accessibilityModifiers.Length == 0)
-            return modifiers.Insert(0, SyntaxFactory.Token(accessibility));
-
-        var first = accessibilityModifiers[0];
-        var trailingTrivia = first.TrailingTrivia;
-        foreach (var removed in accessibilityModifiers.Skip(1))
-        {
-            trailingTrivia = trailingTrivia
-                .AddRange(removed.LeadingTrivia)
-                .AddRange(removed.TrailingTrivia);
-        }
-
-        var replacement = SyntaxFactory.Token(accessibility)
-            .WithLeadingTrivia(first.LeadingTrivia)
-            .WithTrailingTrivia(trailingTrivia);
-        var updated = new List<SyntaxToken>(modifiers.Count - accessibilityModifiers.Length + 1);
-        foreach (var modifier in modifiers)
-        {
-            if (!IsAccessibilityModifier(modifier))
-            {
-                updated.Add(modifier);
-                continue;
-            }
-            if (modifier == first)
-                updated.Add(replacement);
-        }
-        return new SyntaxTokenList(updated);
-
-        static bool IsAccessibilityModifier(SyntaxToken token)
-            => token.Kind() is SyntaxKind.PublicKeyword or SyntaxKind.PrivateKeyword or
-                SyntaxKind.ProtectedKeyword or SyntaxKind.InternalKeyword or SyntaxKind.FileKeyword;
-    }
-
-    private static TypeDeclarationSyntax AddModifier(TypeDeclarationSyntax declaration, SyntaxKind modifier)
-        => declaration.WithModifiers(AddModifier(declaration.Modifiers, modifier));
-
-    private static SyntaxTokenList AddModifier(SyntaxTokenList modifiers, SyntaxKind modifier)
-    {
-        if (modifiers.Any(modifier))
-            return modifiers;
-        for (var index = 0; index < modifiers.Count; index++)
-        {
-            if (modifiers[index].IsKind(SyntaxKind.PartialKeyword))
-                return modifiers.Insert(index, SyntaxFactory.Token(modifier));
-        }
-        return modifiers.Add(SyntaxFactory.Token(modifier));
-    }
-
-    private static TypeDeclarationSyntax RemoveModifier(TypeDeclarationSyntax declaration, SyntaxKind modifier)
-        => declaration.WithModifiers(RemoveModifier(declaration.Modifiers, modifier));
-
-    private static SyntaxTokenList RemoveModifier(SyntaxTokenList modifiers, SyntaxKind modifier)
-        => new(modifiers.Where(token => !token.IsKind(modifier)));
 
     private static bool TryGetEnumUnderlyingTypeSyntax(string type, out TypeSyntax syntax)
     {

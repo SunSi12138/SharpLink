@@ -216,8 +216,7 @@ internal sealed partial class SharpLinkCodeFixProvider
     {
         if (plan.Kind == SignatureEditKind.MakeInstance)
         {
-            return declaration.WithModifiers(RemoveModifier(
-                    declaration.Modifiers, SyntaxKind.StaticKeyword))
+            return RemoveModifier(declaration, SyntaxKind.StaticKeyword)
                 .WithAdditionalAnnotations(Formatter.Annotation);
         }
 

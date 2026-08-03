@@ -232,7 +232,8 @@ internal sealed partial class SharpLinkCodeFixProvider
         CancellationToken cancellationToken)
     {
         var related = await FindRelatedMethodsAsync(method, solution, cancellationToken).ConfigureAwait(false);
-        if (related.Any(candidate => !HasOnlyRegularEditableDeclarations(candidate, solution)))
+        if (related.Any(candidate =>
+                !HasOnlyRegularEditableCSharpMethodDeclarations(candidate, solution, cancellationToken)))
             return false;
         foreach (var candidate in related)
         {
@@ -290,6 +291,17 @@ internal sealed partial class SharpLinkCodeFixProvider
         }
         return true;
     }
+
+    private static bool HasOnlyRegularEditableCSharpMethodDeclarations(
+        IMethodSymbol method,
+        Solution solution,
+        CancellationToken cancellationToken)
+        => method.DeclaringSyntaxReferences.Length != 0 &&
+           method.DeclaringSyntaxReferences.All(reference =>
+               solution.GetDocument(reference.SyntaxTree) is { Project.Language: LanguageNames.CSharp } &&
+               IsRegularEditableDocument(solution, reference.SyntaxTree) &&
+               reference.GetSyntax(cancellationToken).AncestorsAndSelf()
+                   .OfType<MethodDeclarationSyntax>().Any());
 
     private static async Task<Solution> ApplySignatureEditAsync(
         Solution solution,

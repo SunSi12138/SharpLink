@@ -352,6 +352,7 @@ internal sealed partial class SharpLinkCodeFixProvider
 
         if (allPublicConstructors.Length == 0 && nonPublicConstructors.Length == 1 &&
             CanExposeAsPublic(nonPublicConstructors[0]) &&
+            HasExplicitConstructorDeclaration(nonPublicConstructors[0], context.CancellationToken) &&
             HasRegularEditableDeclaration(nonPublicConstructors[0], context.Document.Project.Solution))
         {
             var constructor = nonPublicConstructors[0];

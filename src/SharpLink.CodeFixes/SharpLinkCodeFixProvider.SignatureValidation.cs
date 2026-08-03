@@ -120,9 +120,17 @@ internal sealed partial class SharpLinkCodeFixProvider
         ArgumentSyntax argument,
         int ordinal,
         InvocationEdit edit)
-        => ordinal >= 0 && ordinal < edit.ParameterNames.Length
-            ? argument.WithNameColon(CreateNameColon(edit.ParameterNames[ordinal]))
-            : argument;
+    {
+        if (ordinal < 0 || ordinal >= edit.ParameterNames.Length)
+            return argument;
+        var replacement = CreateNameColon(edit.ParameterNames[ordinal]);
+        if (argument.NameColon is { } existing)
+        {
+            replacement = existing.WithName(
+                replacement.Name.WithTriviaFrom(existing.Name));
+        }
+        return argument.WithNameColon(replacement);
+    }
 
     private static NameColonSyntax CreateNameColon(string parameterName)
     {

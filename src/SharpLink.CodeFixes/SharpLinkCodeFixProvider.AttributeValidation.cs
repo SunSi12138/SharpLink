@@ -35,17 +35,31 @@ internal sealed partial class SharpLinkCodeFixProvider
 
     private static bool CanTargetConstructors(INamedTypeSymbol marker)
     {
-        var usage = marker.GetAttributes().FirstOrDefault(static attribute => string.Equals(
-            attribute.AttributeClass?.ToDisplayString(),
-            "System.AttributeUsageAttribute",
-            StringComparison.Ordinal));
-        if (usage is null)
-            return true;
-        if (usage.ConstructorArguments.Length != 1 ||
-            usage.ConstructorArguments[0].Value is not int targets)
+        for (var current = marker; current is not null; current = current.BaseType)
         {
-            return false;
+            var usage = current.GetAttributes().FirstOrDefault(static attribute => string.Equals(
+                attribute.AttributeClass?.ToDisplayString(),
+                "System.AttributeUsageAttribute",
+                StringComparison.Ordinal));
+            if (usage is null)
+                continue;
+            if (!SymbolEqualityComparer.Default.Equals(current, marker) &&
+                usage.NamedArguments.Any(static argument =>
+                    string.Equals(argument.Key, "Inherited", StringComparison.Ordinal) &&
+                    argument.Value.Value is false))
+            {
+                return true;
+            }
+            return usage.ConstructorArguments.Length == 1 &&
+                   usage.ConstructorArguments[0].Value is int targets &&
+                   (targets & (int)AttributeTargets.Constructor) != 0;
         }
-        return (targets & (int)AttributeTargets.Constructor) != 0;
+        return true;
     }
+
+    private static bool HasExplicitConstructorDeclaration(
+        IMethodSymbol constructor,
+        CancellationToken cancellationToken)
+        => constructor.DeclaringSyntaxReferences.Any(reference =>
+            reference.GetSyntax(cancellationToken) is ConstructorDeclarationSyntax);
 }
