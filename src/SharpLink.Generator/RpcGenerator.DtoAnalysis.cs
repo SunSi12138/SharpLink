@@ -53,6 +53,30 @@ public partial class RpcGenerator
                 _enums.Values.OrderBy(static item => item.TypeName, StringComparer.Ordinal).ToImmutableArray());
         }
 
+        public bool CanGenerateContractPayloadCodecs(INamedTypeSymbol contract)
+        {
+            var unrelatedDiagnosticCount = _diagnostics.Count;
+            var roots = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+            CollectContractPayloadRoots(contract, roots);
+            foreach (var root in roots.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+            {
+                _cancellationToken.ThrowIfCancellationRequested();
+                Visit(root.Value, [], 0);
+            }
+            return _diagnostics.Count == unrelatedDiagnosticCount;
+        }
+
+        public bool HasValidDtoConstructionPlan(INamedTypeSymbol type)
+        {
+            var members = GetSerializableMembers(type)
+                .Select(static member => new DtoConstructionMember(
+                    member,
+                    GetMemberType(member),
+                    IsAssignable(member)))
+                .ToArray();
+            return TrySelectConstructor(type, members, out _);
+        }
+
         private void CollectCurrentAssemblyRoots(
             INamespaceSymbol namespaceSymbol,
             Dictionary<string, ITypeSymbol> roots)
@@ -494,7 +518,13 @@ public partial class RpcGenerator
             if (_failed.Contains(typeName))
                 return;
 
-            if (!TrySelectConstructor(named, analyzedMembers, out var constructorMembers))
+            if (!TrySelectConstructor(
+                    named,
+                    analyzedMembers.Select(static member => new DtoConstructionMember(
+                        member.Symbol,
+                        member.Type,
+                        member.Assignable)).ToArray(),
+                    out var constructorMembers))
             {
                 Report(DtoDiagnosticKind.Constructor, type, "public members cannot be restored by an accessible constructor and object initializer");
                 _failed.Add(typeName);
@@ -626,7 +656,7 @@ public partial class RpcGenerator
 
         private bool TrySelectConstructor(
             INamedTypeSymbol type,
-            List<AnalyzedMember> members,
+            IReadOnlyList<DtoConstructionMember> members,
             out List<string> constructorMembers)
         {
             if (type.TypeKind == TypeKind.Struct && members.All(static member => member.Assignable))
@@ -640,6 +670,7 @@ public partial class RpcGenerator
                 StringComparer.Ordinal);
             foreach (var constructor in type.InstanceConstructors
                          .Where(IsConstructorAccessible)
+                         .Where(static constructor => !IsObsoleteWithError(constructor))
                          .Where(static constructor => constructor.Parameters.All(static parameter =>
                              parameter.RefKind is not (RefKind.Ref or RefKind.Out or RefKind.RefReadOnlyParameter)))
                          .OrderBy(static constructor => constructor.Parameters.Length)
@@ -680,31 +711,31 @@ public partial class RpcGenerator
             constructorMembers = [];
             return false;
 
-            bool TryGetConstructorMember(string parameterName, out AnalyzedMember member)
+            bool TryGetConstructorMember(string parameterName, out DtoConstructionMember member)
             {
-                if (memberByName.TryGetValue(parameterName, out member!))
+                if (memberByName.TryGetValue(parameterName, out member))
                     return true;
 
-                AnalyzedMember? candidate = null;
+                DtoConstructionMember? candidate = null;
                 foreach (var current in members)
                 {
                     if (!string.Equals(current.Symbol.Name, parameterName, StringComparison.OrdinalIgnoreCase))
                         continue;
                     if (candidate is not null)
                     {
-                        member = null!;
+                        member = default;
                         return false;
                     }
                     candidate = current;
                 }
-                member = candidate!;
-                return candidate is not null;
+                member = candidate.GetValueOrDefault();
+                return candidate.HasValue;
             }
         }
 
         private static bool CompilerRequiredMembersAreSatisfied(
             INamedTypeSymbol type,
-            List<AnalyzedMember> members,
+            IReadOnlyList<DtoConstructionMember> members,
             bool setsRequiredMembers)
         {
             if (setsRequiredMembers)
@@ -726,6 +757,12 @@ public partial class RpcGenerator
                 return false;
             return constructor.DeclaredAccessibility is Accessibility.Internal or Accessibility.ProtectedOrInternal;
         }
+
+        private static bool IsObsoleteWithError(ISymbol symbol)
+            => symbol.GetAttributes().Any(static attribute =>
+                IsAttribute(attribute, "System", "ObsoleteAttribute") &&
+                attribute.ConstructorArguments.Length > 1 &&
+                attribute.ConstructorArguments[1].Value is true);
 
         private bool TrySelectAdapter(ITypeSymbol type, out AdapterRegistration? selected)
         {
@@ -1164,6 +1201,11 @@ public partial class RpcGenerator
             bool Assignable,
             bool HasExplicitId,
             string? EnumUnderlyingType);
+
+        private readonly record struct DtoConstructionMember(
+            ISymbol Symbol,
+            ITypeSymbol Type,
+            bool Assignable);
 
         private sealed record AdapterRegistration(
             INamedTypeSymbol AdapterType,

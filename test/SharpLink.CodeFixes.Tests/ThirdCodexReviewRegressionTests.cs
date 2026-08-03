@@ -195,7 +195,7 @@ using System.Threading.Tasks;
 
 public interface IContract
 {
-    [System.Obsolete, [|SharpLink.Abstractions.Timeout|](1)]
+    [System.Obsolete, [|SharpLink.Abstractions.Timeout|](-1)]
     ValueTask<int> RunAsync();
 }
 """));

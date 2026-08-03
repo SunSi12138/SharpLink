@@ -301,6 +301,8 @@ internal sealed partial class SharpLinkCodeFixProvider
         var timeoutAttributes = equivalentMethods
             .SelectMany(static candidate => candidate.GetAttributes())
             .Where(IsTimeoutAttribute)
+            .Where(static attribute =>
+                TryGetTimeoutSeconds(attribute, out var seconds) && !IsValidTimeoutSeconds(seconds))
             .ToImmutableArray();
         if (timeoutAttributes.Length == 0 ||
             timeoutAttributes.Any(attribute =>
@@ -344,8 +346,8 @@ internal sealed partial class SharpLinkCodeFixProvider
         var equivalentMethods = await FindEquivalentInterfaceMethodsAsync(
             method, context.Document.Project.Solution, context.CancellationToken).ConfigureAwait(false);
         var attributes = equivalentMethods
-            .SelectMany(static candidate => candidate.GetAttributes())
-            .Where(IsOnewayAttribute)
+            .Where(static candidate => !IsValidOnewayReturnType(candidate.ReturnType))
+            .SelectMany(static candidate => candidate.GetAttributes().Where(IsOnewayAttribute))
             .ToImmutableArray();
         if (attributes.Length == 0 || attributes.Any(attribute =>
                 attribute.ApplicationSyntaxReference is not { } reference ||
@@ -422,7 +424,7 @@ internal sealed partial class SharpLinkCodeFixProvider
                     continue;
                 root = list.Attributes.Count == 1
                     ? root.RemoveNode(list, SyntaxRemoveOptions.KeepExteriorTrivia) ?? root
-                    : root.ReplaceNode(list, list.WithAttributes(list.Attributes.Remove(attribute)));
+                    : root.RemoveNode(attribute, SyntaxRemoveOptions.KeepExteriorTrivia) ?? root;
             }
             solution = solution.WithDocumentSyntaxRoot(group.Key, root);
         }
@@ -476,7 +478,7 @@ internal sealed partial class SharpLinkCodeFixProvider
         }
         else
         {
-            updatedRoot = root.ReplaceNode(list, list.WithAttributes(list.Attributes.Remove(attribute)));
+            updatedRoot = root.RemoveNode(attribute, SyntaxRemoveOptions.KeepExteriorTrivia) ?? root;
         }
         return document.WithSyntaxRoot(updatedRoot);
     }

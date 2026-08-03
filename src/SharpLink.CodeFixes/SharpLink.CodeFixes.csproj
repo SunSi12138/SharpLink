@@ -21,4 +21,8 @@
     </PackageReference>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" PrivateAssets="all" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpLink.Generator\SharpLink.Generator.csproj" PrivateAssets="all" />
+  </ItemGroup>
 </Project>

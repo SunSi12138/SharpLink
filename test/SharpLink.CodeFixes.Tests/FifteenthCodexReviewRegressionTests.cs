@@ -297,7 +297,7 @@ using System.Threading.Tasks;
 
 public interface IContract
 {
-    [SharpLink.Sdk.Timeout(1)]
+    [SharpLink.Sdk.Timeout(-1)]
     ValueTask<int> [|RunAsync|]();
 }
 """);
@@ -310,7 +310,7 @@ using System.Threading.Tasks;
 public interface IContract
 {
     [SharpLink.Sdk.Oneway]
-    ValueTask [|RunAsync|]();
+    ValueTask<int> [|RunAsync|]();
 }
 """);
         foreach (var diagnosticId in new[] { "SHARPLINK004", "SHARPLINK014" })

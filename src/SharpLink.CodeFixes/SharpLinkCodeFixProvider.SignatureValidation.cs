@@ -209,18 +209,15 @@ internal sealed partial class SharpLinkCodeFixProvider
             if (removedNames.Count == 0)
                 continue;
 
-            foreach (var attribute in method.Parameters.SelectMany(static parameter => parameter.GetAttributes()))
+            var attributes = method.Parameters.SelectMany(static parameter => parameter.GetAttributes())
+                .Concat(method.GetAttributes())
+                .Concat(method.GetReturnTypeAttributes());
+            foreach (var attribute in attributes)
             {
-                var metadataName = attribute.AttributeClass?.ToDisplayString();
-                if (metadataName is not (
-                        "System.Runtime.CompilerServices.InterpolatedStringHandlerArgumentAttribute" or
-                        "System.Runtime.CompilerServices.CallerArgumentExpressionAttribute"))
-                {
-                    continue;
-                }
-
                 if (attribute.ConstructorArguments.SelectMany(GetReferencedParameterNames)
-                    .Any(removedNames.Contains))
+                        .Concat(attribute.NamedArguments.SelectMany(static argument =>
+                            GetReferencedParameterNames(argument.Value)))
+                        .Any(removedNames.Contains))
                 {
                     return false;
                 }

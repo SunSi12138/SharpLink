@@ -75,6 +75,19 @@ namespace SharpLink.Abstractions
 {
     public interface IRpcCodecAdapter { }
 
+    [AttributeUsage(AttributeTargets.Class)]
+    public sealed class RpcServiceAttribute : Attribute
+    {
+        public RpcServiceLifetime Lifetime { get; set; }
+    }
+
+    public enum RpcServiceLifetime
+    {
+        Singleton,
+        Connection,
+        Call
+    }
+
     [AttributeUsage(AttributeTargets.Method)]
     public sealed class NonCancellableAttribute : Attribute { }
 

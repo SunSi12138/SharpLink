@@ -128,7 +128,7 @@ using System.Threading.Tasks;
 public interface IBaseContract : SharpLink.Sdk.IService
 {
     [SharpLink.Sdk.Oneway]
-    ValueTask RunAsync();
+    ValueTask<int> RunAsync();
 }
 """),
                    ("Derived.cs", """
@@ -137,7 +137,7 @@ using System.Threading.Tasks;
 public interface IDerivedContract : IBaseContract
 {
     [SharpLink.Sdk.Oneway]
-    new ValueTask [|RunAsync|]();
+    new ValueTask<int> [|RunAsync|]();
 }
 """)))
         {

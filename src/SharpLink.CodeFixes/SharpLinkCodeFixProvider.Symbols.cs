@@ -125,6 +125,19 @@ internal sealed partial class SharpLinkCodeFixProvider
                "SharpLink.Abstractions.NonCancellableAttribute",
                StringComparison.Ordinal);
 
+    private static bool IsRpcServiceAttribute(AttributeData attribute)
+        => string.Equals(
+               attribute.AttributeClass?.ToDisplayString(),
+               "SharpLink.Sdk.RpcServiceAttribute",
+               StringComparison.Ordinal) ||
+           string.Equals(
+               attribute.AttributeClass?.ToDisplayString(),
+               "SharpLink.Abstractions.RpcServiceAttribute",
+               StringComparison.Ordinal);
+
+    private static bool HasRpcServiceAttribute(INamedTypeSymbol type)
+        => type.GetAttributes().Any(IsRpcServiceAttribute);
+
     private static async Task<ImmutableArray<IMethodSymbol>> FindEquivalentInterfaceMethodsAsync(
         IMethodSymbol method,
         Solution solution,

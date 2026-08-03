@@ -122,7 +122,7 @@ public class Adapter : SharpLink.Abstractions.IRpcCodecAdapter
 [SharpLink.Sdk.RpcSerializable]
 public class [|Payload|]
 {
-    public int Value => 42;
+    public int Value { get; set; }
 }
 """)))
         {
