@@ -136,6 +136,44 @@ public interface IDerivedContract : IBaseContract, SharpLink.Sdk.IService
         await workspace.AssertCompilesAsync(changed);
     }
 
+    [Test]
+    public async Task KeepParameterShouldNotDiscardEffectfulControlArguments()
+    {
+        using var workspace = CodeFixTestWorkspace.Create(
+            ("Contract.cs", """
+using System.Threading;
+
+public interface IContract : SharpLink.Sdk.IService
+{
+    int [|Run|](CancellationToken first, CancellationToken second);
+}
+"""),
+            ("Caller.cs", """
+using System.Threading;
+
+public static class Caller
+{
+    public static int Call(IContract contract, CancellationToken cancellationToken) =>
+        contract.Run(GetAndLogToken(), cancellationToken);
+
+    private static CancellationToken GetAndLogToken() => default;
+}
+"""));
+        await workspace.AssertCompilesAsync();
+        var diagnostic = await workspace.CreateDiagnosticAsync("SHARPLINK002", "Contract.cs");
+        var actions = await workspace.GetActionsAsync(diagnostic, "Contract.cs");
+
+        Ensure(actions.Select(static action => action.EquivalenceKey).SequenceEqual(
+                ["Signature:Keep:CancellationToken:0"],
+                StringComparer.Ordinal),
+            "The keep choice that would discard an effectful argument must be withheld.");
+        var changed = await workspace.ApplyAsync(actions[0]);
+        var caller = await workspace.GetTextAsync("Caller.cs", changed);
+
+        EnsureContains(caller, "contract.Run(GetAndLogToken())", "retained effectful control argument");
+        await workspace.AssertCompilesAsync(changed);
+    }
+
     private static void SetLanguageVersion(
         CodeFixTestWorkspace workspace,
         LanguageVersion languageVersion)

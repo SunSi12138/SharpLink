@@ -123,7 +123,14 @@ internal sealed partial class SharpLinkCodeFixProvider
             if (!CanApplySignatureEditWithoutCollisions(
                     relatedMethods,
                     new SignatureEditPlan(SignatureEditKind.KeepControlParameter, kind, ordinal)) ||
-                !CanRemoveControlParametersWithoutBreakingNameReferences(relatedMethods, kind, ordinal))
+                !CanRemoveControlParametersWithoutBreakingNameReferences(relatedMethods, kind, ordinal) ||
+                !await CanRemoveControlArgumentsWithoutSideEffectsAsync(
+                        relatedMethods,
+                        kind,
+                        ordinal,
+                        context.Document.Project.Solution,
+                        context.CancellationToken)
+                    .ConfigureAwait(false))
             {
                 continue;
             }
@@ -201,7 +208,7 @@ internal sealed partial class SharpLinkCodeFixProvider
                 type.BaseType?.SpecialType != SpecialType.System_Object ||
                 HasMembersIncompatibleWithSealing(type) ||
                 !HasOnlyRegularEditableDeclarations(type, context.Document.Project.Solution) ||
-                !SharpLink.Generator.RpcGenerator.HasValidDtoConstructionPlan(
+                !SharpLink.Generator.RpcGenerator.CanGenerateDtoAfterSealing(
                     semanticModel.Compilation, type, context.CancellationToken))
             {
                 return;

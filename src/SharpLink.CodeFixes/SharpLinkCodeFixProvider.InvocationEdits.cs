@@ -139,6 +139,82 @@ internal sealed partial class SharpLinkCodeFixProvider
         }
     }
 
+    private static async Task<bool> CanRemoveControlArgumentsWithoutSideEffectsAsync(
+        ImmutableArray<IMethodSymbol> methods,
+        ControlParameterKind kind,
+        int keptOrdinal,
+        Solution solution,
+        CancellationToken cancellationToken)
+    {
+        var edits = await FindInvocationEditsAsync(methods, solution, cancellationToken).ConfigureAwait(false);
+        foreach (var pair in edits)
+        {
+            var document = solution.GetDocument(pair.Key);
+            var root = document is null
+                ? null
+                : await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+            var semanticModel = document is null
+                ? null
+                : await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
+            if (root is null || semanticModel is null)
+                return false;
+
+            foreach (var edit in pair.Value)
+            {
+                var invocation = root.FindNode(edit.Span, getInnermostNodeForTie: true)
+                    .AncestorsAndSelf().OfType<InvocationExpressionSyntax>().FirstOrDefault();
+                if (invocation is null)
+                    return false;
+
+                foreach (var argument in invocation.ArgumentList.Arguments)
+                {
+                    if (!edit.ArgumentOrdinals.TryGetValue(argument.Span, out var ordinal) ||
+                        ordinal == keptOrdinal ||
+                        !IsControlParameter(edit, kind, ordinal))
+                    {
+                        continue;
+                    }
+
+                    if (!CanDiscardWithoutObservableSideEffects(
+                            semanticModel.GetOperation(argument.Expression, cancellationToken)))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    private static bool CanDiscardWithoutObservableSideEffects(IOperation? operation)
+        => operation switch
+        {
+            IDefaultValueOperation => true,
+            ILiteralOperation => true,
+            ILocalReferenceOperation => true,
+            IParameterReferenceOperation => true,
+            IConversionOperation conversion => CanDiscardWithoutObservableSideEffects(conversion.Operand),
+            IParenthesizedOperation parenthesized =>
+                CanDiscardWithoutObservableSideEffects(parenthesized.Operand),
+            IPropertyReferenceOperation
+            {
+                Property:
+                {
+                    Name: "None",
+                    IsStatic: true,
+                    ContainingType:
+                    {
+                        Name: "CancellationToken",
+                        ContainingNamespace: { } containingNamespace
+                    }
+                }
+            } => string.Equals(
+                containingNamespace.ToDisplayString(),
+                "System.Threading",
+                StringComparison.Ordinal),
+            _ => false
+        };
+
     private static MethodDeclarationSyntax UpdateDeclaration(
         MethodDeclarationSyntax declaration,
         DeclarationEdit edit,

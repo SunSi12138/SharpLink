@@ -61,13 +61,13 @@ using System.Threading;
 
 public static class Caller
 {
-    public static int Call(IContract contract)
-        => contract.Run(First(), contract.Run(Second(), 42, Third()), Fourth());
-
-    private static CancellationToken First() => default;
-    private static CancellationToken Second() => default;
-    private static CancellationToken Third() => default;
-    private static CancellationToken Fourth() => default;
+    public static int Call(
+        IContract contract,
+        CancellationToken first,
+        CancellationToken second,
+        CancellationToken third,
+        CancellationToken fourth)
+        => contract.Run(first, contract.Run(second, 42, third), fourth);
 }
 """));
         await workspace.AssertCompilesAsync();
@@ -88,10 +88,10 @@ public static class Caller
         EnsureContains(contract, "Run(CancellationToken firstToken, int value)", "contract declaration");
         EnsureContains(implementation, "Run(CancellationToken firstToken, int value)", "implementation declaration");
         EnsureContains(caller,
-            "contract.Run(First(), contract.Run(Second(), 42))",
+            "contract.Run(first, contract.Run(second, 42))",
             "nested edited RPC invocations");
         EnsureDoesNotContain(caller,
-            "contract.Run(First(), contract.Run(Second(), 42, Third()), Fourth())",
+            "contract.Run(first, contract.Run(second, 42, third), fourth)",
             "nested edited RPC invocations");
         await workspace.AssertCompilesAsync(changed);
     }

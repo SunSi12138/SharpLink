@@ -66,16 +66,12 @@ public partial class RpcGenerator
             return _diagnostics.Count == unrelatedDiagnosticCount;
         }
 
-        public bool HasValidDtoConstructionPlan(INamedTypeSymbol type)
+        public bool CanGenerateDtoAfterSealing(INamedTypeSymbol type)
         {
-            var members = GetSerializableMembers(type)
-                .Select(static member => new DtoConstructionMember(
-                    member,
-                    GetMemberType(member),
-                    IsAssignable(member)))
-                .ToArray();
-            return members.All(static member => !IsObsoleteWithError(member.Symbol)) &&
-                   TrySelectConstructor(type, members, out _);
+            var unrelatedDiagnosticCount = _diagnostics.Count;
+            Visit(type, [], 0, type);
+            return _diagnostics.Count == unrelatedDiagnosticCount &&
+                   _models.ContainsKey(GetTypeName(type));
         }
 
         private void CollectCurrentAssemblyRoots(
@@ -314,7 +310,11 @@ public partial class RpcGenerator
             _assemblyBindings[target] = adapter;
         }
 
-        private void Visit(ITypeSymbol type, List<ITypeSymbol> stack, int depth)
+        private void Visit(
+            ITypeSymbol type,
+            List<ITypeSymbol> stack,
+            int depth,
+            ITypeSymbol? assumedSealedRoot = null)
         {
             _cancellationToken.ThrowIfCancellationRequested();
             CollectEnums(type);
@@ -405,11 +405,11 @@ public partial class RpcGenerator
             {
                 stack.Add(type);
                 if (elementType is not null)
-                    Visit(elementType, stack, depth + 1);
+                    Visit(elementType, stack, depth + 1, assumedSealedRoot);
                 if (keyType is not null)
-                    Visit(keyType, stack, depth + 1);
+                    Visit(keyType, stack, depth + 1, assumedSealedRoot);
                 if (valueType is not null)
-                    Visit(valueType, stack, depth + 1);
+                    Visit(valueType, stack, depth + 1, assumedSealedRoot);
                 stack.RemoveAt(stack.Count - 1);
                 if (_failed.Contains(typeName))
                     return;
@@ -441,10 +441,18 @@ public partial class RpcGenerator
                 return;
             }
 
-            AnalyzeDto(type, stack, depth);
+            AnalyzeDto(
+                type,
+                stack,
+                depth,
+                SymbolEqualityComparer.Default.Equals(type, assumedSealedRoot));
         }
 
-        private void AnalyzeDto(ITypeSymbol type, List<ITypeSymbol> stack, int depth)
+        private void AnalyzeDto(
+            ITypeSymbol type,
+            List<ITypeSymbol> stack,
+            int depth,
+            bool assumeSealed)
         {
             var typeName = GetTypeName(type);
             if (type is not INamedTypeSymbol named)
@@ -463,7 +471,7 @@ public partial class RpcGenerator
                 _failed.Add(typeName);
                 return;
             }
-            if (named.TypeKind == TypeKind.Class && !named.IsSealed)
+            if (named.TypeKind == TypeKind.Class && !named.IsSealed && !assumeSealed)
             {
                 Report(DtoDiagnosticKind.Unsupported, type,
                     "classes must be sealed; add an installed serializer selector Attribute or [RpcCodecAdapter(typeof(...))] for polymorphic graphs",
@@ -515,7 +523,7 @@ public partial class RpcGenerator
 
                 var kind = GetMemberKind(memberType, out var fixedType, out var fixedSize);
                 if (kind == GeneratedMemberKind.Complex)
-                    Visit(memberType, stack, depth + 1);
+                    Visit(memberType, stack, depth + 1, assumedSealedRoot: null);
                 analyzedMembers.Add(new AnalyzedMember(
                     member,
                     memberType,

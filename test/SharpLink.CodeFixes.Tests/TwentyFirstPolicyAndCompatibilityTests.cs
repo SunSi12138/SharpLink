@@ -171,4 +171,44 @@ internal sealed class [|Service|]
         EnsureContains(source, "public Service(Dependency dependency)", "internal service constructor");
         await workspace.AssertCompilesAsync(changed);
     }
+
+    [Test]
+    public async Task ConstructorSelectionShouldPreserveMarkerSeparatorComments()
+    {
+        using var workspace = CodeFixTestWorkspace.Create(("Service.cs", """
+using System;
+
+namespace Microsoft.Extensions.DependencyInjection
+{
+    [AttributeUsage(AttributeTargets.Constructor)]
+    public sealed class ActivatorUtilitiesConstructorAttribute : Attribute { }
+}
+
+[SharpLink.Sdk.RpcService]
+public sealed class [|Service|]
+{
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor, // keep constructor rationale
+     Obsolete("Removed constructor", true)]
+    public Service() { }
+
+    public Service(string value) { }
+}
+"""));
+        await workspace.AssertCompilesAsync();
+        var diagnostic = await workspace.CreateDiagnosticAsync("SHARPLINK019", "Service.cs");
+        var actions = await workspace.GetActionsAsync(diagnostic, "Service.cs");
+        var action = actions.Single(static item =>
+            item.EquivalenceKey == "SelectConstructor:Service.Service(string)");
+
+        var changed = await workspace.ApplyAsync(action);
+        var source = await workspace.GetTextAsync("Service.cs", changed);
+
+        EnsureContains(source, "keep constructor rationale", "constructor marker separator trivia");
+        EnsureContains(source, "Obsolete(\"Removed constructor\", true)", "remaining constructor attribute");
+        EnsureContains(
+            source,
+            "ActivatorUtilitiesConstructor] public Service(string value)",
+            "newly selected constructor");
+        await workspace.AssertCompilesAsync(changed);
+    }
 }

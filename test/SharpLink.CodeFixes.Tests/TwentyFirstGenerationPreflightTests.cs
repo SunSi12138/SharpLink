@@ -7,7 +7,7 @@ namespace SharpLink.CodeFixes.Tests;
 public sealed class TwentyFirstGenerationPreflightTests
 {
     [Test]
-    public async Task SealDtoShouldRequireAUsableGeneratorConstructionPlan()
+    public async Task SealDtoShouldRequireACompletePostSealGeneratorModel()
     {
         var invalidSources = new[]
         {
@@ -29,6 +29,24 @@ public class [|Payload|]
 
     private Payload(int value) => Value = value;
 }
+""",
+            """
+[SharpLink.Sdk.RpcSerializable]
+public class [|Payload|]
+{
+    [SharpLink.Sdk.RpcMember(1)]
+    public int First { get; set; }
+
+    [SharpLink.Sdk.RpcMember(1)]
+    public int Second { get; set; }
+}
+""",
+            """
+[SharpLink.Sdk.RpcSerializable]
+public class [|Payload|]
+{
+    public object Value { get; set; } = new();
+}
 """
         };
 
@@ -44,7 +62,7 @@ public class [|Payload|]
             var actions = await workspace.GetActionsAsync(diagnostic, "Payload.cs");
 
             Ensure(actions.All(static action => action.EquivalenceKey != "SealDto"),
-                "SealDto must not expose the next generator error.");
+                "SealDto must validate the complete model reached after sealing.");
         }
     }
 
@@ -208,6 +226,29 @@ internal abstract partial class InternalService { }
         Ensure(internalActions.All(static action =>
                 action.EquivalenceKey is not ("MakeServiceConcrete" or "MakeServiceConcreteAndPublic")),
             "Combined public/concrete edits must be withheld for generated partial declarations.");
+
+        using var union = CodeFixTestWorkspace.Create(("Union.cs", """
+public sealed class NewCase : IResult { }
+
+[[|SharpLink.Sdk.RpcUnionCase|](9, typeof(NewCase))]
+public interface IResult { }
+"""));
+        AddGeneratedSource(union, """
+public sealed class GeneratedOldCase : IResult { }
+""");
+        await union.AssertCompilesAsync();
+        var unionDiagnostic = await union.CreateDiagnosticAsync(
+            "SHARPLINK033",
+            "Union.cs",
+            new Dictionary<string, string?>
+            {
+                ["SharpLink.PreviousUnionTag"] = "7",
+                ["SharpLink.PreviousUnionType"] = "GeneratedOldCase"
+            });
+        var unionActions = await union.GetActionsAsync(unionDiagnostic, "Union.cs");
+
+        Ensure(unionActions.All(static action => action.EquivalenceKey != "RestoreUnionTag"),
+            "Union restoration must reject case types contributed only by another source generator.");
     }
 
     [Test]

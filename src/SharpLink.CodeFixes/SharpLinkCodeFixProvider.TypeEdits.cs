@@ -243,7 +243,7 @@ internal sealed partial class SharpLinkCodeFixProvider
                         continue;
                     root = list.Attributes.Count == 1
                         ? root.RemoveNode(list, SyntaxRemoveOptions.KeepExteriorTrivia) ?? root
-                        : root.ReplaceNode(list, list.WithAttributes(list.Attributes.Remove(attribute)));
+                        : root.RemoveNode(attribute, SyntaxRemoveOptions.KeepExteriorTrivia) ?? root;
                 }
             }
 

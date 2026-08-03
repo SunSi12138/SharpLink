@@ -40,6 +40,8 @@ internal sealed partial class SharpLinkCodeFixProvider
             namedCase.IsUnboundGenericType || ContainsTypeParameter(namedCase) ||
             namedCase.TypeKind is not (TypeKind.Class or TypeKind.Struct) || namedCase.IsAbstract ||
             IsObsoleteWithError(namedCase) ||
+            (namedCase.DeclaringSyntaxReferences.Length != 0 &&
+             !HasOnlyRegularEditableDeclarations(namedCase, context.Document.Project.Solution)) ||
             semanticModel.Compilation is not CSharpCompilation csharpCompilation ||
             !csharpCompilation.ClassifyConversion(namedCase, unionType).IsImplicit)
             return;

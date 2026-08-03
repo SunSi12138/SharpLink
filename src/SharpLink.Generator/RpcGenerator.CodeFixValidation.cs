@@ -9,10 +9,10 @@ public partial class RpcGenerator
         => new DtoAnalysisState(compilation, cancellationToken)
             .CanGenerateContractPayloadCodecs(contract);
 
-    internal static bool HasValidDtoConstructionPlan(
+    internal static bool CanGenerateDtoAfterSealing(
         Compilation compilation,
         INamedTypeSymbol type,
         CancellationToken cancellationToken)
         => new DtoAnalysisState(compilation, cancellationToken)
-            .HasValidDtoConstructionPlan(type);
+            .CanGenerateDtoAfterSealing(type);
 }
