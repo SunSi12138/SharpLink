@@ -343,7 +343,9 @@ internal sealed partial class SharpLinkClient
         {
             var result = await reader.ReadAsync(ct);
             var buffer = result.Buffer;
-            while (ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
+            while (session.IsConnected &&
+                   !ct.IsCancellationRequested &&
+                   ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
             {
                 SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                 if (header.Type != ProtocolV2FrameType.HandshakeResponse)
@@ -457,7 +459,9 @@ internal sealed partial class SharpLinkClient
             var buffer = result.Buffer;
             try
             {
-                while (ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
+                while (session.IsConnected &&
+                       !ct.IsCancellationRequested &&
+                       ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
                 {
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                     session.MarkActive();

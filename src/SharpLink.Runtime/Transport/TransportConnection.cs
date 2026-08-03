@@ -14,9 +14,9 @@ internal class StreamTransportConnection : ITransportConnection
         Id = Guid.NewGuid().ToString("N");
         LocalEndPoint = localEndPoint;
         RemoteEndPoint = remoteEndPoint;
-        Input = PipeReader.Create(
+        Input = new ReadOwnershipPipeReader(PipeReader.Create(
             stream,
-            new StreamPipeReaderOptions(bufferSize: ReadBufferBytes, leaveOpen: true));
+            new StreamPipeReaderOptions(bufferSize: ReadBufferBytes, leaveOpen: true)));
         Output = PipeWriter.Create(stream, new StreamPipeWriterOptions(leaveOpen: true));
     }
 
@@ -96,6 +96,168 @@ internal class StreamTransportConnection : ITransportConnection
         => first is null ? next : new AggregateException(first, next);
 }
 
+/// <summary>
+/// Keeps completion of a stream-backed reader behind release of its current
+/// <see cref="ReadResult"/>. <see cref="PipeReader.CompleteAsync(Exception?)"/> may otherwise
+/// return pooled segments while the single protocol consumer is still dispatching a frame.
+/// </summary>
+internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
+{
+    private readonly Lock _gate = new();
+    private TaskCompletionSource? _readReleased;
+    private Task? _completionTask;
+    private bool _readActive;
+    private int _completionRequested;
+
+    internal bool CompletionRequested => Volatile.Read(ref _completionRequested) != 0;
+
+    public override void AdvanceTo(SequencePosition consumed)
+        => AdvanceTo(consumed, consumed);
+
+    public override void AdvanceTo(SequencePosition consumed, SequencePosition examined)
+    {
+        try
+        {
+            inner.AdvanceTo(consumed, examined);
+        }
+        finally
+        {
+            ReleaseRead();
+        }
+    }
+
+    public override void CancelPendingRead() => inner.CancelPendingRead();
+
+    public override void Complete(Exception? exception = null)
+        => _ = CompleteAsync(exception);
+
+    public override ValueTask CompleteAsync(Exception? exception = null)
+    {
+        lock (_gate)
+        {
+            if (_completionTask is not null)
+                return new ValueTask(_completionTask);
+
+            Volatile.Write(ref _completionRequested, 1);
+            Task? release = null;
+            if (_readActive)
+            {
+                _readReleased = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                release = _readReleased.Task;
+            }
+            _completionTask = CompleteAfterReadReleaseAsync(release, exception);
+            return new ValueTask(_completionTask);
+        }
+    }
+
+    public override ValueTask<ReadResult> ReadAsync(CancellationToken cancellationToken = default)
+    {
+        if (!TryAcquireRead())
+        {
+            return ValueTask.FromException<ReadResult>(new InvalidOperationException(
+                "The transport reader is completing."));
+        }
+
+        ValueTask<ReadResult> read;
+        try
+        {
+            read = inner.ReadAsync(cancellationToken);
+        }
+        catch
+        {
+            ReleaseRead();
+            throw;
+        }
+
+        return read.IsCompletedSuccessfully
+            ? read
+            : AwaitReadAsync(read);
+    }
+
+    public override bool TryRead(out ReadResult result)
+    {
+        if (!TryAcquireRead())
+        {
+            result = default;
+            return false;
+        }
+
+        try
+        {
+            if (inner.TryRead(out result))
+                return true;
+        }
+        catch
+        {
+            ReleaseRead();
+            throw;
+        }
+
+        ReleaseRead();
+        return false;
+    }
+
+    private bool TryAcquireRead()
+    {
+        lock (_gate)
+        {
+            if (_completionTask is not null)
+                return false;
+            if (_readActive)
+                throw new InvalidOperationException("Concurrent PipeReader reads are not supported.");
+            _readActive = true;
+            return true;
+        }
+    }
+
+    private void ReleaseRead()
+    {
+        TaskCompletionSource? released;
+        lock (_gate)
+        {
+            if (!_readActive)
+                return;
+            _readActive = false;
+            released = _readReleased;
+            _readReleased = null;
+        }
+        released?.TrySetResult();
+    }
+
+    private async ValueTask<ReadResult> AwaitReadAsync(ValueTask<ReadResult> read)
+    {
+        try
+        {
+            return await read.ConfigureAwait(false);
+        }
+        catch
+        {
+            ReleaseRead();
+            throw;
+        }
+    }
+
+    private async Task CompleteAfterReadReleaseAsync(Task? release, Exception? exception)
+    {
+        // CompleteAsync can be entered while the state gate is still held. Move transport
+        // cancellation to a later turn so an implementation that completes its pending read
+        // inline cannot run the consumer's AdvanceTo continuation under this gate.
+        await Task.Yield();
+        try
+        {
+            inner.CancelPendingRead();
+        }
+        catch (Exception ex) when (StreamTransportConnection.IsExpectedDisposeException(ex))
+        {
+        }
+
+        if (release is not null)
+            await release.ConfigureAwait(false);
+        await inner.CompleteAsync(exception).ConfigureAwait(false);
+    }
+}
+
 internal sealed class AnonymousPipeTransportConnection : ITransportConnection
 {
     private readonly PipeStream _inputStream;
@@ -108,7 +270,8 @@ internal sealed class AnonymousPipeTransportConnection : ITransportConnection
         _inputStream = inputStream ?? throw new ArgumentNullException(nameof(inputStream));
         _outputStream = outputStream ?? throw new ArgumentNullException(nameof(outputStream));
         Id = Guid.NewGuid().ToString("N");
-        Input = PipeReader.Create(inputStream, new StreamPipeReaderOptions(leaveOpen: true));
+        Input = new ReadOwnershipPipeReader(
+            PipeReader.Create(inputStream, new StreamPipeReaderOptions(leaveOpen: true)));
         Output = PipeWriter.Create(outputStream, new StreamPipeWriterOptions(leaveOpen: true));
     }
 
