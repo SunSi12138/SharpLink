@@ -253,8 +253,18 @@ internal sealed partial class SharpLinkCodeFixProvider
         if (declaration is null || !TryGetEnumUnderlyingTypeSyntax(underlyingType, out var typeSyntax))
             return document;
 
-        var baseList = SyntaxFactory.BaseList(
-            SyntaxFactory.SingletonSeparatedList<BaseTypeSyntax>(SyntaxFactory.SimpleBaseType(typeSyntax)));
+        var baseList = declaration.BaseList;
+        if (baseList?.Types.SingleOrDefault() is SimpleBaseTypeSyntax existingType)
+        {
+            baseList = baseList.WithTypes(baseList.Types.Replace(
+                existingType,
+                existingType.WithType(typeSyntax.WithTriviaFrom(existingType.Type))));
+        }
+        else
+        {
+            baseList = SyntaxFactory.BaseList(
+                SyntaxFactory.SingletonSeparatedList<BaseTypeSyntax>(SyntaxFactory.SimpleBaseType(typeSyntax)));
+        }
         return await ReplaceNodeAsync(document, declaration,
             declaration.WithBaseList(baseList).WithAdditionalAnnotations(Formatter.Annotation), cancellationToken)
             .ConfigureAwait(false);

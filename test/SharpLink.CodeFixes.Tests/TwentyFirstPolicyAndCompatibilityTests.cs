@@ -211,4 +211,58 @@ public sealed class [|Service|]
             "newly selected constructor");
         await workspace.AssertCompilesAsync(changed);
     }
+
+    [Test]
+    public async Task InternalServiceConstructorShouldRejectCrossAssemblyProtectedInternalDependency()
+    {
+        using var workspace = CodeFixTestWorkspace.Create(("Service.cs", """
+[SharpLink.Sdk.RpcService]
+internal sealed class [|Service|] : External.BaseService
+{
+    private Service(Dependency dependency) { }
+}
+"""));
+        workspace.AddMetadataReferenceFromSource("External.Service.Dependencies", """
+namespace External
+{
+    public class BaseService
+    {
+        protected internal sealed class Dependency { }
+    }
+}
+""");
+        await workspace.AssertCompilesAsync();
+        var diagnostic = await workspace.CreateDiagnosticAsync("SHARPLINK019", "Service.cs");
+        var actions = await workspace.GetActionsAsync(diagnostic, "Service.cs");
+
+        Ensure(actions.All(static action => action.EquivalenceKey != "MakeConstructorPublic"),
+            "Generated code in the service assembly cannot name a protected-internal dependency from another assembly.");
+    }
+
+    [Test]
+    public async Task EnumUnderlyingTypeRestorationShouldPreserveBaseListTrivia()
+    {
+        using var workspace = CodeFixTestWorkspace.Create(("Status.cs", """
+public enum [|Status|] : /* wire-width note */ long
+{
+    Ready = 1
+}
+"""));
+        await workspace.AssertCompilesAsync();
+        var diagnostic = await workspace.CreateDiagnosticAsync(
+            "SHARPLINK032",
+            "Status.cs",
+            new Dictionary<string, string?>
+            {
+                ["SharpLink.PreviousEnumUnderlyingType"] = "System.Int32"
+            });
+        var actions = await workspace.GetActionsAsync(diagnostic, "Status.cs");
+        var action = actions.Single(static item => item.EquivalenceKey == "RestoreEnumType");
+
+        var changed = await workspace.ApplyAsync(action);
+        var source = await workspace.GetTextAsync("Status.cs", changed);
+
+        EnsureContains(source, "/* wire-width note */ int", "restored enum base-list trivia");
+        await workspace.AssertCompilesAsync(changed);
+    }
 }

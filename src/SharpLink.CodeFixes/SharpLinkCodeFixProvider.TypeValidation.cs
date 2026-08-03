@@ -176,25 +176,59 @@ internal sealed partial class SharpLinkCodeFixProvider
     {
         var requirePublicDependencies = IsEffectivelyPublic(constructor.ContainingType);
         return constructor.Parameters.All(parameter =>
-            IsAccessibleAtServiceVisibility(parameter.Type, requirePublicDependencies));
+            IsAccessibleAtServiceVisibility(
+                parameter.Type,
+                requirePublicDependencies,
+                constructor.ContainingAssembly));
     }
 
-    private static bool IsAccessibleAtServiceVisibility(ITypeSymbol type, bool requirePublic)
+    private static bool IsAccessibleAtServiceVisibility(
+        ITypeSymbol type,
+        bool requirePublic,
+        IAssemblySymbol serviceAssembly)
         => type switch
         {
-            IArrayTypeSymbol array => IsAccessibleAtServiceVisibility(array.ElementType, requirePublic),
+            IArrayTypeSymbol array => IsAccessibleAtServiceVisibility(
+                array.ElementType, requirePublic, serviceAssembly),
             IPointerTypeSymbol => false,
             IFunctionPointerTypeSymbol => false,
             ITypeParameterSymbol => false,
             IErrorTypeSymbol => false,
             INamedTypeSymbol named =>
-                (requirePublic ? IsEffectivelyPublic(named.OriginalDefinition) : IsAccessibleFromGeneratedCode(named)) &&
-                (named.ContainingType is null ||
-                 IsAccessibleAtServiceVisibility(named.ContainingType, requirePublic)) &&
-                named.TypeArguments.All(argument => IsAccessibleAtServiceVisibility(argument, requirePublic)),
+                (requirePublic
+                    ? IsEffectivelyPublic(named.OriginalDefinition)
+                    : IsAccessibleFromAssembly(named.OriginalDefinition, serviceAssembly)) &&
+                named.TypeArguments.All(argument => IsAccessibleAtServiceVisibility(
+                    argument, requirePublic, serviceAssembly)),
             IDynamicTypeSymbol => true,
             _ => true
         };
+
+    private static bool IsAccessibleFromAssembly(
+        INamedTypeSymbol type,
+        IAssemblySymbol serviceAssembly)
+    {
+        for (var current = type; current is not null; current = current.ContainingType)
+        {
+            switch (current.DeclaredAccessibility)
+            {
+                case Accessibility.Public:
+                    continue;
+                case Accessibility.Internal:
+                case Accessibility.ProtectedOrInternal:
+                    if (current.ContainingAssembly is { } containingAssembly &&
+                        (SymbolEqualityComparer.Default.Equals(containingAssembly, serviceAssembly) ||
+                         containingAssembly.GivesAccessTo(serviceAssembly)))
+                    {
+                        continue;
+                    }
+                    return false;
+                default:
+                    return false;
+            }
+        }
+        return true;
+    }
 
     private static bool IsPubliclyAccessible(ITypeSymbol type)
         => type switch
