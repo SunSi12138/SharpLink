@@ -86,14 +86,15 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             case "SHARPLINK031":
                 if (diagnostic.Properties.TryGetValue(SharpLinkDiagnosticProperties.FixKind, out var requiredKind) &&
                     string.Equals(requiredKind, "RemoveRpcRequired", StringComparison.Ordinal) &&
-                    await CanRemoveAttributeFromSingleMemberAsync(
-                        context.Document, diagnostic, context.CancellationToken).ConfigureAwait(false) &&
                     await FindAttributeAtDiagnosticAsync(
                             context.Document,
                             diagnostic,
                             ["SharpLink.Sdk.RpcRequiredAttribute"],
                             context.CancellationToken)
-                        .ConfigureAwait(false) is not null)
+                        .ConfigureAwait(false) is { } requiredAttribute &&
+                    await CanRemoveAttributeFromSingleMemberAsync(
+                            context.Document, diagnostic, requiredAttribute, context.CancellationToken)
+                        .ConfigureAwait(false))
                 {
                     RegisterDocumentFix(context, diagnostic, "Remove [RpcRequired]", "RemoveRpcRequired",
                         (document, item, ct) => RemoveAttributeAsync(
@@ -236,7 +237,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                                               parameter.IsOptional || parameter.IsParams)) &&
                                       CanApplySignatureEditWithoutCollisions(
                                           relatedMethods,
-                                          new SignatureEditPlan(SignatureEditKind.AddCancellationToken));
+                                          new SignatureEditPlan(SignatureEditKind.AddCancellationToken)) &&
+                                      CanReorderControlParametersWithoutBreakingHandlerDependencies(relatedMethods);
         }
 
         if (canAddCancellationToken)
@@ -382,8 +384,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
                 return;
             if (type.TypeKind != TypeKind.Class || type.IsAbstract || type.IsGenericType ||
                 type.BaseType?.SpecialType != SpecialType.System_Object ||
-                type.GetMembers().Any(static member =>
-                    !member.IsImplicitlyDeclared && member.IsVirtual && !member.IsOverride))
+                HasMembersIncompatibleWithSealing(type))
             {
                 return;
             }
@@ -499,6 +500,8 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
         var publicConstructors = allPublicConstructors
             .Where(IsSupportedServiceConstructor)
             .Where(constructor => ConstructorSatisfiesRequiredMembers(type, constructor))
+            .Where(constructor => CanApplyConstructorSelectionAttribute(
+                constructor, context.CancellationToken))
             .ToArray();
         var nonPublicConstructors = type.InstanceConstructors
             .Where(static item => !item.IsImplicitlyDeclared && item.DeclaredAccessibility != Accessibility.Public)
@@ -683,8 +686,7 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
             adapter.TypeKind != TypeKind.Class || adapter.IsGenericType ||
             GetContainingTypes(adapter).Any(static item => item.IsGenericType) ||
             (adapter.IsAbstract && !IsSafeToMakeConcrete(adapter)) ||
-            adapter.GetMembers().Any(static member =>
-                !member.IsImplicitlyDeclared && member.IsVirtual && !member.IsOverride) ||
+            HasMembersIncompatibleWithSealing(adapter) ||
             !CanExposePublicParameterlessConstructor(adapter) ||
             !CanCallParameterlessConstructorWithRequiredMembers(adapter) ||
             HasPrimaryConstructorWithoutParameterlessAlternative(adapter, context.CancellationToken) ||
@@ -1309,14 +1311,23 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
     private static async Task<bool> CanRemoveAttributeFromSingleMemberAsync(
         Document document,
         Diagnostic diagnostic,
+        AttributeSyntax attribute,
         CancellationToken cancellationToken)
     {
         var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
         var member = root?.FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true)
             .AncestorsAndSelf().OfType<MemberDeclarationSyntax>()
             .FirstOrDefault(static item => item is PropertyDeclarationSyntax or FieldDeclarationSyntax);
-        return member is PropertyDeclarationSyntax or
-               FieldDeclarationSyntax { Declaration.Variables.Count: 1 };
+        if (member is PropertyDeclarationSyntax or
+            FieldDeclarationSyntax { Declaration.Variables.Count: 1 })
+        {
+            return true;
+        }
+
+        return attribute.Parent is AttributeListSyntax { Target: { } target } &&
+               target.Identifier.IsKind(SyntaxKind.PropertyKeyword) &&
+               attribute.Ancestors().OfType<ParameterSyntax>().FirstOrDefault()?.Parent?.Parent is
+                   RecordDeclarationSyntax;
     }
 
     private static async Task<Document> RemoveAttributeNodeAsync(
@@ -2079,6 +2090,22 @@ internal sealed partial class SharpLinkCodeFixProvider : CodeFixProvider
            HasAttribute(
                constructor,
                "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute");
+
+    private static bool CanApplyConstructorSelectionAttribute(
+        IMethodSymbol constructor,
+        CancellationToken cancellationToken)
+        => constructor.DeclaringSyntaxReferences.Any(reference =>
+            reference.GetSyntax(cancellationToken).AncestorsAndSelf().Any(static syntax =>
+                syntax is ConstructorDeclarationSyntax or RecordDeclarationSyntax));
+
+    private static bool HasMembersIncompatibleWithSealing(INamedTypeSymbol type)
+        => type.GetMembers().Any(static member =>
+            !member.IsImplicitlyDeclared &&
+            (member.IsVirtual && !member.IsOverride ||
+             !member.IsOverride && member.DeclaredAccessibility is
+                 Accessibility.Protected or
+                 Accessibility.ProtectedOrInternal or
+                 Accessibility.ProtectedAndInternal));
 
     private static bool HasPrimaryConstructorWithoutParameterlessAlternative(
         INamedTypeSymbol type,
