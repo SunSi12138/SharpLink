@@ -18,5 +18,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SharpLink.SdkOnlyPackageSmoke\SharpLink.SdkOnlyPackageSmoke.csproj" />
+    <ProjectReference Include="..\SharpLink.ReferenceRooting.PackageServer\SharpLink.ReferenceRooting.PackageServer.csproj"
+                      ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\SharpLink.ReferenceRooting.PackageClient\SharpLink.ReferenceRooting.PackageClient.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

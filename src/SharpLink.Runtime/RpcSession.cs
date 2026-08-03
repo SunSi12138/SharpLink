@@ -281,9 +281,9 @@ public sealed partial class RpcSession : IRpcSession
         var result = GetOrCreatePump().TryEnqueue(new OwnedFrame(packet, forceFlush: false, flushCompletion: null));
         if (result == SendEnqueueResult.Full)
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ResourceExhausted,
-                $"Session send queue exceeded its {RuntimeContext.FlowControl.MaxSendQueueBytes}-byte limit.");
+            throw SharpLinkResourceExhaustion.Create(
+                SharpLinkResourceExhaustion.SendQueueCapacity,
+                $"Session send queue exceeded its {RuntimeContext.FlowControl.MaxSendQueueBytes}-byte limit (send_queue_capacity).");
         }
         if (result == SendEnqueueResult.Closed)
             throw GetTerminalException();
@@ -339,9 +339,9 @@ public sealed partial class RpcSession : IRpcSession
             : pump.TryEnqueue(frame);
         if (result == SendEnqueueResult.Full)
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ResourceExhausted,
-                $"Session send queue exceeded its {RuntimeContext.FlowControl.MaxSendQueueBytes}-byte limit.");
+            throw SharpLinkResourceExhaustion.Create(
+                SharpLinkResourceExhaustion.SendQueueCapacity,
+                $"Session send queue exceeded its {RuntimeContext.FlowControl.MaxSendQueueBytes}-byte limit (send_queue_capacity).");
         }
         if (result == SendEnqueueResult.Closed)
             throw GetTerminalException();
@@ -523,22 +523,7 @@ public sealed partial class RpcSession : IRpcSession
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
-        var stopping = new SessionTerminal(
-            SessionTerminalState.Stopping,
-            new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Session is stopping."));
-        if (Interlocked.CompareExchange(ref _terminal, stopping, null) is null)
-        {
-            RecordTelemetryConnectionClosed();
-            Volatile.Read(ref _streamFlowControl)?.Complete(stopping.Exception);
-            CompleteReceiveStreams(stopping.Exception);
-            try
-            {
-                OnDisconnected?.Invoke(stopping.Exception);
-            }
-            catch
-            {
-            }
-        }
+        BeginShutdown();
 
         if (Interlocked.CompareExchange(ref _cleanupStarted, 1, 0) != 0)
         {
@@ -615,6 +600,33 @@ public sealed partial class RpcSession : IRpcSession
 
         if (cleanupException is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
+    }
+
+    internal void BeginShutdown()
+    {
+        var stopping = new SessionTerminal(
+            SessionTerminalState.Stopping,
+            new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Session is stopping."));
+        var existing = Interlocked.CompareExchange(ref _terminal, stopping, null);
+        var terminal = existing ?? stopping;
+        if (existing is null)
+            RecordTelemetryConnectionClosed();
+
+        // These registrations can race the terminal transition during handshake. Repeat the
+        // idempotent signal on every caller so a late publication cannot keep shutdown joined.
+        Volatile.Read(ref _streamFlowControl)?.Complete(terminal.Exception);
+        CompleteReceiveStreams(terminal.Exception);
+        if (existing is null)
+        {
+            try
+            {
+                OnDisconnected?.Invoke(terminal.Exception);
+            }
+            catch
+            {
+            }
+        }
+        Volatile.Read(ref _pump)?.Stop();
     }
 
     private static Exception CombineCleanupExceptions(Exception? first, Exception next)

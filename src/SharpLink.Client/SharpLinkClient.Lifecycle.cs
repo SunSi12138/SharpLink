@@ -343,59 +343,69 @@ internal sealed partial class SharpLinkClient
         {
             var result = await reader.ReadAsync(ct);
             var buffer = result.Buffer;
-            while (ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
+            try
             {
-                SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
-                if (header.Type != ProtocolV2FrameType.HandshakeResponse)
-                    handshakeException = CreateProtocolViolationException("Received unexpected packet during handshake.");
-                else if ((header.Flags & ProtocolV2FrameFlags.Error) == 0)
+                while (session.IsConnected &&
+                       !ct.IsCancellationRequested &&
+                       ProtocolV2FrameParser.TryReadFrame(
+                           ref buffer, _protocolOptions, out var header, out var payload))
                 {
-                    var response = ProtocolV2PayloadCodec.ReadHandshakeResponse(payload, _protocolOptions);
-                    if (response.MinorVersion > ProtocolV2Constants.MinorVersion)
+                    SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
+                    if (header.Type != ProtocolV2FrameType.HandshakeResponse)
+                        handshakeException = CreateProtocolViolationException("Received unexpected packet during handshake.");
+                    else if ((header.Flags & ProtocolV2FrameFlags.Error) == 0)
                     {
-                        handshakeException = new SharpLinkException(SharpLinkErrorCode.Unimplemented,
-                            $"Server requires unsupported protocol minor version {response.MinorVersion}.");
+                        var response = ProtocolV2PayloadCodec.ReadHandshakeResponse(payload, _protocolOptions);
+                        if (response.MinorVersion > ProtocolV2Constants.MinorVersion)
+                        {
+                            handshakeException = new SharpLinkException(SharpLinkErrorCode.Unimplemented,
+                                $"Server requires unsupported protocol minor version {response.MinorVersion}.");
+                        }
+                        else
+                        {
+                            var runtimeSession = (RpcSession)session;
+                            runtimeSession.NegotiatedCapabilities = response.NegotiatedCapabilities;
+                            runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
+                            var compressionBinding = ValidateNegotiatedCompression(
+                                response,
+                                compressionProfiles.Span);
+                            if (compressionBinding is { } binding)
+                                runtimeSession.EnableCompression(binding.Provider, binding.WireProfile);
+                            if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
+                            {
+                                runtimeSession.EnableStreamFlowControl(
+                                    response.StreamReceiveWindowBytes,
+                                    response.ConnectionReceiveWindowBytes);
+                            }
+                            handshakeException = null;
+                        }
                     }
                     else
                     {
-                        var runtimeSession = (RpcSession)session;
-                        runtimeSession.NegotiatedCapabilities = response.NegotiatedCapabilities;
-                        runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
-                        var compressionBinding = ValidateNegotiatedCompression(
-                            response,
-                            compressionProfiles.Span);
-                        if (compressionBinding is { } binding)
-                            runtimeSession.EnableCompression(binding.Provider, binding.WireProfile);
-                        if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
+                        var error = ProtocolV2PayloadCodec.ReadError(
+                            payload, header.Flags, _protocolOptions.MaxErrorMessageBytes);
+                        handshakeException = new SharpLinkException(error.Code, error.Message);
+                        if (error.Code is SharpLinkErrorCode.AuthenticationRejected or
+                            SharpLinkErrorCode.AuthenticationExpired or
+                            SharpLinkErrorCode.AuthorizationDenied or
+                            SharpLinkErrorCode.PermissionDenied)
                         {
-                            runtimeSession.EnableStreamFlowControl(
-                                response.StreamReceiveWindowBytes,
-                                response.ConnectionReceiveWindowBytes);
+                            SharpLinkTelemetry.RecordAuthenticationFailure("client");
                         }
-                        handshakeException = null;
                     }
-                }
-                else
-                {
-                    var error = ProtocolV2PayloadCodec.ReadError(
-                        payload, header.Flags, _protocolOptions.MaxErrorMessageBytes);
-                    handshakeException = new SharpLinkException(error.Code, error.Message);
-                    if (error.Code is SharpLinkErrorCode.AuthenticationRejected or
-                        SharpLinkErrorCode.AuthenticationExpired or
-                        SharpLinkErrorCode.AuthorizationDenied or
-                        SharpLinkErrorCode.PermissionDenied)
-                    {
-                        SharpLinkTelemetry.RecordAuthenticationFailure("client");
-                    }
-                }
 
-                handshakeCompleted = true;
-                break;
+                    handshakeCompleted = true;
+                    break;
+                }
             }
-            // A control or response frame can share this read with the handshake response.
-            // Once the handshake is complete, leave the remainder unexamined so the request
-            // loop observes it immediately instead of waiting for another transport read.
-            reader.AdvanceTo(buffer.Start, handshakeCompleted ? buffer.Start : buffer.End);
+            finally
+            {
+                // A control or response frame can share this read with the handshake response.
+                // Once the handshake is complete, leave the remainder unexamined so the request
+                // loop observes it immediately instead of waiting for another transport read.
+                // The finally also releases transport read ownership when parsing throws.
+                reader.AdvanceTo(buffer.Start, handshakeCompleted ? buffer.Start : buffer.End);
+            }
 
             if (handshakeCompleted)
             {
@@ -457,7 +467,9 @@ internal sealed partial class SharpLinkClient
             var buffer = result.Buffer;
             try
             {
-                while (ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
+                while (session.IsConnected &&
+                       !ct.IsCancellationRequested &&
+                       ProtocolV2FrameParser.TryReadFrame(ref buffer, _protocolOptions, out var header, out var payload))
                 {
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                     session.MarkActive();
@@ -615,7 +627,7 @@ internal sealed partial class SharpLinkClient
         if (isError)
         {
             var error = ProtocolV2PayloadCodec.ReadError(payload, flags, _protocolOptions.MaxErrorMessageBytes);
-            var remoteException = new SharpLinkException(error.Code, error.Message);
+            var remoteException = SharpLinkResourceExhaustion.CreateRemote(error.Code, error.Message);
             if (connection.PendingCalls.DispatchError(requestId, remoteException))
                 return;
         }

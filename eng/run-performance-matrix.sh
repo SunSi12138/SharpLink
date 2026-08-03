@@ -144,10 +144,10 @@ for runtime in "${RUNTIME_LIST[@]}"; do
             done
           fi
 
-          # OneWay completes when the bounded local SendPump accepts the frame. A
-          # sustained many-producer loop intentionally reaches that bound, so keep
-          # the latency/throughput sample single-producer and record saturation as
-          # a separate backpressure result instead of mixing the two semantics.
+          # OneWay completes when the bounded local SendPump accepts the frame. The
+          # fixed-queue throughput sample retries and records transient local queue
+          # backpressure as part of logical-send latency. The profile-default
+          # many-producer workload below records raw saturation separately.
           if [[ "$WORKLOADS" == *,oneway,* ]]; then
             run_project "$runtime" test/SharpLink.LoadTest \
               --mode local --transport "$transport" --operation oneway \

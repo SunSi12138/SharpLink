@@ -2,7 +2,7 @@
 
 本仓库当前有两套压测程序：
 
-- `test/SharpLink.LoadTest`：一元 RPC 压测（`add/echo`）
+- `test/SharpLink.LoadTest`：一元 RPC 压测（`add/echo`）与长耗时调用容量测试（`hold`）
 - `test/SharpLink.StreamLoadTest`：流式 RPC 压测（`unary/c2s/s2c/duplex/duplex-equivalent`）
 
 公共运行时与传输封装已下沉到：
@@ -49,28 +49,49 @@ dotnet run -c Release --project test/SharpLink.StreamLoadTest -- \
   --duration 20
 ```
 
-3. 命名管道（本机）
+3. 长耗时 RPC 容量（本机 TCP）
+
+```bash
+dotnet run -c Release --project test/SharpLink.LoadTest -- \
+  --mode local \
+  --transport tcp \
+  --operation hold \
+  --client-count 4 \
+  --concurrency-per-client 2048 \
+  --min-connections 1 \
+  --max-connections 1 \
+  --hold-duration 30 \
+  --max-concurrent-calls-per-connection 2048 \
+  --max-concurrent-calls-per-server 32768 \
+  --max-pending-requests-per-connection 65536 \
+  --request-timeout disabled \
+  --metrics-port 0
+```
+
+`hold` 为每个客户端创建独立 `SharpLinkClient` 和一条专用连接，并一次性发起指定数量的未完成调用。服务端使用 Singleton 探针和共享 gate：达到预计可接纳容量后统一计时释放，另有有界兜底释放，因而不需要在服务器已满时再发送一个会被拒绝的控制 RPC。该场景默认禁用请求超时，并拒绝显式有限超时，避免客户端 deadline 早于 gate 释放而污染容量证据；reset、诊断和健康 RPC 另有 10 秒独立边界。
+
+4. 命名管道（本机）
 
 ```bash
 dotnet run -c Release --project test/SharpLink.LoadTest -- --mode local --transport namedpipe
 dotnet run -c Release --project test/SharpLink.StreamLoadTest -- --mode local --transport namedpipe
 ```
 
-4. UDS（本机）
+5. UDS（本机）
 
 ```bash
 dotnet run -c Release --project test/SharpLink.LoadTest -- --mode local --transport uds
 dotnet run -c Release --project test/SharpLink.StreamLoadTest -- --mode local --transport uds
 ```
 
-5. 匿名管道（仅 `--mode local`）
+6. 匿名管道（仅 `--mode local`）
 
 ```bash
 dotnet run -c Release --project test/SharpLink.LoadTest -- --mode local --transport anonymous
 dotnet run -c Release --project test/SharpLink.StreamLoadTest -- --mode local --transport anonymous
 ```
 
-6. 共享内存（同机同用户）
+7. 共享内存（同机同用户）
 
 ```bash
 dotnet run -c Release --project test/SharpLink.LoadTest -- \
@@ -134,12 +155,18 @@ dotnet run -c Release --project test/SharpLink.LoadTest -- \
 - `--min-connections`: Client 初始连接数（默认 `1`）
 - `--max-connections`: Client 压力扩容上限（默认 `1`，范围 `1..64`）
 - `--max-send-queue-bytes`: 可选的有界 SendPump 容量覆盖；正式吞吐对比应让 Client 与 Server 使用同一个固定值
+- `--max-concurrent-calls-per-connection`: 每条服务端物理连接的活跃调用上限（默认 1,024）
+- `--max-concurrent-calls-per-server`: 单个服务端实例的全局活跃调用上限（默认 65,536）
+- `--max-pending-requests-per-connection`: Client pending request 容量（默认 65,536，必须是 2 的幂）
 
 `anonymous` 传输的 `--max-connections` 必须为 `1`。验证连接池时可在 TCP/UDS/NamedPipe/SharedMemory 模式增加 `--min-connections 1 --max-connections 4`；最终实际连接数仍由并发压力触发，不会按每次 RPC 新建连接。
 
 LoadTest 专有：
 
-- `--operation`: `add | echo`（默认 `add`）
+- `--operation`: `add | echo | hold`（默认 `add`；另支持现有诊断操作 `empty/oneway/yield/delay`）
+- `--client-count`: `hold` 的独立客户端数量（默认 4，其他操作忽略）
+- `--concurrency-per-client`: `hold` 每个客户端一次性发起的调用数（默认 1,024）
+- `--hold-duration`: `hold` 达到预计容量后的保持秒数（默认 30）
 - `--payload-size`: `echo` 字符串长度（默认 `64`）
 - `--compression`: `none | brotli`（默认 `none`）
 - `--compression-level`: `fastest | optimal | smallest | nocompression`（默认 `fastest`，仅影响本地编码）
@@ -155,6 +182,8 @@ StreamLoadTest 专有：
 - `--messages-per-stream`: `duplex-equivalent` 的每个已完成流双向消息数（默认 `8`）
 
 `duplex-equivalent` 为跨框架比较提供严格 oracle：每个响应都校验 operation ID、顺序、长度和完整 payload，缺失、重复、错序、额外或损坏响应均计为 validation failure，阶段结束时的部分流取消单独计数且不进入成功吞吐。正式连接数对比必须固定 `--min-connections` 与 `--max-connections` 为同一个值；`1/64` 动态池不能替代 `1/1` 与 `64/64` 两条独立证据。
+
+`hold` 要求 `--min-connections 1 --max-connections 1`，避免多连接池的随机路由把理论连接容量误当成保证接纳容量；扩展总连接数应增加独立 `--client-count`。它还会禁用 endpoint topology 与 admission，并要求请求超时为 `disabled`，避免其他限制掩盖 call-capacity 结果。运行结果只接受与配置边界一致的 server/connection/pending 拒绝原因，并核对释放前后的服务端 session ID，防止重连替代品被误报为原连接健康。跨机运行时 Server 与 Client 应使用相同的调用上限参数；`hold` 不支持 anonymous pipe。
 
 ## 默认传输标识
 
@@ -182,7 +211,7 @@ StreamLoadTest 专有：
 - SharedMemory 模式默认记录 negotiated capacity、notification backend、spill/wait/实际 notification 计数
 - 使用 `--detailed-shm-evidence` 时，额外记录直接写入、spill 原因与复制、staging、通知请求/合并及游标刷新；这些高频观测会扰动热路径，只能作为诊断证据
 
-`eng/run-performance-matrix.sh` 的 full tier 覆盖全部适用本机传输、三个 profile、payload `0/32/256/4096/65536/1048576`、连接池 `1/1` 与 `1/4`。小 payload 使用并发 `1/8/32/128/256/512`，64 KiB 使用 `1/8/32/128`，1 MiB 使用 `1/8/32`；显式设置 `SHARPLINK_MATRIX_CONCURRENCY` 时按调用者给定列表执行。正常吞吐场景固定 Client/Server send queue 为 64 MiB（可由 `SHARPLINK_MATRIX_MAX_SEND_QUEUE_BYTES` 覆盖），避免不同 profile 的队列容量成为吞吐混杂变量；`oneway-backpressure` 专项刻意保留 profile 默认队列并单独报告预期饱和。默认执行五轮，偶数轮反转传输顺序；原始 JSON 写入 `artifacts/performance/current/matrix`。SharedMemory 的正式基线必须同时列出同平台 TCP、UDS、NamedPipe 和 AnonymousPipe，不只选择有利对照。NativeAOT 独立进程 smoke 使用 `eng/run-shared-memory-aot-process-smoke.sh`。
+`eng/run-performance-matrix.sh` 的 full tier 覆盖全部适用本机传输、三个 profile、payload `0/32/256/4096/65536/1048576`、连接池 `1/1` 与 `1/4`。小 payload 使用并发 `1/8/32/128/256/512`，64 KiB 使用 `1/8/32/128`，1 MiB 使用 `1/8/32`；显式设置 `SHARPLINK_MATRIX_CONCURRENCY` 时按调用者给定列表执行。正常吞吐场景固定 Client/Server send queue 为 64 MiB（可由 `SHARPLINK_MATRIX_MAX_SEND_QUEUE_BYTES` 覆盖），避免不同 profile 的队列容量成为吞吐混杂变量。正式 OneWay 把本地 `send_queue_capacity` 作为逻辑发送的可重试流控，等待时间进入延迟并在 `SendQueueBackpressureRetries` 中单独计数；其他 `ResourceExhausted` 仍为失败。`oneway-backpressure` 专项刻意保留 profile 默认队列、禁用该重试并单独报告原始饱和。默认执行五轮，偶数轮反转传输顺序；原始 JSON 写入 `artifacts/performance/current/matrix`。SharedMemory 的正式基线必须同时列出同平台 TCP、UDS、NamedPipe 和 AnonymousPipe，不只选择有利对照。NativeAOT 独立进程 smoke 使用 `eng/run-shared-memory-aot-process-smoke.sh`。
 
 静态 endpoint、动态 Resolver、admission、compression 和 interceptor 使用相应 LoadTest 参数或专项 Benchmark runner。最终性能结论只采用精确 RC 提交上同硬件、同配置、交替多轮的结果；短时 smoke 只证明矩阵可运行且无请求错误。
 
@@ -193,6 +222,17 @@ StreamLoadTest 专有：
 - `p99.9`
 - `min`
 - Prometheus 实时指标
+
+`hold` 不以 QPS 为结论，输出：
+
+- `client_count` / `connection_count`
+- `attempted_calls` / `accepted_calls` / `peak_active_calls`
+- `completed_calls` / `resource_exhausted_calls` / `resource_exhausted_reasons` / `cancelled_calls` / `other_failed_calls`
+- `active_calls_after_release` / `healthy_calls_after_release`
+- 每连接、每服务器和 pending request 上限
+- `processor_count`、Runtime、GC、transport、profile 与失败摘要
+
+正式容量结果至少覆盖低于、等于和高于服务器上限，随后验证 `active_calls_after_release: 0`、所有客户端健康调用成功，并在 TCP 之外再运行一种适用的本机传输。容量上限受可用内存、payload、Service scope 和运行时配置共同影响；出现操作系统内存压力的试次应作为上界失败点记录，不应宣称为稳定可用容量。
 
 ## Prometheus 指标（LoadTest）
 

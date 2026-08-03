@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpLink.AotContracts\SharpLink.AotContracts.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Sdk\SharpLink.Sdk.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Generator\SharpLink.Generator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile" />
+  </ItemGroup>
+</Project>
