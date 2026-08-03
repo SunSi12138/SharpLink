@@ -49,19 +49,58 @@ internal sealed partial class SharpLinkCodeFixProvider
             !csharpCompilation.ClassifyConversion(namedCase, unionType).IsImplicit)
             return;
 
-        if (unionType.GetAttributes().Where(IsRpcUnionCaseAttribute).Any(attribute =>
-                !IsAttributeApplication(attribute, targetAttribute) &&
-                attribute.ConstructorArguments.Length == 2 &&
-                (attribute.ConstructorArguments[0].Value is int existingTag && existingTag == parsedTag ||
-                 attribute.ConstructorArguments[1].Value is ITypeSymbol existingCase &&
-                 SymbolEqualityComparer.Default.Equals(existingCase, namedCase))))
+        var mappings = unionType.GetAttributes().Where(IsRpcUnionCaseAttribute).ToArray();
+        var targetMapping = mappings.FirstOrDefault(attribute => IsAttributeApplication(attribute, targetAttribute));
+        if (targetMapping is null || targetMapping.ConstructorArguments.Length != 2 ||
+            targetMapping.ConstructorArguments[0].Value is not int currentTag ||
+            targetMapping.ConstructorArguments[1].Value is not ITypeSymbol currentCase)
         {
             return;
         }
 
+        var preserveCurrentCase = !SymbolEqualityComparer.Default.Equals(currentCase, namedCase);
+        var otherMappings = mappings.Where(attribute => !IsAttributeApplication(attribute, targetAttribute)).ToArray();
+        if (otherMappings.Any(attribute =>
+                attribute.ConstructorArguments.Length == 2 &&
+                (attribute.ConstructorArguments[0].Value is int existingTag && existingTag == parsedTag ||
+                 attribute.ConstructorArguments[1].Value is ITypeSymbol existingCase &&
+                 (SymbolEqualityComparer.Default.Equals(existingCase, namedCase) ||
+                  preserveCurrentCase && SymbolEqualityComparer.Default.Equals(existingCase, currentCase)))))
+        {
+            return;
+        }
+
+        int? preservedTag = null;
+        if (preserveCurrentCase)
+        {
+            var usedTags = new HashSet<int>(otherMappings
+                .Where(static attribute => attribute.ConstructorArguments.Length == 2)
+                .Select(static attribute => attribute.ConstructorArguments[0].Value)
+                .OfType<int>()
+                .Append(parsedTag));
+            if (currentTag > 0 && !usedTags.Contains(currentTag))
+            {
+                preservedTag = currentTag;
+            }
+            else
+            {
+                for (var candidate = 1; candidate <= usedTags.Count + 1; candidate++)
+                {
+                    if (!usedTags.Contains(candidate))
+                    {
+                        preservedTag = candidate;
+                        break;
+                    }
+                }
+            }
+            if (preservedTag is null)
+                return;
+        }
+
         RegisterDocumentFix(context, diagnostic, $"Restore tag {tag} to {type}",
             "RestoreUnionTag",
-            (document, item, ct) => RestoreUnionTagAsync(document, item, tag!, type!, ct));
+            (document, item, ct) => RestoreUnionTagAsync(
+                document, item, tag!, type!, preservedTag, ct));
     }
 
     private static bool IsAttributeApplication(AttributeData attribute, AttributeSyntax syntax)

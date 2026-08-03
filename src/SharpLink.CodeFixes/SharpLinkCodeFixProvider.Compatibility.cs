@@ -170,7 +170,59 @@ internal sealed partial class SharpLinkCodeFixProvider
             if (value < minimum || value > maximum)
                 return false;
         }
-        return true;
+        return !await RestoredEnumTypeIntroducesCompilationErrorsAsync(
+            document, diagnostic, underlyingType, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> RestoredEnumTypeIntroducesCompilationErrorsAsync(
+        Document document,
+        Diagnostic diagnostic,
+        string underlyingType,
+        CancellationToken cancellationToken)
+    {
+        var changedDocument = await RestoreEnumUnderlyingTypeAsync(
+            document, diagnostic, underlyingType, cancellationToken).ConfigureAwait(false);
+        var originalSolution = document.Project.Solution;
+        var changedSolution = changedDocument.Project.Solution;
+        var dependentProjects = originalSolution.GetProjectDependencyGraph()
+            .GetProjectsThatTransitivelyDependOnThisProject(document.Project.Id);
+        foreach (var projectId in dependentProjects.Prepend(document.Project.Id))
+        {
+            var originalProject = originalSolution.GetProject(projectId);
+            var changedProject = changedSolution.GetProject(projectId);
+            var originalCompilation = originalProject is null
+                ? null
+                : await originalProject.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
+            var changedCompilation = changedProject is null
+                ? null
+                : await changedProject.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
+            if (originalCompilation is null || changedCompilation is null ||
+                HasAdditionalCompilationErrors(originalCompilation, changedCompilation, cancellationToken))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool HasAdditionalCompilationErrors(
+        Compilation original,
+        Compilation changed,
+        CancellationToken cancellationToken)
+    {
+        var originalErrors = original.GetDiagnostics(cancellationToken)
+            .Where(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
+            .GroupBy(static diagnostic => diagnostic.Id + "\0" + diagnostic.GetMessage(CultureInfo.InvariantCulture))
+            .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.Ordinal);
+        foreach (var diagnostic in changed.GetDiagnostics(cancellationToken)
+                     .Where(static item => item.Severity == DiagnosticSeverity.Error))
+        {
+            var key = diagnostic.Id + "\0" + diagnostic.GetMessage(CultureInfo.InvariantCulture);
+            if (!originalErrors.TryGetValue(key, out var remaining) || remaining == 0)
+                return true;
+            originalErrors[key] = remaining - 1;
+        }
+        return false;
     }
 
     private static async Task<Document> RestoreEnumUnderlyingTypeAsync(

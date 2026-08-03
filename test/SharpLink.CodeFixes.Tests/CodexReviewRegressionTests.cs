@@ -172,7 +172,9 @@ namespace Cases
         EnsureContains(source,
             "RpcUnionCase(7, typeof(global::Cases.GenericCase<System.Int32>))",
             "closed generic union mapping");
-        EnsureDoesNotContain(source, "typeof(CurrentCase)", "closed generic union mapping");
+        EnsureContains(source,
+            "RpcUnionCase(9, typeof(CurrentCase))",
+            "preserved current closed generic union mapping");
         await workspace.AssertCompilesAsync(changed);
     }
 

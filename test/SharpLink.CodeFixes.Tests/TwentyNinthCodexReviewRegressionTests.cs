@@ -30,6 +30,8 @@ public interface IResult { }
 
         EnsureContains(source, "caseType: typeof(global::OldCase)", "named union case type");
         EnsureContains(source, "tag: 1", "named union tag");
+        EnsureContains(source, "caseType: typeof(NewCase)", "preserved named union case type");
+        EnsureContains(source, "tag: 2", "preserved named union tag");
         await workspace.AssertCompilesAsync(changed);
     }
 

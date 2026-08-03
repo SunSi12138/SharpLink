@@ -211,7 +211,7 @@ public interface IResult { }
         var source = await workspace.GetTextAsync("Union.cs", changed);
 
         EnsureContains(source, "RpcUnionCase(7, typeof(global::OldCase))", "union mapping");
-        EnsureDoesNotContain(source, "RpcUnionCase(9", "union mapping");
+        EnsureContains(source, "RpcUnionCase(9, typeof(NewCase))", "preserved reassigned union mapping");
         await workspace.AssertCompilesAsync(changed);
     }
 

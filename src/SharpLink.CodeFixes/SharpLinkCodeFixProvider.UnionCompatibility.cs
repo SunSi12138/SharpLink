@@ -7,6 +7,7 @@ internal sealed partial class SharpLinkCodeFixProvider
         Diagnostic diagnostic,
         string tag,
         string type,
+        int? preservedTag,
         CancellationToken cancellationToken)
     {
         var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
@@ -36,7 +37,23 @@ internal sealed partial class SharpLinkCodeFixProvider
             existingType.WithExpression(restoredTypeExpression));
         var updated = attribute.WithArgumentList(attribute.ArgumentList.WithArguments(arguments))
             .WithAdditionalAnnotations(Formatter.Annotation);
-        return await ReplaceNodeAsync(document, attribute, updated, cancellationToken).ConfigureAwait(false);
+        if (preservedTag is not { } newTag || attribute.Parent is not AttributeListSyntax attributeList)
+            return await ReplaceNodeAsync(document, attribute, updated, cancellationToken).ConfigureAwait(false);
+
+        var preservedTagArgument = existingTag.WithExpression(
+            SyntaxFactory.ParseExpression(newTag.ToString(CultureInfo.InvariantCulture))
+                .WithTriviaFrom(existingTag.Expression));
+        var preservedArguments = attribute.ArgumentList.Arguments.Replace(
+            attribute.ArgumentList.Arguments[tagIndex], preservedTagArgument);
+        var preserved = attribute.WithArgumentList(attribute.ArgumentList.WithArguments(preservedArguments))
+            .WithoutLeadingTrivia()
+            .WithoutTrailingTrivia()
+            .WithAdditionalAnnotations(Formatter.Annotation);
+        var attributeIndex = attributeList.Attributes.IndexOf(attribute);
+        var updatedList = attributeList.WithAttributes(
+                attributeList.Attributes.Replace(attribute, updated).Insert(attributeIndex + 1, preserved))
+            .WithAdditionalAnnotations(Formatter.Annotation);
+        return await ReplaceNodeAsync(document, attributeList, updatedList, cancellationToken).ConfigureAwait(false);
     }
 
     private static bool TryGetUnionCaseArguments(
