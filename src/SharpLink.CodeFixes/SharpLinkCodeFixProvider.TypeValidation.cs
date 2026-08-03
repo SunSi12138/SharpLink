@@ -122,7 +122,7 @@ internal sealed partial class SharpLinkCodeFixProvider
                });
 
     private static bool CanInvokeWithoutArguments(IMethodSymbol constructor)
-        => constructor.Parameters.All(static parameter => parameter.IsOptional);
+        => constructor.Parameters.All(static parameter => parameter.IsOptional || parameter.IsParams);
 
     private static bool HasOverride(INamedTypeSymbol type, ISymbol abstractMember)
     {
