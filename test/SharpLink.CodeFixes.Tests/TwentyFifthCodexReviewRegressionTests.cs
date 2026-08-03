@@ -152,7 +152,9 @@ public interface IResult { }
 
         using var lifetime = CodeFixTestWorkspace.Create(("Service.cs", """
 [SharpLink.Sdk.RpcService(
-    Lifetime = /* deployment policy */ (SharpLink.Sdk.SharpLinkServiceLifetime)99)]
+    /* keep after open parenthesis */
+    Lifetime = /* deployment policy */ (SharpLink.Sdk.SharpLinkServiceLifetime)99
+    /* keep before close parenthesis */)]
 public sealed class [|Service|] { }
 """));
         await lifetime.AssertCompilesAsync();
@@ -162,6 +164,8 @@ public sealed class [|Service|] { }
         var lifetimeChanged = await lifetime.ApplyAsync(lifetimeAction);
         var lifetimeSource = await lifetime.GetTextAsync("Service.cs", lifetimeChanged);
 
+        EnsureContains(lifetimeSource, "/* keep after open parenthesis */", "lifetime argument-list trivia");
+        EnsureContains(lifetimeSource, "/* keep before close parenthesis */", "lifetime closing trivia");
         EnsureContains(lifetimeSource, "Lifetime = /* deployment policy */", "service lifetime trivia");
         EnsureContains(lifetimeSource, "SharpLinkServiceLifetime.Call", "restored service lifetime");
         await lifetime.AssertCompilesAsync(lifetimeChanged);

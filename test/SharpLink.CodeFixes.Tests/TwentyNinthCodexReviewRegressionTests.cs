@@ -62,4 +62,25 @@ namespace Microsoft.Extensions.DependencyInjection
         Ensure(actions.Count == 0,
             "Inherited=false must not discard a base attribute class's valid-target restriction.");
     }
+
+    [Test]
+    public async Task SignatureCollisionShouldCompareFunctionPointerTypeParameters()
+    {
+        using var workspace = CodeFixTestWorkspace.Create(("Contract.cs", """
+using System.Threading;
+
+public unsafe interface IContract : SharpLink.Sdk.IService
+{
+    int [|Run|]<T>(delegate*<T, void> callback);
+    int Run<T>(delegate*<T, void> callback, CancellationToken cancellationToken);
+}
+"""));
+        workspace.EnableUnsafeCode();
+        await workspace.AssertCompilesAsync();
+        var diagnostic = await workspace.CreateDiagnosticAsync("SHARPLINK004", "Contract.cs");
+        var actions = await workspace.GetActionsAsync(diagnostic, "Contract.cs");
+
+        Ensure(actions.All(static item => item.EquivalenceKey != "Signature:AddCancellationToken"),
+            "Equivalent generic function-pointer parameters must block a duplicate overload edit.");
+    }
 }

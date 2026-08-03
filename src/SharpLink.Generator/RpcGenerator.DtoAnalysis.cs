@@ -851,7 +851,7 @@ public partial class RpcGenerator
                     return false;
                 if ((current.DeclaredAccessibility is Accessibility.Private or Accessibility.Protected or
                         Accessibility.ProtectedAndInternal) &&
-                    assumedPublicTypes?.Contains(current) != true)
+                    assumedPublicTypes?.Contains(current.OriginalDefinition) != true)
                 {
                     return false;
                 }

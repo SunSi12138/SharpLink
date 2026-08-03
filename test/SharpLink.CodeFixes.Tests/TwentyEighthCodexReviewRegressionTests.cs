@@ -11,21 +11,13 @@ public sealed class TwentyEighthCodexReviewRegressionTests
 internal sealed class Outer<T>
 {
     [SharpLink.Sdk.RpcSerializable]
-    internal sealed class [|Payload|]
+    private sealed class [|Payload|]
     {
         public T Value { get; set; } = default!;
     }
-}
 
-internal interface IContract : SharpLink.Sdk.IService
-{
-    [SharpLink.Sdk.NonCancellable]
-    Outer<int>.Payload Get();
-}
-
-internal sealed class GenericConsumer<T>
-{
-    public Outer<T>.Payload Echo(Outer<T>.Payload value) => value;
+    private Outer<int>.Payload? ClosedPayload { get; set; }
+    private Outer<T>.Payload? OpenPayload { get; set; }
 }
 """));
         await workspace.AssertCompilesAsync();

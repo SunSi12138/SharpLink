@@ -346,60 +346,6 @@ internal sealed partial class SharpLinkCodeFixProvider
         return parameters.ToImmutableArray();
     }
 
-    private static bool AreSignatureTypesEquivalent(
-        ITypeSymbol left,
-        IMethodSymbol leftMethod,
-        ITypeSymbol right,
-        IMethodSymbol rightMethod)
-    {
-        if (left is ITypeParameterSymbol leftParameter &&
-            SymbolEqualityComparer.Default.Equals(leftParameter.ContainingSymbol, leftMethod))
-        {
-            return right is ITypeParameterSymbol rightParameter &&
-                   SymbolEqualityComparer.Default.Equals(rightParameter.ContainingSymbol, rightMethod) &&
-                   leftParameter.Ordinal == rightParameter.Ordinal;
-        }
-        if (left is IArrayTypeSymbol leftArray && right is IArrayTypeSymbol rightArray)
-        {
-            return leftArray.Rank == rightArray.Rank &&
-                   AreSignatureTypesEquivalent(
-                       leftArray.ElementType,
-                       leftMethod,
-                       rightArray.ElementType,
-                       rightMethod);
-        }
-        if (left is IPointerTypeSymbol leftPointer && right is IPointerTypeSymbol rightPointer)
-        {
-            return AreSignatureTypesEquivalent(
-                leftPointer.PointedAtType,
-                leftMethod,
-                rightPointer.PointedAtType,
-                rightMethod);
-        }
-        if (left is INamedTypeSymbol leftNamed && right is INamedTypeSymbol rightNamed)
-        {
-            return SymbolEqualityComparer.Default.Equals(
-                       leftNamed.OriginalDefinition,
-                       rightNamed.OriginalDefinition) &&
-                   (leftNamed.ContainingType is null && rightNamed.ContainingType is null ||
-                    leftNamed.ContainingType is not null && rightNamed.ContainingType is not null &&
-                    AreSignatureTypesEquivalent(
-                        leftNamed.ContainingType,
-                        leftMethod,
-                        rightNamed.ContainingType,
-                        rightMethod)) &&
-                   leftNamed.TypeArguments.Length == rightNamed.TypeArguments.Length &&
-                   leftNamed.TypeArguments.Zip(rightNamed.TypeArguments, (leftArgument, rightArgument) =>
-                           AreSignatureTypesEquivalent(
-                               leftArgument,
-                               leftMethod,
-                               rightArgument,
-                               rightMethod))
-                       .All(static equivalent => equivalent);
-        }
-        return SymbolEqualityComparer.Default.Equals(left, right);
-    }
-
     private static ImmutableArray<int> GetControlParameterOrder(DeclarationEdit edit)
         => GetControlParameterOrder(edit.CancellationTokens, edit.CallOptions);
 

@@ -327,7 +327,10 @@ internal sealed partial class SharpLinkCodeFixProvider
             : arguments.Replace(
                 existing,
                 existing.WithExpression(value.WithTriviaFrom(existing.Expression)));
-        var updated = attribute.WithArgumentList(SyntaxFactory.AttributeArgumentList(updatedArguments))
+        var updatedArgumentList = attribute.ArgumentList is { } argumentList
+            ? argumentList.WithArguments(updatedArguments)
+            : SyntaxFactory.AttributeArgumentList(updatedArguments);
+        var updated = attribute.WithArgumentList(updatedArgumentList)
             .WithAdditionalAnnotations(Formatter.Annotation);
         return solution.WithDocumentSyntaxRoot(document.Id, root.ReplaceNode(attribute, updated));
     }

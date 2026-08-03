@@ -125,6 +125,15 @@ namespace SharpLink.Abstractions
 
     internal ProjectId ProjectId { get; }
 
+    internal void EnableUnsafeCode()
+    {
+        var project = Solution.GetProject(ProjectId)
+                      ?? throw new InvalidOperationException("Test project was unavailable.");
+        var options = project.CompilationOptions as CSharpCompilationOptions
+                      ?? throw new InvalidOperationException("C# compilation options were unavailable.");
+        Solution = project.WithCompilationOptions(options.WithAllowUnsafe(true)).Solution;
+    }
+
     internal void AddMetadataReferenceFromSource(string assemblyName, string source)
     {
         var syntaxTree = CSharpSyntaxTree.ParseText(
