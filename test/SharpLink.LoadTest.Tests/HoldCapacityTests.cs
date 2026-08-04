@@ -124,6 +124,52 @@ public class HoldCapacityTests
     }
 
     [Test]
+    public void OneWayResourceExhaustionShouldYieldWithoutChangingOtherFailureLoops()
+    {
+        Ensure(
+            Program.ShouldYieldAfterBackpressure(
+                "oneway",
+                new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "send queue full")),
+            "OneWay backpressure must yield so every worker and the stage timer can run");
+        Ensure(
+            !Program.ShouldYieldAfterBackpressure(
+                "echo",
+                new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "send queue full")),
+            "request-response throughput loops must retain their existing scheduling");
+        Ensure(
+            !Program.ShouldYieldAfterBackpressure(
+                "oneway",
+                new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "connection closed")),
+            "ordinary OneWay failures must retain their existing scheduling");
+    }
+
+    [Test]
+    public void FixedQueueOneWayShouldRetryOnlyLocalSendQueueBackpressure()
+    {
+        var sendQueueFull = new SharpLinkException(
+            SharpLinkErrorCode.ResourceExhausted,
+            "Session send queue exceeded its 67108864-byte limit (send_queue_capacity).");
+
+        Ensure(
+            Program.ShouldRetryOneWaySendQueueBackpressure(true, "oneway", sendQueueFull),
+            "fixed-queue OneWay throughput must retry local SendPump backpressure");
+        Ensure(
+            !Program.ShouldRetryOneWaySendQueueBackpressure(false, "oneway", sendQueueFull),
+            "the dedicated profile-default backpressure workload must retain raw rejection counts");
+        Ensure(
+            !Program.ShouldRetryOneWaySendQueueBackpressure(true, "echo", sendQueueFull),
+            "request-response workloads must not use OneWay retry semantics");
+        Ensure(
+            !Program.ShouldRetryOneWaySendQueueBackpressure(
+                true,
+                "oneway",
+                new SharpLinkException(
+                    SharpLinkErrorCode.ResourceExhausted,
+                    "Server concurrent call capacity was exhausted.")),
+            "server-side capacity rejection must remain a formal workload failure");
+    }
+
+    [Test]
     public void HoldOptionsShouldRejectCapacityMaskingConfigurations()
     {
         var anonymousFailure = CaptureFailure(() => LoadTestOptions.Parse([

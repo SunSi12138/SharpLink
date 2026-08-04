@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Threading;
 using SharpLink.Client;
 
@@ -95,6 +96,16 @@ public class SharpLinkClientCancellationTests
     [Test]
     public async Task EarlyServerStreamDisposalShouldSendConsumerAbandonedReason()
     {
+        using var telemetryListener = new ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "SharpLink.Client",
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
+                ActivitySamplingResult.PropagationData,
+            SampleUsingParentId = static (ref ActivityCreationOptions<string> _) =>
+                ActivitySamplingResult.PropagationData
+        };
+        ActivitySource.AddActivityListener(telemetryListener);
+
         var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
         await using var client = new SharpLinkClient(
             transport,

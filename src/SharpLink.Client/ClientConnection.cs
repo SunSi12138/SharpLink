@@ -17,7 +17,7 @@ internal sealed class ClientConnection :
 {
     private readonly SharpLinkClient _client;
     private readonly CancellationTokenSource _cancellation;
-    private readonly Action<long> _consumerAbandonedCallback;
+    private readonly Func<long, IStreamDispatchState?, ValueTask> _consumerAbandonedCallback;
     private LateResponseLogLimiter _lateResponseLogLimiter;
     private int _state = (int)ClientConnectionState.Ready;
     private int _activeCallCount;
@@ -35,7 +35,7 @@ internal sealed class ClientConnection :
         _client = client ?? throw new ArgumentNullException(nameof(client));
         Session = session ?? throw new ArgumentNullException(nameof(session));
         _cancellation = cancellation ?? throw new ArgumentNullException(nameof(cancellation));
-        _consumerAbandonedCallback = OnConsumerAbandoned;
+        _consumerAbandonedCallback = OnConsumerAbandonedAsync;
         PendingCalls = new PendingRequestTable(maxPendingCalls, codecs, this);
         EndpointId = endpointId;
         EndpointGeneration = endpointGeneration;
@@ -61,7 +61,8 @@ internal sealed class ClientConnection :
 
     public CancellationToken CancellationToken => _cancellation.Token;
 
-    public Action<long> ConsumerAbandonedCallback => _consumerAbandonedCallback;
+    public Func<long, IStreamDispatchState?, ValueTask> ConsumerAbandonedCallback
+        => _consumerAbandonedCallback;
 
     internal bool ShouldLogLateResponse(out int suppressedCount)
         => _lateResponseLogLimiter.ShouldLog(Stopwatch.GetTimestamp(), out suppressedCount);
@@ -163,15 +164,24 @@ internal sealed class ClientConnection :
         }
     }
 
-    public void OnConsumerAbandoned(long requestId)
+    public ValueTask OnConsumerAbandonedAsync(
+        long requestId,
+        IStreamDispatchState? dispatchState)
     {
-        if (!PendingCalls.TryComplete(requestId, PendingCallCompletionReason.ConsumerAbandoned))
+        if (PendingCalls.TryComplete(requestId, PendingCallCompletionReason.ConsumerAbandoned))
+            return ValueTask.CompletedTask;
+
+        // A response/complete path may already own the pending slot but not yet have
+        // flushed receive credit and detached its dispatcher. Remove the map entry if it
+        // is still published, then join the winning completion before a late Cancel.
+        Session.StreamManager.Unregister(requestId, 0);
+        if (dispatchState is null || dispatchState.IsDetached || !Session.IsConnected)
         {
-            // A response/complete path may already own the pending slot but not yet have
-            // detached its dispatcher. Remove the map entry here so this lease cannot be
-            // returned to the process-wide pool while that completion callback is delayed.
-            Session.StreamManager.Unregister(requestId, 0);
+            TrySendCancel(requestId, ProtocolV2CancelReason.ConsumerAbandoned);
+            return ValueTask.CompletedTask;
         }
+
+        return AwaitRemoteCompletionAndSendCancelAsync(requestId, dispatchState);
     }
 
     void IPendingCallOwner.OnPendingCallRegistered()
@@ -256,6 +266,15 @@ internal sealed class ClientConnection :
         {
             ReleaseActiveCall();
         }
+    }
+
+    private async ValueTask AwaitRemoteCompletionAndSendCancelAsync(
+        long requestId,
+        IStreamDispatchState dispatchState)
+    {
+        while (!dispatchState.IsDetached && Session.IsConnected)
+            await Task.Yield();
+        TrySendCancel(requestId, ProtocolV2CancelReason.ConsumerAbandoned);
     }
 
     public ValueTask DisposeAsync()

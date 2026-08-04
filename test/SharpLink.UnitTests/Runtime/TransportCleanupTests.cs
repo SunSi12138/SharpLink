@@ -25,6 +25,28 @@ public class TransportCleanupTests
     }
 
     [Test]
+    public async Task StreamConnectionDisposeShouldWaitForOutstandingReadRelease()
+    {
+        var stream = new MemoryStream(new byte[] { 1, 2, 3, 4 });
+        var connection = new StreamTransportConnection(stream);
+        var reader = (ReadOwnershipPipeReader)connection.Input;
+        var result = await reader.ReadAsync();
+
+        var dispose = connection.DisposeAsync().AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (!reader.CompletionRequested)
+            await Task.Delay(1, timeout.Token);
+
+        Ensure(!dispose.IsCompleted,
+            "stream disposal must not complete its PipeReader while a consumer owns a ReadResult");
+
+        reader.AdvanceTo(result.Buffer.End);
+        await dispose.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(!stream.CanRead,
+            "the owned stream should be disposed after the consumer releases its ReadResult");
+    }
+
+    [Test]
     public async Task StreamConnectionShouldDisposeOwnedStreamAfterWriterCompletionFailure()
     {
         var stream = new ThrowingWriteStream();

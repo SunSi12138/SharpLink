@@ -339,6 +339,8 @@ public static class Program
             await client.ConnectAsync();
 
             var rpc = client.Get<ILoadTestService>();
+            var retryOneWaySendQueueBackpressure =
+                options.Operation == "oneway" && options.MaxSendQueueBytes.HasValue;
             foreach (var concurrency in options.ConcurrencyConfig)
             {
                 if (options.WarmupSeconds > 0)
@@ -352,6 +354,7 @@ public static class Program
                         options.WarmupSeconds,
                         concurrency,
                         metrics,
+                        retryOneWaySendQueueBackpressure,
                         isWarmup: true);
                 }
 
@@ -363,10 +366,12 @@ public static class Program
                     options.DurationSeconds,
                     concurrency,
                     metrics,
+                    retryOneWaySendQueueBackpressure,
                     isWarmup: false);
 
                 Console.WriteLine(
                     $"[Result] op={result.Operation} c={result.Concurrency} qps={result.Qps:F2} ok={result.Success} fail={result.Failure} " +
+                    $"sendQueueRetries={result.SendQueueBackpressureRetries} " +
                     $"err={result.ErrorRatePercent:F2}% p50={result.P50Us:F2}us p95={result.P95Us:F2}us p99={result.P99Us:F2}us p999={result.P999Us:F2}us " +
                     $"avg={result.AvgUs:F2}us min={result.MinUs:F2}us max={result.MaxUs:F2}us dur={result.ElapsedSeconds:F2}s " +
                     $"payload={result.OneWayPayloadMegabytesPerSecond:F2}/{result.RoundTripPayloadMegabytesPerSecond:F2} MiB/s(one-way/round-trip)");
@@ -398,6 +403,7 @@ public static class Program
         int durationSeconds,
         int concurrency,
         MetricsRegistry metrics,
+        bool retryOneWaySendQueueBackpressure,
         bool isWarmup)
     {
         var histogram = new LatencyHistogram();
@@ -407,6 +413,7 @@ public static class Program
         var failures = new FailureRecorder();
         long success = 0;
         long failure = 0;
+        long sendQueueBackpressureRetries = 0;
         long realtimeSuccess = 0;
         var workers = new Task[concurrency];
         var stageTimer = Stopwatch.StartNew();
@@ -459,46 +466,63 @@ public static class Program
                 while (!token.IsCancellationRequested)
                 {
                     var start = Stopwatch.GetTimestamp();
-                    try
+                    while (!token.IsCancellationRequested)
                     {
-                        if (operation == "echo")
+                        try
                         {
-                            _ = await rpc.EchoAsync(echoPayload);
-                        }
-                        else if (operation == "empty")
-                        {
-                            await rpc.PingAsync();
-                        }
-                        else if (operation == "yield")
-                        {
-                            _ = await rpc.YieldAsync(7, 9);
-                        }
-                        else if (operation == "delay")
-                        {
-                            _ = await rpc.DelayAsync(7, 9);
-                        }
-                        else if (operation == "oneway")
-                        {
-                            await rpc.NotifyAsync(7, 9);
-                        }
-                        else
-                        {
-                            _ = await rpc.AddAsync(7, 9);
-                        }
+                            if (operation == "echo")
+                            {
+                                _ = await rpc.EchoAsync(echoPayload);
+                            }
+                            else if (operation == "empty")
+                            {
+                                await rpc.PingAsync();
+                            }
+                            else if (operation == "yield")
+                            {
+                                _ = await rpc.YieldAsync(7, 9);
+                            }
+                            else if (operation == "delay")
+                            {
+                                _ = await rpc.DelayAsync(7, 9);
+                            }
+                            else if (operation == "oneway")
+                            {
+                                await rpc.NotifyAsync(7, 9);
+                            }
+                            else
+                            {
+                                _ = await rpc.AddAsync(7, 9);
+                            }
 
-                        var elapsedUs = Stopwatch.GetElapsedTime(start).TotalMilliseconds * 1000.0;
-                        histogram.Record(elapsedUs);
-                        Volatile.Read(ref realtimeRef).Record(elapsedUs);
-                        Interlocked.Increment(ref success);
-                        Interlocked.Increment(ref realtimeSuccess);
-                    }
-                    catch (Exception ex)
-                    {
-                        if (token.IsCancellationRequested)
+                            var elapsedUs = Stopwatch.GetElapsedTime(start).TotalMilliseconds * 1000.0;
+                            histogram.Record(elapsedUs);
+                            Volatile.Read(ref realtimeRef).Record(elapsedUs);
+                            Interlocked.Increment(ref success);
+                            Interlocked.Increment(ref realtimeSuccess);
                             break;
+                        }
+                        catch (Exception ex)
+                        {
+                            if (token.IsCancellationRequested)
+                                break;
 
-                        failures.Record(ex);
-                        Interlocked.Increment(ref failure);
+                            if (ShouldRetryOneWaySendQueueBackpressure(
+                                    retryOneWaySendQueueBackpressure,
+                                    operation,
+                                    ex))
+                            {
+                                Interlocked.Increment(ref sendQueueBackpressureRetries);
+                                await Task.Yield();
+                                continue;
+                            }
+
+                            failures.Record(ex);
+                            Interlocked.Increment(ref failure);
+                            if (ShouldYieldAfterBackpressure(operation, ex))
+                                await Task.Yield();
+                            break;
+                        }
                     }
                 }
             }, CancellationToken.None);
@@ -530,6 +554,7 @@ public static class Program
             concurrency,
             success,
             failure,
+            sendQueueBackpressureRetries,
             qps,
             oneWayPayloadMegabytesPerSecond,
             roundTripPayloadMegabytesPerSecond,
@@ -550,6 +575,23 @@ public static class Program
 
         return result;
     }
+
+    internal static bool ShouldYieldAfterBackpressure(string operation, Exception exception)
+        => operation == "oneway" &&
+           exception is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted };
+
+    internal static bool ShouldRetryOneWaySendQueueBackpressure(
+        bool retryEnabled,
+        string operation,
+        Exception exception)
+        => retryEnabled &&
+           operation == "oneway" &&
+           exception is SharpLinkException
+           {
+               Code: SharpLinkErrorCode.ResourceExhausted,
+               Message: var message
+           } &&
+           message.Contains("(send_queue_capacity)", StringComparison.Ordinal);
 
     private static SharpLinkServerBuilder ConfigureServer(
         SharpLinkServerBuilder builder,
@@ -900,6 +942,7 @@ public sealed record StageResult(
     int Concurrency,
     long Success,
     long Failure,
+    long SendQueueBackpressureRetries,
     double Qps,
     double OneWayPayloadMegabytesPerSecond,
     double RoundTripPayloadMegabytesPerSecond,
@@ -1056,12 +1099,14 @@ internal sealed class MetricsRegistry
     private readonly ConcurrentDictionary<int, RealtimeResult> _realtimeByConcurrency = new();
     private long _totalSuccess;
     private long _totalFailure;
+    private long _totalSendQueueBackpressureRetries;
 
     public void UpdateStage(StageResult result)
     {
         _stageByConcurrency[result.Concurrency] = result;
         Interlocked.Add(ref _totalSuccess, result.Success);
         Interlocked.Add(ref _totalFailure, result.Failure);
+        Interlocked.Add(ref _totalSendQueueBackpressureRetries, result.SendQueueBackpressureRetries);
     }
 
     public void UpdateRealtime(RealtimeResult result)
@@ -1076,6 +1121,9 @@ internal sealed class MetricsRegistry
         sb.AppendLine($"sharplink_load_test_total_success {Interlocked.Read(ref _totalSuccess)}");
         sb.AppendLine("# TYPE sharplink_load_test_total_failure counter");
         sb.AppendLine($"sharplink_load_test_total_failure {Interlocked.Read(ref _totalFailure)}");
+        sb.AppendLine("# TYPE sharplink_load_test_total_send_queue_backpressure_retries counter");
+        sb.AppendLine(
+            $"sharplink_load_test_total_send_queue_backpressure_retries {Interlocked.Read(ref _totalSendQueueBackpressureRetries)}");
         sb.AppendLine("# TYPE sharplink_load_test_stage_qps gauge");
         sb.AppendLine("# TYPE sharplink_load_test_stage_error_rate_percent gauge");
         sb.AppendLine("# TYPE sharplink_load_test_stage_latency_us gauge");

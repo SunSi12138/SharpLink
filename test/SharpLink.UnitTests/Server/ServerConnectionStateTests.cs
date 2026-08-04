@@ -52,6 +52,56 @@ public class ServerConnectionStateTests
     }
 
     [Test]
+    public async Task CloseShouldWaitForSessionLoopToReleaseItsReadBuffer()
+    {
+        var input = new Pipe();
+        var reader = new CompletionTrackingPipeReader(input.Reader);
+        var output = new Pipe();
+        var disconnectCount = 0;
+        var session = new RpcSession(
+            Guid.NewGuid().ToString("N"),
+            reader,
+            output.Writer,
+            () => Interlocked.Increment(ref disconnectCount),
+            static () => true);
+        var state = new ServerConnectionState(
+            session,
+            new RuntimeConcurrencyOptions(),
+            CancellationToken.None);
+        var stream = new ShutdownJoiningDispatcher();
+        session.StreamManager.Register(7, 1, stream);
+        var streamDispatch = session.StreamManager.DispatchChunkAsync(
+            7,
+            1,
+            new ReadOnlySequence<byte>(new byte[] { 1 })).AsTask();
+        await stream.Entered.WaitAsync(TimeSpan.FromSeconds(2));
+        state.MarkSessionLoopStarted();
+
+        var close = state.CloseAsync().AsTask();
+
+        Ensure(state.ConnectionToken.IsCancellationRequested,
+            "close must cancel the session loop before waiting for its read buffer");
+        Ensure(!close.IsCompleted,
+            "close must not complete the PipeReader while the session loop still owns a ReadResult");
+        Ensure(!session.IsConnected,
+            "close must signal stream and send-pump shutdown before joining the read loop");
+        await streamDispatch.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(stream.CompleteCount == 1,
+            "the pre-disposal shutdown phase must release a read loop blocked in stream dispatch");
+        Ensure(reader.CompleteCount == 0 && disconnectCount == 0,
+            "PipeReader and transport completion must wait until the read buffer has been released");
+
+        state.MarkSessionLoopCompleted();
+        await close.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(reader.CompleteCount == 1 && disconnectCount == 1,
+            "PipeReader and transport completion should resume after the loop releases its buffer");
+        Ensure(state.LifecycleState == ServerConnectionLifecycleState.Closed, "closed state");
+        await input.Writer.CompleteAsync();
+        await output.Reader.CompleteAsync();
+    }
+
+    [Test]
     public async Task DefaultCallContextShouldBeIsolatedPerConnectionAndSafeForConcurrentReads()
     {
         var first = CreateState(static () => { });
@@ -223,6 +273,66 @@ public class ServerConnectionStateTests
     private sealed class EmptyServiceProvider : IServiceProvider
     {
         public object? GetService(Type serviceType) => null;
+    }
+
+    private sealed class CompletionTrackingPipeReader(PipeReader inner) : PipeReader
+    {
+        private int _completeCount;
+
+        internal int CompleteCount => Volatile.Read(ref _completeCount);
+
+        public override void AdvanceTo(SequencePosition consumed) => inner.AdvanceTo(consumed);
+
+        public override void AdvanceTo(SequencePosition consumed, SequencePosition examined)
+            => inner.AdvanceTo(consumed, examined);
+
+        public override void CancelPendingRead() => inner.CancelPendingRead();
+
+        public override void Complete(Exception? exception = null)
+        {
+            Interlocked.Increment(ref _completeCount);
+            inner.Complete(exception);
+        }
+
+        public override async ValueTask CompleteAsync(Exception? exception = null)
+        {
+            Interlocked.Increment(ref _completeCount);
+            await inner.CompleteAsync(exception);
+        }
+
+        public override bool TryRead(out ReadResult result) => inner.TryRead(out result);
+
+        public override ValueTask<ReadResult> ReadAsync(CancellationToken cancellationToken = default)
+            => inner.ReadAsync(cancellationToken);
+    }
+
+    private sealed class ShutdownJoiningDispatcher : IStreamDispatcher
+    {
+        private readonly TaskCompletionSource _entered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _completeCount;
+
+        internal Task Entered => _entered.Task;
+        internal int CompleteCount => Volatile.Read(ref _completeCount);
+
+        public async ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+        {
+            _ = payload;
+            _entered.TrySetResult();
+            await _release.Task.ConfigureAwait(false);
+        }
+
+        public void Complete(bool isError, string? errorMessage)
+            => Complete(isError ? new Exception(errorMessage) : null);
+
+        public void Complete(Exception? exception)
+        {
+            _ = exception;
+            Interlocked.Increment(ref _completeCount);
+            _release.TrySetResult();
+        }
     }
 
     private sealed class ThrowingService(string message) : IAsyncDisposable

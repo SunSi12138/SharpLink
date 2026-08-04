@@ -621,13 +621,44 @@ public class IntegrationBehaviorTests
     [NotInParallel]
     public async Task FastEarlyBreakShouldReturnFlowCreditAndNotLeakCompletedSendStates()
     {
-        await using var harness = await TestHarness.CreateAsync();
+        await using var harness = await TestHarness.CreateAsync(
+            runtimeConfigure: static options =>
+                // Amplify completed-state pressure while leaving enough room for a canceled
+                // producer to observe its terminal token and retire its final in-flight frame.
+                options.Protocol.MaxConcurrentStreamsPerConnection = 8);
         var service = harness.Client.Get<ITestService>();
 
         for (var iteration = 0; iteration < 10_000; iteration++)
         {
-            await using var enumerator = service.DownloadAsync(32).GetAsyncEnumerator();
-            Ensure(await enumerator.MoveNextAsync(), "fast stream should produce its first item");
+            var enumerator = service.DownloadAsync(32).GetAsyncEnumerator();
+            try
+            {
+                bool hasItem;
+                try
+                {
+                    hasItem = await enumerator.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                catch (TimeoutException exception)
+                {
+                    throw new TimeoutException(
+                        $"Fast stream {iteration}/10,000 did not produce its first item within 5 seconds.",
+                        exception);
+                }
+                Ensure(hasItem, "fast stream should produce its first item");
+            }
+            finally
+            {
+                try
+                {
+                    await enumerator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                catch (TimeoutException exception)
+                {
+                    throw new TimeoutException(
+                        $"Fast stream {iteration}/10,000 did not dispose within 5 seconds.",
+                        exception);
+                }
+            }
         }
 
         Ensure(await service.AddAsync(20, 22) == 42,
@@ -664,19 +695,41 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
-    public async Task ServerDisconnectShouldFailFastPendingUnaryAndStream()
+    [NotInParallel]
+    public async Task ServerStopShouldPreservePendingCallCancellationReasons()
     {
-        await using var harness = await TestHarness.CreateAsync();
-        var svc = harness.Client.Get<ITestService>();
+        var exceptionMapper = new RecordingServerStreamExceptionMapper();
+        for (var iteration = 0; iteration < 10; iteration++)
+        {
+            await using var harness = await TestHarness.CreateAsync(
+                serverConfigure: builder => builder.UseExceptionMapper(exceptionMapper));
+            var svc = harness.Client.Get<ITestService>();
 
-        var unaryTask = svc.SlowAddAsync(1, 2, CancellationToken.None).AsTask();
-        var streamTask = CollectAsync(svc.SlowDownloadAsync(100, 200, CancellationToken.None), CancellationToken.None);
+            var unaryTask = svc.SlowAddAsync(1, 2, CancellationToken.None).AsTask();
+            var streamTask = CollectAsync(
+                svc.SlowDownloadAsync(100, 200, CancellationToken.None),
+                CancellationToken.None);
 
-        await Task.Delay(100);
-        await harness.DisposeServerOnlyAsync();
+            await Task.Delay(100);
+            await harness.DisposeServerOnlyAsync();
 
-        await EnsureThrowsSharpLinkFast(unaryTask, "unary fail-fast", SharpLinkErrorCode.ConnectionClosed);
-        await EnsureThrowsSharpLinkFast(streamTask, "stream fail-fast", SharpLinkErrorCode.ConnectionClosed);
+            await EnsureThrowsSharpLinkFast(
+                unaryTask,
+                $"unary fail-fast iteration {iteration}",
+                SharpLinkErrorCode.Unavailable,
+                SharpLinkErrorCode.ConnectionClosed);
+            await EnsureThrowsSharpLinkFast(
+                streamTask,
+                $"stream fail-fast iteration {iteration}",
+                SharpLinkErrorCode.Unavailable,
+                SharpLinkErrorCode.ConnectionClosed);
+        }
+
+        var mappedStreamErrors = exceptionMapper.GetMappedCodes();
+        Ensure(mappedStreamErrors.Length == 10, "every stopped server stream reached the exception mapper");
+        Ensure(
+            mappedStreamErrors.All(static code => code == SharpLinkErrorCode.Unavailable),
+            $"server stream stop reasons: {string.Join(", ", mappedStreamErrors.Select(static code => code?.ToString() ?? "unstructured"))}");
     }
 
     [Test]
@@ -1566,8 +1619,12 @@ public class IntegrationBehaviorTests
         }
     }
 
-    private static async Task EnsureThrowsSharpLinkFast(Task task, string name, SharpLinkErrorCode errorCode)
+    private static async Task EnsureThrowsSharpLinkFast(
+        Task task,
+        string name,
+        params SharpLinkErrorCode[] errorCodes)
     {
+        Ensure(errorCodes.Length > 0, $"{name} expected error codes");
         try
         {
             await task.WaitAsync(TimeSpan.FromSeconds(3));
@@ -1579,7 +1636,9 @@ public class IntegrationBehaviorTests
         }
         catch (SharpLinkException ex)
         {
-            Ensure(ex.Code == errorCode, $"{name} error code");
+            Ensure(
+                errorCodes.Contains(ex.Code),
+                $"{name} error code: expected {string.Join(" or ", errorCodes)}, actual {ex.Code}");
         }
     }
 
@@ -1649,6 +1708,33 @@ public class IntegrationBehaviorTests
         yield return value;
         await Task.Yield();
         throw new InvalidOperationException("injected client stream producer failure");
+    }
+
+    private sealed class RecordingServerStreamExceptionMapper : IRpcExceptionMapper
+    {
+        private readonly Lock _gate = new();
+        private readonly List<SharpLinkErrorCode?> _mappedCodes = [];
+
+        public SharpLinkException Map(Exception exception, SharpLinkServerInvocationContext context)
+        {
+            if (context.Method.Kind == RpcMethodKind.ServerStreaming)
+            {
+                lock (_gate)
+                    _mappedCodes.Add((exception as SharpLinkException)?.Code);
+            }
+
+            if (exception is SharpLinkException sharpLinkException)
+                return sharpLinkException;
+            return exception is OperationCanceledException
+                ? new SharpLinkException(SharpLinkErrorCode.Cancelled, "The server call was cancelled.", exception)
+                : new SharpLinkException(SharpLinkErrorCode.Internal, "Internal service error.", exception);
+        }
+
+        public SharpLinkErrorCode?[] GetMappedCodes()
+        {
+            lock (_gate)
+                return [.. _mappedCodes];
+        }
     }
 
     private sealed class TestHarness : IAsyncDisposable
