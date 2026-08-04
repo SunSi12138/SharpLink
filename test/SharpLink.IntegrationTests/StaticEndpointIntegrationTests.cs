@@ -755,6 +755,9 @@ public sealed class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
+        var implementation = (SharpLinkClient)client;
+        await WaitUntilAsync(() => implementation.ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
+        Ensure(implementation.ReadyConnectionCount == 2, "both GoAway endpoints should be ready");
         var service = client.Get<IConnectionBehaviorService>();
         var longUnary = service.SlowAsync(600, CancellationToken.None).AsTask();
         Ensure(await first.Service.SlowUnaryStarted!.Task == "first", "accepted unary should start on first endpoint");
@@ -763,7 +766,6 @@ public sealed class StaticEndpointIntegrationTests
         Ensure(await first.Service.SlowCallStarted!.Task == "first", "existing stream should start on first endpoint");
 
         var stopTask = first.StopAsync(TimeSpan.FromSeconds(2)).AsTask();
-        var implementation = (SharpLinkClient)client;
         await WaitUntilAsync(() => implementation.ReadyConnectionCount == 1, TimeSpan.FromSeconds(2));
         Ensure(implementation.ReadyConnectionCount == 1, "GoAway should retire the draining endpoint from selection");
         Ensure(await service.GetEndpointIdAsync() == "second", "new RPC should use the remaining endpoint");
