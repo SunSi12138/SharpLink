@@ -509,6 +509,71 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task UnaryResponseAndCallerCancellationRaceShouldHaveOneTerminalOutcomeAndNoPendingLeaks()
+    {
+        const int callCount = 100;
+        TestService.ResetBlockingAdd(callCount);
+        await using var harness = await TestHarness.CreateAsync(disableRequestTimeout: true);
+        var client = (SharpLinkClient)harness.Client;
+        var service = harness.Client.Get<ITestService>();
+        var cancellations = Enumerable.Range(0, callCount)
+            .Select(static _ => new CancellationTokenSource())
+            .ToArray();
+        try
+        {
+            var calls = cancellations.Select((cancellation, iteration) =>
+                    service.BlockingAddAsync(iteration, 1, cancellation.Token).AsTask())
+                .ToArray();
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+            using var ready = new CountdownEvent(2);
+            using var start = new ManualResetEventSlim(initialState: false);
+            var response = Task.Run(() =>
+            {
+                ready.Signal();
+                start.Wait();
+                TestService.ReleaseBlockingAdd();
+            });
+            var callerCancel = Task.Run(() =>
+            {
+                ready.Signal();
+                start.Wait();
+                foreach (var cancellation in cancellations)
+                    cancellation.Cancel();
+            });
+            Ensure(ready.Wait(TimeSpan.FromSeconds(10)), "P2-T01 workers reached the response/cancel gate");
+            start.Set();
+            await Task.WhenAll(response, callerCancel).WaitAsync(TimeSpan.FromSeconds(10));
+
+            for (var iteration = 0; iteration < calls.Length; iteration++)
+            {
+                var exception = await CaptureExceptionAsync(calls[iteration]);
+                Ensure(exception is null or OperationCanceledException,
+                    $"P2-T01 iteration {iteration}: terminal is success or caller cancellation");
+                if (exception is null)
+                {
+                    Ensure(calls[iteration].Result == iteration + 1,
+                        $"P2-T01 iteration {iteration}: successful response value");
+                }
+            }
+
+            Ensure(client.PendingCallCount == 0 && client.ActiveClientCallCount == 0 &&
+                   client.ActiveClientStreamCount == 0,
+                "P2-T01: every racing invocation releases pending/call/stream state");
+            Ensure(await service.AddAsync(20, 22) == 42,
+                "P2-T01: the connection remains reusable after all terminal races");
+            await StopHarnessAndAssertResourcesAsync(harness, "P2-T01");
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+            foreach (var cancellation in cancellations)
+                cancellation.Dispose();
+        }
+    }
+
+    [Test]
     public async Task DefaultRequestTimeoutShouldThrowDeadlineExceeded()
     {
         await using var harness = await TestHarness.CreateAsync(requestTimeout: TimeSpan.FromMilliseconds(120));
@@ -829,20 +894,65 @@ public class IntegrationBehaviorTests
 
     [Test]
     [NotInParallel]
-    public async Task GraceTimeoutShouldCancelRemainingServerCall()
+    public async Task GracefulStopShouldDrainOneHundredAcceptedCallsAndReleaseResources()
     {
+        const int callCount = 100;
+        TestService.ResetBlockingAdd(callCount);
         await using var harness = await TestHarness.CreateAsync();
         var svc = harness.Client.Get<ITestService>();
-        using var callCts = new CancellationTokenSource();
+        var acceptedCalls = Enumerable.Range(0, callCount)
+            .Select(iteration => svc.BlockingAddAsync(iteration, 1, CancellationToken.None).AsTask())
+            .ToArray();
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            var stopTask = harness.DisposeServerOnlyAsync(TimeSpan.FromSeconds(2)).AsTask();
+            TestService.ReleaseBlockingAdd();
 
-        var pending = svc.SlowAddAsync(1, 2, callCts.Token).AsTask();
-        await Task.Delay(50);
-        var started = Stopwatch.GetTimestamp();
-        await harness.DisposeServerOnlyAsync(TimeSpan.FromMilliseconds(100));
-        var elapsed = Stopwatch.GetElapsedTime(started);
+            var results = await Task.WhenAll(acceptedCalls).WaitAsync(TimeSpan.FromSeconds(10));
+            Ensure(results.Where((result, iteration) => result != iteration + 1).Any() is false,
+                "P2-T03 grace: all 100 accepted calls complete on their original terminal path");
+            await stopTask.WaitAsync(TimeSpan.FromSeconds(10));
+            await StopHarnessAndAssertResourcesAsync(harness, "P2-T03 grace");
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+        }
+    }
 
-        Ensure(elapsed < TimeSpan.FromSeconds(2), "grace timeout should cancel the server call promptly");
-        await EnsureThrowsSharpLinkFast(pending, "call remaining after grace timeout", SharpLinkErrorCode.ConnectionClosed);
+    [Test]
+    [NotInParallel]
+    public async Task GraceTimeoutShouldSelectOneForcedTerminalForOneHundredCallsAndReleaseResources()
+    {
+        const int callCount = 100;
+        TestService.ResetBlockingAdd(callCount);
+        await using var harness = await TestHarness.CreateAsync();
+        var svc = harness.Client.Get<ITestService>();
+        var pending = Enumerable.Range(0, callCount)
+            .Select(iteration => svc.BlockingAddAsync(iteration, 1, CancellationToken.None).AsTask())
+            .ToArray();
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            var started = Stopwatch.GetTimestamp();
+            await harness.DisposeServerOnlyAsync(TimeSpan.Zero).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            Ensure(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(10),
+                "P2-T03 force: zero grace stops within the lifecycle bound");
+
+            for (var iteration = 0; iteration < pending.Length; iteration++)
+            {
+                var exception = await CaptureExceptionAsync(pending[iteration]);
+                Ensure(exception is SharpLinkException
+                { Code: SharpLinkErrorCode.ConnectionClosed },
+                    $"P2-T03 force iteration {iteration}: ConnectionClosed is the unique wire terminal");
+            }
+            await StopHarnessAndAssertResourcesAsync(harness, "P2-T03 force");
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+        }
     }
 
     [Test]
@@ -1189,28 +1299,80 @@ public class IntegrationBehaviorTests
 
     [Test]
     [NotInParallel]
-    public async Task QueuedCancellationAndDeadlineShouldNotLeakPermits()
+    public async Task QueuedClientStreamCallerCancellationShouldReleaseAdmissionAndStreamResources()
     {
-        await using (var cancellationHarness = await TestHarness.CreateAsync(
+        using var metrics = new LifecycleMetricProbe(
+            LifecycleMetricProbe.AdmissionPermits,
+            LifecycleMetricProbe.AdmissionQueuedCalls,
+            LifecycleMetricProbe.ActiveStreams);
+        TestService.ResetActiveUploads();
+        TestService.ResetBlockingAdd();
+        await using var harness = await TestHarness.CreateAsync(
             serverConfigure: builder => builder.UseAdmissionControl(options =>
             {
                 options.Global.UseConcurrency(1);
                 options.MaxQueuedCalls = 1;
-                options.MaxQueuedBytes = 4096;
-                options.MaxQueueDelay = TimeSpan.FromSeconds(2);
-            })))
+                options.MaxQueuedBytes = 64 * 1024;
+                options.MaxQueueDelay = TimeSpan.FromSeconds(10);
+            }));
+        var client = (SharpLinkClient)harness.Client;
+        var service = harness.Client.Get<ITestService>();
+        var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
+        using var cancellation = new CancellationTokenSource();
+        try
         {
-            var service = cancellationHarness.Client.Get<ITestService>();
-            var active = service.SlowAddWithoutTimeoutAsync(1, 1).AsTask();
-            await Task.Delay(75);
-            using var cancellation = new CancellationTokenSource();
-            var queued = service.SlowAddAsync(2, 2, cancellation.Token).AsTask();
-            cancellation.CancelAfter(50);
-            await EnsureThrows<OperationCanceledException>(queued, "queued cancellation");
-            Ensure(await active == 2, "active call after queued cancellation");
-            Ensure(await service.AddAsync(3, 4) == 7, "permit after queued cancellation");
-        }
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            await metrics.WaitForValueAsync(
+                LifecycleMetricProbe.AdmissionPermits, 1, "P2-T04 active permit");
+            var queued = service.UploadAsync(
+                YieldOneThenWaitAsync(2, cancellation.Token),
+                cancellation.Token).AsTask();
+            await metrics.WaitForValueAsync(
+                LifecycleMetricProbe.AdmissionQueuedCalls, 1, "P2-T04 queued waiter");
+            await metrics.WaitForAtLeastAsync(
+                LifecycleMetricProbe.ActiveStreams, 1, "P2-T04 pre-admission stream reservation");
 
+            await cancellation.CancelAsync();
+            Ensure(await CaptureExceptionAsync(queued) is OperationCanceledException,
+                "P2-T04 queued client stream observes caller cancellation");
+            await metrics.WaitForValueAsync(
+                LifecycleMetricProbe.AdmissionQueuedCalls, 0, "P2-T04 waiter release");
+            await metrics.WaitForValueAsync(
+                LifecycleMetricProbe.ActiveStreams, 0, "P2-T04 stream reservation release");
+            var queuedReleased = ServerLifecycleResourceInspector.Capture(harness.Server);
+            Ensure(queuedReleased is
+            {
+                AdmissionQueuedCalls: 0,
+                AdmissionQueuedBytes: 0,
+                AdmissionPermits: 1
+            },
+                "P2-T04 waiter/retained payload/stream reservation release while owner retains one permit");
+            Ensure(TestService.ActiveUploads == 0,
+                "P2-T04 canceled queued stream never reaches the service");
+
+            TestService.ReleaseBlockingAdd();
+            Ensure(await active.WaitAsync(TimeSpan.FromSeconds(10)) == 2,
+                "P2-T04 active permit owner completes");
+            await metrics.WaitForValueAsync(
+                LifecycleMetricProbe.AdmissionPermits, 0, "P2-T04 permit release");
+            Ensure(client.PendingCallCount == 0 && client.ActiveClientCallCount == 0 &&
+                   client.ActiveClientStreamCount == 0,
+                "P2-T04 client pending/call/stream resources return to zero");
+            Ensure(await service.AddAsync(3, 4) == 7,
+                "P2-T04 released admission capacity is reusable");
+            await StopHarnessAndAssertResourcesAsync(harness, "P2-T04");
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+            await cancellation.CancelAsync();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task QueuedDeadlineShouldNotLeakPermits()
+    {
         TestService.ResetNonCancellableCompletion();
         await using var deadlineHarness = await TestHarness.CreateAsync(
             requestTimeout: TimeSpan.FromMilliseconds(100),
@@ -1493,35 +1655,43 @@ public class IntegrationBehaviorTests
     }
 
     [Test]
-    public async Task ServerStreamEarlyBreakShouldReleaseAdmissionPermit()
+    [NotInParallel]
+    public async Task ServerStreamConsumerExitShouldReleaseCallStreamAndAdmissionResources()
     {
+        using var metrics = new LifecycleMetricProbe(
+            LifecycleMetricProbe.ActiveCalls,
+            LifecycleMetricProbe.ActiveStreams,
+            LifecycleMetricProbe.AdmissionPermits);
+        TestService.ResetDownloadDisposed();
         await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
             builder.UseAdmissionControl(options => options.Global.UseConcurrency(1)));
+        var client = (SharpLinkClient)harness.Client;
         var service = harness.Client.Get<ITestService>();
         await using (var enumerator = service.SlowDownloadAsync(
-            20, 50, CancellationToken.None).GetAsyncEnumerator())
+            1_000, 10, CancellationToken.None).GetAsyncEnumerator())
         {
             Ensure(await enumerator.MoveNextAsync(), "admitted server stream first item");
+            await metrics.WaitForValueAsync(
+                LifecycleMetricProbe.AdmissionPermits, 1, "P2-T06 admitted stream permit");
             await EnsureThrowsSharpLinkFast(
                 service.AddAsync(1, 1).AsTask(),
                 "permit held for server stream",
                 SharpLinkErrorCode.ResourceExhausted);
         }
 
-        for (var attempt = 0; attempt < 20; attempt++)
-        {
-            try
-            {
-                Ensure(await service.AddAsync(20, 22) == 42, "permit after stream early break");
-                return;
-            }
-            catch (SharpLinkException exception) when (
-                exception.Code == SharpLinkErrorCode.ResourceExhausted)
-            {
-                await Task.Delay(10);
-            }
-        }
-        throw new Exception("assert failed: stream early-break permit was not released");
+        await TestService.WaitForDownloadDisposedAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await metrics.WaitForValueAsync(
+            LifecycleMetricProbe.AdmissionPermits, 0, "P2-T06 permit release");
+        await metrics.WaitForValueAsync(
+            LifecycleMetricProbe.ActiveStreams, 0, "P2-T06 stream release");
+        await metrics.WaitForValueAsync(
+            LifecycleMetricProbe.ActiveCalls, 0, "P2-T06 call release");
+        Ensure(client.PendingCallCount == 0 && client.ActiveClientCallCount == 0 &&
+               client.ActiveClientStreamCount == 0,
+            "P2-T06 client pending/call/stream resources return to zero");
+        Ensure(await service.AddAsync(20, 22) == 42,
+            "P2-T06 permit is reusable immediately after the disposal gate");
+        await StopHarnessAndAssertResourcesAsync(harness, "P2-T06 static");
     }
 
     [Test]
@@ -1560,8 +1730,12 @@ public class IntegrationBehaviorTests
 
     [Test]
     [NotInParallel]
-    public async Task ClientDisconnectShouldCancelAdmissionWaiterAndAllowBoundedServerStop()
+    public async Task ClientDisconnectWhileAdmissionQueuedShouldReleaseWaiterAndAllConnections()
     {
+        using var metrics = new LifecycleMetricProbe(
+            LifecycleMetricProbe.ActiveConnections,
+            LifecycleMetricProbe.AdmissionPermits,
+            LifecycleMetricProbe.AdmissionQueuedCalls);
         await using var harness = await TestHarness.CreateAsync(serverConfigure: builder =>
             builder.UseAdmissionControl(options =>
             {
@@ -1572,19 +1746,29 @@ public class IntegrationBehaviorTests
             }));
         var service = harness.Client.Get<ITestService>();
         TestService.ResetBlockingAdd();
-        var active = service.BlockingAddAsync(1, 1).AsTask();
+        var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
         try
         {
-            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(10));
             var queued = service.SlowAddWithoutTimeoutAsync(2, 2).AsTask();
-            await Task.Delay(50);
+            await metrics.WaitForValueAsync(
+                LifecycleMetricProbe.AdmissionQueuedCalls, 1, "P2-T05 queued waiter");
             Ensure(!queued.IsCompleted, "queued call must await admission before disconnect");
 
-            await harness.DisposeClientOnlyAsync();
-            await EnsureThrows<SharpLinkException>(queued, "disconnected admission waiter");
-            await EnsureThrows<SharpLinkException>(active, "disconnected active call");
+            await harness.DisposeClientOnlyAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            Ensure(await CaptureExceptionAsync(queued) is SharpLinkException,
+                "P2-T05 disconnected admission waiter has one terminal error");
+            Ensure(await CaptureExceptionAsync(active) is SharpLinkException,
+                "P2-T05 disconnected active call has one terminal error");
+            await metrics.WaitForValueAsync(
+                LifecycleMetricProbe.AdmissionQueuedCalls, 0, "P2-T05 waiter release");
+            await metrics.WaitForValueAsync(
+                LifecycleMetricProbe.AdmissionPermits, 0, "P2-T05 permit release");
             await harness.DisposeServerOnlyAsync(TimeSpan.FromSeconds(1))
-                .AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            await metrics.WaitForValueAsync(
+                LifecycleMetricProbe.ActiveConnections, 0, "P2-T05 connection release");
+            await StopHarnessAndAssertResourcesAsync(harness, "P2-T05");
         }
         finally
         {
@@ -1602,6 +1786,46 @@ public class IntegrationBehaviorTests
         catch (TException)
         {
         }
+    }
+
+    private static async Task<Exception?> CaptureExceptionAsync(Task task)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static async Task StopHarnessAndAssertResourcesAsync(TestHarness harness, string scenario)
+    {
+        await harness.DisposeClientOnlyAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await harness.DisposeServerOnlyAsync(TimeSpan.Zero).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await harness.WaitForServerExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        var client = (SharpLinkClient)harness.Client;
+        var server = ServerLifecycleResourceInspector.Capture(harness.Server);
+        Ensure(harness.Client.State == SharpLinkConnectionState.Stopped,
+            $"{scenario}: client stopped within the bound");
+        Ensure(harness.Server.HealthStatus == SharpLinkHealthStatus.Unhealthy,
+            $"{scenario}: server stopped within the bound");
+        Ensure(client.PendingCallCount == 0 && client.ActiveClientCallCount == 0 &&
+               client.ActiveClientStreamCount == 0,
+            $"{scenario}: client pending/call/stream resources are zero");
+        Ensure(server is
+        {
+            ActiveCalls: 0,
+            Connections: 0,
+            RetiredConnections: 0,
+            AdmissionPermits: 0,
+            AdmissionQueuedCalls: 0,
+            AdmissionQueuedBytes: 0
+        },
+            $"{scenario}: server connection/call/admission resources are zero; actual {server}");
     }
 
     private static async Task EnsureClientStreamProducerFailure(Task task, string name)
@@ -1746,6 +1970,7 @@ public class IntegrationBehaviorTests
         private bool _clientDisposed;
 
         public ISharpLinkClient Client { get; }
+        internal ISharpLinkServer Server => _server;
 
         private TestHarness(
             ISharpLinkServer server,
@@ -1860,6 +2085,8 @@ public class IntegrationBehaviorTests
             _clientDisposed = true;
             await Client.StopAsync();
         }
+
+        internal Task WaitForServerExitAsync() => _serverTask;
 
         public async ValueTask DisposeAsync()
         {
@@ -1999,8 +2226,10 @@ public interface ITestService : IService
     ValueTask<int> SlowAddAsync(int left, int right, CancellationToken cancellationToken);
     [NonCancellable]
     ValueTask<int> SlowAddWithoutTimeoutAsync(int left, int right);
-    [NonCancellable]
-    ValueTask<int> BlockingAddAsync(int left, int right);
+    ValueTask<int> BlockingAddAsync(
+        int left,
+        int right,
+        CancellationToken cancellationToken = default);
     [NonCancellable]
     ValueTask<int> SlowThrowWithoutTimeoutAsync();
     [NonCancellable]
@@ -2018,8 +2247,9 @@ public interface ITestService : IService
     ValueTask<Person> EchoAsync(Person person);
     [NonCancellable]
     ValueTask<GeneratedEnvelope> EchoGeneratedAsync(GeneratedEnvelope value);
-    [NonCancellable]
-    ValueTask<int> UploadAsync(IAsyncEnumerable<int> values);
+    ValueTask<int> UploadAsync(
+        IAsyncEnumerable<int> values,
+        CancellationToken cancellationToken = default);
     [NonCancellable]
     ValueTask<int> UploadWithHeaderAsync(Person header, IAsyncEnumerable<int> values);
     [NonCancellable]
@@ -2041,6 +2271,8 @@ public class TestService : ITestService
     private static TaskCompletionSource s_blockingAddStarted = CreateCompletionSource();
     private static TaskCompletionSource s_blockingAddRelease = CreateCompletionSource();
     private static TaskCompletionSource s_downloadDisposed = CreateCompletionSource();
+    private static int s_blockingAddExpectedStarts = 1;
+    private static int s_blockingAddStartedCount;
     private static int s_activeUploads;
     private static int s_malformedUploadInvocations;
     private static int s_malformedOneWayInvocations;
@@ -2079,8 +2311,11 @@ public class TestService : ITestService
     internal static Task WaitForNonCancellableFailureAsync()
         => Volatile.Read(ref s_nonCancellableFailure).Task;
 
-    internal static void ResetBlockingAdd()
+    internal static void ResetBlockingAdd(int expectedStarts = 1)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(expectedStarts);
+        Volatile.Write(ref s_blockingAddExpectedStarts, expectedStarts);
+        Volatile.Write(ref s_blockingAddStartedCount, 0);
         Interlocked.Exchange(ref s_blockingAddStarted, CreateCompletionSource());
         Interlocked.Exchange(ref s_blockingAddRelease, CreateCompletionSource());
     }
@@ -2112,11 +2347,18 @@ public class TestService : ITestService
         return left + right;
     }
 
-    public async ValueTask<int> BlockingAddAsync(int left, int right)
+    public async ValueTask<int> BlockingAddAsync(
+        int left,
+        int right,
+        CancellationToken cancellationToken = default)
     {
         var release = Volatile.Read(ref s_blockingAddRelease);
-        Volatile.Read(ref s_blockingAddStarted).TrySetResult();
-        await release.Task;
+        if (Interlocked.Increment(ref s_blockingAddStartedCount) ==
+            Volatile.Read(ref s_blockingAddExpectedStarts))
+        {
+            Volatile.Read(ref s_blockingAddStarted).TrySetResult();
+        }
+        await release.Task.WaitAsync(cancellationToken);
         return left + right;
     }
 
@@ -2163,13 +2405,16 @@ public class TestService : ITestService
     public ValueTask<GeneratedEnvelope> EchoGeneratedAsync(GeneratedEnvelope value)
         => ValueTask.FromResult(value with { Name = value.Name + "-r", Age = value.Age + 1 });
 
-    public async ValueTask<int> UploadAsync(IAsyncEnumerable<int> values)
+    public async ValueTask<int> UploadAsync(
+        IAsyncEnumerable<int> values,
+        CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref s_activeUploads);
         try
         {
             var sum = 0;
-            await foreach (var i in values) sum += i;
+            await foreach (var i in values.WithCancellation(cancellationToken))
+                sum += i;
             return sum;
         }
         finally
@@ -2218,11 +2463,18 @@ public class TestService : ITestService
 
     public async IAsyncEnumerable<int> SlowDownloadAsync(int count, int delayMs, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        for (var i = 0; i < count; i++)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            yield return i;
-            await Task.Delay(delayMs, cancellationToken);
+            for (var i = 0; i < count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return i;
+                await Task.Delay(delayMs, cancellationToken);
+            }
+        }
+        finally
+        {
+            Volatile.Read(ref s_downloadDisposed).TrySetResult();
         }
     }
 
