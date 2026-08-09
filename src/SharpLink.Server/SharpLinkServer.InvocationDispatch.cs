@@ -210,7 +210,7 @@ internal sealed partial class SharpLinkServer
             CompleteFailedRequestStreams(session, requestId, exception);
             var responseSend = session.SendRpcErrorWithBackpressureAsync(
                 requestId,
-                CreateServerCancellationException(admittedCallState, request.DeadlineTimestamp),
+                MapServerCancellationException(admittedCallState, request.DeadlineTimestamp),
                 connection.ConnectionToken);
             return ReleaseDispatchResourcesAfterResponseAsync(
                 responseSend, admittedCallState, requestId, requestCancellationMap, connection);
@@ -295,7 +295,7 @@ internal sealed partial class SharpLinkServer
                 {
                     responseSend = session.SendRpcErrorWithBackpressureAsync(
                         requestId,
-                        CreateServerCancellationException(callState, request.DeadlineTimestamp),
+                        MapServerCancellationException(callState, request.DeadlineTimestamp),
                         connection.ConnectionToken);
                 }
                 else
@@ -392,7 +392,7 @@ internal sealed partial class SharpLinkServer
             {
                 responseSend = session.SendRpcErrorWithBackpressureAsync(
                     requestId,
-                    CreateServerCancellationException(callState, request.DeadlineTimestamp),
+                    MapServerCancellationException(callState, request.DeadlineTimestamp),
                     connection.ConnectionToken);
             }
             else
@@ -483,7 +483,7 @@ internal sealed partial class SharpLinkServer
             {
                 await session.SendRpcErrorWithBackpressureAsync(
                     requestId,
-                    CreateServerCancellationException(callState, callState.DeadlineTimestamp),
+                    MapServerCancellationException(callState, callState.DeadlineTimestamp),
                     connection.ConnectionToken).ConfigureAwait(false);
             }
             else
@@ -566,7 +566,7 @@ internal sealed partial class SharpLinkServer
             {
                 await session.SendRpcErrorWithBackpressureAsync(
                     requestId,
-                    CreateServerCancellationException(callState, callState.DeadlineTimestamp),
+                    MapServerCancellationException(callState, callState.DeadlineTimestamp),
                     connection.ConnectionToken).ConfigureAwait(false);
             }
             else

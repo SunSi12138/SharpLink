@@ -152,13 +152,14 @@ internal sealed partial class SharpLinkServer
                                     var cancelReason = session.ReadNegotiatedCancelReason(payload);
                                     ((RpcSession)session).AbortSendStreams(
                                         cancelRequestId,
-                                        CreateRemoteCancellationException(cancelReason));
+                                        ServerCallTerminationMapper.CreateRemoteCancellationException(cancelReason));
                                     if (requestCancellationMap.TryGetValue(cancelRequestId, out var callState) &&
                                         callState.TryAcquire(cancelRequestId))
                                     {
                                         try
                                         {
-                                            callState.TryCancel(MapRemoteCancellationReason(cancelReason));
+                                            callState.TryCancel(
+                                                ServerCallTerminationMapper.MapRemoteCancellationReason(cancelReason));
                                         }
                                         finally
                                         {
