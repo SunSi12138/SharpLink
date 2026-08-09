@@ -11,7 +11,7 @@ internal sealed class Int64Codec : IRpcCodec<long>
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
     }
-    
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public long Deserialize(in ReadOnlySequence<byte> buffer)
     {
@@ -20,7 +20,7 @@ internal sealed class Int64Codec : IRpcCodec<long>
         {
             return Unsafe.ReadUnaligned<long>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
         }
-        
+
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
         return Unsafe.ReadUnaligned<long>(ref MemoryMarshal.GetReference(temp));

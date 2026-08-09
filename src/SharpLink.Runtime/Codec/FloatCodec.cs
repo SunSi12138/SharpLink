@@ -11,14 +11,14 @@ internal sealed class FloatCodec : IRpcCodec<float>
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
     }
-    
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float Deserialize(in ReadOnlySequence<byte> buffer)
     {
         CodecHelpers.EnsureExactSize(buffer, Size);
-        if (buffer.FirstSpan.Length >= Size) 
+        if (buffer.FirstSpan.Length >= Size)
             return Unsafe.ReadUnaligned<float>(ref MemoryMarshal.GetReference(buffer.FirstSpan));
-            
+
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
         return Unsafe.ReadUnaligned<float>(ref MemoryMarshal.GetReference(temp));
@@ -59,7 +59,7 @@ internal sealed class NullableFloatCodec : IRpcCodec<float?>
 
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
-        
+
         if (!CodecHelpers.ReadNullablePresence(ref MemoryMarshal.GetReference(temp), Size - 1)) return null;
         return Unsafe.ReadUnaligned<float>(ref Unsafe.Add(ref MemoryMarshal.GetReference(temp), 1));
     }

@@ -11,7 +11,7 @@ public interface IRpcCodec<T> : IRpcCodec
 {
     /// <summary>Serializes a value to a sequential byte writer.</summary>
     void Serialize(in T value, IBufferWriter<byte> buffer);
-    
+
     /// <summary>Deserializes one value from a complete encoded payload.</summary>
     /// <param name="buffer">The encoded payload.</param>
     /// <returns>The decoded value.</returns>

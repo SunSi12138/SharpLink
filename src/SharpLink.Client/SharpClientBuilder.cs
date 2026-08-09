@@ -5,8 +5,8 @@ public class SharpClientBuilder
 {
     /// <summary>Creates a client builder with safe default runtime, heartbeat, timeout, and resilience settings.</summary>
     public static SharpClientBuilder Create() => new();
-    
-    
+
+
     private IClientTransportFactory? _transport;
     private IEnumerable<SharpLinkEndpoint>? _endpoints;
     private SharpLinkEndpoint[]? _preflightEndpointSnapshot;
@@ -75,7 +75,7 @@ public class SharpClientBuilder
 
     /// <summary>Sets a fallback codec resolver scoped to clients built by this builder.</summary>
     /// <param name="codecResolver">Returns a codec for a requested type, or <see langword="null"/> when unresolved.</param>
-    public SharpClientBuilder UseSerializer(Func<Type,IRpcCodec?>? codecResolver)
+    public SharpClientBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
     {
         _runtimeContextBuilder.UseCodecResolver(codecResolver);
         return this;
@@ -346,7 +346,7 @@ public class SharpClientBuilder
         _circuitBreakerConfigured = true;
         return this;
     }
-    
+
     /// <summary>Builds a normal client using the complete generated-manifest catalog.</summary>
     public ISharpLinkClient Build() => BuildCore(staticManifests: null);
 

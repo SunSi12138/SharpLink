@@ -507,54 +507,54 @@ internal sealed partial class SharpLinkClient
                     {
                         switch (header.Type)
                         {
-                        case ProtocolV2FrameType.Ping:
-                            await session.SendPongWithBackpressureAsync(
-                                ReadMonotonicTimestamp(payload), ct).ConfigureAwait(false);
-                            break;
-                        case ProtocolV2FrameType.Pong:
-                            DebugLogServerHeartbeatReceived(_logger);
-                            break;
-                        case ProtocolV2FrameType.Cancel:
-                            _ = session.ReadNegotiatedCancelReason(payload);
-                            DebugLogServerCancelIgnored(_logger);
-                            break;
-                        case ProtocolV2FrameType.Response:
-                            DispatchRpc(connection, unchecked((long)header.RequestId), header.Flags, ref payload);
-                            break;
-                        case ProtocolV2FrameType.HealthResponse:
-                            DispatchHealthResponse(connection, unchecked((long)header.RequestId), ref payload);
-                            break;
-                        case ProtocolV2FrameType.StreamData:
-                            var dispatchTask = DispatchStreamChunkAsync(session, unchecked((long)header.RequestId), payload);
-                            if (!dispatchTask.IsCompletedSuccessfully)
-                                await dispatchTask;
-                            break;
-                        case ProtocolV2FrameType.StreamComplete:
-                            DispatchStreamComplete(
-                                connection, unchecked((long)header.RequestId), header.Flags, payload, _protocolOptions);
-                            break;
-                        case ProtocolV2FrameType.WindowUpdate:
-                            session.ApplyWindowUpdate(
-                                unchecked((long)header.RequestId),
-                                ProtocolV2PayloadCodec.ReadWindowUpdate(payload));
-                            break;
-                        case ProtocolV2FrameType.GoAway:
-                            if (payload.Length < sizeof(ulong))
-                                throw CreateProtocolViolationException("GoAway last accepted request ID is truncated.");
-                            var goAwayError = ProtocolV2PayloadCodec.ReadError(
-                                payload.Slice(sizeof(ulong)),
-                                header.Flags | ProtocolV2FrameFlags.Error,
-                                _protocolOptions.MaxErrorMessageBytes);
-                            MarkConnectionDraining(connection);
-                            using (BeginRequestLogScope(_logger, unchecked((long)header.RequestId)))
-                                LogClientDisconnectedWithError(
-                                    _logger,
-                                    new SharpLinkException(goAwayError.Code, goAwayError.Message));
-                            break;
-                        case ProtocolV2FrameType.HandshakeRequest:
-                        case ProtocolV2FrameType.HandshakeResponse:
-                        case ProtocolV2FrameType.Request:
-                        case ProtocolV2FrameType.HealthCheck:
+                            case ProtocolV2FrameType.Ping:
+                                await session.SendPongWithBackpressureAsync(
+                                    ReadMonotonicTimestamp(payload), ct).ConfigureAwait(false);
+                                break;
+                            case ProtocolV2FrameType.Pong:
+                                DebugLogServerHeartbeatReceived(_logger);
+                                break;
+                            case ProtocolV2FrameType.Cancel:
+                                _ = session.ReadNegotiatedCancelReason(payload);
+                                DebugLogServerCancelIgnored(_logger);
+                                break;
+                            case ProtocolV2FrameType.Response:
+                                DispatchRpc(connection, unchecked((long)header.RequestId), header.Flags, ref payload);
+                                break;
+                            case ProtocolV2FrameType.HealthResponse:
+                                DispatchHealthResponse(connection, unchecked((long)header.RequestId), ref payload);
+                                break;
+                            case ProtocolV2FrameType.StreamData:
+                                var dispatchTask = DispatchStreamChunkAsync(session, unchecked((long)header.RequestId), payload);
+                                if (!dispatchTask.IsCompletedSuccessfully)
+                                    await dispatchTask;
+                                break;
+                            case ProtocolV2FrameType.StreamComplete:
+                                DispatchStreamComplete(
+                                    connection, unchecked((long)header.RequestId), header.Flags, payload, _protocolOptions);
+                                break;
+                            case ProtocolV2FrameType.WindowUpdate:
+                                session.ApplyWindowUpdate(
+                                    unchecked((long)header.RequestId),
+                                    ProtocolV2PayloadCodec.ReadWindowUpdate(payload));
+                                break;
+                            case ProtocolV2FrameType.GoAway:
+                                if (payload.Length < sizeof(ulong))
+                                    throw CreateProtocolViolationException("GoAway last accepted request ID is truncated.");
+                                var goAwayError = ProtocolV2PayloadCodec.ReadError(
+                                    payload.Slice(sizeof(ulong)),
+                                    header.Flags | ProtocolV2FrameFlags.Error,
+                                    _protocolOptions.MaxErrorMessageBytes);
+                                MarkConnectionDraining(connection);
+                                using (BeginRequestLogScope(_logger, unchecked((long)header.RequestId)))
+                                    LogClientDisconnectedWithError(
+                                        _logger,
+                                        new SharpLinkException(goAwayError.Code, goAwayError.Message));
+                                break;
+                            case ProtocolV2FrameType.HandshakeRequest:
+                            case ProtocolV2FrameType.HandshakeResponse:
+                            case ProtocolV2FrameType.Request:
+                            case ProtocolV2FrameType.HealthCheck:
                             default:
                                 SharpLinkTelemetry.RecordProtocolFailure("client");
                                 HandleDisconnected(connection, CreateProtocolViolationException("Received unexpected packet from server."));

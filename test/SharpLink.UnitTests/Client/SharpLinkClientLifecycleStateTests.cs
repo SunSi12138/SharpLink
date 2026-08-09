@@ -561,8 +561,11 @@ public class SharpLinkClientLifecycleStateTests
         Ensure(loggerFactory.Entries.FindIndex(static entry => entry.Level == LogLevel.Error) < 0,
             "a recoverable expansion failure must not be reported as an unhandled background error");
         Ensure(loggerFactory.Entries.FindIndex(static entry =>
-                entry is { Level: LogLevel.Warning, EventId.Id: LogEvents.Client.ConnectionAttemptFailed,
-                    Exception: SocketException }) >= 0,
+                entry is
+                {
+                    Level: LogLevel.Warning, EventId.Id: LogEvents.Client.ConnectionAttemptFailed,
+                    Exception: SocketException
+                }) >= 0,
             "the recoverable expansion failure should remain observable through its warning event");
     }
 

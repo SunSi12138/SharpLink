@@ -6,7 +6,7 @@ namespace SharpLink.Runtime;
 internal sealed class UnsafeBlitCodec<T> : IRpcCodec<T>
 {
     internal static readonly UnsafeBlitCodec<T> Instance = new();
-    
+
     static UnsafeBlitCodec()
     {
         // IsReferenceOrContainsReferences 是 JIT Intrinsic，性能极高
@@ -20,7 +20,7 @@ internal sealed class UnsafeBlitCodec<T> : IRpcCodec<T>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in T value, IBufferWriter<byte> writer)
     {
-        var size = Unsafe.SizeOf<T>(); 
+        var size = Unsafe.SizeOf<T>();
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(size)), value);
         writer.Advance(size);
     }
@@ -30,7 +30,7 @@ internal sealed class UnsafeBlitCodec<T> : IRpcCodec<T>
         => CodecHelpers.ReadUnmanaged<T>(buffer);
 }
 
-internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
+internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T : unmanaged
 {
     internal static readonly BlitArrayCodec<T> Instance = new();
 
@@ -70,7 +70,7 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
     public T[]? Deserialize(in ReadOnlySequence<byte> buffer)
     {
         if (buffer.FirstSpan.Length < 4) return ReadSlow(buffer);
-        
+
         var length = CodecHelpers.ReadInt32(buffer);
         var byteCount = CodecHelpers.GetValidatedCollectionByteCount<T>(buffer, length);
         switch (length)
@@ -82,7 +82,7 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
         }
 
         var array = new T[length];
-        
+
         var destBytes = MemoryMarshal.AsBytes(array.AsSpan());
 
         var payload = buffer.Slice(4);
@@ -131,7 +131,7 @@ internal sealed class BlitArrayCodec<T> : IRpcCodec<T[]?> where T:unmanaged
            typeof(T) == typeof(DateTimeOffset);
 }
 
-internal sealed class BlitListCodec<T> : IRpcCodec<List<T>?> where T:unmanaged
+internal sealed class BlitListCodec<T> : IRpcCodec<List<T>?> where T : unmanaged
 {
     internal static readonly BlitListCodec<T> Instance = new();
 
@@ -153,7 +153,7 @@ internal sealed class BlitListCodec<T> : IRpcCodec<List<T>?> where T:unmanaged
 
         // 零开销获取 List 内部的 Span
         ReadOnlySpan<T> span = CollectionsMarshal.AsSpan(value);
-        
+
         // 写入长度
         var headerSpan = writer.GetSpan(4);
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(headerSpan), span.Length);
@@ -193,7 +193,7 @@ internal sealed class BlitListCodec<T> : IRpcCodec<List<T>?> where T:unmanaged
            typeof(T) == typeof(DateTimeOffset);
 }
 
-internal sealed class BlitMemoryCodec<T> : IRpcCodec<Memory<T>>  where T:unmanaged
+internal sealed class BlitMemoryCodec<T> : IRpcCodec<Memory<T>> where T : unmanaged
 {
     internal static readonly BlitMemoryCodec<T> Instance = new();
 
@@ -207,7 +207,7 @@ internal sealed class BlitMemoryCodec<T> : IRpcCodec<Memory<T>>  where T:unmanag
     public void Serialize(in Memory<T> value, IBufferWriter<byte> writer)
     {
         ReadOnlySpan<T> span = value.Span;
-        
+
         // 写入长度
         var header = writer.GetSpan(4);
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(header), span.Length);
@@ -226,7 +226,7 @@ internal sealed class BlitMemoryCodec<T> : IRpcCodec<Memory<T>>  where T:unmanag
         => BlitArrayCodec<T>.DeserializeRequired(buffer).AsMemory();
 }
 
-internal sealed class BlitReadOnlyMemoryCodec<T> : IRpcCodec<ReadOnlyMemory<T>> where T:unmanaged
+internal sealed class BlitReadOnlyMemoryCodec<T> : IRpcCodec<ReadOnlyMemory<T>> where T : unmanaged
 {
     internal static readonly BlitReadOnlyMemoryCodec<T> Instance = new();
     static BlitReadOnlyMemoryCodec()
@@ -239,10 +239,10 @@ internal sealed class BlitReadOnlyMemoryCodec<T> : IRpcCodec<ReadOnlyMemory<T>> 
     public void Serialize(in ReadOnlyMemory<T> value, IBufferWriter<byte> writer)
     {
         var span = value.Span;
-        
+
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(4)), span.Length);
         writer.Advance(4);
-        
+
         if (span.Length <= 0) return;
         var byteSpan = MemoryMarshal.AsBytes(span);
         CodecHelpers.EnsureSerializablePayloadLength(byteSpan.Length, nameof(value));
@@ -256,7 +256,7 @@ internal sealed class BlitReadOnlyMemoryCodec<T> : IRpcCodec<ReadOnlyMemory<T>> 
         => new(BlitArrayCodec<T>.DeserializeRequired(buffer));
 }
 
-internal sealed class BlitImmutableArrayCodec<T> : IRpcCodec<ImmutableArray<T>>   where T:unmanaged
+internal sealed class BlitImmutableArrayCodec<T> : IRpcCodec<ImmutableArray<T>> where T : unmanaged
 {
     internal static readonly BlitImmutableArrayCodec<T> Instance = new();
 
@@ -277,7 +277,7 @@ internal sealed class BlitImmutableArrayCodec<T> : IRpcCodec<ImmutableArray<T>> 
         }
 
         var span = value.AsSpan();
-        
+
         // Header
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(4)), span.Length);
         writer.Advance(4);

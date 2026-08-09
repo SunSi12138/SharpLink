@@ -1,4 +1,4 @@
-﻿using SharpLink.Runtime;
+using SharpLink.Runtime;
 using SharpLink.Abstractions;
 using System;
 using System.Threading.Tasks;

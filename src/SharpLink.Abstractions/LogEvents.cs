@@ -59,14 +59,14 @@ public static class LogEvents
         /// <summary>A request or response stream closed.</summary>
         public const int StreamClosed = 3002;
     }
-    
+
     /// <summary>Defines transport event identifiers in the 4000-4999 range.</summary>
     public static class Transport
     {
         /// <summary>A transport completed TLS negotiation.</summary>
         public const int TlsEstablished = 4001;
     }
-    
+
     /// <summary>Defines server event identifiers in the 5000-5999 range.</summary>
     public static class Server
     {
@@ -83,7 +83,7 @@ public static class LogEvents
         /// <summary>Framework-owned cleanup did not complete within its timeout.</summary>
         public const int FrameworkCleanupTimeout = 5301;
     }
-    
+
     /// <summary>Defines client event identifiers in the 6000-6999 range.</summary>
     public static class Client
     {

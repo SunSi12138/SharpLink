@@ -64,7 +64,7 @@ internal sealed class NullableInt128Codec : IRpcCodec<Int128?>
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
-        
+
         if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
         return Unsafe.ReadUnaligned<Int128>(ref Unsafe.Add(ref tempStart, 1));
     }
