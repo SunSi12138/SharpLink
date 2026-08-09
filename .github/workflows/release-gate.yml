@@ -142,6 +142,12 @@ jobs:
       - name: Verify package metadata, XML documentation, and symbols
         run: ./eng/verify-packages.sh artifacts/nuget
 
+      - name: Verify Generated ABI Package Mixing
+        run: ./eng/verify-generated-abi-mixing.sh
+
+      - name: Verify Protocol v2 Cross-version Matrix
+        run: ./eng/verify-protocol-v2-cross-version.sh
+
       - name: Restore Package Smoke
         run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
         env:
