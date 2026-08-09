@@ -39,6 +39,10 @@ FEATURE_ROOT="$OUTPUT_ROOT/feature"
 ENVIRONMENT_ROOT="$OUTPUT_ROOT/environment"
 JIT_ROOT="$OUTPUT_ROOT/jit"
 REPORT_ROOT="$OUTPUT_ROOT/report"
+if [[ -e "$OUTPUT_ROOT" ]]; then
+  echo "Output path already exists; choose a fresh directory: $OUTPUT_ROOT" >&2
+  exit 2
+fi
 mkdir -p "$FEATURE_ROOT" "$ENVIRONMENT_ROOT" "$JIT_ROOT" "$REPORT_ROOT"
 
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
@@ -164,8 +168,8 @@ if [[ "$RUN_LEGACY" == "1" ]]; then
   run_bdn '*RuntimeHotPathBenchmarks*' bdn-runtime-hot-path
 fi
 
-SERVER_JIT_METHODS='*ProcessRequestLoop* *DispatchRpcAsync* *DispatchOneWayRpc* *InvokeServiceTrackedAsync*'
-CLIENT_JIT_METHODS='*InvokeUnaryAsync* *InvokeUnaryCoreAsync* *InvokeUnaryWithOptionalRetryAsync* *InvokeUnaryWithRetryAsync* *InvokeUnaryRetryAttemptAsync* *SelectEndpoint* *SelectConnection*'
+SERVER_JIT_METHODS='SharpLink.Server.SharpLinkServer:ProcessRequestLoop SharpLink.Server.SharpLinkServer+<ProcessRequestLoop>d__*:MoveNext SharpLink.Server.SharpLinkServer:DispatchRpcAsync SharpLink.Server.SharpLinkServer:DispatchOneWayRpc SharpLink.Server.SharpLinkServer:InvokeServiceTrackedAsync'
+CLIENT_JIT_METHODS='SharpLink.Client.SharpLinkClient:ProcessRequestLoop SharpLink.Client.SharpLinkClient+<ProcessRequestLoop>d__*:MoveNext SharpLink.Client.SharpLinkClient:InvokeUnaryAsync SharpLink.Client.SharpLinkClient:InvokeUnaryCoreAsync SharpLink.Client.SharpLinkClient:InvokeUnaryWithOptionalRetryAsync SharpLink.Client.SharpLinkClient:InvokeUnaryWithRetryAsync SharpLink.Client.SharpLinkClient+<InvokeUnaryWithRetryAsync>d__*:MoveNext SharpLink.Client.SharpLinkClient:InvokeUnaryRetryAttemptAsync SharpLink.Client.SharpLinkClient+StaticClusterRuntime:SelectEndpoint SharpLink.Client.SharpLinkClient+StaticClusterRuntime:SelectConnection'
 
 run_jit_probe() {
   local component="$1"
