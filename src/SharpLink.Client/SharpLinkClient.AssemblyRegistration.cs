@@ -348,16 +348,7 @@ internal sealed partial class SharpLinkClient
 
     internal static void ValidateStaticManifestCompatibility(
         ISharpLinkGeneratedAssemblyManifest manifest)
-    {
-        if (manifest.ApiVersion == SharpLinkGeneratedManifestVersions.Api &&
-            manifest.ProtocolVersion == SharpLinkGeneratedManifestVersions.Protocol)
-        {
-            return;
-        }
-        throw new InvalidOperationException(
-            $"Generated manifest '{manifest.OwnerAssembly.FullName}' is incompatible: " +
-            $"API={manifest.ApiVersion}, Protocol={manifest.ProtocolVersion}, Generator={manifest.GeneratorVersion}.");
-    }
+        => SharpLinkGeneratedManifestCompatibility.ThrowIfIncompatible(manifest);
 
     private RegistrationCandidate BuildRegistrationCandidate(
         ISharpLinkGeneratedAssemblyManifest incoming,

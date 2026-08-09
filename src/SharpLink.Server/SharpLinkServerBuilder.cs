@@ -510,15 +510,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     }
 
     private static void ValidateManifest(ISharpLinkGeneratedAssemblyManifest manifest)
-    {
-        if (manifest.ApiVersion != SharpLinkGeneratedManifestVersions.Api ||
-            manifest.ProtocolVersion != SharpLinkGeneratedManifestVersions.Protocol)
-        {
-            throw new InvalidOperationException(
-                $"Generated manifest '{manifest.OwnerAssembly.FullName}' is incompatible: " +
-                $"API={manifest.ApiVersion}, Protocol={manifest.ProtocolVersion}, Generator={manifest.GeneratorVersion}.");
-        }
-    }
+        => SharpLinkGeneratedManifestCompatibility.ThrowIfIncompatible(manifest);
 
     private static InvalidOperationException CreateBuildConflict(
         string kind,

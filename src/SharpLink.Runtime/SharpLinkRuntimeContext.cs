@@ -110,6 +110,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
         ISharpLinkGeneratedAssemblyManifest manifest)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        SharpLinkGeneratedManifestCompatibility.ThrowIfIncompatible(manifest);
         return RpcGeneratedManifestRegistration.Create(manifest, Codecs);
     }
 
