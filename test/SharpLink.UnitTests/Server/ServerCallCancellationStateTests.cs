@@ -1,12 +1,15 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
+using SharpLink.Client;
 using SharpLink.Server;
 
 namespace SharpLink.UnitTests.Server;
 
 public class ServerCallCancellationStateTests
 {
+    private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
+
     [Test]
     public void ModuleDrainingShouldCancelOnlyItsCooperativeInvocation()
     {
@@ -281,6 +284,141 @@ public class ServerCallCancellationStateTests
     }
 
     [Test]
+    public void ResponseCallerCancellationAndDeadlineRacesShouldPublishOneTerminalReason()
+    {
+        for (var iteration = 1; iteration <= 100; iteration++)
+        {
+            using var callerState = ServerCallCancellationState.Rent(
+                iteration,
+                null,
+                0,
+                CancellationToken.None,
+                CancellationToken.None,
+                supportsCooperativeCancellation: true);
+            var callerRace = RaceResponseAndCancellation(
+                callerState,
+                ServerCallCancellationReason.RemoteCancel,
+                $"P2-T01 iteration {iteration}");
+            Ensure(callerRace.ResponseWon ^ callerRace.CancellationWon,
+                $"P2-T01 iteration {iteration}: response and caller cancellation need one winner");
+            Ensure(callerState.Reason == (callerRace.ResponseWon
+                    ? ServerCallCancellationReason.Completed
+                    : ServerCallCancellationReason.RemoteCancel),
+                $"P2-T01 iteration {iteration}: terminal reason must match the winner");
+            Ensure(!callerState.TryClaimResponse() &&
+                   !callerState.TryCancel(ServerCallCancellationReason.RemoteCancel),
+                $"P2-T01 iteration {iteration}: late terminal attempts must be ignored");
+
+            using var deadlineState = ServerCallCancellationState.Rent(
+                10_000 + iteration,
+                DateTimeOffset.UtcNow.AddMinutes(1),
+                DeadlineAfter(TimeSpan.FromMinutes(1)),
+                CancellationToken.None,
+                CancellationToken.None,
+                supportsCooperativeCancellation: true);
+            var deadlineRace = RaceResponseAndCancellation(
+                deadlineState,
+                ServerCallCancellationReason.DeadlineExceeded,
+                $"P2-T02 iteration {iteration}");
+            Ensure(deadlineRace.ResponseWon ^ deadlineRace.CancellationWon,
+                $"P2-T02 iteration {iteration}: response and deadline need one winner");
+            Ensure(deadlineState.Reason == (deadlineRace.ResponseWon
+                    ? ServerCallCancellationReason.Completed
+                    : ServerCallCancellationReason.DeadlineExceeded),
+                $"P2-T02 iteration {iteration}: terminal reason must match the winner");
+            Ensure(!deadlineState.TryClaimResponse() &&
+                   !deadlineState.TryCancel(ServerCallCancellationReason.DeadlineExceeded),
+                $"P2-T02 iteration {iteration}: success must not be followed by a deadline error");
+
+            using var futureDeadlineState = ServerCallCancellationState.Rent(
+                20_000 + iteration,
+                DateTimeOffset.UtcNow.AddMinutes(1),
+                DeadlineAfter(TimeSpan.FromMinutes(1)),
+                CancellationToken.None,
+                CancellationToken.None,
+                supportsCooperativeCancellation: false);
+            Ensure(futureDeadlineState.TryClaimResponse(),
+                $"P2-T02 iteration {iteration}: a future deadline must not fire early");
+            Ensure(futureDeadlineState.Reason == ServerCallCancellationReason.Completed &&
+                   !futureDeadlineState.TryCancel(ServerCallCancellationReason.DeadlineExceeded),
+                $"P2-T02 iteration {iteration}: completion before the deadline must stay final");
+        }
+    }
+
+    [Test]
+    public async Task DuplicateCancelLateResponseAndLateStreamCompleteShouldBeIdempotentAndLeaveNoResources()
+    {
+        var limiter = new LateResponseLogLimiter();
+        var emittedDiagnostics = 0;
+        const long diagnosticWindowStart = 1;
+        using var pending = new PendingRequestTable(2);
+
+        for (var iteration = 1; iteration <= 100; iteration++)
+        {
+            using var state = ServerCallCancellationState.Rent(
+                30_000 + iteration,
+                null,
+                0,
+                CancellationToken.None,
+                CancellationToken.None,
+                supportsCooperativeCancellation: true);
+            Ensure(state.TryCancel(ServerCallCancellationReason.RemoteCancel),
+                $"P2-T08 iteration {iteration}: first cancel must win");
+            Ensure(!state.TryCancel(ServerCallCancellationReason.RemoteCancel) &&
+                   !state.TryClaimResponse(),
+                $"P2-T08 iteration {iteration}: duplicate cancel and late response must be ignored");
+            Ensure(state.Reason == ServerCallCancellationReason.RemoteCancel,
+                $"P2-T08 iteration {iteration}: duplicate events must not change the reason");
+            Ensure(state.TryRecordAbandoned() && !state.TryRecordAbandoned(),
+                $"P2-T08 iteration {iteration}: abandonment must be recorded once");
+
+            var operation = pending.Rent(
+                Int32Codec.Instance,
+                PendingCallKind.Unary,
+                deadlineTimestamp: 0,
+                CancellationToken.None,
+                out var requestId);
+            Ensure(pending.TryComplete(requestId, PendingCallCompletionReason.UserCancellation),
+                $"P2-T08 iteration {iteration}: pending cancel must complete once");
+            var emptyPayload = ReadOnlySequence<byte>.Empty;
+            Ensure(!pending.Dispatch(requestId, ref emptyPayload) &&
+                   !pending.TryComplete(requestId, PendingCallCompletionReason.RemoteStreamComplete),
+                $"P2-T08 iteration {iteration}: late response/StreamComplete must not reclaim the slot");
+            Ensure(await CaptureExceptionAsync(operation.AsValueTask().AsTask()) is OperationCanceledException,
+                $"P2-T08 iteration {iteration}: the caller must observe the cancel terminal");
+            Ensure(pending.Count == 0,
+                $"P2-T08 iteration {iteration}: pending slot must be released");
+
+            var streams = new StreamManager();
+            var dispatcher = new CountingDispatcher();
+            streams.Register(requestId, dispatcher);
+            streams.CompleteStream(requestId, exception: null);
+            streams.CompleteStream(requestId, exception: null);
+            await streams.DispatchChunkAsync(
+                requestId,
+                new ReadOnlySequence<byte>(new byte[] { checked((byte)iteration) }));
+            Ensure(dispatcher.CompleteCount == 1 && dispatcher.DispatchCount == 0,
+                $"P2-T08 iteration {iteration}: a dispatcher must complete once and never be recreated");
+            Ensure(streams.ActiveStreamCount == 0 && streams.DroppedStreamFrames == 1,
+                $"P2-T08 iteration {iteration}: late stream data is one bounded diagnostic with zero streams");
+
+            if (limiter.ShouldLog(diagnosticWindowStart + iteration, out _))
+                emittedDiagnostics++;
+            if (limiter.ShouldLog(diagnosticWindowStart + 100 + iteration, out _))
+                emittedDiagnostics++;
+        }
+
+        Ensure(limiter.ShouldLog(
+                diagnosticWindowStart + LateResponseLogLimiter.IntervalTimestampTicks + 1,
+                out var suppressedDiagnostics),
+            "P2-T08: the next diagnostic window must summarize suppressed late frames");
+        emittedDiagnostics++;
+        Ensure(emittedDiagnostics == 2 && suppressedDiagnostics == 199,
+            "P2-T08: 200 late frames must produce two bounded diagnostics and summarize 199 suppressions");
+        Ensure(pending.Count == 0, "P2-T08: all pending resources must finish at zero");
+    }
+
+    [Test]
     [NotInParallel]
     public void OldSnapshotShouldNotAcquireAReusedPooledState()
     {
@@ -319,6 +457,48 @@ public class ServerCallCancellationStateTests
         => Stopwatch.GetTimestamp() +
            Math.Max(1L, (long)Math.Ceiling(duration.TotalSeconds * Stopwatch.Frequency));
 
+    private static (bool ResponseWon, bool CancellationWon) RaceResponseAndCancellation(
+        ServerCallCancellationState state,
+        ServerCallCancellationReason cancellationReason,
+        string scenario)
+    {
+        using var ready = new CountdownEvent(2);
+        using var start = new ManualResetEventSlim(initialState: false);
+        var responseWon = false;
+        var cancellationWon = false;
+        var response = Task.Run(() =>
+        {
+            ready.Signal();
+            start.Wait();
+            responseWon = state.TryClaimResponse();
+        });
+        var cancellation = Task.Run(() =>
+        {
+            ready.Signal();
+            start.Wait();
+            cancellationWon = state.TryCancel(cancellationReason);
+        });
+
+        Ensure(ready.Wait(RaceCoordinationTimeout), $"{scenario}: workers must reach the start gate");
+        start.Set();
+        Ensure(Task.WaitAll([response, cancellation], RaceCoordinationTimeout),
+            $"{scenario}: workers must finish within the race bound");
+        return (responseWon, cancellationWon);
+    }
+
+    private static async Task<Exception?> CaptureExceptionAsync(Task task)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
     private static ScheduledCall Schedule(ServerCallCancellationState state)
     {
         var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
@@ -338,6 +518,35 @@ public class ServerCallCancellationStateTests
             calls.TryRemove(state.RequestId, state);
             scheduler.Dispose();
             state.Dispose();
+        }
+    }
+
+    private sealed class CountingDispatcher : IStreamDispatcher
+    {
+        private int _dispatchCount;
+        private int _completeCount;
+
+        internal int DispatchCount => Volatile.Read(ref _dispatchCount);
+        internal int CompleteCount => Volatile.Read(ref _completeCount);
+
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+        {
+            _ = payload;
+            Interlocked.Increment(ref _dispatchCount);
+            return ValueTask.CompletedTask;
+        }
+
+        public void Complete(bool isError, string? errorMessage)
+        {
+            _ = isError;
+            _ = errorMessage;
+            Interlocked.Increment(ref _completeCount);
+        }
+
+        public void Complete(Exception? exception)
+        {
+            _ = exception;
+            Interlocked.Increment(ref _completeCount);
         }
     }
 

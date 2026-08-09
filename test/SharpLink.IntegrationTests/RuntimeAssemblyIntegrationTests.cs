@@ -537,6 +537,71 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task ServerStreamConsumerExitShouldReleaseDynamicModuleLeasesAndAllCounters()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var plugin = PluginBundle.Load("dynamic-server-stream-consumer-exit");
+        plugin.ResetServiceState();
+        RegisterAll(harness, plugin);
+
+        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        var clientModule = GetDynamicModule(harness.Client, plugin.ContractAssembly);
+        var serverModule = GetDynamicModule(harness.Server, plugin.ServiceAssembly);
+        await using (var enumerator = InvokeStream(
+                proxy,
+                plugin.ContractType,
+                "ServerStreamAsync",
+                int.MaxValue,
+                CancellationToken.None)
+            .GetAsyncEnumerator())
+        {
+            Ensure(await enumerator.MoveNextAsync(),
+                "P2-T06 dynamic stream publishes one item before consumer exit");
+            Ensure(enumerator.Current == 0,
+                "P2-T06 dynamic stream first item preserves the expected route payload");
+            Ensure(clientModule.RemainingCalls == 1 && clientModule.RemainingStreams == 1,
+                "P2-T06 active stream holds one client contract module lease");
+            Ensure(serverModule.RemainingCalls == 1 && serverModule.RemainingStreams == 1,
+                "P2-T06 active stream holds one server service module lease");
+        }
+
+        Ensure(clientModule.RemainingCalls == 0 && clientModule.RemainingStreams == 0,
+            "P2-T06 consumer exit synchronously releases the client module lease");
+        var serverServiceRelease = harness.Server.UnregisterAssemblyAsync(
+            plugin.ServiceAssembly,
+            TimeSpan.FromSeconds(5)).AsTask();
+        await serverModule.WaitForDrainAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(serverModule.RemainingCalls == 0 && serverModule.RemainingStreams == 0,
+            "P2-T06 consumer cancellation naturally releases the server module before grace expires");
+        var serverService = await serverServiceRelease.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(serverService.ReferencesReleased &&
+               serverService.RemainingCalls == 0 &&
+               serverService.RemainingStreams == 0,
+            "P2-T06 consumer exit releases the server service module lease");
+        Ensure(plugin.GetStaticInt("Disposed") == 1,
+            "P2-T06 dynamic singleton is disposed exactly once");
+
+        var clientContract = await harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2));
+        Ensure(clientContract.ReferencesReleased &&
+               clientContract.RemainingCalls == 0 &&
+               clientContract.RemainingStreams == 0,
+            "P2-T06 consumer exit releases the client contract module lease");
+
+        var serverContract = await harness.Server.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2));
+        Ensure(serverContract.ReferencesReleased &&
+               serverContract.RemainingCalls == 0 &&
+               serverContract.RemainingStreams == 0,
+            "P2-T06 server contract releases after the stream dispatcher exits");
+        EnsureClientAndServerCountersAreZero(harness, "P2-T06 dynamic stream");
+        proxy = null;
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task EarlyServerResponseShouldRetainOnlyTheActiveClientStreamProducer()
     {
         await using var harness = await DynamicHarness.CreateAsync();
@@ -1095,6 +1160,100 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task OneHundredDynamicModuleReplacementsShouldPublishNewRouteWhileOldUnaryDrainsWithoutLeaks()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var first = PluginBundle.Load("replace-race-first");
+        using var second = PluginBundle.Load("replace-race-second");
+        RegisterAll(harness, first);
+
+        var current = first;
+        var next = second;
+        for (var iteration = 1; iteration <= 100; iteration++)
+        {
+            current.ResetServiceState();
+            next.ResetServiceState();
+            object? oldProxy = GetProxy(harness.Client, current.ContractType);
+            var oldCall = InvokeValueTaskAsync<int>(
+                oldProxy,
+                current.ContractType,
+                "BlockIgnoringCancellationAsync",
+                CancellationToken.None).AsTask();
+            await current.GetStaticTask("BlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
+
+            object? newProxy = null;
+            try
+            {
+                var serverContract = await harness.Server.ReplaceAssemblyAsync(
+                    current.ContractAssembly,
+                    next.ContractAssembly,
+                    TimeSpan.FromSeconds(2));
+                EnsureReplacementReleased(serverContract,
+                    $"P2-T07 iteration {iteration}: server contract");
+
+                var serverServiceTask = harness.Server.ReplaceAssemblyAsync(
+                    current.ServiceAssembly,
+                    next.ServiceAssembly,
+                    TimeSpan.FromSeconds(5)).AsTask();
+                var clientContractTask = harness.Client.ReplaceAssemblyAsync(
+                    current.ContractAssembly,
+                    next.ContractAssembly,
+                    TimeSpan.FromSeconds(5)).AsTask();
+
+                newProxy = GetProxy(harness.Client, next.ContractType);
+                Ensure(await InvokeValueTaskAsync<int>(
+                        newProxy,
+                        next.ContractType,
+                        "UnaryAsync",
+                        iteration,
+                        CancellationToken.None) == iteration + 1,
+                    $"P2-T07 iteration {iteration}: the newly published route serves immediately");
+                Ensure(next.GetStaticInt("Created") == 1,
+                    $"P2-T07 iteration {iteration}: only the next service generation is activated");
+                Ensure(!serverServiceTask.IsCompleted && !clientContractTask.IsCompleted,
+                    $"P2-T07 iteration {iteration}: old registrations drain behind their admitted call");
+
+                current.ReleaseBlock();
+                Ensure(await oldCall.WaitAsync(TimeSpan.FromSeconds(2)) == 43,
+                    $"P2-T07 iteration {iteration}: old unary completes on its original generation");
+                EnsureReplacementReleased(await serverServiceTask,
+                    $"P2-T07 iteration {iteration}: server service");
+                EnsureReplacementReleased(await clientContractTask,
+                    $"P2-T07 iteration {iteration}: client contract");
+                Ensure(current.GetStaticInt("Disposed") == 1,
+                    $"P2-T07 iteration {iteration}: old service generation is disposed exactly once");
+                Ensure(next.GetStaticInt("Disposed") == 0,
+                    $"P2-T07 iteration {iteration}: new service generation remains active");
+                EnsureClientAndServerCountersAreZero(harness,
+                    $"P2-T07 iteration {iteration}");
+            }
+            finally
+            {
+                current.ReleaseBlock();
+                oldProxy = null;
+                newProxy = null;
+            }
+
+            (current, next) = (next, current);
+        }
+
+        var finalService = await harness.Server.UnregisterAssemblyAsync(
+            current.ServiceAssembly,
+            TimeSpan.FromSeconds(2));
+        var finalServerContract = await harness.Server.UnregisterAssemblyAsync(
+            current.ContractAssembly,
+            TimeSpan.FromSeconds(2));
+        var finalClientContract = await harness.Client.UnregisterAssemblyAsync(
+            current.ContractAssembly,
+            TimeSpan.FromSeconds(2));
+        EnsureUnregisterReleased(finalService, "P2-T07 final server service");
+        EnsureUnregisterReleased(finalServerContract, "P2-T07 final server contract");
+        EnsureUnregisterReleased(finalClientContract, "P2-T07 final client contract");
+        EnsureClientAndServerCountersAreZero(harness, "P2-T07 final cleanup");
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task ReplacementValidationFailureShouldLeaveTheOldSnapshotServing()
     {
         await using var harness = await DynamicHarness.CreateAsync();
@@ -1416,6 +1575,50 @@ public sealed class RuntimeAssemblyIntegrationTests
         Ensure(client.Succeeded, $"client contract registration: {client.Error}");
         Ensure(harness.Server.RegisterAssembly(plugin.ContractAssembly).Succeeded, "server contract registration");
         Ensure(harness.Server.RegisterAssembly(plugin.ServiceAssembly).Succeeded, "server service registration");
+    }
+
+    private static void EnsureReplacementReleased(
+        SharpLinkAssemblyReplacementResult result,
+        string name)
+        => Ensure(result.Succeeded &&
+                  result.ReferencesReleased &&
+                  result.RemainingCalls == 0 &&
+                  result.RemainingStreams == 0,
+            $"{name} publishes atomically and releases every old module counter: {result.Error}");
+
+    private static void EnsureUnregisterReleased(
+        SharpLinkAssemblyUnregisterResult result,
+        string name)
+        => Ensure(result.ReferencesReleased &&
+                  result.RemainingCalls == 0 &&
+                  result.RemainingStreams == 0,
+            $"{name} releases every module counter");
+
+    private static void EnsureClientAndServerCountersAreZero(
+        DynamicHarness harness,
+        string name)
+    {
+        var client = (SharpLinkClient)harness.Client;
+        var serverActiveCalls = (int)(harness.Server.GetType().GetField(
+                "_globalActiveCalls",
+                BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(harness.Server) ?? -1);
+        Ensure(client.PendingCallCount == 0 &&
+               client.ActiveClientCallCount == 0 &&
+               client.ActiveClientStreamCount == 0 &&
+               serverActiveCalls == 0,
+            $"{name} leaves client pending/call/stream and server call counters at zero");
+    }
+
+    private static SharpLinkDynamicModule GetDynamicModule(object owner, Assembly assembly)
+    {
+        var modules = owner.GetType().GetField(
+                "_dynamicModules",
+                BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(owner)
+            as System.Collections.IDictionary
+            ?? throw new InvalidOperationException("Dynamic module registry was not found.");
+        return modules[assembly] as SharpLinkDynamicModule
+            ?? throw new InvalidOperationException(
+                $"Dynamic module was not found for '{assembly.FullName}'.");
     }
 
     private static object GetProxy(ISharpLinkClient client, Type contractType)
