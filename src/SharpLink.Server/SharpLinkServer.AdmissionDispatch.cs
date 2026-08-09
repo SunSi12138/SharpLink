@@ -419,7 +419,7 @@ internal sealed partial class SharpLinkServer
     private static SharpLinkAdmissionContext CreateAdmissionContext(
         ServerConnectionState connection,
         RpcMethodDescriptor descriptor,
-        RpcRequestEnvelope request)
+        ServerRequestEnvelope request)
         => new(
             descriptor.ContractId,
             descriptor.MethodId,
