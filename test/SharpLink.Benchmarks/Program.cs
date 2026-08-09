@@ -9,6 +9,30 @@ public static class Program
     public static async Task Main(string[] args)
     {
         if (args.Length > 0 && string.Equals(
+            args[0], "--feature-evidence", StringComparison.Ordinal))
+        {
+            await FeatureEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--summarize-feature-evidence", StringComparison.Ordinal))
+        {
+            await FeatureEvidenceRunner.SummarizeAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--layout-evidence", StringComparison.Ordinal))
+        {
+            await LayoutEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--jit-evidence", StringComparison.Ordinal))
+        {
+            await JitEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--compression-evidence", StringComparison.Ordinal))
         {
             await CompressionEvidenceRunner.RunAsync(args[1..]);
