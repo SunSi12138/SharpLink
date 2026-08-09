@@ -21,6 +21,18 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--generated-abi-streaming-evidence", StringComparison.Ordinal))
+        {
+            await GeneratedAbiStreamingEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--summarize-generated-abi-streaming-evidence", StringComparison.Ordinal))
+        {
+            await GeneratedAbiStreamingEvidenceRunner.SummarizeAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--layout-evidence", StringComparison.Ordinal))
         {
             await LayoutEvidenceRunner.RunAsync(args[1..]);
