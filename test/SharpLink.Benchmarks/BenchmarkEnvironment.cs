@@ -42,7 +42,10 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
     public static async Task<BenchmarkEnvironment> CreateAsync(
         Action<SharpLinkServerBuilder>? configureServer = null,
         Action<SharpLinkRuntimeOptions>? configureServerRuntime = null,
-        Action<SharpLinkRuntimeOptions>? configureClientRuntime = null)
+        Action<SharpLinkRuntimeOptions>? configureClientRuntime = null,
+        Func<int, SharpClientBuilder>? createClientBuilder = null,
+        Action<ISharpLinkServer>? configureBuiltServer = null,
+        int expectedReadyConnections = 1)
     {
         var localService = new BenchmarkRpcService();
 
@@ -55,6 +58,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
+        configureBuiltServer?.Invoke(server);
 
         var shutdown = new CancellationTokenSource();
         var serverTask = Task.Run(async () =>
@@ -68,14 +72,17 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             }
         }, shutdown.Token);
 
-        var client = SharpClientBuilder.Create()
-            .UseTcp(IPAddress.Loopback.ToString(), port)
-            ;
+        var client = createClientBuilder?.Invoke(port) ?? SharpClientBuilder.Create()
+            .UseTcp(IPAddress.Loopback.ToString(), port);
         if (configureClientRuntime is not null)
             client.UseRuntime(configureClientRuntime);
         var builtClient = client.Build();
 
         await builtClient.ConnectAsync(shutdown.Token);
+        await WaitForReadyConnectionsAsync(
+            builtClient,
+            expectedReadyConnections,
+            shutdown.Token).ConfigureAwait(false);
 
         var rpc = builtClient.Get<IBenchmarkRpc>();
         return new BenchmarkEnvironment(
@@ -86,6 +93,8 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             server,
             builtClient);
     }
+
+    public TContract Get<TContract>() where TContract : class, IService => _client.Get<TContract>();
 
     public async ValueTask DisposeAsync()
     {
@@ -105,6 +114,27 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         return port;
+    }
+
+    private static async Task WaitForReadyConnectionsAsync(
+        ISharpLinkClient client,
+        int expected,
+        CancellationToken cancellationToken)
+    {
+        if (expected <= 1)
+            return;
+
+        var concrete = (SharpLinkClient)client;
+        var timeout = DateTime.UtcNow.AddSeconds(10);
+        while (concrete.ReadyConnectionCount < expected)
+        {
+            if (DateTime.UtcNow >= timeout)
+            {
+                throw new TimeoutException(
+                    $"Only {concrete.ReadyConnectionCount} of {expected} benchmark connections became ready.");
+            }
+            await Task.Delay(10, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     public static async IAsyncEnumerable<T> ToStream<T>(

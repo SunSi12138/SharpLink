@@ -9,6 +9,7 @@ namespace SharpLink.Benchmarks;
 [RpcContract]
 public interface IBenchmarkRpc : IService
 {
+    [Idempotent]
     [NonCancellable]
     ValueTask<int> AddAsync(int left, int right);
     [NonCancellable]
