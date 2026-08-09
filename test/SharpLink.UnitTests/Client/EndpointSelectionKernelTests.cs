@@ -4,19 +4,19 @@ using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Client;
 
-public sealed class StaticEndpointSelectionTests
+public sealed class EndpointSelectionKernelTests
 {
     [Test]
     public void PowerOfTwoComparisonShouldUseExactCrossMultiplication()
     {
         Ensure(
-            StaticEndpointSelection.CompareNormalizedLoad(3, 2, 4, 3) > 0,
+            EndpointSelectionKernel.CompareNormalizedLoad(3, 2, 4, 3) > 0,
             "3/2 should be greater than 4/3");
         Ensure(
-            StaticEndpointSelection.CompareNormalizedLoad(4, 2, 6, 3) == 0,
+            EndpointSelectionKernel.CompareNormalizedLoad(4, 2, 6, 3) == 0,
             "equal normalized loads");
         Ensure(
-            StaticEndpointSelection.CompareNormalizedLoad(
+            EndpointSelectionKernel.CompareNormalizedLoad(
                 int.MaxValue,
                 int.MaxValue,
                 int.MaxValue - 1,
@@ -28,10 +28,10 @@ public sealed class StaticEndpointSelectionTests
     public void RandomSelectionShouldOnlyReturnNonExcludedIndexes()
     {
         const ulong excluded = (1UL << 1) | (1UL << 3);
-        Ensure(StaticEndpointSelection.SelectRandomIndex(5, excluded, 3, 0) == 0, "first available index");
-        Ensure(StaticEndpointSelection.SelectRandomIndex(5, excluded, 3, 1) == 2, "middle available index");
-        Ensure(StaticEndpointSelection.SelectRandomIndex(5, excluded, 3, 2) == 4, "last available index");
-        Ensure(StaticEndpointSelection.SelectRandomIndex(5, excluded, 3, 3) == -1, "out-of-range random target");
+        Ensure(EndpointSelectionKernel.SelectRandomIndex(5, excluded, 3, 0) == 0, "first available index");
+        Ensure(EndpointSelectionKernel.SelectRandomIndex(5, excluded, 3, 1) == 2, "middle available index");
+        Ensure(EndpointSelectionKernel.SelectRandomIndex(5, excluded, 3, 2) == 4, "last available index");
+        Ensure(EndpointSelectionKernel.SelectRandomIndex(5, excluded, 3, 3) == -1, "out-of-range random target");
     }
 
     [Test]
@@ -54,7 +54,7 @@ public sealed class StaticEndpointSelectionTests
         for (var target = 0; target < availableCount; target++)
         {
             Ensure(
-                StaticEndpointSelection.SelectRandomIndex(
+                EndpointSelectionKernel.SelectRandomIndex(
                     length,
                     excluded,
                     availableCount,
@@ -74,15 +74,16 @@ public sealed class StaticEndpointSelectionTests
         var cursor = -1;
 
         Ensure(
-            StaticEndpointSelection.SelectRandomIndex(length, excluded, 0, 0) == -1,
+            EndpointSelectionKernel.SelectRandomIndex(length, excluded, 0, 0) == -1,
             "random zero candidates");
         Ensure(
-            StaticEndpointSelection.SelectRoundRobinIndex(ref cursor, length, excluded) == -1,
+            EndpointSelectionKernel.SelectRoundRobinIndex(ref cursor, length, excluded) == -1,
             "round-robin zero candidates");
     }
 
     [Test]
     [Arguments(1, 0)]
+    [Arguments(2, 0)]
     [Arguments(4, 0)]
     [Arguments(4, 1)]
     [Arguments(4, 3)]
@@ -101,7 +102,7 @@ public sealed class StaticEndpointSelectionTests
 
         for (var iteration = 0; iteration < availableCount * 4; iteration++)
         {
-            var selected = StaticEndpointSelection.SelectRoundRobinIndex(
+            var selected = EndpointSelectionKernel.SelectRoundRobinIndex(
                 ref cursor,
                 length,
                 excluded);
@@ -122,7 +123,7 @@ public sealed class StaticEndpointSelectionTests
     {
         var cursor = -1;
         var selections = new ConcurrentBag<int>();
-        Parallel.For(0, 400, _ => selections.Add(StaticEndpointSelection.SelectRoundRobinIndex(ref cursor, 4, 0)));
+        Parallel.For(0, 400, _ => selections.Add(EndpointSelectionKernel.SelectRoundRobinIndex(ref cursor, 4, 0)));
 
         for (var index = 0; index < 4; index++)
             Ensure(selections.Count(selection => selection == index) == 100, "round-robin concurrent balance");

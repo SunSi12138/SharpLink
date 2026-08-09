@@ -1016,7 +1016,7 @@ internal sealed partial class SharpLinkClient
             return _strategy switch
             {
                 SharpLinkLoadBalancingStrategy.Random => SelectRandom(endpoints.Length, excluded, availableCount),
-                SharpLinkLoadBalancingStrategy.RoundRobin => StaticEndpointSelection.SelectRoundRobinIndex(ref _roundRobinCursor, endpoints.Length, excluded),
+                SharpLinkLoadBalancingStrategy.RoundRobin => EndpointSelectionKernel.SelectRoundRobinIndex(ref _roundRobinCursor, endpoints.Length, excluded),
                 SharpLinkLoadBalancingStrategy.LeastPending => SelectLeastPending(endpoints, excluded),
                 _ => SelectPowerOfTwo(endpoints, excluded, availableCount)
             };
@@ -1030,13 +1030,13 @@ internal sealed partial class SharpLinkClient
                 return first;
             var firstState = endpoints[first];
             var secondState = endpoints[second];
-            return StaticEndpointSelection.CompareNormalizedLoad(
+            return EndpointSelectionKernel.CompareNormalizedLoad(
                 firstState.ActiveCallCount, firstState.ReadyConnections.Length,
                 secondState.ActiveCallCount, secondState.ReadyConnections.Length) <= 0 ? first : second;
         }
 
         private static int SelectRandom(int length, ulong excluded, int availableCount)
-            => availableCount <= 0 ? -1 : StaticEndpointSelection.SelectRandomIndex(
+            => availableCount <= 0 ? -1 : EndpointSelectionKernel.SelectRandomIndex(
                 length, excluded, availableCount, Random.Shared.Next(availableCount));
 
         private int SelectLeastPending(EndpointState[] endpoints, ulong excluded)
@@ -1055,24 +1055,7 @@ internal sealed partial class SharpLinkClient
         }
 
         private static ClientConnection? SelectConnection(EndpointState endpoint)
-        {
-            var connections = endpoint.ReadyConnections;
-            if (connections.Length == 0)
-                return null;
-            if (connections.Length == 1)
-                return connections[0].CanAcceptCalls ? connections[0] : null;
-            var first = Random.Shared.Next(connections.Length);
-            var second = Random.Shared.Next(connections.Length - 1);
-            if (second >= first)
-                second++;
-            var selected = SelectLeastLoaded(connections, first, second);
-            if (selected.CanAcceptCalls)
-                return selected;
-            for (var index = 0; index < connections.Length; index++)
-                if (connections[index].CanAcceptCalls)
-                    return connections[index];
-            return null;
-        }
+            => EndpointSelectionKernel.SelectConnection(endpoint.ReadyConnections);
 
         private EndpointState? FindEndpointLocked(ClientConnection connection)
         {

@@ -653,6 +653,30 @@ public class SharpLinkClientLifecycleStateTests
     }
 
     [Test]
+    public async Task EndpointSelectionKernelShouldHandleEmptyAndSingleConnectionSnapshots()
+    {
+        Ensure(EndpointSelectionKernel.SelectConnection([]) is null, "empty connection snapshot");
+        await using var owner = new SharpLinkClient(
+            new TestClientTransportFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30));
+        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        await using var connection = new ClientConnection(
+            owner,
+            new RpcSession(new TestTransportConnection()),
+            new CancellationTokenSource(),
+            8,
+            context.Codecs);
+
+        connection.Session.NotifyConnected();
+        Ensure(ReferenceEquals(EndpointSelectionKernel.SelectConnection([connection]), connection),
+            "ready single connection");
+        connection.MarkDraining();
+        Ensure(EndpointSelectionKernel.SelectConnection([connection]) is null,
+            "draining single connection");
+    }
+
+    [Test]
     public async Task PowerOfTwoChoiceShouldSelectLowerActiveConnection()
     {
         await using var owner = new SharpLinkClient(
@@ -676,7 +700,7 @@ public class SharpLinkClientLifecycleStateTests
         var firstCall2 = first.PendingCalls.Rent<int>(out var firstId2);
         var secondCall = second.PendingCalls.Rent<int>(out var secondId);
 
-        var selected = SharpLinkClient.SelectLeastLoaded([first, second], 0, 1);
+        var selected = EndpointSelectionKernel.SelectConnection([first, second]);
         Ensure(ReferenceEquals(selected, second), "power-of-two should select the lower active count");
 
         var completed = new InvalidOperationException("test completion");
@@ -716,13 +740,9 @@ public class SharpLinkClientLifecycleStateTests
         try
         {
             Ensure(ReferenceEquals(
-                    SelectClusterConnection("StaticClusterRuntime", 0, stale, ready),
+                    EndpointSelectionKernel.SelectConnection([stale, ready]),
                     ready),
-                "static cluster should fall back to an accepting pooled connection");
-            Ensure(ReferenceEquals(
-                    SelectClusterConnection("DynamicClusterRuntime", 0L, stale, ready),
-                    ready),
-                "dynamic cluster should fall back to an accepting pooled connection");
+                "shared cluster selection should fall back to an accepting pooled connection");
         }
         finally
         {
@@ -1325,41 +1345,6 @@ public class SharpLinkClientLifecycleStateTests
         }
 
         internal void ReleaseDispose() => _release.TrySetResult();
-    }
-
-    private static ClientConnection? SelectClusterConnection(
-        string runtimeName,
-        object stateIndex,
-        ClientConnection stale,
-        ClientConnection ready)
-    {
-        var flags = BindingFlags.NonPublic | BindingFlags.Public;
-        var runtimeType = typeof(SharpLinkClient).GetNestedType(runtimeName, BindingFlags.NonPublic)
-            ?? throw new Exception($"cannot find {runtimeName}");
-        var endpointType = runtimeType.GetNestedType("EndpointState", flags)
-            ?? throw new Exception($"cannot find {runtimeName}.EndpointState");
-        var configuration = new StaticEndpointConfiguration(
-            new SharpLinkEndpoint
-            {
-                Id = "selection",
-                Address = new SharpLinkTcpAddress("127.0.0.1", 5001)
-            },
-            new NonConnectingFactory());
-        var endpoint = Activator.CreateInstance(
-            endpointType,
-            BindingFlags.Instance | flags,
-            binder: null,
-            args: [configuration, stateIndex],
-            culture: null)
-            ?? throw new Exception($"cannot create {runtimeName}.EndpointState");
-        var readyConnections = endpointType.GetField("_readyConnections", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception($"cannot find {runtimeName} ready connection field");
-        readyConnections.SetValue(endpoint, new[] { stale, ready });
-        var selectConnection = runtimeType.GetMethod(
-            "SelectConnection",
-            BindingFlags.Static | BindingFlags.NonPublic)
-            ?? throw new Exception($"cannot find {runtimeName} selection method");
-        return (ClientConnection?)selectConnection.Invoke(null, [endpoint]);
     }
 
     private static SharpLinkEndpoint CreateEndpoint(string id, int port) => new()

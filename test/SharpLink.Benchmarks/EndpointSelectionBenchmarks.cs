@@ -36,7 +36,7 @@ public class EndpointIndexSelectionBenchmarks
 
     [Benchmark]
     public int RandomIndex()
-        => StaticEndpointSelection.SelectRandomIndex(
+        => EndpointSelectionKernel.SelectRandomIndex(
             EndpointCount,
             _excluded,
             _availableCount,
@@ -44,7 +44,7 @@ public class EndpointIndexSelectionBenchmarks
 
     [Benchmark]
     public int RoundRobinIndex()
-        => StaticEndpointSelection.SelectRoundRobinIndex(
+        => EndpointSelectionKernel.SelectRoundRobinIndex(
             ref _cursor,
             EndpointCount,
             _excluded);
