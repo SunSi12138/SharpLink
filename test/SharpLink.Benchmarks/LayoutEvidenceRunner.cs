@@ -27,6 +27,10 @@ internal static class LayoutEvidenceRunner
         "InvokeUnaryWithOptionalRetryAsync",
         "InvokeUnaryWithRetryAsync",
         "InvokeUnaryRetryAttemptAsync",
+        "CompareNormalizedLoad",
+        "SelectRandomIndex",
+        "SelectRoundRobinIndex",
+        "SelectLeastLoaded",
         "SelectEndpoint",
         "SelectConnection"
     };
@@ -108,7 +112,8 @@ internal static class LayoutEvidenceRunner
 
     private static bool IsTargetType(Type type)
         => type.FullName?.StartsWith("SharpLink.Server.SharpLinkServer", StringComparison.Ordinal) == true ||
-           type.FullName?.StartsWith("SharpLink.Client.SharpLinkClient", StringComparison.Ordinal) == true;
+           type.FullName?.StartsWith("SharpLink.Client.SharpLinkClient", StringComparison.Ordinal) == true ||
+           type.FullName == "SharpLink.Client.EndpointSelectionKernel";
 
     private static int GetIlBytes(MethodInfo method)
         => method.GetMethodBody()?.GetILAsByteArray()?.Length ?? 0;

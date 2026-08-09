@@ -251,7 +251,7 @@ internal sealed partial class SharpLinkClient
                 var second = Random.Shared.Next(connections.Length - 1);
                 if (second >= first)
                     second++;
-                selected = SelectLeastLoaded(connections, first, second);
+                selected = EndpointSelectionKernel.SelectLeastLoaded(connections, first, second);
             }
 
             if (selected.CanAcceptCalls)
@@ -298,23 +298,6 @@ internal sealed partial class SharpLinkClient
             attemptOutcome.CompleteLocalFailure(exception);
             throw;
         }
-    }
-
-    internal static ClientConnection SelectLeastLoaded(
-        ClientConnection[] connections,
-        int first,
-        int second)
-    {
-        ArgumentNullException.ThrowIfNull(connections);
-        ArgumentOutOfRangeException.ThrowIfNegative(first);
-        ArgumentOutOfRangeException.ThrowIfNegative(second);
-        if ((uint)first >= (uint)connections.Length || (uint)second >= (uint)connections.Length)
-            throw new ArgumentOutOfRangeException(nameof(first));
-        var firstConnection = connections[first];
-        var secondConnection = connections[second];
-        return firstConnection.ActiveCallCount <= secondConnection.ActiveCallCount
-            ? firstConnection
-            : secondConnection;
     }
 
     private bool RemoveReadyConnection(ClientConnection connection)
