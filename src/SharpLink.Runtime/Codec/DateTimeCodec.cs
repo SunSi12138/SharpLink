@@ -9,7 +9,7 @@ internal sealed class DateTimeCodec : IRpcCodec<DateTime>
     public void Serialize(in DateTime value, IBufferWriter<byte> writer)
     {
         Unsafe.WriteUnaligned(
-            ref MemoryMarshal.GetReference(writer.GetSpan(Size)), 
+            ref MemoryMarshal.GetReference(writer.GetSpan(Size)),
             value.ToBinary()
         );
         writer.Advance(Size);
@@ -55,7 +55,7 @@ internal sealed class NullableDateTimeCodec : IRpcCodec<DateTime?>
         {
             start = 1; // 写入 Tag
             Unsafe.WriteUnaligned(
-                ref Unsafe.Add(ref start, 1), 
+                ref Unsafe.Add(ref start, 1),
                 value.GetValueOrDefault().ToBinary()
             );
         }
@@ -63,11 +63,11 @@ internal sealed class NullableDateTimeCodec : IRpcCodec<DateTime?>
         {
             start = 0; // Tag = 0
             Unsafe.WriteUnaligned(
-                ref Unsafe.Add(ref start, 1), 
+                ref Unsafe.Add(ref start, 1),
                 0L
             );
         }
-        
+
         writer.Advance(Size);
     }
 
@@ -78,9 +78,9 @@ internal sealed class NullableDateTimeCodec : IRpcCodec<DateTime?>
         if (buffer.FirstSpan.Length >= Size)
         {
             ref var start = ref MemoryMarshal.GetReference(buffer.FirstSpan);
-            
+
             if (!CodecHelpers.ReadNullablePresence(ref start, Size - 1)) return null;
-            
+
             var data = Unsafe.ReadUnaligned<long>(ref Unsafe.Add(ref start, 1));
             return CodecHelpers.CreateDateTime(data);
         }
@@ -89,9 +89,9 @@ internal sealed class NullableDateTimeCodec : IRpcCodec<DateTime?>
         buffer.CopyTo(temp);
 
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
-        
+
         if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
-        
+
         var stackData = Unsafe.ReadUnaligned<long>(ref Unsafe.Add(ref tempStart, 1));
         return CodecHelpers.CreateDateTime(stackData);
     }

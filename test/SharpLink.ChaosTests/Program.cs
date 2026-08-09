@@ -563,10 +563,10 @@ public static class Program
 
         return exception is SocketException or IOException or ObjectDisposedException or
             SharpLinkException
-            {
-                Code: SharpLinkErrorCode.Unavailable or SharpLinkErrorCode.ConnectionClosed or
+        {
+            Code: SharpLinkErrorCode.Unavailable or SharpLinkErrorCode.ConnectionClosed or
                     SharpLinkErrorCode.DeadlineExceeded or SharpLinkErrorCode.Cancelled
-            };
+        };
     }
 
     private static async Task<bool> WaitForRecoveryAsync(
@@ -588,12 +588,12 @@ public static class Program
             }
             catch (Exception exception) when (exception is SocketException or IOException or ObjectDisposedException or
                                               SharpLinkException
-                                              {
-                                                  Code: SharpLinkErrorCode.Unavailable or
+            {
+                Code: SharpLinkErrorCode.Unavailable or
                                                       SharpLinkErrorCode.ConnectionClosed or
                                                       SharpLinkErrorCode.DeadlineExceeded or
                                                       SharpLinkErrorCode.Cancelled
-                                              })
+            })
             {
                 consecutiveSuccesses = 0;
             }

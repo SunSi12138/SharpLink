@@ -919,10 +919,10 @@ public partial class RpcGenerator
 
         private static ITypeSymbol NormalizeAdapterTarget(ITypeSymbol type)
             => type is INamedTypeSymbol
-               {
-                   IsTupleType: true,
-                   TupleUnderlyingType: { } underlying
-               }
+            {
+                IsTupleType: true,
+                TupleUnderlyingType: { } underlying
+            }
                 ? underlying
                 : type;
 

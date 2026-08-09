@@ -298,7 +298,8 @@ public sealed class DynamicEndpointResolverTests
         catch (SharpLinkException exception)
         {
             Ensure(exception.Code == SharpLinkErrorCode.Unavailable, "dynamic cluster rejection code");
-            Ensure(exception.InnerException is InvalidOperationException {
+            Ensure(exception.InnerException is InvalidOperationException
+            {
                 Message: "The endpoint resolver returned an invalid initial topology."
             }, "dynamic cluster must reject the anonymous-pipe factory before attempting a connection");
         }
@@ -324,8 +325,11 @@ public sealed class DynamicEndpointResolverTests
         Ensure(!loggerFactory.HasEntry(static entry => entry.Level == LogLevel.Error),
             "a resolver failure owned by the retry worker must not be reported as unhandled");
         Ensure(loggerFactory.HasEntry(static entry =>
-                entry is { Level: LogLevel.Warning, EventId.Id: 6102,
-                    Exception: InvalidOperationException { Message: "watch failed" } }),
+                entry is
+                {
+                    Level: LogLevel.Warning, EventId.Id: 6102,
+                    Exception: InvalidOperationException { Message: "watch failed" }
+                }),
             "the retried resolver failure should remain observable through its warning event");
     }
 

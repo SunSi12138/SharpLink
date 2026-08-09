@@ -218,7 +218,7 @@ internal sealed partial class SharpLinkServer
                 connection.MarkDraining();
                 return;
             }
-            
+
             if (!connection.MarkReady(authResult.Context))
                 return;
 
@@ -330,10 +330,10 @@ internal sealed partial class SharpLinkServer
                 var session = connection.Session;
                 if (session.TimeSinceLastActivity <= heartbeatTimeout || !session.IsConnected)
                     continue;
-                
+
                 using var sessionScope = BeginSessionLogScope(_logger, session.Id);
                 LogClientHeartbeatTimeout(_logger);
-                
+
                 if (_connections.TryGetValue(id, out var current) && ReferenceEquals(current, connection))
                     await DisconnectConnectionAsync(connection).ConfigureAwait(false);
             }
@@ -341,7 +341,7 @@ internal sealed partial class SharpLinkServer
     }
     private async Task<SharpLinkAuthenticationResult> ProcessHandshakeAsync(IRpcSession session, CancellationToken ct)
     {
-        
+
         var reader = session.Input;
         SharpLinkAuthenticationResult? handshakeResult = null;
 
@@ -642,107 +642,107 @@ internal sealed partial class SharpLinkServer
                         {
                             switch (header.Type)
                             {
-                            case ProtocolV2FrameType.Ping:
-                                DebugLogClientHeartbeatReceived(_logger);
-                                await session.SendPongWithBackpressureAsync(
-                                    ReadMonotonicTimestamp(payload), ct).ConfigureAwait(false);
-                                break;
-                            case ProtocolV2FrameType.Pong:
-                                DebugLogClientHeartbeatReceived(_logger);
-                                break;
-                            case ProtocolV2FrameType.Request:
-                            {
-                                var requestId = unchecked((long)header.RequestId);
-                                using var requestScope = BeginRequestLogScope(_logger, requestId);
-                                if (!TryAcceptRequest(connection, requestId))
-                                {
-                                    if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
+                                case ProtocolV2FrameType.Ping:
+                                    DebugLogClientHeartbeatReceived(_logger);
+                                    await session.SendPongWithBackpressureAsync(
+                                        ReadMonotonicTimestamp(payload), ct).ConfigureAwait(false);
+                                    break;
+                                case ProtocolV2FrameType.Pong:
+                                    DebugLogClientHeartbeatReceived(_logger);
+                                    break;
+                                case ProtocolV2FrameType.Request:
                                     {
-                                        Interlocked.Increment(ref _rejectedOneWayCalls);
-                                        LogOnewayRpcResourceExhausted(_logger, "server_unavailable");
+                                        var requestId = unchecked((long)header.RequestId);
+                                        using var requestScope = BeginRequestLogScope(_logger, requestId);
+                                        if (!TryAcceptRequest(connection, requestId))
+                                        {
+                                            if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
+                                            {
+                                                Interlocked.Increment(ref _rejectedOneWayCalls);
+                                                LogOnewayRpcResourceExhausted(_logger, "server_unavailable");
+                                            }
+                                            else
+                                            {
+                                                var errorSend = session.SendRpcErrorWithBackpressureAsync(
+                                                    requestId,
+                                                    new SharpLinkException(
+                                                        SharpLinkErrorCode.Unavailable,
+                                                        "Server is draining."),
+                                                    connection.ConnectionToken);
+                                                if (!errorSend.IsCompletedSuccessfully)
+                                                    ObserveUserCall(errorSend, requestId);
+                                            }
+                                            break;
+                                        }
+
+                                        if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
+                                        {
+                                            DispatchOneWayRpc(
+                                                connection, requestId, header.Flags, payload, requestCancellationMap, ct);
+                                            break;
+                                        }
+
+                                        var dispatchTask = DispatchRpcAsync(
+                                            connection, requestId, header.Flags, payload, requestCancellationMap, ct);
+                                        if (!dispatchTask.IsCompletedSuccessfully)
+                                            ObserveUserCall(dispatchTask, requestId);
+                                        break;
                                     }
-                                    else
+                                case ProtocolV2FrameType.Cancel:
+                                    var cancelRequestId = unchecked((long)header.RequestId);
+                                    var cancelReason = session.ReadNegotiatedCancelReason(payload);
+                                    ((RpcSession)session).AbortSendStreams(
+                                        cancelRequestId,
+                                        CreateRemoteCancellationException(cancelReason));
+                                    if (requestCancellationMap.TryGetValue(cancelRequestId, out var callState) &&
+                                        callState.TryAcquire(cancelRequestId))
                                     {
-                                        var errorSend = session.SendRpcErrorWithBackpressureAsync(
-                                            requestId,
-                                            new SharpLinkException(
-                                                SharpLinkErrorCode.Unavailable,
-                                                "Server is draining."),
-                                            connection.ConnectionToken);
-                                        if (!errorSend.IsCompletedSuccessfully)
-                                            ObserveUserCall(errorSend, requestId);
+                                        try
+                                        {
+                                            callState.TryCancel(MapRemoteCancellationReason(cancelReason));
+                                        }
+                                        finally
+                                        {
+                                            callState.ReleaseUse();
+                                        }
                                     }
                                     break;
-                                }
-
-                                if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
-                                {
-                                    DispatchOneWayRpc(
-                                        connection, requestId, header.Flags, payload, requestCancellationMap, ct);
+                                case ProtocolV2FrameType.StreamData:
+                                    await DispatchStreamChunkAsync(session, unchecked((long)header.RequestId), payload);
                                     break;
-                                }
-
-                                var dispatchTask = DispatchRpcAsync(
-                                    connection, requestId, header.Flags, payload, requestCancellationMap, ct);
-                                if (!dispatchTask.IsCompletedSuccessfully)
-                                    ObserveUserCall(dispatchTask, requestId);
-                                break;
-                            }
-                            case ProtocolV2FrameType.Cancel:
-                                var cancelRequestId = unchecked((long)header.RequestId);
-                                var cancelReason = session.ReadNegotiatedCancelReason(payload);
-                                ((RpcSession)session).AbortSendStreams(
-                                    cancelRequestId,
-                                    CreateRemoteCancellationException(cancelReason));
-                                if (requestCancellationMap.TryGetValue(cancelRequestId, out var callState) &&
-                                    callState.TryAcquire(cancelRequestId))
-                                {
-                                    try
-                                    {
-                                        callState.TryCancel(MapRemoteCancellationReason(cancelReason));
-                                    }
-                                    finally
-                                    {
-                                        callState.ReleaseUse();
-                                    }
-                                }
-                                break;
-                            case ProtocolV2FrameType.StreamData:
-                                await DispatchStreamChunkAsync(session, unchecked((long)header.RequestId), payload);
-                                break;
-                            case ProtocolV2FrameType.StreamComplete:
-                                DispatchStreamComplete(
-                                    session, unchecked((long)header.RequestId), header.Flags, payload, _protocolOptions);
-                                break;
-                            case ProtocolV2FrameType.WindowUpdate:
-                                ((RpcSession)session).ApplyWindowUpdate(
-                                    unchecked((long)header.RequestId),
-                                    ProtocolV2PayloadCodec.ReadWindowUpdate(payload));
-                                break;
-                            case ProtocolV2FrameType.GoAway:
-                                return;
-                            case ProtocolV2FrameType.HealthCheck:
-                                if ((((RpcSession)session).NegotiatedCapabilities &
-                                     ProtocolV2Capabilities.HealthCheck) == 0)
-                                {
-                                    throw new SharpLinkException(
-                                        SharpLinkErrorCode.ProtocolViolation,
-                                        "HealthCheck was not negotiated for this session.");
-                                }
-                                await session.SendHealthResponseWithBackpressureAsync(
-                                    unchecked((long)header.RequestId),
-                                    HealthStatus,
-                                    ct).ConfigureAwait(false);
-                                break;
-                            case ProtocolV2FrameType.HandshakeRequest:
-                            case ProtocolV2FrameType.HandshakeResponse:
-                            case ProtocolV2FrameType.Response:
-                            case ProtocolV2FrameType.HealthResponse:
-                                default:
-                                {
-                                    SharpLinkTelemetry.RecordProtocolFailure("server");
+                                case ProtocolV2FrameType.StreamComplete:
+                                    DispatchStreamComplete(
+                                        session, unchecked((long)header.RequestId), header.Flags, payload, _protocolOptions);
+                                    break;
+                                case ProtocolV2FrameType.WindowUpdate:
+                                    ((RpcSession)session).ApplyWindowUpdate(
+                                        unchecked((long)header.RequestId),
+                                        ProtocolV2PayloadCodec.ReadWindowUpdate(payload));
+                                    break;
+                                case ProtocolV2FrameType.GoAway:
                                     return;
-                                }
+                                case ProtocolV2FrameType.HealthCheck:
+                                    if ((((RpcSession)session).NegotiatedCapabilities &
+                                         ProtocolV2Capabilities.HealthCheck) == 0)
+                                    {
+                                        throw new SharpLinkException(
+                                            SharpLinkErrorCode.ProtocolViolation,
+                                            "HealthCheck was not negotiated for this session.");
+                                    }
+                                    await session.SendHealthResponseWithBackpressureAsync(
+                                        unchecked((long)header.RequestId),
+                                        HealthStatus,
+                                        ct).ConfigureAwait(false);
+                                    break;
+                                case ProtocolV2FrameType.HandshakeRequest:
+                                case ProtocolV2FrameType.HandshakeResponse:
+                                case ProtocolV2FrameType.Response:
+                                case ProtocolV2FrameType.HealthResponse:
+                                default:
+                                    {
+                                        SharpLinkTelemetry.RecordProtocolFailure("server");
+                                        return;
+                                    }
                             }
                         }
                         finally
@@ -1365,7 +1365,7 @@ internal sealed partial class SharpLinkServer
         var session = connection.Session;
         var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
         var hasReturnPayload = (flags & ProtocolV2FrameFlags.HasReturn) != 0;
-        
+
         var request = ReadRequestEnvelope(session, payload, flags);
         if (IsDeadlineExceeded(request.DeadlineTimestamp))
         {

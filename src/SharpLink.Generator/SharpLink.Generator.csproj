@@ -26,10 +26,4 @@
         <PackageReference Include="System.Text.Json" PrivateAssets="all" />
     </ItemGroup>
 
-    <ItemGroup>
-        <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
-        <AdditionalFiles Include="AnalyzerReleases.UnShipped.md" />
-    </ItemGroup>
-
-
 </Project>

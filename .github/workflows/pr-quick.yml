@@ -30,6 +30,9 @@ jobs:
       - name: Restore
         run: dotnet restore Sharplink.slnx
 
+      - name: Verify Formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+
       - name: Build
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 

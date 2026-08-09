@@ -13,14 +13,14 @@ internal interface IRpcOperation
 }
 
 
-internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperation 
+internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperation
 {
     private ManualResetValueTaskSourceCore<T> _core;
     private IRpcCodec<T>? _codec;
     private T? _response;
     private bool _hasResponsePayload;
     private bool _responseNullable;
-    
+
     private readonly Action<RpcRequestOperation<T>> _returnAction;
 
     public RpcRequestOperation(Action<RpcRequestOperation<T>> returnAction)
@@ -28,7 +28,7 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
         _returnAction = returnAction;
         _core.RunContinuationsAsynchronously = true;
     }
-    
+
     public long Id { get; private set; }
     public void Initialize(long id, IRpcCodecProvider codecProvider)
     {
@@ -50,7 +50,7 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     }
     // 【新增】发送失败时的手动归还
     public void ReturnError() => ReturnToPool();
-    
+
     public T GetResult(short token)
     {
         try
@@ -65,7 +65,7 @@ internal sealed class RpcRequestOperation<T> : IValueTaskSource<T>, IRpcOperatio
     public ValueTaskSourceStatus GetStatus(short token) => _core.GetStatus(token);
     public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
-    
+
     public Exception? TryDeserializeResponse(ref ReadOnlySequence<byte> payload)
     {
         try

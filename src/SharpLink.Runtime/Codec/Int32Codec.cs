@@ -11,7 +11,7 @@ internal sealed class Int32Codec : IRpcCodec<int>
         Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value);
         writer.Advance(Size);
     }
-    
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int Deserialize(in ReadOnlySequence<byte> buffer)
     {

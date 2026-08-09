@@ -69,7 +69,7 @@ internal sealed class NullableRuneCodec : IRpcCodec<Rune?>
         Span<byte> temp = stackalloc byte[Size];
         buffer.CopyTo(temp);
         ref var tempStart = ref MemoryMarshal.GetReference(temp);
-        
+
         if (!CodecHelpers.ReadNullablePresence(ref tempStart, Size - 1)) return null;
         return CodecHelpers.ValidateRune(
             Unsafe.ReadUnaligned<Rune>(ref Unsafe.Add(ref tempStart, 1)));

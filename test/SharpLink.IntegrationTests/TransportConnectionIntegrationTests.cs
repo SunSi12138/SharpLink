@@ -1627,37 +1627,37 @@ public class TransportConnectionIntegrationTests
             switch (kind)
             {
                 case TransportKind.Tcp:
-                {
-                    serverBuilder.UseTcp(endpoint.Port, IPAddress.Loopback.ToString());
-                    var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
-                    clientBuilder.UseTcp(IPAddress.Loopback.ToString(), port);
-                    resolvedEndpoint = new TransportEndpoint(kind, port, string.Empty, string.Empty);
-                    break;
-                }
+                    {
+                        serverBuilder.UseTcp(endpoint.Port, IPAddress.Loopback.ToString());
+                        var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+                        clientBuilder.UseTcp(IPAddress.Loopback.ToString(), port);
+                        resolvedEndpoint = new TransportEndpoint(kind, port, string.Empty, string.Empty);
+                        break;
+                    }
                 case TransportKind.NamedPipe:
-                {
-                    var pipeName = string.IsNullOrWhiteSpace(endpoint.PipeName)
-                        ? $"sharplink-int-{Guid.NewGuid():N}"
-                        : endpoint.PipeName;
-                    serverBuilder.UseNamedPipe(pipeName);
-                    clientBuilder.UseNamedPipe(pipeName);
-                    resolvedEndpoint = new TransportEndpoint(kind, 0, pipeName, string.Empty);
-                    break;
-                }
+                    {
+                        var pipeName = string.IsNullOrWhiteSpace(endpoint.PipeName)
+                            ? $"sharplink-int-{Guid.NewGuid():N}"
+                            : endpoint.PipeName;
+                        serverBuilder.UseNamedPipe(pipeName);
+                        clientBuilder.UseNamedPipe(pipeName);
+                        resolvedEndpoint = new TransportEndpoint(kind, 0, pipeName, string.Empty);
+                        break;
+                    }
                 case TransportKind.Uds:
-                {
-                    if (!Socket.OSSupportsUnixDomainSockets)
-                        throw new PlatformNotSupportedException("Unix domain sockets are not supported on this platform.");
+                    {
+                        if (!Socket.OSSupportsUnixDomainSockets)
+                            throw new PlatformNotSupportedException("Unix domain sockets are not supported on this platform.");
 
-                    var udsPath = string.IsNullOrWhiteSpace(endpoint.UdsPath)
-                        ? GetUniqueUdsPath()
-                        : endpoint.UdsPath;
-                    serverBuilder.UseUds(udsPath);
-                    clientBuilder.UseUds(udsPath);
-                    resolvedEndpoint = new TransportEndpoint(kind, 0, string.Empty, udsPath);
-                    cleanup = () => TryDeleteFile(udsPath);
-                    break;
-                }
+                        var udsPath = string.IsNullOrWhiteSpace(endpoint.UdsPath)
+                            ? GetUniqueUdsPath()
+                            : endpoint.UdsPath;
+                        serverBuilder.UseUds(udsPath);
+                        clientBuilder.UseUds(udsPath);
+                        resolvedEndpoint = new TransportEndpoint(kind, 0, string.Empty, udsPath);
+                        cleanup = () => TryDeleteFile(udsPath);
+                        break;
+                    }
             }
 
             var server = serverBuilder.Build();

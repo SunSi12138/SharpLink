@@ -71,7 +71,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
     /// <summary>Sets a fallback codec resolver scoped to servers built by this builder.</summary>
     /// <param name="codecResolver">Returns a codec for a requested type, or <see langword="null"/> when unresolved.</param>
-    public SharpLinkServerBuilder UseSerializer(Func<Type,IRpcCodec?>? codecResolver)
+    public SharpLinkServerBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
     {
         _runtimeContextBuilder.UseCodecResolver(codecResolver);
         return this;
@@ -140,7 +140,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(checkInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
-        
+
         if (timeout <= checkInterval)
             throw new ArgumentException("Heartbeat timeout must be greater than check interval.");
 

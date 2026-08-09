@@ -49,8 +49,8 @@ public class SharpLinkServerInvocationTests
         await InvokeAwaitDispatchAsync(awaitDispatch, server, unexpectedFailure, requestId: 43);
         Ensure(loggerFactory.ErrorEntries is
                [
-                   { EventId.Id: LogEvents.Rpc.DispatchFailed },
-                   { EventId.Id: LogEvents.Rpc.DispatchFailed } unexpectedEntry
+               { EventId.Id: LogEvents.Rpc.DispatchFailed },
+               { EventId.Id: LogEvents.Rpc.DispatchFailed } unexpectedEntry
                ] && ReferenceEquals(unexpectedEntry.Exception, unexpectedFailure),
             "ordinary unexpected failures must remain observable as dispatch errors");
     }
