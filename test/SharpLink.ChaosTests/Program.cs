@@ -24,6 +24,15 @@ namespace SharpLink.ChaosTests;
 public static class Program
 {
     private static readonly TimeSpan RecoveryTimeout = TimeSpan.FromSeconds(30);
+    private static readonly string[] OperationNames =
+    [
+        "Unary",
+        "ServerStreamingEarlyBreak",
+        "ClientStreaming",
+        "Cancellation",
+        "OneWay",
+        "DuplexStreaming"
+    ];
     private const int ConsecutiveRecoveryProbeCount = 5;
 
     public static async Task<int> Main(string[] args)
@@ -49,6 +58,7 @@ public static class Program
         var soakStarted = Stopwatch.GetTimestamp();
         var startedMemory = 0L;
         long success = 0;
+        var operationAttempts = new long[OperationNames.Length];
         long expectedFailures = 0;
         long unexpectedFailures = 0;
         long faultGeneration = 0;
@@ -118,6 +128,7 @@ public static class Program
                 workerId,
                 duration.Token,
                 () => Volatile.Read(ref faultGeneration),
+                operation => Interlocked.Increment(ref operationAttempts[operation]),
                 () => Interlocked.Increment(ref success),
                 () => Interlocked.Increment(ref expectedFailures),
                 RecordUnexpectedFailure);
@@ -197,12 +208,15 @@ public static class Program
                 $"Chaos failed to write its requested report {Volatile.Read(ref reportWriteFailures)} time(s).",
                 Volatile.Read(ref reportWriteFailure));
         }
-        else if (success == 0 || restartCount == 0)
+        else if (success == 0 || expectedFailures == 0 || restartCount == 0 ||
+                 Enumerable.Range(0, operationAttempts.Length)
+                     .Any(index => Volatile.Read(ref operationAttempts[index]) == 0))
         {
             exitCode = 3;
             terminalFailure = new ChaosFailure(
                 "InsufficientCoverage",
-                $"Chaos completed with success={success} and restarts={restartCount}.",
+                $"Chaos completed with success={success}, restarts={restartCount}, and operations=" +
+                string.Join(",", CreateOperationAttemptSnapshot().Select(static item => $"{item.Key}:{item.Value}")) + ".",
                 null);
         }
         else if (lastSixHoursGrowthPercent is > 5)
@@ -378,6 +392,7 @@ public static class Program
                 options.StopOnUnexpectedFailure,
                 Volatile.Read(ref restartCount),
                 Volatile.Read(ref success),
+                CreateOperationAttemptSnapshot(),
                 Volatile.Read(ref expectedFailures),
                 Volatile.Read(ref unexpectedFailures),
                 Volatile.Read(ref maxRecoveryMilliseconds),
@@ -428,6 +443,13 @@ public static class Program
                 return false;
             }
         }
+
+        IReadOnlyDictionary<string, long> CreateOperationAttemptSnapshot()
+            => Enumerable.Range(0, OperationNames.Length)
+                .ToDictionary(
+                    static index => OperationNames[index],
+                    index => Volatile.Read(ref operationAttempts[index]),
+                    StringComparer.Ordinal);
     }
 
     private static async Task RunWorkerAsync(
@@ -435,6 +457,7 @@ public static class Program
         int workerId,
         CancellationToken runToken,
         Func<long> getFaultGeneration,
+        Action<int> attempt,
         Action success,
         Action expectedFailure,
         Action<Exception> unexpectedFailure)
@@ -442,7 +465,8 @@ public static class Program
         var iteration = 0;
         while (!runToken.IsCancellationRequested)
         {
-            var operation = (workerId + iteration++) & 3;
+            var operation = (workerId + iteration++) % 6;
+            attempt(operation);
             var operationGeneration = getFaultGeneration();
             try
             {
@@ -469,7 +493,7 @@ public static class Program
                         if (sum != 120)
                             throw new InvalidDataException($"Client stream result was corrupted: {sum}/120.");
                         break;
-                    default:
+                    case 3:
                         using (var cancellation = CancellationTokenSource.CreateLinkedTokenSource(runToken))
                         {
                             // A finite server delay makes this assertion depend on whether the
@@ -481,6 +505,28 @@ public static class Program
                             await service.DelayAsync(Timeout.Infinite, cancellation.Token).ConfigureAwait(false);
                             throw new InvalidOperationException("Cancellation injection completed successfully.");
                         }
+                    case 4:
+                        await service.PublishAsync(workerId, iteration).ConfigureAwait(false);
+                        break;
+                    default:
+                        var duplexCount = 0;
+                        await foreach (var item in service.DuplexAsync(CreateValues(runToken))
+                                           .ConfigureAwait(false))
+                        {
+                            var expected = duplexCount * 2;
+                            if (item != expected)
+                            {
+                                throw new InvalidDataException(
+                                    $"Duplex stream item was corrupted: {item}/{expected}.");
+                            }
+                            duplexCount++;
+                        }
+                        if (duplexCount != 16)
+                        {
+                            throw new InvalidDataException(
+                                $"Duplex stream returned only {duplexCount}/16 items.");
+                        }
+                        break;
                 }
                 success();
             }
@@ -533,10 +579,21 @@ public static class Program
         {
             _ = await service.AddAsync(iteration, 1).ConfigureAwait(false);
             _ = await service.UploadAsync(CreateValues(cancellationToken)).ConfigureAwait(false);
+            await service.PublishAsync(iteration, 1).ConfigureAwait(false);
             await foreach (var _ in service.StreamAsync(8, cancellationToken)
                                .WithCancellation(cancellationToken).ConfigureAwait(false))
             {
             }
+            var duplexCount = 0;
+            await foreach (var item in service.DuplexAsync(CreateValues(cancellationToken))
+                               .ConfigureAwait(false))
+            {
+                if (item != duplexCount * 2)
+                    throw new InvalidDataException("Duplex warmup result was corrupted.");
+                duplexCount++;
+            }
+            if (duplexCount != 16)
+                throw new InvalidDataException("Duplex warmup returned an incomplete stream.");
         }
     }
 
@@ -1282,6 +1339,7 @@ internal sealed record ChaosReport(
     bool StopOnUnexpectedFailure,
     int RestartCount,
     long Success,
+    IReadOnlyDictionary<string, long> OperationAttempts,
     long ExpectedFailures,
     long UnexpectedFailures,
     long MaxRecoveryMilliseconds,
@@ -1336,6 +1394,13 @@ public interface IChaosService : IService
     ValueTask<int> UploadAsync(IAsyncEnumerable<int> values);
 
     IAsyncEnumerable<int> StreamAsync(int count, CancellationToken cancellationToken);
+
+    [Oneway]
+    [NonCancellable]
+    ValueTask PublishAsync(int workerId, int iteration);
+
+    [NonCancellable]
+    IAsyncEnumerable<int> DuplexAsync(IAsyncEnumerable<int> values);
 }
 
 [RpcService]
@@ -1370,5 +1435,18 @@ public sealed class ChaosService : IChaosService
             yield return index;
             await Task.Yield();
         }
+    }
+
+    public ValueTask PublishAsync(int workerId, int iteration)
+    {
+        _ = workerId;
+        _ = iteration;
+        return ValueTask.CompletedTask;
+    }
+
+    public async IAsyncEnumerable<int> DuplexAsync(IAsyncEnumerable<int> values)
+    {
+        await foreach (var value in values.ConfigureAwait(false))
+            yield return value * 2;
     }
 }
