@@ -35,6 +35,89 @@ public sealed class StaticEndpointSelectionTests
     }
 
     [Test]
+    [Arguments(1, 0)]
+    [Arguments(2, 0)]
+    [Arguments(4, 0)]
+    [Arguments(4, 1)]
+    [Arguments(4, 3)]
+    [Arguments(16, 4)]
+    [Arguments(16, 12)]
+    [Arguments(64, 16)]
+    [Arguments(64, 48)]
+    public void RandomSelectionShouldMapEveryAvailableTargetAtScale(
+        int length,
+        int excludedPrefixLength)
+    {
+        var excluded = CreatePrefixMask(excludedPrefixLength);
+        var availableCount = length - excludedPrefixLength;
+
+        for (var target = 0; target < availableCount; target++)
+        {
+            Ensure(
+                StaticEndpointSelection.SelectRandomIndex(
+                    length,
+                    excluded,
+                    availableCount,
+                    target) == excludedPrefixLength + target,
+                $"length {length}, excluded {excludedPrefixLength}, target {target}");
+        }
+    }
+
+    [Test]
+    [Arguments(0, 0)]
+    [Arguments(1, 1)]
+    [Arguments(4, 4)]
+    [Arguments(64, 64)]
+    public void SelectionShouldRejectZeroCandidates(int length, int excludedPrefixLength)
+    {
+        var excluded = CreatePrefixMask(excludedPrefixLength);
+        var cursor = -1;
+
+        Ensure(
+            StaticEndpointSelection.SelectRandomIndex(length, excluded, 0, 0) == -1,
+            "random zero candidates");
+        Ensure(
+            StaticEndpointSelection.SelectRoundRobinIndex(ref cursor, length, excluded) == -1,
+            "round-robin zero candidates");
+    }
+
+    [Test]
+    [Arguments(1, 0)]
+    [Arguments(4, 0)]
+    [Arguments(4, 1)]
+    [Arguments(4, 3)]
+    [Arguments(16, 4)]
+    [Arguments(16, 12)]
+    [Arguments(64, 16)]
+    [Arguments(64, 48)]
+    public void RoundRobinSelectionShouldNotStarveAvailableIndexesWithExclusions(
+        int length,
+        int excludedPrefixLength)
+    {
+        var excluded = CreatePrefixMask(excludedPrefixLength);
+        var availableCount = length - excludedPrefixLength;
+        var counts = new int[length];
+        var cursor = -1;
+
+        for (var iteration = 0; iteration < availableCount * 4; iteration++)
+        {
+            var selected = StaticEndpointSelection.SelectRoundRobinIndex(
+                ref cursor,
+                length,
+                excluded);
+            Ensure(selected >= excludedPrefixLength && selected < length,
+                $"round-robin selected excluded index {selected}");
+            counts[selected]++;
+        }
+
+        for (var index = 0; index < excludedPrefixLength; index++)
+            Ensure(counts[index] == 0, $"excluded index {index} was selected");
+        for (var index = excludedPrefixLength; index < length; index++)
+            Ensure(counts[index] > 0, $"available index {index} was starved");
+        Ensure(counts.Sum() == availableCount * 4, "round-robin selection count");
+    }
+
+    [Test]
     public void RoundRobinCursorShouldRemainBalancedUnderConcurrency()
     {
         var cursor = -1;
@@ -44,6 +127,11 @@ public sealed class StaticEndpointSelectionTests
         for (var index = 0; index < 4; index++)
             Ensure(selections.Count(selection => selection == index) == 100, "round-robin concurrent balance");
     }
+
+    private static ulong CreatePrefixMask(int excludedPrefixLength)
+        => excludedPrefixLength == 64
+            ? ulong.MaxValue
+            : (1UL << excludedPrefixLength) - 1;
 
     private static void Ensure(bool condition, string message)
     {
