@@ -1034,6 +1034,79 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
+    public async Task CancelledUnregisterWaitsShouldNotCancelClientOrServerBackgroundDrain()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var plugin = PluginBundle.Load("dynamic-cancelled-unregister-waits");
+        plugin.ResetServiceState();
+        RegisterAll(harness, plugin);
+        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        var blocked = InvokeValueTaskAsync<int>(
+            proxy,
+            plugin.ContractType,
+            "BlockIgnoringCancellationAsync",
+            CancellationToken.None).AsTask();
+        await plugin.GetStaticTask("BlockStarted").WaitAsync(TimeSpan.FromSeconds(2));
+
+        using var clientCancellation = new CancellationTokenSource();
+        using var serverCancellation = new CancellationTokenSource();
+        var clientWait = harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2),
+            clientCancellation.Token).AsTask();
+        var serverWait = harness.Server.UnregisterAssemblyAsync(
+            plugin.ServiceAssembly,
+            TimeSpan.FromSeconds(2),
+            serverCancellation.Token).AsTask();
+        clientCancellation.Cancel();
+        serverCancellation.Cancel();
+        await EnsureCancelledAsync(clientWait, "client unregister wait");
+        await EnsureCancelledAsync(serverWait, "server unregister wait");
+
+        plugin.ReleaseBlock();
+        Ensure(await blocked.WaitAsync(TimeSpan.FromSeconds(2)) == 43,
+            "the admitted call completes while both background drains continue");
+        await WaitUntilAsync(() => plugin.GetStaticInt("Disposed") == 1);
+
+        SharpLinkAssemblyRegistrationResult clientRegistration = default;
+        await WaitUntilAsync(() =>
+            (clientRegistration = harness.Client.RegisterAssembly(plugin.ContractAssembly)).Succeeded);
+        Ensure(clientRegistration.Succeeded,
+            "client background drain removes the cancelled waiter's old registration");
+        SharpLinkAssemblyRegistrationResult serverRegistration = default;
+        await WaitUntilAsync(() =>
+            (serverRegistration = harness.Server.RegisterAssembly(plugin.ServiceAssembly)).Succeeded);
+        Ensure(serverRegistration.Succeeded,
+            "server background drain removes the cancelled waiter's old registration");
+        object? reRegisteredProxy = GetProxy(harness.Client, plugin.ContractType);
+        Ensure(await InvokeValueTaskAsync<int>(
+                reRegisteredProxy,
+                plugin.ContractType,
+                "UnaryAsync",
+                5,
+                CancellationToken.None) == 6,
+            "re-registered client and server routes serve a new call");
+
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ServiceAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "re-registered server service release");
+        Ensure(plugin.GetStaticInt("Disposed") == 2,
+            "each server service registration is disposed exactly once");
+        Ensure((await harness.Server.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "server contract release");
+        Ensure((await harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "re-registered client contract release");
+        proxy = null;
+        reRegisteredProxy = null;
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task ConcurrentUnregisterCallersShouldShareOneDrainOperation()
     {
         await using var harness = await DynamicHarness.CreateAsync();
