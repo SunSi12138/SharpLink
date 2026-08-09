@@ -13,9 +13,9 @@ public sealed class Api3BinaryFixtureIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task PublishedApi3BinaryShouldExecuteAllCallShapesAndReleaseItsLoadContext()
+    public async Task PublishedApi3BinaryShouldBeRejectedBeforePublicationAndReleaseItsLoadContext()
     {
-        var weakContext = await ExecuteFixtureAsync();
+        var weakContext = await RejectFixtureAsync();
         for (var attempt = 0; attempt < 20 && weakContext.IsAlive; attempt++)
         {
             GC.Collect();
@@ -25,13 +25,19 @@ public sealed class Api3BinaryFixtureIntegrationTests
         }
 
         Ensure(!weakContext.IsAlive,
-            "unregistered API 3 fixture should not leave a collectible load-context root");
+            "rejected API 3 fixture should not leave a collectible load-context root");
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task<WeakReference> ExecuteFixtureAsync()
+    private static async Task<WeakReference> RejectFixtureAsync()
     {
         await using var harness = await FixtureHarness.CreateAsync();
+        var clientModulesBefore = GetSnapshotCount(harness.Client, "_dynamicModules");
+        var clientProxiesBefore = GetSnapshotCount(harness.Client, "_proxies");
+        var clientCodecsBefore = GetGeneratedCodecCount(harness.Client);
+        var serverModulesBefore = GetSnapshotCount(harness.Server, "_dynamicModules");
+        var serverServicesBefore = GetSnapshotCount(harness.Server, "_services");
+        var serverCodecsBefore = GetGeneratedCodecCount(harness.Server);
         var assemblyBytes = ReadFixtureAssembly();
         var loadContext = new FixtureLoadContext("api3-prebuilt-fixture");
         var weakContext = new WeakReference(loadContext, trackResurrection: false);
@@ -39,110 +45,39 @@ public sealed class Api3BinaryFixtureIntegrationTests
         var assembly = loadContext.LoadFromStream(assemblyStream);
 
         var loaded = SharpLinkAssemblyManifestLoader.TryLoad(assembly, out var manifest);
-        Ensure(loaded.Succeeded && manifest is not null,
-            $"published API 3 fixture manifest should load: {loaded.Error}");
-        Ensure(manifest!.ApiVersion == 3 &&
-               manifest.ProtocolVersion == SharpLinkGeneratedManifestVersions.Protocol &&
-               manifest.GeneratorVersion.StartsWith("1.1.1", StringComparison.Ordinal),
-            "fixture should carry the real 1.1.1 Generator API 3 stamp and Protocol 2");
-        Ensure(ReferenceEquals(manifest.OwnerAssembly, assembly),
-            "fixture manifest should be owned by the prebuilt assembly");
-
-        var contract = manifest.Contracts.Single(descriptor =>
-            string.Equals(
-                descriptor.ContractType.FullName,
-                "SharpLink.Api3Fixture.IApi3FixtureService",
-                StringComparison.Ordinal));
-        var kinds = contract.Methods.Select(static method => method.Kind).ToHashSet();
-        Ensure(kinds.SetEquals([
-                RpcMethodKind.Unary,
-                RpcMethodKind.OneWay,
-                RpcMethodKind.ClientStreaming,
-                RpcMethodKind.ServerStreaming,
-                RpcMethodKind.DuplexStreaming]),
-            "fixture manifest should contain all five generated call shapes");
-        Ensure(manifest.Codecs.Any(factory =>
-                string.Equals(
-                    factory.TargetType.FullName,
-                    "SharpLink.Api3Fixture.Api3Payload",
-                    StringComparison.Ordinal)),
-            "fixture manifest should contain the generated DTO Codec");
+        Ensure(!loaded.Succeeded && manifest is null,
+            "the 2.0 Runtime must reject the published API 3 fixture");
+        Ensure(loaded.Error is
+        {
+            Code: SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest
+        },
+            $"API 3 should fail with an incompatible-manifest error: {loaded.Error}");
+        Ensure(loaded.Error!.Message.Contains(
+                   $"API 3/{SharpLinkGeneratedManifestVersions.Api}",
+                   StringComparison.Ordinal) &&
+               loaded.Error.Message.Contains("Protocol 2/2", StringComparison.Ordinal) &&
+               loaded.Error.Message.Contains("Generator", StringComparison.Ordinal) &&
+               loaded.Error.IncomingAssembly == assembly.FullName,
+            "rejection should identify incoming/required API and Protocol, Generator, and owner");
 
         var serverRegistration = harness.Server.RegisterAssembly(assembly);
         var clientRegistration = harness.Client.RegisterAssembly(assembly);
-        Ensure(serverRegistration.Succeeded && clientRegistration.Succeeded,
-            $"current API 3 Runtime should register the published fixture: " +
+        Ensure(!serverRegistration.Succeeded && !clientRegistration.Succeeded &&
+               serverRegistration.Error?.Code ==
+                   SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest &&
+               clientRegistration.Error?.Code ==
+                   SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+            $"client and server must reject API 3 atomically: " +
             $"server={serverRegistration.Error}, client={clientRegistration.Error}");
+        Ensure(GetSnapshotCount(harness.Client, "_dynamicModules") == clientModulesBefore &&
+               GetSnapshotCount(harness.Client, "_proxies") == clientProxiesBefore &&
+               GetGeneratedCodecCount(harness.Client) == clientCodecsBefore,
+            "client rejection must publish no module, proxy, or Codec");
+        Ensure(GetSnapshotCount(harness.Server, "_dynamicModules") == serverModulesBefore &&
+               GetSnapshotCount(harness.Server, "_services") == serverServicesBefore &&
+               GetGeneratedCodecCount(harness.Server) == serverCodecsBefore,
+            "server rejection must publish no module, service, or Codec");
 
-        var contractType = contract.ContractType;
-        var serviceType = assembly.GetType(
-            "SharpLink.Api3Fixture.Api3FixtureService",
-            throwOnError: true)!;
-        var payloadType = assembly.GetType(
-            "SharpLink.Api3Fixture.Api3Payload",
-            throwOnError: true)!;
-        var proxy = GetProxy(harness.Client, contractType);
-
-        var payload = Activator.CreateInstance(payloadType)!;
-        payloadType.GetProperty("Value")!.SetValue(payload, 41);
-        payloadType.GetProperty("Label")!.SetValue(payload, "fixture");
-        var unaryResult = await InvokeResultAsync(
-            proxy,
-            contractType.GetMethod("UnaryAsync")!,
-            payload);
-        Ensure((int)payloadType.GetProperty("Value")!.GetValue(unaryResult)! == 42 &&
-               string.Equals(
-                   (string?)payloadType.GetProperty("Label")!.GetValue(unaryResult),
-                   "fixture-api3",
-                   StringComparison.Ordinal),
-            "API 3 unary call should round-trip through the generated DTO Codec");
-
-        await (ValueTask)(contractType.GetMethod("NotifyAsync")!.Invoke(proxy, [7]) ??
-            throw new InvalidOperationException("NotifyAsync returned null."));
-        var notificationObserved = (Task)(serviceType.GetProperty("NotificationObserved")!.GetValue(null) ??
-            throw new InvalidOperationException("NotificationObserved returned null."));
-        await notificationObserved.WaitAsync(TimeSpan.FromSeconds(2));
-        Ensure((int)serviceType.GetProperty("Notifications")!.GetValue(null)! == 7,
-            "API 3 OneWay call should reach the service exactly once");
-
-        var upload = (ValueTask<int>)(contractType.GetMethod("ClientStreamAsync")!.Invoke(
-            proxy,
-            [Values(1, 2, 3), CancellationToken.None]) ??
-            throw new InvalidOperationException("ClientStreamAsync returned null."));
-        Ensure(await upload == 6, "API 3 ClientStreaming should aggregate every item");
-
-        var download = (IAsyncEnumerable<int>)(contractType.GetMethod("ServerStreamAsync")!.Invoke(
-            proxy,
-            [3, CancellationToken.None]) ??
-            throw new InvalidOperationException("ServerStreamAsync returned null."));
-        Ensure((await CollectAsync(download)).SequenceEqual([0, 1, 2]),
-            "API 3 ServerStreaming should deliver the complete sequence");
-
-        var duplex = (IAsyncEnumerable<int>)(contractType.GetMethod("DuplexAsync")!.Invoke(
-            proxy,
-            [Values(2, 4, 6), CancellationToken.None]) ??
-            throw new InvalidOperationException("DuplexAsync returned null."));
-        Ensure((await CollectAsync(duplex)).SequenceEqual([4, 8, 12]),
-            "API 3 DuplexStreaming should transform every item");
-
-        var clientDrain = await harness.Client.UnregisterAssemblyAsync(
-            assembly,
-            TimeSpan.FromSeconds(2));
-        var serverDrain = await harness.Server.UnregisterAssemblyAsync(
-            assembly,
-            TimeSpan.FromSeconds(2));
-        Ensure(clientDrain.ReferencesReleased && serverDrain.ReferencesReleased &&
-               clientDrain.RemainingCalls == 0 && clientDrain.RemainingStreams == 0 &&
-               serverDrain.RemainingCalls == 0 && serverDrain.RemainingStreams == 0,
-            "fixture unregister should release all client/server calls, streams, and references");
-
-        proxy = null!;
-        payload = null!;
-        unaryResult = null;
-        contractType = null!;
-        serviceType = null!;
-        payloadType = null!;
-        contract = null!;
         manifest = null;
         assembly = null!;
         loadContext.Unload();
@@ -179,41 +114,30 @@ public sealed class Api3BinaryFixtureIntegrationTests
                throw new DirectoryNotFoundException("SharpLink workspace root was not found.");
     }
 
-    private static object GetProxy(ISharpLinkClient client, Type contractType)
-        => typeof(ISharpLinkClient).GetMethod(nameof(ISharpLinkClient.Get))!
-               .MakeGenericMethod(contractType)
-               .Invoke(client, null) ??
-           throw new InvalidOperationException("API 3 proxy factory returned null.");
-
-    private static async Task<object?> InvokeResultAsync(
-        object target,
-        MethodInfo method,
-        params object?[] arguments)
+    private static int GetSnapshotCount(object owner, string fieldName)
     {
-        var valueTask = method.Invoke(target, arguments) ??
-                        throw new InvalidOperationException($"{method.Name} returned null.");
-        var task = (Task)(valueTask.GetType().GetMethod(nameof(ValueTask<int>.AsTask))!.Invoke(
-            valueTask,
-            null) ?? throw new InvalidOperationException($"{method.Name}.AsTask returned null."));
-        await task.WaitAsync(TimeSpan.FromSeconds(2));
-        return task.GetType().GetProperty("Result")!.GetValue(task);
+        var field = owner.GetType().GetField(
+            fieldName,
+            BindingFlags.Instance | BindingFlags.NonPublic) ??
+            throw new MissingFieldException(owner.GetType().FullName, fieldName);
+        var snapshot = field.GetValue(owner) ??
+            throw new InvalidOperationException($"{fieldName} was null.");
+        return (int)(snapshot.GetType().GetProperty("Count")?.GetValue(snapshot) ??
+            throw new MissingMemberException(snapshot.GetType().FullName, "Count"));
     }
 
-    private static async Task<int[]> CollectAsync(IAsyncEnumerable<int> stream)
+    private static int GetGeneratedCodecCount(object owner)
     {
-        var values = new List<int>();
-        await foreach (var value in stream)
-            values.Add(value);
-        return [.. values];
-    }
-
-    private static async IAsyncEnumerable<int> Values(params int[] values)
-    {
-        for (var index = 0; index < values.Length; index++)
-        {
-            yield return values[index];
-            await Task.Yield();
-        }
+        var runtimeContext = owner.GetType().GetField(
+                "_runtimeContext",
+                BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(owner) ??
+            throw new MissingFieldException(owner.GetType().FullName, "_runtimeContext");
+        var snapshot = runtimeContext.GetType().GetMethod(
+                "CreateGeneratedCodecSnapshot",
+                BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(runtimeContext, null) ??
+            throw new MissingMethodException(runtimeContext.GetType().FullName, "CreateGeneratedCodecSnapshot");
+        return (int)(snapshot.GetType().GetProperty("Count")?.GetValue(snapshot) ??
+            throw new MissingMemberException(snapshot.GetType().FullName, "Count"));
     }
 
     private static void Ensure(bool condition, string message)

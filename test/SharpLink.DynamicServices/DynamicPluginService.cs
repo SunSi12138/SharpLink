@@ -97,6 +97,15 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         }
     }
 
+    public async IAsyncEnumerable<int> ThrowingServerStreamAsync(
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        yield return 1;
+        await Task.Yield();
+        throw new InvalidOperationException("Dynamic service stream failure.");
+    }
+
     public async IAsyncEnumerable<int> DuplexAsync(
         IAsyncEnumerable<int> values,
         [EnumeratorCancellation] CancellationToken cancellationToken)

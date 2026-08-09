@@ -294,12 +294,27 @@ public static class RpcSessionExtensions
 
         /// <summary>Serializes and sends one flow-controlled stream item.</summary>
         /// <typeparam name="T">The stream item type.</typeparam>
-        public async ValueTask SendStreamChunkAsync<T>(
+        public ValueTask SendStreamChunkAsync<T>(
             long requestId,
             ushort streamId,
             T item,
             CancellationToken cancellationToken = default)
+            => SendStreamChunkAsync(
+                session,
+                requestId,
+                streamId,
+                item,
+                session.RuntimeContext.Codecs.GetCodec<T>(),
+                cancellationToken);
+
+        internal async ValueTask SendStreamChunkAsync<T>(
+            long requestId,
+            ushort streamId,
+            T item,
+            IRpcCodec<T> codec,
+            CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(codec);
             var writer = GetRuntimeSession(session).RentFrameWriter();
             var ownsWriter = true;
             try
@@ -312,7 +327,7 @@ public static class RpcSessionExtensions
                     var idSpan = writer.GetSpan(sizeof(ushort));
                     BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
                     writer.Advance(sizeof(ushort));
-                    session.RuntimeContext.Codecs.GetCodec<T>().Serialize(item, writer);
+                    codec.Serialize(item, writer);
                 }
                 var encodedBytes = Math.Max(
                     1,

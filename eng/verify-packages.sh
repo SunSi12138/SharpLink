@@ -56,7 +56,12 @@ done
 unzip -Z1 "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" |
   grep -Fx "analyzers/dotnet/cs/SharpLink.Generator.dll" >/dev/null
 unzip -p "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" SharpLink.Sdk.nuspec |
-  grep -F "<dependency id=\"SharpLink.Runtime\" version=\"$EXPECTED_VERSION\"" >/dev/null
+  grep -F "<dependency id=\"SharpLink.Abstractions\" version=\"$EXPECTED_VERSION\"" >/dev/null
+if unzip -p "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" SharpLink.Sdk.nuspec |
+   grep -F '<dependency id="SharpLink.Runtime"' >/dev/null; then
+  echo "SharpLink.Sdk must not depend on SharpLink.Runtime." >&2
+  exit 1
+fi
 
 if unzip -p "$ARTIFACT_DIR/SharpLink.Abstractions.$EXPECTED_VERSION.nupkg" SharpLink.Abstractions.nuspec |
    grep -F '<dependency id="SharpLink.Sdk"' >/dev/null; then

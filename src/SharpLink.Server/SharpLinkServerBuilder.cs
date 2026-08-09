@@ -258,7 +258,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         if (_authenticationRequired && _authenticator is null)
             throw new InvalidOperationException("RequireAuthentication needs an ISharpLinkServerAuthenticator.");
 
-        var runtimeContext = _runtimeContextBuilder.Build();
+        var manifests = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
+        var runtimeContext = _runtimeContextBuilder.Build(manifests);
         IAsyncDisposable? ownedServiceProvider = null;
         SharpLinkAdmissionController? admissionController = null;
         List<ServiceRegistration>? registrations = null;
@@ -277,14 +278,13 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                 ownedServiceProvider = internalProvider;
             }
 
-            var manifests = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
             if (_admissionControlOptions is not null)
             {
                 admissionController = SharpLinkAdmissionController.Create(
                     _admissionControlOptions,
                     manifests);
             }
-            var definitions = BuildServiceDefinitions(manifests, serviceProvider);
+            var definitions = BuildServiceDefinitions(manifests, serviceProvider, runtimeContext.Codecs);
             registrations = new List<ServiceRegistration>(definitions.Count);
             var registrationsByContract = new Dictionary<long, ServiceRegistration>(definitions.Count);
             foreach (var pair in definitions)
@@ -400,7 +400,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
     private Dictionary<long, ServiceRegistrationDefinition> BuildServiceDefinitions(
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
-        IServiceProvider serviceProvider)
+        IServiceProvider serviceProvider,
+        IRpcCodecProvider codecs)
     {
         var contracts = new Dictionary<long, (SharpLinkGeneratedContractDescriptor Descriptor, ISharpLinkGeneratedAssemblyManifest Manifest)>();
         var services = new Dictionary<long, (SharpLinkGeneratedServiceDescriptor Descriptor, ISharpLinkGeneratedAssemblyManifest Manifest)>();
@@ -450,7 +451,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             ValidateDependencies(service, serviceProvider);
             definitions.Add(service.ContractId, new ServiceRegistrationDefinition(
                 service.ContractType,
-                contract.Descriptor.StubFactory(),
+                contract.Descriptor.StubFactory(codecs),
                 service.Lifetime,
                 service.Activator,
                 instance: null,
@@ -469,7 +470,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             var value = replacement.Value;
             definitions[contract.Descriptor.ContractId] = new ServiceRegistrationDefinition(
                 replacement.Key,
-                contract.Descriptor.StubFactory(),
+                contract.Descriptor.StubFactory(codecs),
                 value.Lifetime,
                 value.Factory,
                 value.Instance,

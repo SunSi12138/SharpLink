@@ -367,9 +367,9 @@ internal sealed partial class SharpLinkServer
         {
             return output is null
                 ? stub.InvokeNoReturnCancellableAsync(
-                    service, session, methodId, requestId, arguments, cancellationToken)
+                    service, (IRpcGeneratedServerBridge)session, methodId, requestId, arguments, cancellationToken)
                 : stub.InvokeCancellableAsync(
-                    service, session, methodId, requestId, arguments, output, cancellationToken);
+                    service, (IRpcGeneratedServerBridge)session, methodId, requestId, arguments, output, cancellationToken);
         }
 
         return InvokeInterceptedWithOwnedArgumentsAsync(
@@ -782,13 +782,13 @@ internal sealed partial class SharpLinkServer
                 if (_output is null)
                 {
                     await _stub.InvokeNoReturnCancellableAsync(
-                        _service, _session, _methodId, _requestId, _arguments, _cancellationToken)
+                        _service, (IRpcGeneratedServerBridge)_session, _methodId, _requestId, _arguments, _cancellationToken)
                         .ConfigureAwait(false);
                 }
                 else
                 {
                     await _stub.InvokeCancellableAsync(
-                        _service, _session, _methodId, _requestId, _arguments, _output, _cancellationToken)
+                        _service, (IRpcGeneratedServerBridge)_session, _methodId, _requestId, _arguments, _output, _cancellationToken)
                         .ConfigureAwait(false);
                 }
                 context.Status = SharpLinkInvocationStatus.Succeeded;

@@ -12,6 +12,78 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
     [Test]
+    public Task GeneratedApi4ShouldUseLiteralManifestStampAndAbstractionsOnlyServerBridge()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class Payload
+{
+    public string Value { get; set; } = string.Empty;
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IAbi4Service : SharpLink.Sdk.IService
+{
+    ValueTask<Payload> Unary(Payload value);
+
+    [SharpLink.Sdk.Oneway]
+    ValueTask Notify(int value);
+
+    ValueTask<int> Upload(IAsyncEnumerable<Payload> values, CancellationToken cancellationToken);
+
+    IAsyncEnumerable<Payload> Download(int count, CancellationToken cancellationToken);
+
+    IAsyncEnumerable<Payload> Duplex(
+        IAsyncEnumerable<Payload> values,
+        CancellationToken cancellationToken);
+}
+""");
+
+        var generated = RunGeneratorAndGetSources(source);
+        var stub = generated.Single(text => text.Contains(
+            "public sealed class IAbi4Service_Stub",
+            StringComparison.Ordinal));
+        var proxy = generated.Single(text => text.Contains(
+            "public sealed class IAbi4Service_Proxy",
+            StringComparison.Ordinal));
+        var manifest = generated.Single(text =>
+            text.Contains("__SharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
+        var allGenerated = string.Join("\n", generated);
+
+        Ensure(manifest.Contains("public int ApiVersion => 4;", StringComparison.Ordinal) &&
+               manifest.Contains("public int ProtocolVersion => 2;", StringComparison.Ordinal),
+            "the Generator must own literal API 4 / Protocol 2 stamps");
+        Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
+               manifest.Contains(", 4, 2,", StringComparison.Ordinal),
+            "the manifest locator must describe compatibility before materialization");
+        Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
+            "producer stamps must not read consumer-owned Runtime constants");
+        Ensure(stub.Contains("IRpcGeneratedServerBridge bridge", StringComparison.Ordinal),
+            "API 4 stubs must depend on the whole-stream server bridge");
+        Ensure(stub.Contains("IBufferWriter<byte> output", StringComparison.Ordinal),
+            "response payload output must be narrowed to IBufferWriter<byte>");
+        Ensure(stub.Contains("IAbi4Service_Stub(IRpcCodecProvider codecs)", StringComparison.Ordinal),
+            "server codecs must be resolved when the Stub is constructed");
+        Ensure(stub.Contains("bridge.CreateInboundStream", StringComparison.Ordinal) &&
+               stub.Contains("bridge.PumpOutboundStreamAsync", StringComparison.Ordinal),
+            "inbound and outbound stream lifecycles must be delegated to Runtime");
+        foreach (var forbidden in new[]
+                 {
+                     "SharpLink.Runtime", "IRpcSession", "RuntimeContext",
+                     "PooledAsyncStreamDispatcher", "RpcSessionExtensions"
+                 })
+        {
+            Ensure(!stub.Contains(forbidden, StringComparison.Ordinal),
+                $"API 4 Stub leaked forbidden Runtime ABI token '{forbidden}'");
+        }
+        Ensure(!proxy.Contains("using SharpLink.Runtime;", StringComparison.Ordinal),
+            "API 4 Proxy must not acquire a Runtime AssemblyRef through an unused import");
+        Ensure(!allGenerated.Contains("SharpLink.Runtime", StringComparison.Ordinal),
+            "no generated API 4 source may reference SharpLink.Runtime");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task SemanticFixedRequestValuesShouldUseValidatedBuiltInCodecs()
     {
         var source = BuildSource("""
@@ -419,9 +491,13 @@ public interface ITaskPayloadContract : SharpLink.Sdk.IService
         Ensure(proxyStart >= 0 && proxyEnd > proxyStart &&
                generated.AsSpan(proxyStart, proxyEnd - proxyStart).Contains(".AsTask();", StringComparison.Ordinal),
             "Task<T> Proxy emission must convert the channel ValueTask using outer Task semantics");
-        Ensure(generated.Contains("__SerializeResponse(pending.GetAwaiter().GetResult(), false, session, output)", StringComparison.Ordinal),
+        Ensure(generated.Contains(
+                "__SerializeResponse(pending.GetAwaiter().GetResult(), false, __responseCodec_",
+                StringComparison.Ordinal),
             "Task<T> Stub emission must use Task result semantics even when T contains 'ValueTask'");
-        Ensure(generated.Contains("return __AwaitTaskResultAsync(pending, false, session, output);", StringComparison.Ordinal),
+        Ensure(generated.Contains(
+                "return __AwaitTaskResultAsync(pending, false, __responseCodec_",
+                StringComparison.Ordinal),
             "Task<T> Stub emission must await the outer Task type");
         Ensure(!generated.Contains("Serialize(pending.Result, output)", StringComparison.Ordinal),
             "Task<T> must not use the ValueTask-only Result path");
@@ -772,10 +848,8 @@ internal sealed class InternalService : IInternalService
         var zetaCall = first.IndexOf("global::SharpLink.Generated.ZetaManifest.Register();", StringComparison.Ordinal);
         Ensure(alphaCall >= 0 && zetaCall > alphaCall,
             "bootstrap calls must use public fully qualified entry points in assembly-identity order");
-        Ensure(first.Contains(
-                "SharpLinkGeneratedAssemblyCatalog.Register(global::SharpLink.Generated.LegacyManifest.Instance);",
-                StringComparison.Ordinal),
-            "referenced manifests generated before the public Register entry point must use the Instance fallback");
+        Ensure(!first.Contains("LegacyManifest", StringComparison.Ordinal),
+            "legacy API 3 locators must not be bootstrapped into an API 4 process");
         Ensure(first.Contains("ModuleInitializer", StringComparison.Ordinal),
             "the consumer bootstrap must execute before application entry and server Build");
         Ensure(!first.Contains("OrdinaryDependency", StringComparison.Ordinal) &&
@@ -3052,6 +3126,11 @@ namespace SharpLink.Abstractions
     public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
     {
         public SharpLinkGeneratedAssemblyManifestAttribute(Type manifestType) { }
+        public SharpLinkGeneratedAssemblyManifestAttribute(
+            Type manifestType,
+            int apiVersion,
+            int protocolVersion,
+            string generatorVersion) { }
     }
 
     public static class SharpLinkGeneratedAssemblyCatalog
@@ -3071,7 +3150,7 @@ namespace SharpLink.Abstractions
             $$"""
 using SharpLink.Abstractions;
 
-[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}))]
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 4, 2, "2.0.0-test")]
 
 namespace SharpLink.Generated
 {
@@ -3113,7 +3192,7 @@ namespace SharpLink.Generated
             """
 using SharpLink.Abstractions;
 
-[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.MalformedManifest))]
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.MalformedManifest), 4, 2, "2.0.0-test")]
 
 namespace SharpLink.Generated
 {

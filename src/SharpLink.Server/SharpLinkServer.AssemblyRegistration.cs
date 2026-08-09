@@ -374,6 +374,34 @@ internal sealed partial class SharpLinkServer
         foreach (var contract in incoming.Contracts)
             allContracts.Add(contract.ContractId, (contract, incoming));
 
+        var factories = currentCodecs ?? _runtimeContext.CreateGeneratedCodecSnapshot();
+        var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
+        foreach (var pair in module.CodecRegistration.Codecs)
+        {
+            var codec = pair.Value;
+            if (nextFactories.TryGetValue(pair.Key, out var existingCodec))
+            {
+                if (!string.Equals(existingCodec.Factory.SchemaId, codec.Factory.SchemaId, StringComparison.Ordinal) ||
+                    !string.Equals(existingCodec.Factory.WireFormatId, codec.Factory.WireFormatId, StringComparison.Ordinal))
+                {
+                    error = CreateError(
+                        SharpLinkAssemblyRegistrationErrorCode.CodecConflict,
+                        $"Codec conflict for '{pair.Key.FullName}': existing schema/wire '{existingCodec.Factory.SchemaId}'/'{existingCodec.Factory.WireFormatId}', incoming schema/wire '{codec.Factory.SchemaId}'/'{codec.Factory.WireFormatId}'.",
+                        incoming.OwnerAssembly,
+                        artifact: "Codec",
+                        existingFingerprint: existingCodec.Factory.SchemaId,
+                        incomingFingerprint: codec.Factory.SchemaId);
+                    return default;
+                }
+                continue;
+            }
+            nextFactories.Add(pair.Key, codec);
+        }
+
+        var candidateCodecs = new RpcRegistrationCodecProvider(
+            _runtimeContext.Codecs,
+            module.CodecRegistration.Codecs);
+
         var nextServices = currentServices.ToDictionary(static pair => pair.Key, static pair => pair.Value);
         var createdServices = new List<ServiceRegistration>();
         try
@@ -417,7 +445,7 @@ internal sealed partial class SharpLinkServer
                 }
                 var definition = new ServiceRegistrationDefinition(
                     service.ContractType,
-                    contract.Contract.StubFactory(),
+                    contract.Contract.StubFactory(candidateCodecs),
                     service.Lifetime,
                     service.Activator,
                     instance: null,
@@ -427,30 +455,6 @@ internal sealed partial class SharpLinkServer
                 nextServices.Add(service.ContractId, registration);
             }
 
-            var factories = currentCodecs ?? _runtimeContext.CreateGeneratedCodecSnapshot();
-            var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-            foreach (var pair in module.CodecRegistration.Codecs)
-            {
-                var codec = pair.Value;
-                if (nextFactories.TryGetValue(pair.Key, out var existingCodec))
-                {
-                    if (!string.Equals(existingCodec.Factory.SchemaId, codec.Factory.SchemaId, StringComparison.Ordinal) ||
-                        !string.Equals(existingCodec.Factory.WireFormatId, codec.Factory.WireFormatId, StringComparison.Ordinal))
-                    {
-                        error = CreateError(
-                            SharpLinkAssemblyRegistrationErrorCode.CodecConflict,
-                            $"Codec conflict for '{pair.Key.FullName}': existing schema/wire '{existingCodec.Factory.SchemaId}'/'{existingCodec.Factory.WireFormatId}', incoming schema/wire '{codec.Factory.SchemaId}'/'{codec.Factory.WireFormatId}'.",
-                            incoming.OwnerAssembly,
-                            artifact: "Codec",
-                            existingFingerprint: existingCodec.Factory.SchemaId,
-                            incomingFingerprint: codec.Factory.SchemaId);
-                        DisposeCreatedServices(createdServices);
-                        return default;
-                    }
-                    continue;
-                }
-                nextFactories.Add(pair.Key, codec);
-            }
             return new RegistrationCandidate(nextServices.ToFrozenDictionary(), nextFactories);
         }
         catch
