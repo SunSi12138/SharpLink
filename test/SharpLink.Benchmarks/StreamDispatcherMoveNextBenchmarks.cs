@@ -389,14 +389,14 @@ public class StreamDispatcherMoveNextBenchmarks
                     case ProducerMode.Stop:
                         return;
                     case ProducerMode.Dispatcher:
-                    {
-                        var dispatcher = Volatile.Read(ref _dispatcher)
-                            ?? throw new InvalidOperationException("Producer was asked to dispatch without a dispatcher.");
-                        var itemCount = Volatile.Read(ref _requestedItemCount);
-                        for (var index = 0; index < itemCount; index++)
-                            dispatcher.DispatchAsync(SPayload, encodedByteCount: 1).GetAwaiter().GetResult();
-                        break;
-                    }
+                        {
+                            var dispatcher = Volatile.Read(ref _dispatcher)
+                                ?? throw new InvalidOperationException("Producer was asked to dispatch without a dispatcher.");
+                            var itemCount = Volatile.Read(ref _requestedItemCount);
+                            for (var index = 0; index < itemCount; index++)
+                                dispatcher.DispatchAsync(SPayload, encodedByteCount: 1).GetAwaiter().GetResult();
+                            break;
+                        }
                     case ProducerMode.Control:
                         _controlSignal.Signal();
                         break;
