@@ -69,6 +69,12 @@ if unzip -p "$ARTIFACT_DIR/SharpLink.Abstractions.$EXPECTED_VERSION.nupkg" Sharp
   exit 1
 fi
 
+if unzip -p "$ARTIFACT_DIR/SharpLink.Abstractions.$EXPECTED_VERSION.nupkg" SharpLink.Abstractions.nuspec |
+   grep -F '<dependency id="Microsoft.Extensions.DependencyInjection.Abstractions"' >/dev/null; then
+  echo "SharpLink.Abstractions must not depend on Microsoft.Extensions.DependencyInjection.Abstractions." >&2
+  exit 1
+fi
+
 if ! unzip -p "$ARTIFACT_DIR/SharpLink.Hosting.$EXPECTED_VERSION.nupkg" SharpLink.Hosting.nuspec |
    grep -F "<dependency id=\"SharpLink.Runtime\" version=\"$EXPECTED_VERSION\"" >/dev/null; then
   echo "SharpLink.Hosting must directly depend on SharpLink.Runtime $EXPECTED_VERSION." >&2
