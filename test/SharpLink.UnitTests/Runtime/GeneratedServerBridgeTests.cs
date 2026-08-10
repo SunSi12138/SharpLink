@@ -14,12 +14,10 @@ public class GeneratedServerBridgeTests
         PooledAsyncStreamDispatcher<BridgeItem>.ClearPoolForTests();
         var input = new Pipe();
         var output = new Pipe();
-        await using var session = new RpcSession(
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "bridge-register-rollback",
             input.Reader,
             output.Writer,
-            static () => { },
-            static () => true,
             RpcSessionTestFixture.ServerOptions());
         var existing = new TrackingDispatcher();
         session.StreamManager.Register(41, 1, existing);
@@ -107,12 +105,10 @@ public class GeneratedServerBridgeTests
     {
         var input = new Pipe();
         var output = new Pipe();
-        await using var session = new RpcSession(
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "bridge-outbound-backpressure",
             input.Reader,
             output.Writer,
-            static () => { },
-            static () => true,
             RpcSessionTestFixture.ServerOptions());
         session.NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl;
         session.EnableStreamFlowControl(streamWindowBytes: 4, connectionWindowBytes: 4);
@@ -151,12 +147,10 @@ public class GeneratedServerBridgeTests
     {
         var input = new Pipe();
         var output = new Pipe();
-        await using var session = new RpcSession(
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "bridge-outbound-pump",
             input.Reader,
             output.Writer,
-            static () => { },
-            static () => true,
             RpcSessionTestFixture.ServerOptions());
 
         await ((IRpcGeneratedServerBridge)session).PumpOutboundStreamAsync(

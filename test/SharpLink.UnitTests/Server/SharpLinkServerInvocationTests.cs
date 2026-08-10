@@ -65,12 +65,10 @@ public class SharpLinkServerInvocationTests
             .Build();
         var input = new System.IO.Pipelines.Pipe();
         var output = new System.IO.Pipelines.Pipe();
-        await using var session = new RpcSession(
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "admission-drain-race",
             input.Reader,
             output.Writer,
-            static () => { },
-            static () => true,
             RpcSessionTestFixture.ServerOptions());
         var connection = CreateConnection(session);
         Ensure(connection.MarkReady(null), "connection ready");
@@ -163,14 +161,14 @@ public class SharpLinkServerInvocationTests
         var secondOutput = new Pipe();
         var thirdInput = new Pipe();
         var thirdOutput = new Pipe();
-        await using var firstSession = new RpcSession(
-            "capacity-first", firstInput.Reader, firstOutput.Writer, static () => { }, static () => true,
+        await using var firstSession = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "capacity-first", firstInput.Reader, firstOutput.Writer,
             RpcSessionTestFixture.ServerOptions());
-        await using var secondSession = new RpcSession(
-            "capacity-second", secondInput.Reader, secondOutput.Writer, static () => { }, static () => true,
+        await using var secondSession = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "capacity-second", secondInput.Reader, secondOutput.Writer,
             RpcSessionTestFixture.ServerOptions());
-        await using var thirdSession = new RpcSession(
-            "capacity-third", thirdInput.Reader, thirdOutput.Writer, static () => { }, static () => true,
+        await using var thirdSession = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "capacity-third", thirdInput.Reader, thirdOutput.Writer,
             RpcSessionTestFixture.ServerOptions());
         var firstConnection = CreateConnection(firstSession);
         var secondConnection = CreateConnection(secondSession);
@@ -970,12 +968,10 @@ public class SharpLinkServerInvocationTests
                     "_runtimeContext",
                     BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(Server)!);
-            Session = new RpcSession(
+            Session = RpcSessionTestFixture.CreateSessionOverTestTransport(
                 "response-capacity",
                 _input.Reader,
                 output,
-                static () => { },
-                static () => true,
                 RpcSessionTestFixture.ServerOptions(runtimeContext));
             Connection = new ServerConnectionState(
                 Session,

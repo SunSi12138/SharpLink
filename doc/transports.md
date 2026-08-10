@@ -33,7 +33,66 @@ SharedMemory 是显式选择的同用户、同机器传输，数据走两个有�
 
 ## 自定义 transport
 
-实现 `IClientTransportFactory`、`IServerTransportListener` 和 `ITransportConnection`。每次 Connect/Accept 返回独立拥有的连接；Dispose 必须停止 I/O、完成 pipelines 并可重复调用。不要让多个 Client/Server 隐式共享一个可释放 factory/listener。
+稳定扩展面是 `IClientTransportFactory`、`IServerTransportListener` 和
+`ITransportConnection`，不是直接构造 `RpcSession`。每次 Connect/Accept 返回一个独立拥有
+的连接，并把所有权转移给 Client/Server；成功返回后，factory/listener 不得再释放该连接。
+连接失败发生在返回前时，创建者负责逆序清理已物化的资源。
+
+下面是最小的 stream-backed 连接形状。真实实现还应按项目策略保留并聚合多个 cleanup
+异常，但无论某一步是否失败，都必须继续释放其余资源。
+
+```csharp
+sealed class CustomTransportConnection : ITransportConnection
+{
+    private readonly Stream _stream;
+    private readonly Lock _disposeGate = new();
+    private Task? _disposeTask;
+
+    public CustomTransportConnection(string id, Stream stream)
+    {
+        Id = id;
+        _stream = stream;
+        Input = PipeReader.Create(stream, new StreamPipeReaderOptions(leaveOpen: true));
+        Output = PipeWriter.Create(stream, new StreamPipeWriterOptions(leaveOpen: true));
+    }
+
+    public string Id { get; }
+    public PipeReader Input { get; }
+    public PipeWriter Output { get; }
+    public EndPoint? LocalEndPoint => null;
+    public EndPoint? RemoteEndPoint => null;
+
+    public ValueTask DisposeAsync()
+    {
+        lock (_disposeGate)
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        try
+        {
+            await Output.CompleteAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            try
+            {
+                await Input.CompleteAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                await _stream.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+}
+```
+
+Session 是 transport 的唯一直接 owner：`Fault`、shutdown 和 `DisposeAsync` 可以竞争，但
+transport 的 `DisposeAsync` 只会启动一次，所有显式 Session disposal 等待者观察同一个
+结果。EOF 或物理错误应由 transport 完成/fault Input/Output 暴露；不要再维护第二个
+`isConnected` 回调。不要让多个 Client/Server 隐式共享一个可释放 factory/listener。
 
 ## 可运行矩阵
 

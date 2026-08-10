@@ -183,12 +183,10 @@ public class CompressionFrameTests
             .Build();
         var input = new Pipe();
         var output = new Pipe();
-        var session = new RpcSession(
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "compression-frame-test",
             input.Reader,
             output.Writer,
-            static () => { },
-            static () => true,
             RpcSessionTestFixture.ClientOptions(context));
         if (enableCompression)
         {

@@ -69,12 +69,10 @@ public class SharpLinkClientLifecycleStateTests
             runtimeContext: context);
         var input = new Pipe();
         var output = new BlockingFlushPipeWriter();
-        var session = new RpcSession(
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "heartbeat-backpressure",
             input.Reader,
             output,
-            static () => { },
-            static () => true,
             RpcSessionTestFixture.ClientOptions(context));
         using var connectionCancellation = new CancellationTokenSource();
         await using var connection = new ClientConnection(
@@ -137,12 +135,10 @@ public class SharpLinkClientLifecycleStateTests
             .Build();
         var input = new Pipe();
         var output = new Pipe();
-        await using var session = new RpcSession(
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "control-frame-fast-path",
             input.Reader,
             output.Writer,
-            static () => { },
-            static () => true,
             RpcSessionTestFixture.ClientOptions(context));
         const long pongTimestamp = 0x0102_0304_0506_0708;
 

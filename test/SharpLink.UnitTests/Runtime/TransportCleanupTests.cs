@@ -60,7 +60,7 @@ public class TransportCleanupTests
     }
 
     [Test]
-    public async Task SessionShouldDisposeTransportAfterPipelineCompletionFailure()
+    public async Task SessionShouldObserveTransportOwnedPipelineCompletionFailure()
     {
         var transport = new PipelineFailingTransport();
         transport.Output.Write(new byte[1]);
@@ -181,10 +181,39 @@ public class TransportCleanupTests
         internal PipelineFailingTransport()
             => Output = PipeWriter.Create(_outputStream, new StreamPipeWriterOptions(leaveOpen: true));
 
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
             Interlocked.Increment(ref _disposeCount);
-            return ValueTask.CompletedTask;
+            Exception? failure = null;
+            try
+            {
+                await Output.CompleteAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+
+            try
+            {
+                await Input.CompleteAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                failure = failure is null ? exception : new AggregateException(failure, exception);
+            }
+
+            try
+            {
+                await _outputStream.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                failure = failure is null ? exception : new AggregateException(failure, exception);
+            }
+
+            if (failure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         }
     }
 

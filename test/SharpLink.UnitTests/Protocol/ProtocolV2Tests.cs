@@ -325,12 +325,10 @@ public class ProtocolV2Tests
 
         var input = new Pipe();
         var output = new Pipe();
-        await using var session = new RpcSession(
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "cancel-shape",
             input.Reader,
             output.Writer,
-            static () => { },
-            static () => true,
             RpcSessionTestFixture.ClientOptions());
 
         session.NegotiatedCapabilities = ProtocolV2Capabilities.CancellationReason;

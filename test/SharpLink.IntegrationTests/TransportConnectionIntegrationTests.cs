@@ -152,7 +152,6 @@ public class TransportConnectionIntegrationTests
             await serverCts.CancelAsync();
             await server.DisposeAsync();
             await serverTask.WaitAsync(TimeSpan.FromSeconds(2));
-            await connection.DisposeAsync();
         }
     }
 
@@ -190,7 +189,6 @@ public class TransportConnectionIntegrationTests
             await serverCts.CancelAsync();
             await server.DisposeAsync();
             await serverTask.WaitAsync(TimeSpan.FromSeconds(2));
-            await connection.DisposeAsync();
         }
     }
 
@@ -226,7 +224,6 @@ public class TransportConnectionIntegrationTests
         {
             connection.Reader.ReleaseCompletion();
             await client.DisposeAsync();
-            await connection.DisposeAsync();
         }
     }
 
@@ -1799,9 +1796,22 @@ internal sealed class CompletionJoiningTransportConnection : ITransportConnectio
 
     public async ValueTask DisposeAsync()
     {
-        Reader.ReleaseCompletion();
-        await _input.Writer.CompleteAsync();
-        await _output.Reader.CompleteAsync();
+        try
+        {
+            await Output.CompleteAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            try
+            {
+                await Reader.CompleteAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                await _input.Writer.CompleteAsync().ConfigureAwait(false);
+                await _output.Reader.CompleteAsync().ConfigureAwait(false);
+            }
+        }
     }
 }
 

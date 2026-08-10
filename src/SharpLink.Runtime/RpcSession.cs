@@ -20,13 +20,13 @@ public sealed partial class RpcSession : IRpcSession
     internal TimeSpan TimeSinceLastActivity
         => Stopwatch.GetElapsedTime(Volatile.Read(ref _lastActiveTimestamp));
     /// <inheritdoc />
-    public PipeReader Input { get; }
-    private PipeWriter Output { get; }
+    public PipeReader Input => _transport.Input;
+    private PipeWriter Output => _transport.Output;
 
     private readonly CancellationTokenSource _cts = new();
-    private readonly ITransportConnection? _transportConnection;
-    internal EndPoint? LocalEndPoint => _transportConnection?.LocalEndPoint;
-    internal EndPoint? RemoteEndPoint => _transportConnection?.RemoteEndPoint;
+    private readonly ITransportConnection _transport;
+    internal EndPoint? LocalEndPoint => _transport.LocalEndPoint;
+    internal EndPoint? RemoteEndPoint => _transport.RemoteEndPoint;
     private SessionTerminal? _terminal;
     private int _cleanupStarted;
     private int _stopped;
@@ -37,10 +37,7 @@ public sealed partial class RpcSession : IRpcSession
     /// <inheritdoc />
     public IStreamManager StreamManager { get; }
     /// <inheritdoc />
-    public bool IsConnected => Volatile.Read(ref _terminal) is null &&
-                               (_transportConnection is not null || _isConnected());
-    private readonly Action _disconnect;
-    private readonly Func<bool> _isConnected;
+    public bool IsConnected => Volatile.Read(ref _terminal) is null;
 
     private readonly Lock _pumpGate = new();
     private readonly RpcSessionFlushOptions? _flushOptions;
@@ -85,31 +82,19 @@ public sealed partial class RpcSession : IRpcSession
             exception);
     }
 
-    /// <summary>Creates a session over caller-owned pipelines and connection lifecycle callbacks.</summary>
-    /// <param name="id">The non-empty diagnostic session identifier.</param>
-    /// <param name="reader">The transport input reader.</param>
-    /// <param name="writer">The transport output writer.</param>
-    /// <param name="disconnect">The callback that closes the underlying connection.</param>
-    /// <param name="isConnected">The callback that reports underlying connection state.</param>
+    /// <summary>Creates an RPC session that owns one transport connection.</summary>
+    /// <param name="connection">The independently owned transport connection.</param>
     /// <param name="creationOptions">The complete immutable session configuration.</param>
-    internal RpcSession(
-        string id,
-        PipeReader reader,
-        PipeWriter writer,
-        Action disconnect,
-        Func<bool> isConnected,
-        RpcSessionCreationOptions creationOptions)
+    internal RpcSession(ITransportConnection connection, RpcSessionCreationOptions creationOptions)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(id);
-        ArgumentNullException.ThrowIfNull(reader);
-        ArgumentNullException.ThrowIfNull(writer);
-        ArgumentNullException.ThrowIfNull(disconnect);
-        ArgumentNullException.ThrowIfNull(isConnected);
+        ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(creationOptions);
+        ArgumentException.ThrowIfNullOrWhiteSpace(connection.Id);
+        ArgumentNullException.ThrowIfNull(connection.Input);
+        ArgumentNullException.ThrowIfNull(connection.Output);
 
-        Id = id;
-        Input = reader;
-        Output = writer;
+        _transport = connection;
+        Id = connection.Id;
         Role = creationOptions.Role;
         RuntimeContext = creationOptions.RuntimeContext;
         Volatile.Write(
@@ -120,26 +105,9 @@ public sealed partial class RpcSession : IRpcSession
             AcceptReceivedStreamBytes,
             OnStreamBytesConsumed,
             OnReceiveStreamCompleted);
-        _disconnect = disconnect;
-        _isConnected = isConnected;
         _flushOptions = creationOptions.FlushOptions;
         _telemetrySide = creationOptions.TelemetrySide;
         _serviceExceptionMapper = creationOptions.ServiceExceptionMapper;
-    }
-
-    /// <summary>Creates an RPC session that owns one transport connection.</summary>
-    /// <param name="connection">The independently owned transport connection.</param>
-    /// <param name="creationOptions">The complete immutable session configuration.</param>
-    internal RpcSession(ITransportConnection connection, RpcSessionCreationOptions creationOptions)
-        : this(
-            (connection ?? throw new ArgumentNullException(nameof(connection))).Id,
-            connection.Input,
-            connection.Output,
-            static () => { },
-            static () => true,
-            creationOptions)
-    {
-        _transportConnection = connection;
     }
 
     internal void SetNegotiatedMaxFramePayloadBytes(int value)
@@ -494,7 +462,7 @@ public sealed partial class RpcSession : IRpcSession
         Volatile.Read(ref _streamFlowControl)?.Complete(structured);
         Volatile.Read(ref _pump)?.Stop();
         CompleteReceiveStreams(structured);
-        _ = StartTransportDispose();
+        ObserveTransportDispose(StartTransportDispose());
         try
         {
             OnDisconnected?.Invoke(structured);
@@ -533,30 +501,6 @@ public sealed partial class RpcSession : IRpcSession
                 pump?.Stop();
                 if (pump is not null)
                     await pump.WaitForStopAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                cleanupException = CombineCleanupExceptions(cleanupException, exception);
-            }
-
-            try
-            {
-                await Output.CompleteAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is ObjectDisposedException or IOException or InvalidOperationException or ArgumentNullException)
-            {
-            }
-            catch (Exception exception)
-            {
-                cleanupException = CombineCleanupExceptions(cleanupException, exception);
-            }
-
-            try
-            {
-                await Input.CompleteAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is ObjectDisposedException or IOException or InvalidOperationException)
-            {
             }
             catch (Exception exception)
             {
@@ -675,31 +619,34 @@ public sealed partial class RpcSession : IRpcSession
             if (_transportDisposeTask is not null)
                 return _transportDisposeTask;
 
-            if (_transportConnection is not null)
+            try
             {
-                try
-                {
-                    _transportDisposeTask = _transportConnection.DisposeAsync().AsTask();
-                }
-                catch (Exception ex)
-                {
-                    _transportDisposeTask = Task.FromException(ex);
-                }
+                _transportDisposeTask = _transport.DisposeAsync().AsTask();
             }
-            else
+            catch (Exception ex)
             {
-                try
-                {
-                    _disconnect();
-                    _transportDisposeTask = Task.CompletedTask;
-                }
-                catch (Exception ex) when (ex is ObjectDisposedException or IOException or SocketException or ArgumentException)
-                {
-                    _transportDisposeTask = Task.CompletedTask;
-                }
+                _transportDisposeTask = Task.FromException(ex);
             }
 
             return _transportDisposeTask;
+        }
+    }
+
+    private static void ObserveTransportDispose(Task disposeTask)
+    {
+        if (!disposeTask.IsCompletedSuccessfully)
+            _ = ObserveTransportDisposeAsync(disposeTask);
+    }
+
+    private static async Task ObserveTransportDisposeAsync(Task disposeTask)
+    {
+        try
+        {
+            await disposeTask.ConfigureAwait(false);
+        }
+        catch
+        {
+            // DisposeAsync awaits the same single-flight task and preserves this failure for the owner.
         }
     }
 

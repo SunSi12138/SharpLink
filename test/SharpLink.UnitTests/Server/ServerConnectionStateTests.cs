@@ -61,14 +61,11 @@ public class ServerConnectionStateTests
         var input = new Pipe();
         var reader = new CompletionTrackingPipeReader(input.Reader);
         var output = new Pipe();
-        var disconnectCount = 0;
-        var session = new RpcSession(
+        var transport = RpcSessionTestFixture.Transport(
             Guid.NewGuid().ToString("N"),
             reader,
-            output.Writer,
-            () => Interlocked.Increment(ref disconnectCount),
-            static () => true,
-            RpcSessionTestFixture.ServerOptions());
+            output.Writer);
+        var session = new RpcSession(transport, RpcSessionTestFixture.ServerOptions());
         var state = new ServerConnectionState(
             session,
             CreateCallCancellations(),
@@ -93,13 +90,13 @@ public class ServerConnectionStateTests
         await streamDispatch.WaitAsync(TimeSpan.FromSeconds(2));
         Ensure(stream.CompleteCount == 1,
             "the pre-disposal shutdown phase must release a read loop blocked in stream dispatch");
-        Ensure(reader.CompleteCount == 0 && disconnectCount == 0,
+        Ensure(reader.CompleteCount == 0 && transport.DisposeCount == 0,
             "PipeReader and transport completion must wait until the read buffer has been released");
 
         state.MarkSessionLoopCompleted();
         await close.WaitAsync(TimeSpan.FromSeconds(2));
 
-        Ensure(reader.CompleteCount == 1 && disconnectCount == 1,
+        Ensure(reader.CompleteCount == 1 && transport.DisposeCount == 1,
             "PipeReader and transport completion should resume after the loop releases its buffer");
         Ensure(state.LifecycleState == ServerConnectionLifecycleState.Closed, "closed state");
         await input.Writer.CompleteAsync();
@@ -218,13 +215,16 @@ public class ServerConnectionStateTests
     {
         var input = new Pipe();
         var output = new Pipe();
-        var session = new RpcSession(
+        var transport = RpcSessionTestFixture.Transport(
             Guid.NewGuid().ToString("N"),
             input.Reader,
             output.Writer,
-            disconnect,
-            static () => true,
-            RpcSessionTestFixture.ServerOptions());
+            () =>
+            {
+                disconnect();
+                return ValueTask.CompletedTask;
+            });
+        var session = new RpcSession(transport, RpcSessionTestFixture.ServerOptions());
         return new ServerConnectionState(session, CreateCallCancellations(), serverToken);
     }
 
