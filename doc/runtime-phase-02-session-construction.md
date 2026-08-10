@@ -2,7 +2,7 @@
 
 `RpcSession` now has one internal creation model. Every constructor requires an immutable
 `RpcSessionCreationOptions` snapshot containing the Client/Server role, the real instance-owned
-`SharpLinkRuntimeContext`, optional flush policy, and optional Server exception mapper. The
+`SharpLinkRuntimeContext` and optional flush policy. The
 constructor publishes transport input, Context, role-specific telemetry, negotiated local frame
 limit, and one `StreamManager` before returning.
 
@@ -18,9 +18,9 @@ The following production paths were deleted, not deprecated or forwarded:
 
 Client fixed, static-cluster, and dynamic-cluster connection paths now create Client-role Sessions
 with their owning Client Context. The Server allocates the per-connection cancellation map first,
-then gives the same map to both the immutable mapper delegate and `ServerConnectionState`; this
-breaks the previous Session/connection-state construction cycle without a holder, late setter, or
-global lookup.
+then gives the map to `ServerConnectionState` and its Server-owned generated bridge; this breaks
+the previous Session/connection-state construction cycle without a holder, late setter, or global
+lookup.
 
 ## Ownership and state boundaries
 
@@ -30,7 +30,7 @@ global lookup.
 | transport | Client connector or Server listener; transferred to Session after successful construction | Session terminal arbitration disposes it once |
 | StreamManager | Session constructor | Reference never changes; Session terminal completion drains it |
 | Server call-cancellation map | Server accepted-connection path; owned by `ServerConnectionState` | Deadline scheduler and connection close converge on the same map |
-| exception mapper delegate | Server accepted-connection path; borrowed by Session | Immutable; invoked only for that connection and never disposed |
+| generated Server bridge | Server accepted-connection path; owned by `ServerConnectionState` | Borrows Session protocol operations; applies Server exception policy without publishing it to Session |
 
 Transport/protocol state remains in `RpcSession`; new-call admission and pending ownership remain
 in `ClientConnection`; authentication, call admission, and draining remain in
@@ -40,7 +40,7 @@ business request ID.
 ## Tests and compatibility
 
 `RpcSessionLifecycleTests` verifies missing/invalid creation dependencies, role and Context
-publication, Context isolation, constructor-supplied mapper behavior, stable StreamManager
+publication, Context isolation, stable StreamManager
 references through concurrent terminal cleanup, and deterministic disposal of both isolated
 Contexts. `ServerConnectionStateTests` verifies that business admission remains closed before
 handshake. Existing seeded 100-round Session terminal races continue to prove exactly-once
@@ -54,4 +54,6 @@ The production changes are control-plane construction work. They do not add a pe
 or per-stream-item abstraction, allocation, or lock. The dispatcher provider cleanup affects only
 an overload not used by production call sites; production continues to rent with an already
 resolved codec. Phase 08 retains scheduler/monotonic-time work, and Phases 03-06 retain transport
-constructor removal, exception-mapper placement, and handshake negotiation snapshots.
+constructor removal, exception-mapper placement, and handshake negotiation snapshots. Phase 04
+subsequently moved mapper policy out of the construction snapshot and into the Server invocation
+bridge.

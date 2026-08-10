@@ -16,6 +16,9 @@ Interceptor 按注册顺序进入、逆序退出。不要在单例 interceptor �
 
 默认未知服务异常映射为 `Internal` 和安全消息。`IRpcExceptionMapper` 可根据 Server context 返回具体 `SharpLinkException`。Mapper 本身抛错不会破坏 session 写路径，框架退回安全 `Internal`。
 
+Mapper 只存在于 Server invocation layer。生成代码通过每连接的窄 bridge 提交流式终态；
+`RpcSession` 只编码已经结构化的错误，不持有 mapper，也不解释 service/contract/method policy。
+
 `EnableDetailedErrors` 会把业务异常详情返回给对端，仅用于可信开发环境。
 
 ## Activity

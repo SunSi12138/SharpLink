@@ -31,11 +31,13 @@ internal sealed class ServerConnectionState
 
     internal ServerConnectionState(
         RpcSession session,
+        IRpcGeneratedServerBridge generatedBridge,
         StripedLongMap<ServerCallCancellationState> callCancellations,
         CancellationToken serverToken,
         int maxConcurrentCalls = 1024)
     {
         Session = session ?? throw new ArgumentNullException(nameof(session));
+        GeneratedBridge = generatedBridge ?? throw new ArgumentNullException(nameof(generatedBridge));
         CallCancellations = callCancellations ?? throw new ArgumentNullException(nameof(callCancellations));
         DeadlineScheduler = new ServerCallDeadlineScheduler(CallCancellations, maxConcurrentCalls);
         _connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
@@ -43,6 +45,8 @@ internal sealed class ServerConnectionState
     }
 
     internal RpcSession Session { get; }
+
+    internal IRpcGeneratedServerBridge GeneratedBridge { get; }
 
     internal SharpLinkAuthenticationContext? AuthenticationContext
         => Volatile.Read(ref _authenticationContext);

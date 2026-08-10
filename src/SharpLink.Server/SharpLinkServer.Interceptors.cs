@@ -19,6 +19,7 @@ internal sealed partial class SharpLinkServer
                 registration.Stub,
                 singleton,
                 session,
+                connection.GeneratedBridge,
                 methodId,
                 requestId,
                 arguments,
@@ -50,6 +51,7 @@ internal sealed partial class SharpLinkServer
                     registration.Stub,
                     dynamicSingleton,
                     session,
+                    connection.GeneratedBridge,
                     methodId,
                     requestId,
                     arguments,
@@ -111,6 +113,7 @@ internal sealed partial class SharpLinkServer
                 acquisition,
                 registration.Stub,
                 session,
+                connection.GeneratedBridge,
                 methodId,
                 requestId,
                 arguments,
@@ -124,6 +127,7 @@ internal sealed partial class SharpLinkServer
             registration.Stub,
             acquisition.Result,
             session,
+            connection.GeneratedBridge,
             methodId,
             requestId,
             arguments,
@@ -161,6 +165,7 @@ internal sealed partial class SharpLinkServer
         IRpcStub stub,
         ServiceLease lease,
         IRpcSession session,
+        IRpcGeneratedServerBridge generatedBridge,
         long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
@@ -176,6 +181,7 @@ internal sealed partial class SharpLinkServer
                 stub,
                 lease.Service,
                 session,
+                generatedBridge,
                 methodId,
                 requestId,
                 arguments,
@@ -188,6 +194,7 @@ internal sealed partial class SharpLinkServer
             stub,
             lease,
             session,
+            generatedBridge,
             methodId,
             requestId,
             arguments,
@@ -201,6 +208,7 @@ internal sealed partial class SharpLinkServer
         ValueTask<ServiceLease> acquisition,
         IRpcStub stub,
         IRpcSession session,
+        IRpcGeneratedServerBridge generatedBridge,
         long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
@@ -226,6 +234,7 @@ internal sealed partial class SharpLinkServer
             stub,
             lease,
             session,
+            generatedBridge,
             methodId,
             requestId,
             arguments,
@@ -239,6 +248,7 @@ internal sealed partial class SharpLinkServer
         IRpcStub stub,
         object service,
         IRpcSession session,
+        IRpcGeneratedServerBridge generatedBridge,
         long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
@@ -254,6 +264,7 @@ internal sealed partial class SharpLinkServer
                 stub,
                 service,
                 session,
+                generatedBridge,
                 methodId,
                 requestId,
                 arguments,
@@ -280,6 +291,7 @@ internal sealed partial class SharpLinkServer
         IRpcStub stub,
         ServiceLease lease,
         IRpcSession session,
+        IRpcGeneratedServerBridge generatedBridge,
         long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
@@ -295,6 +307,7 @@ internal sealed partial class SharpLinkServer
                 stub,
                 lease.Service,
                 session,
+                generatedBridge,
                 methodId,
                 requestId,
                 arguments,
@@ -350,6 +363,7 @@ internal sealed partial class SharpLinkServer
         IRpcStub stub,
         object service,
         IRpcSession session,
+        IRpcGeneratedServerBridge generatedBridge,
         long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
@@ -367,15 +381,16 @@ internal sealed partial class SharpLinkServer
         {
             return output is null
                 ? stub.InvokeNoReturnCancellableAsync(
-                    service, (IRpcGeneratedServerBridge)session, methodId, requestId, arguments, cancellationToken)
+                    service, generatedBridge, methodId, requestId, arguments, cancellationToken)
                 : stub.InvokeCancellableAsync(
-                    service, (IRpcGeneratedServerBridge)session, methodId, requestId, arguments, output, cancellationToken);
+                    service, generatedBridge, methodId, requestId, arguments, output, cancellationToken);
         }
 
         return InvokeInterceptedWithOwnedArgumentsAsync(
             stub,
             service,
             session,
+            generatedBridge,
             methodId,
             requestId,
             arguments,
@@ -388,6 +403,7 @@ internal sealed partial class SharpLinkServer
         IRpcStub stub,
         object service,
         IRpcSession session,
+        IRpcGeneratedServerBridge generatedBridge,
         long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
@@ -411,6 +427,7 @@ internal sealed partial class SharpLinkServer
                 stub,
                 service,
                 session,
+                generatedBridge,
                 methodId,
                 requestId,
                 ReadOnlySequence<byte>.Empty,
@@ -429,6 +446,7 @@ internal sealed partial class SharpLinkServer
                 stub,
                 service,
                 session,
+                generatedBridge,
                 methodId,
                 requestId,
                 ownedArguments,
@@ -502,7 +520,7 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private SharpLinkException MapStreamServiceException(
+    internal SharpLinkException MapStreamServiceException(
         StripedLongMap<ServerCallCancellationState> callCancellations,
         IRpcSession session,
         long requestId,
@@ -552,6 +570,7 @@ internal sealed partial class SharpLinkServer
         private readonly IRpcStub _stub;
         private readonly object _service;
         private readonly IRpcSession _session;
+        private readonly IRpcGeneratedServerBridge _generatedBridge;
         private readonly long _methodId;
         private readonly long _requestId;
         private readonly ReadOnlySequence<byte> _arguments;
@@ -564,6 +583,7 @@ internal sealed partial class SharpLinkServer
             IRpcStub stub,
             object service,
             IRpcSession session,
+            IRpcGeneratedServerBridge generatedBridge,
             long methodId,
             long requestId,
             ReadOnlySequence<byte> arguments,
@@ -574,6 +594,7 @@ internal sealed partial class SharpLinkServer
             _stub = stub;
             _service = service;
             _session = session;
+            _generatedBridge = generatedBridge;
             _methodId = methodId;
             _requestId = requestId;
             _arguments = arguments;
@@ -782,16 +803,17 @@ internal sealed partial class SharpLinkServer
                 if (_output is null)
                 {
                     await _stub.InvokeNoReturnCancellableAsync(
-                        _service, (IRpcGeneratedServerBridge)_session, _methodId, _requestId, _arguments, _cancellationToken)
+                        _service, _generatedBridge, _methodId, _requestId, _arguments, _cancellationToken)
                         .ConfigureAwait(false);
                 }
                 else
                 {
                     await _stub.InvokeCancellableAsync(
-                        _service, (IRpcGeneratedServerBridge)_session, _methodId, _requestId, _arguments, _output, _cancellationToken)
+                        _service, _generatedBridge, _methodId, _requestId, _arguments, _output, _cancellationToken)
                         .ConfigureAwait(false);
                 }
-                context.Status = SharpLinkInvocationStatus.Succeeded;
+                if (context.Status == SharpLinkInvocationStatus.Pending)
+                    context.Status = SharpLinkInvocationStatus.Succeeded;
             }
             catch (Exception exception)
             {

@@ -215,7 +215,10 @@ internal sealed partial class SharpLinkServer
                 callContext);
             if (invokeTask.IsCompletedSuccessfully)
             {
-                if (callContext is SharpLinkServerInvocationContext interceptorContext)
+                if (callContext is SharpLinkServerInvocationContext
+                    {
+                        Status: SharpLinkInvocationStatus.Pending
+                    } interceptorContext)
                     interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
                 TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken);
                 ReleaseOneWayDispatchResources(callState, requestId, requestCancellationMap, connection);
@@ -267,7 +270,10 @@ internal sealed partial class SharpLinkServer
         try
         {
             await invokeTask.ConfigureAwait(false);
-            if (callContext is SharpLinkServerInvocationContext interceptorContext)
+            if (callContext is SharpLinkServerInvocationContext
+                {
+                    Status: SharpLinkInvocationStatus.Pending
+                } interceptorContext)
                 interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
             TryClaimCallCompletion(callState);
         }

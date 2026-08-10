@@ -50,36 +50,11 @@ public sealed partial class RpcSession : IRpcSession
     private const int TelemetryNotOpened = 0;
     private const int TelemetryOpened = 1;
     private const int TelemetryClosed = 2;
-    private readonly RpcSessionServiceExceptionMapper? _serviceExceptionMapper;
 
     internal void MarkActive()
     {
         Volatile.Write(ref _lastActiveTimestamp, Stopwatch.GetTimestamp());
         LastActive = DateTime.UtcNow;
-    }
-
-    internal SharpLinkException MapServiceException(
-        long requestId,
-        long contractId,
-        long methodId,
-        Exception exception)
-    {
-        ArgumentNullException.ThrowIfNull(exception);
-        if (_serviceExceptionMapper is { } mapper)
-        {
-            try
-            {
-                return mapper(this, requestId, contractId, methodId, exception);
-            }
-            catch
-            {
-                // A mapper is never allowed to break the session write path.
-            }
-        }
-        return exception as SharpLinkException ?? new SharpLinkException(
-            SharpLinkErrorCode.Internal,
-            "Internal service error.",
-            exception);
     }
 
     /// <summary>Creates an RPC session that owns one transport connection.</summary>
@@ -107,7 +82,6 @@ public sealed partial class RpcSession : IRpcSession
             OnReceiveStreamCompleted);
         _flushOptions = creationOptions.FlushOptions;
         _telemetrySide = creationOptions.TelemetrySide;
-        _serviceExceptionMapper = creationOptions.ServiceExceptionMapper;
     }
 
     internal void SetNegotiatedMaxFramePayloadBytes(int value)
