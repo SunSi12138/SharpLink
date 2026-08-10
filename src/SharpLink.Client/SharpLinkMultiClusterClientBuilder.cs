@@ -121,6 +121,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
         }
 
         var createdSlots = new List<SharpLinkClusterSlot>(_clusters.Count);
+        using var transaction = new SynchronousBuildTransaction();
         try
         {
             foreach (var configuration in _clusters.Values)
@@ -131,7 +132,11 @@ public sealed class SharpLinkMultiClusterClientBuilder
                         ? manifest
                         : new DependencyManifestView(manifest))
                     .ToArray();
-                var child = configuration.Builder.BuildCore(staticManifests);
+                var child = transaction.Own(
+                    configuration.Builder.BuildCore(staticManifests),
+                    static client => SharpLinkAsyncCleanup.DisposeSynchronously(client),
+                    SynchronousBuildResourceMetadata.FrameworkOwned(
+                        $"Multi-cluster child '{configuration.Key}'"));
                 createdSlots.Add(new SharpLinkClusterSlot(
                     configuration.Key,
                     child,
@@ -142,26 +147,20 @@ public sealed class SharpLinkMultiClusterClientBuilder
 
             var slots = createdSlots.ToFrozenDictionary(static slot => slot.Key);
             var routes = BuildStaticRoutes(slots, assemblyOwners, manifestByAssembly);
-            return new SharpLinkMultiClusterClient(
+            var client = new SharpLinkMultiClusterClient(
                 options,
                 slots,
                 routes,
                 routeManifestSnapshot,
                 configuredConnections,
                 _loggerFactory);
+            transaction.Commit();
+            return client;
         }
         catch (Exception buildException)
         {
-            var cleanupFailures = new List<Exception>();
-            for (var index = createdSlots.Count - 1; index >= 0; index--)
-            {
-                try { SharpLinkAsyncCleanup.DisposeSynchronously(createdSlots[index].Client); }
-                catch (Exception cleanupException) { cleanupFailures.Add(cleanupException); }
-            }
-            if (cleanupFailures.Count == 0)
-                throw;
-            cleanupFailures.Insert(0, buildException);
-            throw new AggregateException(cleanupFailures);
+            transaction.Rollback(buildException);
+            throw new UnreachableException();
         }
     }
 
@@ -226,31 +225,31 @@ public sealed class SharpLinkMultiClusterClientBuilder
                 ? manifest
                 : new DependencyManifestView(manifest))
             .ToArray();
-        var child = builder.BuildCore(staticManifests);
-        var slot = new SharpLinkClusterSlot(
-            cluster,
-            child,
-            allowDynamicContracts,
-            connectionBudget,
-            staticManifests);
+        using var transaction = new SynchronousBuildTransaction();
         try
         {
+            var child = transaction.Own(
+                builder.BuildCore(staticManifests),
+                static client => SharpLinkAsyncCleanup.DisposeSynchronously(client),
+                SynchronousBuildResourceMetadata.FrameworkOwned(
+                    $"Runtime multi-cluster child '{cluster}'"));
+            var slot = new SharpLinkClusterSlot(
+                cluster,
+                child,
+                allowDynamicContracts,
+                connectionBudget,
+                staticManifests);
             var slots = new Dictionary<SharpLinkClusterKey, SharpLinkClusterSlot> { [cluster] = slot }
                 .ToFrozenDictionary();
             var routes = BuildStaticRoutes(slots, assemblyOwners, manifestsByAssembly);
-            return new SharpLinkPreparedCluster(slot, routes);
+            var prepared = new SharpLinkPreparedCluster(slot, routes);
+            transaction.Commit();
+            return prepared;
         }
         catch (Exception buildException)
         {
-            try
-            {
-                SharpLinkAsyncCleanup.DisposeSynchronously(child);
-            }
-            catch (Exception cleanupException)
-            {
-                throw new AggregateException(buildException, cleanupException);
-            }
-            throw;
+            transaction.Rollback(buildException);
+            throw new UnreachableException();
         }
     }
 
@@ -262,16 +261,31 @@ public sealed class SharpLinkMultiClusterClientBuilder
         ArgumentNullException.ThrowIfNull(builder);
         var connectionBudget = builder.GetConfiguredMaximumConnections();
         var staticManifests = existingSlot.StaticManifests ?? [];
-        var child = builder.BuildCore(staticManifests);
-        var slot = new SharpLinkClusterSlot(
-            existingSlot.Key,
-            child,
-            existingSlot.AllowDynamicContracts,
-            connectionBudget,
-            staticManifests);
-        return new SharpLinkPreparedCluster(
-            slot,
-            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty);
+        using var transaction = new SynchronousBuildTransaction();
+        try
+        {
+            var child = transaction.Own(
+                builder.BuildCore(staticManifests),
+                static client => SharpLinkAsyncCleanup.DisposeSynchronously(client),
+                SynchronousBuildResourceMetadata.FrameworkOwned(
+                    $"Replacement multi-cluster child '{existingSlot.Key}'"));
+            var slot = new SharpLinkClusterSlot(
+                existingSlot.Key,
+                child,
+                existingSlot.AllowDynamicContracts,
+                connectionBudget,
+                staticManifests);
+            var prepared = new SharpLinkPreparedCluster(
+                slot,
+                FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty);
+            transaction.Commit();
+            return prepared;
+        }
+        catch (Exception buildException)
+        {
+            transaction.Rollback(buildException);
+            throw new UnreachableException();
+        }
     }
 
     private static FrozenDictionary<Type, SharpLinkClusterRouteRegistration> BuildStaticRoutes(

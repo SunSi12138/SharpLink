@@ -431,7 +431,7 @@ internal sealed partial class SharpLinkClient
                     var endpoint = endpoints[index];
                     if (previous.TryGetValue(endpoint.Id, out var existing) && SameGeneration(existing.Configuration.Endpoint, endpoint))
                         continue;
-                    var factory = SharpClientBuilder.CreateTransportFactory(endpoint, _transportFactory, _client._runtimeContext);
+                    var factory = SharpClientBuilder.CreateRuntimeTransportFactory(endpoint, _transportFactory, _client._runtimeContext);
                     created.Add(endpoint.Id, new EndpointState(
                         new StaticEndpointConfiguration(endpoint, factory),
                         Interlocked.Increment(ref _nextGeneration)));

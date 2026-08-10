@@ -546,6 +546,26 @@ public sealed class SharpLinkMultiClusterClientTests
     }
 
     [Test]
+    public async Task PrepareReplacementClusterShouldTransferItsChildAfterSuccessfulPreparation()
+    {
+        var replacementTransport = new ControlledMutationTransportFactory();
+        var existingSlot = new SharpLinkClusterSlot(
+            "replacement",
+            new CoordinatedUnregisterClient(),
+            AllowDynamicContracts: true);
+
+        var prepared = SharpLinkMultiClusterClientBuilder.PrepareReplacementCluster(
+            existingSlot,
+            SharpClientBuilder.Create().UseTransport(replacementTransport));
+
+        Ensure(replacementTransport.DisposeCount == 0,
+            "successful replacement preparation must transfer its child instead of cleaning it");
+        await prepared.Slot.Client.DisposeAsync();
+        Ensure(replacementTransport.DisposeCount == 1,
+            "the prepared replacement caller must own and dispose the transferred child");
+    }
+
+    [Test]
     public async Task RuntimeAddShouldEnforceMaxClustersAndDisposeUnbuiltResources()
     {
         SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);

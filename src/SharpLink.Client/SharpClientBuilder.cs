@@ -384,22 +384,22 @@ public class SharpClientBuilder
         _transport = null;
         _endpointResolver = null;
 
-        List<Exception>? failures = null;
+        using var transaction = new SynchronousBuildTransaction();
         if (directTransport is not null)
         {
-            try { SharpLinkAsyncCleanup.DisposeSynchronously(directTransport); }
-            catch (Exception exception) { (failures ??= []).Add(exception); }
+            transaction.Own(
+                directTransport,
+                static transport => SharpLinkAsyncCleanup.DisposeSynchronously(transport),
+                SynchronousBuildResourceMetadata.FrameworkOwned("unbuilt Client direct transport"));
         }
         if (endpointResolver is not null && !ReferenceEquals(endpointResolver, directTransport))
         {
-            try { SharpLinkAsyncCleanup.DisposeSynchronously(endpointResolver); }
-            catch (Exception exception) { (failures ??= []).Add(exception); }
+            transaction.Own(
+                endpointResolver,
+                static resolver => SharpLinkAsyncCleanup.DisposeSynchronously(resolver),
+                SynchronousBuildResourceMetadata.FrameworkOwned("unbuilt Client endpoint resolver"));
         }
-
-        if (failures is { Count: 1 })
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
-        if (failures is { Count: > 1 })
-            throw new AggregateException(failures);
+        transaction.Rollback();
     }
 
     // Multi-cluster construction supplies a filtered immutable manifest snapshot here. Keeping this
@@ -419,70 +419,45 @@ public class SharpClientBuilder
 
         var directTransport = _transport;
         var endpointResolver = _endpointResolver;
-        var runtimeContext = staticManifests is null
-            ? _runtimeContextBuilder.Build()
-            : _runtimeContextBuilder.Build(staticManifests);
+        using var transaction = new SynchronousBuildTransaction();
         try
         {
-            var client = BuildWithRuntimeContext(runtimeContext, staticManifests, preflightEndpoints);
+            if (directTransport is not null)
+            {
+                transaction.Own(
+                    directTransport,
+                    static transport => SharpLinkAsyncCleanup.DisposeSynchronously(transport),
+                    SynchronousBuildResourceMetadata.FrameworkOwned("Client direct transport"));
+            }
+            if (endpointResolver is not null)
+            {
+                transaction.Own(
+                    endpointResolver,
+                    static resolver => SharpLinkAsyncCleanup.DisposeSynchronously(resolver),
+                    SynchronousBuildResourceMetadata.FrameworkOwned("Client endpoint resolver"));
+            }
+
+            var runtimeContext = transaction.Own(
+                staticManifests is null
+                    ? _runtimeContextBuilder.Build()
+                    : _runtimeContextBuilder.Build(staticManifests),
+                static context => context.Dispose(),
+                SynchronousBuildResourceMetadata.FrameworkOwned("Client runtime context"));
+            var client = BuildWithRuntimeContext(
+                runtimeContext,
+                staticManifests,
+                preflightEndpoints,
+                transaction);
             ReleaseTransferredBuilderResource(directTransport, endpointResolver);
+            transaction.Commit();
             return client;
         }
         catch (Exception buildException)
         {
             ReleaseTransferredBuilderResource(directTransport, endpointResolver);
-            ThrowAfterClientBuildRollback(
-                buildException,
-                directTransport,
-                endpointResolver,
-                runtimeContext);
+            transaction.Rollback(buildException);
             throw new System.Diagnostics.UnreachableException();
         }
-    }
-
-    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static void ThrowAfterClientBuildRollback(
-        Exception buildException,
-        IClientTransportFactory? directTransport,
-        ISharpLinkEndpointResolver? endpointResolver,
-        SharpLinkRuntimeContext runtimeContext)
-    {
-        List<Exception>? cleanupFailures = null;
-        if (directTransport is not null)
-        {
-            try
-            {
-                SharpLinkAsyncCleanup.DisposeSynchronously(directTransport);
-            }
-            catch (Exception cleanupException)
-            {
-                (cleanupFailures ??= []).Add(cleanupException);
-            }
-        }
-        if (endpointResolver is not null && !ReferenceEquals(endpointResolver, directTransport))
-        {
-            try
-            {
-                SharpLinkAsyncCleanup.DisposeSynchronously(endpointResolver);
-            }
-            catch (Exception cleanupException)
-            {
-                (cleanupFailures ??= []).Add(cleanupException);
-            }
-        }
-        try
-        {
-            runtimeContext.Dispose();
-        }
-        catch (Exception cleanupException)
-        {
-            (cleanupFailures ??= []).Add(cleanupException);
-        }
-        if (cleanupFailures is null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(buildException).Throw();
-        cleanupFailures!.Insert(0, buildException);
-        throw new AggregateException(cleanupFailures);
     }
 
     private void ReleaseTransferredBuilderResource(
@@ -498,7 +473,8 @@ public class SharpClientBuilder
     private ISharpLinkClient BuildWithRuntimeContext(
         SharpLinkRuntimeContext runtimeContext,
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests,
-        SharpLinkEndpoint[]? preflightEndpoints)
+        SharpLinkEndpoint[]? preflightEndpoints,
+        SynchronousBuildTransaction transaction)
     {
         var protocolOptions = runtimeContext.Protocol;
         if (_endpointResolver is not null)
@@ -522,77 +498,47 @@ public class SharpClientBuilder
             {
                 if (_clusterConfigured)
                     throw new InvalidOperationException("UseCluster requires two or more endpoints.");
-                var transport = CreateTransportFactory(endpoints[0], _endpointTransportFactory!, runtimeContext);
-                try
+                var transport = CreateBuildTransportFactory(
+                    endpoints[0],
+                    _endpointTransportFactory!,
+                    runtimeContext,
+                    transaction);
+                var singleEndpointPool = CreateConnectionPoolSnapshot(runtimeContext);
+                if (transport is AnonymousPipeClientTransportFactory && singleEndpointPool.MaxConnections != 1)
                 {
-                    var singleEndpointPool = CreateConnectionPoolSnapshot(runtimeContext);
-                    if (transport is AnonymousPipeClientTransportFactory && singleEndpointPool.MaxConnections != 1)
-                    {
-                        throw new InvalidOperationException(
-                            "Anonymous-pipe handle offers support exactly one client connection.");
-                    }
-                    return CreateFixedClient(
-                        transport,
-                        runtimeContext,
-                        protocolOptions,
-                        singleEndpointPool,
-                        fixedEndpoint: endpoints[0],
-                        staticManifests: staticManifests);
+                    throw new InvalidOperationException(
+                        "Anonymous-pipe handle offers support exactly one client connection.");
                 }
-                catch (Exception buildException)
-                {
-                    try
-                    {
-                        SharpLinkAsyncCleanup.DisposeSynchronously(transport);
-                    }
-                    catch (Exception cleanupException)
-                    {
-                        throw new AggregateException(buildException, cleanupException);
-                    }
-                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(buildException).Throw();
-                    throw new System.Diagnostics.UnreachableException();
-                }
+                return CreateFixedClient(
+                    transport,
+                    runtimeContext,
+                    protocolOptions,
+                    singleEndpointPool,
+                    fixedEndpoint: endpoints[0],
+                    staticManifests: staticManifests);
             }
 
             if (_connectionPoolConfigured)
                 throw new InvalidOperationException("UseConnectionPool is only available for a fixed single endpoint.");
             var cluster = _cluster.CloneValidated(endpoints.Length);
             var configurations = new StaticEndpointConfiguration[endpoints.Length];
-            var ownedFactories = new HashSet<IClientTransportFactory>(ReferenceEqualityComparer.Instance);
-            try
+            for (var index = 0; index < endpoints.Length; index++)
             {
-                for (var index = 0; index < endpoints.Length; index++)
+                var factory = CreateBuildTransportFactory(
+                    endpoints[index],
+                    _endpointTransportFactory!,
+                    runtimeContext,
+                    transaction);
+                if (factory is AnonymousPipeClientTransportFactory)
                 {
-                    var factory = CreateTransportFactory(endpoints[index], _endpointTransportFactory!, runtimeContext);
-                    if (!ownedFactories.Add(factory))
-                    {
-                        throw new InvalidOperationException(
-                            "Each static endpoint must receive an independently owned transport factory.");
-                    }
-                    if (factory is AnonymousPipeClientTransportFactory)
-                    {
-                        throw new InvalidOperationException(
-                            "Anonymous-pipe handle offers cannot be used by endpoint clusters.");
-                    }
-                    configurations[index] = new StaticEndpointConfiguration(
-                        endpoints[index],
-                        factory);
+                    throw new InvalidOperationException(
+                        "Anonymous-pipe handle offers cannot be used by endpoint clusters.");
                 }
-                return CreateClusterClient(configurations, cluster, runtimeContext, protocolOptions, staticManifests);
+                configurations[index] = new StaticEndpointConfiguration(
+                    endpoints[index],
+                    factory);
             }
-            catch (Exception buildException)
-            {
-                List<Exception>? cleanupFailures = null;
-                foreach (var factory in ownedFactories)
-                {
-                    try { SharpLinkAsyncCleanup.DisposeSynchronously(factory); }
-                    catch (Exception exception) { (cleanupFailures ??= []).Add(exception); }
-                }
-                if (cleanupFailures is null)
-                    throw;
-                cleanupFailures.Insert(0, buildException);
-                throw new AggregateException(cleanupFailures);
-            }
+            return CreateClusterClient(configurations, cluster, runtimeContext, protocolOptions, staticManifests);
         }
 
         var fixedTransport = _transport!;
@@ -701,7 +647,25 @@ public class SharpClientBuilder
                 runtimeContext.TimeProvider)
             : _endpointAdmissionPolicy;
 
-    internal static IClientTransportFactory CreateTransportFactory(
+    private static IClientTransportFactory CreateBuildTransportFactory(
+        SharpLinkEndpoint endpoint,
+        SharpLinkEndpointTransportFactory factory,
+        SharpLinkRuntimeContext runtimeContext,
+        SynchronousBuildTransaction transaction)
+    {
+        var transport = factory(endpoint) ?? throw new InvalidOperationException("Endpoint transport factory returned null.");
+        transaction.Own(
+            transport,
+            static value => SharpLinkAsyncCleanup.DisposeSynchronously(value),
+            SynchronousBuildResourceMetadata.FrameworkOwned("Client endpoint transport factory"));
+        if (transport is IPerformanceProfileAwareTransport profileAware)
+            profileAware.BindPerformanceProfile(runtimeContext.PerformanceProfile);
+        return transport;
+    }
+
+    // Dynamic clusters materialize endpoint factories after Build has committed. Their local runtime cleanup
+    // remains separate from the construction transaction and must not be used by builder materialization.
+    internal static IClientTransportFactory CreateRuntimeTransportFactory(
         SharpLinkEndpoint endpoint,
         SharpLinkEndpointTransportFactory factory,
         SharpLinkRuntimeContext runtimeContext)
