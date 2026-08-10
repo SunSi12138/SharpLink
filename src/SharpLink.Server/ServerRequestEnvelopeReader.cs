@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace SharpLink.Server;
 
 internal static class ServerRequestEnvelopeReader
@@ -9,9 +7,9 @@ internal static class ServerRequestEnvelopeReader
         ReadOnlySequence<byte> payload,
         ProtocolV2FrameFlags flags,
         int maxMetadataBytes,
-        DateTimeOffset utcNow,
-        long monotonicNow)
+        TimeProvider timeProvider)
     {
+        ArgumentNullException.ThrowIfNull(timeProvider);
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out long interfaceHash) ||
             !reader.TryReadLittleEndian(out long methodHash))
@@ -21,19 +19,19 @@ internal static class ServerRequestEnvelopeReader
                 "Request routing prefix is truncated.");
         }
 
-        DateTimeOffset? deadline = null;
-        var deadlineTimestamp = 0L;
+        var deadline = default(RpcDeadline);
         if ((flags & ProtocolV2FrameFlags.HasDeadline) != 0)
         {
             if (!reader.TryReadLittleEndian(out long unixMilliseconds))
                 throw new SharpLinkException(SharpLinkErrorCode.ProtocolViolation, "Request deadline is truncated.");
             try
             {
-                deadline = DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds);
-                deadlineTimestamp = GetMonotonicDeadlineTimestamp(
-                    deadline.Value,
-                    utcNow,
-                    monotonicNow);
+                var utcDeadline = DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds);
+                deadline = RpcDeadline.Create(
+                    utcDeadline,
+                    timeProvider.GetUtcNow(),
+                    timeProvider.GetTimestamp(),
+                    timeProvider.TimestampFrequency);
             }
             catch (ArgumentOutOfRangeException exception)
             {
@@ -72,22 +70,7 @@ internal static class ServerRequestEnvelopeReader
             methodHash,
             reader.UnreadSequence,
             deadline,
-            deadlineTimestamp,
             metadata);
-    }
-
-    private static long GetMonotonicDeadlineTimestamp(
-        DateTimeOffset deadline,
-        DateTimeOffset utcNow,
-        long monotonicNow)
-    {
-        var remaining = deadline - utcNow;
-        if (remaining <= TimeSpan.Zero)
-            return monotonicNow;
-        var stopwatchTicks = remaining.TotalSeconds * Stopwatch.Frequency;
-        if (stopwatchTicks >= long.MaxValue - monotonicNow)
-            return long.MaxValue;
-        return monotonicNow + Math.Max(1L, (long)Math.Ceiling(stopwatchTicks));
     }
 }
 
@@ -95,6 +78,8 @@ internal readonly record struct ServerRequestEnvelope(
     long InterfaceHash,
     long MethodHash,
     ReadOnlySequence<byte> Arguments,
-    DateTimeOffset? Deadline,
-    long DeadlineTimestamp,
-    SharpLinkMetadata? Metadata);
+    RpcDeadline RpcDeadline,
+    SharpLinkMetadata? Metadata)
+{
+    internal DateTimeOffset? Deadline => RpcDeadline.UtcDeadline;
+}

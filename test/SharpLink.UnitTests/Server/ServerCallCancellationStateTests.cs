@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using SharpLink.Client;
 using SharpLink.Server;
@@ -15,7 +16,7 @@ public class ServerCallCancellationStateTests
     public void ModuleDrainingShouldCancelOnlyItsCooperativeInvocation()
     {
         using var moduleDraining = new CancellationTokenSource();
-        var state = ServerCallCancellationState.Rent(
+        var state = Rent(
             100,
             null,
             0,
@@ -40,7 +41,7 @@ public class ServerCallCancellationStateTests
     {
         using var connectionClosed = new CancellationTokenSource();
         using var serverStopping = new CancellationTokenSource();
-        var state = ServerCallCancellationState.Rent(
+        var state = Rent(
             1,
             DateTimeOffset.UtcNow.AddMinutes(1),
             DeadlineAfter(TimeSpan.FromMinutes(1)),
@@ -60,7 +61,7 @@ public class ServerCallCancellationStateTests
     [Test]
     public async Task DeadlineTimerShouldSetDeadlineReason()
     {
-        var state = ServerCallCancellationState.Rent(
+        var state = Rent(
             2,
             DateTimeOffset.UtcNow.AddMilliseconds(25),
             DeadlineAfter(TimeSpan.FromMilliseconds(25)),
@@ -78,7 +79,7 @@ public class ServerCallCancellationStateTests
     [Test]
     public async Task DeadlineReasonShouldBePublishedBeforeInvocationCallbacksRun()
     {
-        var state = ServerCallCancellationState.Rent(
+        var state = Rent(
             20,
             DateTimeOffset.UtcNow.AddMilliseconds(25),
             DeadlineAfter(TimeSpan.FromMilliseconds(25)),
@@ -100,7 +101,7 @@ public class ServerCallCancellationStateTests
     [Test]
     public async Task NonCooperativeDeadlineShouldNotCreateInvocationCancellationSource()
     {
-        var state = ServerCallCancellationState.Rent(
+        var state = Rent(
             21,
             DateTimeOffset.UtcNow.AddMilliseconds(25),
             DeadlineAfter(TimeSpan.FromMilliseconds(25)),
@@ -116,9 +117,108 @@ public class ServerCallCancellationStateTests
     }
 
     [Test]
+    public void FakeTimeSchedulerShouldExpireEqualDeadlinesTogetherKeepOrderAndPreserveCancellationWinner()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
+        using var scheduler = new ServerCallDeadlineScheduler(calls, maxCalls: 4, timeProvider);
+        var firstDeadline = RpcDeadline.Create(
+            timeProvider.GetUtcNow().AddSeconds(1),
+            timeProvider);
+        var laterDeadline = RpcDeadline.Create(
+            timeProvider.GetUtcNow().AddSeconds(2),
+            timeProvider);
+        var first = ServerCallCancellationState.Rent(
+            101, firstDeadline, timeProvider,
+            CancellationToken.None, CancellationToken.None,
+            supportsCooperativeCancellation: true);
+        var tied = ServerCallCancellationState.Rent(
+            102, firstDeadline, timeProvider,
+            CancellationToken.None, CancellationToken.None,
+            supportsCooperativeCancellation: false);
+        var later = ServerCallCancellationState.Rent(
+            103, laterDeadline, timeProvider,
+            CancellationToken.None, CancellationToken.None,
+            supportsCooperativeCancellation: false);
+        var canceled = ServerCallCancellationState.Rent(
+            104, laterDeadline, timeProvider,
+            CancellationToken.None, CancellationToken.None,
+            supportsCooperativeCancellation: true);
+        var states = new[] { first, tied, later, canceled };
+        foreach (var state in states)
+        {
+            calls.Set(state.RequestId, state);
+            scheduler.Register(state);
+        }
+
+        Ensure(timeProvider.ActiveTimerCount == 1,
+            "one server connection scheduler must own exactly one provider timer");
+        Ensure(canceled.TryCancel(ServerCallCancellationReason.RemoteCancel),
+            "caller cancellation must claim its call before the deadline");
+        timeProvider.Advance(TimeSpan.FromSeconds(1).Subtract(TimeSpan.FromTicks(1)));
+        Ensure(states.All(static state => state.Reason is ServerCallCancellationReason.None or
+                                            ServerCallCancellationReason.RemoteCancel),
+            "no server deadline may fire one provider tick early");
+
+        timeProvider.Advance(TimeSpan.FromTicks(1));
+        Ensure(first.Reason == ServerCallCancellationReason.DeadlineExceeded &&
+               tied.Reason == ServerCallCancellationReason.DeadlineExceeded,
+            "all calls sharing the earliest timestamp must expire in the same scan");
+        Ensure(later.Reason == ServerCallCancellationReason.None,
+            "the later deadline must remain live after the first scan");
+        Ensure(canceled.Reason == ServerCallCancellationReason.RemoteCancel,
+            "deadline scanning must not replace an earlier cancellation winner");
+
+        timeProvider.Advance(TimeSpan.FromSeconds(1));
+        Ensure(later.Reason == ServerCallCancellationReason.DeadlineExceeded,
+            "the later deadline must expire only at its own monotonic timestamp");
+        Ensure(canceled.Reason == ServerCallCancellationReason.RemoteCancel,
+            "a later exact deadline must remain a no-op after cancellation");
+
+        foreach (var state in states)
+        {
+            Ensure(calls.TryRemove(state.RequestId, state), "scheduled call cleanup");
+            state.Dispose();
+        }
+    }
+
+    [Test]
+    public void FakeTimeSchedulerDisposeShouldDisarmItsOwnedTimer()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
+        var deadline = RpcDeadline.Create(
+            timeProvider.GetUtcNow().AddSeconds(1),
+            timeProvider);
+        var state = ServerCallCancellationState.Rent(
+            105, deadline, timeProvider,
+            CancellationToken.None, CancellationToken.None,
+            supportsCooperativeCancellation: true);
+        calls.Set(state.RequestId, state);
+        var scheduler = new ServerCallDeadlineScheduler(calls, maxCalls: 1, timeProvider);
+        scheduler.Register(state);
+
+        Ensure(timeProvider.ActiveTimerCount == 1,
+            "server scheduler must register one provider timer");
+        scheduler.Dispose();
+        Ensure(timeProvider.ActiveTimerCount == 0,
+            "server scheduler disposal must remove its provider timer");
+
+        timeProvider.Advance(TimeSpan.FromSeconds(1));
+        Ensure(state.Reason == ServerCallCancellationReason.None,
+            "a disposed scheduler must not run its deadline callback");
+        Ensure(!state.TryClaimResponse() &&
+               state.Reason == ServerCallCancellationReason.DeadlineExceeded,
+            "the call's own exact-boundary claim guard must still reject late success");
+
+        Ensure(calls.TryRemove(state.RequestId, state), "disposed scheduler call cleanup");
+        state.Dispose();
+    }
+
+    [Test]
     public async Task UserCancellationBeforeDeadlineShouldRemainTheTerminalReason()
     {
-        var state = ServerCallCancellationState.Rent(
+        var state = Rent(
             23,
             DateTimeOffset.UtcNow.AddMilliseconds(40),
             DeadlineAfter(TimeSpan.FromMilliseconds(40)),
@@ -138,7 +238,7 @@ public class ServerCallCancellationStateTests
     [Test]
     public async Task DeadlineBeforeUserCancellationShouldRemainTheTerminalReason()
     {
-        var state = ServerCallCancellationState.Rent(
+        var state = Rent(
             24,
             DateTimeOffset.UtcNow.AddMilliseconds(20),
             DeadlineAfter(TimeSpan.FromMilliseconds(20)),
@@ -158,7 +258,7 @@ public class ServerCallCancellationStateTests
     [Test]
     public void ResponseClaimShouldUseMonotonicDeadlineInsteadOfUtcClock()
     {
-        var state = ServerCallCancellationState.Rent(
+        var state = Rent(
             22,
             DateTimeOffset.UtcNow.AddMinutes(1),
             Stopwatch.GetTimestamp() - 1,
@@ -177,7 +277,7 @@ public class ServerCallCancellationStateTests
     {
         using var firstConnection = new CancellationTokenSource();
         using var firstServer = new CancellationTokenSource();
-        var serverState = ServerCallCancellationState.Rent(
+        var serverState = Rent(
             3, null, 0, firstConnection.Token, firstServer.Token, supportsCooperativeCancellation: true);
         firstServer.Cancel();
         firstConnection.Cancel();
@@ -185,7 +285,7 @@ public class ServerCallCancellationStateTests
 
         using var secondConnection = new CancellationTokenSource();
         using var secondServer = new CancellationTokenSource();
-        var connectionState = ServerCallCancellationState.Rent(
+        var connectionState = Rent(
             4, null, 0, secondConnection.Token, secondServer.Token, supportsCooperativeCancellation: true);
         secondConnection.Cancel();
         secondServer.Cancel();
@@ -202,7 +302,7 @@ public class ServerCallCancellationStateTests
         {
             using var connectionClosed = new CancellationTokenSource();
             using var serverStopping = new CancellationTokenSource();
-            var state = ServerCallCancellationState.Rent(
+            var state = Rent(
                 iteration + 1,
                 null,
                 0,
@@ -225,7 +325,7 @@ public class ServerCallCancellationStateTests
     public void CompletedCallShouldIgnoreLaterCancellation()
     {
         using var connectionClosed = new CancellationTokenSource();
-        var state = ServerCallCancellationState.Rent(
+        var state = Rent(
             5, null, 0, connectionClosed.Token, CancellationToken.None, supportsCooperativeCancellation: true);
 
         Ensure(state.TryClaimResponse(), "normal completion should claim the terminal state");
@@ -238,7 +338,7 @@ public class ServerCallCancellationStateTests
     [Test]
     public void ThrowingUserCancellationCallbackShouldNotEscapeFrameworkCancellation()
     {
-        var state = ServerCallCancellationState.Rent(
+        var state = Rent(
             6, null, 0, CancellationToken.None, CancellationToken.None, supportsCooperativeCancellation: true);
         using var registration = state.InvocationToken.Register(static () => throw new InvalidOperationException("user callback"));
 
@@ -253,7 +353,7 @@ public class ServerCallCancellationStateTests
         for (var iteration = 1; iteration <= 100_000; iteration++)
         {
             var requestId = iteration;
-            var state = ServerCallCancellationState.Rent(
+            var state = Rent(
                 requestId,
                 null,
                 0,
@@ -289,7 +389,7 @@ public class ServerCallCancellationStateTests
     {
         for (var iteration = 1; iteration <= 100; iteration++)
         {
-            using var callerState = ServerCallCancellationState.Rent(
+            using var callerState = Rent(
                 iteration,
                 null,
                 0,
@@ -310,7 +410,7 @@ public class ServerCallCancellationStateTests
                    !callerState.TryCancel(ServerCallCancellationReason.RemoteCancel),
                 $"P2-T01 iteration {iteration}: late terminal attempts must be ignored");
 
-            using var deadlineState = ServerCallCancellationState.Rent(
+            using var deadlineState = Rent(
                 10_000 + iteration,
                 DateTimeOffset.UtcNow.AddMinutes(1),
                 DeadlineAfter(TimeSpan.FromMinutes(1)),
@@ -331,7 +431,7 @@ public class ServerCallCancellationStateTests
                    !deadlineState.TryCancel(ServerCallCancellationReason.DeadlineExceeded),
                 $"P2-T02 iteration {iteration}: success must not be followed by a deadline error");
 
-            using var futureDeadlineState = ServerCallCancellationState.Rent(
+            using var futureDeadlineState = Rent(
                 20_000 + iteration,
                 DateTimeOffset.UtcNow.AddMinutes(1),
                 DeadlineAfter(TimeSpan.FromMinutes(1)),
@@ -349,14 +449,14 @@ public class ServerCallCancellationStateTests
     [Test]
     public async Task DuplicateCancelLateResponseAndLateStreamCompleteShouldBeIdempotentAndLeaveNoResources()
     {
-        var limiter = new LateResponseLogLimiter();
+        var limiter = new LateResponseLogLimiter(TimeProvider.System.TimestampFrequency);
         var emittedDiagnostics = 0;
         const long diagnosticWindowStart = 1;
         using var pending = PendingRequestTableTestFixture.Create(2);
 
         for (var iteration = 1; iteration <= 100; iteration++)
         {
-            using var state = ServerCallCancellationState.Rent(
+            using var state = Rent(
                 30_000 + iteration,
                 null,
                 0,
@@ -376,7 +476,7 @@ public class ServerCallCancellationStateTests
             var operation = pending.Rent(
                 Int32Codec.Instance,
                 PendingCallKind.Unary,
-                deadlineTimestamp: 0,
+                deadline: default,
                 CancellationToken.None,
                 out var requestId);
             Ensure(pending.TryComplete(requestId, PendingCallCompletionReason.UserCancellation),
@@ -410,7 +510,7 @@ public class ServerCallCancellationStateTests
         }
 
         Ensure(limiter.ShouldLog(
-                diagnosticWindowStart + LateResponseLogLimiter.IntervalTimestampTicks + 1,
+                diagnosticWindowStart + limiter.IntervalTimestampTicks + 1,
                 out var suppressedDiagnostics),
             "P2-T08: the next diagnostic window must summarize suppressed late frames");
         emittedDiagnostics++;
@@ -424,7 +524,7 @@ public class ServerCallCancellationStateTests
     public void OldSnapshotShouldNotAcquireAReusedPooledState()
     {
         var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
-        var first = ServerCallCancellationState.Rent(
+        var first = Rent(
             50, null, 0, CancellationToken.None, CancellationToken.None,
             supportsCooperativeCancellation: false);
         calls.Set(first.RequestId, first);
@@ -433,7 +533,7 @@ public class ServerCallCancellationStateTests
         Ensure(calls.TryRemove(first.RequestId, first), "remove old call");
         first.Dispose();
 
-        var reused = ServerCallCancellationState.Rent(
+        var reused = Rent(
             51, null, 0, CancellationToken.None, CancellationToken.None,
             supportsCooperativeCancellation: false);
         Ensure(ReferenceEquals(snapshot[0].Value, reused),
@@ -442,6 +542,41 @@ public class ServerCallCancellationStateTests
             "an old request ID must not acquire a new lease");
         reused.Dispose();
     }
+
+    private static ServerCallCancellationState Rent(
+        long requestId,
+        DateTimeOffset? deadline,
+        long deadlineTimestamp,
+        CancellationToken connectionClosedToken,
+        CancellationToken serverStoppingToken,
+        bool supportsCooperativeCancellation)
+        => Rent(
+            requestId,
+            deadline,
+            deadlineTimestamp,
+            connectionClosedToken,
+            serverStoppingToken,
+            CancellationToken.None,
+            supportsCooperativeCancellation);
+
+    private static ServerCallCancellationState Rent(
+        long requestId,
+        DateTimeOffset? deadline,
+        long deadlineTimestamp,
+        CancellationToken connectionClosedToken,
+        CancellationToken serverStoppingToken,
+        CancellationToken moduleDrainingToken,
+        bool supportsCooperativeCancellation)
+        => ServerCallCancellationState.Rent(
+            requestId,
+            deadline is { } utcDeadline
+                ? RpcDeadline.Create(utcDeadline, deadlineTimestamp)
+                : default,
+            TimeProvider.System,
+            connectionClosedToken,
+            serverStoppingToken,
+            moduleDrainingToken,
+            supportsCooperativeCancellation);
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
@@ -504,7 +639,10 @@ public class ServerCallCancellationStateTests
     {
         var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
         calls.Set(state.RequestId, state);
-        var scheduler = new ServerCallDeadlineScheduler(calls, maxCalls: 1);
+        var scheduler = new ServerCallDeadlineScheduler(
+            calls,
+            maxCalls: 1,
+            TimeProvider.System);
         scheduler.Register(state);
         return new ScheduledCall(calls, scheduler, state);
     }

@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 using SharpLink.Client;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Client;
 
@@ -52,6 +53,23 @@ public class SharpClientBuilderTests
         var timeout = ReadRequestTimeout(client);
         Ensure(timeout == TimeSpan.FromSeconds(2), "request timeout should be applied");
         await client.DisposeAsync();
+    }
+
+    [Test]
+    public async Task BuildShouldForwardTheApplicationOwnedTimeProvider()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var client = SharpClientBuilder.Create()
+            .UseTimeProvider(timeProvider)
+            .UseTransport(new NoopTransport())
+            .Build();
+
+        var runtimeContext = (SharpLinkRuntimeContext)((IRpcChannel)client).RuntimeContext;
+        Ensure(ReferenceEquals(runtimeContext.TimeProvider, timeProvider),
+            "client builder must preserve the configured provider instance");
+        await client.DisposeAsync();
+        Ensure(timeProvider.ActiveTimerCount == 0,
+            "disposing the client must not leave a timer on the application-owned provider");
     }
 
     [Test]

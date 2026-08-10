@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Buffers.Binary;
 using SharpLink.Client;
 using SharpLink.Sdk;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Client;
 
@@ -75,6 +76,47 @@ public class SharpLinkClientCallOptionsTests
     }
 
     [Test]
+    public async Task WaitForReadyShouldUseTheRuntimeMonotonicDeadlineAtTheExactFakeTimeBoundary()
+    {
+        var timeProvider = new ManualTimeProvider();
+        await using var client = new SharpLinkClient(
+            new TestClientTransportFactory(),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(timeProvider));
+        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(
+            client,
+            new SharpLinkCallOptions
+            {
+                Timeout = TimeSpan.FromSeconds(3),
+                WaitForReady = true
+            }).AsTask();
+
+        timeProvider.SetUtcNow(timeProvider.GetUtcNow().AddDays(1));
+        await Task.Yield();
+        Ensure(!invocation.IsCompleted,
+            "a forward UTC correction must not change the resolved local timeout");
+        timeProvider.SetUtcNow(timeProvider.GetUtcNow().AddDays(-2));
+        await Task.Yield();
+        Ensure(!invocation.IsCompleted,
+            "a backward UTC correction must not change the resolved local timeout");
+
+        timeProvider.Advance(TimeSpan.FromSeconds(3).Subtract(TimeSpan.FromTicks(1)));
+        await Task.Yield();
+        Ensure(!invocation.IsCompleted,
+            "wait-for-ready must remain pending one provider tick before its deadline");
+        Ensure(((ISharpLinkClientDrainInspector)client).ActiveCallCount == 1,
+            "the fake-time ready waiter must remain a visible logical call");
+
+        timeProvider.Advance(TimeSpan.FromTicks(1));
+        var failure = await CaptureException(invocation);
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
+            "wait-for-ready must fail at the exact runtime monotonic deadline");
+        Ensure(((ISharpLinkClientDrainInspector)client).ActiveCallCount == 0,
+            "deadline completion must release the logical call count");
+    }
+
+    [Test]
     public async Task FarFutureWaitForReadyDeadlineShouldRemainCancellable()
     {
         await using var client = new SharpLinkClient(
@@ -118,6 +160,55 @@ public class SharpLinkClientCallOptionsTests
         Ensure(await invocation == 0, "maximum positive timeout should not fail before send");
         Ensure((request.Flags & ProtocolV2FrameFlags.HasDeadline) != 0,
             "saturated timeout should retain an explicit far-future deadline");
+    }
+
+    [Test]
+    public async Task LogicalCallShouldResolveAllDeadlineCandidatesOnceAndSendTheEarliestWireUtcValue()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var utcNow = timeProvider.GetUtcNow();
+        var transport = new TestClientTransportFactory();
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(timeProvider),
+            requestTimeout: TimeSpan.FromSeconds(10));
+        await client.ConnectAsync();
+        var utcReadsBeforeInvocation = timeProvider.UtcNowReadCount;
+        var method = new RpcMethodDescriptor(
+            ContractId: 1,
+            MethodId: 41,
+            Kind: RpcMethodKind.Unary,
+            HasResponsePayload: true,
+            HasClientStreams: false,
+            HasMethodTimeout: true,
+            MethodTimeout: TimeSpan.FromSeconds(3));
+        var channel = (IRpcChannel)client;
+        var request = default(RpcEmptyRequest);
+
+        var invocation = channel.InvokeUnaryAsync(
+            method,
+            in request,
+            RpcEmptyRequestCodec.Instance,
+            channel.RuntimeContext.Codecs.GetCodec<int>(),
+            new SharpLinkCallOptions
+            {
+                Deadline = utcNow.AddSeconds(8),
+                Timeout = TimeSpan.FromSeconds(5)
+            }).AsTask();
+        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+        var wireDeadlineMilliseconds = BinaryPrimitives.ReadInt64LittleEndian(
+            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long)));
+
+        Ensure((sent.Header.Flags & ProtocolV2FrameFlags.HasDeadline) != 0,
+            "resolved logical call must retain its wire deadline flag");
+        Ensure(timeProvider.UtcNowReadCount == utcReadsBeforeInvocation + 1,
+            "the logical call boundary must resolve all UTC candidates from one provider reading");
+        Ensure(wireDeadlineMilliseconds == utcNow.AddSeconds(3).ToUnixTimeMilliseconds(),
+            "method timeout must be the earliest of absolute, option, method, and client default candidates");
+        await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId));
+        Ensure(await invocation == 0, "earliest-deadline test response");
     }
 
     [Test]
@@ -350,8 +441,13 @@ public class SharpLinkClientCallOptionsTests
         Ensure(await occupied == 0, "occupied pending call completion");
     }
 
-    private static SharpLinkRuntimeContext CreateRuntimeContext()
-        => new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+    private static SharpLinkRuntimeContext CreateRuntimeContext(TimeProvider? timeProvider = null)
+    {
+        var builder = new SharpLinkRuntimeContextBuilder();
+        if (timeProvider is not null)
+            builder.UseTimeProvider(timeProvider);
+        return builder.Build(includeGeneratedAssemblyCatalog: false);
+    }
 
     private static readonly RpcMethodDescriptor OneWayClientStreamingMethod = new(
         1,

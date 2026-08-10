@@ -65,6 +65,15 @@ public class SharpClientBuilder
         return this;
     }
 
+    /// <summary>
+    /// Uses an application-owned time source for the built client. The client never disposes it.
+    /// </summary>
+    public SharpClientBuilder UseTimeProvider(TimeProvider timeProvider)
+    {
+        _runtimeContextBuilder.UseTimeProvider(timeProvider);
+        return this;
+    }
+
     /// <summary>Configures per-client protocol safety limits.</summary>
     public SharpClientBuilder UseProtocol(Action<SharpLinkProtocolOptions> configure)
     {

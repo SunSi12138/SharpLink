@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace SharpLink.Server;
 
 internal enum ServerCallCancellationReason : byte
@@ -38,6 +36,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     private AdmissionLease? _admissionLease;
     private SharpLinkBufferWriterPool? _payloadPool;
     private IRpcByteBufferWriter? _payloadOwner;
+    private TimeProvider? _timeProvider;
 
     private ServerCallCancellationState()
     {
@@ -45,9 +44,7 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     public long RequestId { get; private set; }
 
-    public DateTimeOffset? Deadline { get; private set; }
-
-    public long DeadlineTimestamp { get; private set; }
+    public RpcDeadline Deadline { get; private set; }
 
     public CancellationToken InvocationToken
         => _invocationCancellation?.Token ?? CancellationToken.None;
@@ -59,15 +56,15 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     public static ServerCallCancellationState Rent(
         long requestId,
-        DateTimeOffset? deadline,
-        long deadlineTimestamp,
+        RpcDeadline deadline,
+        TimeProvider timeProvider,
         CancellationToken connectionClosedToken,
         CancellationToken serverStoppingToken,
         bool supportsCooperativeCancellation)
         => Rent(
             requestId,
             deadline,
-            deadlineTimestamp,
+            timeProvider,
             connectionClosedToken,
             serverStoppingToken,
             CancellationToken.None,
@@ -75,8 +72,8 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     public static ServerCallCancellationState Rent(
         long requestId,
-        DateTimeOffset? deadline,
-        long deadlineTimestamp,
+        RpcDeadline deadline,
+        TimeProvider timeProvider,
         CancellationToken connectionClosedToken,
         CancellationToken serverStoppingToken,
         CancellationToken moduleDrainingToken,
@@ -89,7 +86,7 @@ internal sealed class ServerCallCancellationState : IDisposable
 
         state.RequestId = requestId;
         state.Deadline = deadline;
-        state.DeadlineTimestamp = deadlineTimestamp;
+        state._timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         state._reason = (int)ServerCallCancellationReason.None;
         state._abandonedRecorded = 0;
         state._moduleDrainResponseClaimed = 0;
@@ -204,7 +201,8 @@ internal sealed class ServerCallCancellationState : IDisposable
         if (Reason != ServerCallCancellationReason.None)
             return false;
 
-        if (DeadlineTimestamp > 0 && DeadlineTimestamp <= Stopwatch.GetTimestamp())
+        if (Deadline.IsExpired(_timeProvider ?? throw new InvalidOperationException(
+                "Server call state has no time provider.")))
         {
             TryCancel(ServerCallCancellationReason.DeadlineExceeded);
             return false;
@@ -274,8 +272,8 @@ internal sealed class ServerCallCancellationState : IDisposable
         _serverStoppingRegistration = default;
         _moduleDrainingRegistration = default;
         RequestId = 0;
-        Deadline = null;
-        DeadlineTimestamp = 0;
+        Deadline = default;
+        _timeProvider = null;
         _reason = (int)ServerCallCancellationReason.None;
         _abandonedRecorded = 0;
         _moduleDrainResponseClaimed = 0;

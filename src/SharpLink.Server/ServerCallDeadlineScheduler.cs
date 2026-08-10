@@ -1,6 +1,4 @@
 using System.Buffers;
-using System.Diagnostics;
-
 namespace SharpLink.Server;
 
 /// <summary>
@@ -9,24 +7,25 @@ namespace SharpLink.Server;
 /// </summary>
 internal sealed class ServerCallDeadlineScheduler : IDisposable
 {
-    private static readonly TimeSpan MaxTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue);
-
     private readonly StripedLongMap<ServerCallCancellationState> _calls;
     private readonly int _maxCalls;
-    private readonly Timer _timer;
+    private readonly TimeProvider _timeProvider;
+    private readonly ITimer _timer;
     private long _approximateEarliestDeadline = long.MaxValue;
     private int _scanRunning;
     private int _disposed;
 
     internal ServerCallDeadlineScheduler(
         StripedLongMap<ServerCallCancellationState> calls,
-        int maxCalls)
+        int maxCalls,
+        TimeProvider timeProvider)
     {
         _calls = calls ?? throw new ArgumentNullException(nameof(calls));
         if (maxCalls is < 1 or > SharpLinkFlowControlOptions.MaximumConcurrentCallsPerConnection)
             throw new ArgumentOutOfRangeException(nameof(maxCalls));
         _maxCalls = maxCalls;
-        _timer = new Timer(
+        _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+        _timer = _timeProvider.CreateTimer(
             static state => ((ServerCallDeadlineScheduler)state!).ScanExpiredDeadlines(),
             this,
             Timeout.InfiniteTimeSpan,
@@ -36,8 +35,8 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
     internal void Register(ServerCallCancellationState call)
     {
         ArgumentNullException.ThrowIfNull(call);
-        if (call.DeadlineTimestamp > 0)
-            UpdateEarliestDeadline(call.DeadlineTimestamp);
+        if (call.Deadline.HasValue)
+            UpdateEarliestDeadline(call.Deadline.Timestamp);
     }
 
     public void Dispose()
@@ -80,7 +79,7 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         {
             Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);
             var count = _calls.CopyEntries(snapshot);
-            var now = Stopwatch.GetTimestamp();
+            var now = _timeProvider.GetTimestamp();
             for (var index = 0; index < count; index++)
             {
                 var entry = snapshot[index];
@@ -90,13 +89,13 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
                     continue;
                 try
                 {
-                    var deadlineTimestamp = call.DeadlineTimestamp;
-                    if (deadlineTimestamp <= 0)
+                    var deadline = call.Deadline;
+                    if (!deadline.HasValue)
                         continue;
-                    if (deadlineTimestamp <= now)
+                    if (deadline.Timestamp <= now)
                         call.TryCancel(ServerCallCancellationReason.DeadlineExceeded);
                     else
-                        UpdateEarliestDeadline(deadlineTimestamp);
+                        UpdateEarliestDeadline(deadline.Timestamp);
                 }
                 finally
                 {
@@ -108,7 +107,11 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         {
             // Session admission makes this unreachable. Never let an invariant violation escape
             // a timer callback; retry after a bounded delay so deadlines are not lost.
-            UpdateEarliestDeadline(Stopwatch.GetTimestamp() + Stopwatch.Frequency);
+            var now = _timeProvider.GetTimestamp();
+            var frequency = _timeProvider.TimestampFrequency;
+            UpdateEarliestDeadline(now > long.MaxValue - frequency
+                ? long.MaxValue
+                : now + frequency);
         }
         finally
         {
@@ -127,12 +130,12 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
-        var remainingTicks = deadlineTimestamp - Stopwatch.GetTimestamp();
-        var delay = remainingTicks <= 0
-            ? TimeSpan.Zero
-            : TimeSpan.FromSeconds((double)remainingTicks / Stopwatch.Frequency);
-        if (delay > MaxTimerDelay)
-            delay = MaxTimerDelay;
+        var delay = RpcDeadline.GetRemaining(
+            deadlineTimestamp,
+            _timeProvider.GetTimestamp(),
+            _timeProvider.TimestampFrequency);
+        if (delay > SharpLinkTimer.MaximumDelay)
+            delay = SharpLinkTimer.MaximumDelay;
         try
         {
             _timer.Change(delay, Timeout.InfiniteTimeSpan);

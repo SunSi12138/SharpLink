@@ -16,6 +16,7 @@ internal sealed class ManualTimeProvider : TimeProvider
     private readonly List<ManualTimer> _timers = [];
     private DateTimeOffset _utcNow;
     private long _timestamp;
+    private int _utcNowReadCount;
 
     public ManualTimeProvider(DateTimeOffset? start = null)
     {
@@ -29,13 +30,40 @@ internal sealed class ManualTimeProvider : TimeProvider
     public override DateTimeOffset GetUtcNow()
     {
         lock (_gate)
+        {
+            _utcNowReadCount++;
             return _utcNow;
+        }
     }
 
     public override long GetTimestamp()
     {
         lock (_gate)
             return _timestamp;
+    }
+
+    public int ActiveTimerCount
+    {
+        get
+        {
+            lock (_gate)
+                return _timers.Count;
+        }
+    }
+
+    public int UtcNowReadCount
+    {
+        get
+        {
+            lock (_gate)
+                return _utcNowReadCount;
+        }
+    }
+
+    public void SetUtcNow(DateTimeOffset utcNow)
+    {
+        lock (_gate)
+            _utcNow = utcNow;
     }
 
     public override ITimer CreateTimer(

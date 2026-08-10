@@ -62,10 +62,11 @@ public class PendingRequestTableTests
         var timeProvider = new TrackingTimeProvider(utcNow);
         using var manager = CreateTable(1, timeProvider: timeProvider);
         var occupied = manager.Rent<int>(out _);
+        var deadline = RpcDeadline.Create(utcNow.AddTicks(-1), timeProvider);
 
         var failure = await CaptureExceptionAsync(manager.RentAsync<int>(
             waitForSlot: true,
-            utcNow.AddTicks(-1),
+            deadline,
             CancellationToken.None).AsTask());
 
         Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
@@ -73,6 +74,114 @@ public class PendingRequestTableTests
         Ensure(timeProvider.UtcReadCount == 1, "the capacity wait must read the injected time source once");
         manager.FailAllPendingRequests(new IOException("test cleanup"));
         await EnsureThrows<IOException>(occupied.AsValueTask(), "test cleanup");
+    }
+
+    [Test]
+    public async Task FakeTimeCapacityWaitShouldExpireAtItsMonotonicBoundaryWithoutLeakingAWaiter()
+    {
+        var timeProvider = new ManualTimeProvider();
+        using var manager = CreateTable(1, timeProvider: timeProvider);
+        var occupied = manager.Rent<int>(out _);
+        var deadline = RpcDeadline.Create(
+            timeProvider.GetUtcNow().AddSeconds(2),
+            timeProvider);
+        var waiting = manager.RentAsync<int>(
+            waitForSlot: true,
+            deadline,
+            CancellationToken.None).AsTask();
+
+        timeProvider.Advance(TimeSpan.FromSeconds(2).Subtract(TimeSpan.FromTicks(1)));
+        await Task.Yield();
+        Ensure(!waiting.IsCompleted,
+            "capacity wait must remain pending one provider tick before its deadline");
+
+        timeProvider.Advance(TimeSpan.FromTicks(1));
+        var failure = await CaptureExceptionAsync(waiting);
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
+            "capacity wait must fail with DeadlineExceeded at the exact monotonic boundary");
+        Ensure(manager.Count == 1,
+            "a timed-out waiter must not occupy or release the existing pending slot");
+
+        manager.FailAllPendingRequests(new IOException("fake-time cleanup"));
+        await EnsureThrows<IOException>(occupied.AsValueTask(), "fake-time cleanup");
+        Ensure(manager.Count == 0, "capacity timeout cleanup must leave zero pending calls");
+    }
+
+    [Test]
+    public async Task FakeTimeDeadlineSchedulerShouldExpireEqualDeadlinesTogetherAndLaterDeadlineInOrder()
+    {
+        var timeProvider = new ManualTimeProvider();
+        using var manager = CreateTable(8, timeProvider: timeProvider);
+        var firstDeadline = RpcDeadline.Create(
+            timeProvider.GetUtcNow().AddSeconds(1),
+            timeProvider);
+        var laterDeadline = RpcDeadline.Create(
+            timeProvider.GetUtcNow().AddSeconds(2),
+            timeProvider);
+        var first = manager.Rent(
+            new Int32Codec(), PendingCallKind.Unary, firstDeadline,
+            CancellationToken.None, out _).AsValueTask().AsTask();
+        var tied = manager.Rent(
+            new Int32Codec(), PendingCallKind.Unary, firstDeadline,
+            CancellationToken.None, out _).AsValueTask().AsTask();
+        var later = manager.Rent(
+            new Int32Codec(), PendingCallKind.Unary, laterDeadline,
+            CancellationToken.None, out _).AsValueTask().AsTask();
+
+        timeProvider.Advance(TimeSpan.FromSeconds(1).Subtract(TimeSpan.FromTicks(1)));
+        Ensure(!first.IsCompleted && !tied.IsCompleted && !later.IsCompleted,
+            "no pending call may expire before the earliest monotonic timestamp");
+
+        timeProvider.Advance(TimeSpan.FromTicks(1));
+        Ensure(await CaptureExceptionAsync(first) is SharpLinkException
+        { Code: SharpLinkErrorCode.DeadlineExceeded },
+            "first equal deadline result");
+        Ensure(await CaptureExceptionAsync(tied) is SharpLinkException
+        { Code: SharpLinkErrorCode.DeadlineExceeded },
+            "second equal deadline result");
+        Ensure(!later.IsCompleted && manager.Count == 1,
+            "later deadline must remain registered after equal earlier deadlines expire");
+
+        timeProvider.Advance(TimeSpan.FromSeconds(1));
+        Ensure(await CaptureExceptionAsync(later) is SharpLinkException
+        { Code: SharpLinkErrorCode.DeadlineExceeded },
+            "later deadline result");
+        Ensure(manager.Count == 0,
+            "ordered fake-time deadline scans must release every pending slot");
+    }
+
+    [Test]
+    public async Task FakeTimeCancellationAndDisposeShouldRemoveCallsAndTheOwnedTimerExactlyOnce()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var manager = CreateTable(2, timeProvider: timeProvider);
+        using var cancellation = new CancellationTokenSource();
+        var deadline = RpcDeadline.Create(
+            timeProvider.GetUtcNow().AddSeconds(5),
+            timeProvider);
+        var canceled = manager.Rent(
+            new Int32Codec(), PendingCallKind.Unary, deadline,
+            cancellation.Token, out _).AsValueTask().AsTask();
+        var disposed = manager.Rent(
+            new Int32Codec(), PendingCallKind.Unary, deadline,
+            CancellationToken.None, out _).AsValueTask().AsTask();
+
+        Ensure(timeProvider.ActiveTimerCount == 1,
+            "one pending table must own exactly one provider timer");
+        cancellation.Cancel();
+        Ensure(await CaptureExceptionAsync(canceled) is OperationCanceledException,
+            "caller cancellation must win before the fake deadline");
+
+        manager.Dispose();
+        Ensure(await CaptureExceptionAsync(disposed) is SharpLinkException
+        { Code: SharpLinkErrorCode.ConnectionClosed },
+            "table disposal must complete the remaining call as ConnectionClosed");
+        Ensure(manager.Count == 0 && timeProvider.ActiveTimerCount == 0,
+            "dispose must drain calls and dispose its single owned timer");
+
+        timeProvider.Advance(TimeSpan.FromSeconds(5));
+        Ensure(manager.Count == 0 && timeProvider.ActiveTimerCount == 0,
+            "advancing fake time after dispose must not resurrect timer work");
     }
 
     [Test]
@@ -103,7 +212,7 @@ public class PendingRequestTableTests
         var operation = manager.Rent(
             new Int32Codec(),
             PendingCallKind.Unary,
-            deadlineTimestamp: 0,
+            deadline: default,
             CancellationToken.None,
             out var requestId);
         var payload = ReadOnlySequence<byte>.Empty;
@@ -117,7 +226,7 @@ public class PendingRequestTableTests
         var payloadlessOperation = manager.Rent(
             new Int32Codec(),
             PendingCallKind.Unary,
-            deadlineTimestamp: 0,
+            deadline: default,
             CancellationToken.None,
             out requestId,
             hasResponsePayload: false);
@@ -135,7 +244,7 @@ public class PendingRequestTableTests
         var operation = manager.Rent(
             new NullStringCodec(),
             PendingCallKind.Unary,
-            deadlineTimestamp: 0,
+            deadline: default,
             CancellationToken.None,
             out var requestId);
         var payload = new ReadOnlySequence<byte>(new byte[] { 1 });
@@ -149,7 +258,7 @@ public class PendingRequestTableTests
         var nullableOperation = manager.Rent(
             new NullStringCodec(),
             PendingCallKind.Unary,
-            deadlineTimestamp: 0,
+            deadline: default,
             CancellationToken.None,
             out requestId,
             responseNullable: true);
@@ -289,7 +398,7 @@ public class PendingRequestTableTests
 
         var waiting = manager.RentAsync<int>(
             waitForSlot: true,
-            DateTimeOffset.UtcNow.AddSeconds(5),
+            RpcDeadline.Create(DateTimeOffset.UtcNow.AddSeconds(5), TimeProvider.System),
             System.Threading.CancellationToken.None).AsTask();
         Ensure(!waiting.IsCompleted, "full table waiter should suspend");
 
@@ -314,7 +423,7 @@ public class PendingRequestTableTests
 
         var timeout = await CaptureExceptionAsync(manager.RentAsync<int>(
             waitForSlot: true,
-            DateTimeOffset.UtcNow.AddMilliseconds(20),
+            RpcDeadline.Create(DateTimeOffset.UtcNow.AddMilliseconds(20), TimeProvider.System),
             System.Threading.CancellationToken.None).AsTask());
         Ensure(timeout is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }, "deadline error");
 
@@ -322,7 +431,7 @@ public class PendingRequestTableTests
         cancellation.Cancel();
         var canceled = await CaptureExceptionAsync(manager.RentAsync<int>(
             waitForSlot: true,
-            deadline: null,
+            deadline: default,
             cancellation.Token).AsTask());
         Ensure(canceled is OperationCanceledException, "cancellation error");
 
@@ -339,7 +448,7 @@ public class PendingRequestTableTests
 
         var failure = await CaptureExceptionAsync(manager.RentAsync<int>(
             waitForSlot: true,
-            DateTimeOffset.MaxValue,
+            RpcDeadline.Create(DateTimeOffset.MaxValue, TimeProvider.System),
             cancellation.Token).AsTask());
 
         Ensure(failure is OperationCanceledException,
@@ -382,7 +491,7 @@ public class PendingRequestTableTests
         var requestId = manager.RegisterStream(
             PendingCallKind.ServerStreaming,
             new NoopStreamDispatcher(),
-            deadlineTimestamp: 0,
+            deadline: default,
             CancellationToken.None,
             observer);
 
@@ -415,7 +524,7 @@ public class PendingRequestTableTests
         var owner = new RecordingPendingCallOwner();
         using var manager = CreateTable(8, owner: owner);
         var lease = manager.RegisterOneWayClientStream(
-            deadlineTimestamp: 0,
+            deadline: default,
             CancellationToken.None);
         using var callback = manager.GetProducerCancellationToken(lease.Id).Register(
             static () => throw new InvalidOperationException("producer cancellation callback failed"));
@@ -457,14 +566,14 @@ public class PendingRequestTableTests
             registeredStreamId = manager.RegisterStream(
                 PendingCallKind.ServerStreaming,
                 new NoopStreamDispatcher(),
-                deadlineTimestamp: 0,
+                deadline: default,
                 CancellationToken.None);
         });
         PendingRequestLease<RpcEmptyRequest> registeredOneWay = default;
         var oneWayFailure = CaptureException(() =>
         {
             registeredOneWay = manager.RegisterOneWayClientStream(
-                deadlineTimestamp: 0,
+                deadline: default,
                 CancellationToken.None);
         });
 
@@ -537,7 +646,7 @@ public class PendingRequestTableTests
         var operation = manager.Rent(
             new Int32Codec(),
             PendingCallKind.Unary,
-            deadline,
+            RpcDeadline.Create(DateTimeOffset.MaxValue, deadline),
             CancellationToken.None,
             out _);
 
@@ -561,7 +670,7 @@ public class PendingRequestTableTests
             operation = manager.Rent(
                 new Int32Codec(),
                 PendingCallKind.Unary,
-                deadline,
+                RpcDeadline.Create(DateTimeOffset.MaxValue, deadline),
                 CancellationToken.None,
                 out requestId);
         }
@@ -588,7 +697,7 @@ public class PendingRequestTableTests
             var operation = manager.Rent(
                 new Int32Codec(),
                 PendingCallKind.Unary,
-                deadlineTimestamp: 0,
+                deadline: default,
                 CancellationToken.None,
                 out var requestId);
             var payload = SInt32Payload;
@@ -623,7 +732,7 @@ public class PendingRequestTableTests
         var rentTask = Task.Run(() => manager.Rent(
             new Int32Codec(),
             PendingCallKind.Unary,
-            deadlineTimestamp: 0,
+            deadline: default,
             cancellation.Token,
             out _));
 

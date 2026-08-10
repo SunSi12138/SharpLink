@@ -19,7 +19,7 @@ internal sealed partial class SharpLinkServer
         using var requestScope = BeginRequestLogScope(_logger, requestId);
         var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
         var request = ReadRequestEnvelope(session, payload, flags);
-        if (IsDeadlineExceeded(request.DeadlineTimestamp))
+        if (IsDeadlineExceeded(request.RpcDeadline))
         {
             if (admittedCallState is not null)
             {
@@ -54,8 +54,7 @@ internal sealed partial class SharpLinkServer
             admittedCallState = CreateAdmissionWaitState(
                 connection,
                 requestId,
-                request.Deadline,
-                request.DeadlineTimestamp,
+                request.RpcDeadline,
                 serverLoopToken,
                 serviceInfo.ModuleCancellation,
                 requestCancellationMap);
@@ -179,8 +178,7 @@ internal sealed partial class SharpLinkServer
         var callState = admittedCallState ?? CreateTrackedCallState(
             connection,
             requestId,
-            request.Deadline,
-            request.DeadlineTimestamp,
+            request.RpcDeadline,
             serverLoopToken,
             serviceInfo.ModuleCancellation,
             supportsCooperativeCancellation,
@@ -188,7 +186,7 @@ internal sealed partial class SharpLinkServer
         if (decodedRequestOwner is not null)
         {
             callState = EnsureTrackedCallState(
-                connection, callState, requestId, request.Deadline, request.DeadlineTimestamp,
+                connection, callState, requestId, request.RpcDeadline,
                 serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);
             callState.AttachPayloadOwner(_runtimeContext.Buffers, decodedRequestOwner);
             decodedRequestOwner = null;
@@ -220,13 +218,13 @@ internal sealed partial class SharpLinkServer
                         Status: SharpLinkInvocationStatus.Pending
                     } interceptorContext)
                     interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
-                TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken);
+                TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken);
                 ReleaseOneWayDispatchResources(callState, requestId, requestCancellationMap, connection);
                 return;
             }
 
             callState = EnsureTrackedCallState(
-                connection, callState, requestId, request.Deadline, request.DeadlineTimestamp,
+                connection, callState, requestId, request.RpcDeadline,
                 serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);
             ObserveUserCall(
                 new ValueTask(AwaitOneWayDispatchAsync(
@@ -245,7 +243,7 @@ internal sealed partial class SharpLinkServer
         catch (Exception ex)
         {
             DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
-            if (TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
+            if (TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken))
             {
                 LogOnewayRpcDispatchFailed(_logger, MapServiceException(
                     ex, callContext, session, serviceInfo.Stub, request.MethodHash, requestId, invokeToken));
@@ -403,8 +401,7 @@ internal sealed partial class SharpLinkServer
     private ServerCallCancellationState CreateAdmissionWaitState(
         ServerConnectionState connection,
         long requestId,
-        DateTimeOffset? deadline,
-        long deadlineTimestamp,
+        RpcDeadline deadline,
         CancellationToken serverLoopToken,
         CancellationToken moduleDrainingToken,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap)
@@ -412,7 +409,7 @@ internal sealed partial class SharpLinkServer
         var callState = ServerCallCancellationState.Rent(
             requestId,
             deadline,
-            deadlineTimestamp,
+            _runtimeContext.TimeProvider,
             serverLoopToken,
             _forceStopCts.Token,
             moduleDrainingToken,

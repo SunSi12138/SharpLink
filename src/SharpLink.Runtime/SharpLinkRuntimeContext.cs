@@ -100,7 +100,11 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
 
     internal RuntimeConcurrencyOptions Concurrency { get; }
 
-    internal TimeProvider TimeProvider { get; }
+    /// <summary>
+    /// Gets the application-owned time source used for monotonic runtime scheduling.
+    /// SharpLink never disposes this instance.
+    /// </summary>
+    public TimeProvider TimeProvider { get; }
 
     internal SharpLinkProtocolOptions Protocol => _options.Protocol;
 
@@ -202,7 +206,7 @@ public sealed class SharpLinkRuntimeContextBuilder
     private readonly RuntimeConcurrencyOptions _concurrency = new();
     private readonly BufferWriterPoolOptions _bufferPool = new();
     private readonly Dictionary<Type, IRpcCodec> _codecs = [];
-    private readonly TimeProvider _timeProvider = TimeProvider.System;
+    private TimeProvider _timeProvider = TimeProvider.System;
     private Func<Type, IRpcCodec?>? _resolver;
 
     /// <summary>Configures runtime and protocol limits.</summary>
@@ -233,6 +237,16 @@ public sealed class SharpLinkRuntimeContextBuilder
     public SharpLinkRuntimeContextBuilder UseCodecResolver(Func<Type, IRpcCodec?>? resolver)
     {
         _resolver = resolver;
+        return this;
+    }
+
+    /// <summary>
+    /// Uses an application-owned time source for contexts built by this builder.
+    /// The context stores the reference but never disposes it.
+    /// </summary>
+    public SharpLinkRuntimeContextBuilder UseTimeProvider(TimeProvider timeProvider)
+    {
+        _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         return this;
     }
 

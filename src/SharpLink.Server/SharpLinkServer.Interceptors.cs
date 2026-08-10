@@ -536,7 +536,7 @@ internal sealed partial class SharpLinkServer
             {
                 exception = MapServerCancellationException(
                     callState,
-                    callState.DeadlineTimestamp);
+                    callState.Deadline);
             }
             finally
             {

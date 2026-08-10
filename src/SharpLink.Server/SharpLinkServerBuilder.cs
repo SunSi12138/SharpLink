@@ -91,6 +91,15 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
+    /// <summary>
+    /// Uses an application-owned time source for the built server. The server never disposes it.
+    /// </summary>
+    public SharpLinkServerBuilder UseTimeProvider(TimeProvider timeProvider)
+    {
+        _runtimeContextBuilder.UseTimeProvider(timeProvider);
+        return this;
+    }
+
     /// <summary>Enables bounded active admission control for calls accepted by this server.</summary>
     /// <param name="configure">Configures global, contract, method, partition and queue limits.</param>
     /// <returns>This builder.</returns>
