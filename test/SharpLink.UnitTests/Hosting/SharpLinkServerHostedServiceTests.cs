@@ -311,12 +311,16 @@ public class SharpLinkServerHostedServiceTests
         var deferred = ((SharpLinkServer)server).DeferredTaskSnapshotForDiagnostics;
         Ensure(deferred.ShutdownCleanupObserver is not null and not TaskStatus.RanToCompletion,
             "timed-out framework cleanup must remain continuously observed and diagnosable");
+        var shutdownCleanupObserver = (Task)(typeof(SharpLinkServer).GetField(
+            "_shutdownCleanupObserver",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(server) ?? throw new Exception("cannot find Server shutdown cleanup observer owner"));
 
         transport.ReleaseDispose();
-        await YieldUntilAsync(
-            () => ((SharpLinkServer)server).DeferredTaskSnapshotForDiagnostics.ShutdownCleanupObserver ==
-                  TaskStatus.RanToCompletion,
-            "framework cleanup observer did not complete after the listener owner released");
+        await shutdownCleanupObserver;
+        Ensure(((SharpLinkServer)server).DeferredTaskSnapshotForDiagnostics.ShutdownCleanupObserver ==
+               TaskStatus.RanToCompletion,
+            "framework cleanup observer must complete after the listener owner releases");
         await runTask;
         Ensure(provider.ActiveTimerCount == 0,
             "framework cleanup completion must leave no provider timer behind");
