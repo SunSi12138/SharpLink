@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -39,8 +40,14 @@ public static class Program
             if (args[index].Equals("--role", StringComparison.OrdinalIgnoreCase))
                 role = args[index + 1].ToLowerInvariant();
         }
+        string? completionFile = null;
+        for (var index = 0; index + 1 < args.Length; index++)
+        {
+            if (args[index].Equals("--completion-file", StringComparison.OrdinalIgnoreCase))
+                completionFile = args[index + 1];
+        }
         if (role == "server")
-            return await RunServerOnlyAsync(sharedMemoryName).ConfigureAwait(false);
+            return await RunServerOnlyAsync(sharedMemoryName, completionFile).ConfigureAwait(false);
         if (role == "client")
             return await RunClientOnlyAsync(sharedMemoryName).ConfigureAwait(false);
         if (role != "local")
@@ -125,7 +132,7 @@ public static class Program
         }
     }
 
-    private static async Task<int> RunServerOnlyAsync(string name)
+    private static async Task<int> RunServerOnlyAsync(string name, string? completionFile)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         VerifyReferencedServiceManifestIsRootedBeforeBuild();
@@ -139,7 +146,10 @@ public static class Program
         Console.WriteLine("AOT_SMOKE_SERVER_READY");
         try
         {
-            await AotService.FinalCall.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
+            if (completionFile is null)
+                await AotService.FinalCall.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
+            else
+                await WaitForCompletionFileAsync(completionFile, timeout.Token).ConfigureAwait(false);
             await server.StopAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
             await runTask.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
             Console.WriteLine("AOT_SMOKE_SERVER_PASS");
@@ -169,6 +179,14 @@ public static class Program
             await Console.Error.WriteLineAsync($"AOT_SMOKE_CLIENT_FAIL: {exception}");
             return 1;
         }
+    }
+
+    private static async Task WaitForCompletionFileAsync(
+        string completionFile,
+        CancellationToken cancellationToken)
+    {
+        while (!File.Exists(completionFile))
+            await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task VerifyClientAsync(ISharpLinkClient client, CancellationToken cancellationToken)
