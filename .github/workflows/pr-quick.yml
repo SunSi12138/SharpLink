@@ -73,6 +73,9 @@ jobs:
       - name: Verify Hosting direct Runtime dependency
         run: ./eng/verify-hosting-package-dependency.sh artifacts/nuget
 
+      - name: Verify Abstractions has no DI dependency
+        run: ./eng/verify-abstractions-package-dependency.sh artifacts/nuget
+
       - name: Restore Package Smoke
         run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
         env:

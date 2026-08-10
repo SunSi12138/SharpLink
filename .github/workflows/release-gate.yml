@@ -149,6 +149,9 @@ jobs:
       - name: Verify Hosting direct Runtime dependency
         run: ./eng/verify-hosting-package-dependency.sh artifacts/nuget
 
+      - name: Verify Abstractions has no DI dependency
+        run: ./eng/verify-abstractions-package-dependency.sh artifacts/nuget
+
       - name: Verify Generated ABI Package Mixing
         run: ./eng/verify-generated-abi-mixing.sh
 
