@@ -254,18 +254,10 @@ internal sealed class BrotliCompressionProvider(CompressionLevel level) : ISharp
         int maxOutputBytes,
         CancellationToken cancellationToken)
     {
-        byte[]? contiguous = null;
-        ReadOnlySpan<byte> source;
-        if (input.IsSingleSegment)
-        {
-            source = input.FirstSpan;
-        }
-        else
-        {
-            contiguous = input.ToArray();
-            source = contiguous;
-        }
+        if (!input.IsSingleSegment)
+            return DecompressBrotliSegmented(input, output, maxOutputBytes, cancellationToken);
 
+        ReadOnlySpan<byte> source = input.FirstSpan;
         using var decoder = new BrotliDecoder();
         var consumed = 0;
         var written = 0;
@@ -314,6 +306,97 @@ internal sealed class BrotliCompressionProvider(CompressionLevel level) : ISharp
             if (consumedNow == 0 && writtenNow == 0)
                 throw new InvalidDataException("Brotli decoder made no progress.");
         }
+    }
+
+    private static int DecompressBrotliSegmented(
+        ReadOnlySequence<byte> input,
+        IBufferWriter<byte> output,
+        int maxOutputBytes,
+        CancellationToken cancellationToken)
+    {
+        using var decoder = new BrotliDecoder();
+        var consumed = 0L;
+        var written = 0;
+        Span<byte> outputLimitProbe = stackalloc byte[1];
+        var segments = input.GetEnumerator();
+        var hasSegment = MoveToNextNonEmptySegment(ref segments, out var segment);
+        var segmentOffset = 0;
+        var drainFinalOutput = false;
+
+        while (hasSegment || drainFinalOutput)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var source = hasSegment
+                ? segment.Span[segmentOffset..]
+                : ReadOnlySpan<byte>.Empty;
+            OperationStatus status;
+            int consumedNow;
+            int writtenNow;
+            if (written < maxOutputBytes)
+            {
+                var capacity = Math.Min(8192, maxOutputBytes - written);
+                var destination = output.GetSpan(capacity)[..capacity];
+                status = decoder.Decompress(source, destination, out consumedNow, out writtenNow);
+                output.Advance(writtenNow);
+                written += writtenNow;
+            }
+            else
+            {
+                status = decoder.Decompress(source, outputLimitProbe, out consumedNow, out writtenNow);
+                if (writtenNow != 0)
+                    throw new SharpLinkCompressionOutputLimitException(maxOutputBytes);
+            }
+            segmentOffset += consumedNow;
+            consumed += consumedNow;
+
+            switch (status)
+            {
+                case OperationStatus.Done:
+                    if (consumed != input.Length)
+                        throw new InvalidDataException("Compressed payload contains trailing data.");
+                    return written;
+                case OperationStatus.InvalidData:
+                    throw new InvalidDataException("Brotli payload is invalid.");
+                case OperationStatus.NeedMoreData:
+                    if (!hasSegment)
+                        throw new InvalidDataException("Brotli payload is truncated.");
+                    if (segmentOffset == segment.Length)
+                    {
+                        hasSegment = MoveToNextNonEmptySegment(ref segments, out segment);
+                        segmentOffset = 0;
+                        if (!hasSegment)
+                            throw new InvalidDataException("Brotli payload is truncated.");
+                        continue;
+                    }
+                    break;
+            }
+
+            if (hasSegment && segmentOffset == segment.Length)
+            {
+                hasSegment = MoveToNextNonEmptySegment(ref segments, out segment);
+                segmentOffset = 0;
+                drainFinalOutput = !hasSegment && status == OperationStatus.DestinationTooSmall;
+            }
+            if (consumedNow == 0 && writtenNow == 0)
+                throw new InvalidDataException("Brotli decoder made no progress.");
+        }
+
+        throw new InvalidDataException("Brotli payload is truncated.");
+    }
+
+    private static bool MoveToNextNonEmptySegment(
+        ref ReadOnlySequence<byte>.Enumerator segments,
+        out ReadOnlyMemory<byte> segment)
+    {
+        while (segments.MoveNext())
+        {
+            segment = segments.Current;
+            if (!segment.IsEmpty)
+                return true;
+        }
+
+        segment = default;
+        return false;
     }
 
 }
