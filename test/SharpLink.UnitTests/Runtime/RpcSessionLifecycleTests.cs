@@ -379,6 +379,180 @@ public class RpcSessionLifecycleTests
     }
 
     [Test]
+    [Arguments("sync", "dispose")]
+    [Arguments("async", "dispose")]
+    [Arguments("backpressure", "dispose")]
+    [Arguments("sync", "fault")]
+    [Arguments("async", "fault")]
+    [Arguments("backpressure", "fault")]
+    public async Task TerminalTransitionDuringSendShouldReturnPublishedFailure(
+        string sendPath,
+        string terminalPath)
+    {
+        var provider = new BlockingCompressionProvider();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options => options.Compression.Providers.Add(provider))
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var input = new Pipe();
+        var output = new Pipe();
+        var transport = RpcSessionTestFixture.Transport(
+            $"terminal-send-{sendPath}-{terminalPath}",
+            input.Reader,
+            output.Writer);
+        var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions(context));
+        RpcSessionTestFixture.CompleteHandshake(
+            session,
+            ProtocolV2Capabilities.Compression,
+            compressionBinding: context.Compression.ProviderBindings[0]);
+        var published = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var publishedCount = 0;
+        session.OnDisconnected += exception =>
+        {
+            Interlocked.Increment(ref publishedCount);
+            published.TrySetResult(exception);
+        };
+        var original = CreateResponsePacket(session, 2048);
+        var send = StartSendAsync(session, original, sendPath);
+
+        await provider.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        if (terminalPath == "fault")
+        {
+            session.NotifyDisconnected(
+                new SharpLinkException(SharpLinkErrorCode.DataLoss, "terminal send race"));
+        }
+        else
+        {
+            session.BeginShutdown();
+        }
+        var terminal = await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        provider.Release();
+
+        var failure = await send.WaitAsync(TimeSpan.FromSeconds(2));
+        await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(terminal is SharpLinkException, "the terminal transition must publish a structured failure");
+        Ensure(ReferenceEquals(terminal, failure), "the in-flight send must observe the published terminal instance");
+        Ensure(failure is SharpLinkException { Code: not SharpLinkErrorCode.ProtocolViolation },
+            "a terminal transition must not be rewritten as a protocol validation failure");
+        Ensure(publishedCount == 1, "the terminal transition must be published exactly once");
+        Ensure(!session.IsConnected && session.QueuedSendBytes == 0,
+            "the terminal send must not remain connected or strand queued bytes");
+        Ensure(transport.DisposeCount == 1, "the terminal send must dispose its transport exactly once");
+        EnsureReturned(original, "compression must return the original packet owner");
+        Ensure(provider.Candidate is not null, "compression must expose its replacement packet owner");
+        EnsureReturned(provider.Candidate!, "terminal validation must return the replacement packet owner");
+    }
+
+    [Test]
+    [Arguments("sync")]
+    [Arguments("async")]
+    [Arguments("backpressure")]
+    public async Task PumpCreationObservingTerminalShouldReturnValidatedPacket(string sendPath)
+    {
+        var input = new Pipe();
+        var output = new Pipe();
+        var transport = RpcSessionTestFixture.Transport(
+            $"terminal-pump-{sendPath}",
+            input.Reader,
+            output.Writer);
+        var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions());
+        RpcSessionTestFixture.CompleteHandshake(session);
+        var published = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        session.OnDisconnected += exception => published.TrySetResult(exception);
+        var packet = new BlockingPacketWriter();
+        packet.WritePacket(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, requestId: 1);
+        packet.Arm();
+        var send = StartSendAsync(session, packet, sendPath);
+
+        await packet.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        session.BeginShutdown();
+        var terminal = await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        packet.Release();
+
+        var failure = await send.WaitAsync(TimeSpan.FromSeconds(2));
+        await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var returnCount = packet.DisposeCount;
+        if (returnCount == 0)
+            packet.Dispose();
+
+        Ensure(ReferenceEquals(terminal, failure), "pump creation must preserve the published terminal instance");
+        Ensure(returnCount == 1, "a validated packet rejected before pump ownership must be returned exactly once");
+        Ensure(session.QueuedSendBytes == 0, "a rejected validated packet must not affect queue accounting");
+        Ensure(transport.DisposeCount == 1, "the pump race must dispose its transport exactly once");
+    }
+
+    [Test]
+    [Arguments("sync")]
+    [Arguments("async")]
+    [Arguments("backpressure")]
+    public async Task ExistingPumpShouldRejectValidatedPacketAfterTerminalWins(string sendPath)
+    {
+        var input = new Pipe();
+        var output = new Pipe();
+        var transport = RpcSessionTestFixture.Transport(
+            $"terminal-existing-pump-{sendPath}",
+            input.Reader,
+            output.Writer);
+        var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions());
+        RpcSessionTestFixture.CompleteHandshake(session);
+        session.SendPacket(CreatePacket(session));
+        var published = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseShutdown = new ManualResetEventSlim(initialState: false);
+        session.OnDisconnected += exception =>
+        {
+            published.TrySetResult(exception);
+            if (!releaseShutdown.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("The in-flight send did not release shutdown.");
+        };
+        var packet = new BlockingPacketWriter();
+        packet.WritePacket(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, requestId: 2);
+        packet.Arm();
+        var send = StartSendAsync(session, packet, sendPath);
+
+        await packet.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var shutdown = Task.Run(session.BeginShutdown);
+        var terminal = await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        packet.Release();
+        var failure = await send.WaitAsync(TimeSpan.FromSeconds(2));
+        releaseShutdown.Set();
+        await shutdown.WaitAsync(TimeSpan.FromSeconds(2));
+        await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var returnCount = packet.DisposeCount;
+        if (returnCount == 0)
+            packet.Dispose();
+
+        Ensure(ReferenceEquals(terminal, failure),
+            "a published terminal must win before an existing pump accepts the validated packet");
+        Ensure(returnCount == 1, "an existing pump must return a terminally rejected packet exactly once");
+        Ensure(session.QueuedSendBytes == 0, "terminal rejection must leave existing-pump accounting balanced");
+        Ensure(transport.DisposeCount == 1, "existing-pump shutdown must dispose its transport exactly once");
+    }
+
+    [Test]
+    public async Task HealthySessionShouldPreserveOutboundProtocolViolation()
+    {
+        var input = new Pipe();
+        var output = new Pipe();
+        var transport = RpcSessionTestFixture.Transport(
+            "healthy-protocol-validation",
+            input.Reader,
+            output.Writer);
+        var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions());
+        RpcSessionTestFixture.CompleteHandshake(session);
+        var packet = session.RuntimeContext.Buffers.Rent();
+        packet.WritePacket(ProtocolV2FrameType.HandshakeRequest, ProtocolV2FrameFlags.None, requestId: 1);
+
+        var failure = CaptureException(() => session.SendPacket(packet));
+
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation },
+            "a genuinely invalid outbound frame on a healthy session must remain a protocol violation");
+        Ensure(session.IsConnected, "local outbound validation must not terminate a healthy session");
+        EnsureReturned(packet, "outbound validation must return the rejected packet owner");
+        await session.DisposeAsync();
+        Ensure(transport.DisposeCount == 1, "healthy-session cleanup must dispose its transport exactly once");
+    }
+
+    [Test]
     public async Task NotifyConnectedAfterDisposeShouldNotReopenConnectionMetric()
     {
         const string side = "client";
@@ -550,6 +724,142 @@ public class RpcSessionLifecycleTests
         var writer = session.RuntimeContext.Buffers.Rent();
         writer.WritePacket(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, 1);
         return writer;
+    }
+
+    private static IRpcByteBufferWriter CreateResponsePacket(RpcSession session, int payloadBytes)
+    {
+        var writer = session.RuntimeContext.Buffers.Rent();
+        using (writer.BeginPacketScope(
+                   ProtocolV2FrameType.Response,
+                   ProtocolV2FrameFlags.None,
+                   requestId: 1))
+        {
+            writer.Write(new byte[payloadBytes]);
+        }
+        return writer;
+    }
+
+    private static Task<Exception?> StartSendAsync(
+        RpcSession session,
+        IRpcByteBufferWriter packet,
+        string sendPath)
+        => Task.Run(async () =>
+        {
+            try
+            {
+                switch (sendPath)
+                {
+                    case "sync":
+                        session.SendPacket(packet);
+                        break;
+                    case "async":
+                        await session.SendPacketAsync(
+                            packet,
+                            waitForCapacity: true,
+                            forceFlush: false);
+                        break;
+                    case "backpressure":
+                        await session.SendPacketWithBackpressureAsync(packet);
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(sendPath), sendPath, "Unknown send path.");
+                }
+                return null;
+            }
+            catch (Exception exception)
+            {
+                return exception;
+            }
+        });
+
+    private static void EnsureReturned(IRpcByteBufferWriter writer, string message)
+    {
+        try
+        {
+            _ = writer.WrittenCount;
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
+        throw new Exception(message);
+    }
+
+    private sealed class BlockingCompressionProvider : ISharpLinkCompressionProvider
+    {
+        private readonly ManualResetEventSlim _release = new(initialState: false);
+
+        internal TaskCompletionSource<bool> Entered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal IRpcByteBufferWriter? Candidate { get; private set; }
+        public string WireProfile => "test-terminal-send-race";
+
+        public SharpLinkCompressionResult Compress(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            Candidate = (IRpcByteBufferWriter)output;
+            Entered.TrySetResult(true);
+            if (!_release.Wait(TimeSpan.FromSeconds(5), cancellationToken))
+                throw new TimeoutException("The terminal transition did not release compression.");
+            var span = output.GetSpan(1);
+            span[0] = 0;
+            output.Advance(1);
+            return new SharpLinkCompressionResult(checked((int)input.Length), 1);
+        }
+
+        public SharpLinkCompressionResult Decompress(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        internal void Release() => _release.Set();
+    }
+
+    private sealed class BlockingPacketWriter : IRpcByteBufferWriter
+    {
+        private readonly PooledByteBufferWriter _inner = new();
+        private readonly ManualResetEventSlim _release = new(initialState: false);
+        private int _armed;
+        private int _disposeCount;
+
+        internal TaskCompletionSource<bool> Entered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal int DisposeCount => Volatile.Read(ref _disposeCount);
+        public int WrittenCount => _inner.WrittenCount;
+        public ReadOnlyMemory<byte> WrittenMemory => _inner.WrittenMemory;
+        public Span<byte> WrittenSpan
+        {
+            get
+            {
+                if (Volatile.Read(ref _armed) != 0)
+                {
+                    Entered.TrySetResult(true);
+                    if (!_release.Wait(TimeSpan.FromSeconds(5)))
+                        throw new TimeoutException("The terminal transition did not release packet validation.");
+                }
+                return _inner.WrittenSpan;
+            }
+        }
+        public int Capacity => _inner.Capacity;
+
+        public void Advance(int count) => _inner.Advance(count);
+        public Memory<byte> GetMemory(int sizeHint = 0) => _inner.GetMemory(sizeHint);
+        public Span<byte> GetSpan(int sizeHint = 0) => _inner.GetSpan(sizeHint);
+        public void Clear() => _inner.Clear();
+        public void Dispose()
+        {
+            Interlocked.Increment(ref _disposeCount);
+            _inner.Dispose();
+        }
+
+        internal void Arm() => Volatile.Write(ref _armed, 1);
+        internal void Release() => _release.Set();
     }
 
     private sealed class ImmediateConsumingDispatcher : IStreamConsumptionAwareDispatcher
