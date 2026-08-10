@@ -251,6 +251,8 @@ public class ClientConnectionConsumerAbandonmentTests
 
         public bool IsDetached => false;
 
+        public ValueTask WaitForDispatchesDrainedAsync() => ValueTask.CompletedTask;
+
         public ValueTask WaitForDetachedAsync(CancellationToken cancellationToken)
         {
             _waitEntered.TrySetResult();

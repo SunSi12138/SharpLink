@@ -917,17 +917,19 @@ public class StreamManagerTests
             65,
             0,
             new OperationCanceledException()).AsTask();
+        var stateDispatchDrain = state.WaitForDispatchesDrainedAsync().AsTask();
         var detached = state.WaitForDetachedAsync(CancellationToken.None).AsTask();
-        Ensure(!dispatchDrain.IsCompleted && !detached.IsCompleted,
+        Ensure(!dispatchDrain.IsCompleted && !stateDispatchDrain.IsCompleted && !detached.IsCompleted,
             "the distinct drain and detach signals must both remain pending before the acquired dispatch releases");
 
         dispatcher.ReleaseDispatch();
         await finalCreditEntered.Task.WaitAsync(RaceCoordinationTimeout);
+        await stateDispatchDrain.WaitAsync(RaceCoordinationTimeout);
         Ensure(!dispatchDrain.IsCompleted && !detached.IsCompleted && !state.IsDetached,
             "the dispatch-drained signal must not complete detach before the final credit callback reaches Detach");
 
         releaseFinalCredit.TrySetResult();
-        await Task.WhenAll(dispatch, dispatchDrain, detached).WaitAsync(RaceCoordinationTimeout);
+        await Task.WhenAll(dispatch, dispatchDrain, stateDispatchDrain, detached).WaitAsync(RaceCoordinationTimeout);
         Ensure(state.IsDetached && dispatcher.DispatchesDrainedCount == 1,
             "draining the acquired dispatch must finalize both distinct signals and return the lease once");
     }

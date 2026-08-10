@@ -281,7 +281,7 @@ public class StreamManager : IStreamManager
         RequestDispatchers requestDispatchers,
         DispatcherEntry entry)
     {
-        await entry.WaitForDispatchesAsync().ConfigureAwait(false);
+        await entry.WaitForDispatchesDrainedAsync().ConfigureAwait(false);
         FinalizeLocallyTerminatedStream(requestId, streamId, requestDispatchers, entry);
     }
 
@@ -771,7 +771,7 @@ public class StreamManager : IStreamManager
             }
         }
 
-        internal ValueTask WaitForDispatchesAsync()
+        public ValueTask WaitForDispatchesDrainedAsync()
         {
             if (!HasActiveDispatches)
                 return ValueTask.CompletedTask;
