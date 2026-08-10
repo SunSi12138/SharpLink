@@ -205,7 +205,7 @@ public sealed class ServerRequestEnvelopeReaderTests
         await using var session = CreateSession(ProtocolV2Capabilities.None);
         var deadline = DateTimeOffset.FromUnixTimeMilliseconds(
             DateTimeOffset.MaxValue.ToUnixTimeMilliseconds());
-        const long monotonicNow = 123;
+        const long monotonicNow = long.MaxValue - 1;
         var payload = CreatePayload(deadline.ToUnixTimeMilliseconds(), metadata: null, arguments: []);
 
         var envelope = ServerRequestEnvelopeReader.Read(

@@ -34,6 +34,10 @@ jobs:
       - name: Build
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 
+      - name: Verify Generated Assemblies Do Not Reference Runtime
+        if: runner.os == 'Linux'
+        run: ./eng/verify-generated-assembly-dependencies.sh
+
       - name: Unit Tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 

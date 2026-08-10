@@ -20,25 +20,39 @@ dotnet build "$PROJECT" -c Release -m:1 -p:UseSharedCompilation=false -nodeReuse
 dotnet run -c Release --no-build --no-restore --project "$PROJECT" -- \
   --list-tests json >"$OUTPUT/tests.json"
 
-stream_uid="$(jq -r '.tests[] | select(.displayName == "ServerStreamConsumerExitShouldReleaseDynamicModuleLeasesAndAllCounters") | .uid' "$OUTPUT/tests.json")"
 replacement_uid="$(jq -r '.tests[] | select(.displayName == "OneHundredDynamicModuleReplacementsShouldPublishNewRouteWhileOldUnaryDrainsWithoutLeaks") | .uid' "$OUTPUT/tests.json")"
-if [[ -z "$stream_uid" || "$stream_uid" == "null" ||
-      -z "$replacement_uid" || "$replacement_uid" == "null" ]]; then
+rejection_uid="$(jq -r '.tests[] | select(.displayName == "RejectedApi4DynamicRegistrationShouldReleaseItsCollectibleContext") | .uid' "$OUTPUT/tests.json")"
+framework_unload_uid="$(jq -r '.tests[] | select(.displayName == "CollectibleContextShouldUnloadAfterFrameworkReferencesAreReleased") | .uid' "$OUTPUT/tests.json")"
+mapfile -t stream_uids < <(jq -r '
+  .tests[] |
+  select(.displayName | startswith("Api4DynamicStreamExitShouldReleaseItsCollectibleContext(")) |
+  .uid' "$OUTPUT/tests.json")
+if [[ -z "$replacement_uid" || "$replacement_uid" == "null" ||
+      -z "$rejection_uid" || "$rejection_uid" == "null" ||
+      -z "$framework_unload_uid" || "$framework_unload_uid" == "null" ||
+      ${#stream_uids[@]} -ne 5 ]]; then
   echo "Required generated ABI dynamic-module tests were not discovered." >&2
   exit 2
 fi
+
+run_test() {
+  local uid="$1"
+  dotnet run -c Release --no-build --no-restore --project "$PROJECT" -- \
+    --maximum-parallel-tests 1 --timeout 120s --filter-uid "$uid" \
+    >>"$OUTPUT/test.log" 2>&1
+}
 
 started_epoch="$(date +%s)"
 deadline_epoch=$((started_epoch + DURATION_SECONDS))
 rounds=0
 : >"$OUTPUT/test.log"
 while (( $(date +%s) < deadline_epoch )); do
-  dotnet run -c Release --no-build --no-restore --project "$PROJECT" -- \
-    --maximum-parallel-tests 1 --timeout 120s --filter-uid "$replacement_uid" \
-    >>"$OUTPUT/test.log" 2>&1
-  dotnet run -c Release --no-build --no-restore --project "$PROJECT" -- \
-    --maximum-parallel-tests 1 --timeout 120s --filter-uid "$stream_uid" \
-    >>"$OUTPUT/test.log" 2>&1
+  run_test "$replacement_uid"
+  for stream_uid in "${stream_uids[@]}"; do
+    run_test "$stream_uid"
+  done
+  run_test "$rejection_uid"
+  run_test "$framework_unload_uid"
   rounds=$((rounds + 1))
 done
 
@@ -49,11 +63,15 @@ if (( rounds == 0 || elapsed_seconds < DURATION_SECONDS )); then
   exit 3
 fi
 
-printf 'commit=%s\nduration_seconds=%s\nrounds=%s\nreplacements=%s\nstream_consumer_exits=%s\n' \
+printf 'commit=%s\nduration_seconds=%s\nrounds=%s\ntest_processes=%s\nreplacements=%s\napi4_stream_exits=%s\napi4_stream_exit_modes=%s\nregistration_rejections=%s\nframework_reference_unloads=%s\n' \
   "$(git -C "$ROOT" rev-parse HEAD)" \
   "$elapsed_seconds" \
   "$rounds" \
+  "$((rounds * (3 + ${#stream_uids[@]})))" \
   "$((rounds * 100))" \
+  "$((rounds * ${#stream_uids[@]}))" \
+  'normal,cancellation-before-first,cancellation-mid-stream,consumer-break,service-exception' \
+  "$rounds" \
   "$rounds" \
   >"$OUTPUT/summary.txt"
 cat "$OUTPUT/summary.txt"

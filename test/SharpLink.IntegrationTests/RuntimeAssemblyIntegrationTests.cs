@@ -1496,7 +1496,8 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [Arguments("normal")]
-    [Arguments("cancellation")]
+    [Arguments("cancellation-before-first")]
+    [Arguments("cancellation-mid-stream")]
     [Arguments("consumer-break")]
     [Arguments("service-exception")]
     [NotInParallel]
@@ -1623,10 +1624,33 @@ public sealed class RuntimeAssemblyIntegrationTests
                     "dynamic service stream exception maps to Internal");
             }
         }
+        else if (string.Equals(exitMode, "cancellation-before-first", StringComparison.Ordinal))
+        {
+            using var cancellation = new CancellationTokenSource();
+            await using var enumerator = InvokeStream(
+                    proxy,
+                    plugin.ContractType,
+                    "ServerStreamAsync",
+                    int.MaxValue,
+                    cancellation.Token)
+                .GetAsyncEnumerator();
+            cancellation.Cancel();
+            var cancelled = false;
+            try
+            {
+                _ = await enumerator.MoveNextAsync();
+            }
+            catch (OperationCanceledException)
+            {
+                cancelled = true;
+            }
+            Ensure(cancelled,
+                "API 4 dynamic stream cancellation before the first item reaches the caller");
+        }
         else
         {
             using var cancellation = new CancellationTokenSource();
-            var token = string.Equals(exitMode, "cancellation", StringComparison.Ordinal)
+            var token = string.Equals(exitMode, "cancellation-mid-stream", StringComparison.Ordinal)
                 ? cancellation.Token
                 : CancellationToken.None;
             await using var enumerator = InvokeStream(
@@ -1638,8 +1662,21 @@ public sealed class RuntimeAssemblyIntegrationTests
                 .GetAsyncEnumerator();
             Ensure(await enumerator.MoveNextAsync(),
                 $"API 4 dynamic stream '{exitMode}' starts before exit");
-            if (string.Equals(exitMode, "cancellation", StringComparison.Ordinal))
+            if (string.Equals(exitMode, "cancellation-mid-stream", StringComparison.Ordinal))
+            {
                 cancellation.Cancel();
+                var cancelled = false;
+                try
+                {
+                    _ = await enumerator.MoveNextAsync();
+                }
+                catch (OperationCanceledException)
+                {
+                    cancelled = true;
+                }
+                Ensure(cancelled,
+                    "API 4 dynamic stream cancellation after the first item reaches the caller");
+            }
             else
                 Ensure(string.Equals(exitMode, "consumer-break", StringComparison.Ordinal),
                     $"unknown dynamic stream exit mode '{exitMode}'");

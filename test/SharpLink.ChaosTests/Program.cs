@@ -52,6 +52,7 @@ public static class Program
         var failures = new ConcurrentDictionary<string, long>(StringComparer.Ordinal);
         var failureSamples = new ConcurrentQueue<string>();
         var memorySamples = new ConcurrentQueue<MemorySample>();
+        var unobservedTaskExceptionSamples = new ConcurrentQueue<string>();
         var serverStops = new ConcurrentQueue<ChaosServerStopObservation>();
         var reportGate = new Lock();
         var phase = "Starting";
@@ -61,6 +62,7 @@ public static class Program
         var operationAttempts = new long[OperationNames.Length];
         long expectedFailures = 0;
         long unexpectedFailures = 0;
+        long unobservedTaskExceptions = 0;
         long faultGeneration = 0;
         long maxRecoveryMilliseconds = 0;
         long reportWriteFailures = 0;
@@ -85,6 +87,14 @@ public static class Program
                 isFinal: true);
         };
         AppDomain.CurrentDomain.UnhandledException += unhandledHandler;
+        EventHandler<UnobservedTaskExceptionEventArgs> unobservedTaskExceptionHandler = (_, eventArgs) =>
+        {
+            Interlocked.Increment(ref unobservedTaskExceptions);
+            if (unobservedTaskExceptionSamples.Count < 20)
+                unobservedTaskExceptionSamples.Enqueue(eventArgs.Exception.ToString());
+            eventArgs.SetObserved();
+        };
+        TaskScheduler.UnobservedTaskException += unobservedTaskExceptionHandler;
 
         phase = "StartingServer";
         var server = await ChaosServer.StartAsync(
@@ -113,9 +123,13 @@ public static class Program
         var service = client.Get<IChaosService>();
         phase = "Warmup";
         await WarmUpAsync(service, duration.Token).ConfigureAwait(false);
-        startedMemory = GetRetainedMemory();
         soakStarted = Stopwatch.GetTimestamp();
-        memorySamples.Enqueue(new MemorySample(DateTimeOffset.UtcNow, 0, startedMemory));
+        var startedSample = CaptureResourceSample(0) with
+        {
+            UnobservedTaskExceptions = Volatile.Read(ref unobservedTaskExceptions)
+        };
+        startedMemory = startedSample.RetainedBytes;
+        memorySamples.Enqueue(startedSample);
         phase = "Workload";
         TryWriteReport("Running", phase, null, failure: null, drain: null, isFinal: false);
         var memorySampler = SampleRetainedMemoryAsync();
@@ -145,14 +159,17 @@ public static class Program
         serverStops.Enqueue(await server.StopAsync("FinalStop").ConfigureAwait(false));
         phase = "DrainingMetrics";
         var drain = await metrics.WaitForZeroAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
-        var endedMemory = GetRetainedMemory();
+        if (options.InjectUnobservedTaskException)
+            CreateUnobservedTaskExceptionForGateProbe();
+        var finalSample = CaptureResourceSample(Stopwatch.GetElapsedTime(soakStarted).TotalSeconds) with
+        {
+            UnobservedTaskExceptions = Volatile.Read(ref unobservedTaskExceptions)
+        };
+        var endedMemory = finalSample.RetainedBytes;
         var memoryGrowthPercent = startedMemory == 0
             ? 0
             : (endedMemory - startedMemory) * 100.0 / startedMemory;
-        memorySamples.Enqueue(new MemorySample(
-            DateTimeOffset.UtcNow,
-            Stopwatch.GetElapsedTime(soakStarted).TotalSeconds,
-            endedMemory));
+        memorySamples.Enqueue(finalSample);
         var orderedMemorySamples = memorySamples.OrderBy(static sample => sample.ElapsedSeconds).ToArray();
         var lastSixHoursGrowthPercent = CalculateWindowGrowth(orderedMemorySamples, TimeSpan.FromHours(6));
         if (options.InjectClientError)
@@ -183,6 +200,14 @@ public static class Program
                 "UnexpectedFailures",
                 $"Chaos recorded {unexpectedFailures} unexpected failures.",
                 null);
+        }
+        else if (Volatile.Read(ref unobservedTaskExceptions) != 0)
+        {
+            exitCode = 7;
+            terminalFailure = new ChaosFailure(
+                "UnobservedTaskExceptions",
+                $"Chaos captured {Volatile.Read(ref unobservedTaskExceptions)} unobserved Task exception(s).",
+                string.Join(Environment.NewLine, unobservedTaskExceptionSamples));
         }
         else if (clientLogs.ErrorCount != 0)
         {
@@ -246,10 +271,12 @@ public static class Program
                 Volatile.Read(ref reportWriteFailure));
         }
         AppDomain.CurrentDomain.UnhandledException -= unhandledHandler;
+        TaskScheduler.UnobservedTaskException -= unobservedTaskExceptionHandler;
 
         Console.WriteLine(
             $"CHAOS_RESULT success={success} injected={expectedFailures} unexpected={unexpectedFailures} " +
             $"restarts={restartCount} clientErrors={clientLogs.ErrorCount} serverErrors={serverLogs.ErrorCount} " +
+            $"unobserved={Volatile.Read(ref unobservedTaskExceptions)} " +
             $"retained={startedMemory}->{endedMemory} ({memoryGrowthPercent:F2}%)");
         foreach (var error in serverLogs.AllSnapshot())
             Console.WriteLine($"CHAOS_SERVER_ERROR {error}");
@@ -340,16 +367,23 @@ public static class Program
                 while (true)
                 {
                     await Task.Delay(options.CheckpointInterval, duration.Token).ConfigureAwait(false);
-                    var sample = new MemorySample(
-                        DateTimeOffset.UtcNow,
-                        Stopwatch.GetElapsedTime(soakStarted).TotalSeconds,
-                        GetRetainedMemory());
+                    var sample = CaptureResourceSample(
+                        Stopwatch.GetElapsedTime(soakStarted).TotalSeconds) with
+                    {
+                        UnobservedTaskExceptions = Volatile.Read(ref unobservedTaskExceptions)
+                    };
                     memorySamples.Enqueue(sample);
                     TryWriteReport("Running", phase, null, failure: null, drain: null, isFinal: false);
                     Console.WriteLine(
                         $"CHAOS_CHECKPOINT elapsed={sample.ElapsedSeconds:F0}s success={Volatile.Read(ref success)} " +
                         $"unexpected={Volatile.Read(ref unexpectedFailures)} restarts={Volatile.Read(ref restartCount)} " +
-                        $"retained={sample.RetainedBytes}");
+                        $"retained={sample.RetainedBytes} workingSet={sample.ProcessWorkingSetBytes} " +
+                        $"private={sample.ProcessPrivateBytes} gcHeap={sample.GcHeapSizeBytes} " +
+                        $"gen={sample.Gen0Collections}/{sample.Gen1Collections}/{sample.Gen2Collections} " +
+                        $"threads={sample.ProcessThreadCount}/{sample.ThreadPoolThreadCount} " +
+                        $"pending={sample.ThreadPoolPendingWorkItemCount} " +
+                        $"dispatchers={sample.DispatcherRetainedCount} " +
+                        $"unobserved={sample.UnobservedTaskExceptions}");
                 }
             }
             catch (OperationCanceledException) when (duration.IsCancellationRequested)
@@ -395,6 +429,7 @@ public static class Program
                 CreateOperationAttemptSnapshot(),
                 Volatile.Read(ref expectedFailures),
                 Volatile.Read(ref unexpectedFailures),
+                Volatile.Read(ref unobservedTaskExceptions),
                 Volatile.Read(ref maxRecoveryMilliseconds),
                 startedMemory,
                 latestMemory,
@@ -409,6 +444,7 @@ public static class Program
                 failures.OrderByDescending(static item => item.Value)
                     .ToDictionary(static item => item.Key, static item => item.Value),
                 [.. failureSamples],
+                [.. unobservedTaskExceptionSamples],
                 clientLogs.AllSnapshot(),
                 serverLogs.AllSnapshot(),
                 [.. serverStops]);
@@ -698,12 +734,41 @@ public static class Program
             ? $"{nameof(SharpLinkException)}[{sharpLink.Code}]"
             : exception.GetType().Name;
 
-    private static long GetRetainedMemory()
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void CreateUnobservedTaskExceptionForGateProbe()
+    {
+        var faulted = Task.FromException(
+            new InvalidOperationException("Injected unobserved Task exception gate probe."));
+        GC.KeepAlive(faulted);
+    }
+
+    private static MemorySample CaptureResourceSample(double elapsedSeconds)
     {
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
-        return GC.GetTotalMemory(forceFullCollection: true);
+        var retainedBytes = GC.GetTotalMemory(forceFullCollection: false);
+        var gc = GC.GetGCMemoryInfo();
+        using var process = Process.GetCurrentProcess();
+        process.Refresh();
+        return new MemorySample(
+            DateTimeOffset.UtcNow,
+            elapsedSeconds,
+            retainedBytes,
+            process.WorkingSet64,
+            process.PrivateMemorySize64,
+            gc.HeapSizeBytes,
+            gc.TotalCommittedBytes,
+            gc.FragmentedBytes,
+            GC.CollectionCount(0),
+            GC.CollectionCount(1),
+            GC.CollectionCount(2),
+            process.Threads.Count,
+            ThreadPool.ThreadCount,
+            ThreadPool.PendingWorkItemCount,
+            ThreadPool.CompletedWorkItemCount,
+            PooledAsyncStreamDispatcher<int>.RetainedCountForTests,
+            UnobservedTaskExceptions: 0);
     }
 
     private static double? CalculateWindowGrowth(
@@ -892,6 +957,7 @@ public static class Program
         Console.WriteLine("  --stop-on-unexpected true");
         Console.WriteLine("  --inject-client-error false      (release-gate self-test)");
         Console.WriteLine("  --inject-server-error false      (release-gate self-test)");
+        Console.WriteLine("  --inject-unobserved-task-exception false (release-gate self-test)");
         Console.WriteLine("  --json-output artifacts/chaos/report.json");
     }
 }
@@ -1189,6 +1255,7 @@ internal sealed class ChaosOptions
     internal bool StopOnUnexpectedFailure { get; private init; } = true;
     internal bool InjectClientError { get; private init; }
     internal bool InjectServerError { get; private init; }
+    internal bool InjectUnobservedTaskException { get; private init; }
     internal ChaosTransport Transport { get; private init; } = ChaosTransport.Tcp;
     internal string SharedMemoryName { get; private init; } = "sharplink-chaos";
     internal string? JsonOutputPath { get; private init; }
@@ -1238,6 +1305,10 @@ internal sealed class ChaosOptions
             StopOnUnexpectedFailure = ParseBoolean(values, "stop-on-unexpected", fallback: true),
             InjectClientError = ParseBoolean(values, "inject-client-error", fallback: false),
             InjectServerError = ParseBoolean(values, "inject-server-error", fallback: false),
+            InjectUnobservedTaskException = ParseBoolean(
+                values,
+                "inject-unobserved-task-exception",
+                fallback: false),
             Transport = transport,
             SharedMemoryName = values.GetValueOrDefault("shm-name", "sharplink-chaos"),
             JsonOutputPath = values.GetValueOrDefault("json-output")
@@ -1342,6 +1413,7 @@ internal sealed record ChaosReport(
     IReadOnlyDictionary<string, long> OperationAttempts,
     long ExpectedFailures,
     long UnexpectedFailures,
+    long UnobservedTaskExceptions,
     long MaxRecoveryMilliseconds,
     long RetainedMemoryStart,
     long RetainedMemoryEnd,
@@ -1355,6 +1427,7 @@ internal sealed record ChaosReport(
     ChaosDiagnosticArtifact? DiagnosticArtifact,
     IReadOnlyDictionary<string, long> Failures,
     IReadOnlyList<string> FailureSamples,
+    IReadOnlyList<string> UnobservedTaskExceptionSamples,
     IReadOnlyList<string> ClientErrors,
     IReadOnlyList<string> ServerErrors,
     IReadOnlyList<ChaosServerStopObservation> ServerStops);
@@ -1380,7 +1453,21 @@ internal enum ChaosTransport
 internal sealed record MemorySample(
     DateTimeOffset TimestampUtc,
     double ElapsedSeconds,
-    long RetainedBytes);
+    long RetainedBytes,
+    long ProcessWorkingSetBytes,
+    long ProcessPrivateBytes,
+    long GcHeapSizeBytes,
+    long GcTotalCommittedBytes,
+    long GcFragmentedBytes,
+    int Gen0Collections,
+    int Gen1Collections,
+    int Gen2Collections,
+    int ProcessThreadCount,
+    int ThreadPoolThreadCount,
+    long ThreadPoolPendingWorkItemCount,
+    long ThreadPoolCompletedWorkItemCount,
+    int DispatcherRetainedCount,
+    long UnobservedTaskExceptions);
 
 [RpcContract]
 public interface IChaosService : IService

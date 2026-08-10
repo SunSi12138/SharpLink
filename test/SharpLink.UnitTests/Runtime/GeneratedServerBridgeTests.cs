@@ -83,8 +83,27 @@ public class GeneratedServerBridgeTests
             "the unique terminal frame must carry the error flag");
     }
 
+    [Test]
+    public async Task ThrowingOutboundCodecShouldEmitOneErrorTerminalAndNoDataOrSuccessTerminal()
+    {
+        var frames = await PumpAndReadFramesAsync(Values(1), new ThrowingIntCodec());
+
+        Ensure(frames.Count == 1,
+            "a serialization failure before publication must emit only its terminal frame");
+        Ensure(frames.Count(static frame => frame.Type == ProtocolV2FrameType.StreamData) == 0,
+            "a failed serialization must not publish a partial data frame");
+        Ensure(frames.Count(static frame => frame.Type == ProtocolV2FrameType.StreamComplete) == 1,
+            "a failed serialization must emit exactly one terminal frame");
+        Ensure(frames.Count(static frame =>
+                   frame.Type == ProtocolV2FrameType.StreamComplete &&
+                   (frame.Flags & ProtocolV2FrameFlags.Error) == 0) == 0,
+            "a failed serialization must not emit a success terminal");
+        Ensure((frames[0].Flags & ProtocolV2FrameFlags.Error) != 0,
+            "the serialization failure terminal must carry the error flag");
+    }
+
     private static async Task<List<(ProtocolV2FrameType Type, ProtocolV2FrameFlags Flags)>>
-        PumpAndReadFramesAsync(IAsyncEnumerable<int> stream)
+        PumpAndReadFramesAsync(IAsyncEnumerable<int> stream, IRpcCodec<int>? codec = null)
     {
         var input = new Pipe();
         var output = new Pipe();
@@ -100,7 +119,7 @@ public class GeneratedServerBridgeTests
             73,
             0,
             stream,
-            session.RuntimeContext.Codecs.GetCodec<int>(),
+            codec ?? session.RuntimeContext.Codecs.GetCodec<int>(),
             payloadNullable: false,
             contractId: 101,
             methodId: 202,
@@ -161,6 +180,22 @@ public class GeneratedServerBridgeTests
 
         public BridgeItem Deserialize(in ReadOnlySequence<byte> buffer)
             => new(BitConverter.ToInt32(buffer.FirstSpan));
+    }
+
+    private sealed class ThrowingIntCodec : IRpcCodec<int>
+    {
+        public void Serialize(in int value, IBufferWriter<byte> buffer)
+        {
+            _ = value;
+            _ = buffer;
+            throw new InvalidOperationException("codec serialization failed");
+        }
+
+        public int Deserialize(in ReadOnlySequence<byte> buffer)
+        {
+            _ = buffer;
+            throw new NotSupportedException();
+        }
     }
 
     private sealed class TrackingDispatcher : IStreamDispatcher
