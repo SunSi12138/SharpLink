@@ -62,9 +62,13 @@ public class RpcSessionLifecycleTests
         Ensure(ReferenceEquals(client.RuntimeContext, clientContext) &&
                ReferenceEquals(server.RuntimeContext, serverContext),
             "each Session must publish its caller-supplied RuntimeContext immediately");
+        Ensure(client.ProtocolPhase == RpcSessionProtocolPhase.Handshaking &&
+               server.ProtocolPhase == RpcSessionProtocolPhase.Handshaking &&
+               client.NegotiatedOptions is null && server.NegotiatedOptions is null,
+            "construction must not expose local limits as a completed negotiation");
         Ensure(client.NegotiatedMaxFramePayloadBytes == 2048 &&
                server.NegotiatedMaxFramePayloadBytes == 4096,
-            "each Session must snapshot protocol limits from only its own Context");
+            "handshake frame allocation must remain bounded by each Session's local Context");
         Ensure(!ReferenceEquals(clientStreams, serverStreams),
             "parallel Sessions must not share StreamManager state");
         await Task.WhenAll(client.DisposeAsync().AsTask(), server.DisposeAsync().AsTask());
@@ -213,6 +217,7 @@ public class RpcSessionLifecycleTests
             input.Reader,
             output.Writer);
         await using var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions());
+        RpcSessionTestFixture.CompleteHandshake(session);
         var disconnected = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var publishedCount = 0;
         session.OnDisconnected += exception =>
@@ -254,6 +259,7 @@ public class RpcSessionLifecycleTests
             input.Reader,
             output.Writer);
         var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions());
+        RpcSessionTestFixture.CompleteHandshake(session);
         var failures = new ConcurrentBag<SharpLinkException>();
         var senders = new Task[4];
         for (var senderIndex = 0; senderIndex < senders.Length; senderIndex++)
@@ -335,9 +341,13 @@ public class RpcSessionLifecycleTests
             "flow-credit-flush",
             input.Reader,
             output.Writer,
-            RpcSessionTestFixture.ClientOptions());
-        session.NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl;
-        session.EnableStreamFlowControl(4, 4);
+            RpcSessionTestFixture.ClientOptions(),
+            completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(
+            session,
+            ProtocolV2Capabilities.FlowControl,
+            streamReceiveWindowBytes: 4,
+            connectionReceiveWindowBytes: 4);
         session.StreamManager.Register(1, 1, new ImmediateConsumingDispatcher());
         session.StreamManager.Register(2, 1, new ImmediateConsumingDispatcher());
 

@@ -323,27 +323,35 @@ public class ProtocolV2Tests
         Ensure(ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out _, out _),
             "static parser should accept a bounded one-byte Cancel payload");
 
-        var input = new Pipe();
-        var output = new Pipe();
-        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
-            "cancel-shape",
-            input.Reader,
-            output.Writer,
-            RpcSessionTestFixture.ClientOptions());
-
-        session.NegotiatedCapabilities = ProtocolV2Capabilities.CancellationReason;
+        var negotiatedInput = new Pipe();
+        var negotiatedOutput = new Pipe();
+        await using var negotiatedSession = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "cancel-shape-negotiated",
+            negotiatedInput.Reader,
+            negotiatedOutput.Writer,
+            RpcSessionTestFixture.ClientOptions(),
+            completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(
+            negotiatedSession,
+            ProtocolV2Capabilities.CancellationReason);
         Ensure(
-            session.ReadNegotiatedCancelReason(payload) == ProtocolV2CancelReason.ConsumerAbandoned,
+            negotiatedSession.ReadNegotiatedCancelReason(payload) == ProtocolV2CancelReason.ConsumerAbandoned,
             "negotiated reason should decode");
         await ExpectProtocolViolation(() =>
-            session.ReadNegotiatedCancelReason(ReadOnlySequence<byte>.Empty));
+            negotiatedSession.ReadNegotiatedCancelReason(ReadOnlySequence<byte>.Empty));
 
-        session.NegotiatedCapabilities = ProtocolV2Capabilities.None;
+        var legacyInput = new Pipe();
+        var legacyOutput = new Pipe();
+        await using var legacySession = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "cancel-shape-legacy",
+            legacyInput.Reader,
+            legacyOutput.Writer,
+            RpcSessionTestFixture.ClientOptions());
         Ensure(
-            session.ReadNegotiatedCancelReason(ReadOnlySequence<byte>.Empty) ==
+            legacySession.ReadNegotiatedCancelReason(ReadOnlySequence<byte>.Empty) ==
             ProtocolV2CancelReason.Unspecified,
             "legacy empty Cancel should decode as unspecified");
-        await ExpectProtocolViolation(() => session.ReadNegotiatedCancelReason(payload));
+        await ExpectProtocolViolation(() => legacySession.ReadNegotiatedCancelReason(payload));
         await ExpectProtocolViolation(() => ProtocolV2PayloadCodec.ReadCancelReason(
             new ReadOnlySequence<byte>(new byte[] { byte.MaxValue })));
     }

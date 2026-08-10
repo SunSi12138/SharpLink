@@ -61,6 +61,15 @@ public class RuntimePhase00Benchmarks
                 _sendInput.Reader,
                 new DiscardingPipeWriter()),
             new RpcSessionCreationOptions(RpcSessionRole.Client, _context));
+        if (!_sendSession.TryCompleteHandshake(new NegotiatedSessionOptions(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.None,
+                _context.Protocol.MaxFramePayloadBytes,
+                _context.FlowControl.StreamReceiveWindowBytes,
+                _context.FlowControl.ConnectionReceiveWindowBytes)))
+        {
+            throw new InvalidOperationException("Benchmark session handshake completion failed.");
+        }
         _responsePayload = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(_responsePayload, 42);
         _streamPayload = new ReadOnlySequence<byte>(new byte[] { 42 });
@@ -87,6 +96,15 @@ public class RuntimePhase00Benchmarks
     [Benchmark]
     public bool SessionIsConnected()
         => _sendSession.IsConnected;
+
+    [Benchmark(OperationsPerInvoke = 1024)]
+    public int NegotiatedSnapshotRead()
+    {
+        var checksum = 0;
+        for (var index = 0; index < 1024; index++)
+            checksum = unchecked(checksum + (_sendSession.NegotiatedOptions?.MaxFramePayloadBytes ?? 0));
+        return checksum;
+    }
 
     [Benchmark]
     public async ValueTask<int> PendingRegisterAndComplete()

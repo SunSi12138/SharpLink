@@ -354,6 +354,7 @@ internal sealed partial class SharpLinkClient
                            ref buffer, _protocolOptions, out var header, out var payload))
                 {
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
+                    ((RpcSession)session).EnsureInboundFrameAllowed(header.Type);
                     if (header.Type != ProtocolV2FrameType.HandshakeResponse)
                         handshakeException = CreateProtocolViolationException("Received unexpected packet during handshake.");
                     else if ((header.Flags & ProtocolV2FrameFlags.Error) == 0)
@@ -367,20 +368,25 @@ internal sealed partial class SharpLinkClient
                         else
                         {
                             var runtimeSession = (RpcSession)session;
-                            runtimeSession.NegotiatedCapabilities = response.NegotiatedCapabilities;
-                            runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
                             var compressionBinding = ValidateNegotiatedCompression(
                                 response,
                                 compressionProfiles.Span);
-                            if (compressionBinding is { } binding)
-                                runtimeSession.EnableCompression(binding.Provider, binding.WireProfile);
-                            if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
+                            var negotiated = new NegotiatedSessionOptions(
+                                response.MinorVersion,
+                                response.NegotiatedCapabilities,
+                                response.MaxFramePayloadBytes,
+                                response.StreamReceiveWindowBytes,
+                                response.ConnectionReceiveWindowBytes,
+                                compressionBinding);
+                            if (!runtimeSession.TryCompleteHandshake(negotiated))
                             {
-                                runtimeSession.EnableStreamFlowControl(
-                                    response.StreamReceiveWindowBytes,
-                                    response.ConnectionReceiveWindowBytes);
+                                handshakeException = CreateProtocolViolationException(
+                                    "The handshake result was already completed or the session terminated.");
                             }
-                            handshakeException = null;
+                            else
+                            {
+                                handshakeException = null;
+                            }
                         }
                     }
                     else
@@ -476,6 +482,7 @@ internal sealed partial class SharpLinkClient
                 {
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                     session.MarkActive();
+                    session.EnsureInboundFrameAllowed(header.Type);
                     IRpcByteBufferWriter? decodedOwner = null;
                     try
                     {

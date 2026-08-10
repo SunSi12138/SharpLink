@@ -637,9 +637,7 @@ public class SharpLinkClientLifecycleStateTests
             static () => throw new InvalidOperationException("connection cancellation callback failed"));
         var connection = new ClientConnection(
             owner,
-            new RpcSession(
-                new TestTransportConnection(),
-                RpcSessionTestFixture.ClientOptions(context)),
+            CreateReadySession(context),
             cancellation,
             8,
             context);
@@ -677,9 +675,7 @@ public class SharpLinkClientLifecycleStateTests
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         await using var connection = new ClientConnection(
             owner,
-            new RpcSession(
-                new TestTransportConnection(),
-                RpcSessionTestFixture.ClientOptions(context)),
+            CreateReadySession(context),
             new CancellationTokenSource(),
             8,
             context);
@@ -693,6 +689,52 @@ public class SharpLinkClientLifecycleStateTests
     }
 
     [Test]
+    public async Task SecondHandshakeResponseShouldTerminateThePublishedSession()
+    {
+        var transport = new TestClientTransportFactory();
+        using var context = CreateRuntimeContext();
+        await using var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            context);
+        await client.ConnectAsync();
+        var readyConnectionsField = typeof(SharpLinkClient).GetField(
+            "_readyConnections",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find ready connection snapshot");
+        var connection = ((ClientConnection[])readyConnectionsField.GetValue(client)!)[0];
+        var disconnected = new TaskCompletionSource<Exception?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        connection.Session.OnDisconnected += exception => disconnected.TrySetResult(exception);
+        var pending = connection.PendingCalls.Rent<int>(out _);
+        var payload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeResponse(payload, new ProtocolV2HandshakeResponse(
+            ProtocolV2Constants.MinorVersion,
+            ProtocolV2Capabilities.None,
+            context.Protocol.MaxFramePayloadBytes,
+            context.FlowControl.StreamReceiveWindowBytes,
+            context.FlowControl.ConnectionReceiveWindowBytes));
+
+        await transport.Connection.InjectFrameAsync(
+            ProtocolV2FrameType.HandshakeResponse,
+            ProtocolV2FrameFlags.None,
+            0,
+            payload.WrittenMemory);
+        var failure = await CaptureSharpLinkExceptionAsync(
+            pending.AsValueTask().AsTask().WaitAsync(TimeSpan.FromSeconds(2)));
+        await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(failure.Code == SharpLinkErrorCode.ProtocolViolation,
+            "a second handshake response must be a structured protocol failure");
+        Ensure(connection.Session.ProtocolPhase is
+                   RpcSessionProtocolPhase.Stopping or RpcSessionProtocolPhase.Terminal &&
+               connection.Session.NegotiatedOptions is not null &&
+               !connection.CanAcceptCalls,
+            "a duplicate response must terminate the already-published snapshot and reject new calls");
+    }
+
+    [Test]
     public async Task PowerOfTwoChoiceShouldSelectLowerActiveConnection()
     {
         await using var owner = new SharpLinkClient(
@@ -703,17 +745,13 @@ public class SharpLinkClientLifecycleStateTests
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         await using var first = new ClientConnection(
             owner,
-            new RpcSession(
-                new TestTransportConnection(),
-                RpcSessionTestFixture.ClientOptions(context)),
+            CreateReadySession(context),
             new CancellationTokenSource(),
             8,
             context);
         await using var second = new ClientConnection(
             owner,
-            new RpcSession(
-                new TestTransportConnection(),
-                RpcSessionTestFixture.ClientOptions(context)),
+            CreateReadySession(context),
             new CancellationTokenSource(),
             8,
             context);
@@ -744,17 +782,13 @@ public class SharpLinkClientLifecycleStateTests
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         await using var stale = new ClientConnection(
             owner,
-            new RpcSession(
-                new TestTransportConnection(),
-                RpcSessionTestFixture.ClientOptions(context)),
+            CreateReadySession(context),
             new CancellationTokenSource(),
             8,
             context);
         await using var ready = new ClientConnection(
             owner,
-            new RpcSession(
-                new TestTransportConnection(),
-                RpcSessionTestFixture.ClientOptions(context)),
+            CreateReadySession(context),
             new CancellationTokenSource(),
             8,
             context);
@@ -876,6 +910,15 @@ public class SharpLinkClientLifecycleStateTests
 
     private static SharpLinkRuntimeContext CreateRuntimeContext()
         => new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+
+    private static RpcSession CreateReadySession(SharpLinkRuntimeContext context)
+    {
+        var session = new RpcSession(
+            new TestTransportConnection(),
+            RpcSessionTestFixture.ClientOptions(context));
+        RpcSessionTestFixture.CompleteHandshake(session);
+        return session;
+    }
 
     private static async Task InjectGoAwayAsync(TestTransportConnection connection)
     {

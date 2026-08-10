@@ -305,8 +305,9 @@ public sealed class ServerRequestEnvelopeReaderTests
             "envelope-reader",
             input.Reader,
             output.Writer,
-            RpcSessionTestFixture.ServerOptions());
-        session.NegotiatedCapabilities = capabilities;
+            RpcSessionTestFixture.ServerOptions(),
+            completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(session, capabilities);
         return session;
     }
 

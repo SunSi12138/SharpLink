@@ -323,9 +323,13 @@ public class StreamFlowControllerTests
             "stream-completion-capacity",
             input.Reader,
             output,
-            RpcSessionTestFixture.ClientOptions(context));
-        session.NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl;
-        session.EnableStreamFlowControl(4, 4);
+            RpcSessionTestFixture.ClientOptions(context),
+            completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(
+            session,
+            ProtocolV2Capabilities.FlowControl,
+            streamReceiveWindowBytes: 4,
+            connectionReceiveWindowBytes: 4);
         await session.AcquireStreamSendCreditAsync(1, 1, 1, CancellationToken.None);
         session.ApplyWindowUpdate(1, new ProtocolV2WindowUpdate(1, 1));
         session.SendHealthCheck(99);
