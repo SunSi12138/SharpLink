@@ -137,6 +137,79 @@ public class StreamFlowControllerTests
     }
 
     [Test]
+    public async Task MultiKeyReceiveExhaustionShouldFlushAllContributingConnectionCredit()
+    {
+        var receiver = new StreamFlowController(8, 8, 1024);
+        receiver.AcceptReceived(41, 1, 3);
+        receiver.AcceptReceived(42, 2, 3);
+        receiver.AcceptReceived(43, 3, 2);
+
+        try
+        {
+            receiver.AcceptReceived(44, 4, 1);
+            throw new Exception("expected exhausted connection credit violation");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+        }
+
+        Ensure(receiver.RecordConsumed(41, 1, 3) == 0,
+            "the first partial stream consume should remain pending below both update thresholds");
+        Ensure(receiver.RecordConsumed(42, 2, 3) == 3,
+            "the connection threshold should return the current key's exact pending credit");
+        Ensure(receiver.TryTakeConsumedCreditUpdate(out var requestId, out var streamId, out var credit),
+            "the connection threshold should flush the other contributing key");
+        Ensure(requestId == 41 && streamId == 1 && credit == 3,
+            "the queued cross-key update must preserve its original key and exact credit");
+        Ensure(!receiver.TryTakeConsumedCreditUpdate(out _, out _, out _),
+            "each contributing key must be flushed exactly once");
+
+        receiver.AcceptReceived(44, 4, 6);
+        try
+        {
+            receiver.AcceptReceived(44, 4, 1);
+            throw new Exception("expected the exact flushed credit to be fully consumed");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+        }
+
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task RecordConsumedDuplicateAndOverCreditShouldBeProtocolViolations()
+    {
+        var duplicate = new StreamFlowController(4, 8, 1024);
+        duplicate.AcceptReceived(51, 1, 2);
+        duplicate.AcceptReceived(52, 2, 4);
+        Ensure(duplicate.RecordConsumed(51, 1, 2) == 2,
+            "the original consumed credit should be returned once");
+        try
+        {
+            duplicate.RecordConsumed(51, 1, 2);
+            throw new Exception("expected duplicate consumed credit violation");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+        }
+
+        var overCredit = new StreamFlowController(4, 8, 1024);
+        overCredit.AcceptReceived(61, 1, 2);
+        overCredit.AcceptReceived(62, 2, 4);
+        try
+        {
+            overCredit.RecordConsumed(61, 1, 3);
+            throw new Exception("expected over-credit consumed violation");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+        }
+
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task ConnectionThresholdFlushShouldClearPendingCreditFromEveryReceiveState()
     {
         var receiver = new StreamFlowController(4, 4, 16);
