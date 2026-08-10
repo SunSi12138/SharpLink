@@ -153,15 +153,20 @@ public class SharpClientBuilderTests
             .UseTransport(new NoopTransport())
             .UseProtocol(static options => options.MaxFramePayloadBytes = 2048);
 
-        var firstClient = builder.Build();
-        builder.UseProtocol(static options => options.MaxFramePayloadBytes = 4096);
-        builder.UseTransport(new NoopTransport());
-        var secondClient = builder.Build();
+        var client = builder.Build();
 
-        Ensure(ReadMaxFramePayloadBytes(firstClient) == 2048, "first client protocol snapshot");
-        Ensure(ReadMaxFramePayloadBytes(secondClient) == 4096, "second client protocol snapshot");
-        await firstClient.DisposeAsync();
-        await secondClient.DisposeAsync();
+        Ensure(ReadMaxFramePayloadBytes(client) == 2048, "built client protocol snapshot");
+        await EnsureConsumed(() =>
+        {
+            builder.UseProtocol(static options => options.MaxFramePayloadBytes = 4096);
+            return Task.CompletedTask;
+        });
+        await EnsureConsumed(() =>
+        {
+            _ = builder.Build();
+            return Task.CompletedTask;
+        });
+        await client.DisposeAsync();
     }
 
     [Test]
@@ -178,22 +183,30 @@ public class SharpClientBuilderTests
     [Test]
     public async Task ConnectionPoolShouldDefaultToOneAndFreezeExplicitBounds()
     {
-        var builder = SharpClientBuilder.Create()
+        var defaultBuilder = SharpClientBuilder.Create()
             .UseTransport(new NoopTransport());
-        var defaultClient = builder.Build();
+        var defaultClient = defaultBuilder.Build();
         Ensure(ReadConnectionPool(defaultClient) is { MinConnections: 1, MaxConnections: 1 },
             "balanced default pool");
 
-        builder.UseConnectionPool(options =>
+        SharpLinkConnectionPoolOptions? configuredDraft = null;
+        var configuredBuilder = SharpClientBuilder.Create()
+            .UseTransport(new NoopTransport())
+            .UseConnectionPool(options =>
         {
             options.MinConnections = 2;
             options.MaxConnections = 4;
+            configuredDraft = options;
         });
-        builder.UseTransport(new NoopTransport());
-        var configuredClient = builder.Build();
-        builder.UseConnectionPool(options => options.MaxConnections = 6);
+        var configuredClient = configuredBuilder.Build();
+        configuredDraft!.MaxConnections = 6;
         Ensure(ReadConnectionPool(configuredClient) is { MinConnections: 2, MaxConnections: 4 },
             "built client should own a frozen pool snapshot");
+        await EnsureConsumed(() =>
+        {
+            configuredBuilder.UseConnectionPool(options => options.MaxConnections = 6);
+            return Task.CompletedTask;
+        });
 
         await defaultClient.DisposeAsync();
         await configuredClient.DisposeAsync();
@@ -309,6 +322,20 @@ public class SharpClientBuilderTests
         }
         catch (TException)
         {
+        }
+    }
+
+    private static async Task EnsureConsumed(Func<Task> action)
+    {
+        try
+        {
+            await action();
+            throw new Exception("expected consumed builder failure");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message == "This SharpLink builder has already been consumed.",
+                "consumed builders must have a stable error message");
         }
     }
 

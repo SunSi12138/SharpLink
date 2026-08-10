@@ -267,20 +267,53 @@ public sealed class SharpLinkRuntimeContextBuilder
 
     /// <summary>Validates and freezes a new context.</summary>
     public SharpLinkRuntimeContext Build()
-        => Build(SharpLinkGeneratedAssemblyCatalog.CreateSnapshot());
+        => MaterializeStandalone(Compile(SharpLinkGeneratedManifestSource.FromCatalog()));
 
     internal SharpLinkRuntimeContext Build(bool includeGeneratedAssemblyCatalog)
-        => Build(includeGeneratedAssemblyCatalog
-            ? SharpLinkGeneratedAssemblyCatalog.CreateSnapshot()
-            : []);
+        => MaterializeStandalone(Compile(includeGeneratedAssemblyCatalog
+            ? SharpLinkGeneratedManifestSource.FromCatalog()
+            : SharpLinkGeneratedManifestSource.Empty));
 
     internal SharpLinkRuntimeContext Build(IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> generatedManifests)
+        => MaterializeStandalone(Compile(SharpLinkGeneratedManifestSource.FromSnapshot(generatedManifests)));
+
+    /// <summary>
+    /// Validates and freezes the Context inputs without allocating Context-owned resources. Builders
+    /// materialize the returned plan inside their synchronous construction transaction.
+    /// </summary>
+    internal SharpLinkRuntimeContextBuildPlan Compile(SharpLinkGeneratedManifestSource manifestSource)
     {
-        ArgumentNullException.ThrowIfNull(generatedManifests);
+        ArgumentNullException.ThrowIfNull(manifestSource);
         var options = _options.CloneValidated();
         var concurrency = _concurrency.CloneValidated();
         var bufferPool = _bufferPool.CloneValidated();
-        return new SharpLinkRuntimeContext(options, concurrency, bufferPool, _timeProvider, _resolver,
-            new Dictionary<Type, IRpcCodec>(_codecs), generatedManifests);
+        manifestSource.ValidateForPlanCompilation();
+        return new SharpLinkRuntimeContextBuildPlan(
+            options,
+            concurrency,
+            bufferPool,
+            _timeProvider,
+            _resolver,
+            new Dictionary<Type, IRpcCodec>(_codecs),
+            manifestSource);
+    }
+
+    private static SharpLinkRuntimeContext MaterializeStandalone(SharpLinkRuntimeContextBuildPlan plan)
+    {
+        using var transaction = new SynchronousBuildTransaction();
+        try
+        {
+            var context = transaction.Own(
+                plan.Materialize(),
+                static value => value.Dispose(),
+                SynchronousBuildResourceMetadata.FrameworkOwned("Standalone RuntimeContext"));
+            transaction.Commit();
+            return context;
+        }
+        catch (Exception buildException)
+        {
+            transaction.Rollback(buildException);
+            throw new System.Diagnostics.UnreachableException();
+        }
     }
 }

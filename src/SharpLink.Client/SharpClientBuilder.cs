@@ -3,649 +3,751 @@ namespace SharpLink.Client;
 /// <summary>Configures and creates an independently owned SharpLink RPC client.</summary>
 public class SharpClientBuilder
 {
-    /// <summary>Creates a client builder with safe default runtime, heartbeat, timeout, and resilience settings.</summary>
-    public static SharpClientBuilder Create() => new();
+    private const string ConsumedBuilderMessage = "This SharpLink builder has already been consumed.";
 
+    private readonly object _configurationGate = new();
+    private readonly SharpLinkRuntimeContextBuilder _runtimeContextBuilder = new();
+    private readonly List<ISharpLinkClientInterceptor> _interceptors = [];
+    private readonly SharpLinkConnectionPoolOptions _connectionPool = new();
+    private readonly SharpLinkClusterOptions _cluster = new();
+    private readonly SharpLinkRetryOptions _retry = new();
+    private readonly SharpLinkCircuitBreakerOptions _circuitBreaker = new();
 
-    private IClientTransportFactory? _transport;
-    private IEnumerable<SharpLinkEndpoint>? _endpoints;
-    private SharpLinkEndpoint[]? _preflightEndpointSnapshot;
-    private SharpLinkEndpointTransportFactory? _endpointTransportFactory;
-    private ISharpLinkEndpointResolver? _endpointResolver;
-    private SharpLinkEndpointTransportFactory? _resolverTransportFactory;
+    private BuilderState _state;
+    private ClientTopologyDraft? _topology;
+    private ClientRuntimeResources? _pendingResources;
     private ILoggerFactory? _loggerFactory;
     private ISharpLinkClientAuthenticator? _authenticator;
-    private readonly List<ISharpLinkClientInterceptor> _interceptors = [];
+    private TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(10);
+    private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
+    private TimeSpan? _requestTimeout = TimeSpan.FromSeconds(30);
+    private RpcSessionFlushOptions? _rpcSessionFlushOptions;
+    private bool _connectionPoolConfigured;
+    private bool _clusterConfigured;
+    private SharpLinkLoadBalancingStrategy _loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices;
+    private bool _loadBalancingConfigured;
+    private ISharpLinkEndpointSelector? _endpointSelector;
+    private bool _retryConfigured;
+    private ISharpLinkRetryPolicy? _retryPolicy;
+    private ISharpLinkEndpointAdmissionPolicy? _endpointAdmissionPolicy;
+    private bool _circuitBreakerConfigured;
+
+    /// <summary>Creates a client builder with safe default runtime, heartbeat, timeout, and resilience settings.</summary>
+    public static SharpClientBuilder Create() => new();
 
     /// <summary>Uses an outbound transport factory owned by the built client.</summary>
     /// <param name="transport">The factory used for initial connections and reconnects.</param>
     public SharpClientBuilder UseTransport(IClientTransportFactory transport)
     {
-        _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(transport);
+            SetTopology(new FixedTransportTopologyDraft(transport));
+        });
         return this;
     }
 
     /// <summary>Configures an instance-scoped client authentication payload provider.</summary>
     public SharpClientBuilder UseAuthenticator(ISharpLinkClientAuthenticator authenticator)
     {
-        _authenticator = authenticator ?? throw new ArgumentNullException(nameof(authenticator));
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(authenticator);
+            _authenticator = authenticator;
+        });
         return this;
     }
 
     /// <summary>Adds a client interceptor in registration order.</summary>
     public SharpClientBuilder AddInterceptor(ISharpLinkClientInterceptor interceptor)
     {
-        _interceptors.Add(interceptor ?? throw new ArgumentNullException(nameof(interceptor)));
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(interceptor);
+            _interceptors.Add(interceptor);
+        });
         return this;
     }
-
-    private readonly SharpLinkRuntimeContextBuilder _runtimeContextBuilder = new();
-    private TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(10);
-    private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
-    private TimeSpan? _requestTimeout = TimeSpan.FromSeconds(30);
-    private RpcSessionFlushOptions? _rpcSessionFlushOptions;
-    private readonly SharpLinkConnectionPoolOptions _connectionPool = new();
-    private bool _connectionPoolConfigured;
-    private readonly SharpLinkClusterOptions _cluster = new();
-    private bool _clusterConfigured;
-    private SharpLinkLoadBalancingStrategy _loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices;
-    private bool _loadBalancingConfigured;
-    private ISharpLinkEndpointSelector? _endpointSelector;
-    private readonly SharpLinkRetryOptions _retry = new();
-    private bool _retryConfigured;
-    private ISharpLinkRetryPolicy? _retryPolicy;
-    private ISharpLinkEndpointAdmissionPolicy? _endpointAdmissionPolicy;
-    private readonly SharpLinkCircuitBreakerOptions _circuitBreaker = new();
-    private bool _circuitBreakerConfigured;
 
     /// <summary>Configures instance-scoped runtime behavior.</summary>
     public SharpClientBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)
     {
-        _runtimeContextBuilder.Configure(configure);
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(configure);
+            _runtimeContextBuilder.Configure(configure);
+        });
         return this;
     }
 
-    /// <summary>
-    /// Uses an application-owned time source for the built client. The client never disposes it.
-    /// </summary>
+    /// <summary>Uses an application-owned time source for the built client. The client never disposes it.</summary>
     public SharpClientBuilder UseTimeProvider(TimeProvider timeProvider)
     {
-        _runtimeContextBuilder.UseTimeProvider(timeProvider);
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            _runtimeContextBuilder.UseTimeProvider(timeProvider);
+        });
         return this;
     }
 
     /// <summary>Configures per-client protocol safety limits.</summary>
     public SharpClientBuilder UseProtocol(Action<SharpLinkProtocolOptions> configure)
     {
-        ArgumentNullException.ThrowIfNull(configure);
-        _runtimeContextBuilder.Configure(options => configure(options.Protocol));
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(configure);
+            _runtimeContextBuilder.Configure(options => configure(options.Protocol));
+        });
         return this;
     }
 
     /// <summary>Sets a fallback codec resolver scoped to clients built by this builder.</summary>
-    /// <param name="codecResolver">Returns a codec for a requested type, or <see langword="null"/> when unresolved.</param>
     public SharpClientBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
     {
-        _runtimeContextBuilder.UseCodecResolver(codecResolver);
+        Configure(() => _runtimeContextBuilder.UseCodecResolver(codecResolver));
         return this;
     }
 
     /// <summary>Registers an explicit codec only for clients built by this builder.</summary>
     public SharpClientBuilder UseCodec<T>(IRpcCodec<T> codec)
     {
-        _runtimeContextBuilder.AddCodec(codec);
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(codec);
+            _runtimeContextBuilder.AddCodec(codec);
+        });
         return this;
     }
 
     /// <summary>Uses the supplied application-owned logger factory.</summary>
     public SharpClientBuilder UseLoggerFactory(ILoggerFactory loggerFactory)
     {
-        ArgumentNullException.ThrowIfNull(loggerFactory);
-        _loggerFactory = loggerFactory;
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(loggerFactory);
+            _loggerFactory = loggerFactory;
+        });
         return this;
     }
 
     /// <summary>Configures the instance-owned outbound buffer pool.</summary>
     public SharpClientBuilder UseBufferWriterPool(Action<BufferWriterPoolOptions> configure)
     {
-        _runtimeContextBuilder.ConfigureBufferPool(configure);
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(configure);
+            _runtimeContextBuilder.ConfigureBufferPool(configure);
+        });
         return this;
     }
 
     /// <summary>Configures striped state-store concurrency for this client.</summary>
     public SharpClientBuilder UseStateStoreConcurrency(Action<RuntimeConcurrencyOptions> configure)
     {
-        _runtimeContextBuilder.ConfigureStateStores(configure);
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(configure);
+            _runtimeContextBuilder.ConfigureStateStores(configure);
+        });
         return this;
     }
 
     /// <summary>Sets an application-owned logger factory only when none was explicitly configured.</summary>
     public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
     {
-        ArgumentNullException.ThrowIfNull(loggerFactory);
-        _loggerFactory ??= loggerFactory;
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(loggerFactory);
+            _loggerFactory ??= loggerFactory;
+        });
     }
 
     /// <summary>Configures the heartbeat send interval and peer-liveness timeout.</summary>
     public SharpClientBuilder UseHeartbeat(TimeSpan interval, TimeSpan timeout)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
-        if (timeout <= interval)
-            throw new ArgumentException("Heartbeat timeout must be greater than interval.");
-
-        _heartbeatInterval = interval;
-        _heartbeatTimeout = timeout;
+        Configure(() =>
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+            if (timeout <= interval)
+                throw new ArgumentException("Heartbeat timeout must be greater than interval.");
+            _heartbeatInterval = interval;
+            _heartbeatTimeout = timeout;
+        });
         return this;
     }
 
     /// <summary>Configures how often the client sends heartbeat frames.</summary>
     public SharpClientBuilder UseHeartbeatInterval(TimeSpan interval)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
-        if (_heartbeatTimeout <= interval)
-            throw new ArgumentException("Heartbeat timeout must be greater than interval.");
-
-        _heartbeatInterval = interval;
+        Configure(() =>
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
+            if (_heartbeatTimeout <= interval)
+                throw new ArgumentException("Heartbeat timeout must be greater than interval.");
+            _heartbeatInterval = interval;
+        });
         return this;
     }
 
     /// <summary>Configures how long peer inactivity is allowed before the connection is closed.</summary>
     public SharpClientBuilder UseHeartbeatTimeout(TimeSpan timeout)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
-        if (timeout <= _heartbeatInterval)
-            throw new ArgumentException("Heartbeat timeout must be greater than interval.");
-
-        _heartbeatTimeout = timeout;
+        Configure(() =>
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+            if (timeout <= _heartbeatInterval)
+                throw new ArgumentException("Heartbeat timeout must be greater than interval.");
+            _heartbeatTimeout = timeout;
+        });
         return this;
     }
 
     /// <summary>Configures the default timeout applied to unary calls without an earlier deadline.</summary>
-    /// <param name="timeout">A positive timeout.</param>
-    /// <returns>This builder.</returns>
     public SharpClientBuilder UseRequestTimeout(TimeSpan timeout)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
-        _requestTimeout = timeout;
+        Configure(() =>
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+            _requestTimeout = timeout;
+        });
         return this;
     }
 
     /// <summary>Disables the client default request timeout.</summary>
-    /// <remarks>Explicit call deadlines, call-option timeouts, and <c>TimeoutAttribute</c> still apply.</remarks>
-    /// <returns>This builder.</returns>
     public SharpClientBuilder DisableRequestTimeout()
     {
-        _requestTimeout = null;
+        Configure(() => _requestTimeout = null);
         return this;
     }
 
     /// <summary>Enables bounded send coalescing by byte threshold and maximum latency.</summary>
     public SharpClientBuilder UseRpcSessionFlush(int flushSizeThreshold, TimeSpan maxLatency)
     {
-        _rpcSessionFlushOptions = RpcSessionFlushOptions.Create(flushSizeThreshold, maxLatency);
+        Configure(() => _rpcSessionFlushOptions = RpcSessionFlushOptions.Create(flushSizeThreshold, maxLatency));
         return this;
     }
 
     /// <summary>Configures the bounded connection pool for the selected endpoint.</summary>
-    /// <param name="configure">Mutates builder-owned options that are frozen by <see cref="Build"/>.</param>
     public SharpClientBuilder UseConnectionPool(Action<SharpLinkConnectionPoolOptions> configure)
     {
-        ArgumentNullException.ThrowIfNull(configure);
-        configure(_connectionPool);
-        _connectionPoolConfigured = true;
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(configure);
+            configure(_connectionPool);
+            _connectionPoolConfigured = true;
+        });
         return this;
     }
 
     /// <summary>Uses one static endpoint and an endpoint-specific transport factory.</summary>
-    /// <param name="endpoint">The endpoint copied and frozen during <see cref="Build"/>.</param>
-    /// <param name="transportFactory">Creates the client-owned transport factory for the frozen endpoint.</param>
     public SharpClientBuilder UseEndpoint(
         SharpLinkEndpoint endpoint,
         SharpLinkEndpointTransportFactory transportFactory)
     {
-        ArgumentNullException.ThrowIfNull(endpoint);
-        ArgumentNullException.ThrowIfNull(transportFactory);
-        _endpoints = [endpoint];
-        _preflightEndpointSnapshot = null;
-        _endpointTransportFactory = transportFactory;
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(endpoint);
+            ArgumentNullException.ThrowIfNull(transportFactory);
+            SetTopology(new StaticEndpointsTopologyDraft([endpoint], transportFactory));
+        });
         return this;
     }
 
     /// <summary>Uses a static endpoint collection and an endpoint-specific transport factory.</summary>
-    /// <param name="endpoints">Endpoints enumerated once and frozen during <see cref="Build"/>.</param>
-    /// <param name="transportFactory">Creates one client-owned transport factory per frozen endpoint.</param>
     public SharpClientBuilder UseEndpoints(
         IEnumerable<SharpLinkEndpoint> endpoints,
         SharpLinkEndpointTransportFactory transportFactory)
     {
-        _endpoints = endpoints ?? throw new ArgumentNullException(nameof(endpoints));
-        _preflightEndpointSnapshot = null;
-        _endpointTransportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(endpoints);
+            ArgumentNullException.ThrowIfNull(transportFactory);
+            SetTopology(new StaticEndpointsTopologyDraft(endpoints, transportFactory));
+        });
         return this;
     }
 
     /// <summary>Uses a client-owned resolver to maintain a dynamic endpoint topology.</summary>
-    /// <param name="resolver">The resolver disposed by the built client.</param>
-    /// <param name="transportFactory">Creates one client-owned transport factory for each endpoint generation.</param>
-    /// <remarks>
-    /// This mode is mutually exclusive with <see cref="UseTransport"/> and <see cref="UseEndpoint"/>.
-    /// The resolver supplies complete snapshots; its initial resolution and watch execute only after
-    /// <see cref="ISharpLinkClient.ConnectAsync"/> is called.
-    /// </remarks>
     public SharpClientBuilder UseEndpointResolver(
         ISharpLinkEndpointResolver resolver,
         SharpLinkEndpointTransportFactory transportFactory)
     {
-        _endpointResolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
-        _resolverTransportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(resolver);
+            ArgumentNullException.ThrowIfNull(transportFactory);
+            SetTopology(new DynamicResolverTopologyDraft(resolver, transportFactory));
+        });
         return this;
     }
 
     /// <summary>Uses the built-in DNS resolver for a dynamic TCP endpoint topology.</summary>
-    /// <param name="host">The DNS host name used as the default endpoint authority.</param>
-    /// <param name="port">The TCP port from 1 through 65535.</param>
-    /// <param name="transportFactory">Creates a client-owned transport factory for every discovered endpoint generation.</param>
-    /// <param name="configure">Optionally configures refresh and address-family behavior.</param>
-    /// <returns>This builder.</returns>
     public SharpClientBuilder UseDnsEndpoints(
         string host,
         int port,
         SharpLinkEndpointTransportFactory transportFactory,
         Action<SharpLinkDnsResolverOptions>? configure = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(host);
-        if (port is < 1 or > 65535)
-            throw new ArgumentOutOfRangeException(nameof(port));
-        ArgumentNullException.ThrowIfNull(transportFactory);
-
-        var options = new SharpLinkDnsResolverOptions();
-        configure?.Invoke(options);
-        return UseEndpointResolver(
-            new SharpLinkDnsEndpointResolver(host, port, options),
-            transportFactory);
+        Configure(() =>
+        {
+            EnsureTopologyAvailable(ClientTopologyKind.DynamicResolver);
+            ArgumentException.ThrowIfNullOrWhiteSpace(host);
+            if (port is < 1 or > 65535)
+                throw new ArgumentOutOfRangeException(nameof(port));
+            ArgumentNullException.ThrowIfNull(transportFactory);
+            var options = new SharpLinkDnsResolverOptions();
+            configure?.Invoke(options);
+            var frozenOptions = options.CloneValidated();
+            SetTopology(new DynamicResolverTopologyDraft(
+                new SharpLinkDnsEndpointResolver(host, port, frozenOptions, BclSharpLinkDnsQuery.Instance),
+                transportFactory));
+        });
+        return this;
     }
 
     /// <summary>Configures the bounded resources used only by a multi-endpoint static cluster.</summary>
-    /// <param name="configure">Mutates builder-owned options frozen by <see cref="Build"/>.</param>
     public SharpClientBuilder UseCluster(Action<SharpLinkClusterOptions> configure)
     {
-        ArgumentNullException.ThrowIfNull(configure);
-        configure(_cluster);
-        _clusterConfigured = true;
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(configure);
+            configure(_cluster);
+            _clusterConfigured = true;
+        });
         return this;
     }
 
     /// <summary>Selects a built-in static endpoint load-balancing strategy.</summary>
-    /// <param name="strategy">The strategy used only by a multi-endpoint static cluster.</param>
-    /// <exception cref="InvalidOperationException">A custom selector has already been configured.</exception>
     public SharpClientBuilder UseLoadBalancing(SharpLinkLoadBalancingStrategy strategy)
     {
-        if (_endpointSelector is not null)
-            throw new InvalidOperationException("A custom endpoint selector is already configured.");
-        if (!Enum.IsDefined(strategy))
-            throw new ArgumentOutOfRangeException(nameof(strategy));
-        _loadBalancingStrategy = strategy;
-        _loadBalancingConfigured = true;
+        Configure(() =>
+        {
+            if (!Enum.IsDefined(strategy))
+                throw new ArgumentOutOfRangeException(nameof(strategy));
+            if (_endpointSelector is not null)
+                throw new InvalidOperationException("A custom endpoint selector is already configured.");
+            _loadBalancingStrategy = strategy;
+            _loadBalancingConfigured = true;
+        });
         return this;
     }
 
     /// <summary>Uses a custom static endpoint selector.</summary>
-    /// <param name="selector">A synchronous selector that returns a current candidate index.</param>
-    /// <exception cref="InvalidOperationException">A built-in strategy was explicitly configured.</exception>
     public SharpClientBuilder UseEndpointSelector(ISharpLinkEndpointSelector selector)
     {
-        ArgumentNullException.ThrowIfNull(selector);
-        if (_loadBalancingConfigured)
-            throw new InvalidOperationException("A built-in endpoint load-balancing strategy is already configured.");
-        _endpointSelector = selector;
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(selector);
+            if (_loadBalancingConfigured)
+                throw new InvalidOperationException("A built-in endpoint load-balancing strategy is already configured.");
+            _endpointSelector = selector;
+        });
         return this;
     }
 
     /// <summary>Enables the built-in retry policy for explicitly idempotent unary calls.</summary>
-    /// <remarks>Retry is disabled by default. Streaming, one-way, and non-idempotent unary calls never retry.</remarks>
     public SharpClientBuilder UseRetry()
     {
-        _retryConfigured = true;
-        _retryPolicy = null;
+        Configure(() =>
+        {
+            _retryConfigured = true;
+            _retryPolicy = null;
+        });
         return this;
     }
 
     /// <summary>Enables and configures the built-in retry policy for explicitly idempotent unary calls.</summary>
-    /// <param name="configure">Mutates builder-owned options frozen during <see cref="Build"/>.</param>
     public SharpClientBuilder UseRetry(Action<SharpLinkRetryOptions> configure)
     {
-        ArgumentNullException.ThrowIfNull(configure);
-        configure(_retry);
-        _retryConfigured = true;
-        _retryPolicy = null;
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(configure);
+            configure(_retry);
+            _retryConfigured = true;
+            _retryPolicy = null;
+        });
         return this;
     }
 
     /// <summary>Enables a custom retry policy for explicitly idempotent unary calls.</summary>
-    /// <param name="policy">A synchronous policy that returns only a decision and delay.</param>
     public SharpClientBuilder UseRetry(ISharpLinkRetryPolicy policy)
     {
-        _retryPolicy = policy ?? throw new ArgumentNullException(nameof(policy));
-        _retryConfigured = true;
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(policy);
+            _retryPolicy = policy;
+            _retryConfigured = true;
+        });
         return this;
     }
 
     /// <summary>Uses a synchronous custom endpoint admission policy for cluster attempts.</summary>
-    /// <remarks>
-    /// Endpoint admission and the built-in circuit breaker are alternative policies. Neither affects
-    /// fixed <see cref="UseTransport(IClientTransportFactory)"/> mode because it has no endpoint topology.
-    /// </remarks>
     public SharpClientBuilder UseEndpointAdmission(ISharpLinkEndpointAdmissionPolicy policy)
     {
-        ArgumentNullException.ThrowIfNull(policy);
-        if (_circuitBreakerConfigured)
-            throw new InvalidOperationException("UseEndpointAdmission and UseCircuitBreaker are mutually exclusive.");
-        _endpointAdmissionPolicy = policy;
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(policy);
+            if (_circuitBreakerConfigured)
+                throw new InvalidOperationException("UseEndpointAdmission and UseCircuitBreaker are mutually exclusive.");
+            _endpointAdmissionPolicy = policy;
+        });
         return this;
     }
 
     /// <summary>Enables the built-in endpoint-generation circuit breaker for cluster attempts.</summary>
     public SharpClientBuilder UseCircuitBreaker(Action<SharpLinkCircuitBreakerOptions> configure)
     {
-        ArgumentNullException.ThrowIfNull(configure);
-        if (_endpointAdmissionPolicy is not null)
-            throw new InvalidOperationException("UseEndpointAdmission and UseCircuitBreaker are mutually exclusive.");
-        configure(_circuitBreaker);
-        _circuitBreakerConfigured = true;
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(configure);
+            if (_endpointAdmissionPolicy is not null)
+                throw new InvalidOperationException("UseEndpointAdmission and UseCircuitBreaker are mutually exclusive.");
+            configure(_circuitBreaker);
+            _circuitBreakerConfigured = true;
+        });
         return this;
     }
 
-    /// <summary>Builds a normal client using the complete generated-manifest catalog.</summary>
-    public ISharpLinkClient Build() => BuildCore(staticManifests: null);
+    /// <summary>Builds a normal client using one complete generated-manifest snapshot.</summary>
+    public ISharpLinkClient Build()
+        => Materialize(CompileForBuild(SharpLinkGeneratedManifestSource.FromCatalog));
 
-    internal int GetConfiguredMaximumConnections()
+    // Multi-cluster callers compile once, use this exact plan for budget validation, then materialize it.
+    internal ClientBuildPlan CompileForMultiCluster(
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> staticManifests)
+        => CompileForBuild(() => SharpLinkGeneratedManifestSource.FromSnapshot(staticManifests));
+
+    internal ISharpLinkClient MaterializeCompiledPlan(ClientBuildPlan plan)
     {
-        if (_endpointResolver is not null)
-            return _cluster.MaxConnections;
-        if (_endpoints is not null)
-        {
-            var endpoints = CreateEndpointSnapshot(_endpoints, allowEmpty: false);
-            _preflightEndpointSnapshot = endpoints;
-            if (endpoints.Length == 1)
-                return GetFixedConnectionBudget();
+        ArgumentNullException.ThrowIfNull(plan);
+        return Materialize(plan);
+    }
 
-            var cluster = _cluster.CloneValidated(endpoints.Length);
-            return Math.Min(cluster.MaxConnections,
-                checked(endpoints.Length * cluster.MaxConnectionsPerEndpoint));
-        }
-        return GetFixedConnectionBudget();
+    internal void DiscardCompiledPlan(ClientBuildPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        plan.MarkDiscarded();
+        DisposeUnbuiltResources();
     }
 
     internal void DisposeUnbuiltResources()
     {
-        var directTransport = _transport;
-        var endpointResolver = _endpointResolver;
-        _transport = null;
-        _endpointResolver = null;
+        ClientRuntimeResources? resources;
+        lock (_configurationGate)
+        {
+            if (_state == BuilderState.Consumed)
+                return;
 
-        using var transaction = new SynchronousBuildTransaction();
-        if (directTransport is not null)
-        {
-            transaction.Own(
-                directTransport,
-                static transport => SharpLinkAsyncCleanup.DisposeSynchronously(transport),
-                SynchronousBuildResourceMetadata.FrameworkOwned("unbuilt Client direct transport"));
+            resources = _pendingResources ?? CreateRuntimeResources(_topology);
+            _pendingResources = resources;
+            _topology = null;
+            _state = BuilderState.Consumed;
         }
-        if (endpointResolver is not null && !ReferenceEquals(endpointResolver, directTransport))
-        {
-            transaction.Own(
-                endpointResolver,
-                static resolver => SharpLinkAsyncCleanup.DisposeSynchronously(resolver),
-                SynchronousBuildResourceMetadata.FrameworkOwned("unbuilt Client endpoint resolver"));
-        }
-        transaction.Rollback();
+
+        resources.DisposeUnmaterialized();
     }
 
-    // Multi-cluster construction supplies a filtered immutable manifest snapshot here. Keeping this
-    // decision at construction time preserves the ordinary client's hot path unchanged.
-    internal ISharpLinkClient BuildCore(IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests)
+    private ClientBuildPlan CompileForBuild(Func<SharpLinkGeneratedManifestSource> createManifestSource)
     {
-        // Multi-cluster preflight enumerates a static endpoint source to calculate its exact
-        // connection budget. Consume that one build-local snapshot, then clear it so later builds
-        // retain the normal builder behavior of taking a fresh topology snapshot.
-        var preflightEndpoints = staticManifests is null ? null : _preflightEndpointSnapshot;
-        _preflightEndpointSnapshot = null;
-        var modeCount = (_transport is null ? 0 : 1) + (_endpoints is null ? 0 : 1) + (_endpointResolver is null ? 0 : 1);
-        if (modeCount > 1)
-            throw new InvalidOperationException("UseTransport, UseEndpoint(s), and UseEndpointResolver are mutually exclusive.");
-        if (modeCount == 0)
-            throw new InvalidOperationException("Transport, endpoint(s), or an endpoint resolver must be set before building the client.");
-
-        var directTransport = _transport;
-        var endpointResolver = _endpointResolver;
-        using var transaction = new SynchronousBuildTransaction();
+        BeginBuild();
         try
         {
-            if (directTransport is not null)
+            var manifestSource = createManifestSource();
+            var plan = CompilePlan(manifestSource);
+            lock (_configurationGate)
+                _pendingResources = plan.Resources;
+            return plan;
+        }
+        catch (Exception buildException)
+        {
+            try
             {
-                transaction.Own(
-                    directTransport,
-                    static transport => SharpLinkAsyncCleanup.DisposeSynchronously(transport),
-                    SynchronousBuildResourceMetadata.FrameworkOwned("Client direct transport"));
+                DisposeUnbuiltResources();
             }
-            if (endpointResolver is not null)
+            catch (Exception cleanupException)
             {
-                transaction.Own(
-                    endpointResolver,
-                    static resolver => SharpLinkAsyncCleanup.DisposeSynchronously(resolver),
-                    SynchronousBuildResourceMetadata.FrameworkOwned("Client endpoint resolver"));
+                throw new AggregateException(buildException, cleanupException);
             }
+            throw;
+        }
+    }
 
+    private ClientBuildPlan CompilePlan(SharpLinkGeneratedManifestSource manifestSource)
+    {
+        var draft = _topology ?? throw new InvalidOperationException(
+            "Transport, endpoint(s), or an endpoint resolver must be set before building the client.");
+        var runtimeContext = _runtimeContextBuilder.Compile(manifestSource);
+        var resources = CreateRuntimeResources(draft);
+        var topology = CompileTopology(draft, runtimeContext, out var connectionPool, out var cluster);
+        var retry = CreateRetryPlan();
+        var circuitBreaker = CreateCircuitBreakerPlan();
+
+        return new ClientBuildPlan(
+            topology,
+            resources,
+            runtimeContext,
+            manifestSource,
+            _heartbeatInterval,
+            _heartbeatTimeout,
+            _requestTimeout,
+            _rpcSessionFlushOptions,
+            connectionPool,
+            cluster,
+            _loadBalancingStrategy,
+            _endpointSelector,
+            retry,
+            _retryPolicy,
+            circuitBreaker,
+            _endpointAdmissionPolicy,
+            _authenticator,
+            _loggerFactory ?? NullLoggerFactory.Instance,
+            [.. _interceptors]);
+    }
+
+    private ClientTopologyPlan CompileTopology(
+        ClientTopologyDraft draft,
+        SharpLinkRuntimeContextBuildPlan runtimeContext,
+        out ClientConnectionPoolPlan connectionPool,
+        out ClientClusterPlan? cluster)
+    {
+        switch (draft)
+        {
+            case FixedTransportTopologyDraft:
+                connectionPool = CreateConnectionPoolPlan(runtimeContext);
+                cluster = null;
+                return new FixedTransportTopologyPlan();
+
+            case StaticEndpointsTopologyDraft staticDraft:
+                {
+                    var endpoints = CreateEndpointSnapshot(staticDraft.Endpoints, allowEmpty: false);
+                    if (endpoints.Length == 1)
+                    {
+                        if (_clusterConfigured)
+                            throw new InvalidOperationException("UseCluster requires two or more endpoints.");
+                        connectionPool = CreateConnectionPoolPlan(runtimeContext);
+                        cluster = null;
+                    }
+                    else
+                    {
+                        if (_connectionPoolConfigured)
+                            throw new InvalidOperationException("UseConnectionPool is only available for a fixed single endpoint.");
+                        connectionPool = default;
+                        cluster = CreateClusterPlan(_cluster.CloneValidated(endpoints.Length));
+                    }
+                    return new StaticEndpointsTopologyPlan(endpoints, staticDraft.TransportFactory);
+                }
+
+            case DynamicResolverTopologyDraft dynamicDraft:
+                if (_connectionPoolConfigured)
+                    throw new InvalidOperationException("UseConnectionPool is only available for a fixed single endpoint.");
+                connectionPool = default;
+                cluster = CreateClusterPlan(_cluster.CloneValidatedForDynamicResolver());
+                return new DynamicResolverTopologyPlan(dynamicDraft.TransportFactory);
+
+            default:
+                throw new UnreachableException();
+        }
+    }
+
+    private ISharpLinkClient Materialize(ClientBuildPlan plan)
+    {
+        using var transaction = new SynchronousBuildTransaction();
+        var materializationStarted = false;
+        try
+        {
+            plan.BeginMaterialization();
+            materializationStarted = true;
+            plan.Resources.RegisterWith(transaction);
             var runtimeContext = transaction.Own(
-                staticManifests is null
-                    ? _runtimeContextBuilder.Build()
-                    : _runtimeContextBuilder.Build(staticManifests),
+                plan.RuntimeContext.Materialize(),
                 static context => context.Dispose(),
                 SynchronousBuildResourceMetadata.FrameworkOwned("Client runtime context"));
-            var client = BuildWithRuntimeContext(
-                runtimeContext,
-                staticManifests,
-                preflightEndpoints,
-                transaction);
-            ReleaseTransferredBuilderResource(directTransport, endpointResolver);
+            var client = MaterializeClient(plan, runtimeContext, transaction);
             transaction.Commit();
+            plan.Resources.MarkTransferred();
+            CompleteBuild();
             return client;
         }
         catch (Exception buildException)
         {
-            ReleaseTransferredBuilderResource(directTransport, endpointResolver);
-            transaction.Rollback(buildException);
-            throw new System.Diagnostics.UnreachableException();
+            if (materializationStarted)
+                plan.Resources.MarkRolledBack();
+            CompleteBuild();
+            if (materializationStarted)
+            {
+                transaction.Rollback(buildException);
+                throw new UnreachableException();
+            }
+
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(buildException).Throw();
+            throw new UnreachableException();
         }
     }
 
-    private void ReleaseTransferredBuilderResource(
-        IClientTransportFactory? directTransport,
-        ISharpLinkEndpointResolver? endpointResolver)
-    {
-        if (directTransport is not null)
-            _transport = null;
-        if (endpointResolver is not null)
-            _endpointResolver = null;
-    }
-
-    private ISharpLinkClient BuildWithRuntimeContext(
+    private static ISharpLinkClient MaterializeClient(
+        ClientBuildPlan plan,
         SharpLinkRuntimeContext runtimeContext,
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests,
-        SharpLinkEndpoint[]? preflightEndpoints,
         SynchronousBuildTransaction transaction)
     {
-        var protocolOptions = runtimeContext.Protocol;
-        if (_endpointResolver is not null)
+        switch (plan.Topology)
         {
-            if (_connectionPoolConfigured)
-                throw new InvalidOperationException("UseConnectionPool is only available for a fixed single endpoint.");
-            var cluster = _cluster.CloneValidatedForDynamicResolver();
-            return CreateDynamicClusterClient(
-                _endpointResolver,
-                _resolverTransportFactory!,
-                cluster,
-                runtimeContext,
-                protocolOptions,
-                staticManifests);
-        }
-
-        if (_endpoints is not null)
-        {
-            var endpoints = preflightEndpoints ?? CreateEndpointSnapshot(_endpoints, allowEmpty: false);
-            if (endpoints.Length == 1)
-            {
-                if (_clusterConfigured)
-                    throw new InvalidOperationException("UseCluster requires two or more endpoints.");
-                var transport = CreateBuildTransportFactory(
-                    endpoints[0],
-                    _endpointTransportFactory!,
-                    runtimeContext,
-                    transaction);
-                var singleEndpointPool = CreateConnectionPoolSnapshot(runtimeContext);
-                if (transport is AnonymousPipeClientTransportFactory && singleEndpointPool.MaxConnections != 1)
+            case FixedTransportTopologyPlan:
                 {
-                    throw new InvalidOperationException(
-                        "Anonymous-pipe handle offers support exactly one client connection.");
+                    var transport = plan.Resources.DirectTransport ?? throw new InvalidOperationException(
+                        "A fixed Client topology requires a direct transport resource.");
+                    if (transport is IPerformanceProfileAwareTransport profileAwareTransport)
+                        profileAwareTransport.BindPerformanceProfile(runtimeContext.PerformanceProfile);
+                    var connectionPool = plan.ConnectionPool.CreateOptions();
+                    if (transport is AnonymousPipeClientTransportFactory && connectionPool.MaxConnections != 1)
+                    {
+                        throw new InvalidOperationException(
+                            "Anonymous-pipe handle offers support exactly one client connection.");
+                    }
+                    return CreateFixedClient(plan, transport, runtimeContext, connectionPool, fixedEndpoint: null);
                 }
-                return CreateFixedClient(
-                    transport,
-                    runtimeContext,
-                    protocolOptions,
-                    singleEndpointPool,
-                    fixedEndpoint: endpoints[0],
-                    staticManifests: staticManifests);
-            }
 
-            if (_connectionPoolConfigured)
-                throw new InvalidOperationException("UseConnectionPool is only available for a fixed single endpoint.");
-            var cluster = _cluster.CloneValidated(endpoints.Length);
-            var configurations = new StaticEndpointConfiguration[endpoints.Length];
-            for (var index = 0; index < endpoints.Length; index++)
-            {
-                var factory = CreateBuildTransportFactory(
-                    endpoints[index],
-                    _endpointTransportFactory!,
-                    runtimeContext,
-                    transaction);
-                if (factory is AnonymousPipeClientTransportFactory)
+            case StaticEndpointsTopologyPlan staticTopology:
                 {
-                    throw new InvalidOperationException(
-                        "Anonymous-pipe handle offers cannot be used by endpoint clusters.");
+                    if (staticTopology.EndpointCount == 1)
+                    {
+                        var endpoint = staticTopology[0];
+                        var transport = CreateBuildTransportFactory(
+                            endpoint,
+                            staticTopology.TransportFactory,
+                            runtimeContext,
+                            transaction);
+                        var connectionPool = plan.ConnectionPool.CreateOptions();
+                        if (transport is AnonymousPipeClientTransportFactory && connectionPool.MaxConnections != 1)
+                        {
+                            throw new InvalidOperationException(
+                                "Anonymous-pipe handle offers support exactly one client connection.");
+                        }
+                        return CreateFixedClient(plan, transport, runtimeContext, connectionPool, endpoint);
+                    }
+
+                    var configurations = new StaticEndpointConfiguration[staticTopology.EndpointCount];
+                    for (var index = 0; index < configurations.Length; index++)
+                    {
+                        var endpoint = staticTopology[index];
+                        var transport = CreateBuildTransportFactory(
+                            endpoint,
+                            staticTopology.TransportFactory,
+                            runtimeContext,
+                            transaction);
+                        if (transport is AnonymousPipeClientTransportFactory)
+                        {
+                            throw new InvalidOperationException(
+                                "Anonymous-pipe handle offers cannot be used by endpoint clusters.");
+                        }
+                        configurations[index] = new StaticEndpointConfiguration(endpoint, transport);
+                    }
+                    return CreateClusterClient(
+                        plan,
+                        configurations,
+                        plan.Cluster ?? throw new InvalidOperationException("A static Client cluster requires cluster options."),
+                        runtimeContext);
                 }
-                configurations[index] = new StaticEndpointConfiguration(
-                    endpoints[index],
-                    factory);
-            }
-            return CreateClusterClient(configurations, cluster, runtimeContext, protocolOptions, staticManifests);
+
+            case DynamicResolverTopologyPlan dynamicTopology:
+                return CreateDynamicClusterClient(
+                    plan,
+                    plan.Resources.DynamicResolver ?? throw new InvalidOperationException(
+                        "A dynamic Client topology requires an endpoint resolver resource."),
+                    dynamicTopology.TransportFactory,
+                    plan.Cluster ?? throw new InvalidOperationException("A dynamic Client cluster requires cluster options."),
+                    runtimeContext);
+
+            default:
+                throw new UnreachableException();
         }
-
-        var fixedTransport = _transport!;
-        if (fixedTransport is IPerformanceProfileAwareTransport profileAwareTransport)
-            profileAwareTransport.BindPerformanceProfile(runtimeContext.PerformanceProfile);
-        var connectionPool = CreateConnectionPoolSnapshot(runtimeContext);
-        if (fixedTransport is AnonymousPipeClientTransportFactory && connectionPool.MaxConnections != 1)
-            throw new InvalidOperationException("Anonymous-pipe handle offers support exactly one client connection.");
-
-        return CreateFixedClient(fixedTransport, runtimeContext, protocolOptions, connectionPool,
-            staticManifests: staticManifests);
     }
 
-    private ISharpLinkClient CreateFixedClient(
+    private static ISharpLinkClient CreateFixedClient(
+        ClientBuildPlan plan,
         IClientTransportFactory transport,
         SharpLinkRuntimeContext runtimeContext,
-        SharpLinkProtocolOptions protocolOptions,
-        SharpLinkConnectionPoolOptions? connectionPool = null,
-        SharpLinkEndpoint? fixedEndpoint = null,
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null)
-    {
-        return new SharpLinkClient(
+        SharpLinkConnectionPoolOptions connectionPool,
+        SharpLinkEndpoint? fixedEndpoint)
+        => new SharpLinkClient(
             transport,
-            _heartbeatInterval,
-            _heartbeatTimeout,
-            _loggerFactory ?? NullLoggerFactory.Instance,
+            plan.HeartbeatInterval,
+            plan.HeartbeatTimeout,
+            plan.LoggerFactory,
             runtimeContext,
-            _requestTimeout,
-            _authenticator,
-            protocolOptions,
-            _rpcSessionFlushOptions,
-            connectionPool ?? CreateConnectionPoolSnapshot(runtimeContext),
-            _interceptors.ToArray(),
+            plan.RequestTimeout,
+            plan.Authenticator,
+            runtimeContext.Protocol,
+            plan.RpcSessionFlushOptions,
+            connectionPool,
+            plan.CreateInterceptorSnapshot(),
             fixedEndpoint: fixedEndpoint,
-            retryOptions: CreateRetryOptions(),
-            retryPolicy: _retryPolicy,
-            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(runtimeContext),
-            staticManifests: staticManifests
-        );
-    }
+            retryOptions: plan.Retry?.CreateOptions(),
+            retryPolicy: plan.RetryPolicy,
+            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(plan, runtimeContext),
+            staticManifests: plan.CreateStaticManifestSnapshot());
 
-    private ISharpLinkClient CreateClusterClient(
+    private static ISharpLinkClient CreateClusterClient(
+        ClientBuildPlan plan,
         StaticEndpointConfiguration[] configurations,
-        SharpLinkClusterOptions cluster,
-        SharpLinkRuntimeContext runtimeContext,
-        SharpLinkProtocolOptions protocolOptions,
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests)
+        ClientClusterPlan cluster,
+        SharpLinkRuntimeContext runtimeContext)
         => new SharpLinkClient(
             configurations[0].TransportFactory,
-            _heartbeatInterval,
-            _heartbeatTimeout,
-            _loggerFactory ?? NullLoggerFactory.Instance,
+            plan.HeartbeatInterval,
+            plan.HeartbeatTimeout,
+            plan.LoggerFactory,
             runtimeContext,
-            _requestTimeout,
-            _authenticator,
-            protocolOptions,
-            _rpcSessionFlushOptions,
+            plan.RequestTimeout,
+            plan.Authenticator,
+            runtimeContext.Protocol,
+            plan.RpcSessionFlushOptions,
             new SharpLinkConnectionPoolOptions(),
-            _interceptors.ToArray(),
+            plan.CreateInterceptorSnapshot(),
             configurations,
-            cluster,
-            _loadBalancingStrategy,
-            _endpointSelector,
-            retryOptions: CreateRetryOptions(),
-            retryPolicy: _retryPolicy,
-            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(runtimeContext),
-            staticManifests: staticManifests);
+            cluster.CreateOptions(),
+            plan.LoadBalancingStrategy,
+            plan.EndpointSelector,
+            retryOptions: plan.Retry?.CreateOptions(),
+            retryPolicy: plan.RetryPolicy,
+            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(plan, runtimeContext),
+            staticManifests: plan.CreateStaticManifestSnapshot());
 
-    private ISharpLinkClient CreateDynamicClusterClient(
+    private static ISharpLinkClient CreateDynamicClusterClient(
+        ClientBuildPlan plan,
         ISharpLinkEndpointResolver resolver,
         SharpLinkEndpointTransportFactory transportFactory,
-        SharpLinkClusterOptions cluster,
-        SharpLinkRuntimeContext runtimeContext,
-        SharpLinkProtocolOptions protocolOptions,
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests)
+        ClientClusterPlan cluster,
+        SharpLinkRuntimeContext runtimeContext)
         => new SharpLinkClient(
             DynamicClusterTransportPlaceholder.Instance,
-            _heartbeatInterval,
-            _heartbeatTimeout,
-            _loggerFactory ?? NullLoggerFactory.Instance,
+            plan.HeartbeatInterval,
+            plan.HeartbeatTimeout,
+            plan.LoggerFactory,
             runtimeContext,
-            _requestTimeout,
-            _authenticator,
-            protocolOptions,
-            _rpcSessionFlushOptions,
+            plan.RequestTimeout,
+            plan.Authenticator,
+            runtimeContext.Protocol,
+            plan.RpcSessionFlushOptions,
             new SharpLinkConnectionPoolOptions(),
-            _interceptors.ToArray(),
+            plan.CreateInterceptorSnapshot(),
             dynamicResolver: resolver,
             dynamicTransportFactory: transportFactory,
-            clusterOptions: cluster,
-            loadBalancingStrategy: _loadBalancingStrategy,
-            endpointSelector: _endpointSelector,
-            retryOptions: CreateRetryOptions(),
-            retryPolicy: _retryPolicy,
-            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(runtimeContext),
-            staticManifests: staticManifests);
+            clusterOptions: cluster.CreateOptions(),
+            loadBalancingStrategy: plan.LoadBalancingStrategy,
+            endpointSelector: plan.EndpointSelector,
+            retryOptions: plan.Retry?.CreateOptions(),
+            retryPolicy: plan.RetryPolicy,
+            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(plan, runtimeContext),
+            staticManifests: plan.CreateStaticManifestSnapshot());
 
-    private SharpLinkRetryOptions? CreateRetryOptions()
-        => _retryConfigured ? _retry.CloneValidated() : null;
-
-    private ISharpLinkEndpointAdmissionPolicy? CreateEndpointAdmissionPolicy(
+    private static ISharpLinkEndpointAdmissionPolicy? CreateEndpointAdmissionPolicy(
+        ClientBuildPlan plan,
         SharpLinkRuntimeContext runtimeContext)
-        => _circuitBreakerConfigured
-            ? new SharpLinkCircuitBreaker(
-                _circuitBreaker.CloneValidated(),
-                runtimeContext.TimeProvider)
-            : _endpointAdmissionPolicy;
+        => plan.CircuitBreaker is { } circuitBreaker
+            ? new SharpLinkCircuitBreaker(circuitBreaker.CreateOptions(), runtimeContext.TimeProvider)
+            : plan.EndpointAdmissionPolicy;
 
     private static IClientTransportFactory CreateBuildTransportFactory(
         SharpLinkEndpoint endpoint,
@@ -688,7 +790,7 @@ public class SharpClientBuilder
                     throw new AggregateException(bindingException, cleanupException);
                 }
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(bindingException).Throw();
-                throw new System.Diagnostics.UnreachableException();
+                throw new UnreachableException();
             }
         }
         return transport;
@@ -737,29 +839,121 @@ public class SharpClientBuilder
         return [.. endpoints];
     }
 
-    private SharpLinkConnectionPoolOptions CreateConnectionPoolSnapshot(SharpLinkRuntimeContext runtimeContext)
+    private ClientConnectionPoolPlan CreateConnectionPoolPlan(SharpLinkRuntimeContextBuildPlan runtimeContext)
     {
-        if (_connectionPoolConfigured)
-            return _connectionPool.CloneValidated();
-
-        var maxConnections = runtimeContext.PerformanceProfile == SharpLinkPerformanceProfile.Throughput
-            ? Math.Min(Environment.ProcessorCount, 4)
-            : 1;
-        return new SharpLinkConnectionPoolOptions
-        {
-            MinConnections = 1,
-            MaxConnections = Math.Max(1, maxConnections)
-        }.CloneValidated();
+        var snapshot = _connectionPoolConfigured
+            ? _connectionPool.CloneValidated()
+            : new SharpLinkConnectionPoolOptions
+            {
+                MinConnections = 1,
+                MaxConnections = Math.Max(
+                    1,
+                    runtimeContext.PerformanceProfile == SharpLinkPerformanceProfile.Throughput
+                        ? Math.Min(Environment.ProcessorCount, 4)
+                        : 1)
+            }.CloneValidated();
+        return new ClientConnectionPoolPlan(snapshot.MinConnections, snapshot.MaxConnections);
     }
 
-    private int GetFixedConnectionBudget()
+    private ClientRetryPlan? CreateRetryPlan()
     {
-        if (_connectionPoolConfigured)
-            return _connectionPool.CloneValidated().MaxConnections;
+        if (!_retryConfigured)
+            return null;
+        var snapshot = _retry.CloneValidated();
+        return new ClientRetryPlan(
+            snapshot.MaxAttempts,
+            snapshot.InitialBackoff,
+            snapshot.MaxBackoff,
+            snapshot.JitterRatio);
+    }
 
-        using var runtimeContext = _runtimeContextBuilder.Build(includeGeneratedAssemblyCatalog: false);
-        return runtimeContext.PerformanceProfile == SharpLinkPerformanceProfile.Throughput
-            ? Math.Max(1, Math.Min(Environment.ProcessorCount, 4))
-            : 1;
+    private ClientCircuitBreakerPlan? CreateCircuitBreakerPlan()
+    {
+        if (!_circuitBreakerConfigured)
+            return null;
+        var snapshot = _circuitBreaker.CloneValidated();
+        return new ClientCircuitBreakerPlan(
+            snapshot.MinimumThroughput,
+            snapshot.FailureRatio,
+            snapshot.SamplingDuration,
+            snapshot.BreakDuration,
+            snapshot.HalfOpenMaxCalls);
+    }
+
+    private static ClientClusterPlan CreateClusterPlan(SharpLinkClusterOptions snapshot)
+        => new(
+            snapshot.MaxEndpoints,
+            snapshot.MinReadyEndpoints,
+            snapshot.MaxConnections,
+            snapshot.MaxConnectionsPerEndpoint,
+            snapshot.MaxRetiringConnections);
+
+    private static ClientRuntimeResources CreateRuntimeResources(ClientTopologyDraft? topology)
+        => topology switch
+        {
+            FixedTransportTopologyDraft fixedTransport => new ClientRuntimeResources(fixedTransport.Transport, null),
+            DynamicResolverTopologyDraft dynamicResolver => new ClientRuntimeResources(null, dynamicResolver.Resolver),
+            _ => new ClientRuntimeResources(null, null)
+        };
+
+    private void SetTopology(ClientTopologyDraft topology)
+    {
+        EnsureTopologyAvailable(topology.Kind);
+        _topology = topology;
+    }
+
+    private void EnsureTopologyAvailable(ClientTopologyKind kind)
+    {
+        if (_topology is null)
+            return;
+
+        if (_topology.Kind != kind)
+        {
+            throw new InvalidOperationException(
+                "UseTransport, UseEndpoint(s), and UseEndpointResolver are mutually exclusive.");
+        }
+
+        throw new InvalidOperationException("A Client topology has already been configured for this builder.");
+    }
+
+    private void Configure(Action configure)
+    {
+        lock (_configurationGate)
+        {
+            EnsureMutable();
+            configure();
+        }
+    }
+
+    private void BeginBuild()
+    {
+        lock (_configurationGate)
+        {
+            EnsureMutable();
+            _state = BuilderState.Building;
+        }
+    }
+
+    private void CompleteBuild()
+    {
+        lock (_configurationGate)
+        {
+            _topology = null;
+            _pendingResources = null;
+            _state = BuilderState.Consumed;
+        }
+    }
+
+    private void EnsureMutable()
+    {
+        if (_state != BuilderState.Mutable)
+            throw new InvalidOperationException(ConsumedBuilderMessage);
+    }
+
+    private enum BuilderState : byte
+    {
+        Mutable,
+        Building,
+        Consumed
     }
 }

@@ -56,20 +56,6 @@ public sealed class SharpLinkMultiClusterClientBuilder
         if (_clusters.Count > options.MaxClusters)
             throw new InvalidOperationException($"Configured cluster count exceeds MaxClusters ({options.MaxClusters}).");
 
-        var configuredConnections = 0;
-        var connectionBudgets = new Dictionary<SharpLinkClusterKey, int>();
-        foreach (var configuration in _clusters.Values)
-        {
-            var connectionBudget = configuration.Builder.GetConfiguredMaximumConnections();
-            connectionBudgets.Add(configuration.Key, connectionBudget);
-            configuredConnections = checked(configuredConnections + connectionBudget);
-        }
-        if (configuredConnections > options.MaxTotalConfiguredConnections)
-        {
-            throw new InvalidOperationException(
-                $"Configured child connection budget ({configuredConnections}) exceeds MaxTotalConfiguredConnections ({options.MaxTotalConfiguredConnections}).");
-        }
-
         var routeManifestSnapshot = SharpLinkGeneratedClusterRouteCatalog.CreateSnapshot();
         var configuredRoutes = routeManifestSnapshot
             .SelectMany(static manifest => manifest.Routes)
@@ -120,29 +106,52 @@ public sealed class SharpLinkMultiClusterClientBuilder
             }
         }
 
+        var compiledPlans = new List<CompiledClusterPlan>(_clusters.Count);
+        var configuredConnections = 0;
+        foreach (var configuration in _clusters.Values)
+        {
+            var staticManifests = manifestsByCluster[configuration.Key].Values
+                .OrderBy(static manifest => manifest.OwnerAssembly.FullName, StringComparer.Ordinal)
+                .Select(manifest => IsRoutedToCluster(manifest, configuration.Key, assemblyOwners)
+                    ? manifest
+                    : new DependencyManifestView(manifest))
+                .ToArray();
+            try
+            {
+                var plan = configuration.Builder.CompileForMultiCluster(staticManifests);
+                configuredConnections = checked(configuredConnections + plan.MaximumConnections);
+                compiledPlans.Add(new CompiledClusterPlan(configuration, plan, staticManifests));
+            }
+            catch (Exception buildException)
+            {
+                RethrowAfterDiscardingCompiledPlans(buildException, compiledPlans);
+            }
+        }
+        if (configuredConnections > options.MaxTotalConfiguredConnections)
+        {
+            var budgetFailure = new InvalidOperationException(
+                $"Configured child connection budget ({configuredConnections}) exceeds MaxTotalConfiguredConnections ({options.MaxTotalConfiguredConnections}).");
+            RethrowAfterDiscardingCompiledPlans(budgetFailure, compiledPlans);
+        }
+
         var createdSlots = new List<SharpLinkClusterSlot>(_clusters.Count);
         using var transaction = new SynchronousBuildTransaction();
         try
         {
-            foreach (var configuration in _clusters.Values)
+            foreach (var compiled in compiledPlans)
             {
-                var staticManifests = manifestsByCluster[configuration.Key].Values
-                    .OrderBy(static manifest => manifest.OwnerAssembly.FullName, StringComparer.Ordinal)
-                    .Select(manifest => IsRoutedToCluster(manifest, configuration.Key, assemblyOwners)
-                        ? manifest
-                        : new DependencyManifestView(manifest))
-                    .ToArray();
+                compiled.MaterializationStarted = true;
                 var child = transaction.Own(
-                    configuration.Builder.BuildCore(staticManifests),
+                    compiled.Configuration.Builder.MaterializeCompiledPlan(compiled.Plan),
                     static client => SharpLinkAsyncCleanup.DisposeSynchronously(client),
                     SynchronousBuildResourceMetadata.FrameworkOwned(
-                        $"Multi-cluster child '{configuration.Key}'"));
+                        $"Multi-cluster child '{compiled.Configuration.Key}'"));
                 createdSlots.Add(new SharpLinkClusterSlot(
-                    configuration.Key,
+                    compiled.Configuration.Key,
                     child,
-                    configuration.AllowDynamicContracts,
-                    connectionBudgets[configuration.Key],
-                    staticManifests));
+                    compiled.Configuration.AllowDynamicContracts,
+                    compiled.Plan.MaximumConnections,
+                    compiled.StaticManifests));
             }
 
             var slots = createdSlots.ToFrozenDictionary(static slot => slot.Key);
@@ -159,7 +168,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
         }
         catch (Exception buildException)
         {
-            transaction.Rollback(buildException);
+            RethrowAfterDiscardingCompiledPlans(buildException, compiledPlans, transaction);
             throw new UnreachableException();
         }
     }
@@ -181,7 +190,6 @@ public sealed class SharpLinkMultiClusterClientBuilder
         ValidateCluster(cluster);
         ArgumentNullException.ThrowIfNull(builder);
 
-        var connectionBudget = builder.GetConfiguredMaximumConnections();
         var configuredRoutes = SharpLinkGeneratedClusterRouteCatalog.CreateSnapshot()
             .SelectMany(static manifest => manifest.Routes)
             .Where(route => route.Cluster == cluster)
@@ -225,11 +233,13 @@ public sealed class SharpLinkMultiClusterClientBuilder
                 ? manifest
                 : new DependencyManifestView(manifest))
             .ToArray();
+        var plan = builder.CompileForMultiCluster(staticManifests);
+        var connectionBudget = plan.MaximumConnections;
         using var transaction = new SynchronousBuildTransaction();
         try
         {
             var child = transaction.Own(
-                builder.BuildCore(staticManifests),
+                builder.MaterializeCompiledPlan(plan),
                 static client => SharpLinkAsyncCleanup.DisposeSynchronously(client),
                 SynchronousBuildResourceMetadata.FrameworkOwned(
                     $"Runtime multi-cluster child '{cluster}'"));
@@ -259,13 +269,14 @@ public sealed class SharpLinkMultiClusterClientBuilder
     {
         ArgumentNullException.ThrowIfNull(existingSlot);
         ArgumentNullException.ThrowIfNull(builder);
-        var connectionBudget = builder.GetConfiguredMaximumConnections();
         var staticManifests = existingSlot.StaticManifests ?? [];
+        var plan = builder.CompileForMultiCluster(staticManifests);
+        var connectionBudget = plan.MaximumConnections;
         using var transaction = new SynchronousBuildTransaction();
         try
         {
             var child = transaction.Own(
-                builder.BuildCore(staticManifests),
+                builder.MaterializeCompiledPlan(plan),
                 static client => SharpLinkAsyncCleanup.DisposeSynchronously(client),
                 SynchronousBuildResourceMetadata.FrameworkOwned(
                     $"Replacement multi-cluster child '{existingSlot.Key}'"));
@@ -317,6 +328,43 @@ public sealed class SharpLinkMultiClusterClientBuilder
         }
 
         return routes.ToFrozenDictionary();
+    }
+
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
+    private static void RethrowAfterDiscardingCompiledPlans(
+        Exception primaryException,
+        IReadOnlyList<CompiledClusterPlan> compiledPlans,
+        SynchronousBuildTransaction? transaction = null)
+    {
+        ArgumentNullException.ThrowIfNull(primaryException);
+        List<Exception>? cleanupFailures = null;
+        for (var index = compiledPlans.Count - 1; index >= 0; index--)
+        {
+            var compiled = compiledPlans[index];
+            if (compiled.MaterializationStarted)
+                continue;
+
+            try
+            {
+                compiled.Configuration.Builder.DiscardCompiledPlan(compiled.Plan);
+            }
+            catch (Exception cleanupException)
+            {
+                (cleanupFailures ??= []).Add(cleanupException);
+            }
+        }
+
+        var failure = cleanupFailures is null
+            ? primaryException
+            : new AggregateException([primaryException, .. cleanupFailures]);
+        if (transaction is not null)
+        {
+            transaction.Rollback(failure);
+            throw new UnreachableException();
+        }
+
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        throw new UnreachableException();
     }
 
     private static Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest> LoadRoutedManifestGraph(
@@ -435,6 +483,17 @@ public sealed class SharpLinkMultiClusterClientBuilder
         SharpLinkClusterKey Key,
         SharpClientBuilder Builder,
         bool AllowDynamicContracts);
+
+    private sealed class CompiledClusterPlan(
+        ClusterConfiguration configuration,
+        ClientBuildPlan plan,
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> staticManifests)
+    {
+        internal ClusterConfiguration Configuration { get; } = configuration;
+        internal ClientBuildPlan Plan { get; } = plan;
+        internal IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> StaticManifests { get; } = staticManifests;
+        internal bool MaterializationStarted { get; set; }
+    }
 }
 
 internal sealed record SharpLinkPreparedCluster(

@@ -58,6 +58,11 @@ var value = await client.Get<ICalculator>().AddAsync(20, 22, CancellationToken.N
 
 Client 和 Server 都是异步可释放对象。生产代码必须在停止时先阻止新工作，再 `DisposeAsync`，并观察后台运行任务；不要用进程退出替代资源收口。
 
+`SharpClientBuilder` 与 `SharpLinkServerBuilder` 也是一次性构建器：一次 `Build()` 尝试后（成功或
+失败）不能继续配置或再次 Build，需要新的运行实例时请创建新的 Builder。Client 在第一次选择
+`UseTransport`、`UseEndpoint(s)` 或 `UseEndpointResolver` 时就确定 topology，不能混用或重复替换。
+这保证 transport/resolver 所有权和静态 endpoint 快照只有一个明确归属。
+
 ## 分离部署
 
 推荐把契约放在独立程序集，由 Client 和 Server 共同引用。契约程序集只需引用 `SharpLink.Sdk`；SDK 会传递引入生成 Proxy、Stub、Codec 与 Manifest 所需的 Abstractions，并自动携带 Source Generator。API 4 生成程序集不引用 Runtime。Client 和 Server 项目再分别引用契约程序集及自身所需的 `SharpLink.Client` 或 `SharpLink.Server` 包，这些应用包负责引入 Runtime。完整结构见：
