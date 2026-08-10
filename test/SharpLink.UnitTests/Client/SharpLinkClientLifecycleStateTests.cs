@@ -19,7 +19,8 @@ public class SharpLinkClientLifecycleStateTests
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext());
 
         var connects = new Task[16];
         for (var index = 0; index < connects.Length; index++)
@@ -39,7 +40,8 @@ public class SharpLinkClientLifecycleStateTests
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromMilliseconds(10),
-            TimeSpan.FromMilliseconds(30));
+            TimeSpan.FromMilliseconds(30),
+            CreateRuntimeContext());
         await client.ConnectAsync();
         var readyConnectionsField = typeof(SharpLinkClient).GetField(
             "_readyConnections",
@@ -72,8 +74,8 @@ public class SharpLinkClientLifecycleStateTests
             input.Reader,
             output,
             static () => { },
-            static () => true);
-        session.BindRuntimeContext(context);
+            static () => true,
+            RpcSessionTestFixture.ClientOptions(context));
         using var connectionCancellation = new CancellationTokenSource();
         await using var connection = new ClientConnection(
             client,
@@ -140,8 +142,8 @@ public class SharpLinkClientLifecycleStateTests
             input.Reader,
             output.Writer,
             static () => { },
-            static () => true);
-        session.BindRuntimeContext(context);
+            static () => true,
+            RpcSessionTestFixture.ClientOptions(context));
         const long pongTimestamp = 0x0102_0304_0506_0708;
 
         var ping = session.SendPingWithBackpressureAsync();
@@ -175,7 +177,8 @@ public class SharpLinkClientLifecycleStateTests
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext());
         using var cancellation = new CancellationTokenSource();
 
         var cancelledWaiter = client.ConnectAsync(cancellation.Token).AsTask();
@@ -232,7 +235,8 @@ public class SharpLinkClientLifecycleStateTests
         var client = new SharpLinkClient(
             new TestClientTransportFactory(),
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext());
         var shutdownField = typeof(SharpLinkClient).GetField(
             "_shutdownCts",
             BindingFlags.Instance | BindingFlags.NonPublic)
@@ -274,7 +278,8 @@ public class SharpLinkClientLifecycleStateTests
         await using var client = new SharpLinkClient(
             new CleanupFailingHandshakeTransportFactory(),
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext());
 
         Exception failure;
         try
@@ -302,6 +307,7 @@ public class SharpLinkClientLifecycleStateTests
             new InitialPoolRollbackFailingTransportFactory(),
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             connectionPoolOptions: new SharpLinkConnectionPoolOptions
             {
                 MinConnections = 2,
@@ -344,7 +350,8 @@ public class SharpLinkClientLifecycleStateTests
         var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext());
         await client.ConnectAsync();
 
         await Task.WhenAll(
@@ -369,7 +376,8 @@ public class SharpLinkClientLifecycleStateTests
         var client = new SharpLinkClient(
             new NonConnectingFactory(),
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext());
         var reconnectTaskField = typeof(SharpLinkClient).GetField(
             "_reconnectTask",
             BindingFlags.Instance | BindingFlags.NonPublic)
@@ -402,7 +410,8 @@ public class SharpLinkClientLifecycleStateTests
         await using var client = new SharpLinkClient(
             new NonConnectingFactory(),
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext());
         var expected = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var unexpected = new TaskCompletionSource(
@@ -492,7 +501,8 @@ public class SharpLinkClientLifecycleStateTests
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext());
         await client.ConnectAsync();
         var first = await transport.WaitForConnectionAsync(0);
 
@@ -511,7 +521,8 @@ public class SharpLinkClientLifecycleStateTests
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext());
         await client.ConnectAsync();
         var first = await transport.WaitForConnectionAsync(0);
 
@@ -536,6 +547,7 @@ public class SharpLinkClientLifecycleStateTests
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
             loggerFactory,
+            CreateRuntimeContext(),
             connectionPoolOptions: new SharpLinkConnectionPoolOptions
             {
                 MinConnections = 1,
@@ -577,6 +589,7 @@ public class SharpLinkClientLifecycleStateTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             connectionPoolOptions: new SharpLinkConnectionPoolOptions
             {
                 MinConnections = 2,
@@ -594,12 +607,13 @@ public class SharpLinkClientLifecycleStateTests
         await using var owner = new SharpLinkClient(
             new NonConnectingFactory(),
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false));
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         var transport = new BlockingDisposeConnection();
         var connection = new ClientConnection(
             owner,
-            new RpcSession(transport),
+            new RpcSession(transport, RpcSessionTestFixture.ClientOptions(context)),
             new CancellationTokenSource(),
             8,
             context);
@@ -619,14 +633,17 @@ public class SharpLinkClientLifecycleStateTests
         await using var owner = new SharpLinkClient(
             new NonConnectingFactory(),
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false));
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         using var cancellation = new CancellationTokenSource();
         using var callback = cancellation.Token.Register(
             static () => throw new InvalidOperationException("connection cancellation callback failed"));
         var connection = new ClientConnection(
             owner,
-            new RpcSession(new TestTransportConnection()),
+            new RpcSession(
+                new TestTransportConnection(),
+                RpcSessionTestFixture.ClientOptions(context)),
             cancellation,
             8,
             context);
@@ -659,11 +676,14 @@ public class SharpLinkClientLifecycleStateTests
         await using var owner = new SharpLinkClient(
             new TestClientTransportFactory(),
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false));
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         await using var connection = new ClientConnection(
             owner,
-            new RpcSession(new TestTransportConnection()),
+            new RpcSession(
+                new TestTransportConnection(),
+                RpcSessionTestFixture.ClientOptions(context)),
             new CancellationTokenSource(),
             8,
             context);
@@ -682,17 +702,22 @@ public class SharpLinkClientLifecycleStateTests
         await using var owner = new SharpLinkClient(
             new TestClientTransportFactory(),
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false));
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         await using var first = new ClientConnection(
             owner,
-            new RpcSession(new TestTransportConnection()),
+            new RpcSession(
+                new TestTransportConnection(),
+                RpcSessionTestFixture.ClientOptions(context)),
             new CancellationTokenSource(),
             8,
             context);
         await using var second = new ClientConnection(
             owner,
-            new RpcSession(new TestTransportConnection()),
+            new RpcSession(
+                new TestTransportConnection(),
+                RpcSessionTestFixture.ClientOptions(context)),
             new CancellationTokenSource(),
             8,
             context);
@@ -718,17 +743,22 @@ public class SharpLinkClientLifecycleStateTests
         await using var owner = new SharpLinkClient(
             new TestClientTransportFactory(),
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false));
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         await using var stale = new ClientConnection(
             owner,
-            new RpcSession(new TestTransportConnection()),
+            new RpcSession(
+                new TestTransportConnection(),
+                RpcSessionTestFixture.ClientOptions(context)),
             new CancellationTokenSource(),
             8,
             context);
         await using var ready = new ClientConnection(
             owner,
-            new RpcSession(new TestTransportConnection()),
+            new RpcSession(
+                new TestTransportConnection(),
+                RpcSessionTestFixture.ClientOptions(context)),
             new CancellationTokenSource(),
             8,
             context);
@@ -758,6 +788,7 @@ public class SharpLinkClientLifecycleStateTests
             new TestClientTransportFactory(),
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             endpointAdmissionPolicy: policy);
         var stateType = typeof(SharpLinkClient).GetNestedType("AttemptOutcomeState", BindingFlags.NonPublic)
             ?? throw new Exception("cannot find attempt outcome state");
@@ -798,6 +829,7 @@ public class SharpLinkClientLifecycleStateTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             connectionPoolOptions: new SharpLinkConnectionPoolOptions
             {
                 MinConnections = 2,
@@ -832,6 +864,7 @@ public class SharpLinkClientLifecycleStateTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             fixedEndpoint: endpoint,
             endpointAdmissionPolicy: breaker);
         await client.ConnectAsync();
@@ -844,6 +877,9 @@ public class SharpLinkClientLifecycleStateTests
             () => !breaker.TryAcquire(candidate, method).IsAllowed,
             () => "GoAway was not recorded as an endpoint infrastructure failure");
     }
+
+    private static SharpLinkRuntimeContext CreateRuntimeContext()
+        => new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
 
     private static async Task InjectGoAwayAsync(TestTransportConnection connection)
     {

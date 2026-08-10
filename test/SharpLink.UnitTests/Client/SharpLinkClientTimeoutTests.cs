@@ -13,7 +13,8 @@ public class SharpLinkClientTimeoutTests
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false));
 
         await client.ConnectAsync();
 
@@ -38,6 +39,7 @@ public class SharpLinkClientTimeoutTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false),
             TimeSpan.FromSeconds(1));
 
         await client.ConnectAsync();

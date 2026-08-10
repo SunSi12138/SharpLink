@@ -144,6 +144,7 @@ public class SharpLinkClientRetryTests
                 transport,
                 TimeSpan.FromSeconds(10),
                 TimeSpan.FromSeconds(30),
+                CreateRuntimeContext(),
                 retryOptions: new SharpLinkRetryOptions
                 {
                     MaxAttempts = 2,
@@ -197,6 +198,7 @@ public class SharpLinkClientRetryTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             clientInterceptors: [interceptor],
             retryOptions: RetryOptions(2, TimeSpan.Zero),
             retryPolicy: invalidPolicy);
@@ -226,6 +228,7 @@ public class SharpLinkClientRetryTests
             first,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             staticEndpoints: endpoints,
             clusterOptions: new SharpLinkClusterOptions(),
             endpointSelector: new FirstAvailableSelector(),
@@ -259,6 +262,7 @@ public class SharpLinkClientRetryTests
             first,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             staticEndpoints: endpoints,
             clusterOptions: new SharpLinkClusterOptions(),
             endpointSelector: new FirstAvailableSelector(),
@@ -288,6 +292,7 @@ public class SharpLinkClientRetryTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             fixedEndpoint: Endpoint("retry", 5001),
             retryOptions: RetryOptions(2, TimeSpan.Zero),
             endpointAdmissionPolicy: admission);
@@ -314,6 +319,7 @@ public class SharpLinkClientRetryTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             fixedEndpoint: Endpoint("retry-admission", 5001),
             retryOptions: RetryOptions(2, TimeSpan.Zero),
             endpointAdmissionPolicy: admission);
@@ -350,6 +356,7 @@ public class SharpLinkClientRetryTests
             first,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             staticEndpoints: endpoints,
             clusterOptions: new SharpLinkClusterOptions { MinReadyEndpoints = 3, MaxConnections = 3 },
             endpointSelector: new FirstUnexcludedSelector(),
@@ -515,8 +522,12 @@ public class SharpLinkClientRetryTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             retryOptions: RetryOptions(maxAttempts, initialBackoff ?? TimeSpan.Zero),
             retryPolicy: policy);
+
+    private static SharpLinkRuntimeContext CreateRuntimeContext()
+        => new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
 
     private static SharpLinkRetryOptions RetryOptions(int maxAttempts, TimeSpan initialBackoff)
         => new()

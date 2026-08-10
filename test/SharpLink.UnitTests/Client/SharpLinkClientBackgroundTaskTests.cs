@@ -15,7 +15,8 @@ public sealed class SharpLinkClientBackgroundTaskTests
             new TestClientTransportFactory(),
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
-            loggerFactory);
+            loggerFactory,
+            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false));
 
         client.TrackBackgroundTask(Task.FromException(
             new InvalidOperationException("tracked cleanup failed")));

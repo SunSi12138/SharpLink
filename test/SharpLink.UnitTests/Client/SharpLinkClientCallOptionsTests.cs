@@ -16,7 +16,8 @@ public class SharpLinkClientCallOptionsTests
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext());
 
         var exception = await CaptureSharpLinkException(ClientInvokerTestHelper.InvokeUnaryAsync(client));
         Ensure(exception.Code == SharpLinkErrorCode.Unavailable, "fail-fast error code");
@@ -29,7 +30,8 @@ public class SharpLinkClientCallOptionsTests
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext());
 
         var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(
             client,
@@ -59,7 +61,8 @@ public class SharpLinkClientCallOptionsTests
         await using var client = new SharpLinkClient(
             transport,
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext());
 
         var exception = await CaptureSharpLinkException(ClientInvokerTestHelper.InvokeUnaryAsync(
             client,
@@ -77,7 +80,8 @@ public class SharpLinkClientCallOptionsTests
         await using var client = new SharpLinkClient(
             new TestClientTransportFactory(),
             TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(30),
+            CreateRuntimeContext());
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
         var failure = await CaptureException(ClientInvokerTestHelper.InvokeUnaryAsync(
@@ -101,6 +105,7 @@ public class SharpLinkClientCallOptionsTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             requestTimeout: TimeSpan.MaxValue);
         await client.ConnectAsync();
 
@@ -124,6 +129,7 @@ public class SharpLinkClientCallOptionsTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             fixedEndpoint: FixedEndpoint,
             endpointAdmissionPolicy: policy);
         await client.ConnectAsync();
@@ -148,6 +154,7 @@ public class SharpLinkClientCallOptionsTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             fixedEndpoint: FixedEndpoint,
             endpointAdmissionPolicy: policy);
         await client.ConnectAsync();
@@ -182,6 +189,7 @@ public class SharpLinkClientCallOptionsTests
             first,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             staticEndpoints: endpoints,
             clusterOptions: new SharpLinkClusterOptions { MinReadyEndpoints = 2, MaxConnections = 2 },
             endpointSelector: new FirstUnexcludedSelector(),
@@ -219,6 +227,7 @@ public class SharpLinkClientCallOptionsTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             fixedEndpoint: FixedEndpoint,
             endpointAdmissionPolicy: policy);
 
@@ -250,6 +259,7 @@ public class SharpLinkClientCallOptionsTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             fixedEndpoint: FixedEndpoint,
             endpointAdmissionPolicy: policy);
         await client.ConnectAsync();
@@ -282,6 +292,7 @@ public class SharpLinkClientCallOptionsTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             fixedEndpoint: FixedEndpoint,
             endpointAdmissionPolicy: policy);
         await client.ConnectAsync();
@@ -303,6 +314,7 @@ public class SharpLinkClientCallOptionsTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            CreateRuntimeContext(),
             protocolOptions: new SharpLinkProtocolOptions { MaxPendingRequestsPerConnection = 1 },
             fixedEndpoint: FixedEndpoint,
             endpointAdmissionPolicy: policy);
@@ -337,6 +349,9 @@ public class SharpLinkClientCallOptionsTests
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)occupiedRequest.RequestId));
         Ensure(await occupied == 0, "occupied pending call completion");
     }
+
+    private static SharpLinkRuntimeContext CreateRuntimeContext()
+        => new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
 
     private static readonly RpcMethodDescriptor OneWayClientStreamingMethod = new(
         1,

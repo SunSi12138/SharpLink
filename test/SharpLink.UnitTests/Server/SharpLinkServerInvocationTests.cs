@@ -70,11 +70,9 @@ public class SharpLinkServerInvocationTests
             input.Reader,
             output.Writer,
             static () => { },
-            static () => true);
-        var connection = new ServerConnectionState(
-            session,
-            new RuntimeConcurrencyOptions(),
-            CancellationToken.None);
+            static () => true,
+            RpcSessionTestFixture.ServerOptions());
+        var connection = CreateConnection(session);
         Ensure(connection.MarkReady(null), "connection ready");
 
         var tryAcquire = CreatePrivateCall<Func<SharpLinkServer, ServerConnectionState, int>>(
@@ -166,17 +164,17 @@ public class SharpLinkServerInvocationTests
         var thirdInput = new Pipe();
         var thirdOutput = new Pipe();
         await using var firstSession = new RpcSession(
-            "capacity-first", firstInput.Reader, firstOutput.Writer, static () => { }, static () => true);
+            "capacity-first", firstInput.Reader, firstOutput.Writer, static () => { }, static () => true,
+            RpcSessionTestFixture.ServerOptions());
         await using var secondSession = new RpcSession(
-            "capacity-second", secondInput.Reader, secondOutput.Writer, static () => { }, static () => true);
+            "capacity-second", secondInput.Reader, secondOutput.Writer, static () => { }, static () => true,
+            RpcSessionTestFixture.ServerOptions());
         await using var thirdSession = new RpcSession(
-            "capacity-third", thirdInput.Reader, thirdOutput.Writer, static () => { }, static () => true);
-        var firstConnection = new ServerConnectionState(
-            firstSession, new RuntimeConcurrencyOptions(), CancellationToken.None);
-        var secondConnection = new ServerConnectionState(
-            secondSession, new RuntimeConcurrencyOptions(), CancellationToken.None);
-        var thirdConnection = new ServerConnectionState(
-            thirdSession, new RuntimeConcurrencyOptions(), CancellationToken.None);
+            "capacity-third", thirdInput.Reader, thirdOutput.Writer, static () => { }, static () => true,
+            RpcSessionTestFixture.ServerOptions());
+        var firstConnection = CreateConnection(firstSession);
+        var secondConnection = CreateConnection(secondSession);
+        var thirdConnection = CreateConnection(thirdSession);
         Ensure(firstConnection.MarkReady(null), "first connection ready");
         Ensure(secondConnection.MarkReady(null), "second connection ready");
         Ensure(thirdConnection.MarkReady(null), "third connection ready");
@@ -333,7 +331,9 @@ public class SharpLinkServerInvocationTests
             .DisableAutomaticServiceRegistration()
             .UseTransport(new IdleListener())
             .Build();
-        await using var session = new RpcSession(new TestTransportConnection());
+        await using var session = new RpcSession(
+            new TestTransportConnection(),
+            RpcSessionTestFixture.ServerOptions());
         var lease = new ServiceLease(
             new ThrowingService(),
             new ThrowingScope(),
@@ -389,8 +389,8 @@ public class SharpLinkServerInvocationTests
             "unexpected",
             new InvalidOperationException("unexpected sibling session cleanup failed"));
         var unexpected = new ServerConnectionState(
-            new RpcSession(unexpectedTransport),
-            new RuntimeConcurrencyOptions(),
+            new RpcSession(unexpectedTransport, RpcSessionTestFixture.ServerOptions()),
+            CreateCallCancellations(),
             CancellationToken.None);
         connections.TryAdd(unexpected.Session.Id, unexpected);
 
@@ -402,8 +402,8 @@ public class SharpLinkServerInvocationTests
                 new IOException("expected session transport closure"));
             expectedTransports.Add(transport);
             var connection = new ServerConnectionState(
-                new RpcSession(transport),
-                new RuntimeConcurrencyOptions(),
+                new RpcSession(transport, RpcSessionTestFixture.ServerOptions()),
+                CreateCallCancellations(),
                 CancellationToken.None);
             connections.TryAdd(connection.Session.Id, connection);
         }
@@ -640,6 +640,13 @@ public class SharpLinkServerInvocationTests
 
         throw new Exception($"response frame {requestId} was not emitted");
     }
+
+    private static ServerConnectionState CreateConnection(RpcSession session)
+        => new(session, CreateCallCancellations(), CancellationToken.None);
+
+    private static StripedLongMap<ServerCallCancellationState> CreateCallCancellations(
+        SharpLinkRuntimeContext? runtimeContext = null)
+        => new((runtimeContext ?? RpcSessionTestFixture.RuntimeContext).Concurrency);
 
     private static TDelegate CreatePrivateCall<TDelegate>(MethodInfo method)
         where TDelegate : Delegate
@@ -968,11 +975,11 @@ public class SharpLinkServerInvocationTests
                 _input.Reader,
                 output,
                 static () => { },
-                static () => true);
-            Session.BindRuntimeContext(runtimeContext);
+                static () => true,
+                RpcSessionTestFixture.ServerOptions(runtimeContext));
             Connection = new ServerConnectionState(
                 Session,
-                new RuntimeConcurrencyOptions(),
+                CreateCallCancellations(runtimeContext),
                 CancellationToken.None);
             Ensure(Connection.MarkReady(null), "connection ready");
             var registration = ServiceRegistration.CreateSingleton(

@@ -53,8 +53,9 @@ public sealed class RuntimeArchitecturePhase00Tests
         for (var iteration = 0; iteration < RaceRepetitions; iteration++)
         {
             var transport = new CountingTransportConnection($"phase00-session-{iteration}");
-            var session = new RpcSession(transport);
-            session.BindRuntimeContext(context);
+            var session = new RpcSession(
+                transport,
+                RpcSessionTestFixture.ClientOptions(context));
             var runtimeContext = session.RuntimeContext;
             var streamManager = session.StreamManager;
             var input = session.Input;

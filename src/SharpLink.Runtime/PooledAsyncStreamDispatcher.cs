@@ -83,28 +83,28 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _producerSegment = _firstSegment;
     }
 
-    /// <summary>Rents a dispatcher using a codec from the supplied or default runtime context.</summary>
+    /// <summary>Rents a dispatcher using a codec from the supplied runtime context.</summary>
     /// <param name="enumerationToken">Cancels local stream consumption.</param>
-    /// <param name="codecProvider">The codec provider, or <see langword="null"/> for the default runtime provider.</param>
+    /// <param name="codecProvider">The required instance-owned codec provider.</param>
     /// <returns>A reset dispatcher that must be asynchronously disposed.</returns>
     public static PooledAsyncStreamDispatcher<T> Rent(
-        CancellationToken enumerationToken = default,
-        IRpcCodecProvider? codecProvider = null)
+        CancellationToken enumerationToken,
+        IRpcCodecProvider codecProvider)
         => Rent(enumerationToken, codecProvider, payloadNullable: false);
 
     /// <summary>Rents a dispatcher using a codec provider and explicit payload nullability.</summary>
     /// <param name="enumerationToken">Cancels local stream consumption.</param>
-    /// <param name="codecProvider">The codec provider, or <see langword="null"/> for the default runtime provider.</param>
+    /// <param name="codecProvider">The required instance-owned codec provider.</param>
     /// <param name="payloadNullable">Whether the wire contract permits a null item.</param>
     /// <returns>A reset dispatcher that must be asynchronously disposed.</returns>
     public static PooledAsyncStreamDispatcher<T> Rent(
         CancellationToken enumerationToken,
-        IRpcCodecProvider? codecProvider,
+        IRpcCodecProvider codecProvider,
         bool payloadNullable)
-        => Rent(
-            enumerationToken,
-            (codecProvider ?? SharpLinkRuntimeContext.Default.Codecs).GetCodec<T>(),
-            payloadNullable);
+    {
+        ArgumentNullException.ThrowIfNull(codecProvider);
+        return Rent(enumerationToken, codecProvider.GetCodec<T>(), payloadNullable);
+    }
 
     /// <summary>Rents a dispatcher using a specific item codec.</summary>
     /// <param name="enumerationToken">Cancels local stream consumption.</param>

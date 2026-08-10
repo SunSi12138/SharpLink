@@ -17,8 +17,7 @@ public class CodecSafetyTests
             new ReadOnlySequence<byte>(new byte[] { 0xA5 })));
     }
 
-    private static readonly IRpcCodecProvider SCodecs =
-        new SharpLinkRuntimeContextBuilder().Build().Codecs;
+    private static IRpcCodecProvider SCodecs => RpcSessionTestFixture.RuntimeContext.Codecs;
 
     [Test]
     public void FixedLengthCodecsShouldRoundTripSingleAndMultiSegmentAndRejectTruncation()

@@ -8,8 +8,7 @@ public class StreamManagerTests
 {
     private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
 
-    private static readonly IRpcCodecProvider SCodecs =
-        new SharpLinkRuntimeContextBuilder().Build().Codecs;
+    private static IRpcCodecProvider SCodecs => RpcSessionTestFixture.RuntimeContext.Codecs;
 
     [Test]
     public async Task DispatchChunkShouldReachRegisteredDefaultStream()
@@ -167,7 +166,7 @@ public class StreamManagerTests
     [Test]
     public async Task SlowConsumerShouldReceiveResourceExhaustedAt4096BufferedElements()
     {
-        var dispatcher = PooledAsyncStreamDispatcher<int>.Rent(codecProvider: SCodecs);
+        var dispatcher = PooledAsyncStreamDispatcher<int>.Rent(default, SCodecs);
         var writer = new ArrayBufferWriter<byte>();
         SCodecs.GetCodec<int>().Serialize(42, writer);
         var payload = new ReadOnlySequence<byte>(writer.WrittenMemory);
@@ -200,7 +199,7 @@ public class StreamManagerTests
             (_, _, bytes) => accepted += bytes,
             (_, _, bytes) => consumed += bytes,
             null);
-        var dispatcher = PooledAsyncStreamDispatcher<int>.Rent(codecProvider: SCodecs);
+        var dispatcher = PooledAsyncStreamDispatcher<int>.Rent(default, SCodecs);
         manager.Register(40, 2, dispatcher);
         var writer = new ArrayBufferWriter<byte>();
         SCodecs.GetCodec<int>().Serialize(42, writer);

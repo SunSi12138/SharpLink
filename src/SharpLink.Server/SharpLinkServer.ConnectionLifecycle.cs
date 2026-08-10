@@ -30,24 +30,29 @@ internal sealed partial class SharpLinkServer
             if (connection is ITransportSecurityInfo securityInfo)
                 LogTlsEstablished(_logger, securityInfo.Protocol, securityInfo.CipherSuite);
 
-            var session = new RpcSession(connection, _rpcSessionFlushOptions);
+            var callCancellations = new StripedLongMap<ServerCallCancellationState>(
+                _runtimeContext.Concurrency);
+            var session = new RpcSession(
+                connection,
+                new RpcSessionCreationOptions(
+                    RpcSessionRole.Server,
+                    _runtimeContext,
+                    _rpcSessionFlushOptions,
+                    (mappedSession, requestId, contractId, methodId, exception) =>
+                        MapStreamServiceException(
+                            callCancellations,
+                            mappedSession,
+                            requestId,
+                            contractId,
+                            methodId,
+                            exception)));
             connectionState = new ServerConnectionState(
                 session,
-                _runtimeContext.Concurrency,
+                callCancellations,
                 cancellationToken,
                 _maxConcurrentCallsPerConnection);
             connectionState.MarkSessionLoopStarted();
             connection = null;
-            session.SetTelemetrySide("server");
-            session.BindRuntimeContext(_runtimeContext);
-            session.ServiceExceptionMapper = (requestId, contractId, methodId, exception) =>
-                MapStreamServiceException(
-                    connectionState,
-                    session,
-                    requestId,
-                    contractId,
-                    methodId,
-                    exception);
             await ReplaceConnectionAsync(connectionState).ConfigureAwait(false);
             await HandleSessionLifecycleAsync(connectionState).ConfigureAwait(false);
         }
