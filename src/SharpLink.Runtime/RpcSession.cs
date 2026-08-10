@@ -41,6 +41,8 @@ public sealed partial class RpcSession : IRpcSession
     private int _cleanupStarted;
     private int _stopped;
     private readonly TaskCompletionSource<bool> _stoppedTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Lock _ctsGate = new();
+    private bool _ctsCancellationSignaled;
     private readonly Lock _transportDisposeGate = new();
     private Task? _transportDisposeTask;
 
@@ -419,7 +421,7 @@ public sealed partial class RpcSession : IRpcSession
 
         TransitionProtocolPhaseToTerminal();
         RecordTelemetryConnectionClosed();
-        _cts.Cancel();
+        CancelSession();
         Volatile.Read(ref _protocolState).FlowController?.Complete(structured);
         Volatile.Read(ref _pump)?.Stop();
         CompleteReceiveStreams(structured);
@@ -449,7 +451,7 @@ public sealed partial class RpcSession : IRpcSession
         {
             try
             {
-                _cts.Cancel();
+                CancelSession();
             }
             catch (Exception exception)
             {
@@ -480,8 +482,7 @@ public sealed partial class RpcSession : IRpcSession
         finally
         {
             TransitionProtocolPhaseToTerminal();
-            Volatile.Write(ref _stopped, 1);
-            _cts.Dispose();
+            DisposeSessionCancellation();
             if (cleanupException is null)
                 _stoppedTcs.TrySetResult(true);
             else
@@ -519,6 +520,28 @@ public sealed partial class RpcSession : IRpcSession
             }
         }
         Volatile.Read(ref _pump)?.Stop();
+    }
+
+    private void CancelSession()
+    {
+        lock (_ctsGate)
+        {
+            if (_ctsCancellationSignaled)
+                return;
+
+            // Publish ownership before callbacks run so cancellation cannot re-enter this path.
+            _ctsCancellationSignaled = true;
+            _cts.Cancel();
+        }
+    }
+
+    private void DisposeSessionCancellation()
+    {
+        lock (_ctsGate)
+        {
+            _cts.Dispose();
+            Volatile.Write(ref _stopped, 1);
+        }
     }
 
     private static Exception CombineCleanupExceptions(Exception? first, Exception next)

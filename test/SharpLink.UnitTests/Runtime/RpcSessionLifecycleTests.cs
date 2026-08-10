@@ -148,6 +148,93 @@ public class RpcSessionLifecycleTests
     }
 
     [Test]
+    public async Task FaultPausedAfterPublishingTerminalShouldSurviveConcurrentRepeatedDispose()
+    {
+        var input = new Pipe();
+        var output = new Pipe();
+        var transport = RpcSessionTestFixture.Transport(
+            "fault-cts-dispose-barrier",
+            input.Reader,
+            output.Writer);
+        var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions());
+        var terminalPublished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseFault = new ManualResetEventSlim();
+        using var listener = new MeterListener();
+        var barrierArmed = 0;
+        listener.InstrumentPublished = (instrument, meterListener) =>
+        {
+            if (instrument.Meter.Name == "SharpLink" &&
+                instrument.Name == "sharplink.connections.active")
+            {
+                meterListener.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
+        {
+            if (measurement != -1 || Volatile.Read(ref barrierArmed) == 0)
+                return;
+
+            foreach (var tag in tags)
+            {
+                if (tag.Key != "rpc.side" || !Equals(tag.Value, "client"))
+                    continue;
+
+                // Fault records this metric after publishing its terminal and before cancelling the CTS.
+                terminalPublished.TrySetResult();
+                releaseFault.Wait();
+                return;
+            }
+        });
+        listener.Start();
+        session.NotifyConnected();
+        Volatile.Write(ref barrierArmed, 1);
+        var originalFault = new SharpLinkException(SharpLinkErrorCode.ProtocolViolation, "deterministic fault");
+        Exception? publishedFault = null;
+        var disconnectCount = 0;
+        session.OnDisconnected += exception =>
+        {
+            publishedFault = exception;
+            Interlocked.Increment(ref disconnectCount);
+        };
+
+        var faultTask = Task.Run(() =>
+            CaptureException(() => session.NotifyDisconnected(originalFault)));
+        Exception?[] disposeFailures;
+        try
+        {
+            await terminalPublished.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(!session.IsConnected,
+                "Fault must publish its terminal before the deterministic cancellation barrier");
+
+            disposeFailures = await Task.WhenAll(
+                    CaptureDisposeExceptionAsync(session),
+                    CaptureDisposeExceptionAsync(session))
+                .WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            releaseFault.Set();
+        }
+
+        var faultFailure = await faultTask.WaitAsync(TimeSpan.FromSeconds(2));
+        await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(faultFailure is null,
+            "Fault must not touch a CTS already released by the DisposeAsync owner");
+        foreach (var disposeFailure in disposeFailures)
+        {
+            Ensure(disposeFailure is null,
+                "concurrent and repeated DisposeAsync callers must share successful cleanup");
+        }
+        Ensure(ReferenceEquals(publishedFault, originalFault) && disconnectCount == 1,
+            "the original Fault winner must remain the single published terminal");
+        Ensure(ReferenceEquals(CaptureSendException(session), originalFault),
+            "later operations must keep observing the original fault after CTS cleanup");
+        Ensure(transport.DisposeCount == 1,
+            "Fault and repeated DisposeAsync calls must dispose their transport exactly once");
+    }
+
+    [Test]
     public async Task SynchronousTransportDisposeFailureShouldBecomeOneObservedTask()
     {
         var input = new Pipe();
