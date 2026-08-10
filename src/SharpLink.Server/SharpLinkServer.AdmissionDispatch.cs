@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
@@ -65,6 +63,7 @@ internal sealed partial class SharpLinkServer
                     CreateAdmissionContext(connection, descriptor, request),
                     checked((int)payload.Length),
                     _admissionController.QueueOneWayCalls,
+                    request.RpcDeadline,
                     admittedCallState.InvocationToken);
             }
             catch (Exception exception)
@@ -473,12 +472,28 @@ internal sealed partial class SharpLinkServer
 
     private bool ShouldLogOneWayAdmissionRejection()
     {
-        var now = Stopwatch.GetTimestamp();
-        var minimumInterval = Stopwatch.Frequency * 5L;
+        var timeProvider = _runtimeContext.TimeProvider;
+        var now = timeProvider.GetTimestamp();
         while (true)
         {
+            var initialization = Volatile.Read(ref _oneWayAdmissionLogInitialized);
+            if (initialization != 2)
+            {
+                if (initialization == 0 &&
+                    Interlocked.CompareExchange(
+                        ref _oneWayAdmissionLogInitialized,
+                        1,
+                        0) == 0)
+                {
+                    Volatile.Write(ref _oneWayAdmissionLogTimestamp, now);
+                    Volatile.Write(ref _oneWayAdmissionLogInitialized, 2);
+                    return true;
+                }
+                return false;
+            }
+
             var previous = Volatile.Read(ref _oneWayAdmissionLogTimestamp);
-            if (previous != 0 && now - previous < minimumInterval)
+            if (timeProvider.GetElapsedTime(previous, now) < TimeSpan.FromSeconds(5))
                 return false;
             if (Interlocked.CompareExchange(ref _oneWayAdmissionLogTimestamp, now, previous) == previous)
                 return true;

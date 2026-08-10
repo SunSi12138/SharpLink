@@ -12,7 +12,7 @@ internal sealed partial class SharpLinkMultiClusterClient
     {
         ValidateClusterKey(cluster);
         ArgumentNullException.ThrowIfNull(builder);
-        var started = Stopwatch.GetTimestamp();
+        var started = _timeProvider.GetTimestamp();
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         SharpLinkPreparedCluster? candidate = null;
         var published = false;
@@ -53,7 +53,7 @@ internal sealed partial class SharpLinkMultiClusterClient
             LogMutationStage(_logger, "add", cluster.Value,
                 candidateConnected ? "candidate_connected" : "candidate_prepared", "success",
                 candidate.Slot.ConfiguredConnectionBudget,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds);
 
             failureStage = "snapshot_validation";
             lock (_gate)
@@ -79,14 +79,14 @@ internal sealed partial class SharpLinkMultiClusterClient
             }
 
             LogMutationStage(_logger, "add", cluster.Value, "snapshot_published", "success", publishedBudget,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
-            RecordMutation("add", "success", Stopwatch.GetElapsedTime(started));
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds);
+            RecordMutation("add", "success", _timeProvider.GetElapsedTime(started));
         }
         catch (Exception exception)
         {
             LogMutationStage(_logger, "add", cluster.Value, "rollback", "failed", 0,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds, failureStage);
-            RecordMutation("add", "failed", Stopwatch.GetElapsedTime(started));
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds, failureStage);
+            RecordMutation("add", "failed", _timeProvider.GetElapsedTime(started));
             if (candidate is not null && !published)
                 await RethrowAfterCandidateCleanupAsync(exception, candidate.Slot.Client).ConfigureAwait(false);
             throw;
@@ -107,7 +107,7 @@ internal sealed partial class SharpLinkMultiClusterClient
         ValidateClusterKey(cluster);
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
-        var started = Stopwatch.GetTimestamp();
+        var started = _timeProvider.GetTimestamp();
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         SharpLinkPreparedCluster? candidate = null;
         SharpLinkClusterSlot? existingSlot = null;
@@ -155,7 +155,7 @@ internal sealed partial class SharpLinkMultiClusterClient
             LogMutationStage(_logger, "replace", cluster.Value,
                 candidateConnected ? "candidate_connected" : "candidate_prepared", "success",
                 candidate.Slot.ConfiguredConnectionBudget,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds);
 
             failureStage = "snapshot_validation";
             lock (_gate)
@@ -192,7 +192,7 @@ internal sealed partial class SharpLinkMultiClusterClient
             }
 
             LogMutationStage(_logger, "replace", cluster.Value, "snapshot_published", "success", publishedBudget,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds);
             var cleanup = TrackRetiredSlotCleanup(
                 existingSlot!,
                 existingSlot!.ConfiguredConnectionBudget,
@@ -203,23 +203,24 @@ internal sealed partial class SharpLinkMultiClusterClient
             var released = await WaitForRetiredCleanupAsync(
                 cleanup,
                 gracefulTimeout,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                existingSlot!.Client).ConfigureAwait(false);
             if (!released)
             {
                 LogMutationStage(_logger, "replace", cluster.Value, "forced_stop", "cleanup_pending",
                     Volatile.Read(ref _snapshot).ConfiguredConnectionBudget,
-                    Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                    _timeProvider.GetElapsedTime(started).TotalMilliseconds);
             }
-            RecordMutation("replace", released ? "success" : "forced_stop", Stopwatch.GetElapsedTime(started));
+            RecordMutation("replace", released ? "success" : "forced_stop", _timeProvider.GetElapsedTime(started));
         }
         catch (Exception exception)
         {
             LogMutationStage(_logger, "replace", cluster.Value,
                 published ? "cleanup_wait_failed" : "rollback", "failed",
                 Volatile.Read(ref _snapshot).ConfiguredConnectionBudget,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds,
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds,
                 failureStage);
-            RecordMutation("replace", published ? "published_wait_failed" : "failed", Stopwatch.GetElapsedTime(started));
+            RecordMutation("replace", published ? "published_wait_failed" : "failed", _timeProvider.GetElapsedTime(started));
             if (candidate is not null && !published)
                 await RethrowAfterCandidateCleanupAsync(exception, candidate.Slot.Client).ConfigureAwait(false);
             throw;
@@ -238,7 +239,7 @@ internal sealed partial class SharpLinkMultiClusterClient
     {
         ValidateClusterKey(cluster);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
-        var started = Stopwatch.GetTimestamp();
+        var started = _timeProvider.GetTimestamp();
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         SharpLinkClusterSlot? existingSlot = null;
         var published = false;
@@ -274,7 +275,7 @@ internal sealed partial class SharpLinkMultiClusterClient
             }
 
             LogMutationStage(_logger, "remove", cluster.Value, "snapshot_published", "success", publishedBudget,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds);
             var cleanup = TrackRetiredSlotCleanup(
                 existingSlot!,
                 existingSlot!.ConfiguredConnectionBudget,
@@ -285,14 +286,15 @@ internal sealed partial class SharpLinkMultiClusterClient
             var released = await WaitForRetiredCleanupAsync(
                 cleanup,
                 gracefulTimeout,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                existingSlot!.Client).ConfigureAwait(false);
             if (!released)
             {
                 LogMutationStage(_logger, "remove", cluster.Value, "forced_stop", "cleanup_pending",
                     Volatile.Read(ref _snapshot).ConfiguredConnectionBudget,
-                    Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                    _timeProvider.GetElapsedTime(started).TotalMilliseconds);
             }
-            RecordMutation("remove", released ? "success" : "forced_stop", Stopwatch.GetElapsedTime(started));
+            RecordMutation("remove", released ? "success" : "forced_stop", _timeProvider.GetElapsedTime(started));
             return new SharpLinkClusterRemovalResult
             {
                 Succeeded = true,
@@ -305,9 +307,9 @@ internal sealed partial class SharpLinkMultiClusterClient
             LogMutationStage(_logger, "remove", cluster.Value,
                 published ? "cleanup_wait_failed" : "rollback", "failed",
                 Volatile.Read(ref _snapshot).ConfiguredConnectionBudget,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds,
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds,
                 failureStage);
-            RecordMutation("remove", published ? "published_wait_failed" : "failed", Stopwatch.GetElapsedTime(started));
+            RecordMutation("remove", published ? "published_wait_failed" : "failed", _timeProvider.GetElapsedTime(started));
             throw;
         }
         finally
@@ -475,10 +477,17 @@ internal sealed partial class SharpLinkMultiClusterClient
         if (gracefulTimeout == TimeSpan.Zero || client is not ISharpLinkClientDrainInspector inspector)
             return;
 
-        var started = Stopwatch.GetTimestamp();
+        var timeProvider = GetTimeProvider(client);
+        var deadline = SharpLinkTime.AddDuration(
+            timeProvider.GetTimestamp(),
+            gracefulTimeout,
+            timeProvider.TimestampFrequency);
         while (inspector.ActiveCallCount != 0 || inspector.ActiveStreamCount != 0)
         {
-            var remaining = gracefulTimeout - Stopwatch.GetElapsedTime(started);
+            var remaining = SharpLinkTime.GetRemaining(
+                deadline,
+                timeProvider.GetTimestamp(),
+                timeProvider.TimestampFrequency);
             if (remaining <= TimeSpan.Zero)
                 return;
             try
@@ -487,6 +496,7 @@ internal sealed partial class SharpLinkMultiClusterClient
                     remaining < TimeSpan.FromMilliseconds(25)
                         ? remaining
                         : TimeSpan.FromMilliseconds(25),
+                    timeProvider,
                     _shutdown.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
@@ -496,13 +506,15 @@ internal sealed partial class SharpLinkMultiClusterClient
         }
     }
 
-    private static async Task<bool> WaitForRetiredCleanupAsync(
+    private async Task<bool> WaitForRetiredCleanupAsync(
         Task cleanup,
         TimeSpan gracefulTimeout,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ISharpLinkClient? client = null)
         => await SharpLinkTimer.WaitAsync(
             cleanup,
             gracefulTimeout,
+            client is null ? _timeProvider : GetTimeProvider(client),
             cancellationToken).ConfigureAwait(false);
 
     private void EndSlotMutation()

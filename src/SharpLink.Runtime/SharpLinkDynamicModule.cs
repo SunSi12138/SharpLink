@@ -157,7 +157,6 @@ internal static class SharpLinkAssemblyManifestLoader
 
 internal sealed class SharpLinkDynamicModule
 {
-    private static readonly TimeSpan MaximumTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue);
     private readonly PaddedCounter[] _callCounters;
     private readonly PaddedCounter[] _streamCounters;
     private readonly int _stripeMask;
@@ -239,31 +238,23 @@ internal sealed class SharpLinkDynamicModule
     internal Task WaitForDrainAsync() => _drained.Task;
 
     internal static async Task<bool> WaitForDrainAsync(Task drainTask, TimeSpan gracefulTimeout)
+        => await WaitForDrainAsync(
+            drainTask,
+            gracefulTimeout,
+            TimeProvider.System).ConfigureAwait(false);
+
+    internal static async Task<bool> WaitForDrainAsync(
+        Task drainTask,
+        TimeSpan gracefulTimeout,
+        TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(drainTask);
+        ArgumentNullException.ThrowIfNull(timeProvider);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
-        while (true)
-        {
-            if (drainTask.IsCompleted)
-            {
-                await drainTask.ConfigureAwait(false);
-                return true;
-            }
-
-            var delay = gracefulTimeout > MaximumTimerDelay
-                ? MaximumTimerDelay
-                : gracefulTimeout;
-            if (ReferenceEquals(
-                    await Task.WhenAny(drainTask, Task.Delay(delay)).ConfigureAwait(false),
-                    drainTask))
-            {
-                await drainTask.ConfigureAwait(false);
-                return true;
-            }
-            if (gracefulTimeout <= MaximumTimerDelay)
-                return false;
-            gracefulTimeout -= MaximumTimerDelay;
-        }
+        return await SharpLinkTimer.WaitAsync(
+            drainTask,
+            gracefulTimeout,
+            timeProvider).ConfigureAwait(false);
     }
 
     internal void CancelRemainingCalls()

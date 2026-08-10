@@ -14,6 +14,7 @@ internal sealed class ManualTimeProvider : TimeProvider
 
     private readonly Lock _gate = new();
     private readonly List<ManualTimer> _timers = [];
+    private TaskCompletionSource _timersDrained = CreateCompletedSignal();
     private DateTimeOffset _utcNow;
     private long _timestamp;
     private int _utcNowReadCount;
@@ -49,6 +50,30 @@ internal sealed class ManualTimeProvider : TimeProvider
             lock (_gate)
                 return _timers.Count;
         }
+    }
+
+    internal long EarliestTimerTimestamp
+    {
+        get
+        {
+            lock (_gate)
+            {
+                var earliest = long.MaxValue;
+                for (var index = 0; index < _timers.Count; index++)
+                {
+                    var timer = _timers[index];
+                    if (!timer.IsDisposed && timer.NextTimestamp < earliest)
+                        earliest = timer.NextTimestamp;
+                }
+                return earliest;
+            }
+        }
+    }
+
+    internal Task WaitForTimersDrainedAsync()
+    {
+        lock (_gate)
+            return _timersDrained.Task;
     }
 
     public int UtcNowReadCount
@@ -140,7 +165,14 @@ internal sealed class ManualTimeProvider : TimeProvider
             if (timer.IsDisposed)
                 return false;
             if (!_timers.Contains(timer))
+            {
+                if (_timers.Count == 0)
+                {
+                    _timersDrained = new TaskCompletionSource(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
+                }
                 _timers.Add(timer);
+            }
 
             timer.PeriodTicks = periodTicks <= 0 ? long.MaxValue : periodTicks;
             timer.NextTimestamp = dueTicks == long.MaxValue
@@ -159,7 +191,16 @@ internal sealed class ManualTimeProvider : TimeProvider
             timer.IsDisposed = true;
             timer.NextTimestamp = long.MaxValue;
             _timers.Remove(timer);
+            if (_timers.Count == 0)
+                _timersDrained.TrySetResult();
         }
+    }
+
+    private static TaskCompletionSource CreateCompletedSignal()
+    {
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        signal.TrySetResult();
+        return signal;
     }
 
     private static long ValidateDelay(TimeSpan value, string parameterName)

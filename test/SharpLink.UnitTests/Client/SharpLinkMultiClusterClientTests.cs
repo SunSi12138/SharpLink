@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using SharpLink.Client;
 using SharpLink.RollbackPlugin;
 using SharpLink.Sdk;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Client;
 
@@ -1272,6 +1273,99 @@ public sealed class SharpLinkMultiClusterClientTests
     }
 
     [Test]
+    public async Task RetiredActiveCallsShouldForceStopAtTheOwningProviderBoundaryAndCleanUp()
+    {
+        var ownerProvider = new ManualTimeProvider();
+        var unrelatedProvider = new ManualTimeProvider();
+        SharpLinkClusterKey cluster = "provider-retiring";
+        var child = new BlockingRetiredClient(ownerProvider);
+        var slot = new SharpLinkClusterSlot(cluster, child, AllowDynamicContracts: true);
+        var client = new SharpLinkMultiClusterClient(
+            new SharpLinkMultiClusterOptions(),
+            new Dictionary<SharpLinkClusterKey, SharpLinkClusterSlot> { [cluster] = slot }
+                .ToFrozenDictionary(),
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
+            []);
+        try
+        {
+            var removal = client.RemoveClusterAsync(cluster, TimeSpan.FromSeconds(5)).AsTask();
+            unrelatedProvider.Advance(TimeSpan.FromDays(1));
+            ownerProvider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+            await Task.Yield();
+
+            Ensure(!removal.IsCompleted && child.StopCount == 0,
+                "an unrelated clock and the owner tick before retirement expiry must keep active calls draining");
+            Ensure(unrelatedProvider.ActiveTimerCount == 0 && ownerProvider.ActiveTimerCount > 0,
+                "retired-call drain timers must be owned only by the child RuntimeContext provider");
+
+            ownerProvider.Advance(TimeSpan.FromTicks(1));
+            await YieldUntilAsync(
+                () => removal.IsCompleted && child.StopCount == 1,
+                "retired cleanup did not force one child stop at exact owner-provider equality");
+            var result = await removal;
+            Ensure(result is { Succeeded: true, ReferencesReleased: false, ForcedStop: true },
+                "the equality boundary must report forced cleanup while the child stop is still retained");
+
+            child.ReleaseStop();
+            await YieldUntilAsync(
+                () => client.FrameworkTaskSnapshotForDiagnostics.ActiveTasks == 0,
+                "the coordinator did not retire its completed cleanup task");
+            Ensure(ownerProvider.ActiveTimerCount == 0 && child.StopCount == 1,
+                "completed retirement must disarm provider timers and stop the child exactly once");
+            Ensure((int)typeof(SharpLinkMultiClusterClient)
+                .GetField("_transitionConnectionBudget", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(client)! == 0,
+                "completed retirement must return its transition connection budget");
+        }
+        finally
+        {
+            child.ReleaseStop();
+            await client.StopAsync();
+        }
+    }
+
+    [Test]
+    public async Task CoordinatorStopRacingRetiredDrainDueShouldOwnOneCleanupAndOneChildStop()
+    {
+        var ownerProvider = new ManualTimeProvider();
+        SharpLinkClusterKey cluster = "provider-race";
+        var child = new BlockingRetiredClient(ownerProvider);
+        var slot = new SharpLinkClusterSlot(cluster, child, AllowDynamicContracts: true);
+        var client = new SharpLinkMultiClusterClient(
+            new SharpLinkMultiClusterOptions(),
+            new Dictionary<SharpLinkClusterKey, SharpLinkClusterSlot> { [cluster] = slot }
+                .ToFrozenDictionary(),
+            FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty,
+            []);
+        try
+        {
+            var removal = client.RemoveClusterAsync(cluster, TimeSpan.FromSeconds(5)).AsTask();
+            ownerProvider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+            var coordinatorStop = client.StopAsync().AsTask();
+            ownerProvider.Advance(TimeSpan.FromTicks(1));
+
+            await YieldUntilAsync(
+                () => removal.IsCompleted && child.StopCount == 1,
+                "the due/Stop race did not converge on one retired-child cleanup");
+            Ensure(!coordinatorStop.IsCompleted,
+                "coordinator Stop must retain ownership until the single retired child stop completes");
+
+            child.ReleaseStop();
+            await Task.WhenAll(removal, coordinatorStop);
+            Ensure(child.StopCount == 1 && ownerProvider.ActiveTimerCount == 0,
+                "the due/Stop race must neither duplicate Stop nor leak the drain timer");
+            var snapshot = client.FrameworkTaskSnapshotForDiagnostics;
+            Ensure(snapshot is { IsSealed: true, IsDrained: true, ActiveTasks: 0 },
+                "coordinator shutdown must fully drain the one retired cleanup registration");
+        }
+        finally
+        {
+            child.ReleaseStop();
+            await client.StopAsync();
+        }
+    }
+
+    [Test]
     public async Task ForcedRemoveShouldUnpublishImmediatelyAndCoordinatorStopShouldTrackCleanup()
     {
         SharpLinkClusterKey cluster = "retiring";
@@ -1364,6 +1458,13 @@ public sealed class SharpLinkMultiClusterClientTests
         var deadline = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * 2d);
         while (!condition() && Stopwatch.GetTimestamp() < deadline)
             await Task.Delay(10);
+        Ensure(condition(), failureMessage);
+    }
+
+    private static async Task YieldUntilAsync(Func<bool> condition, string failureMessage)
+    {
+        for (var attempt = 0; attempt < 256 && !condition(); attempt++)
+            await Task.Yield();
         Ensure(condition(), failureMessage);
     }
 
@@ -1589,18 +1690,29 @@ public sealed class SharpLinkMultiClusterClientTests
         internal void ReleaseConnect() => _connectRelease.TrySetResult(true);
     }
 
-    private sealed class BlockingRetiredClient : ISharpLinkClient, ISharpLinkClientDrainInspector
+    private sealed class BlockingRetiredClient :
+        ISharpLinkClient,
+        ISharpLinkClientDrainInspector,
+        ISharpLinkClientTimeProvider
     {
         private readonly TaskCompletionSource _stop =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _activeCalls = 1;
         private int _registerAssemblyCallCount;
+        private int _stopCount;
+
+        internal BlockingRetiredClient(TimeProvider? timeProvider = null)
+        {
+            TimeProvider = timeProvider ?? global::System.TimeProvider.System;
+        }
 
         internal TaskCompletionSource StopStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal int RegisterAssemblyCallCount => Volatile.Read(ref _registerAssemblyCallCount);
+        internal int StopCount => Volatile.Read(ref _stopCount);
 
         public SharpLinkConnectionState State { get; private set; } = SharpLinkConnectionState.Ready;
+        public TimeProvider TimeProvider { get; }
         int ISharpLinkClientDrainInspector.ActiveCallCount => Volatile.Read(ref _activeCalls);
         int ISharpLinkClientDrainInspector.ActiveStreamCount => 0;
 
@@ -1609,6 +1721,7 @@ public sealed class SharpLinkMultiClusterClientTests
 
         public ValueTask StopAsync(CancellationToken cancellationToken = default)
         {
+            Interlocked.Increment(ref _stopCount);
             State = SharpLinkConnectionState.Draining;
             StopStarted.TrySetResult();
             return cancellationToken.CanBeCanceled

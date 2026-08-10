@@ -97,6 +97,21 @@ public class RuntimePhase00Benchmarks
     public bool SessionIsConnected()
         => _sendSession.IsConnected;
 
+    [Benchmark]
+    public void SessionMarkActive()
+        => _sendSession.MarkActive();
+
+    [Benchmark]
+    public DateTime SessionLastActiveRead()
+        => _sendSession.LastActive;
+
+    [Benchmark]
+    public DateTime SessionMarkActiveAndRead()
+    {
+        _sendSession.MarkActive();
+        return _sendSession.LastActive;
+    }
+
     [Benchmark(OperationsPerInvoke = 1024)]
     public int NegotiatedSnapshotRead()
     {

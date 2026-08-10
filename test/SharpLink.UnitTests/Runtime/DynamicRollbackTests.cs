@@ -62,6 +62,132 @@ public class DynamicRollbackTests
     }
 
     [Test]
+    public async Task ClientUnregisterRetainedLeaseShouldUseOnlyItsRuntimeContextProvider()
+    {
+        await RollbackState.TestIsolation.WaitAsync();
+        Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
+        var ownerProvider = new ManualTimeProvider();
+        var unrelatedProvider = new ManualTimeProvider();
+        var client = SharpClientBuilder.Create()
+            .UseTimeProvider(ownerProvider)
+            .UseTransport(new NoopClientTransport())
+            .Build();
+        SharpLinkDynamicModuleLease lease = default;
+        try
+        {
+            var assembly = typeof(RollbackMarker).Assembly;
+            Ensure(client.RegisterAssembly(assembly).Succeeded, "dynamic Client registration");
+            var modules = (Dictionary<Assembly, SharpLinkDynamicModule>)typeof(SharpLinkClient)
+                .GetField("_dynamicModules", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(client)!;
+            var module = modules[assembly];
+            Ensure(module.TryAcquire(stream: false, out lease), "retained Client module lease");
+            var forcedCancellationCount = 0;
+            using var registration = module.ForcedCancellation.Register(
+                () => Interlocked.Increment(ref forcedCancellationCount));
+
+            var unregister = client.UnregisterAssemblyAsync(
+                assembly,
+                TimeSpan.FromSeconds(5)).AsTask();
+            unrelatedProvider.Advance(TimeSpan.FromDays(1));
+            ownerProvider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+            await Task.Yield();
+
+            Ensure(!unregister.IsCompleted && forcedCancellationCount == 0,
+                "an unrelated clock and the owner tick before the deadline must not force Client calls");
+            Ensure(ownerProvider.ActiveTimerCount == 1 && unrelatedProvider.ActiveTimerCount == 0,
+                "the retained Client lease timeout must be owned only by its RuntimeContext provider");
+
+            ownerProvider.Advance(TimeSpan.FromTicks(1));
+            var result = await unregister;
+            Ensure(result is { ReferencesReleased: false, RemainingCalls: 1 } &&
+                   forcedCancellationCount == 1,
+                "exact equality must force-cancel the retained Client lease once and report deferred release");
+
+            lease.Dispose();
+            lease = default;
+            await module.WaitForDrainAsync();
+            await client.StopAsync();
+            await ownerProvider.WaitForTimersDrainedAsync();
+            Ensure(module.State == SharpLinkDynamicModuleState.Released && !modules.ContainsKey(assembly),
+                "Client module must be released after its retained lease and framework owner drain");
+            Ensure(ownerProvider.ActiveTimerCount == 0 && forcedCancellationCount == 1,
+                "Client deferred release must leave no provider timer or duplicate forced cancellation");
+        }
+        finally
+        {
+            if (lease.IsAcquired)
+                lease.Dispose();
+            try { await client.DisposeAsync(); } catch { }
+            ClearEnvironment();
+            RollbackState.TestIsolation.Release();
+        }
+    }
+
+    [Test]
+    public async Task ServerUnregisterRetainedLeaseShouldUseOnlyItsRuntimeContextProvider()
+    {
+        await RollbackState.TestIsolation.WaitAsync();
+        Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
+        var ownerProvider = new ManualTimeProvider();
+        var unrelatedProvider = new ManualTimeProvider();
+        var server = SharpLinkServerBuilder.Create()
+            .UseTimeProvider(ownerProvider)
+            .UseTransport(new NoopServerTransport())
+            .Build();
+        SharpLinkDynamicModuleLease lease = default;
+        try
+        {
+            var assembly = typeof(RollbackMarker).Assembly;
+            Ensure(server.RegisterAssembly(assembly).Succeeded, "dynamic Server registration");
+            var modules = (Dictionary<Assembly, SharpLinkDynamicModule>)typeof(SharpLinkServer)
+                .GetField("_dynamicModules", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(server)!;
+            var module = modules[assembly];
+            Ensure(module.TryAcquire(stream: false, out lease), "retained Server module lease");
+            var forcedCancellationCount = 0;
+            using var registration = module.ForcedCancellation.Register(
+                () => Interlocked.Increment(ref forcedCancellationCount));
+
+            var unregister = server.UnregisterAssemblyAsync(
+                assembly,
+                TimeSpan.FromSeconds(5)).AsTask();
+            unrelatedProvider.Advance(TimeSpan.FromDays(1));
+            ownerProvider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+            await Task.Yield();
+
+            Ensure(!unregister.IsCompleted && forcedCancellationCount == 0,
+                "an unrelated clock and the owner tick before the deadline must not force Server calls");
+            Ensure(ownerProvider.ActiveTimerCount == 1 && unrelatedProvider.ActiveTimerCount == 0,
+                "the retained Server lease timeout must be owned only by its RuntimeContext provider");
+
+            ownerProvider.Advance(TimeSpan.FromTicks(1));
+            var result = await unregister;
+            Ensure(result is { ReferencesReleased: false, RemainingCalls: 1 } &&
+                   forcedCancellationCount == 1,
+                "exact equality must force-cancel the retained Server lease once and report deferred release");
+
+            lease.Dispose();
+            lease = default;
+            await module.WaitForDrainAsync();
+            await server.StopAsync(TimeSpan.Zero);
+            await ownerProvider.WaitForTimersDrainedAsync();
+            Ensure(module.State == SharpLinkDynamicModuleState.Released && !modules.ContainsKey(assembly),
+                "Server module must be released after its retained lease and framework owner drain");
+            Ensure(ownerProvider.ActiveTimerCount == 0 && forcedCancellationCount == 1,
+                "Server deferred release must leave no provider timer or duplicate forced cancellation");
+        }
+        finally
+        {
+            if (lease.IsAcquired)
+                lease.Dispose();
+            try { await server.DisposeAsync(); } catch { }
+            ClearEnvironment();
+            RollbackState.TestIsolation.Release();
+        }
+    }
+
+    [Test]
     public async Task ClientRegistrationRollbackShouldPreserveConflictAndAdapterCleanupFailure()
     {
         await RollbackState.TestIsolation.WaitAsync();

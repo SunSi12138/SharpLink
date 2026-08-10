@@ -92,7 +92,8 @@ internal sealed partial class SharpLinkServer
                     CreateAdmissionContext(connection, descriptor, request),
                     checked((int)payload.Length),
                     allowQueue: true,
-                    admittedCallState.InvocationToken);
+                    deadline: request.RpcDeadline,
+                    cancellationToken: admittedCallState.InvocationToken);
             }
             catch (Exception exception)
             {

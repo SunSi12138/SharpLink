@@ -432,6 +432,7 @@ internal sealed partial class SharpLinkServer
                 requestId,
                 ReadOnlySequence<byte>.Empty,
                 output,
+                _runtimeContext.TimeProvider,
                 cancellationToken).InvokeAsync(context).ConfigureAwait(false);
             return;
         }
@@ -451,6 +452,7 @@ internal sealed partial class SharpLinkServer
                 requestId,
                 ownedArguments,
                 output,
+                _runtimeContext.TimeProvider,
                 cancellationToken).InvokeAsync(context).ConfigureAwait(false);
         }
         finally
@@ -575,6 +577,7 @@ internal sealed partial class SharpLinkServer
         private readonly long _requestId;
         private readonly ReadOnlySequence<byte> _arguments;
         private readonly IRpcByteBufferWriter? _output;
+        private readonly TimeProvider _timeProvider;
         private readonly CancellationToken _cancellationToken;
         private long _started;
 
@@ -588,6 +591,7 @@ internal sealed partial class SharpLinkServer
             long requestId,
             ReadOnlySequence<byte> arguments,
             IRpcByteBufferWriter? output,
+            TimeProvider timeProvider,
             CancellationToken cancellationToken)
         {
             _interceptors = interceptors;
@@ -599,12 +603,13 @@ internal sealed partial class SharpLinkServer
             _requestId = requestId;
             _arguments = arguments;
             _output = output;
+            _timeProvider = timeProvider;
             _cancellationToken = cancellationToken;
         }
 
         public async ValueTask InvokeAsync(SharpLinkServerInvocationContext context)
         {
-            _started = System.Diagnostics.Stopwatch.GetTimestamp();
+            _started = _timeProvider.GetTimestamp();
             try
             {
                 await InvokeNextAsync(0, context).ConfigureAwait(false);
@@ -618,7 +623,7 @@ internal sealed partial class SharpLinkServer
             }
             finally
             {
-                context.Elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(_started);
+                context.Elapsed = _timeProvider.GetElapsedTime(_started);
             }
         }
 
@@ -822,7 +827,7 @@ internal sealed partial class SharpLinkServer
             }
             finally
             {
-                context.Elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(_started);
+                context.Elapsed = _timeProvider.GetElapsedTime(_started);
             }
         }
     }

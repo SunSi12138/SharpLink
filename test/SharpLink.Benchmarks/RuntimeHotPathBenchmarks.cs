@@ -462,3 +462,40 @@ public class ServerCallCancellationStateBenchmarks
         state.Dispose();
     }
 }
+
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+public class RuntimeTimingHotPathBenchmarks
+{
+    private SharpLinkCircuitBreaker _breaker = null!;
+    private SharpLinkEndpointCandidate _endpoint;
+    private RpcMethodDescriptor _method;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _breaker = new SharpLinkCircuitBreaker(new SharpLinkCircuitBreakerOptions().CloneValidated());
+        _endpoint = new SharpLinkEndpointCandidate(
+            new SharpLinkEndpoint
+            {
+                Id = "timing-benchmark",
+                Address = new SharpLinkTcpAddress("127.0.0.1", 5001)
+            },
+            readyConnectionCount: 1,
+            activeCallCount: 0,
+            generation: 1);
+        _method = new RpcMethodDescriptor(
+            1,
+            2,
+            RpcMethodKind.Unary,
+            HasResponsePayload: true,
+            HasClientStreams: false,
+            HasMethodTimeout: false,
+            MethodTimeout: null);
+        _ = _breaker.TryAcquire(_endpoint, _method);
+    }
+
+    [Benchmark]
+    public SharpLinkEndpointAdmissionDecision CircuitBreakerClosedTryAcquire()
+        => _breaker.TryAcquire(_endpoint, _method);
+}

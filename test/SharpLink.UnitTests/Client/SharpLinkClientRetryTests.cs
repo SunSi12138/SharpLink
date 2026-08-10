@@ -2,6 +2,7 @@ using System.Threading;
 using System.Diagnostics;
 using SharpLink.Client;
 using SharpLink.Sdk;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Client;
 
@@ -513,6 +514,216 @@ public class SharpLinkClientRetryTests
             "stale success must not close a newer half-open epoch");
     }
 
+    [Test]
+    public void CircuitBreakerFakeTimeShouldRemainOpenBeforeAndEnterHalfOpenAtExactEquality()
+    {
+        var provider = new ManualTimeProvider();
+        var breaker = new SharpLinkCircuitBreaker(
+            BreakerOptions(minimumThroughput: 1, failureRatio: 1),
+            provider);
+        var method = BreakerMethod();
+        var endpoint = BreakerEndpoint();
+        var failure = BreakerOutcome(
+            endpoint,
+            method,
+            SharpLinkEndpointOutcomeKind.RemoteError,
+            SharpLinkErrorCode.Unavailable);
+        var success = BreakerOutcome(
+            endpoint,
+            method,
+            SharpLinkEndpointOutcomeKind.Success,
+            errorCode: null);
+
+        var admitted = breaker.TryAcquire(endpoint, method);
+        breaker.Report(failure, admitted.Token);
+        var opened = breaker.TryAcquire(endpoint, method);
+        Ensure(!opened.IsAllowed && opened.RetryAfter == TimeSpan.FromSeconds(5),
+            "the threshold failure must open for the complete provider break duration");
+
+        provider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+        var before = breaker.TryAcquire(endpoint, method);
+        Ensure(!before.IsAllowed && before.RetryAfter == TimeSpan.FromTicks(1),
+            "one provider tick before the boundary must remain Open with exact remaining time");
+
+        provider.Advance(TimeSpan.FromTicks(1));
+        var probe = breaker.TryAcquire(endpoint, method);
+        var excessProbe = breaker.TryAcquire(endpoint, method);
+        Ensure(probe.IsAllowed && probe.Token != 0,
+            "exact provider equality must admit the first HalfOpen probe");
+        Ensure(!excessProbe.IsAllowed && excessProbe.RetryAfter == TimeSpan.Zero,
+            "HalfOpen equality must retain its configured single-probe bound");
+
+        breaker.Report(success, probe.Token);
+        var closed = breaker.TryAcquire(endpoint, method);
+        Ensure(closed.IsAllowed && closed.Token == 0,
+            "the successful HalfOpen probe must return the endpoint to Closed");
+        Ensure(provider.ActiveTimerCount == 0,
+            "the breaker must remain timestamp-driven and own no timer");
+    }
+
+    [Test]
+    public void CircuitBreakerSamplingShouldRetainAtEqualityAndPruneOneTickAfter()
+    {
+        var exactProvider = new ManualTimeProvider();
+        var afterProvider = new ManualTimeProvider();
+        var options = BreakerOptions(minimumThroughput: 2, failureRatio: 0.5);
+        var exact = new SharpLinkCircuitBreaker(options, exactProvider);
+        var after = new SharpLinkCircuitBreaker(options, afterProvider);
+        var method = BreakerMethod();
+        var endpoint = BreakerEndpoint();
+        var failure = BreakerOutcome(
+            endpoint,
+            method,
+            SharpLinkEndpointOutcomeKind.RemoteError,
+            SharpLinkErrorCode.Unavailable);
+        var success = BreakerOutcome(
+            endpoint,
+            method,
+            SharpLinkEndpointOutcomeKind.Success,
+            errorCode: null);
+
+        RecordBreakerOutcome(exact, endpoint, method, failure);
+        exactProvider.Advance(TimeSpan.FromSeconds(10));
+        RecordBreakerOutcome(exact, endpoint, method, success);
+        Ensure(!exact.TryAcquire(endpoint, method).IsAllowed,
+            "a sample exactly at SamplingDuration must remain and satisfy the failure threshold");
+
+        RecordBreakerOutcome(after, endpoint, method, failure);
+        afterProvider.Advance(TimeSpan.FromSeconds(10).Add(TimeSpan.FromTicks(1)));
+        RecordBreakerOutcome(after, endpoint, method, success);
+        Ensure(after.TryAcquire(endpoint, method).IsAllowed,
+            "a sample one provider tick beyond SamplingDuration must be pruned before evaluation");
+    }
+
+    [Test]
+    public void CircuitBreakersWithDifferentProvidersShouldAdvanceIndependently()
+    {
+        var firstProvider = new ManualTimeProvider();
+        var secondProvider = new ManualTimeProvider();
+        var options = BreakerOptions(minimumThroughput: 1, failureRatio: 1);
+        var first = new SharpLinkCircuitBreaker(options, firstProvider);
+        var second = new SharpLinkCircuitBreaker(options, secondProvider);
+        var method = BreakerMethod();
+        var endpoint = BreakerEndpoint();
+        var failure = BreakerOutcome(
+            endpoint,
+            method,
+            SharpLinkEndpointOutcomeKind.ConnectionClosed,
+            SharpLinkErrorCode.ConnectionClosed);
+
+        RecordBreakerOutcome(first, endpoint, method, failure);
+        RecordBreakerOutcome(second, endpoint, method, failure);
+        firstProvider.Advance(TimeSpan.FromSeconds(5));
+
+        var firstProbe = first.TryAcquire(endpoint, method);
+        var secondStillOpen = second.TryAcquire(endpoint, method);
+        Ensure(firstProbe.IsAllowed && firstProbe.Token != 0,
+            "advancing the first provider must move only its breaker to HalfOpen");
+        Ensure(!secondStillOpen.IsAllowed &&
+               secondStillOpen.RetryAfter == TimeSpan.FromSeconds(5),
+            "the second breaker must retain its complete independent Open duration");
+
+        secondProvider.Advance(TimeSpan.FromSeconds(5));
+        var secondProbe = second.TryAcquire(endpoint, method);
+        Ensure(secondProbe.IsAllowed && secondProbe.Token != 0,
+            "the second breaker must enter HalfOpen only when its own provider advances");
+    }
+
+    [Test]
+    public async Task RetryDelayEndingAtTheSharedDeadlineShouldNotStartAWaitOrSecondAttempt()
+    {
+        var provider = new ManualTimeProvider();
+        var transport = new TestClientTransportFactory();
+        var admission = new CountingAdmissionPolicy();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(provider)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var client = new SharpLinkClient(
+            transport,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            context,
+            fixedEndpoint: Endpoint("retry-deadline", 5001),
+            retryOptions: RetryOptions(2, TimeSpan.FromSeconds(5)),
+            endpointAdmissionPolicy: admission);
+        try
+        {
+            await client.ConnectAsync();
+            var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
+                client,
+                new SharpLinkCallOptions { Timeout = TimeSpan.FromSeconds(5) }).AsTask();
+            var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+            var timersBeforeFailure = provider.ActiveTimerCount;
+
+            await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
+            var failure = await EnsureThrows<SharpLinkException>(invocation);
+
+            Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
+                "a retry delay ending at the shared deadline must be rejected inclusively");
+            Ensure(admission.AcquireCount == 1 && admission.ReportCount == 1,
+                "the deadline gate must terminate after the first attempt without acquiring a second");
+            Ensure(client.ActiveClientCallCount == 0,
+                "the rejected retry wait must release the complete logical invocation");
+            Ensure(provider.ActiveTimerCount == timersBeforeFailure,
+                "the pre-wait deadline gate must not allocate a retry delay timer");
+
+            provider.Advance(TimeSpan.FromSeconds(5));
+            await Task.Yield();
+            Ensure(admission.AcquireCount == 1 && invocation.IsCompleted,
+                "later time advancement must not resurrect a rejected second attempt");
+        }
+        finally
+        {
+            await client.DisposeAsync();
+        }
+
+        Ensure(provider.ActiveTimerCount == 0,
+            "client shutdown must release the shared scheduler and heartbeat timers");
+    }
+
+    private static SharpLinkCircuitBreakerOptions BreakerOptions(
+        int minimumThroughput,
+        double failureRatio)
+        => new SharpLinkCircuitBreakerOptions
+        {
+            MinimumThroughput = minimumThroughput,
+            FailureRatio = failureRatio,
+            SamplingDuration = TimeSpan.FromSeconds(10),
+            BreakDuration = TimeSpan.FromSeconds(5),
+            HalfOpenMaxCalls = 1
+        }.CloneValidated();
+
+    private static RpcMethodDescriptor BreakerMethod()
+        => new(1, 2, RpcMethodKind.Unary, true, false, false, null);
+
+    private static SharpLinkEndpointCandidate BreakerEndpoint()
+        => new(Endpoint("fake-time-breaker", 5001), 1, 0, generation: 1);
+
+    private static SharpLinkEndpointOutcome BreakerOutcome(
+        SharpLinkEndpointCandidate endpoint,
+        RpcMethodDescriptor method,
+        SharpLinkEndpointOutcomeKind kind,
+        SharpLinkErrorCode? errorCode)
+        => new(
+            endpoint,
+            method,
+            kind,
+            errorCode,
+            ResponseObserved: true,
+            Elapsed: TimeSpan.Zero);
+
+    private static void RecordBreakerOutcome(
+        SharpLinkCircuitBreaker breaker,
+        SharpLinkEndpointCandidate endpoint,
+        RpcMethodDescriptor method,
+        SharpLinkEndpointOutcome outcome)
+    {
+        var admission = breaker.TryAcquire(endpoint, method);
+        Ensure(admission.IsAllowed,
+            "the setup outcome must be admitted while the breaker is Closed");
+        breaker.Report(outcome, admission.Token);
+    }
+
     private static SharpLinkClient CreateRetryClient(
         TestClientTransportFactory transport,
         ISharpLinkRetryPolicy? policy,
@@ -743,6 +954,30 @@ public class SharpLinkClientRetryTests
 
         public void Report(in SharpLinkEndpointOutcome outcome, long token)
         {
+        }
+    }
+
+    private sealed class CountingAdmissionPolicy : ISharpLinkEndpointAdmissionPolicy
+    {
+        public int AcquireCount { get; private set; }
+        public int ReportCount { get; private set; }
+
+        public SharpLinkEndpointAdmissionDecision TryAcquire(
+            in SharpLinkEndpointCandidate endpoint,
+            in RpcMethodDescriptor method)
+        {
+            _ = endpoint;
+            _ = method;
+            AcquireCount++;
+            return new SharpLinkEndpointAdmissionDecision(true, Token: AcquireCount, RetryAfter: null);
+        }
+
+        public void Report(in SharpLinkEndpointOutcome outcome, long token)
+        {
+            _ = outcome;
+            Ensure(token == AcquireCount,
+                "the admitted attempt must report its exact acquisition token");
+            ReportCount++;
         }
     }
 }

@@ -291,7 +291,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             {
                 admissionController = SharpLinkAdmissionController.Create(
                     _admissionControlOptions,
-                    manifests);
+                    manifests,
+                    runtimeContext.TimeProvider);
             }
             var definitions = BuildServiceDefinitions(manifests, serviceProvider, runtimeContext.Codecs);
             registrations = new List<ServiceRegistration>(definitions.Count);
