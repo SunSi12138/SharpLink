@@ -64,7 +64,6 @@ public sealed partial class RpcSession : IRpcSession
     private readonly Lock _pumpGate = new();
     private readonly RpcSessionFlushOptions? _flushOptions;
     private SendPump? _pump;
-    private int _activeRequests;
     private readonly string _telemetrySide;
     private int _telemetryConnectionState;
     private const int TelemetryNotOpened = 0;
@@ -371,32 +370,49 @@ public sealed partial class RpcSession : IRpcSession
 
     internal long QueuedSendBytes => Volatile.Read(ref _pump)?.QueuedBytes ?? 0;
 
-    internal int ActiveRequestCount => Volatile.Read(ref _activeRequests);
-
     internal bool IsDraining => ProtocolPhase == RpcSessionProtocolPhase.Draining;
 
     internal bool CanAcceptCalls =>
         ProtocolPhase == RpcSessionProtocolPhase.Ready && IsConnected;
 
-    internal void AddActiveRequest()
+    /// <summary>
+    /// Validates a stable Session lifecycle snapshot at a transition or test boundary.
+    /// This intentionally does not run for every frame or request.
+    /// </summary>
+    internal void AssertStateInvariant()
     {
-        if (!CanAcceptCalls)
-            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The connection is draining.");
-        Interlocked.Increment(ref _activeRequests);
-        if (!CanAcceptCalls)
+        var phase = ProtocolPhase;
+        var acceptsCalls = CanAcceptCalls;
+        if (phase == RpcSessionProtocolPhase.Ready && !acceptsCalls)
         {
-            Interlocked.Decrement(ref _activeRequests);
-            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The connection is draining.");
+            throw new InvalidOperationException(
+                "A Ready RPC session must remain connected and accept new calls at a stable lifecycle boundary.");
         }
-    }
-
-    internal void ReleaseActiveRequest()
-    {
-        var remaining = Interlocked.Decrement(ref _activeRequests);
-        if (remaining < 0)
+        if (acceptsCalls && phase is (
+                RpcSessionProtocolPhase.Draining or
+                RpcSessionProtocolPhase.Stopping or
+                RpcSessionProtocolPhase.Terminal))
         {
-            Interlocked.Exchange(ref _activeRequests, 0);
-            throw new InvalidOperationException("Connection active request count became negative.");
+            throw new InvalidOperationException(
+                "A draining or terminal RPC session must not accept a new call at a stable lifecycle boundary.");
+        }
+        if (phase is RpcSessionProtocolPhase.Stopping or RpcSessionProtocolPhase.Terminal)
+        {
+            if (Volatile.Read(ref _terminal) is null)
+            {
+                throw new InvalidOperationException(
+                    "A stopping or terminal RPC session must publish its terminal reason before the stable lifecycle boundary.");
+            }
+            if (StreamManager is StreamManager manager && !manager.IsTerminated)
+            {
+                throw new InvalidOperationException(
+                    "A stopping or terminal RPC session must publish receive-stream termination before the stable lifecycle boundary.");
+            }
+            if (Volatile.Read(ref _pump) is { } pump && !pump.IsStopRequested)
+            {
+                throw new InvalidOperationException(
+                    "A stopping or terminal RPC session must request send-pump stop before the stable lifecycle boundary.");
+            }
         }
     }
 

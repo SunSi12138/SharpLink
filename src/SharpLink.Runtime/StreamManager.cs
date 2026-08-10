@@ -428,6 +428,18 @@ public class StreamManager : IStreamManager
 
     internal long DroppedStreamFrames => Volatile.Read(ref _droppedStreamFrames);
     internal int ActiveStreamCount => Volatile.Read(ref _activeStreamCount);
+    internal bool IsTerminated => Volatile.Read(ref _termination) is not null;
+
+    /// <summary>
+    /// Validates business-stream accounting at a lifecycle or test boundary. Dispatcher-entry
+    /// dispatch leases have a separate encoded state machine and are intentionally not folded
+    /// into this count.
+    /// </summary>
+    internal void AssertAccountingInvariant()
+    {
+        if (ActiveStreamCount < 0)
+            throw new InvalidOperationException("Stream manager active stream count became negative.");
+    }
 
     private void RemoveEmptyRequest(long requestId, RequestDispatchers requestDispatchers)
     {

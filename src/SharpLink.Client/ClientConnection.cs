@@ -65,6 +65,30 @@ internal sealed class ClientConnection :
 
     public int ActiveCallCount => Volatile.Read(ref _activeCallCount);
 
+    /// <summary>
+    /// Validates a stable connection lifecycle snapshot at a transition or test boundary.
+    /// This intentionally stays outside the per-frame and selection hot paths.
+    /// </summary>
+    internal void AssertStateInvariant()
+    {
+        var activeCalls = ActiveCallCount;
+        if (activeCalls < 0)
+            throw new InvalidOperationException("Client connection active call count became negative.");
+
+        var state = State;
+        var sessionAcceptsCalls = Session.CanAcceptCalls;
+        if (state == ClientConnectionState.Ready && !sessionAcceptsCalls)
+        {
+            throw new InvalidOperationException(
+                "A Ready client connection must reference a Session that accepts new calls at a stable lifecycle boundary.");
+        }
+        if (state == ClientConnectionState.Draining && sessionAcceptsCalls)
+        {
+            throw new InvalidOperationException(
+                "A Draining client connection must not reference a Session that accepts new calls at a stable lifecycle boundary.");
+        }
+    }
+
     public CancellationToken CancellationToken => _cancellation.Token;
 
     public Func<long, IStreamDispatchState?, ValueTask> ConsumerAbandonedCallback

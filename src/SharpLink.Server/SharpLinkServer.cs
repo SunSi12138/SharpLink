@@ -31,7 +31,7 @@ internal sealed partial class SharpLinkServer(
         Faulted
     }
 
-    private enum ServerCallAdmissionResult : byte
+    internal enum ServerCallAdmissionResult : byte
     {
         Acquired,
         Unavailable,
@@ -87,6 +87,12 @@ internal sealed partial class SharpLinkServer(
     private int _deferredConnectionCleanups;
     private ServerStopDiagnosticSnapshot? _lastStopDiagnostics;
     private int _globalActiveCalls;
+    private int _pendingCallAdmissions;
+    // 0 = no signal, 1 = single winner recording, 2 = snapshot published before TCS completion.
+    private int _callDrainSignalState;
+    private int _lastCallDrainSignalGlobalCalls;
+    private int _lastCallDrainSignalPendingAdmissions;
+    private int _lastCallDrainSignalLocalCalls;
     private long _rejectedOneWayCalls;
     private long _oneWayAdmissionLogTimestamp;
     private int _oneWayAdmissionLogInitialized;
@@ -142,22 +148,29 @@ internal sealed partial class SharpLinkServer(
 
         try
         {
-            if (Volatile.Read(ref _globalActiveCalls) == 0)
-                _callsDrained.TrySetResult(true);
-            else
+            TrySignalCallsDrained();
+            if (!_callsDrained.Task.IsCompletedSuccessfully)
                 await WaitUntilWithRuntimeTimeAsync(_callsDrained.Task, gracefulDeadline).ConfigureAwait(false);
 
+            var callsDrained = _callsDrained.Task.IsCompletedSuccessfully;
             Task flushTask = Task.CompletedTask;
-            if (_callsDrained.Task.IsCompletedSuccessfully)
+            if (callsDrained)
                 flushTask = FlushAllSessionsAsync();
 
             var unfinishedCalls = Volatile.Read(ref _globalActiveCalls);
-            if (unfinishedCalls > 0)
+            if (!callsDrained)
             {
-                Volatile.Write(ref _lastStopDiagnostics, CaptureStopDiagnostics(unfinishedCalls));
-                LogForcedCallsRemaining(_logger, unfinishedCalls);
-                SharpLinkTelemetry.RecordForcedStopCalls(unfinishedCalls);
-                _deferredServiceCleanupTask = DisposeServicesWhenDrainedAsync(_callsDrained.Task);
+                if (unfinishedCalls > 0)
+                {
+                    Volatile.Write(ref _lastStopDiagnostics, CaptureStopDiagnostics(unfinishedCalls));
+                    LogForcedCallsRemaining(_logger, unfinishedCalls);
+                    SharpLinkTelemetry.RecordForcedStopCalls(unfinishedCalls);
+                }
+
+                // A pending admission is not a user-call metric, but it must retain
+                // the service graph until it either publishes a global slot or rolls
+                // back its local slot.
+                _deferredServiceCleanupTask ??= DisposeServicesWhenDrainedAsync(_callsDrained.Task);
             }
 
             CancelForShutdown(_forceStopCts, _logger, "CallCancellation");
@@ -201,7 +214,7 @@ internal sealed partial class SharpLinkServer(
                 _forceStopCts.Dispose();
             }
 
-            if (unfinishedCalls == 0)
+            if (callsDrained)
             {
                 var serviceCleanupTask = DisposeRegisteredServicesAsync();
                 try
@@ -270,13 +283,16 @@ internal sealed partial class SharpLinkServer(
         BeginDrainDynamicModules();
         _frameworkTasks.Seal();
         CancelForShutdown(_forceStopCts, _logger, "CallCancellation");
-        if (Volatile.Read(ref _globalActiveCalls) == 0)
-            _callsDrained.TrySetResult(true);
-        else
+        TrySignalCallsDrained();
+        var callsDrained = _callsDrained.Task.IsCompletedSuccessfully;
+        if (!callsDrained)
         {
             var unfinishedCalls = Volatile.Read(ref _globalActiveCalls);
-            LogForcedCallsRemaining(_logger, unfinishedCalls);
-            SharpLinkTelemetry.RecordForcedStopCalls(unfinishedCalls);
+            if (unfinishedCalls > 0)
+            {
+                LogForcedCallsRemaining(_logger, unfinishedCalls);
+                SharpLinkTelemetry.RecordForcedStopCalls(unfinishedCalls);
+            }
             _deferredServiceCleanupTask ??= DisposeServicesWhenDrainedAsync(_callsDrained.Task);
         }
 
@@ -311,7 +327,7 @@ internal sealed partial class SharpLinkServer(
                 _logger);
         }
 
-        if (_callsDrained.Task.IsCompletedSuccessfully)
+        if (callsDrained)
         {
             var serviceCleanupTask = DisposeRegisteredServicesAsync();
             try
@@ -639,29 +655,51 @@ internal sealed partial class SharpLinkServer(
         return method;
     }
 
-    private ServerCallAdmissionResult TryAcquireCall(ServerConnectionState connection)
+    internal ServerCallAdmissionResult TryAcquireCall(ServerConnectionState connection)
     {
         if (CurrentState != ServerState.Running)
             return ServerCallAdmissionResult.Unavailable;
-        if (!connection.TryAcquireCall(_maxConcurrentCallsPerConnection))
+
+        Interlocked.Increment(ref _pendingCallAdmissions);
+        try
         {
-            return connection.LifecycleState == ServerConnectionLifecycleState.Ready
-                ? ServerCallAdmissionResult.PerConnectionCapacityExhausted
-                : ServerCallAdmissionResult.Unavailable;
-        }
+            // Stop can begin between the first Running check and the pending
+            // increment. In that case this admission owns no local slot and can
+            // leave immediately. Once this check succeeds, the pending count
+            // covers every local -> global transfer and rollback below.
+            if (CurrentState != ServerState.Running)
+                return ServerCallAdmissionResult.Unavailable;
 
-        if (Interlocked.Increment(ref _globalActiveCalls) > _maxConcurrentCallsPerServer)
+            if (!connection.TryAcquireCall(_maxConcurrentCallsPerConnection))
+            {
+                return connection.LifecycleState == ServerConnectionLifecycleState.Ready
+                    ? ServerCallAdmissionResult.PerConnectionCapacityExhausted
+                    : ServerCallAdmissionResult.Unavailable;
+            }
+
+#if DEBUG
+            connection.NotifyAfterLocalCallAdmissionForTesting();
+#endif
+
+            if (!TryAcquireGlobalCall())
+            {
+                // The provisional global increment remains owned here until the paired
+                // local slot is released. A draining server must never observe a zero
+                // global count while this connection still publishes an active call.
+                ReleaseCall(connection);
+                return ServerCallAdmissionResult.ServerCapacityExhausted;
+            }
+
+            if (CurrentState == ServerState.Running)
+                return ServerCallAdmissionResult.Acquired;
+
+            ReleaseCall(connection);
+            return ServerCallAdmissionResult.Unavailable;
+        }
+        finally
         {
-            Interlocked.Decrement(ref _globalActiveCalls);
-            connection.ReleaseCall();
-            return ServerCallAdmissionResult.ServerCapacityExhausted;
+            EndPendingCallAdmission(connection);
         }
-
-        if (CurrentState == ServerState.Running)
-            return ServerCallAdmissionResult.Acquired;
-
-        ReleaseCall(connection);
-        return ServerCallAdmissionResult.Unavailable;
     }
 
     private static string GetCallCapacityExhaustionReason(ServerCallAdmissionResult result)
@@ -684,15 +722,115 @@ internal sealed partial class SharpLinkServer(
                connection.LifecycleState == ServerConnectionLifecycleState.Ready;
     }
 
-    private void ReleaseCall(ServerConnectionState connection)
+    internal void ReleaseCall(ServerConnectionState connection)
+    {
+        connection.ReleaseCall();
+        ReleaseGlobalCall();
+        TrySignalCallsDrained(connection);
+    }
+
+    private bool TryAcquireGlobalCall()
+    {
+        if (Interlocked.Increment(ref _globalActiveCalls) <= _maxConcurrentCallsPerServer)
+            return true;
+
+        // The caller owns both provisional slots at this point. It must release the
+        // connection slot before it decrements this global slot so server drain
+        // cannot become observable between those two releases.
+        return false;
+    }
+
+    private void ReleaseGlobalCall()
     {
         var active = Interlocked.Decrement(ref _globalActiveCalls);
-        connection.ReleaseCall();
-        if (active == 0 && CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
-            _callsDrained.TrySetResult(true);
+        if (active < 0)
+            throw new InvalidOperationException("Server global active call count underflowed.");
+    }
+
+    private void EndPendingCallAdmission(ServerConnectionState connection)
+    {
+        var remaining = Interlocked.Decrement(ref _pendingCallAdmissions);
+        if (remaining < 0)
+            throw new InvalidOperationException("Server pending call admission count underflowed.");
+        if (remaining == 0)
+            TrySignalCallsDrained(connection);
+    }
+
+    private void TrySignalCallsDrained(ServerConnectionState? releasingConnection = null)
+    {
+        if (CurrentState is not (ServerState.Draining or ServerState.Stopped or ServerState.Faulted))
+            return;
+
+        // A pending admission stays counted until it has either published its
+        // global slot or fully released both provisional slots. Reading it first
+        // makes a zero global count safe: a post-stop entrant may still increment
+        // pending, but its second state check prevents it from taking any slot.
+        var pendingAdmissions = Volatile.Read(ref _pendingCallAdmissions);
+        if (pendingAdmissions != 0)
+            return;
+
+        var globalActiveCalls = Volatile.Read(ref _globalActiveCalls);
+        if (globalActiveCalls != 0)
+        {
+            return;
+        }
+
+        var releasingConnectionActiveCalls = releasingConnection?.ActiveCalls ?? 0;
+        if (releasingConnection is not null && releasingConnectionActiveCalls != 0)
+        {
+            throw new InvalidOperationException(
+                "Server drain cannot complete before the releasing connection publishes its local call release.");
+        }
+
+        // There is one publication winner. It records every observed counter with
+        // release ordering before completing the TCS, so a continuation that sees
+        // calls drained can read a stable, non-forgeable terminal snapshot.
+        if (Interlocked.CompareExchange(ref _callDrainSignalState, 1, 0) != 0)
+            return;
+
+        Volatile.Write(ref _lastCallDrainSignalGlobalCalls, globalActiveCalls);
+        Volatile.Write(ref _lastCallDrainSignalPendingAdmissions, pendingAdmissions);
+        Volatile.Write(ref _lastCallDrainSignalLocalCalls, releasingConnectionActiveCalls);
+        Volatile.Write(ref _callDrainSignalState, 2);
+        _callsDrained.TrySetResult(true);
     }
 
     internal int ActiveCallCountForDiagnostics => Volatile.Read(ref _globalActiveCalls);
+
+    internal int PendingCallAdmissionsForDiagnostics => Volatile.Read(ref _pendingCallAdmissions);
+
+    internal Task<bool> CallsDrainedForDiagnostics => _callsDrained.Task;
+
+    internal ServerCallDrainSignalSnapshot? LastCallDrainSignalForDiagnostics
+    {
+        get
+        {
+            if (Volatile.Read(ref _callDrainSignalState) != 2)
+                return null;
+            return new ServerCallDrainSignalSnapshot(
+                Volatile.Read(ref _lastCallDrainSignalGlobalCalls),
+                Volatile.Read(ref _lastCallDrainSignalPendingAdmissions),
+                Volatile.Read(ref _lastCallDrainSignalLocalCalls));
+        }
+    }
+
+    internal void AssertCallAccountingInvariant()
+    {
+        if (ActiveCallCountForDiagnostics < 0)
+            throw new InvalidOperationException("Server global active call count became negative.");
+        if (PendingCallAdmissionsForDiagnostics < 0)
+            throw new InvalidOperationException("Server pending call admission count became negative.");
+        // A thread that read Running before Stop can increment the transient pending
+        // counter after drain is already published, but its second state check cannot
+        // acquire a local or global slot. Therefore completed drain proves no active
+        // call slot remains; a stable caller that also needs pending == 0 must join
+        // its admission work before asserting that stronger condition.
+        if (_callsDrained.Task.IsCompletedSuccessfully && ActiveCallCountForDiagnostics != 0)
+        {
+            throw new InvalidOperationException(
+                "Server call drain completed before global active calls reached zero.");
+        }
+    }
 
     internal int MaxConcurrentCallsPerConnectionForDiagnostics => _maxConcurrentCallsPerConnection;
 

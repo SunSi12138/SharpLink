@@ -314,34 +314,45 @@ public class SharpLinkServerInvocationTests
             var belowCapacity = tryAcquire(server, firstConnection);
             firstAcquired = Enum.GetName(tryAcquireMethod.ReturnType, belowCapacity) == "Acquired";
             Ensure(firstAcquired, "the call below server capacity must be acquired");
-            Ensure(server.ActiveCallCountForDiagnostics == 1 && firstConnection.ActiveCalls == 1,
+            Ensure(server.PendingCallAdmissionsForDiagnostics == 0 &&
+                   server.ActiveCallCountForDiagnostics == 1 && firstConnection.ActiveCalls == 1,
                 "below-capacity counters");
+            server.AssertCallAccountingInvariant();
+            firstConnection.AssertStateInvariant();
 
             var perConnectionRejection = tryAcquire(server, firstConnection);
             Ensure(Enum.GetName(tryAcquireMethod.ReturnType, perConnectionRejection) ==
                    "PerConnectionCapacityExhausted",
                 "the same connection must report its own capacity reason");
-            Ensure(server.ActiveCallCountForDiagnostics == 1 && firstConnection.ActiveCalls == 1,
+            Ensure(server.PendingCallAdmissionsForDiagnostics == 0 &&
+                   server.ActiveCallCountForDiagnostics == 1 && firstConnection.ActiveCalls == 1,
                 "per-connection rejection must not consume either counter");
 
             var atCapacity = tryAcquire(server, secondConnection);
             secondAcquired = Enum.GetName(tryAcquireMethod.ReturnType, atCapacity) == "Acquired";
             Ensure(secondAcquired, "the call exactly at server capacity must be acquired");
-            Ensure(server.ActiveCallCountForDiagnostics == 2 && secondConnection.ActiveCalls == 1,
+            Ensure(server.PendingCallAdmissionsForDiagnostics == 0 &&
+                   server.ActiveCallCountForDiagnostics == 2 && secondConnection.ActiveCalls == 1,
                 "at-capacity counters");
+            server.AssertCallAccountingInvariant();
+            secondConnection.AssertStateInvariant();
 
             var serverRejection = tryAcquire(server, thirdConnection);
             Ensure(Enum.GetName(tryAcquireMethod.ReturnType, serverRejection) ==
                    "ServerCapacityExhausted",
                 "the first call above the server limit must report server capacity");
-            Ensure(server.ActiveCallCountForDiagnostics == 2 && thirdConnection.ActiveCalls == 0,
+            Ensure(server.PendingCallAdmissionsForDiagnostics == 0 &&
+                   server.ActiveCallCountForDiagnostics == 2 && thirdConnection.ActiveCalls == 0,
                 "server rejection must roll back the provisional connection slot");
             Ensure(thirdConnection.LifecycleState == ServerConnectionLifecycleState.Ready,
                 "capacity rejection must keep the healthy connection ready");
+            server.AssertCallAccountingInvariant();
+            thirdConnection.AssertStateInvariant();
 
             release(server, firstConnection);
             firstAcquired = false;
-            Ensure(server.ActiveCallCountForDiagnostics == 1 && firstConnection.ActiveCalls == 0,
+            Ensure(server.PendingCallAdmissionsForDiagnostics == 0 &&
+                   server.ActiveCallCountForDiagnostics == 1 && firstConnection.ActiveCalls == 0,
                 "releasing one call must restore one server and connection slot");
 
             var recovered = tryAcquire(server, thirdConnection);
@@ -353,11 +364,16 @@ public class SharpLinkServerInvocationTests
             secondAcquired = false;
             release(server, thirdConnection);
             thirdAcquired = false;
-            Ensure(server.ActiveCallCountForDiagnostics == 0 &&
+            Ensure(server.PendingCallAdmissionsForDiagnostics == 0 &&
+                   server.ActiveCallCountForDiagnostics == 0 &&
                    firstConnection.ActiveCalls == 0 &&
                    secondConnection.ActiveCalls == 0 &&
                    thirdConnection.ActiveCalls == 0,
                 "all capacity counters must return to zero after release");
+            server.AssertCallAccountingInvariant();
+            firstConnection.AssertStateInvariant();
+            secondConnection.AssertStateInvariant();
+            thirdConnection.AssertStateInvariant();
         }
         finally
         {
@@ -373,6 +389,147 @@ public class SharpLinkServerInvocationTests
             await thirdConnection.CloseAsync();
         }
     }
+
+    [Test]
+    public async Task StopAndTerminalReleaseShouldPublishDrainAfterTheConnectionSlotIsReleased()
+    {
+        var listener = new BlockingListener();
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .DisableAutomaticServiceRegistration()
+            .UseTransport(listener)
+            .Build();
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "stop-terminal-release", input.Reader, output.Writer,
+            RpcSessionTestFixture.ServerOptions());
+        var connection = CreateConnection(session);
+        Ensure(connection.MarkReady(null), "connection ready");
+
+        var runTask = server.RunAsync().AsTask();
+        await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(server.TryAcquireCall(connection) == SharpLinkServer.ServerCallAdmissionResult.Acquired,
+            "the active invocation must acquire both capacity slots before Stop");
+        Ensure(server.ActiveCallCountForDiagnostics == 1 && connection.ActiveCalls == 1,
+            "the admitted invocation must hold one global and one connection slot");
+
+        // This direct ServerConnectionState is not registered through a transport
+        // handshake. MarkDraining models GoAway publication while the real
+        // RunAsync/StopAsync path waits for the paired invocation release.
+        connection.MarkDraining();
+        var stopTask = server.StopAsync(TimeSpan.FromSeconds(2)).AsTask();
+        await YieldUntilAsync(
+            () => server.HealthStatus == SharpLinkHealthStatus.Draining,
+            "StopAsync must publish draining before the terminal invocation release");
+        Ensure(!server.CallsDrainedForDiagnostics.IsCompleted,
+            "server call drain must remain unpublished while the paired slots are held");
+        Ensure(!stopTask.IsCompleted,
+            "StopAsync must not complete while either paired capacity slot is still held");
+
+        server.ReleaseCall(connection);
+
+        await stopTask.WaitAsync(TimeSpan.FromSeconds(2));
+        await runTask.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(server.PendingCallAdmissionsForDiagnostics == 0 &&
+               server.ActiveCallCountForDiagnostics == 0 && connection.ActiveCalls == 0,
+            "terminal release must return the paired global and connection counters to zero");
+        Ensure(server.LastCallDrainSignalForDiagnostics is
+        {
+            GlobalActiveCalls: 0,
+            PendingAdmissions: 0,
+            ReleasingConnectionActiveCalls: 0
+        },
+            "the drain signal must observe the local connection slot at zero before publishing");
+        server.AssertCallAccountingInvariant();
+        connection.AssertStateInvariant();
+        await connection.CloseAsync();
+    }
+
+#if DEBUG
+    [Test]
+    [NotInParallel]
+    public async Task StopShouldWaitForPendingAdmissionBetweenConnectionAndGlobalSlots()
+    {
+        using var localSlotAcquired = new ManualResetEventSlim(initialState: false);
+        using var allowGlobalAcquire = new ManualResetEventSlim(initialState: false);
+        var listener = new BlockingListener();
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .DisableAutomaticServiceRegistration()
+            .UseTransport(listener)
+            .Build();
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "pending-admission-drain", input.Reader, output.Writer,
+            RpcSessionTestFixture.ServerOptions());
+        var connection = new ServerConnectionState(
+            session,
+            new RpcSessionGeneratedServerBridge(session),
+            CreateCallCancellations(),
+            CancellationToken.None,
+            RpcSessionTestFixture.RuntimeContext.TimeProvider,
+            afterLocalCallAdmission: () =>
+            {
+                localSlotAcquired.Set();
+                allowGlobalAcquire.Wait();
+            });
+        Ensure(connection.MarkReady(null), "connection ready");
+
+        // The direct connection is deliberately outside the transport registry;
+        // the test drives the real admission and StopAsync state machines while
+        // the Debug-only instance probe controls only the local-to-global gap.
+
+        var runTask = server.RunAsync().AsTask();
+        await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var admissionTask = Task.Run(() => server.TryAcquireCall(connection));
+        try
+        {
+            Ensure(localSlotAcquired.Wait(TimeSpan.FromSeconds(2)),
+                "the deterministic probe must observe the local slot before global admission");
+            Ensure(server.PendingCallAdmissionsForDiagnostics == 1 &&
+                   connection.ActiveCalls == 1 &&
+                   server.ActiveCallCountForDiagnostics == 0,
+                "the pending admission must cover the local-only transfer window");
+
+            var stopTask = server.StopAsync(TimeSpan.FromSeconds(2)).AsTask();
+            await YieldUntilAsync(
+                () => server.HealthStatus == SharpLinkHealthStatus.Draining,
+                "StopAsync must close admission before the local-only transfer resumes");
+            connection.MarkDraining();
+            Ensure(!server.CallsDrainedForDiagnostics.IsCompleted && !stopTask.IsCompleted,
+                "StopAsync must wait for the pending local-only admission rather than observing global zero");
+
+            allowGlobalAcquire.Set();
+            var admission = await admissionTask.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(admission == SharpLinkServer.ServerCallAdmissionResult.Unavailable,
+                "an admission that crosses the drain boundary must release instead of publishing a call");
+            await stopTask.WaitAsync(TimeSpan.FromSeconds(2));
+            await runTask.WaitAsync(TimeSpan.FromSeconds(2));
+
+            Ensure(server.PendingCallAdmissionsForDiagnostics == 0 &&
+                   server.ActiveCallCountForDiagnostics == 0 &&
+                   connection.ActiveCalls == 0,
+                "the pending admission and both capacity slots must return to zero exactly once");
+            Ensure(server.LastCallDrainSignalForDiagnostics is
+            {
+                GlobalActiveCalls: 0,
+                PendingAdmissions: 0,
+                ReleasingConnectionActiveCalls: 0
+            },
+                "the final drain signal must publish only after the paused local slot is released");
+            server.AssertCallAccountingInvariant();
+            connection.AssertStateInvariant();
+        }
+        finally
+        {
+            allowGlobalAcquire.Set();
+            var admission = await admissionTask.WaitAsync(TimeSpan.FromSeconds(2));
+            if (admission == SharpLinkServer.ServerCallAdmissionResult.Acquired)
+                server.ReleaseCall(connection);
+            await connection.CloseAsync();
+        }
+    }
+#endif
 
     [Test]
     [Arguments(false)]
@@ -891,6 +1048,23 @@ public class SharpLinkServerInvocationTests
 
         public ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
             => ValueTask.FromException<ITransportConnection>(new NotSupportedException());
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class BlockingListener : IServerTransportListener
+    {
+        internal TaskCompletionSource AcceptStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public System.Net.EndPoint? LocalEndPoint => null;
+
+        public async ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
+        {
+            AcceptStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("The cancelled accept must not continue.");
+        }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

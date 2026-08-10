@@ -205,6 +205,21 @@ internal sealed class SharpLinkDynamicModule
 
     internal int RemainingStreams => Sum(_streamCounters);
 
+    /// <summary>
+    /// Validates the aggregate view of the striped module counters at a lifecycle or test boundary.
+    /// It deliberately does not alter the striped acquire/release fast path.
+    /// </summary>
+    internal void AssertAccountingInvariant()
+    {
+        var remainingCalls = RemainingCalls;
+        var remainingStreams = RemainingStreams;
+        if (remainingCalls < 0 || remainingStreams < 0 || remainingStreams > remainingCalls)
+        {
+            throw new InvalidOperationException(
+                "Dynamic module call and stream lease counters are inconsistent.");
+        }
+    }
+
     internal bool TryAcquire(bool stream, out SharpLinkDynamicModuleLease lease)
     {
         lease = default;

@@ -28,6 +28,9 @@ internal sealed class ServerConnectionState
     private int _sessionLoopState;
     private int _closeStarted;
     private Task? _serviceCleanupTask;
+#if DEBUG
+    private readonly Action? _afterLocalCallAdmission;
+#endif
 
     internal ServerConnectionState(
         RpcSession session,
@@ -35,7 +38,11 @@ internal sealed class ServerConnectionState
         StripedLongMap<ServerCallCancellationState> callCancellations,
         CancellationToken serverToken,
         TimeProvider timeProvider,
-        int maxConcurrentCalls = 1024)
+        int maxConcurrentCalls = 1024
+#if DEBUG
+        , Action? afterLocalCallAdmission = null
+#endif
+        )
     {
         Session = session ?? throw new ArgumentNullException(nameof(session));
         GeneratedBridge = generatedBridge ?? throw new ArgumentNullException(nameof(generatedBridge));
@@ -46,6 +53,9 @@ internal sealed class ServerConnectionState
             timeProvider ?? throw new ArgumentNullException(nameof(timeProvider)));
         _connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
         _connectionToken = _connectionCancellation.Token;
+#if DEBUG
+        _afterLocalCallAdmission = afterLocalCallAdmission;
+#endif
     }
 
     internal RpcSession Session { get; }
@@ -86,6 +96,32 @@ internal sealed class ServerConnectionState
     internal Task ServiceCleanupTask => Volatile.Read(ref _serviceCleanupTask) ?? Task.CompletedTask;
 
     internal int ActiveCalls => Volatile.Read(ref _activeCalls);
+
+    /// <summary>
+    /// Validates a stable server-connection lifecycle snapshot at a transition or test boundary.
+    /// This intentionally stays outside the request/frame hot path and takes no locks.
+    /// </summary>
+    internal void AssertStateInvariant()
+    {
+        if (ActiveCalls < 0)
+            throw new InvalidOperationException("Server connection active call count became negative.");
+
+        var state = LifecycleState;
+        var sessionAcceptsCalls = Session.CanAcceptCalls;
+        if (state == ServerConnectionLifecycleState.Ready &&
+            (!sessionAcceptsCalls || Session.NegotiatedOptions is null || DefaultCallContext is null))
+        {
+            throw new InvalidOperationException(
+                "A Ready server connection must have a negotiated, call-accepting Session and a published authentication/call-context snapshot at a stable lifecycle boundary.");
+        }
+        if (sessionAcceptsCalls && state is (
+                ServerConnectionLifecycleState.Draining or
+                ServerConnectionLifecycleState.Closed))
+        {
+            throw new InvalidOperationException(
+                "A draining or closed server connection must not reference a Session that accepts new calls at a stable lifecycle boundary.");
+        }
+    }
 
     internal long LastAcceptedRequestId => Volatile.Read(ref _lastAcceptedRequestId);
 
@@ -158,6 +194,15 @@ internal sealed class ServerConnectionState
         if (remaining == 0 && LifecycleState >= ServerConnectionLifecycleState.Draining)
             _callsDrained.TrySetResult();
     }
+
+#if DEBUG
+    /// <summary>
+    /// Deterministic UnitTests-only seam for the exact local-to-global admission
+    /// transfer. Release builds omit both this method and the nullable observer.
+    /// </summary>
+    internal void NotifyAfterLocalCallAdmissionForTesting()
+        => _afterLocalCallAdmission?.Invoke();
+#endif
 
     internal ValueTask<ServiceLease> AcquireServiceAsync(
         ServiceRegistration registration,

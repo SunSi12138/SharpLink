@@ -694,7 +694,10 @@ public class SharpLinkClientLifecycleStateTests
             staticEndpoints: endpoints,
             clusterOptions: new SharpLinkClusterOptions
             {
-                MinReadyEndpoints = 2,
+                // A one-endpoint target makes the first configured endpoint the
+                // deterministic initial dial owner. The second configuration stays
+                // present to prove its reconnect worker is not spuriously started.
+                MinReadyEndpoints = 1,
                 MaxConnections = 2,
                 MaxConnectionsPerEndpoint = 1
             },
@@ -712,14 +715,14 @@ public class SharpLinkClientLifecycleStateTests
 
             provider.Advance(TimeSpan.FromMilliseconds(100).Subtract(TimeSpan.FromTicks(1)));
             await Task.Yield();
-            Ensure(firstFactory.ConnectCount == 1 && secondFactory.ConnectCount == 1,
-                "static reconnect must not dial before its provider boundary");
+            Ensure(firstFactory.ConnectCount == 1 && secondFactory.ConnectCount == 0,
+                "static reconnect must not dial either the disconnected endpoint or an unrelated endpoint before its provider boundary");
 
             provider.Advance(TimeSpan.FromTicks(1));
             await reconnect;
-            Ensure(firstFactory.ConnectCount == 2 && client.ReadyConnectionCount == 2,
+            Ensure(firstFactory.ConnectCount == 2 && client.ReadyConnectionCount == 1,
                 "static reconnect must restore the endpoint at exact equality");
-            Ensure(jitter.AddQuarterWindowCalls == 1 && secondFactory.ConnectCount == 1,
+            Ensure(jitter.AddQuarterWindowCalls == 1 && secondFactory.ConnectCount == 0,
                 "static reconnect must remain per-endpoint single-flight");
         }
         finally
@@ -965,9 +968,13 @@ public class SharpLinkClientLifecycleStateTests
             context);
 
         connection.Session.NotifyConnected();
+        connection.Session.AssertStateInvariant();
+        connection.AssertStateInvariant();
         Ensure(ReferenceEquals(EndpointSelectionKernel.SelectConnection([connection]), connection),
             "ready single connection");
         connection.MarkDraining();
+        connection.Session.AssertStateInvariant();
+        connection.AssertStateInvariant();
         Ensure(EndpointSelectionKernel.SelectConnection([connection]) is null,
             "draining single connection");
     }
