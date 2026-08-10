@@ -1299,17 +1299,17 @@ public sealed class SharpLinkMultiClusterClientTests
                 "retired-call drain timers must be owned only by the child RuntimeContext provider");
 
             ownerProvider.Advance(TimeSpan.FromTicks(1));
-            await YieldUntilAsync(
-                () => removal.IsCompleted && child.StopCount == 1,
-                "retired cleanup did not force one child stop at exact owner-provider equality");
             var result = await removal;
+            await child.StopStarted.Task;
+            Ensure(child.StopCount == 1,
+                "retired cleanup must force one child stop at exact owner-provider equality");
             Ensure(result is { Succeeded: true, ReferencesReleased: false, ForcedStop: true },
                 "the equality boundary must report forced cleanup while the child stop is still retained");
 
             child.ReleaseStop();
-            await YieldUntilAsync(
-                () => client.FrameworkTaskSnapshotForDiagnostics.ActiveTasks == 0,
-                "the coordinator did not retire its completed cleanup task");
+            await client.StopAsync();
+            Ensure(client.FrameworkTaskSnapshotForDiagnostics.ActiveTasks == 0,
+                "coordinator shutdown must join its completed retired cleanup task");
             Ensure(ownerProvider.ActiveTimerCount == 0 && child.StopCount == 1,
                 "completed retirement must disarm provider timers and stop the child exactly once");
             Ensure((int)typeof(SharpLinkMultiClusterClient)
@@ -1344,9 +1344,10 @@ public sealed class SharpLinkMultiClusterClientTests
             var coordinatorStop = client.StopAsync().AsTask();
             ownerProvider.Advance(TimeSpan.FromTicks(1));
 
-            await YieldUntilAsync(
-                () => removal.IsCompleted && child.StopCount == 1,
-                "the due/Stop race did not converge on one retired-child cleanup");
+            await removal;
+            await child.StopStarted.Task;
+            Ensure(child.StopCount == 1,
+                "the due/Stop race must converge on one retired-child cleanup");
             Ensure(!coordinatorStop.IsCompleted,
                 "coordinator Stop must retain ownership until the single retired child stop completes");
 
@@ -1458,13 +1459,6 @@ public sealed class SharpLinkMultiClusterClientTests
         var deadline = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * 2d);
         while (!condition() && Stopwatch.GetTimestamp() < deadline)
             await Task.Delay(10);
-        Ensure(condition(), failureMessage);
-    }
-
-    private static async Task YieldUntilAsync(Func<bool> condition, string failureMessage)
-    {
-        for (var attempt = 0; attempt < 256 && !condition(); attempt++)
-            await Task.Yield();
         Ensure(condition(), failureMessage);
     }
 

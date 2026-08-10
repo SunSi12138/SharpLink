@@ -135,11 +135,9 @@ public class DynamicModuleTests
         Ensure(module.WaitForDrainAsync().IsCompletedSuccessfully &&
                module.RemainingCalls == 0 && module.RemainingStreams == 0,
             "lease release must publish drained state with balanced counters");
-        await YieldUntilAsync(
-            () => provider.ActiveTimerCount == 0,
-            "the losing Task.WaitAsync timer did not converge after owner completion");
+        await provider.WaitForTimersDrainedAsync();
         Ensure(provider.ActiveTimerCount == 0,
-            "successful drain completion must eventually disarm the losing timeout timer");
+            "successful drain completion must disarm the losing timeout timer");
 
         provider.Advance(TimeSpan.FromHours(1));
         Ensure(wait.IsCompletedSuccessfully && wait.Result,
@@ -150,13 +148,6 @@ public class DynamicModuleTests
     {
         if (!condition)
             throw new Exception(message);
-    }
-
-    private static async Task YieldUntilAsync(Func<bool> condition, string failureMessage)
-    {
-        for (var attempt = 0; attempt < 128 && !condition(); attempt++)
-            await Task.Yield();
-        Ensure(condition(), failureMessage);
     }
 
     private sealed class EmptyManifest : ISharpLinkGeneratedAssemblyManifest

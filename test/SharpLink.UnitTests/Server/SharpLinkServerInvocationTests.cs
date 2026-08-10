@@ -92,14 +92,13 @@ public class SharpLinkServerInvocationTests
                 "a server session exactly at heartbeat timeout must remain connected");
             healthySession.MarkActive();
 
+            var staleClosed = GetConnectionCompletionTask(stale);
             provider.Advance(TimeSpan.FromSeconds(5));
-            await YieldUntilAsync(
-                () => connections.Count == 1 &&
-                      connections.TryGetValue(healthySession.Id, out var current) &&
-                      ReferenceEquals(current, healthy) &&
-                      stale.LifecycleState == ServerConnectionLifecycleState.Closed &&
-                      !staleSession.IsConnected,
-                "the post-boundary check did not remove only the stale session");
+            await staleClosed;
+            Ensure(connections.Count == 1 &&
+                   connections.TryGetValue(healthySession.Id, out var current) &&
+                   ReferenceEquals(current, healthy),
+                "the post-boundary check must remove only the stale session");
             Ensure(stale.LifecycleState == ServerConnectionLifecycleState.Closed &&
                    !staleSession.IsConnected,
                 "the stale session must reach its single Closed terminal state");
@@ -850,6 +849,9 @@ public class SharpLinkServerInvocationTests
             await Task.Yield();
         Ensure(condition(), failureMessage);
     }
+
+    private static Task GetConnectionCompletionTask(ServerConnectionState connection)
+        => connection.SessionTask;
 
     private sealed class CaptureLoggerFactory : ILoggerFactory
     {

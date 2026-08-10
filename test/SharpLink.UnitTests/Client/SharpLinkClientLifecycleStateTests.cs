@@ -102,10 +102,11 @@ public class SharpLinkClientLifecycleStateTests
                    connection.State == ClientConnectionState.Ready && connection.Session.IsConnected,
                 "elapsed equal to the heartbeat timeout must remain healthy and send the next Ping");
 
+            var sessionStopped = GetSessionStoppedTask(connection.Session);
             provider.Advance(TimeSpan.FromSeconds(5));
-            await YieldUntilAsync(
-                () => connection.State == ClientConnectionState.Closed && !connection.Session.IsConnected,
-                "the first check after the timeout boundary did not close the silent connection");
+            await sessionStopped;
+            Ensure(connection.State == ClientConnectionState.Closed && !connection.Session.IsConnected,
+                "the first check after the timeout boundary must close the silent connection");
             Ensure(transport.ConnectCount == 1,
                 "the timeout must not dial again before the reconnect provider delay");
         }
@@ -584,10 +585,11 @@ public class SharpLinkClientLifecycleStateTests
     public async Task FixedReconnectShouldDialOnceAtTheExactProviderBoundary()
     {
         var provider = new ManualTimeProvider();
+        var clock = new TimerArmObservingTimeProvider(provider, TimeSpan.FromMilliseconds(100));
         var transport = new SequenceClientTransportFactory();
         var jitter = new FixedReconnectJitter(TimeSpan.FromMilliseconds(100));
         using var context = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(provider)
+            .UseTimeProvider(clock)
             .Build(includeGeneratedAssemblyCatalog: false);
         var client = new SharpLinkClient(
             transport,
@@ -600,11 +602,12 @@ public class SharpLinkClientLifecycleStateTests
             await client.ConnectAsync();
             var first = GetOnlyReadyConnection(client);
             first.Session.NotifyDisconnected(new IOException("fixed reconnect test disconnect"));
-            await YieldUntilAsync(
-                () => client.State == SharpLinkConnectionState.Reconnecting &&
-                      jitter.ScaleTwentyPercentCalls == 1 &&
-                      provider.EarliestTimerTimestamp == TimeSpan.FromMilliseconds(100).Ticks,
-                "the fixed reconnect worker did not enter its provider delay");
+            var ready = GetReadySignalTask(client);
+            await clock.ExpectedTimerArmed;
+            Ensure(client.State == SharpLinkConnectionState.Reconnecting &&
+                   jitter.ScaleTwentyPercentCalls == 1 &&
+                   provider.EarliestTimerTimestamp == TimeSpan.FromMilliseconds(100).Ticks,
+                "the fixed reconnect worker must enter its provider delay");
 
             provider.Advance(TimeSpan.FromMilliseconds(100).Subtract(TimeSpan.FromTicks(1)));
             await Task.Yield();
@@ -612,11 +615,11 @@ public class SharpLinkClientLifecycleStateTests
                 "the fixed reconnect worker must not dial one provider tick before its delay");
 
             provider.Advance(TimeSpan.FromTicks(1));
-            await YieldUntilAsync(
-                () => transport.ConnectCount == 2 &&
-                      client.State == SharpLinkConnectionState.Ready &&
-                      client.ReadyConnectionCount == 1,
-                "the fixed reconnect worker did not publish one connection at exact equality");
+            await ready;
+            Ensure(transport.ConnectCount == 2 &&
+                   client.State == SharpLinkConnectionState.Ready &&
+                   client.ReadyConnectionCount == 1,
+                "the fixed reconnect worker must publish one connection at exact equality");
             Ensure(jitter.ScaleTwentyPercentCalls == 1 && transport.ConnectionCount == 2,
                 "one disconnect signal must own exactly one fixed reconnect delay and dial");
         }
@@ -633,10 +636,11 @@ public class SharpLinkClientLifecycleStateTests
     public async Task FixedReconnectStopAtDueBoundaryShouldDrainTimerAndWorkerOnce()
     {
         var provider = new ManualTimeProvider();
+        var clock = new TimerArmObservingTimeProvider(provider, TimeSpan.FromMilliseconds(100));
         var transport = new SequenceClientTransportFactory();
         var jitter = new FixedReconnectJitter(TimeSpan.FromMilliseconds(100));
         using var context = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(provider)
+            .UseTimeProvider(clock)
             .Build(includeGeneratedAssemblyCatalog: false);
         var client = new SharpLinkClient(
             transport,
@@ -647,10 +651,10 @@ public class SharpLinkClientLifecycleStateTests
         await client.ConnectAsync();
         GetOnlyReadyConnection(client).Session.NotifyDisconnected(
             new IOException("fixed reconnect stop race disconnect"));
-        await YieldUntilAsync(
-            () => jitter.ScaleTwentyPercentCalls == 1 &&
-                  provider.EarliestTimerTimestamp == TimeSpan.FromMilliseconds(100).Ticks,
-            "the fixed reconnect race did not arm its provider delay");
+        await clock.ExpectedTimerArmed;
+        Ensure(jitter.ScaleTwentyPercentCalls == 1 &&
+               provider.EarliestTimerTimestamp == TimeSpan.FromMilliseconds(100).Ticks,
+            "the fixed reconnect race must arm its provider delay");
 
         provider.Advance(TimeSpan.FromMilliseconds(100));
         await client.StopAsync();
@@ -670,6 +674,7 @@ public class SharpLinkClientLifecycleStateTests
     public async Task StaticClusterReconnectShouldBeSingleFlightAtTheProviderBoundary()
     {
         var provider = new ManualTimeProvider();
+        var clock = new TimerArmObservingTimeProvider(provider, TimeSpan.FromMilliseconds(100));
         var firstFactory = new SequenceClientTransportFactory();
         var secondFactory = new SequenceClientTransportFactory();
         var jitter = new FixedReconnectJitter(TimeSpan.FromMilliseconds(100));
@@ -679,7 +684,7 @@ public class SharpLinkClientLifecycleStateTests
             new StaticEndpointConfiguration(CreateEndpoint("static-second", 5002), secondFactory)
         };
         using var context = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(provider)
+            .UseTimeProvider(clock)
             .Build(includeGeneratedAssemblyCatalog: false);
         var client = new SharpLinkClient(
             new NonConnectingFactory(),
@@ -699,10 +704,10 @@ public class SharpLinkClientLifecycleStateTests
             await client.ConnectAsync();
             GetClusterReadyConnection(client, "static-first").Session.NotifyDisconnected(
                 new IOException("static reconnect test disconnect"));
-            await YieldUntilAsync(
-                () => jitter.AddQuarterWindowCalls == 1 &&
-                      provider.EarliestTimerTimestamp == TimeSpan.FromMilliseconds(100).Ticks,
-                "the static endpoint did not arm its single reconnect worker");
+            await clock.ExpectedTimerArmed;
+            Ensure(jitter.AddQuarterWindowCalls == 1 &&
+                   provider.EarliestTimerTimestamp == TimeSpan.FromMilliseconds(100).Ticks,
+                "the static endpoint must arm its single reconnect worker");
             var reconnect = GetStaticReconnectTask(client, "static-first");
 
             provider.Advance(TimeSpan.FromMilliseconds(100).Subtract(TimeSpan.FromTicks(1)));
@@ -730,13 +735,14 @@ public class SharpLinkClientLifecycleStateTests
     public async Task DynamicClusterReconnectShouldBeSingleFlightAtTheProviderBoundary()
     {
         var provider = new ManualTimeProvider();
+        var clock = new TimerArmObservingTimeProvider(provider, TimeSpan.FromMilliseconds(100));
         var transport = new SequenceClientTransportFactory();
         var jitter = new FixedReconnectJitter(TimeSpan.FromMilliseconds(100));
         var resolver = new ChannelSnapshotResolver(new SharpLinkEndpointSnapshot(
             1,
             [CreateEndpoint("dynamic-provider", 5003)]));
         using var context = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(provider)
+            .UseTimeProvider(clock)
             .Build(includeGeneratedAssemblyCatalog: false);
         var client = new SharpLinkClient(
             new NonConnectingFactory(),
@@ -758,10 +764,11 @@ public class SharpLinkClientLifecycleStateTests
             await client.ConnectAsync();
             GetClusterReadyConnection(client, "dynamic-provider").Session.NotifyDisconnected(
                 new IOException("dynamic reconnect test disconnect"));
-            await YieldUntilAsync(
-                () => jitter.AddQuarterWindowCalls == 1 &&
-                      provider.EarliestTimerTimestamp == TimeSpan.FromMilliseconds(100).Ticks,
-                "the dynamic endpoint did not arm its single reconnect worker");
+            await clock.ExpectedTimerArmed;
+            Ensure(jitter.AddQuarterWindowCalls == 1 &&
+                   provider.EarliestTimerTimestamp == TimeSpan.FromMilliseconds(100).Ticks,
+                "the dynamic endpoint must arm its single reconnect worker");
+            var reconnect = GetDynamicReconnectTask(client, "dynamic-provider");
 
             provider.Advance(TimeSpan.FromMilliseconds(100).Subtract(TimeSpan.FromTicks(1)));
             await Task.Yield();
@@ -769,9 +776,9 @@ public class SharpLinkClientLifecycleStateTests
                 "dynamic reconnect must not dial before its provider boundary");
 
             provider.Advance(TimeSpan.FromTicks(1));
-            await YieldUntilAsync(
-                () => transport.ConnectCount == 2 && client.ReadyConnectionCount == 1,
-                "dynamic reconnect did not restore the endpoint at exact equality");
+            await reconnect;
+            Ensure(transport.ConnectCount == 2 && client.ReadyConnectionCount == 1,
+                "dynamic reconnect must restore the endpoint at exact equality");
             Ensure(jitter.AddQuarterWindowCalls == 1 && transport.ConnectionCount == 2,
                 "dynamic reconnect must remain single-flight for one endpoint generation");
         }
@@ -1200,6 +1207,18 @@ public class SharpLinkClientLifecycleStateTests
         return connections[0];
     }
 
+    private static Task GetSessionStoppedTask(RpcSession session)
+        => ((TaskCompletionSource<bool>)(typeof(RpcSession).GetField(
+            "_stoppedTcs",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(session) ?? throw new Exception("cannot find session stop owner"))).Task;
+
+    private static Task GetReadySignalTask(SharpLinkClient client)
+        => ((TaskCompletionSource<bool>)(typeof(SharpLinkClient).GetField(
+            "_readySignal",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(client) ?? throw new Exception("client has no active ready signal"))).Task;
+
     private static ClientConnection GetClusterReadyConnection(
         SharpLinkClient client,
         string endpointId)
@@ -1244,6 +1263,31 @@ public class SharpLinkClientLifecycleStateTests
             "_endpoints",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?.GetValue(cluster) ?? throw new Exception("cannot find static endpoint states"));
+        foreach (var state in states)
+        {
+            var configuration = state.GetType().GetProperty("Configuration")!.GetValue(state)!;
+            var endpoint = (SharpLinkEndpoint)configuration.GetType()
+                .GetProperty("Endpoint")!
+                .GetValue(configuration)!;
+            if (string.Equals(endpoint.Id, endpointId, StringComparison.Ordinal))
+            {
+                return (Task?)(state.GetType().GetProperty("ReconnectTask")!.GetValue(state))
+                    ?? throw new Exception($"endpoint {endpointId} has no active reconnect owner");
+            }
+        }
+        throw new Exception($"cannot find reconnect endpoint {endpointId}");
+    }
+
+    private static Task GetDynamicReconnectTask(SharpLinkClient client, string endpointId)
+    {
+        var cluster = typeof(SharpLinkClient).GetField(
+            "_cluster",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(client) ?? throw new Exception("client does not own an endpoint cluster");
+        var states = (System.Collections.IEnumerable)(cluster.GetType().GetField(
+            "_current",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(cluster) ?? throw new Exception("cannot find dynamic endpoint states"));
         foreach (var state in states)
         {
             var configuration = state.GetType().GetProperty("Configuration")!.GetValue(state)!;
@@ -1606,6 +1650,36 @@ public class SharpLinkClientLifecycleStateTests
             _ = baseDelayMilliseconds;
             Interlocked.Increment(ref _scaleTwentyPercentCalls);
             return delay;
+        }
+    }
+
+    private sealed class TimerArmObservingTimeProvider(
+        ManualTimeProvider inner,
+        TimeSpan expectedDueTime) : TimeProvider
+    {
+        private readonly TaskCompletionSource _expectedTimerArmed =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal Task ExpectedTimerArmed => _expectedTimerArmed.Task;
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
+
+        public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
+
+        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
+
+        public override long GetTimestamp() => inner.GetTimestamp();
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            var timer = inner.CreateTimer(callback, state, dueTime, period);
+            if (dueTime == expectedDueTime)
+                _expectedTimerArmed.TrySetResult();
+            return timer;
         }
     }
 
