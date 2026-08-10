@@ -46,6 +46,8 @@ public class ServerConnectionStateTests
 
         state.MarkDraining();
         Ensure(!state.TryRecordAcceptedRequest(43), "draining connection must reject new request IDs");
+        Ensure(state.Session.ProtocolPhase == RpcSessionProtocolPhase.Draining,
+            "server connection draining must update the shared Session protocol phase");
 
         await Task.WhenAll(state.CloseAsync().AsTask(), state.CloseAsync().AsTask());
         Ensure(state.LifecycleState == ServerConnectionLifecycleState.Closed, "closed state");
@@ -226,6 +228,7 @@ public class ServerConnectionStateTests
                 return ValueTask.CompletedTask;
             });
         var session = new RpcSession(transport, RpcSessionTestFixture.ServerOptions());
+        RpcSessionTestFixture.CompleteHandshake(session);
         return new ServerConnectionState(
             session,
             new RpcSessionGeneratedServerBridge(session),

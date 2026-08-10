@@ -27,6 +27,9 @@ internal sealed partial class SharpLinkServer
                     {
                         SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                         session.MarkActive();
+                        ((RpcSession)session).EnsureInboundFrameAllowed(
+                            header.Type,
+                            allowRequestWhileDraining: true);
                         IRpcByteBufferWriter? decodedOwner = null;
                         try
                         {

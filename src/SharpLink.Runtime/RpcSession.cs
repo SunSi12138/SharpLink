@@ -10,9 +10,19 @@ public sealed partial class RpcSession : IRpcSession
     /// <summary>Gets the instance-owned runtime services used by this session.</summary>
     public SharpLinkRuntimeContext RuntimeContext { get; }
     internal RpcSessionRole Role { get; }
-    internal ProtocolV2Capabilities NegotiatedCapabilities { get; set; }
-    private int _negotiatedMaxFramePayloadBytes;
-    internal int NegotiatedMaxFramePayloadBytes => Volatile.Read(ref _negotiatedMaxFramePayloadBytes);
+    private RpcSessionProtocolState _protocolState = RpcSessionProtocolState.Handshaking;
+    private int _handshakeCompletionStarted;
+    internal NegotiatedSessionOptions? NegotiatedOptions
+        => Volatile.Read(ref _protocolState).Options;
+    internal ProtocolV2Capabilities NegotiatedCapabilities
+        => Volatile.Read(ref _protocolState).Options?.Capabilities ?? ProtocolV2Capabilities.None;
+    internal int NegotiatedMaxFramePayloadBytes
+        => Volatile.Read(ref _protocolState).Options?.MaxFramePayloadBytes ??
+            RuntimeContext.Protocol.MaxFramePayloadBytes;
+    internal RpcSessionProtocolPhase ProtocolPhase
+        => Volatile.Read(ref _protocolState).Phase;
+    internal bool HasStreamFlowControl
+        => Volatile.Read(ref _protocolState).FlowController is not null;
     IRpcRuntimeContext IRpcSession.RuntimeContext => RuntimeContext;
     private long _lastActiveTimestamp = Stopwatch.GetTimestamp();
     /// <inheritdoc />
@@ -42,9 +52,7 @@ public sealed partial class RpcSession : IRpcSession
     private readonly Lock _pumpGate = new();
     private readonly RpcSessionFlushOptions? _flushOptions;
     private SendPump? _pump;
-    private StreamFlowController? _streamFlowControl;
     private int _activeRequests;
-    private int _draining;
     private readonly string _telemetrySide;
     private int _telemetryConnectionState;
     private const int TelemetryNotOpened = 0;
@@ -72,9 +80,6 @@ public sealed partial class RpcSession : IRpcSession
         Id = connection.Id;
         Role = creationOptions.Role;
         RuntimeContext = creationOptions.RuntimeContext;
-        Volatile.Write(
-            ref _negotiatedMaxFramePayloadBytes,
-            creationOptions.RuntimeContext.Protocol.MaxFramePayloadBytes);
         StreamManager = new StreamManager(
             creationOptions.RuntimeContext.Concurrency,
             AcceptReceivedStreamBytes,
@@ -84,33 +89,8 @@ public sealed partial class RpcSession : IRpcSession
         _telemetrySide = creationOptions.TelemetrySide;
     }
 
-    internal void SetNegotiatedMaxFramePayloadBytes(int value)
-    {
-        if (value < SharpLinkProtocolOptions.MinMaxFramePayloadBytes ||
-            value > RuntimeContext.Protocol.MaxFramePayloadBytes)
-        {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ProtocolViolation,
-                $"Negotiated frame limit {value} is outside the local protocol limits.");
-        }
-        Volatile.Write(ref _negotiatedMaxFramePayloadBytes, value);
-    }
-
     internal IRpcByteBufferWriter RentFrameWriter()
         => RuntimeContext.Buffers.Rent(checked(ProtocolV2Constants.HeaderBytes + NegotiatedMaxFramePayloadBytes));
-
-    internal void EnableStreamFlowControl(int streamWindowBytes, int connectionWindowBytes)
-    {
-        if ((NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) == 0)
-            throw new InvalidOperationException("Flow control was not negotiated for this session.");
-        var controller = new StreamFlowController(
-            streamWindowBytes,
-            connectionWindowBytes,
-            NegotiatedMaxFramePayloadBytes,
-            RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection);
-        if (Interlocked.CompareExchange(ref _streamFlowControl, controller, null) is not null)
-            throw new InvalidOperationException("Stream flow control is already enabled for this session.");
-    }
 
     internal ValueTask AcquireStreamSendCreditAsync(
         long requestId,
@@ -118,18 +98,18 @@ public sealed partial class RpcSession : IRpcSession
         int encodedBytes,
         CancellationToken cancellationToken)
     {
-        var controller = Volatile.Read(ref _streamFlowControl);
+        var controller = Volatile.Read(ref _protocolState).FlowController;
         return controller is null
             ? ValueTask.CompletedTask
             : controller.AcquireSendCreditAsync(requestId, streamId, encodedBytes, cancellationToken);
     }
 
     internal void ReturnUnsentStreamCredit(long requestId, ushort streamId, int encodedBytes)
-        => Volatile.Read(ref _streamFlowControl)?.ReturnUnsentCredit(requestId, streamId, encodedBytes);
+        => Volatile.Read(ref _protocolState).FlowController?.ReturnUnsentCredit(requestId, streamId, encodedBytes);
 
     internal void ApplyWindowUpdate(long requestId, in ProtocolV2WindowUpdate update)
     {
-        var controller = Volatile.Read(ref _streamFlowControl) ??
+        var controller = Volatile.Read(ref _protocolState).FlowController ??
             throw new SharpLinkException(
                 SharpLinkErrorCode.ProtocolViolation,
                 "WindowUpdate was received without negotiated flow control.");
@@ -137,17 +117,17 @@ public sealed partial class RpcSession : IRpcSession
     }
 
     internal void CompleteSendStream(long requestId, ushort streamId, Exception? exception = null)
-        => Volatile.Read(ref _streamFlowControl)?.CompleteSendStream(requestId, streamId, exception);
+        => Volatile.Read(ref _protocolState).FlowController?.CompleteSendStream(requestId, streamId, exception);
 
     internal void AbortSendStreams(long requestId, Exception exception)
-        => Volatile.Read(ref _streamFlowControl)?.AbortSendStreams(requestId, exception);
+        => Volatile.Read(ref _protocolState).FlowController?.AbortSendStreams(requestId, exception);
 
     private void AcceptReceivedStreamBytes(long requestId, ushort streamId, int encodedBytes)
-        => Volatile.Read(ref _streamFlowControl)?.AcceptReceived(requestId, streamId, encodedBytes);
+        => Volatile.Read(ref _protocolState).FlowController?.AcceptReceived(requestId, streamId, encodedBytes);
 
     private void OnStreamBytesConsumed(long requestId, ushort streamId, int encodedBytes)
     {
-        var controller = Volatile.Read(ref _streamFlowControl);
+        var controller = Volatile.Read(ref _protocolState).FlowController;
         var credit = controller?.RecordConsumed(requestId, streamId, encodedBytes) ?? 0;
         if (credit != 0)
             TrySendWindowUpdate(requestId, streamId, credit);
@@ -156,7 +136,7 @@ public sealed partial class RpcSession : IRpcSession
 
     private void OnReceiveStreamCompleted(long requestId, ushort streamId)
     {
-        var controller = Volatile.Read(ref _streamFlowControl);
+        var controller = Volatile.Read(ref _protocolState).FlowController;
         var credit = controller?.FlushConsumed(requestId, streamId) ?? 0;
         if (credit != 0)
             TrySendWindowUpdate(requestId, streamId, credit);
@@ -339,17 +319,21 @@ public sealed partial class RpcSession : IRpcSession
             if (length < ProtocolV2Constants.HeaderBytes)
                 throw new InvalidOperationException("Outbound frame is shorter than the protocol header.");
 
+            var protocolState = Volatile.Read(ref _protocolState);
+            var maxFramePayloadBytes = protocolState.Options?.MaxFramePayloadBytes ??
+                RuntimeContext.Protocol.MaxFramePayloadBytes;
             var payloadLength = length - ProtocolV2Constants.HeaderBytes;
-            if (payloadLength > NegotiatedMaxFramePayloadBytes)
+            if (payloadLength > maxFramePayloadBytes)
             {
                 throw new SharpLinkException(
                     SharpLinkErrorCode.ResourceExhausted,
-                    $"Outbound frame payload exceeds the negotiated {NegotiatedMaxFramePayloadBytes}-byte limit.");
+                    $"Outbound frame payload exceeds the negotiated {maxFramePayloadBytes}-byte limit.");
             }
 
             var span = packet.WrittenSpan;
             if (span[0] != ProtocolV2Constants.Magic)
                 throw new InvalidOperationException("Outbound frame has an invalid protocol magic byte.");
+            EnsureOutboundFrameAllowed(protocolState.Phase, (ProtocolV2FrameType)span[5]);
             var encodedPayloadLength = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(1, sizeof(int)));
             if (encodedPayloadLength != payloadLength)
                 throw new InvalidOperationException("Outbound frame payload length does not match its header.");
@@ -365,10 +349,10 @@ public sealed partial class RpcSession : IRpcSession
 
     internal int ActiveRequestCount => Volatile.Read(ref _activeRequests);
 
-    internal bool IsDraining => Volatile.Read(ref _draining) != 0;
+    internal bool IsDraining => ProtocolPhase == RpcSessionProtocolPhase.Draining;
 
     internal bool CanAcceptCalls =>
-        !IsDraining && IsConnected;
+        ProtocolPhase == RpcSessionProtocolPhase.Ready && IsConnected;
 
     internal void AddActiveRequest()
     {
@@ -393,7 +377,9 @@ public sealed partial class RpcSession : IRpcSession
     }
 
     internal void MarkDraining()
-        => Volatile.Write(ref _draining, 1);
+        => TransitionProtocolPhase(
+            RpcSessionProtocolPhase.Ready,
+            RpcSessionProtocolPhase.Draining);
 
     /// <inheritdoc />
     public event Action? OnConnected;
@@ -431,9 +417,10 @@ public sealed partial class RpcSession : IRpcSession
         if (Interlocked.CompareExchange(ref _terminal, terminal, null) is not null)
             return;
 
+        TransitionProtocolPhaseToTerminal();
         RecordTelemetryConnectionClosed();
         _cts.Cancel();
-        Volatile.Read(ref _streamFlowControl)?.Complete(structured);
+        Volatile.Read(ref _protocolState).FlowController?.Complete(structured);
         Volatile.Read(ref _pump)?.Stop();
         CompleteReceiveStreams(structured);
         ObserveTransportDispose(StartTransportDispose());
@@ -492,6 +479,7 @@ public sealed partial class RpcSession : IRpcSession
         }
         finally
         {
+            TransitionProtocolPhaseToTerminal();
             Volatile.Write(ref _stopped, 1);
             _cts.Dispose();
             if (cleanupException is null)
@@ -514,9 +502,11 @@ public sealed partial class RpcSession : IRpcSession
         if (existing is null)
             RecordTelemetryConnectionClosed();
 
+        TransitionProtocolPhaseToStopping();
+
         // These registrations can race the terminal transition during handshake. Repeat the
         // idempotent signal on every caller so a late publication cannot keep shutdown joined.
-        Volatile.Read(ref _streamFlowControl)?.Complete(terminal.Exception);
+        Volatile.Read(ref _protocolState).FlowController?.Complete(terminal.Exception);
         CompleteReceiveStreams(terminal.Exception);
         if (existing is null)
         {

@@ -26,9 +26,12 @@ fi
 
 SERVER_LOG="$OUTPUT/server.log"
 CLIENT_LOG="$OUTPUT/client.log"
-"$EXE" sharedmemory --role server --shm-name "$NAME" >"$SERVER_LOG" 2>&1 &
+COMPLETION_FILE="$OUTPUT/client-complete-$$"
+"$EXE" sharedmemory --role server --shm-name "$NAME" \
+  --completion-file "$COMPLETION_FILE" >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 cleanup() {
+  rm -f "$COMPLETION_FILE"
   if kill -0 "$SERVER_PID" 2>/dev/null; then
     kill "$SERVER_PID" 2>/dev/null || true
   fi
@@ -36,10 +39,12 @@ cleanup() {
 trap cleanup EXIT
 
 "$EXE" sharedmemory --role client --shm-name "$NAME" | tee "$CLIENT_LOG"
+: >"$COMPLETION_FILE"
 wait "$SERVER_PID"
 grep -q "REFERENCED_SERVICE_PASS" "$CLIENT_LOG"
 grep -q "AOT_SMOKE_CLIENT_PASS" "$CLIENT_LOG"
 grep -q "AOT_SMOKE_SERVER_PASS" "$SERVER_LOG"
+rm -f "$COMPLETION_FILE"
 trap - EXIT
 
 echo "Shared-memory independent-process NativeAOT smoke passed ($RID)."

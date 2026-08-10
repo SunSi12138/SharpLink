@@ -6,11 +6,7 @@ namespace SharpLink.Runtime;
 public static class ProtocolV2PayloadCodec
 {
     private const ProtocolV2Capabilities KnownCapabilities =
-        ProtocolV2Capabilities.Metadata |
-        ProtocolV2Capabilities.Compression |
-        ProtocolV2Capabilities.FlowControl |
-        ProtocolV2Capabilities.HealthCheck |
-        ProtocolV2Capabilities.CancellationReason;
+        RpcSessionProtocolRules.KnownCapabilities;
     private static readonly Encoding SStrictUtf8 = new UTF8Encoding(false, true);
     private const int HandshakeRequestFixedBytes =
         sizeof(ushort) + sizeof(ulong) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int);

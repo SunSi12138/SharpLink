@@ -113,9 +113,13 @@ public class GeneratedServerBridgeTests
             "bridge-outbound-backpressure",
             input.Reader,
             output.Writer,
-            RpcSessionTestFixture.ServerOptions());
-        session.NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl;
-        session.EnableStreamFlowControl(streamWindowBytes: 4, connectionWindowBytes: 4);
+            RpcSessionTestFixture.ServerOptions(),
+            completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(
+            session,
+            ProtocolV2Capabilities.FlowControl,
+            streamReceiveWindowBytes: 4,
+            connectionReceiveWindowBytes: 4);
         await session.AcquireStreamSendCreditAsync(72, 0, 4, CancellationToken.None);
         var serialized = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 

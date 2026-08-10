@@ -20,6 +20,7 @@ internal sealed partial class SharpLinkServer
                            ref buffer, _protocolOptions, out var header, out var message))
                 {
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + message.Length);
+                    var runtimeSession = (RpcSession)session;
                     SharpLinkAuthenticationResult authResult;
                     ProtocolV2HandshakeRequest request = default;
                     var supportedCapabilities =
@@ -29,7 +30,8 @@ internal sealed partial class SharpLinkServer
                         ProtocolV2Capabilities.CancellationReason;
                     if (_runtimeContext.Compression.ProviderBindings.Count != 0)
                         supportedCapabilities |= ProtocolV2Capabilities.Compression;
-                    if (header.Type != ProtocolV2FrameType.HandshakeRequest)
+                    if (!RpcSessionProtocolRules.IsFrameAllowed(runtimeSession.ProtocolPhase, header.Type) ||
+                        header.Type != ProtocolV2FrameType.HandshakeRequest)
                     {
                         authResult = SharpLinkAuthenticationResult.Reject(
                             SharpLinkErrorCode.ProtocolViolation,
@@ -72,18 +74,20 @@ internal sealed partial class SharpLinkServer
                             Math.Min(request.StreamReceiveWindowBytes, _runtimeContext.FlowControl.StreamReceiveWindowBytes),
                             Math.Min(request.ConnectionReceiveWindowBytes, _runtimeContext.FlowControl.ConnectionReceiveWindowBytes),
                             compressionBinding?.WireProfile);
-                        var runtimeSession = (RpcSession)session;
-                        runtimeSession.NegotiatedCapabilities = response.NegotiatedCapabilities;
-                        runtimeSession.SetNegotiatedMaxFramePayloadBytes(response.MaxFramePayloadBytes);
-                        if (compressionBinding is { } binding)
-                            runtimeSession.EnableCompression(binding.Provider, binding.WireProfile);
-                        if ((response.NegotiatedCapabilities & ProtocolV2Capabilities.FlowControl) != 0)
-                        {
-                            runtimeSession.EnableStreamFlowControl(
-                                response.StreamReceiveWindowBytes,
-                                response.ConnectionReceiveWindowBytes);
-                        }
                         await session.SendHandshakeResponseAndFlushAsync(response, ct).ConfigureAwait(false);
+                        var negotiated = new NegotiatedSessionOptions(
+                            response.MinorVersion,
+                            response.NegotiatedCapabilities,
+                            response.MaxFramePayloadBytes,
+                            response.StreamReceiveWindowBytes,
+                            response.ConnectionReceiveWindowBytes,
+                            compressionBinding);
+                        if (!runtimeSession.TryCompleteHandshake(negotiated))
+                        {
+                            throw new SharpLinkException(
+                                SharpLinkErrorCode.ProtocolViolation,
+                                "The handshake result was already completed or the session terminated.");
+                        }
                     }
                     else
                     {

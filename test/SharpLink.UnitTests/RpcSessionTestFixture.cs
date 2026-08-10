@@ -36,8 +36,36 @@ internal static class RpcSessionTestFixture
         string id,
         PipeReader input,
         PipeWriter output,
-        RpcSessionCreationOptions creationOptions)
-        => new(Transport(id, input, output), creationOptions);
+        RpcSessionCreationOptions creationOptions,
+        bool completeHandshake = true)
+    {
+        var session = new RpcSession(Transport(id, input, output), creationOptions);
+        if (completeHandshake)
+            CompleteHandshake(session);
+        return session;
+    }
+
+    internal static NegotiatedSessionOptions CompleteHandshake(
+        RpcSession session,
+        ProtocolV2Capabilities capabilities = ProtocolV2Capabilities.None,
+        int? maxFramePayloadBytes = null,
+        int? streamReceiveWindowBytes = null,
+        int? connectionReceiveWindowBytes = null,
+        SharpLinkCompressionProviderBinding? compressionBinding = null)
+    {
+        var context = session.RuntimeContext;
+        var options = new NegotiatedSessionOptions(
+            ProtocolV2Constants.MinorVersion,
+            capabilities,
+            maxFramePayloadBytes ?? context.Protocol.MaxFramePayloadBytes,
+            streamReceiveWindowBytes ?? context.FlowControl.StreamReceiveWindowBytes,
+            connectionReceiveWindowBytes ?? context.FlowControl.ConnectionReceiveWindowBytes,
+            compressionBinding);
+        if (!session.TryCompleteHandshake(options))
+            throw new InvalidOperationException("The test Session handshake was already completed or terminated.");
+        return session.NegotiatedOptions ??
+            throw new InvalidOperationException("The completed test Session did not publish negotiated options.");
+    }
 }
 
 /// <summary>A test transport that makes pipeline and disposal ownership explicit.</summary>

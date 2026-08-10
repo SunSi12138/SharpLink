@@ -252,6 +252,7 @@ internal sealed class ServerConnectionState
                     (int)ServerConnectionLifecycleState.Draining,
                     current) == current)
             {
+                Session.MarkDraining();
                 if (ActiveCalls == 0)
                     _callsDrained.TrySetResult();
                 return;
