@@ -737,6 +737,7 @@ public class SharpClientBuilder
     {
         var staticManifests = plan.CreateStaticManifestSnapshot();
         var requestTimeout = plan.RequestTimeout;
+        var logger = plan.LoggerFactory.CreateLogger<SharpLinkClient>();
         var composition = new ClientRuntimeComposition(
             transport,
             topology,
@@ -756,9 +757,9 @@ public class SharpClientBuilder
             plan.RetryPolicy,
             CreateEndpointAdmissionPolicy(plan, runtimeContext),
             plan.ReconnectJitter,
-            plan.LoggerFactory.CreateLogger<SharpLinkClient>());
-        var client = new SharpLinkClient(composition);
-        return client;
+            logger,
+            SharpLinkClient.CreateFrameworkTaskSupervisor(logger));
+        return new SharpLinkClient(composition);
     }
 
     private static SharpLinkConnectionPoolOptions CreateDefaultConnectionPoolOptions()

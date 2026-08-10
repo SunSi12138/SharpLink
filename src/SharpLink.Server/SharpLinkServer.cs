@@ -77,7 +77,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     /// <summary>
     /// Initializes a Server from the explicit composition materialized by
     /// <see cref="SharpLinkServerBuilder"/>. It performs no mutable-option fallback, clone, catalog
-    /// lookup, listener/service-provider creation, or RuntimeContext materialization.
+    /// lookup, listener/service-provider/FrameworkTaskSupervisor creation, or RuntimeContext materialization.
     /// </summary>
     internal SharpLinkServer(ServerRuntimeComposition composition)
     {
@@ -101,7 +101,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _maxConcurrentCallsPerConnection = _runtimeContext.FlowControl.MaxConcurrentCallsPerConnection;
         _maxConcurrentCallsPerServer = _runtimeContext.FlowControl.MaxConcurrentCallsPerServer;
         _serviceCleanup = composition.ServiceCleanup;
-        _frameworkTasks = CreateFrameworkTaskSupervisor(_logger);
+        _frameworkTasks = composition.FrameworkTasks;
     }
 
     public SharpLinkHealthStatus HealthStatus => CurrentState switch
@@ -889,7 +889,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         }
     }
 
-    private static FrameworkTaskSupervisor CreateFrameworkTaskSupervisor(ILogger logger)
+    internal static FrameworkTaskSupervisor CreateFrameworkTaskSupervisor(ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(logger);
         return new FrameworkTaskSupervisor((operation, exception) =>

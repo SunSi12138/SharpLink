@@ -176,7 +176,8 @@ internal sealed class ClientRuntimeComposition
         ISharpLinkRetryPolicy? retryPolicy,
         ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy,
         ISharpLinkReconnectJitter reconnectJitter,
-        ILogger logger)
+        ILogger logger,
+        FrameworkTaskSupervisor frameworkTasks)
     {
         TransportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
         Topology = topology ?? throw new ArgumentNullException(nameof(topology));
@@ -211,6 +212,7 @@ internal sealed class ClientRuntimeComposition
         EndpointAdmissionPolicy = endpointAdmissionPolicy;
         ReconnectJitter = reconnectJitter ?? throw new ArgumentNullException(nameof(reconnectJitter));
         Logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        FrameworkTasks = frameworkTasks ?? throw new ArgumentNullException(nameof(frameworkTasks));
     }
 
     internal IClientTransportFactory TransportFactory { get; }
@@ -246,6 +248,8 @@ internal sealed class ClientRuntimeComposition
     internal ISharpLinkReconnectJitter ReconnectJitter { get; }
 
     internal ILogger Logger { get; }
+
+    internal FrameworkTaskSupervisor FrameworkTasks { get; }
 
     internal IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> StaticManifests => _staticManifests;
 

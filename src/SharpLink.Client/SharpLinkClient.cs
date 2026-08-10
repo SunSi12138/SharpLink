@@ -58,7 +58,8 @@ internal sealed partial class SharpLinkClient :
     /// <summary>
     /// Initializes a Client from the explicit composition materialized by <see cref="SharpClientBuilder"/>.
     /// It intentionally performs no catalog discovery, option clone/default, topology selection, endpoint
-    /// factory call, or RuntimeContext materialization.
+    /// factory call, or RuntimeContext materialization. The already-tagged topology is bound here so the
+    /// Client is fully valid when construction completes.
     /// </summary>
     internal SharpLinkClient(ClientRuntimeComposition composition)
     {
@@ -81,12 +82,11 @@ internal sealed partial class SharpLinkClient :
         _endpointAdmissionPolicy = composition.EndpointAdmissionPolicy;
         _reconnectJitter = composition.ReconnectJitter;
         _logger = composition.Logger;
-        _frameworkTasks = new FrameworkTaskSupervisor((operation, exception) =>
-            LogClientBackgroundLoopUnhandledException(_logger, operation, exception));
+        _frameworkTasks = composition.FrameworkTasks;
 
-        // The Builder has already selected and materialized one tagged topology. This is a direct
-        // typed binding, not nullable-argument inference or endpoint factory creation, so the
-        // Client is fully valid when its constructor returns.
+        // Builder has already selected and materialized exactly one tagged topology. Creating the
+        // Client-owned cluster object here does not enumerate endpoints, invoke a transport factory,
+        // or reinterpret mutable Builder state.
         switch (composition.Topology)
         {
             case FixedClientRuntimeTopologyComposition fixedTopology:
@@ -104,6 +104,13 @@ internal sealed partial class SharpLinkClient :
             default:
                 throw new UnreachableException();
         }
+    }
+
+    internal static FrameworkTaskSupervisor CreateFrameworkTaskSupervisor(ILogger logger)
+    {
+        ArgumentNullException.ThrowIfNull(logger);
+        return new FrameworkTaskSupervisor((operation, exception) =>
+            LogClientBackgroundLoopUnhandledException(logger, operation, exception));
     }
 
     public IRpcRuntimeContext RuntimeContext => _runtimeContext;

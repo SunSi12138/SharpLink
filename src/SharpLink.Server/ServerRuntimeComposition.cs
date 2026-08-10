@@ -27,7 +27,8 @@ internal sealed class ServerRuntimeComposition
         IServiceProvider serviceProvider,
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> staticManifests,
         SharpLinkAdmissionController? admissionController,
-        ServerShutdownPlan shutdownPlan)
+        ServerShutdownPlan shutdownPlan,
+        FrameworkTaskSupervisor frameworkTasks)
     {
         TransportListener = transportListener ?? throw new ArgumentNullException(nameof(transportListener));
         Services = services ?? throw new ArgumentNullException(nameof(services));
@@ -44,6 +45,7 @@ internal sealed class ServerRuntimeComposition
         ServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
         ArgumentNullException.ThrowIfNull(staticManifests);
         ShutdownPlan = shutdownPlan ?? throw new ArgumentNullException(nameof(shutdownPlan));
+        FrameworkTasks = frameworkTasks ?? throw new ArgumentNullException(nameof(frameworkTasks));
 
         _interceptors = [.. interceptors];
         _staticManifests = new ISharpLinkGeneratedAssemblyManifest[staticManifests.Count];
@@ -90,4 +92,6 @@ internal sealed class ServerRuntimeComposition
     internal SharpLinkAdmissionController? AdmissionController { get; }
 
     internal ServerShutdownPlan ShutdownPlan { get; }
+
+    internal FrameworkTaskSupervisor FrameworkTasks { get; }
 }

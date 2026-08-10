@@ -22,8 +22,8 @@ does not construct a runtime directly.
 
 | Runtime | Sole constructor input | Materialized by | Explicit ownership carried by the composition |
 | --- | --- | --- | --- |
-| `SharpLinkClient` | `ClientRuntimeComposition` | `SharpClientBuilder` | direct transport or typed fixed/static/dynamic topology, Runtime Context, frozen manifest/proxy snapshots, protocol/pool/retry/interceptor snapshots, admission policy, reconnect jitter, logger |
-| `SharpLinkServer` | `ServerRuntimeComposition` | `SharpLinkServerBuilder` | listener, frozen service registrations, Runtime Context, logger, caller or framework provider, admission controller, shutdown plan, interceptors, manifest snapshot |
+| `SharpLinkClient` | `ClientRuntimeComposition` | `SharpClientBuilder` | direct transport or typed fixed/static/dynamic topology, Runtime Context, frozen manifest/proxy snapshots, protocol/pool/retry/interceptor snapshots, admission policy, reconnect jitter, logger, FrameworkTaskSupervisor |
+| `SharpLinkServer` | `ServerRuntimeComposition` | `SharpLinkServerBuilder` | listener, frozen service registrations, Runtime Context, logger, FrameworkTaskSupervisor, caller or framework provider, admission controller, shutdown plan, interceptors, manifest snapshot |
 
 Client topology is tagged before the Client exists:
 
@@ -33,11 +33,13 @@ Client topology is tagged before the Client exists:
 | two or more static endpoints | `StaticClientRuntimeTopologyComposition` | fixed materialized endpoint configurations and cluster options |
 | resolver | `DynamicClientRuntimeTopologyComposition` | builder-owned resolver, transport delegate, and frozen cluster options |
 
-The Client receives the composition without interpreting nullable topology arguments. Its one typed
-constructor directly binds the already-selected composition topology while the Client itself becomes
-the static/dynamic cluster owner, so every returned Client is immediately valid. This binding does
-not enumerate caller endpoints, invoke an endpoint factory, select a topology from optional inputs,
-fall back to a catalog, clone/default options, or materialize a Runtime Context.
+The Client constructor receives the composition without interpreting nullable topology arguments.
+It switches once on the already-tagged topology and assigns either the fixed endpoint or a Client-owned
+static/dynamic cluster before returning, so a constructed Client is immediately valid and no secondary
+binding order exists. This typed binding does not enumerate caller endpoints, invoke an endpoint
+factory, select a topology from optional inputs, fall back to a catalog, clone/default options, or
+materialize a Runtime Context. If Client-owned cluster construction fails, the surrounding Builder
+transaction still owns and rolls back every external materialized resource.
 
 ## Removed behavior and migration map
 
@@ -88,13 +90,16 @@ generated API 4, manifest, trimming, and NativeAOT behavior do not change in thi
 The source gate is intentionally simple and reproducible:
 
 ```text
-rg -n 'new SharpLinkClient\\(|new SharpLinkServer\\(' --glob '*.cs' .
+eng/verify-runtime-construction-boundary.sh
 ```
 
-The expected result contains only `SharpClientBuilder` and `SharpLinkServerBuilder` materialization
-sites. `SharpLinkClient.cs` and `SharpLinkServer.cs` each expose only their single typed-composition
-constructor; neither contains catalog fallback, Runtime Context materialization, endpoint source
-enumeration, a reflection constructor adapter, or a legacy long-parameter forwarding overload.
+It checks every C# file in both runtime projects so constructors added in another partial declaration
+cannot evade the gate. Each concrete runtime exposes exactly one typed-composition constructor; the
+Client constructor performs all three tagged topology bindings itself and has no post-construction
+attach state; neither constructor creates a `FrameworkTaskSupervisor`; and the only concrete runtime
+creation sites are the two Builders. Neither runtime constructor contains catalog fallback, Runtime
+Context materialization, endpoint source enumeration, a reflection constructor adapter, or a legacy
+long-parameter forwarding overload.
 
 Focused local Debug evidence:
 

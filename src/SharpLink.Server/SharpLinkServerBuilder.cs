@@ -458,12 +458,13 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             }
 
             var services = registrationsByContract.ToFrozenDictionary();
+            var logger = plan.LoggerFactory.CreateLogger<SharpLinkServer>();
             var composition = new ServerRuntimeComposition(
                 plan.Resources.Transport,
                 services,
                 plan.HeartbeatCheckInterval,
                 plan.HeartbeatTimeout,
-                plan.LoggerFactory.CreateLogger<SharpLinkServer>(),
+                logger,
                 runtimeContext,
                 plan.Authenticator,
                 plan.AuthenticationRequired,
@@ -475,7 +476,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                 serviceProvider,
                 staticManifests,
                 admissionController,
-                ServerShutdownPlan.Default);
+                ServerShutdownPlan.Default,
+                SharpLinkServer.CreateFrameworkTaskSupervisor(logger));
             var server = new SharpLinkServer(composition);
             transaction.Commit();
             plan.Resources.MarkTransferred();
