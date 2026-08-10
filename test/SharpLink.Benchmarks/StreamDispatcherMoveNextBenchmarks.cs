@@ -101,6 +101,14 @@ public class StreamDispatcherMoveNextBenchmarks
     [Benchmark(OperationsPerInvoke = 1_024)]
     public int PreBuffered_1024() => ConsumePreBuffered(1_024);
 
+    // Unlike PreBuffered_1024, this starts with one armed MoveNextAsync and dispatches the
+    // entire burst in the measured method. The first frame wakes the reusable source and the
+    // remaining frames exercise the producer-side coalesced Signal path before any item is
+    // consumed. Every dispatch is required to complete synchronously, so the producer never
+    // waits outside the work this benchmark measures.
+    [Benchmark(OperationsPerInvoke = BurstStreamItemCount)]
+    public int FullBurstProducer_1024() => ConsumeFullBurstWithMeasuredProducer();
+
     [IterationSetup(Target = nameof(AlwaysSuspend_1))]
     public void SetupAlwaysSuspend1() => PrepareSuspendedDispatcher();
 
@@ -253,6 +261,50 @@ public class StreamDispatcherMoveNextBenchmarks
         }
 
         return sum;
+    }
+
+    private static int ConsumeFullBurstWithMeasuredProducer()
+    {
+        var dispatcher = PooledAsyncStreamDispatcher<byte>.Rent(default, SCodec);
+        var enumerator = dispatcher.GetAsyncEnumerator();
+        try
+        {
+            var firstMoveNext = enumerator.MoveNextAsync();
+            if (firstMoveNext.IsCompleted)
+                throw new InvalidOperationException("The full-burst benchmark must start with an armed waiter.");
+
+            for (var index = 0; index < BurstStreamItemCount; index++)
+            {
+                var dispatch = dispatcher.DispatchAsync(SPayload, encodedByteCount: 1);
+                if (!dispatch.IsCompletedSuccessfully)
+                    throw new InvalidOperationException("The full-burst producer must not wait for its consumer.");
+                dispatch.GetAwaiter().GetResult();
+            }
+
+            if (!firstMoveNext.IsCompletedSuccessfully || !firstMoveNext.Result)
+                throw new InvalidOperationException("The first full-burst item must complete the armed waiter.");
+
+            var sum = enumerator.Current;
+            for (var index = 1; index < BurstStreamItemCount; index++)
+            {
+                var moveNext = enumerator.MoveNextAsync();
+                if (!moveNext.IsCompletedSuccessfully || !moveNext.Result)
+                    throw new InvalidOperationException("Every full-burst item must be immediately consumable.");
+                sum += enumerator.Current;
+            }
+
+            dispatcher.Complete(exception: null);
+            var terminalMoveNext = enumerator.MoveNextAsync();
+            if (!terminalMoveNext.IsCompletedSuccessfully || terminalMoveNext.Result)
+                throw new InvalidOperationException("The full-burst dispatcher must complete after all items are consumed.");
+
+            return sum;
+        }
+        finally
+        {
+            dispatcher.Complete(exception: null);
+            enumerator.DisposeAsync().GetAwaiter().GetResult();
+        }
     }
 
     private async ValueTask<int> ConsumeSuspendedAsync(int itemCount, int burstSize)
