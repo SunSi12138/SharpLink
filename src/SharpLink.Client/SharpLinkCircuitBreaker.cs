@@ -16,11 +16,20 @@ internal interface ISharpLinkEndpointAdmissionLifecycle
 internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolicy, ISharpLinkEndpointAdmissionLifecycle
 {
     private readonly SharpLinkCircuitBreakerOptions _options;
+    private readonly TimeProvider _timeProvider;
     private readonly ConcurrentDictionary<CircuitKey, CircuitState> _states = new();
 
     public SharpLinkCircuitBreaker(SharpLinkCircuitBreakerOptions options)
+        : this(options, TimeProvider.System)
+    {
+    }
+
+    internal SharpLinkCircuitBreaker(
+        SharpLinkCircuitBreakerOptions options,
+        TimeProvider timeProvider)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
     }
 
     public SharpLinkEndpointAdmissionDecision TryAcquire(
@@ -28,8 +37,11 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
         in RpcMethodDescriptor method)
     {
         var key = new CircuitKey(endpoint.Endpoint.Id, endpoint.Generation);
-        var state = _states.GetOrAdd(key, static (_, options) => new CircuitState(options), _options);
-        var decision = state.TryAcquire(Stopwatch.GetTimestamp());
+        var state = _states.GetOrAdd(
+            key,
+            static (_, factory) => new CircuitState(factory.Options, factory.TimeProvider),
+            (Options: _options, TimeProvider: _timeProvider));
+        var decision = state.TryAcquire(_timeProvider.GetTimestamp());
         if (!decision.IsAllowed)
         {
             SharpLinkTelemetry.RecordEndpointAdmissionRejected("breaker_open");
@@ -43,7 +55,7 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
         var key = new CircuitKey(outcome.Endpoint.Endpoint.Id, outcome.Endpoint.Generation);
         if (!_states.TryGetValue(key, out var state))
             return;
-        state.Report(Stopwatch.GetTimestamp(), Classify(outcome), token);
+        state.Report(_timeProvider.GetTimestamp(), Classify(outcome), token);
     }
 
     public void Retire(in SharpLinkEndpointCandidate endpoint)
@@ -53,8 +65,11 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
     internal void ReportInfrastructureFailure(in SharpLinkEndpointCandidate endpoint)
     {
         var key = new CircuitKey(endpoint.Endpoint.Id, endpoint.Generation);
-        var state = _states.GetOrAdd(key, static (_, options) => new CircuitState(options), _options);
-        state.ReportInfrastructureFailure(Stopwatch.GetTimestamp());
+        var state = _states.GetOrAdd(
+            key,
+            static (_, factory) => new CircuitState(factory.Options, factory.TimeProvider),
+            (Options: _options, TimeProvider: _timeProvider));
+        state.ReportInfrastructureFailure(_timeProvider.GetTimestamp());
     }
 
     private static CircuitSample Classify(in SharpLinkEndpointOutcome outcome)
@@ -104,11 +119,10 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
         private const int HalfOpen = 2;
 
         private readonly SharpLinkCircuitBreakerOptions _options;
+        private readonly TimeProvider _timeProvider;
         private readonly object _samplesGate = new();
         private readonly long[] _timestamps;
         private readonly bool[] _failures;
-        private readonly long _samplingTicks;
-        private readonly long _breakTicks;
         private int _state;
         private long _openUntil;
         private int _halfOpenInFlight;
@@ -117,14 +131,15 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
         private int _count;
         private int _failureCount;
 
-        public CircuitState(SharpLinkCircuitBreakerOptions options)
+        public CircuitState(
+            SharpLinkCircuitBreakerOptions options,
+            TimeProvider timeProvider)
         {
             _options = options;
+            _timeProvider = timeProvider;
             var capacity = Math.Max(options.MinimumThroughput * 4, 64);
             _timestamps = new long[capacity];
             _failures = new bool[capacity];
-            _samplingTicks = ToStopwatchTicks(options.SamplingDuration);
-            _breakTicks = ToStopwatchTicks(options.BreakDuration);
         }
 
         public SharpLinkEndpointAdmissionDecision TryAcquire(long now)
@@ -145,7 +160,10 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
                         var openUntil = _openUntil;
                         if (now < openUntil)
                         {
-                            retryAfter = TimeSpan.FromSeconds((double)(openUntil - now) / Stopwatch.Frequency);
+                            retryAfter = SharpLinkTime.GetRemaining(
+                                openUntil,
+                                now,
+                                _timeProvider.TimestampFrequency);
                         }
                         else
                         {
@@ -250,7 +268,10 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
 
         private void OpenCircuitLocked(long now)
         {
-            _openUntil = SaturatingAdd(now, _breakTicks);
+            _openUntil = SharpLinkTime.AddDuration(
+                now,
+                _options.BreakDuration,
+                _timeProvider.TimestampFrequency);
             _halfOpenInFlight = 0;
             _halfOpenEpoch = NextHalfOpenEpoch();
             Volatile.Write(ref _state, Open);
@@ -261,8 +282,8 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
 
         private void Prune(long now)
         {
-            var minimum = now - _samplingTicks;
-            while (_count != 0 && _timestamps[_head] < minimum)
+            while (_count != 0 &&
+                   _timeProvider.GetElapsedTime(_timestamps[_head], now) > _options.SamplingDuration)
             {
                 if (_failures[_head])
                     _failureCount--;
@@ -293,13 +314,5 @@ internal sealed class SharpLinkCircuitBreaker : ISharpLinkEndpointAdmissionPolic
                 _failureCount++;
         }
 
-        private static long ToStopwatchTicks(TimeSpan value)
-        {
-            var ticks = value.TotalSeconds * Stopwatch.Frequency;
-            return ticks >= long.MaxValue ? long.MaxValue : Math.Max(1, (long)Math.Ceiling(ticks));
-        }
-
-        private static long SaturatingAdd(long value, long add)
-            => add >= long.MaxValue - value ? long.MaxValue : value + add;
     }
 }

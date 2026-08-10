@@ -63,8 +63,21 @@ internal static class SharpLinkTimer
         Task task,
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
+        => await WaitAsync(task, timeout, TimeProvider.System, cancellationToken).ConfigureAwait(false);
+
+    internal static async ValueTask<bool> WaitAsync(
+        Task task,
+        TimeSpan timeout,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(task);
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        ArgumentOutOfRangeException.ThrowIfLessThan(timeout, TimeSpan.Zero);
+        var deadline = SharpLinkTime.AddDuration(
+            timeProvider.GetTimestamp(),
+            timeout,
+            timeProvider.TimestampFrequency);
         while (true)
         {
             if (task.IsCompleted)
@@ -73,10 +86,17 @@ internal static class SharpLinkTimer
                 return true;
             }
 
-            var slice = timeout > MaximumDelay ? MaximumDelay : timeout;
+            cancellationToken.ThrowIfCancellationRequested();
+            var remaining = SharpLinkTime.GetRemaining(
+                deadline,
+                timeProvider.GetTimestamp(),
+                timeProvider.TimestampFrequency);
+            if (remaining == TimeSpan.Zero)
+                return false;
+            var slice = remaining > MaximumDelay ? MaximumDelay : remaining;
             try
             {
-                await task.WaitAsync(slice, TimeProvider.System, cancellationToken).ConfigureAwait(false);
+                await task.WaitAsync(slice, timeProvider, cancellationToken).ConfigureAwait(false);
                 return true;
             }
             catch (TimeoutException)
@@ -86,9 +106,13 @@ internal static class SharpLinkTimer
                     await task.ConfigureAwait(false);
                     return true;
                 }
-                if (timeout <= MaximumDelay)
+                if (SharpLinkTime.GetRemaining(
+                        deadline,
+                        timeProvider.GetTimestamp(),
+                        timeProvider.TimestampFrequency) == TimeSpan.Zero)
+                {
                     return false;
-                timeout -= MaximumDelay;
+                }
             }
         }
     }
@@ -144,13 +168,34 @@ internal static class SharpLinkTimer
         SemaphoreSlim semaphore,
         TimeSpan timeout,
         CancellationToken cancellationToken)
+        => await WaitAsync(
+            semaphore,
+            timeout,
+            TimeProvider.System,
+            cancellationToken).ConfigureAwait(false);
+
+    internal static async ValueTask<bool> WaitAsync(
+        SemaphoreSlim semaphore,
+        TimeSpan timeout,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
     {
-        while (timeout > MaximumDelay)
-        {
-            if (await semaphore.WaitAsync(MaximumDelay, cancellationToken).ConfigureAwait(false))
-                return true;
-            timeout -= MaximumDelay;
-        }
-        return await semaphore.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(semaphore);
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        ArgumentOutOfRangeException.ThrowIfLessThan(timeout, TimeSpan.Zero);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (semaphore.Wait(0))
+            return true;
+        if (timeout == TimeSpan.Zero)
+            return false;
+        var deadline = SharpLinkTime.AddDuration(
+            timeProvider.GetTimestamp(),
+            timeout,
+            timeProvider.TimestampFrequency);
+        return await WaitAsync(
+            semaphore,
+            RpcDeadline.Create(DateTimeOffset.MaxValue, deadline),
+            timeProvider,
+            cancellationToken).ConfigureAwait(false);
     }
 }

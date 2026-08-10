@@ -163,8 +163,9 @@ internal sealed partial class SharpLinkClient
         }
 
         ResetReadySignal();
-        var stableTicks = Stopwatch.GetTimestamp() - Volatile.Read(ref _readyTimestamp);
-        if (stableTicks >= 30L * Stopwatch.Frequency)
+        var stableDuration = _runtimeContext.TimeProvider.GetElapsedTime(
+            Volatile.Read(ref _readyTimestamp));
+        if (stableDuration >= TimeSpan.FromSeconds(30))
             Volatile.Write(ref _reconnectDelayMilliseconds, 100);
         TransitionTo(SharpLinkConnectionState.Reconnecting);
         EnsureReconnectLoop();
@@ -203,11 +204,13 @@ internal sealed partial class SharpLinkClient
                    ReadyConnectionCount < _connectionPoolOptions.MinConnections)
             {
                 var baseDelay = Volatile.Read(ref _reconnectDelayMilliseconds);
-                var jitter = 0.8 + Random.Shared.NextDouble() * 0.4;
-                var delay = TimeSpan.FromMilliseconds(baseDelay * jitter);
+                var delay = _reconnectJitter.ScaleTwentyPercent(baseDelay);
                 try
                 {
-                    await Task.Delay(delay, _shutdownCts.Token).ConfigureAwait(false);
+                    await Task.Delay(
+                        delay,
+                        _runtimeContext.TimeProvider,
+                        _shutdownCts.Token).ConfigureAwait(false);
                     SharpLinkTelemetry.ReconnectAttempt();
                     await ConnectOneAsync(_shutdownCts.Token).ConfigureAwait(false);
                     PublishReadyState();

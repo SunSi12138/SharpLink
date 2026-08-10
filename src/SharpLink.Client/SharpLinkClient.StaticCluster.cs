@@ -603,8 +603,10 @@ internal sealed partial class SharpLinkClient
                 delayMilliseconds = endpoint.ReconnectDelayMilliseconds;
             try
             {
-                var jitterMilliseconds = Random.Shared.Next(delayMilliseconds / 4 + 1);
-                await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds + jitterMilliseconds), _client._shutdownCts.Token).ConfigureAwait(false);
+                await Task.Delay(
+                    _client._reconnectJitter.AddQuarterWindow(delayMilliseconds),
+                    _client._runtimeContext.TimeProvider,
+                    _client._shutdownCts.Token).ConfigureAwait(false);
                 var shouldConnect = false;
                 lock (_gate)
                     shouldConnect = NeedsReconnectLocked(endpoint);
@@ -641,7 +643,7 @@ internal sealed partial class SharpLinkClient
         {
             if (ReadyConnectionCount == 0)
                 return;
-            _client._readyTimestamp = Stopwatch.GetTimestamp();
+            _client._readyTimestamp = _client._runtimeContext.TimeProvider.GetTimestamp();
             _client.TransitionTo(SharpLinkConnectionState.Ready);
             Volatile.Read(ref _client._readySignal).TrySetResult(true);
         }

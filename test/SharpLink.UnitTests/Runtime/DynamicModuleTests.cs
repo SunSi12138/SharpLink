@@ -57,6 +57,93 @@ public class DynamicModuleTests
             "stale route readers can safely register module cancellation after release");
     }
 
+    [Test]
+    public async Task ProviderAwareDrainShouldTimeOutAtExactEqualityAndReleaseItsTimer()
+    {
+        var provider = new ManualTimeProvider();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(provider)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var manifest = new EmptyManifest();
+        using var registration = context.PrepareGeneratedManifest(manifest);
+        var module = new SharpLinkDynamicModule(
+            typeof(DynamicModuleTests).Assembly,
+            manifest,
+            registration);
+        Ensure(module.TryAcquire(stream: true, out var lease),
+            "the timeout scenario must retain one call and stream lease");
+        Ensure(module.TryBeginDraining(),
+            "the module must publish Draining before the bounded wait");
+        var wait = SharpLinkDynamicModule.WaitForDrainAsync(
+            module.WaitForDrainAsync(),
+            TimeSpan.FromSeconds(5),
+            provider);
+
+        Ensure(provider.ActiveTimerCount == 1,
+            "the pending module drain must own one provider timer");
+        provider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+        await Task.Yield();
+        Ensure(!wait.IsCompleted,
+            "one provider tick before the graceful boundary must remain pending");
+        Ensure(module.RemainingCalls == 1 && module.RemainingStreams == 1,
+            "fake-time advancement must not release the retained module lease");
+
+        provider.Advance(TimeSpan.FromTicks(1));
+        Ensure(!await wait,
+            "an undrained module must time out at exact provider equality");
+        Ensure(module.State == SharpLinkDynamicModuleState.Draining &&
+               module.RemainingCalls == 1 && module.RemainingStreams == 1,
+            "the bounded wait helper must not mutate module state or counters by itself");
+        Ensure(provider.ActiveTimerCount == 0,
+            "the timed-out drain must dispose its provider timer");
+
+        lease.Dispose();
+        await module.WaitForDrainAsync();
+        Ensure(module.RemainingCalls == 0 && module.RemainingStreams == 0,
+            "the final lease must still drain both counters after timeout");
+    }
+
+    [Test]
+    public async Task ProviderAwareDrainShouldCompleteOnLeaseReleaseBeforeBoundaryAndDisarmTimeout()
+    {
+        var provider = new ManualTimeProvider();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(provider)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var manifest = new EmptyManifest();
+        using var registration = context.PrepareGeneratedManifest(manifest);
+        var module = new SharpLinkDynamicModule(
+            typeof(DynamicModuleTests).Assembly,
+            manifest,
+            registration);
+        Ensure(module.TryAcquire(stream: false, out var lease),
+            "the release scenario must retain one call lease");
+        module.TryBeginDraining();
+        var wait = SharpLinkDynamicModule.WaitForDrainAsync(
+            module.WaitForDrainAsync(),
+            TimeSpan.FromSeconds(5),
+            provider);
+
+        provider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+        await Task.Yield();
+        Ensure(!wait.IsCompleted && provider.ActiveTimerCount == 1,
+            "the drain must remain pending with one owned timer before lease release");
+
+        lease.Dispose();
+        Ensure(await wait,
+            "the final lease release immediately before the boundary must complete the drain");
+        Ensure(module.WaitForDrainAsync().IsCompletedSuccessfully &&
+               module.RemainingCalls == 0 && module.RemainingStreams == 0,
+            "lease release must publish drained state with balanced counters");
+        await provider.WaitForTimersDrainedAsync();
+        Ensure(provider.ActiveTimerCount == 0,
+            "successful drain completion must disarm the losing timeout timer");
+
+        provider.Advance(TimeSpan.FromHours(1));
+        Ensure(wait.IsCompletedSuccessfully && wait.Result,
+            "later fake-time advancement must not change a successful drain result");
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)

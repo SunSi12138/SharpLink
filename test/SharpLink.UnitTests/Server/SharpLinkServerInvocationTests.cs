@@ -17,6 +17,113 @@ namespace SharpLink.UnitTests.Server;
 public class SharpLinkServerInvocationTests
 {
     [Test]
+    public async Task ServerHeartbeatShouldKeepEqualityAndCloseOnlyTheStaleProviderSession()
+    {
+        var provider = new ManualTimeProvider();
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .DisableAutomaticServiceRegistration()
+            .UseTimeProvider(provider)
+            .UseHeartbeat(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10))
+            .UseTransport(new IdleListener())
+            .Build();
+        var runtimeContext = (SharpLinkRuntimeContext)(
+            typeof(SharpLinkServer).GetField(
+                "_runtimeContext",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(server)!);
+        var connections = (ConcurrentDictionary<string, ServerConnectionState>)(
+            typeof(SharpLinkServer).GetField(
+                "_connections",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(server)!);
+        var staleTransport = new TestTransportConnection();
+        var healthyTransport = new TestTransportConnection();
+        var staleSession = new RpcSession(
+            staleTransport,
+            RpcSessionTestFixture.ServerOptions(runtimeContext));
+        var healthySession = new RpcSession(
+            healthyTransport,
+            RpcSessionTestFixture.ServerOptions(runtimeContext));
+        RpcSessionTestFixture.CompleteHandshake(staleSession);
+        RpcSessionTestFixture.CompleteHandshake(healthySession);
+        var stale = new ServerConnectionState(
+            staleSession,
+            new RpcSessionGeneratedServerBridge(staleSession),
+            CreateCallCancellations(runtimeContext),
+            CancellationToken.None,
+            provider);
+        var healthy = new ServerConnectionState(
+            healthySession,
+            new RpcSessionGeneratedServerBridge(healthySession),
+            CreateCallCancellations(runtimeContext),
+            CancellationToken.None,
+            provider);
+        Ensure(stale.MarkReady(null) && healthy.MarkReady(null),
+            "both provider-backed heartbeat sessions must begin Ready");
+        Ensure(connections.TryAdd(staleSession.Id, stale) &&
+               connections.TryAdd(healthySession.Id, healthy),
+            "both heartbeat sessions must be published to the server connection table");
+        var runHeartbeat = typeof(SharpLinkServer).GetMethod(
+            "RunHeartbeatCheckLoopAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("cannot find Server heartbeat wrapper");
+        using var loopCancellation = new CancellationTokenSource();
+        var heartbeat = (Task)runHeartbeat.Invoke(server, [loopCancellation.Token])!;
+
+        try
+        {
+            Ensure(provider.ActiveTimerCount == 3,
+                "two deadline schedulers plus the heartbeat loop must own three provider timers");
+            Ensure(provider.EarliestTimerTimestamp == TimeSpan.FromSeconds(5).Ticks,
+                "the first server heartbeat check must be due at its provider interval");
+            provider.Advance(TimeSpan.FromSeconds(5));
+            await YieldUntilAsync(
+                () => provider.EarliestTimerTimestamp == TimeSpan.FromSeconds(10).Ticks,
+                "the first heartbeat check did not rearm its provider timer");
+            Ensure(connections.Count == 2 && staleSession.IsConnected && healthySession.IsConnected,
+                "sessions below the timeout must remain published and connected");
+
+            provider.Advance(TimeSpan.FromSeconds(5));
+            await YieldUntilAsync(
+                () => provider.EarliestTimerTimestamp == TimeSpan.FromSeconds(15).Ticks,
+                "the equality heartbeat check did not rearm its provider timer");
+            Ensure(staleSession.TimeSinceLastActivity == TimeSpan.FromSeconds(10) &&
+                   connections.Count == 2 && staleSession.IsConnected,
+                "a server session exactly at heartbeat timeout must remain connected");
+            healthySession.MarkActive();
+
+            var staleClosed = GetConnectionCompletionTask(stale);
+            provider.Advance(TimeSpan.FromSeconds(5));
+            await staleClosed;
+            Ensure(connections.Count == 1 &&
+                   connections.TryGetValue(healthySession.Id, out var current) &&
+                   ReferenceEquals(current, healthy),
+                "the post-boundary check must remove only the stale session");
+            Ensure(stale.LifecycleState == ServerConnectionLifecycleState.Closed &&
+                   !staleSession.IsConnected,
+                "the stale session must reach its single Closed terminal state");
+            Ensure(healthy.LifecycleState == ServerConnectionLifecycleState.Ready &&
+                   healthySession.IsConnected &&
+                   healthySession.TimeSinceLastActivity == TimeSpan.FromSeconds(5),
+                "refreshing one session must isolate it from another session's timeout");
+        }
+        finally
+        {
+            loopCancellation.Cancel();
+            await heartbeat;
+            connections.TryRemove(healthySession.Id, out _);
+            connections.TryRemove(staleSession.Id, out _);
+            await stale.CloseAsync();
+            await healthy.CloseAsync();
+            await stale.ServiceCleanupTask;
+            await healthy.ServiceCleanupTask;
+        }
+
+        Ensure(provider.ActiveTimerCount == 0,
+            "server heartbeat cancellation and connection close must release every provider timer");
+    }
+
+    [Test]
     public async Task DispatchObserverShouldSuppressOnlyExpectedConnectionClosure()
     {
         var loggerFactory = new CaptureLoggerFactory();
@@ -735,6 +842,16 @@ public class SharpLinkServerInvocationTests
         if (!condition)
             throw new Exception(message);
     }
+
+    private static async Task YieldUntilAsync(Func<bool> condition, string failureMessage)
+    {
+        for (var attempt = 0; attempt < 128 && !condition(); attempt++)
+            await Task.Yield();
+        Ensure(condition(), failureMessage);
+    }
+
+    private static Task GetConnectionCompletionTask(ServerConnectionState connection)
+        => connection.SessionTask;
 
     private sealed class CaptureLoggerFactory : ILoggerFactory
     {

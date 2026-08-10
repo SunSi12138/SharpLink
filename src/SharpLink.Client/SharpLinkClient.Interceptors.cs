@@ -85,7 +85,7 @@ internal sealed partial class SharpLinkClient
 
         public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync()
         {
-            _started = Stopwatch.GetTimestamp();
+            _started = _client._runtimeContext.TimeProvider.GetTimestamp();
             try
             {
                 var result = await InvokeNextAsync(0, _context).ConfigureAwait(false);
@@ -112,7 +112,7 @@ internal sealed partial class SharpLinkClient
             }
             finally
             {
-                _context.Elapsed = Stopwatch.GetElapsedTime(_started);
+                _context.Elapsed = _client._runtimeContext.TimeProvider.GetElapsedTime(_started);
             }
         }
 
@@ -321,7 +321,7 @@ internal sealed partial class SharpLinkClient
             }
             finally
             {
-                context.Elapsed = Stopwatch.GetElapsedTime(_started);
+                context.Elapsed = _client._runtimeContext.TimeProvider.GetElapsedTime(_started);
             }
         }
 

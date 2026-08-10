@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Reflection;
 
 namespace SharpLink.Server;
@@ -90,6 +89,7 @@ internal sealed partial class SharpLinkServer(
     private int _globalActiveCalls;
     private long _rejectedOneWayCalls;
     private long _oneWayAdmissionLogTimestamp;
+    private int _oneWayAdmissionLogInitialized;
 
     public SharpLinkHealthStatus HealthStatus => CurrentState switch
     {
@@ -119,9 +119,15 @@ internal sealed partial class SharpLinkServer(
 
     private async Task StopCoreAsync(TimeSpan gracefulTimeout)
     {
-        var started = Stopwatch.GetTimestamp();
-        var gracefulDeadline = AddStopwatchDuration(started, gracefulTimeout);
-        var finalDeadline = AddStopwatchDuration(gracefulDeadline, _shutdownPlan.CleanupBudget);
+        var started = _runtimeContext.TimeProvider.GetTimestamp();
+        var gracefulDeadline = SharpLinkTime.AddDuration(
+            started,
+            gracefulTimeout,
+            _runtimeContext.TimeProvider.TimestampFrequency);
+        var finalDeadline = SharpLinkTime.AddDuration(
+            gracefulDeadline,
+            _shutdownPlan.CleanupBudget,
+            _runtimeContext.TimeProvider.TimestampFrequency);
         var faulted = false;
         List<Exception>? stopFailures = null;
 
@@ -139,7 +145,7 @@ internal sealed partial class SharpLinkServer(
             if (Volatile.Read(ref _globalActiveCalls) == 0)
                 _callsDrained.TrySetResult(true);
             else
-                await WaitUntilAsync(_callsDrained.Task, gracefulDeadline).ConfigureAwait(false);
+                await WaitUntilWithRuntimeTimeAsync(_callsDrained.Task, gracefulDeadline).ConfigureAwait(false);
 
             Task flushTask = Task.CompletedTask;
             if (_callsDrained.Task.IsCompletedSuccessfully)
@@ -167,7 +173,7 @@ internal sealed partial class SharpLinkServer(
             var frameworkCleanupCompleted = false;
             try
             {
-                frameworkCleanupCompleted = await WaitUntilAsync(
+                frameworkCleanupCompleted = await WaitUntilWithRuntimeTimeAsync(
                     frameworkCleanupTask,
                     finalDeadline).ConfigureAwait(false);
             }
@@ -200,7 +206,7 @@ internal sealed partial class SharpLinkServer(
                 var serviceCleanupTask = DisposeRegisteredServicesAsync();
                 try
                 {
-                    if (!await WaitUntilAsync(serviceCleanupTask, finalDeadline).ConfigureAwait(false))
+                    if (!await WaitUntilWithRuntimeTimeAsync(serviceCleanupTask, finalDeadline).ConfigureAwait(false))
                     {
                         faulted = true;
                         _serviceCleanupObserver = ObserveCleanupFailureAsync(
@@ -254,9 +260,10 @@ internal sealed partial class SharpLinkServer(
 
     private async Task CleanupAfterRunFailureAsync()
     {
-        var deadline = AddStopwatchDuration(
-            Stopwatch.GetTimestamp(),
-            _shutdownPlan.CleanupBudget);
+        var deadline = SharpLinkTime.AddDuration(
+            _runtimeContext.TimeProvider.GetTimestamp(),
+            _shutdownPlan.CleanupBudget,
+            _runtimeContext.TimeProvider.TimestampFrequency);
 
         CancelForShutdown(_acceptCts, _logger, "AcceptCancellation");
         _admissionController?.StopAccepting();
@@ -280,7 +287,7 @@ internal sealed partial class SharpLinkServer(
         var frameworkCleanupCompleted = false;
         try
         {
-            frameworkCleanupCompleted = await WaitUntilAsync(frameworkCleanupTask, deadline)
+            frameworkCleanupCompleted = await WaitUntilWithRuntimeTimeAsync(frameworkCleanupTask, deadline)
                 .ConfigureAwait(false);
         }
         catch (Exception exception)
@@ -309,7 +316,7 @@ internal sealed partial class SharpLinkServer(
             var serviceCleanupTask = DisposeRegisteredServicesAsync();
             try
             {
-                if (!await WaitUntilAsync(serviceCleanupTask, deadline).ConfigureAwait(false))
+                if (!await WaitUntilWithRuntimeTimeAsync(serviceCleanupTask, deadline).ConfigureAwait(false))
                 {
                     _serviceCleanupObserver = ObserveCleanupFailureAsync(
                         serviceCleanupTask,
@@ -448,7 +455,13 @@ internal sealed partial class SharpLinkServer(
             throw new AggregateException(unexpected);
     }
 
-    private static async Task<bool> WaitUntilAsync(Task task, long deadline)
+    private Task<bool> WaitUntilWithRuntimeTimeAsync(Task task, long deadline)
+        => WaitUntilWithProviderAsync(task, deadline, _runtimeContext.TimeProvider);
+
+    private static async Task<bool> WaitUntilWithProviderAsync(
+        Task task,
+        long deadline,
+        TimeProvider timeProvider)
     {
         if (task.IsCompleted)
         {
@@ -456,26 +469,16 @@ internal sealed partial class SharpLinkServer(
             return true;
         }
 
-        var remaining = GetRemaining(deadline);
+        var remaining = SharpLinkTime.GetRemaining(
+            deadline,
+            timeProvider.GetTimestamp(),
+            timeProvider.TimestampFrequency);
         if (remaining <= TimeSpan.Zero)
             return false;
-        return await SharpLinkTimer.WaitAsync(task, remaining).ConfigureAwait(false);
-    }
-
-    private static long AddStopwatchDuration(long timestamp, TimeSpan duration)
-    {
-        var delta = duration.TotalSeconds * Stopwatch.Frequency;
-        if (delta >= long.MaxValue - timestamp)
-            return long.MaxValue;
-        return timestamp + (long)Math.Ceiling(delta);
-    }
-
-    private static TimeSpan GetRemaining(long deadline)
-    {
-        var remainingTicks = deadline - Stopwatch.GetTimestamp();
-        if (remainingTicks <= 0)
-            return TimeSpan.Zero;
-        return TimeSpan.FromSeconds((double)remainingTicks / Stopwatch.Frequency);
+        return await SharpLinkTimer.WaitAsync(
+            task,
+            remaining,
+            timeProvider).ConfigureAwait(false);
     }
 
     private async Task DisposeServicesWhenDrainedAsync(Task callsDrained)
@@ -719,7 +722,10 @@ internal sealed partial class SharpLinkServer(
             snapshots[index] = connections[index]
                 .CaptureStopDiagnostics(_maxConcurrentCallsPerConnection);
         }
-        return new ServerStopDiagnosticSnapshot(DateTimeOffset.UtcNow, activeCalls, snapshots);
+        return new ServerStopDiagnosticSnapshot(
+            _runtimeContext.TimeProvider.GetUtcNow(),
+            activeCalls,
+            snapshots);
     }
 
     private ServerState CurrentState => (ServerState)Volatile.Read(ref _state);

@@ -85,7 +85,9 @@ internal sealed partial class SharpLinkServer
         using var sessionScope = BeginSessionLogScope(_logger, session.Id);
         try
         {
-            using var handshakeTimeoutCts = new CancellationTokenSource(_protocolOptions.HandshakeTimeout);
+            using var handshakeTimeoutCts = new CancellationTokenSource(
+                _protocolOptions.HandshakeTimeout,
+                _runtimeContext.TimeProvider);
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct, handshakeTimeoutCts.Token);
             SharpLinkAuthenticationResult authResult;
             try
@@ -239,7 +241,10 @@ internal sealed partial class SharpLinkServer
     {
         while (!ct.IsCancellationRequested)
         {
-            await SharpLinkTimer.DelayAsync(heartbeatCheckInterval, ct).ConfigureAwait(false);
+            await SharpLinkTimer.DelayAsync(
+                heartbeatCheckInterval,
+                _runtimeContext.TimeProvider,
+                ct).ConfigureAwait(false);
             foreach (var (id, connection) in _connections)
             {
                 var session = connection.Session;

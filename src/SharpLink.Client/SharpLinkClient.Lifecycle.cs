@@ -180,7 +180,9 @@ internal sealed partial class SharpLinkClient
         CancellationToken operationCancellation,
         CancellationToken propagatedCancellation)
     {
-        using var handshakeTimeout = new CancellationTokenSource(_protocolOptions.HandshakeTimeout);
+        using var handshakeTimeout = new CancellationTokenSource(
+            _protocolOptions.HandshakeTimeout,
+            _runtimeContext.TimeProvider);
         using var handshakeCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             operationCancellation,
             handshakeTimeout.Token);
@@ -217,7 +219,7 @@ internal sealed partial class SharpLinkClient
         {
             if (_shutdownCts.IsCancellationRequested || ReadyConnectionCount == 0)
                 return;
-            _readyTimestamp = Stopwatch.GetTimestamp();
+            _readyTimestamp = _runtimeContext.TimeProvider.GetTimestamp();
             TransitionTo(SharpLinkConnectionState.Ready);
             _readySignal.TrySetResult(true);
         }
@@ -571,7 +573,10 @@ internal sealed partial class SharpLinkClient
         while (!ct.IsCancellationRequested)
         {
             await session.SendPingWithBackpressureAsync(ct).ConfigureAwait(false);
-            await SharpLinkTimer.DelayAsync(_heartbeatInterval, ct).ConfigureAwait(false);
+            await SharpLinkTimer.DelayAsync(
+                _heartbeatInterval,
+                _runtimeContext.TimeProvider,
+                ct).ConfigureAwait(false);
             if (session.TimeSinceLastActivity <= _heartbeatTimeout && session.IsConnected)
                 continue;
 

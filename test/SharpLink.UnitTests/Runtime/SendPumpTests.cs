@@ -38,6 +38,58 @@ public class SendPumpTests
     }
 
     [Test]
+    public async Task TimedBatchShouldFlushAtExactProviderLatencyAndReturnItsOwner()
+    {
+        var clock = new ManualTimeProvider();
+        var maxLatency = TimeSpan.FromSeconds(5);
+        var provider = new TimerArmObservingTimeProvider(clock, maxLatency);
+        var input = new Pipe();
+        var output = new Pipe();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(provider)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "timed-batch-provider-boundary",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ClientOptions(
+                context,
+                new RpcSessionFlushOptions(1024 * 1024, maxLatency)));
+        var frame = CreateFrame(session, 32, requestId: 1);
+        try
+        {
+            var flushedBytes = output.Reader.ReadAsync().AsTask();
+            session.SendPacket(frame);
+            await provider.ExpectedTimerArmed;
+            Ensure(clock.EarliestTimerTimestamp == maxLatency.Ticks,
+                "the first small frame must arm its exact provider MaxLatency boundary");
+
+            clock.Advance(maxLatency.Subtract(TimeSpan.FromTicks(1)));
+            Ensure(!flushedBytes.IsCompleted && session.QueuedSendBytes > 0,
+                "the small frame must remain batched one provider tick before MaxLatency");
+
+            clock.Advance(TimeSpan.FromTicks(1));
+            var read = await flushedBytes;
+            Ensure(read.Buffer.Length > ProtocolV2Constants.HeaderBytes,
+                "exact provider equality must make the timed batch visible to the transport");
+            output.Reader.AdvanceTo(read.Buffer.End);
+
+            await session.FlushSendQueueAsync();
+            await clock.WaitForTimersDrainedAsync();
+            EnsureReturned(frame,
+                "the equality flush must return the small-frame owner before its queue barrier completes");
+            Ensure(session.QueuedSendBytes == 0 && clock.ActiveTimerCount == 0,
+                "the equality flush must release queued bytes and its provider timer");
+        }
+        finally
+        {
+            await session.DisposeAsync();
+            await output.Reader.CompleteAsync();
+            await input.Writer.CompleteAsync();
+        }
+    }
+
+    [Test]
     public async Task FullByteQueueShouldFailFastWithoutClosingHealthySession()
     {
         var input = new Pipe();
@@ -248,6 +300,36 @@ public class SendPumpTests
             if (Stopwatch.GetTimestamp() >= deadline)
                 throw new TimeoutException("condition was not reached");
             await Task.Delay(5);
+        }
+    }
+
+    private sealed class TimerArmObservingTimeProvider(
+        ManualTimeProvider inner,
+        TimeSpan expectedDueTime) : TimeProvider
+    {
+        private readonly TaskCompletionSource _expectedTimerArmed =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal Task ExpectedTimerArmed => _expectedTimerArmed.Task;
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
+
+        public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
+
+        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
+
+        public override long GetTimestamp() => inner.GetTimestamp();
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            var timer = inner.CreateTimer(callback, state, dueTime, period);
+            if (dueTime == expectedDueTime)
+                _expectedTimerArmed.TrySetResult();
+            return timer;
         }
     }
 

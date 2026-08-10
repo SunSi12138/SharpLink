@@ -199,13 +199,16 @@ public static class RpcSessionExtensions
 
         /// <summary>Sends a ping containing the current monotonic timestamp.</summary>
         public void SendPingAsync()
-            => SendTimestampFrame(session, ProtocolV2FrameType.Ping, Stopwatch.GetTimestamp());
+            => SendTimestampFrame(
+                session,
+                ProtocolV2FrameType.Ping,
+                GetRuntimeSession(session).RuntimeContext.TimeProvider.GetTimestamp());
 
         internal ValueTask SendPingWithBackpressureAsync(CancellationToken cancellationToken = default)
             => SendTimestampFrameWithBackpressureAsync(
                 session,
                 ProtocolV2FrameType.Ping,
-                Stopwatch.GetTimestamp(),
+                GetRuntimeSession(session).RuntimeContext.TimeProvider.GetTimestamp(),
                 cancellationToken);
 
         /// <summary>Sends a pong that echoes a received ping timestamp.</summary>

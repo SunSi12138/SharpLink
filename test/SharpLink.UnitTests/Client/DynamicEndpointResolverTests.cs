@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using SharpLink.Client;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Client;
 
@@ -239,6 +240,51 @@ public sealed class DynamicEndpointResolverTests
     }
 
     [Test]
+    public async Task DelegateResolverPollingShouldUseTheBoundProviderBoundaryAndCleanUpOnStop()
+    {
+        var provider = new ManualTimeProvider();
+        var resolveCount = 0;
+        var resolver = new DelegateSharpLinkEndpointResolver(
+            _ =>
+            {
+                var version = Interlocked.Increment(ref resolveCount);
+                return ValueTask.FromResult(new SharpLinkEndpointSnapshot(version, []));
+            },
+            TimeSpan.FromSeconds(5));
+        var providerAware = (ISharpLinkRuntimeTimeProviderAwareResolver)resolver;
+        providerAware.BindTimeProvider(provider);
+        var duplicateBind = CaptureFailure(() => providerAware.BindTimeProvider(provider));
+        using var stop = new CancellationTokenSource();
+        await using var watch = resolver.WatchAsync(stop.Token).GetAsyncEnumerator(stop.Token);
+        var firstPoll = watch.MoveNextAsync().AsTask();
+
+        Ensure(duplicateBind is InvalidOperationException,
+            "a built-in resolver must bind to exactly one client TimeProvider");
+        Ensure(provider.ActiveTimerCount == 1 && resolveCount == 0,
+            "polling must arm one provider timer without resolving immediately");
+        provider.Advance(TimeSpan.FromSeconds(5).Subtract(TimeSpan.FromTicks(1)));
+        await Task.Yield();
+        Ensure(!firstPoll.IsCompleted && resolveCount == 0,
+            "delegate polling must remain pending one provider tick before its interval");
+
+        provider.Advance(TimeSpan.FromTicks(1));
+        Ensure(await firstPoll && resolveCount == 1 && watch.Current.Version == 1,
+            "delegate polling must resolve exactly once at provider equality");
+
+        var stoppedPoll = watch.MoveNextAsync().AsTask();
+        Ensure(provider.ActiveTimerCount == 1,
+            "the next polling interval must own one provider timer");
+        stop.Cancel();
+        var stopped = await CaptureFailureAsync(stoppedPoll);
+        await resolver.DisposeAsync();
+
+        Ensure(stopped is OperationCanceledException,
+            "client stop cancellation must terminate provider-backed delegate polling");
+        Ensure(resolveCount == 1 && provider.ActiveTimerCount == 0,
+            "stopping polling must not resolve again or leak its provider timer");
+    }
+
+    [Test]
     public async Task DynamicBuilderShouldOwnResolverAndRejectFixedTransportConflict()
     {
         var resolver = new TrackingResolver();
@@ -350,6 +396,19 @@ public sealed class DynamicEndpointResolverTests
         try
         {
             await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static Exception? CaptureFailure(Action action)
+    {
+        try
+        {
+            action();
             return null;
         }
         catch (Exception exception)

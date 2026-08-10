@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Threading.RateLimiting;
 
 namespace SharpLink.Server;
@@ -12,6 +11,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
     private readonly long _maxQueuedBytes;
     private readonly TimeSpan _maxQueueDelay;
     private readonly bool _queueOneWayCalls;
+    private readonly TimeProvider _timeProvider;
     private readonly AdmissionPartitionPool? _partitions;
     private readonly CancellationTokenSource _draining = new();
     private readonly Lock _queueGate = new();
@@ -27,12 +27,14 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         AdmissionRuleRuntime? global,
         FrozenDictionary<long, AdmissionRuleRuntime> contracts,
         FrozenDictionary<(long ContractId, long MethodId), AdmissionRuleRuntime> methods,
-        AdmissionPartitionPool? partitions)
+        AdmissionPartitionPool? partitions,
+        TimeProvider timeProvider)
     {
         _maxQueuedCalls = options.MaxQueuedCalls;
         _maxQueuedBytes = options.MaxQueuedBytes;
         _maxQueueDelay = options.MaxQueueDelay;
         _queueOneWayCalls = options.QueueOneWayCalls;
+        _timeProvider = timeProvider;
         _global = global;
         _contracts = contracts;
         _methods = methods;
@@ -41,10 +43,12 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
 
     internal static SharpLinkAdmissionController Create(
         SharpLinkAdmissionControlOptions options,
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests)
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(manifests);
+        timeProvider ??= TimeProvider.System;
         options.Validate();
         var contractsByType = new Dictionary<Type, SharpLinkGeneratedContractDescriptor>();
         foreach (var manifest in manifests)
@@ -128,14 +132,18 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             }
             var partitions = options.Partition is { } partition
                 ? new AdmissionPartitionPool(
-                    options.PartitionSelector!, partition, options.MaxQueuedCalls)
+                    options.PartitionSelector!,
+                    partition,
+                    options.MaxQueuedCalls,
+                    timeProvider)
                 : null;
             return new SharpLinkAdmissionController(
                 options,
                 global,
                 contractRules.ToFrozenDictionary(),
                 methodRules.ToFrozenDictionary(),
-                partitions);
+                partitions,
+                timeProvider);
         }
         catch
         {
@@ -152,6 +160,21 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         SharpLinkAdmissionContext context,
         int retainedBytes,
         bool allowQueue,
+        CancellationToken cancellationToken)
+        => AcquireAsync(
+            context,
+            retainedBytes,
+            allowQueue,
+            context.Deadline is { } deadline
+                ? RpcDeadline.Create(deadline, _timeProvider)
+                : default,
+            cancellationToken);
+
+    internal ValueTask<AdmissionDecision> AcquireAsync(
+        SharpLinkAdmissionContext context,
+        int retainedBytes,
+        bool allowQueue,
+        RpcDeadline deadline,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -188,7 +211,7 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
             request,
             failedSlot,
             retainedBytes,
-            context.Deadline,
+            deadline,
             cancellationToken);
     }
 
@@ -226,33 +249,26 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         AdmissionRequest request,
         AdmissionLimiterSlot failedSlot,
         int retainedBytes,
-        DateTimeOffset? deadline,
+        RpcDeadline deadline,
         CancellationToken cancellationToken)
     {
-        var started = Stopwatch.GetTimestamp();
-        using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken,
-            _draining.Token);
+        var started = _timeProvider.GetTimestamp();
         var maximumDelay = _maxQueueDelay;
         var deadlineLimitsWait = false;
-        if (deadline is { } absoluteDeadline)
+        if (deadline.HasValue && deadline.WouldExpireBeforeOrAt(maximumDelay, _timeProvider))
         {
-            var deadlineDelay = absoluteDeadline - DateTimeOffset.UtcNow;
-            if (deadlineDelay <= TimeSpan.Zero)
-            {
-                maximumDelay = TimeSpan.Zero;
-                deadlineLimitsWait = true;
-            }
-            else if (deadlineDelay < maximumDelay)
-            {
-                maximumDelay = deadlineDelay;
-                deadlineLimitsWait = true;
-            }
+            maximumDelay = deadline.GetRemaining(_timeProvider);
+            deadlineLimitsWait = true;
         }
+        using var timeoutCancellation = maximumDelay <= TimeSpan.Zero
+            ? new CancellationTokenSource()
+            : new CancellationTokenSource(maximumDelay, _timeProvider);
         if (maximumDelay <= TimeSpan.Zero)
-            waitCancellation.Cancel();
-        else
-            waitCancellation.CancelAfter(maximumDelay);
+            timeoutCancellation.Cancel();
+        using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _draining.Token,
+            timeoutCancellation.Token);
 
         try
         {
@@ -300,7 +316,8 @@ internal sealed class SharpLinkAdmissionController : IAsyncDisposable
         finally
         {
             ReleaseQueue(retainedBytes);
-            SharpLinkTelemetry.RecordAdmissionQueueDuration(Stopwatch.GetElapsedTime(started));
+            SharpLinkTelemetry.RecordAdmissionQueueDuration(
+                _timeProvider.GetElapsedTime(started));
             request.Dispose();
         }
     }
@@ -729,6 +746,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
     private readonly Func<SharpLinkAdmissionContext, string?> _selector;
     private readonly SharpLinkPartitionAdmissionOptions _options;
     private readonly int _queueLimit;
+    private readonly TimeProvider _timeProvider;
     private readonly Lock _gate = new();
     private readonly Dictionary<AdmissionPartitionKey, AdmissionPartitionEntry> _entries = [];
     private int _disposed;
@@ -736,11 +754,13 @@ internal sealed class AdmissionPartitionPool : IDisposable
     internal AdmissionPartitionPool(
         Func<SharpLinkAdmissionContext, string?> selector,
         SharpLinkPartitionAdmissionOptions options,
-        int queueLimit)
+        int queueLimit,
+        TimeProvider timeProvider)
     {
         _selector = selector;
         _options = options.CloneValidated();
         _queueLimit = queueLimit;
+        _timeProvider = timeProvider;
     }
 
     internal AdmissionPartitionLease? TryAcquire(SharpLinkAdmissionContext context)
@@ -760,7 +780,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
                 return null;
             if (!_entries.TryGetValue(key, out entry!))
             {
-                evicted = ReclaimIdleEntries(Stopwatch.GetTimestamp(), stopAfterOne: true);
+                evicted = ReclaimIdleEntries(_timeProvider.GetTimestamp(), stopAfterOne: true);
                 if (_entries.Count >= _options.MaxPartitions)
                     return null;
                 entry = new AdmissionPartitionEntry(
@@ -769,6 +789,7 @@ internal sealed class AdmissionPartitionPool : IDisposable
                 SharpLinkTelemetry.AddAdmissionActivePartitions(1);
             }
             entry.References++;
+            entry.IsIdle = false;
         }
         DisposeRules(evicted);
         return new AdmissionPartitionLease(this, entry);
@@ -781,8 +802,11 @@ internal sealed class AdmissionPartitionPool : IDisposable
         {
             entry.References--;
             if (entry.References == 0)
-                entry.IdleSince = Stopwatch.GetTimestamp();
-            evicted = ReclaimIdleEntries(Stopwatch.GetTimestamp(), stopAfterOne: true);
+            {
+                entry.IdleSince = _timeProvider.GetTimestamp();
+                entry.IsIdle = true;
+            }
+            evicted = ReclaimIdleEntries(_timeProvider.GetTimestamp(), stopAfterOne: true);
         }
         DisposeRules(evicted);
     }
@@ -792,8 +816,8 @@ internal sealed class AdmissionPartitionPool : IDisposable
         List<AdmissionPartitionKey>? keys = null;
         foreach (var pair in _entries)
         {
-            if (pair.Value.References != 0 || pair.Value.IdleSince == 0 ||
-                Stopwatch.GetElapsedTime(pair.Value.IdleSince, now) < _options.IdleTimeout)
+            if (pair.Value.References != 0 || !pair.Value.IsIdle ||
+                _timeProvider.GetElapsedTime(pair.Value.IdleSince, now) < _options.IdleTimeout)
             {
                 continue;
             }
@@ -859,6 +883,7 @@ internal sealed class AdmissionPartitionEntry(AdmissionRuleRuntime runtime)
     internal AdmissionRuleRuntime Runtime { get; } = runtime;
     internal int References;
     internal long IdleSince;
+    internal bool IsIdle;
 }
 
 internal sealed class AdmissionPartitionLease(

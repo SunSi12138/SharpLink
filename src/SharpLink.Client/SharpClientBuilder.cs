@@ -629,7 +629,7 @@ public class SharpClientBuilder
             fixedEndpoint: fixedEndpoint,
             retryOptions: CreateRetryOptions(),
             retryPolicy: _retryPolicy,
-            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(),
+            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(runtimeContext),
             staticManifests: staticManifests
         );
     }
@@ -658,7 +658,7 @@ public class SharpClientBuilder
             _endpointSelector,
             retryOptions: CreateRetryOptions(),
             retryPolicy: _retryPolicy,
-            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(),
+            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(runtimeContext),
             staticManifests: staticManifests);
 
     private ISharpLinkClient CreateDynamicClusterClient(
@@ -687,15 +687,18 @@ public class SharpClientBuilder
             endpointSelector: _endpointSelector,
             retryOptions: CreateRetryOptions(),
             retryPolicy: _retryPolicy,
-            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(),
+            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(runtimeContext),
             staticManifests: staticManifests);
 
     private SharpLinkRetryOptions? CreateRetryOptions()
         => _retryConfigured ? _retry.CloneValidated() : null;
 
-    private ISharpLinkEndpointAdmissionPolicy? CreateEndpointAdmissionPolicy()
+    private ISharpLinkEndpointAdmissionPolicy? CreateEndpointAdmissionPolicy(
+        SharpLinkRuntimeContext runtimeContext)
         => _circuitBreakerConfigured
-            ? new SharpLinkCircuitBreaker(_circuitBreaker.CloneValidated())
+            ? new SharpLinkCircuitBreaker(
+                _circuitBreaker.CloneValidated(),
+                runtimeContext.TimeProvider)
             : _endpointAdmissionPolicy;
 
     internal static IClientTransportFactory CreateTransportFactory(

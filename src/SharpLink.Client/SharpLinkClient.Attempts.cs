@@ -32,7 +32,7 @@ internal sealed partial class SharpLinkClient
         {
             _client = client;
             _method = method;
-            _attemptStarted = Stopwatch.GetTimestamp();
+            _attemptStarted = _client._runtimeContext.TimeProvider.GetTimestamp();
             SharpLinkTelemetry.RecordClientAttempt();
         }
 
@@ -108,7 +108,9 @@ internal sealed partial class SharpLinkClient
             _completionReason = null;
             _localErrorCode = null;
             Volatile.Write(ref _responseObserved, 0);
-            Volatile.Write(ref _endpointStarted, Stopwatch.GetTimestamp());
+            Volatile.Write(
+                ref _endpointStarted,
+                _client._runtimeContext.TimeProvider.GetTimestamp());
             Volatile.Write(ref _admissionGranted, 1);
             Volatile.Write(ref _hasAdmissionLease, 1);
             Volatile.Write(ref _reported, 0);
@@ -167,7 +169,7 @@ internal sealed partial class SharpLinkClient
                 _completionReason,
                 Volatile.Read(ref _responseObserved) != 0,
                 _localErrorCode ?? GetErrorCode(exception),
-                Stopwatch.GetElapsedTime(_attemptStarted));
+                _client._runtimeContext.TimeProvider.GetElapsedTime(_attemptStarted));
 
         private void Report(PendingCallCompletionReason reason, Exception? exception)
         {
@@ -183,7 +185,8 @@ internal sealed partial class SharpLinkClient
                 ToOutcomeKind(reason, exception),
                 _localErrorCode ?? (exception is null ? null : GetErrorCode(exception)),
                 Volatile.Read(ref _responseObserved) != 0,
-                Stopwatch.GetElapsedTime(Volatile.Read(ref _endpointStarted)));
+                _client._runtimeContext.TimeProvider.GetElapsedTime(
+                    Volatile.Read(ref _endpointStarted)));
             try
             {
                 policy.Report(outcome, _admissionToken);

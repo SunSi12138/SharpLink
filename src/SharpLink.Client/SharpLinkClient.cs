@@ -7,7 +7,8 @@ internal sealed partial class SharpLinkClient :
     IRpcChannel,
     ISharpLinkClient,
     IDynamicAssemblyRegistrationInspector,
-    ISharpLinkClientDrainInspector
+    ISharpLinkClientDrainInspector,
+    ISharpLinkClientTimeProvider
 {
     private readonly IClientTransportFactory transportFactory;
     private readonly IEndpointClusterRuntime? _cluster;
@@ -53,6 +54,7 @@ internal sealed partial class SharpLinkClient :
     private readonly SharpLinkRetryOptions? _retryOptions;
     private readonly ISharpLinkRetryPolicy? _retryPolicy;
     private readonly ISharpLinkEndpointAdmissionPolicy? _endpointAdmissionPolicy;
+    private readonly ISharpLinkReconnectJitter _reconnectJitter;
 
     private SharpLinkClient(
         IClientTransportFactory transportFactory,
@@ -67,7 +69,8 @@ internal sealed partial class SharpLinkClient :
         SharpLinkRetryOptions? retryOptions = null,
         ISharpLinkRetryPolicy? retryPolicy = null,
         ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null,
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null)
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null,
+        ISharpLinkReconnectJitter? reconnectJitter = null)
     {
         this.transportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
         _runtimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
@@ -78,6 +81,7 @@ internal sealed partial class SharpLinkClient :
         _retryOptions = retryOptions;
         _retryPolicy = retryPolicy;
         _endpointAdmissionPolicy = endpointAdmissionPolicy;
+        _reconnectJitter = reconnectJitter ?? RandomSharpLinkReconnectJitter.Instance;
         if (staticEndpoints is not null && dynamicResolver is not null)
             throw new ArgumentException("Static endpoints and an endpoint resolver cannot both be configured.");
         if (staticEndpoints is not null)
@@ -122,9 +126,11 @@ internal sealed partial class SharpLinkClient :
         SharpLinkRetryOptions? retryOptions = null,
         ISharpLinkRetryPolicy? retryPolicy = null,
         ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null,
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null)
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null,
+        ISharpLinkReconnectJitter? reconnectJitter = null)
         : this(transportFactory, runtimeContext, staticEndpoints, clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint,
-            dynamicResolver, dynamicTransportFactory, retryOptions, retryPolicy, endpointAdmissionPolicy, staticManifests)
+            dynamicResolver, dynamicTransportFactory, retryOptions, retryPolicy, endpointAdmissionPolicy, staticManifests,
+            reconnectJitter)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatTimeout, TimeSpan.Zero);
@@ -169,17 +175,21 @@ internal sealed partial class SharpLinkClient :
         SharpLinkRetryOptions? retryOptions = null,
         ISharpLinkRetryPolicy? retryPolicy = null,
         ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null,
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null)
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null,
+        ISharpLinkReconnectJitter? reconnectJitter = null)
         : this(transportFactory, heartbeatInterval, heartbeatTimeout, runtimeContext, requestTimeout, authenticator,
             protocolOptions, rpcSessionFlushOptions, connectionPoolOptions, clientInterceptors, staticEndpoints,
             clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint, dynamicResolver, dynamicTransportFactory,
-            retryOptions, retryPolicy, endpointAdmissionPolicy, staticManifests)
+            retryOptions, retryPolicy, endpointAdmissionPolicy, staticManifests, reconnectJitter)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _logger = loggerFactory.CreateLogger<SharpLinkClient>();
     }
 
     public IRpcRuntimeContext RuntimeContext => _runtimeContext;
+
+    TimeProvider ISharpLinkClientTimeProvider.TimeProvider
+        => _runtimeContext.TimeProvider;
 
     public SharpLinkConnectionState State
         => (SharpLinkConnectionState)Volatile.Read(ref _state);

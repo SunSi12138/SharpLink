@@ -55,7 +55,8 @@ internal sealed partial class SharpLinkServer
         {
             if (!await SharpLinkDynamicModule.WaitForDrainAsync(
                     drainTask,
-                    gracefulTimeout).ConfigureAwait(false))
+                    gracefulTimeout,
+                    _runtimeContext.TimeProvider).ConfigureAwait(false))
             {
                 module.CancelRemainingCalls();
                 await Task.Yield();

@@ -11,6 +11,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger _logger;
+    private readonly TimeProvider _timeProvider;
     private readonly FrameworkTaskSupervisor _frameworkTasks;
     private MultiClusterSnapshot _snapshot;
     private readonly List<DynamicAssemblyRegistration> _dynamicRegistrations = [];
@@ -43,6 +44,10 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
                 : clusters.Values.Sum(static slot => slot.ConfiguredConnectionBudget));
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
         _logger = _loggerFactory.CreateLogger<SharpLinkMultiClusterClient>();
+        _timeProvider = clusters.Values
+            .Select(static slot => slot.Client)
+            .OfType<ISharpLinkClientTimeProvider>()
+            .FirstOrDefault()?.TimeProvider ?? TimeProvider.System;
         _frameworkTasks = new FrameworkTaskSupervisor((operation, exception) =>
             LogMultiClusterFrameworkTaskFailure(_logger, operation, exception));
     }
@@ -551,7 +556,10 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
     {
         while ((SharpLinkMultiClusterState)Volatile.Read(ref _state) is not SharpLinkMultiClusterState.Stopped)
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(100)).ConfigureAwait(false);
+            await Task.Delay(
+                TimeSpan.FromMilliseconds(100),
+                GetTimeProvider(slot.Client),
+                _shutdown.Token).ConfigureAwait(false);
             if (slot.Client is IDynamicAssemblyRegistrationInspector inspector)
             {
                 if (!inspector.IsDynamicAssemblyRegistered(registration.Assembly))
@@ -721,6 +729,11 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         string message,
         Assembly assembly)
         => new(code, message, IncomingAssembly: assembly.FullName);
+
+    private TimeProvider GetTimeProvider(ISharpLinkClient client)
+        => client is ISharpLinkClientTimeProvider inspector
+            ? inspector.TimeProvider
+            : _timeProvider;
 }
 
 internal sealed record SharpLinkClusterSlot(
@@ -765,4 +778,9 @@ internal interface ISharpLinkClientDrainInspector
     int ActiveCallCount { get; }
 
     int ActiveStreamCount { get; }
+}
+
+internal interface ISharpLinkClientTimeProvider
+{
+    TimeProvider TimeProvider { get; }
 }

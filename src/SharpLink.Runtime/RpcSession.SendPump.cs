@@ -5,7 +5,6 @@ public sealed partial class RpcSession
     private sealed class SendPump
     {
         private static readonly TimeSpan MaximumTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue);
-        private static readonly long MaximumTimerStopwatchTicks = ToStopwatchTicks(MaximumTimerDelay);
         private enum FlushMode
         {
             LowLatency,
@@ -16,8 +15,9 @@ public sealed partial class RpcSession
         private readonly PipeWriter _output;
         private readonly FlushMode _flushMode;
         private readonly int _flushSizeThreshold;
-        private readonly long _maxLatencyTicks;
+        private readonly TimeSpan _maxLatency;
         private readonly int _maxQueuedBytes;
+        private readonly TimeProvider _timeProvider;
         private readonly CancellationToken _sessionCancellation;
         private readonly Action<IRpcByteBufferWriter> _returnBuffer;
         private readonly Action<Exception> _onTransportFaulted;
@@ -35,6 +35,7 @@ public sealed partial class RpcSession
             SharpLinkPerformanceProfile performanceProfile,
             int maxQueuedBytes,
             RpcSessionFlushOptions? flushOptions,
+            TimeProvider timeProvider,
             CancellationToken sessionCancellation,
             Action<IRpcByteBufferWriter> returnBuffer,
             Action<Exception> onTransportFaulted)
@@ -43,6 +44,7 @@ public sealed partial class RpcSession
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxQueuedBytes);
             _output = output;
             _maxQueuedBytes = maxQueuedBytes;
+            _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
             _sessionCancellation = sessionCancellation;
             _returnBuffer = returnBuffer ?? throw new ArgumentNullException(nameof(returnBuffer));
             _onTransportFaulted = onTransportFaulted ?? throw new ArgumentNullException(nameof(onTransportFaulted));
@@ -51,7 +53,7 @@ public sealed partial class RpcSession
             {
                 _flushMode = FlushMode.TimedBatch;
                 _flushSizeThreshold = custom.FlushSizeThreshold;
-                _maxLatencyTicks = ToStopwatchTicks(custom.MaxLatency);
+                _maxLatency = custom.MaxLatency;
             }
             else
             {
@@ -60,17 +62,17 @@ public sealed partial class RpcSession
                     case SharpLinkPerformanceProfile.LowLatency:
                         _flushMode = FlushMode.LowLatency;
                         _flushSizeThreshold = 1;
-                        _maxLatencyTicks = 0;
+                        _maxLatency = TimeSpan.Zero;
                         break;
                     case SharpLinkPerformanceProfile.Throughput:
                         _flushMode = FlushMode.TimedBatch;
                         _flushSizeThreshold = 64 * 1024;
-                        _maxLatencyTicks = ToStopwatchTicks(TimeSpan.FromMilliseconds(1));
+                        _maxLatency = TimeSpan.FromMilliseconds(1);
                         break;
                     default:
                         _flushMode = FlushMode.Balanced;
                         _flushSizeThreshold = 16 * 1024;
-                        _maxLatencyTicks = 0;
+                        _maxLatency = TimeSpan.Zero;
                         break;
                 }
             }
@@ -140,7 +142,7 @@ public sealed partial class RpcSession
             var pending = new List<OwnedFrame>(32);
             Exception terminalException = CreateTransportClosedException();
             var bytesAccumulated = 0;
-            var batchStart = 0L;
+            var batchDeadline = 0L;
 
             try
             {
@@ -149,7 +151,12 @@ public sealed partial class RpcSession
                     while (_queue.Reader.TryRead(out var frame))
                     {
                         if (pending.Count == 0)
-                            batchStart = Stopwatch.GetTimestamp();
+                        {
+                            batchDeadline = SharpLinkTime.AddDuration(
+                                _timeProvider.GetTimestamp(),
+                                _maxLatency,
+                                _timeProvider.TimestampFrequency);
+                        }
 
                         WriteFrame(frame);
                         pending.Add(frame);
@@ -161,7 +168,7 @@ public sealed partial class RpcSession
                         {
                             await FlushAndReleaseAsync(pending).ConfigureAwait(false);
                             bytesAccumulated = 0;
-                            batchStart = 0;
+                            batchDeadline = 0;
                         }
                     }
 
@@ -169,14 +176,14 @@ public sealed partial class RpcSession
                         continue;
 
                     if (_flushMode == FlushMode.TimedBatch &&
-                        await WaitForMoreUntilDeadlineAsync(batchStart).ConfigureAwait(false))
+                        await WaitForMoreUntilDeadlineAsync(batchDeadline).ConfigureAwait(false))
                     {
                         continue;
                     }
 
                     await FlushAndReleaseAsync(pending).ConfigureAwait(false);
                     bytesAccumulated = 0;
-                    batchStart = 0;
+                    batchDeadline = 0;
                 }
             }
             catch (OperationCanceledException) when (_sessionCancellation.IsCancellationRequested)
@@ -214,7 +221,7 @@ public sealed partial class RpcSession
             ReleaseBatch(pending, exception: null);
         }
 
-        private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchStart)
+        private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchDeadline)
         {
             var waitToRead = _queue.Reader.WaitToReadAsync(_sessionCancellation);
             if (waitToRead.IsCompletedSuccessfully)
@@ -224,14 +231,16 @@ public sealed partial class RpcSession
             _pendingReadWait = pendingRead;
             while (true)
             {
-                var remainingTicks = _maxLatencyTicks - (Stopwatch.GetTimestamp() - batchStart);
-                if (remainingTicks <= 0)
+                var remaining = SharpLinkTime.GetRemaining(
+                    batchDeadline,
+                    _timeProvider.GetTimestamp(),
+                    _timeProvider.TimestampFrequency);
+                if (remaining == TimeSpan.Zero)
                     return false;
 
-                var timerTicks = Math.Min(remainingTicks, MaximumTimerStopwatchTicks);
-                var delay = TimeSpan.FromSeconds((double)timerTicks / Stopwatch.Frequency);
+                var delay = remaining > MaximumTimerDelay ? MaximumTimerDelay : remaining;
                 using var delayCancellation = new CancellationTokenSource();
-                var delayTask = Task.Delay(delay, delayCancellation.Token);
+                var delayTask = Task.Delay(delay, _timeProvider, delayCancellation.Token);
                 if (await Task.WhenAny(pendingRead, delayTask).ConfigureAwait(false) == pendingRead)
                 {
                     _pendingReadWait = null;
@@ -239,7 +248,7 @@ public sealed partial class RpcSession
                     return await pendingRead.ConfigureAwait(false);
                 }
 
-                if (remainingTicks <= MaximumTimerStopwatchTicks)
+                if (remaining <= MaximumTimerDelay)
                     return false;
             }
         }
@@ -376,14 +385,6 @@ public sealed partial class RpcSession
             _queue.Writer.TryComplete(exception);
             PulseCapacityWaiters();
             _onTransportFaulted(exception);
-        }
-
-        private static long ToStopwatchTicks(TimeSpan value)
-        {
-            var ticks = value.TotalSeconds * Stopwatch.Frequency;
-            return ticks >= long.MaxValue
-                ? long.MaxValue
-                : Math.Max(1L, (long)Math.Ceiling(ticks));
         }
 
         private static SharpLinkException NormalizeTransportException(Exception exception)

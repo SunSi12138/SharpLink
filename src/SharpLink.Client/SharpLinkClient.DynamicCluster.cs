@@ -46,6 +46,8 @@ internal sealed partial class SharpLinkClient
             ISharpLinkEndpointSelector? selector)
         {
             _client = client;
+            if (resolver is ISharpLinkRuntimeTimeProviderAwareResolver timeProviderAware)
+                timeProviderAware.BindTimeProvider(client._runtimeContext.TimeProvider);
             _resolver = resolver;
             _transportFactory = transportFactory;
             _options = options;
@@ -385,8 +387,10 @@ internal sealed partial class SharpLinkClient
 
         private async Task DelayResolverRetryAsync(int delayMilliseconds)
         {
-            var jitter = 0.8 + Random.Shared.NextDouble() * 0.4;
-            await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds * jitter), _client._shutdownCts.Token)
+            await Task.Delay(
+                    _client._reconnectJitter.ScaleTwentyPercent(delayMilliseconds),
+                    _client._runtimeContext.TimeProvider,
+                    _client._shutdownCts.Token)
                 .ConfigureAwait(false);
         }
 
@@ -929,8 +933,10 @@ internal sealed partial class SharpLinkClient
                 delayMilliseconds = endpoint.ReconnectDelayMilliseconds;
             try
             {
-                var jitterMilliseconds = Random.Shared.Next(delayMilliseconds / 4 + 1);
-                await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds + jitterMilliseconds), _client._shutdownCts.Token).ConfigureAwait(false);
+                await Task.Delay(
+                    _client._reconnectJitter.AddQuarterWindow(delayMilliseconds),
+                    _client._runtimeContext.TimeProvider,
+                    _client._shutdownCts.Token).ConfigureAwait(false);
                 var shouldConnect = false;
                 lock (_gate)
                     shouldConnect = NeedsReconnectLocked(endpoint);
@@ -967,7 +973,7 @@ internal sealed partial class SharpLinkClient
         {
             if (ReadyConnectionCount != 0)
             {
-                _client._readyTimestamp = Stopwatch.GetTimestamp();
+                _client._readyTimestamp = _client._runtimeContext.TimeProvider.GetTimestamp();
                 _client.TransitionTo(SharpLinkConnectionState.Ready);
                 Volatile.Read(ref _client._readySignal).TrySetResult(true);
                 return;

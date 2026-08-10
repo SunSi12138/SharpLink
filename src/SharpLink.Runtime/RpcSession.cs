@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace SharpLink.Runtime;
 
 /// <summary>Owns protocol state, buffering, flow control, and lifecycle for one RPC transport connection.</summary>
@@ -24,11 +22,23 @@ public sealed partial class RpcSession : IRpcSession
     internal bool HasStreamFlowControl
         => Volatile.Read(ref _protocolState).FlowController is not null;
     IRpcRuntimeContext IRpcSession.RuntimeContext => RuntimeContext;
-    private long _lastActiveTimestamp = Stopwatch.GetTimestamp();
+    private long _lastActiveTimestamp;
+    private long _lastActiveUtcTicks;
     /// <inheritdoc />
-    public DateTime LastActive { get; set; } = DateTime.UtcNow;
+    public DateTime LastActive
+    {
+        get => new(Volatile.Read(ref _lastActiveUtcTicks), DateTimeKind.Utc);
+        set
+        {
+            Volatile.Write(
+                ref _lastActiveUtcTicks,
+                value.Kind == DateTimeKind.Local
+                    ? value.ToUniversalTime().Ticks
+                    : value.Ticks);
+        }
+    }
     internal TimeSpan TimeSinceLastActivity
-        => Stopwatch.GetElapsedTime(Volatile.Read(ref _lastActiveTimestamp));
+        => RuntimeContext.TimeProvider.GetElapsedTime(Volatile.Read(ref _lastActiveTimestamp));
     /// <inheritdoc />
     public PipeReader Input => _transport.Input;
     private PipeWriter Output => _transport.Output;
@@ -63,8 +73,9 @@ public sealed partial class RpcSession : IRpcSession
 
     internal void MarkActive()
     {
-        Volatile.Write(ref _lastActiveTimestamp, Stopwatch.GetTimestamp());
-        LastActive = DateTime.UtcNow;
+        var timeProvider = RuntimeContext.TimeProvider;
+        Volatile.Write(ref _lastActiveTimestamp, timeProvider.GetTimestamp());
+        Volatile.Write(ref _lastActiveUtcTicks, timeProvider.GetUtcNow().UtcDateTime.Ticks);
     }
 
     /// <summary>Creates an RPC session that owns one transport connection.</summary>
@@ -82,6 +93,8 @@ public sealed partial class RpcSession : IRpcSession
         Id = connection.Id;
         Role = creationOptions.Role;
         RuntimeContext = creationOptions.RuntimeContext;
+        _lastActiveTimestamp = RuntimeContext.TimeProvider.GetTimestamp();
+        _lastActiveUtcTicks = RuntimeContext.TimeProvider.GetUtcNow().UtcDateTime.Ticks;
         StreamManager = new StreamManager(
             creationOptions.RuntimeContext.Concurrency,
             AcceptReceivedStreamBytes,
@@ -600,6 +613,7 @@ public sealed partial class RpcSession : IRpcSession
                 RuntimeContext.PerformanceProfile,
                 RuntimeContext.FlowControl.MaxSendQueueBytes,
                 _flushOptions,
+                RuntimeContext.TimeProvider,
                 _cts.Token,
                 ReturnBuffer,
                 Fault);
