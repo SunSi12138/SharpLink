@@ -3,210 +3,276 @@ namespace SharpLink.Server;
 /// <summary>Configures transports, services, security, limits, and runtime behavior for a SharpLink server.</summary>
 public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 {
-    /// <summary>Creates a server builder with safe runtime and heartbeat defaults.</summary>
-    public static SharpLinkServerBuilder Create() => new();
+    private const string ConsumedBuilderMessage = "This SharpLink builder has already been consumed.";
 
-    private IServerTransportListener? _transport;
-    /// <summary>Gets the currently configured server transport listener.</summary>
-    public IServerTransportListener? Transport => _transport;
+    private readonly object _configurationGate = new();
     private readonly SharpLinkRuntimeContextBuilder _runtimeContextBuilder = new();
+    private readonly HashSet<Type> _enabledServices = [];
+    private readonly HashSet<Type> _excludedServices = [];
+    private readonly Dictionary<Type, ReplacementServiceDefinition> _replacementServices = [];
+    private readonly List<ISharpLinkServerInterceptor> _interceptors = [];
+
+    private BuilderState _state;
+    private IServerTransportListener? _transport;
+    private ServerRuntimeResources? _pendingResources;
     private TimeSpan _heartbeatCheckInterval = TimeSpan.FromSeconds(10);
     private TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
     private RpcSessionFlushOptions? _rpcSessionFlushOptions;
     private bool _automaticServiceRegistration = true;
-    private readonly HashSet<Type> _enabledServices = [];
-    private readonly HashSet<Type> _excludedServices = [];
-    private readonly Dictionary<Type, ReplacementServiceDefinition> _replacementServices = [];
     private IServiceProvider? _serviceProvider;
     private ILoggerFactory? _loggerFactory;
     private ISharpLinkServerAuthenticator? _authenticator;
     private bool _authenticationRequired;
-    private readonly List<ISharpLinkServerInterceptor> _interceptors = [];
     private IRpcExceptionMapper? _exceptionMapper;
     private bool _includeExceptionDetails;
     private SharpLinkAdmissionControlOptions? _admissionControlOptions;
 
+    /// <summary>Creates a server builder with safe runtime and heartbeat defaults.</summary>
+    public static SharpLinkServerBuilder Create() => new();
+
+    /// <summary>Gets the currently configured server transport listener.</summary>
+    public IServerTransportListener? Transport
+    {
+        get
+        {
+            lock (_configurationGate)
+                return _transport;
+        }
+    }
+
     /// <summary>Uses a server listener owned by the built server.</summary>
-    /// <param name="transport">The listener used to accept independent connections.</param>
     public SharpLinkServerBuilder UseTransport(IServerTransportListener transport)
     {
-        _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(transport);
+            if (_transport is not null)
+                throw new InvalidOperationException("A Server transport has already been configured for this builder.");
+            _transport = transport;
+        });
         return this;
     }
 
     /// <summary>Configures an instance-scoped server authenticator.</summary>
     public SharpLinkServerBuilder UseAuthenticator(ISharpLinkServerAuthenticator authenticator)
     {
-        _authenticator = authenticator ?? throw new ArgumentNullException(nameof(authenticator));
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(authenticator);
+            _authenticator = authenticator;
+        });
         return this;
     }
 
     /// <summary>Requires authentication and fails <see cref="Build"/> when no authenticator is registered.</summary>
     public SharpLinkServerBuilder RequireAuthentication()
     {
-        _authenticationRequired = true;
+        Configure(() => _authenticationRequired = true);
         return this;
     }
 
     /// <summary>Adds a server interceptor in registration order.</summary>
     public SharpLinkServerBuilder AddInterceptor(ISharpLinkServerInterceptor interceptor)
     {
-        _interceptors.Add(interceptor ?? throw new ArgumentNullException(nameof(interceptor)));
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(interceptor);
+            _interceptors.Add(interceptor);
+        });
         return this;
     }
 
     /// <summary>Configures an instance-scoped business exception mapper.</summary>
     public SharpLinkServerBuilder UseExceptionMapper(IRpcExceptionMapper exceptionMapper)
     {
-        _exceptionMapper = exceptionMapper ?? throw new ArgumentNullException(nameof(exceptionMapper));
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(exceptionMapper);
+            _exceptionMapper = exceptionMapper;
+        });
         return this;
     }
 
     /// <summary>Includes service exception messages in default Internal responses. Disabled by default.</summary>
     public SharpLinkServerBuilder EnableDetailedErrors(bool enabled = true)
     {
-        _includeExceptionDetails = enabled;
+        Configure(() => _includeExceptionDetails = enabled);
         return this;
     }
 
     /// <summary>Sets a fallback codec resolver scoped to servers built by this builder.</summary>
-    /// <param name="codecResolver">Returns a codec for a requested type, or <see langword="null"/> when unresolved.</param>
     public SharpLinkServerBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
     {
-        _runtimeContextBuilder.UseCodecResolver(codecResolver);
+        Configure(() => _runtimeContextBuilder.UseCodecResolver(codecResolver));
         return this;
     }
 
     /// <summary>Registers an explicit codec only for servers built by this builder.</summary>
     public SharpLinkServerBuilder UseCodec<T>(IRpcCodec<T> codec)
     {
-        _runtimeContextBuilder.AddCodec(codec);
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(codec);
+            _runtimeContextBuilder.AddCodec(codec);
+        });
         return this;
     }
 
     /// <summary>Configures instance-scoped runtime behavior.</summary>
     public SharpLinkServerBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)
     {
-        _runtimeContextBuilder.Configure(configure);
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(configure);
+            _runtimeContextBuilder.Configure(configure);
+        });
         return this;
     }
 
-    /// <summary>
-    /// Uses an application-owned time source for the built server. The server never disposes it.
-    /// </summary>
+    /// <summary>Uses an application-owned time source for the built server. The server never disposes it.</summary>
     public SharpLinkServerBuilder UseTimeProvider(TimeProvider timeProvider)
     {
-        _runtimeContextBuilder.UseTimeProvider(timeProvider);
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            _runtimeContextBuilder.UseTimeProvider(timeProvider);
+        });
         return this;
     }
 
     /// <summary>Enables bounded active admission control for calls accepted by this server.</summary>
-    /// <param name="configure">Configures global, contract, method, partition and queue limits.</param>
-    /// <returns>This builder.</returns>
     public SharpLinkServerBuilder UseAdmissionControl(Action<SharpLinkAdmissionControlOptions> configure)
     {
-        ArgumentNullException.ThrowIfNull(configure);
-        if (_admissionControlOptions is not null)
-            throw new InvalidOperationException("Admission control has already been configured for this builder.");
-        var options = new SharpLinkAdmissionControlOptions();
-        configure(options);
-        options.Validate();
-        _admissionControlOptions = options;
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(configure);
+            if (_admissionControlOptions is not null)
+                throw new InvalidOperationException("Admission control has already been configured for this builder.");
+            var options = new SharpLinkAdmissionControlOptions();
+            configure(options);
+            options.Validate();
+            _admissionControlOptions = options;
+        });
         return this;
     }
 
     /// <summary>Uses the supplied application-owned logger factory.</summary>
     public SharpLinkServerBuilder UseLoggerFactory(ILoggerFactory loggerFactory)
     {
-        ArgumentNullException.ThrowIfNull(loggerFactory);
-        _loggerFactory = loggerFactory;
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(loggerFactory);
+            _loggerFactory = loggerFactory;
+        });
         return this;
     }
 
     /// <summary>Configures the instance-owned outbound buffer pool.</summary>
     public SharpLinkServerBuilder UseBufferWriterPool(Action<BufferWriterPoolOptions> configure)
     {
-        _runtimeContextBuilder.ConfigureBufferPool(configure);
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(configure);
+            _runtimeContextBuilder.ConfigureBufferPool(configure);
+        });
         return this;
     }
 
     /// <summary>Configures striped state-store concurrency for this server.</summary>
     public SharpLinkServerBuilder UseStateStoreConcurrency(Action<RuntimeConcurrencyOptions> configure)
     {
-        _runtimeContextBuilder.ConfigureStateStores(configure);
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(configure);
+            _runtimeContextBuilder.ConfigureStateStores(configure);
+        });
         return this;
     }
 
     /// <summary>Sets an application-owned logger factory only when none was explicitly configured.</summary>
     public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
     {
-        ArgumentNullException.ThrowIfNull(loggerFactory);
-        _loggerFactory ??= loggerFactory;
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(loggerFactory);
+            _loggerFactory ??= loggerFactory;
+        });
     }
 
     /// <summary>Configures the heartbeat inspection interval and peer-inactivity timeout.</summary>
     public SharpLinkServerBuilder UseHeartbeat(TimeSpan checkInterval, TimeSpan timeout)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(checkInterval, TimeSpan.Zero);
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
-
-        if (timeout <= checkInterval)
-            throw new ArgumentException("Heartbeat timeout must be greater than check interval.");
-
-        _heartbeatCheckInterval = checkInterval;
-        _heartbeatTimeout = timeout;
+        Configure(() =>
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(checkInterval, TimeSpan.Zero);
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+            if (timeout <= checkInterval)
+                throw new ArgumentException("Heartbeat timeout must be greater than check interval.");
+            _heartbeatCheckInterval = checkInterval;
+            _heartbeatTimeout = timeout;
+        });
         return this;
     }
 
     /// <summary>Configures how often the server checks sessions for heartbeat timeout.</summary>
     public SharpLinkServerBuilder UseHeartbeatCheckInterval(TimeSpan checkInterval)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(checkInterval, TimeSpan.Zero);
-        if (_heartbeatTimeout <= checkInterval)
-            throw new ArgumentException("Heartbeat timeout must be greater than check interval.");
-
-        _heartbeatCheckInterval = checkInterval;
+        Configure(() =>
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(checkInterval, TimeSpan.Zero);
+            if (_heartbeatTimeout <= checkInterval)
+                throw new ArgumentException("Heartbeat timeout must be greater than check interval.");
+            _heartbeatCheckInterval = checkInterval;
+        });
         return this;
     }
 
     /// <summary>Configures how long peer inactivity is allowed before a session is closed.</summary>
     public SharpLinkServerBuilder UseHeartbeatTimeout(TimeSpan timeout)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
-        if (timeout <= _heartbeatCheckInterval)
-            throw new ArgumentException("Heartbeat timeout must be greater than check interval.");
-
-        _heartbeatTimeout = timeout;
+        Configure(() =>
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+            if (timeout <= _heartbeatCheckInterval)
+                throw new ArgumentException("Heartbeat timeout must be greater than check interval.");
+            _heartbeatTimeout = timeout;
+        });
         return this;
     }
 
     /// <summary>Enables bounded send coalescing by byte threshold and maximum latency.</summary>
     public SharpLinkServerBuilder UseRpcSessionFlush(int flushSizeThreshold, TimeSpan maxLatency)
     {
-        _rpcSessionFlushOptions = RpcSessionFlushOptions.Create(flushSizeThreshold, maxLatency);
+        Configure(() => _rpcSessionFlushOptions = RpcSessionFlushOptions.Create(flushSizeThreshold, maxLatency));
         return this;
     }
 
     /// <summary>Configures per-server protocol safety limits.</summary>
     public SharpLinkServerBuilder UseProtocol(Action<SharpLinkProtocolOptions> configure)
     {
-        ArgumentNullException.ThrowIfNull(configure);
-        _runtimeContextBuilder.Configure(options => configure(options.Protocol));
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(configure);
+            _runtimeContextBuilder.Configure(options => configure(options.Protocol));
+        });
         return this;
     }
 
     /// <summary>Uses an application-owned provider for service dependencies and per-call scopes.</summary>
-    /// <param name="serviceProvider">The provider used by service factories. It is never disposed by SharpLink.</param>
     public SharpLinkServerBuilder UseServiceProvider(IServiceProvider serviceProvider)
     {
-        _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(serviceProvider);
+            _serviceProvider = serviceProvider;
+        });
         return this;
     }
 
     /// <summary>Disables automatic service exposure for this builder; explicitly enabled and replaced services remain.</summary>
     public SharpLinkServerBuilder DisableAutomaticServiceRegistration()
     {
-        _automaticServiceRegistration = false;
+        Configure(() => _automaticServiceRegistration = false);
         return this;
     }
 
@@ -214,8 +280,11 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     public SharpLinkServerBuilder EnableService<TContract>()
         where TContract : class, IService
     {
-        _excludedServices.Remove(typeof(TContract));
-        _enabledServices.Add(typeof(TContract));
+        Configure(() =>
+        {
+            _excludedServices.Remove(typeof(TContract));
+            _enabledServices.Add(typeof(TContract));
+        });
         return this;
     }
 
@@ -223,8 +292,11 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     public SharpLinkServerBuilder ExcludeService<TContract>()
         where TContract : class, IService
     {
-        _enabledServices.Remove(typeof(TContract));
-        _excludedServices.Add(typeof(TContract));
+        Configure(() =>
+        {
+            _enabledServices.Remove(typeof(TContract));
+            _excludedServices.Add(typeof(TContract));
+        });
         return this;
     }
 
@@ -232,12 +304,15 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     public SharpLinkServerBuilder ReplaceService<TContract>(TContract instance)
         where TContract : class, IService
     {
-        ArgumentNullException.ThrowIfNull(instance);
-        _replacementServices[typeof(TContract)] = new ReplacementServiceDefinition(
-            instance,
-            Factory: null,
-            SharpLinkServiceLifetime.Singleton,
-            CallerOwned: true);
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(instance);
+            _replacementServices[typeof(TContract)] = new ReplacementServiceDefinition(
+                instance,
+                Factory: null,
+                SharpLinkServiceLifetime.Singleton,
+                CallerOwned: true);
+        });
         return this;
     }
 
@@ -247,43 +322,97 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         SharpLinkServiceLifetime lifetime = SharpLinkServiceLifetime.Singleton)
         where TContract : class, IService
     {
-        ArgumentNullException.ThrowIfNull(factory);
-        ValidateLifetime(lifetime);
-        _replacementServices[typeof(TContract)] = new ReplacementServiceDefinition(
-            Instance: null,
-            provider => factory(provider) ?? throw new InvalidOperationException(
-                $"Replacement factory for '{typeof(TContract).FullName}' returned null."),
-            lifetime,
-            CallerOwned: false);
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(factory);
+            ValidateLifetime(lifetime);
+            _replacementServices[typeof(TContract)] = new ReplacementServiceDefinition(
+                Instance: null,
+                provider => factory(provider) ?? throw new InvalidOperationException(
+                    $"Replacement factory for '{typeof(TContract).FullName}' returned null."),
+                lifetime,
+                CallerOwned: false);
+        });
         return this;
     }
 
     /// <inheritdoc />
-    public ISharpLinkServer Build()
+    public ISharpLinkServer Build() => Materialize(CompileForBuild());
+
+    private ServerBuildPlan CompileForBuild()
     {
-        var transport = _transport;
-        if (transport == null)
-            throw new InvalidOperationException("Transport must be set before building the server.");
+        BeginBuild();
+        try
+        {
+            var manifestSource = SharpLinkGeneratedManifestSource.FromCatalog();
+            var plan = CompilePlan(manifestSource);
+            lock (_configurationGate)
+                _pendingResources = plan.Resources;
+            return plan;
+        }
+        catch (Exception buildException)
+        {
+            try
+            {
+                DisposeUnbuiltResources();
+            }
+            catch (Exception cleanupException)
+            {
+                throw new AggregateException(buildException, cleanupException);
+            }
+            throw;
+        }
+    }
+
+    private ServerBuildPlan CompilePlan(SharpLinkGeneratedManifestSource manifestSource)
+    {
+        var transport = _transport ?? throw new InvalidOperationException("Transport must be set before building the server.");
         if (_authenticationRequired && _authenticator is null)
             throw new InvalidOperationException("RequireAuthentication needs an ISharpLinkServerAuthenticator.");
 
-        var manifests = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
+        var manifests = manifestSource.CreateMaterializationSnapshot();
+        var runtimeContext = _runtimeContextBuilder.Compile(manifestSource);
+        var services = CompileServicePlan(
+            manifests,
+            _automaticServiceRegistration,
+            _enabledServices.ToFrozenSet(),
+            _excludedServices.ToFrozenSet(),
+            [.. _replacementServices]);
+
+        return new ServerBuildPlan(
+            new ServerRuntimeResources(transport),
+            runtimeContext,
+            manifestSource,
+            services,
+            _heartbeatCheckInterval,
+            _heartbeatTimeout,
+            _rpcSessionFlushOptions,
+            _loggerFactory ?? NullLoggerFactory.Instance,
+            _authenticator,
+            _authenticationRequired,
+            [.. _interceptors],
+            _exceptionMapper ?? new DefaultRpcExceptionMapper(_includeExceptionDetails),
+            _serviceProvider,
+            _admissionControlOptions?.CloneValidated());
+    }
+
+    private ISharpLinkServer Materialize(ServerBuildPlan plan)
+    {
         using var transaction = new SynchronousBuildTransaction();
+        var materializationStarted = false;
         try
         {
-            transaction.Own(
-                transport,
-                static listener => SharpLinkAsyncCleanup.DisposeSynchronously(listener),
-                SynchronousBuildResourceMetadata.FrameworkOwned("Server transport listener"));
+            plan.BeginMaterialization();
+            materializationStarted = true;
+            plan.Resources.RegisterWith(transaction);
             var runtimeContext = transaction.Own(
-                _runtimeContextBuilder.Build(manifests),
+                plan.RuntimeContext.Materialize(),
                 static context => context.Dispose(),
                 SynchronousBuildResourceMetadata.FrameworkOwned("Server runtime context"));
-            if (transport is IPerformanceProfileAwareTransport profileAwareTransport)
+            if (plan.Resources.Transport is IPerformanceProfileAwareTransport profileAwareTransport)
                 profileAwareTransport.BindPerformanceProfile(runtimeContext.PerformanceProfile);
 
-            var protocolOptions = runtimeContext.Protocol;
-            var serviceProvider = _serviceProvider;
+            var serviceProvider = plan.CallerServiceProvider;
             IAsyncDisposable? ownedServiceProvider = null;
             if (serviceProvider is null)
             {
@@ -304,62 +433,79 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             }
 
             SharpLinkAdmissionController? admissionController = null;
-            if (_admissionControlOptions is not null)
+            var staticManifests = plan.CreateStaticManifestSnapshot();
+            if (plan.AdmissionControlOptions is not null)
             {
                 admissionController = transaction.Own(
                     SharpLinkAdmissionController.Create(
-                        _admissionControlOptions,
-                        manifests,
+                        plan.AdmissionControlOptions,
+                        staticManifests,
                         runtimeContext.TimeProvider),
                     static controller => SharpLinkAsyncCleanup.DisposeSynchronously(controller),
                     SynchronousBuildResourceMetadata.FrameworkOwned("Server admission controller"));
             }
-            var definitions = BuildServiceDefinitions(manifests, serviceProvider, runtimeContext.Codecs);
-            var registrationsByContract = new Dictionary<long, ServiceRegistration>(definitions.Count);
-            foreach (var pair in definitions)
+
+            var registrationsByContract = new Dictionary<long, ServiceRegistration>(plan.ServiceCount);
+            for (var index = 0; index < plan.ServiceCount; index++)
             {
+                var entry = plan.GetService(index);
+                entry.Registration.ValidateDependencies(serviceProvider);
                 var registration = transaction.Own(
-                    pair.Value.Build(serviceProvider),
+                    entry.Registration.Materialize(runtimeContext.Codecs).Build(serviceProvider),
                     static value => SharpLinkAsyncCleanup.DisposeSynchronously(value),
                     SynchronousBuildResourceMetadata.FrameworkOwned("Server service registration"));
-                registrationsByContract.Add(pair.Key, registration);
+                registrationsByContract.Add(entry.ContractId, registration);
             }
 
             var server = new SharpLinkServer(
-                transport,
+                plan.Resources.Transport,
                 registrationsByContract.ToFrozenDictionary(),
-                _heartbeatCheckInterval,
-                _heartbeatTimeout,
-                _loggerFactory ?? NullLoggerFactory.Instance,
+                plan.HeartbeatCheckInterval,
+                plan.HeartbeatTimeout,
+                plan.LoggerFactory,
                 runtimeContext,
-                _authenticator,
-                _authenticationRequired,
-                protocolOptions,
-                _rpcSessionFlushOptions,
-                _interceptors.ToArray(),
-                _exceptionMapper ?? new DefaultRpcExceptionMapper(_includeExceptionDetails),
+                plan.Authenticator,
+                plan.AuthenticationRequired,
+                runtimeContext.Protocol,
+                plan.RpcSessionFlushOptions,
+                plan.CreateInterceptorSnapshot(),
+                plan.ExceptionMapper,
                 ownedServiceProvider,
                 serviceProvider,
-                manifests,
+                staticManifests,
                 admissionController,
                 ServerShutdownPlan.Default);
-            _transport = null;
             transaction.Commit();
+            plan.Resources.MarkTransferred();
+            CompleteBuild();
             return server;
         }
         catch (Exception buildException)
         {
-            _transport = null;
-            transaction.Rollback(buildException);
+            if (materializationStarted)
+                plan.Resources.MarkRolledBack();
+            CompleteBuild();
+            if (materializationStarted)
+            {
+                transaction.Rollback(buildException);
+                throw new System.Diagnostics.UnreachableException();
+            }
+
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(buildException).Throw();
             throw new System.Diagnostics.UnreachableException();
         }
     }
 
-    private Dictionary<long, ServiceRegistrationDefinition> BuildServiceDefinitions(
+    private static ServerServiceRegistrationPlanEntry[] CompileServicePlan(
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
-        IServiceProvider serviceProvider,
-        IRpcCodecProvider codecs)
+        bool automaticServiceRegistration,
+        FrozenSet<Type> enabledServices,
+        FrozenSet<Type> excludedServices,
+        IReadOnlyList<KeyValuePair<Type, ReplacementServiceDefinition>> replacementServices)
     {
+        var replacementTypes = new HashSet<Type>(replacementServices.Count);
+        for (var replacementIndex = 0; replacementIndex < replacementServices.Count; replacementIndex++)
+            replacementTypes.Add(replacementServices[replacementIndex].Key);
         var contracts = new Dictionary<long, (SharpLinkGeneratedContractDescriptor Descriptor, ISharpLinkGeneratedAssemblyManifest Manifest)>();
         var services = new Dictionary<long, (SharpLinkGeneratedServiceDescriptor Descriptor, ISharpLinkGeneratedAssemblyManifest Manifest)>();
         for (var manifestIndex = 0; manifestIndex < manifests.Count; manifestIndex++)
@@ -377,7 +523,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             {
                 var incoming = manifest.Services[index];
                 if (services.TryGetValue(incoming.ContractId, out var existing) &&
-                    !_replacementServices.ContainsKey(incoming.ContractType))
+                    !replacementTypes.Contains(incoming.ContractType))
                 {
                     throw CreateBuildConflict("Service", incoming, manifest, existing.Descriptor, existing.Manifest);
                 }
@@ -385,18 +531,17 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             }
         }
 
-        var definitions = new Dictionary<long, ServiceRegistrationDefinition>();
+        var definitions = new List<ServerServiceRegistrationPlanEntry>(services.Count);
         var foundEnabled = new HashSet<Type>();
         foreach (var pair in services)
         {
             var service = pair.Value.Descriptor;
-            if (_replacementServices.ContainsKey(service.ContractType))
+            if (replacementTypes.Contains(service.ContractType))
                 continue;
-            var explicitlyEnabled = _enabledServices.Contains(service.ContractType);
+            var explicitlyEnabled = enabledServices.Contains(service.ContractType);
             if (explicitlyEnabled)
                 foundEnabled.Add(service.ContractType);
-            if ((!_automaticServiceRegistration && !explicitlyEnabled) ||
-                _excludedServices.Contains(service.ContractType))
+            if ((!automaticServiceRegistration && !explicitlyEnabled) || excludedServices.Contains(service.ContractType))
                 continue;
             if (!contracts.TryGetValue(service.ContractId, out var contract) ||
                 !ReferenceEquals(contract.Descriptor.ContractType, service.ContractType))
@@ -405,18 +550,22 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                     $"Generated service '{service.ImplementationName}' requires contract '{service.ContractName}' " +
                     $"({service.ContractId}), but its contract-owned manifest is not loaded.");
             }
-            ValidateDependencies(service, serviceProvider);
-            definitions.Add(service.ContractId, new ServiceRegistrationDefinition(
-                service.ContractType,
-                contract.Descriptor.StubFactory(codecs),
-                service.Lifetime,
-                service.Activator,
-                instance: null,
-                callerOwned: false));
+            definitions.Add(new ServerServiceRegistrationPlanEntry(
+                service.ContractId,
+                new ServerServiceRegistrationPlan(
+                    service.ContractType,
+                    service.ImplementationName,
+                    contract.Descriptor.StubFactory,
+                    service.Lifetime,
+                    service.Activator,
+                    instance: null,
+                    callerOwned: false,
+                    service.Dependencies)));
         }
 
-        foreach (var replacement in _replacementServices)
+        for (var replacementIndex = 0; replacementIndex < replacementServices.Count; replacementIndex++)
         {
+            var replacement = replacementServices[replacementIndex];
             var contract = contracts.Values.FirstOrDefault(candidate =>
                 ReferenceEquals(candidate.Descriptor.ContractType, replacement.Key));
             if (contract.Descriptor is null)
@@ -425,17 +574,21 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                     $"Generated contract '{replacement.Key.FullName}' required by ReplaceService was not found.");
             }
             var value = replacement.Value;
-            definitions[contract.Descriptor.ContractId] = new ServiceRegistrationDefinition(
-                replacement.Key,
-                contract.Descriptor.StubFactory(codecs),
-                value.Lifetime,
-                value.Factory,
-                value.Instance,
-                value.CallerOwned);
+            definitions.Add(new ServerServiceRegistrationPlanEntry(
+                contract.Descriptor.ContractId,
+                new ServerServiceRegistrationPlan(
+                    replacement.Key,
+                    replacement.Key.FullName ?? replacement.Key.Name,
+                    contract.Descriptor.StubFactory,
+                    value.Lifetime,
+                    value.Factory,
+                    value.Instance,
+                    value.CallerOwned,
+                    [])));
             foundEnabled.Add(replacement.Key);
         }
 
-        foreach (var required in _enabledServices)
+        foreach (var required in enabledServices)
         {
             if (!foundEnabled.Contains(required))
             {
@@ -443,28 +596,58 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                     $"Generated service for required contract '{required.FullName}' was not found.");
             }
         }
-        return definitions;
+        return [.. definitions];
     }
 
-    private static void ValidateDependencies(
-        SharpLinkGeneratedServiceDescriptor service,
-        IServiceProvider provider)
+    private void DisposeUnbuiltResources()
     {
-        if (service.Dependencies.Count == 0)
-            return;
-        var availability = provider.GetService<IServiceProviderIsService>();
-        if (availability is null)
-            return;
-        for (var index = 0; index < service.Dependencies.Count; index++)
+        ServerRuntimeResources? resources;
+        lock (_configurationGate)
         {
-            var dependency = service.Dependencies[index];
-            if (!availability.IsService(dependency))
-            {
-                throw new InvalidOperationException(
-                    $"Required dependency '{dependency.FullName}' for generated RPC service " +
-                    $"'{service.ImplementationName}' is not registered.");
-            }
+            if (_state == BuilderState.Consumed)
+                return;
+
+            resources = _pendingResources ?? (_transport is null ? null : new ServerRuntimeResources(_transport));
+            _pendingResources = resources;
+            _transport = null;
+            _state = BuilderState.Consumed;
         }
+
+        resources?.DisposeUnmaterialized();
+    }
+
+    private void Configure(Action configure)
+    {
+        lock (_configurationGate)
+        {
+            EnsureMutable();
+            configure();
+        }
+    }
+
+    private void BeginBuild()
+    {
+        lock (_configurationGate)
+        {
+            EnsureMutable();
+            _state = BuilderState.Building;
+        }
+    }
+
+    private void CompleteBuild()
+    {
+        lock (_configurationGate)
+        {
+            _transport = null;
+            _pendingResources = null;
+            _state = BuilderState.Consumed;
+        }
+    }
+
+    private void EnsureMutable()
+    {
+        if (_state != BuilderState.Mutable)
+            throw new InvalidOperationException(ConsumedBuilderMessage);
     }
 
     private static void ValidateManifest(ISharpLinkGeneratedAssemblyManifest manifest)
@@ -509,10 +692,10 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         }
     }
 
-    private sealed record ReplacementServiceDefinition(
-        object? Instance,
-        Func<IServiceProvider, object>? Factory,
-        SharpLinkServiceLifetime Lifetime,
-        bool CallerOwned);
-
+    private enum BuilderState : byte
+    {
+        Mutable,
+        Building,
+        Consumed
+    }
 }

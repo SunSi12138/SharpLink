@@ -60,9 +60,10 @@ public class BuilderOwnershipRollbackTests
             bindingFailure: null,
             cleanupFailure: "Client context construction transport cleanup failed");
 
-        var failure = Capture(() => SharpClientBuilder.Create()
-            .UseTransport(transport)
-            .BuildCore([new ThrowingRuntimeContextManifest()]));
+        var builder = SharpClientBuilder.Create().UseTransport(transport);
+        var plan = builder.CompileForMultiCluster([new ThrowingRuntimeContextManifest()]);
+
+        var failure = Capture(() => builder.MaterializeCompiledPlan(plan));
 
         Ensure(Contains(failure, "controlled Runtime Context construction failure"),
             "Client RuntimeContext construction failure must remain primary");
@@ -180,7 +181,7 @@ public class BuilderOwnershipRollbackTests
     }
 
     [Test]
-    public void ServerValidationFailureShouldPreserveRuntimeContextCleanupFailure()
+    public void ServerCompileValidationFailureShouldNotMaterializeRuntimeContext()
     {
         RollbackState.TestIsolation.Wait();
         try
@@ -193,11 +194,12 @@ public class BuilderOwnershipRollbackTests
                     .EnableService<IMissingService>()
                     .Build());
 
-                Ensure(Contains(failure, "required contract"), "Server build retains service validation failure");
-                Ensure(Contains(failure, "rollback Adapter scope cleanup failed"),
-                    "Server build retains Runtime Context cleanup failure");
-                Ensure(RollbackState.ScopeDisposeCount == 1, "Server validation rollback disposes Context once");
-                Ensure(transport.DisposeCount == 1, "Server validation rollback disposes listener once");
+                Ensure(Contains(failure, "required contract"), "Server Compile retains service validation failure");
+                Ensure(!Contains(failure, "rollback Adapter scope cleanup failed"),
+                    "Server Compile validation must not create a RuntimeContext cleanup path");
+                Ensure(RollbackState.ScopeDisposeCount == 0,
+                    "Server Compile validation must not materialize generated adapter scopes");
+                Ensure(transport.DisposeCount == 1, "Server Compile validation still disposes listener once");
             });
         }
         finally
@@ -658,9 +660,31 @@ public class BuilderOwnershipRollbackTests
         public string CompileTimeDescriptor => "builder-runtime-context-throw";
         public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
-        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs
-            => throw new InvalidOperationException("controlled Runtime Context construction failure");
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } = [new ThrowingRuntimeContextCodecFactory()];
         public IReadOnlyList<string> Dependencies => [];
+    }
+
+    private sealed class ThrowingRuntimeContextCodecFactory : IRpcGeneratedCodecFactory
+    {
+        public Type TargetType => typeof(CodecValue);
+        public string SchemaId => "builder-runtime-context-throw/v1";
+        public string WireFormatId => "builder-runtime-context-wire/v1";
+        public string? AdapterId => "builder-runtime-context-adapter/v1";
+        public IRpcCodecAdapter Adapter { get; } = new ThrowingRuntimeContextAdapter();
+
+        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
+            => new TrackingCodec();
+
+        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<CodecValue>;
+    }
+
+    private sealed class ThrowingRuntimeContextAdapter : IRpcCodecAdapter
+    {
+        public string AdapterId => "builder-runtime-context-adapter/v1";
+        public string WireFormatId => "builder-runtime-context-wire/v1";
+
+        public IRpcCodecAdapterScope CreateScope()
+            => throw new InvalidOperationException("controlled Runtime Context construction failure");
     }
 
     private sealed class TrackingRegistrationServiceOne(List<string> cleanupEvents) : IRegistrationServiceOne, IAsyncDisposable

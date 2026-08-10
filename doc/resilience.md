@@ -6,7 +6,10 @@
 
 ## 静态 endpoint
 
-`UseEndpoints` 接收 2–64 个不可变 endpoint 和按地址创建 transport 的 factory。Builder 在 `Build()` 时枚举、复制并验证 endpoint；之后修改原集合或 attribute 字典不会改变 Client。
+`UseEndpoints` 接收 1–64 个 endpoint 和按地址创建 transport 的 factory。Builder 在 `Build()` 的
+Compile 阶段只枚举、复制并验证一次 endpoint；之后修改原集合或 attribute 字典不会改变 Client，
+Materialize 也不会重新枚举。单个 endpoint 折叠为固定 Client 快路径；多个 endpoint 使用 cluster。
+Endpoint factory 只在 Materialize 时创建，因此纯配置/校验失败不会取得它的所有权。
 
 ```csharp
 builder

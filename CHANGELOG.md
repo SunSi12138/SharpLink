@@ -15,6 +15,10 @@
 
 ### Changed
 
+- Client and Server construction now compiles one immutable build plan before materializing runtime
+  resources through a synchronous ownership transaction. Static endpoint and manifest sources are
+  snapshotted once; multi-cluster child budget checks materialize the same compiled plan instead of
+  using a mutable preflight cache.
 - Business exception mapping now belongs to the Server invocation layer. A per-connection generated bridge maps Unary and streaming failures before Runtime encodes a structured protocol error; `RpcSession` no longer stores mapper policy or service/contract/method mapping state.
 - `RpcSession` now owns exactly one non-null `ITransportConnection`. Input, output, endpoints, physical cleanup, and terminal connectivity all flow through that transport; Fault and explicit disposal converge on one supervised dispose task.
 - Client, static/dynamic cluster, and Server connection paths now construct complete `RpcSession` instances before handshake. Runtime Context, role-specific telemetry, and StreamManager state are read-only for the Session lifetime; stream dispatcher codec-provider overloads also require an explicit provider.
@@ -26,6 +30,12 @@
 
 ### Breaking
 
+- `SharpClientBuilder` and `SharpLinkServerBuilder` are single-use. After any Build attempt, whether
+  it succeeds or fails, create a new builder; subsequent Build or configuration calls throw
+  `InvalidOperationException("This SharpLink builder has already been consumed.")`. Client topology
+  configuration is also single-choice: mixing or repeating `UseTransport`, `UseEndpoint(s)`, and
+  `UseEndpointResolver` now fails at the second configuration call instead of replacing or delaying
+  validation until Build. See [`doc/runtime-phase-11-build-plan.md`](doc/runtime-phase-11-build-plan.md).
 - Public `RpcSession` error-send extensions now accept only an already structured `SharpLinkException`; callers that use these low-level protocol helpers must map arbitrary exceptions before encoding them.
 - The PipeReader/PipeWriter/disconnect/isConnected `RpcSession` constructor is removed without an obsolete or forwarding shim. Custom transports must implement `ITransportConnection` and expose themselves through a client factory or server listener; the Session no longer completes caller-supplied pipelines or invokes lifecycle callbacks.
 - The incomplete `RpcSession` constructors and the `BindRuntimeContext` follow-up call are removed instead of retained as forwarding shims. Internal Client/Server construction also requires an already-built Runtime Context; no process-wide Context or codec fallback remains.

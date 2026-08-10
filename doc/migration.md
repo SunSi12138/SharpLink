@@ -17,6 +17,22 @@ SharpLink 2.0 将进程内 Generated Server ABI 从 API 3 原子升级为 API 4�
 
 Generated API 不参与网络握手。1.1.x Client 与 2.0 Server、2.0 Client 与 1.1.x Server 仍可通过 Protocol v2 互操作，但每个进程只能加载与本进程 Runtime 匹配的生成程序集，并且两端契约的 wire schema 必须兼容。
 
+## Builder 构建计划与单次使用
+
+`SharpClientBuilder` 和 `SharpLinkServerBuilder` 现在在 `Build()` 中先冻结完整
+BuildPlan，再 materialize framework-owned 资源并提交所有权。Builder 本身是一次性的：无论
+Build 成功或失败，后续的 `Build()` 或 `Use*`/`Add*` 调用都会抛出
+`InvalidOperationException("This SharpLink builder has already been consumed.")`。需要另一个
+Client 或 Server 时，创建新 Builder，不要修改或复用已经 Build 过的实例。
+
+Client topology 也必须在第一次配置时确定。`UseTransport`、`UseEndpoint`/`UseEndpoints` 和
+`UseEndpointResolver` 不能混用，也不能重复配置同一种 topology；第二次调用会立即失败。静态
+endpoint 与 manifest source 只在 Compile 时取一次快照，随后修改原 collection、attribute 字典或
+options 不会影响已经编译的 plan。多集群会用同一个 child plan 同时执行预算检查和 materialize，
+不再存在 endpoint 预检缓存。
+
+详见 [`runtime-phase-11-build-plan.md`](runtime-phase-11-build-plan.md)。
+
 ## 包依赖变化
 
 `SharpLink.Sdk` 2.0 只依赖 `SharpLink.Abstractions` 并携带 Analyzer/Source Generator，不再传递引入 `SharpLink.Runtime`。纯契约项目继续只引用 SDK；Client、Server 或 Hosting 应用引用相应应用包，由应用包引入 Runtime。直接使用 Runtime API 的库必须显式引用 `SharpLink.Runtime`。

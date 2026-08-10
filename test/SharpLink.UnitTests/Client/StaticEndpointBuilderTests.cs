@@ -84,22 +84,24 @@ public class StaticEndpointBuilderTests
     }
 
     [Test]
-    public async Task SingleEndpointFactoryShouldBeReleasedWhenLaterBuildValidationFails()
+    public async Task CompileValidationFailureShouldNotAcquireEndpointFactory()
     {
         var factory = new TrackingFactory();
+        var builder = SharpClientBuilder.Create()
+            .UseEndpoint(Endpoint("one", 5001), _ => factory)
+            .UseConnectionPool(static options => options.MaxConnections = 0);
         await EnsureThrows<ArgumentOutOfRangeException>(() =>
         {
-            _ = SharpClientBuilder.Create()
-                .UseEndpoint(Endpoint("one", 5001), _ => factory)
-                .UseConnectionPool(static options => options.MaxConnections = 0)
-                .Build();
+            _ = builder.Build();
             return Task.CompletedTask;
         });
-        Ensure(factory.DisposeCount == 1, "factory disposal after a fixed-client build failure");
+        Ensure(factory.DisposeCount == 0,
+            "Compile validation must not invoke or take ownership of an endpoint factory");
+        await EnsureConsumed(builder.Build);
     }
 
     [Test]
-    public void SingleEndpointBuildRollbackShouldPreserveValidationAndCleanupFailures()
+    public void CompileValidationFailureShouldNotRunEndpointFactoryCleanup()
     {
         var factory = new TrackingFactory(throwOnDispose: true);
 
@@ -109,9 +111,9 @@ public class StaticEndpointBuilderTests
             .Build());
 
         Ensure(ContainsException<ArgumentOutOfRangeException>(failure),
-            "fixed-endpoint rollback must retain the build validation failure");
-        Ensure(ContainsMessage(failure, "test disposal failure"),
-            "fixed-endpoint rollback must retain the transport cleanup failure");
+            "Compile validation must preserve the validation failure");
+        Ensure(!ContainsMessage(failure, "test disposal failure") && factory.DisposeCount == 0,
+            "Compile validation must not create or clean up the endpoint factory");
     }
 
     [Test]
@@ -126,8 +128,9 @@ public class StaticEndpointBuilderTests
             try
             {
                 _ = SharpClientBuilder.Create()
-                    .UseEndpoint(Endpoint("one", 5001), _ => factory)
-                    .UseConnectionPool(static options => options.MaxConnections = 0)
+                    .UseTransport(factory)
+                    .UseProtocol(static options =>
+                        options.MaxFramePayloadBytes = SharpLinkProtocolOptions.MinMaxFramePayloadBytes - 1)
                     .Build();
             }
             catch (Exception exception)
@@ -149,7 +152,7 @@ public class StaticEndpointBuilderTests
         Ensure(failure is not null && ContainsException<ArgumentOutOfRangeException>(failure),
             "rollback must preserve the original validation failure");
         Ensure(factory.DisposeCompleted,
-            "rollback must complete the context-capturing asynchronous disposal");
+            "compile-failure cleanup must complete the context-capturing direct transport disposal");
     }
 
     [Test]
@@ -215,17 +218,18 @@ public class StaticEndpointBuilderTests
     }
 
     [Test]
-    public void ClientBuildRollbackShouldPreserveBuildAndRuntimeContextCleanupFailures()
+    public void ClientMaterializeRollbackShouldPreserveBuildAndRuntimeContextCleanupFailures()
     {
-        var failure = CaptureFailure(() => SharpClientBuilder.Create()
-            .UseEndpoint(Endpoint("one", 5001), _ => new TrackingFactory())
-            .UseConnectionPool(static options => options.MaxConnections = 0)
-            .BuildCore([new ThrowingScopeManifest()]));
+        var builder = SharpClientBuilder.Create()
+            .UseEndpoint(Endpoint("one", 5001), _ => new ProfileBindingFailureFactory());
+        var plan = builder.CompileForMultiCluster([new ThrowingScopeManifest()]);
 
-        Ensure(ContainsException<ArgumentOutOfRangeException>(failure),
-            "Client rollback must retain the original build failure");
+        var failure = CaptureFailure(() => builder.MaterializeCompiledPlan(plan));
+
+        Ensure(ContainsMessage(failure, "test profile binding failure"),
+            "Client materialization rollback must retain the profile binding failure");
         Ensure(ContainsMessage(failure, "runtime context cleanup failed"),
-            "Client rollback must retain Runtime Context cleanup failure");
+            "Client materialization rollback must retain Runtime Context cleanup failure");
     }
 
     [Test]
@@ -245,30 +249,40 @@ public class StaticEndpointBuilderTests
     }
 
     [Test]
-    public async Task BuilderShouldTakeFreshEndpointSnapshotsAfterPreflightBuilds()
+    public async Task BuilderShouldCompileOneFrozenEndpointSnapshotAndThenBeConsumed()
     {
-        var endpoints = new List<SharpLinkEndpoint> { Endpoint("first", 5001) };
+        var attributes = new Dictionary<string, string> { ["zone"] = "first" };
+        var endpoints = new List<SharpLinkEndpoint>
+        {
+            new()
+            {
+                Id = "first",
+                Address = new SharpLinkTcpAddress("127.0.0.1", 5001),
+                Attributes = attributes
+            }
+        };
+        var source = new SinglePassEndpointEnumerable(endpoints);
         var createdEndpointIds = new List<string>();
         var builder = SharpClientBuilder.Create()
-            .UseEndpoints(endpoints, endpoint =>
+            .UseEndpoints(source, endpoint =>
             {
                 createdEndpointIds.Add(endpoint.Id);
                 return new TrackingFactory();
             });
 
-        Ensure(builder.GetConfiguredMaximumConnections() == 1,
-            "one endpoint should reserve the fixed-client connection budget");
-        await using (var first = builder.Build())
-        {
-        }
+        await using var client = builder.Build();
 
+        attributes["zone"] = "changed";
         endpoints[0] = Endpoint("second", 5002);
-        await using (var second = builder.Build())
-        {
-        }
+        var frozenEndpoint = ReadPrivate<SharpLinkEndpoint>(client, "_fixedEndpoint");
 
-        Ensure(createdEndpointIds.SequenceEqual(["first", "second"]),
-            "a reused builder must take a fresh endpoint snapshot for each build");
+        Ensure(source.EnumerationCount == 1 && source.MoveNextCount == 2,
+            "a static endpoint source must be enumerated exactly once during Compile");
+        Ensure(createdEndpointIds.SequenceEqual(["first"]),
+            "Materialize must use the endpoint frozen by Compile");
+        Ensure(frozenEndpoint.Id == "first" && frozenEndpoint.Attributes["zone"] == "first",
+            "post-Build source and attribute mutation must not affect the frozen Client plan");
+        await EnsureConsumed(builder.Build);
     }
 
     [Test]
@@ -468,6 +482,21 @@ public class StaticEndpointBuilderTests
         }
     }
 
+    private static Task EnsureConsumed(Func<ISharpLinkClient> build)
+    {
+        try
+        {
+            _ = build();
+            throw new Exception("expected consumed builder failure");
+        }
+        catch (InvalidOperationException exception)
+        {
+            Ensure(exception.Message == "This SharpLink builder has already been consumed.",
+                "consumed builders must have a stable error message");
+            return Task.CompletedTask;
+        }
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
@@ -518,6 +547,31 @@ public class StaticEndpointBuilderTests
                 return ValueTask.FromException(new InvalidOperationException("test disposal failure"));
             return ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class SinglePassEndpointEnumerable(IReadOnlyList<SharpLinkEndpoint> endpoints)
+        : IEnumerable<SharpLinkEndpoint>
+    {
+        private int _enumerationCount;
+        private int _moveNextCount;
+
+        internal int EnumerationCount => Volatile.Read(ref _enumerationCount);
+        internal int MoveNextCount => Volatile.Read(ref _moveNextCount);
+
+        public IEnumerator<SharpLinkEndpoint> GetEnumerator()
+        {
+            if (Interlocked.Increment(ref _enumerationCount) != 1)
+                throw new InvalidOperationException("endpoint source must not be enumerated twice");
+
+            for (var index = 0; index < endpoints.Count; index++)
+            {
+                Interlocked.Increment(ref _moveNextCount);
+                yield return endpoints[index];
+            }
+            Interlocked.Increment(ref _moveNextCount);
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     private sealed class ProfileBindingFailureFactory(bool throwOnDispose = false)

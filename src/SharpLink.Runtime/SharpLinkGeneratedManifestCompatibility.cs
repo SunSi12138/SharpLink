@@ -35,10 +35,6 @@ internal static class SharpLinkGeneratedManifestCompatibility
         }
     }
 
-    internal static SharpLinkAssemblyRegistrationError? ValidateCompatibility(
-        ISharpLinkGeneratedAssemblyManifest manifest)
-        => ValidateVersion(manifest, expectedOwner: null);
-
     private static SharpLinkAssemblyRegistrationError? ValidateVersion(
         ISharpLinkGeneratedAssemblyManifest manifest,
         Assembly? expectedOwner)
