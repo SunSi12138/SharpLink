@@ -29,7 +29,7 @@ namespace SharpLink.Benchmarks;
 [MemoryDiagnoser(displayGenColumns: false)]
 [ThreadingDiagnoser]
 [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 5, iterationCount: 15)]
-public sealed class DispatcherPoolAllocationBenchmarks
+public class DispatcherPoolAllocationBenchmarks
 {
     private const int MaxRetainedDispatchers = 1_024;
     private const int TotalOperations = 131_072;
