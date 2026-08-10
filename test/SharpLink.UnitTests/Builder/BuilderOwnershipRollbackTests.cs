@@ -51,6 +51,33 @@ public class BuilderOwnershipRollbackTests
     }
 
     [Test]
+    public void StaticClientFactoryBindingFailureShouldRollbackFactoriesInReverseExactlyOnce()
+    {
+        var probe = new BuilderFaultInjectionProbe();
+        var failure = Capture(() => SharpClientBuilder.Create()
+            .UseEndpoints(
+                [CreateEndpoint("first", 6801), CreateEndpoint("second", 6802)],
+                endpoint =>
+                {
+                    probe.RecordAcquisition(endpoint.Id);
+                    return new TrackingClientTransport(
+                        bindingFailure: endpoint.Id == "second" ? "second factory binding failed" : null,
+                        cleanupFailure: $"{endpoint.Id} factory cleanup failed",
+                        probe,
+                        endpoint.Id);
+                })
+            .Build());
+
+        BuilderFaultInjectionProbe.AssertFailureOrder(
+            failure,
+            "second factory binding failed",
+            "second factory cleanup failed",
+            "first factory cleanup failed");
+        probe.AssertAcquisitionOrder("first", "second");
+        probe.AssertReverseCleanupAndExactlyOnce();
+    }
+
+    [Test]
     public void DynamicResolverValidationFailureShouldDisposeResolverAndPreserveBothFailures()
     {
         var resolver = new TrackingResolver("dynamic resolver cleanup failed");
@@ -168,6 +195,13 @@ public class BuilderOwnershipRollbackTests
         return exception.InnerException is { } nested && Contains(nested, text);
     }
 
+    private static SharpLinkEndpoint CreateEndpoint(string id, int port)
+        => new()
+        {
+            Id = id,
+            Address = new SharpLinkTcpAddress("127.0.0.1", port)
+        };
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition) throw new Exception(message);
@@ -175,7 +209,11 @@ public class BuilderOwnershipRollbackTests
 
     private interface IMissingService : IService;
 
-    private sealed class TrackingClientTransport(string? bindingFailure, string? cleanupFailure) :
+    private sealed class TrackingClientTransport(
+        string? bindingFailure,
+        string? cleanupFailure,
+        BuilderFaultInjectionProbe? probe = null,
+        string? resource = null) :
         IClientTransportFactory,
         IPerformanceProfileAwareTransport
     {
@@ -193,6 +231,8 @@ public class BuilderOwnershipRollbackTests
         public ValueTask DisposeAsync()
         {
             DisposeCount++;
+            if (probe is not null)
+                probe.RecordCleanup(resource ?? throw new InvalidOperationException("Tracked resource name is required."));
             return cleanupFailure is null
                 ? ValueTask.CompletedTask
                 : ValueTask.FromException(new InvalidOperationException(cleanupFailure));

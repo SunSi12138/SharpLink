@@ -6,6 +6,7 @@
 
 ### Added
 
+- Added the Runtime Architecture Phase 00 deterministic lifecycle/fake-time fixtures and a bounded six-path BenchmarkDotNet baseline. This is test/tooling evidence only and does not change production behavior, Protocol v2, contract/schema identity, or Generated API 4.
 - Generated Server API 4 introduces `IRpcGeneratedServerBridge`. Generated stubs now use this narrow operation-lifecycle bridge for inbound and outbound streams, while Runtime exclusively owns dispatchers, flow control, frame construction, send-pump behavior, and terminal arbitration.
 - Generated assembly locators now carry the manifest type, Generated API, Protocol version, and Generator version without materializing the manifest. Runtime uses that metadata to reject incompatible dynamic modules before publishing contracts, services, proxies, codecs, adapter scopes, or module leases.
 - Release gates now cover mixed Generator/package versions, all four SharpLink 1.1.1/2.0 Protocol v2 process pairs, five NativeAOT call shapes, generated-assembly metadata dependency scans, and collectible API 4 dynamic modules.
