@@ -137,6 +137,100 @@ public class StreamFlowControllerTests
     }
 
     [Test]
+    public async Task ConnectionThresholdFlushShouldClearPendingCreditFromEveryReceiveState()
+    {
+        var receiver = new StreamFlowController(4, 4, 16);
+        receiver.AcceptReceived(1, 1, 1);
+        Ensure(receiver.RecordConsumed(1, 1, 1) == 0,
+            "the first stream should leave credit pending before the connection threshold");
+        receiver.AcceptReceived(2, 1, 1);
+        Ensure(receiver.RecordConsumed(2, 1, 1) == 1,
+            "the second stream should flush both pending receive states");
+
+        Ensure(receiver.TryTakeConsumedCreditUpdate(out var requestId, out var streamId, out var credit),
+            "the first connection flush should enqueue the other stream's credit");
+        Ensure(requestId == 1 && streamId == 1 && credit == 1,
+            "the first connection flush must preserve the other stream's exact credit");
+        Ensure(!receiver.TryTakeConsumedCreditUpdate(out _, out _, out _),
+            "the first connection flush should leave no duplicate updates");
+
+        receiver.AcceptReceived(3, 1, 1);
+        Ensure(receiver.RecordConsumed(3, 1, 1) == 0,
+            "a new partial receive state should remain pending before the next threshold");
+        receiver.AcceptReceived(4, 1, 1);
+        Ensure(receiver.RecordConsumed(4, 1, 1) == 1,
+            "the next connection threshold should return the current stream's credit");
+
+        Ensure(receiver.TryTakeConsumedCreditUpdate(out requestId, out streamId, out credit),
+            "the second connection flush should enqueue its only other pending stream");
+        Ensure(requestId == 3 && streamId == 1 && credit == 1,
+            "already-flushed receive states must not emit duplicate credit");
+        Ensure(!receiver.TryTakeConsumedCreditUpdate(out _, out _, out _),
+            "the second connection flush should not recreate old pending credit");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task CompletedReceiveStateShouldReleaseCapacityAfterItsFinalCreditReturns()
+    {
+        const int maxConcurrentStreams = 128;
+        var receiver = new StreamFlowController(
+            streamWindow: 4,
+            connectionWindow: 512,
+            maxFramePayloadBytes: 1024,
+            maxConcurrentStreams: maxConcurrentStreams);
+        for (var requestId = 1; requestId <= maxConcurrentStreams; requestId++)
+            receiver.AcceptReceived(requestId, 1, 1);
+
+        try
+        {
+            receiver.AcceptReceived(maxConcurrentStreams + 1, 1, 1);
+            throw new Exception("expected receive stream capacity exhaustion");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+        }
+
+        Ensure(receiver.FlushConsumed(1, 1) == 0,
+            "completion should retain a receive state until its final credit returns");
+        Ensure(receiver.RecordConsumed(1, 1, 1) == 1,
+            "the final credit should be emitted when the completed receive state is released");
+        receiver.AcceptReceived(maxConcurrentStreams + 1, 1, 1);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task ExistingReceiveStateAtCapacityShouldKeepItsCreditAndReleaseTheSlot()
+    {
+        var receiver = new StreamFlowController(
+            streamWindow: 4,
+            connectionWindow: 16,
+            maxFramePayloadBytes: 1024,
+            maxConcurrentStreams: 1);
+
+        receiver.AcceptReceived(1, 1, 1);
+        receiver.AcceptReceived(1, 1, 1);
+        try
+        {
+            receiver.AcceptReceived(2, 1, 1);
+            throw new Exception("expected the second receive state to exceed the bounded capacity");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+        }
+
+        Ensure(receiver.RecordConsumed(1, 1, 1) == 0,
+            "the first partial consume should remain below the stream update threshold");
+        Ensure(receiver.RecordConsumed(1, 1, 1) == 2,
+            "the existing state at capacity must retain both reserved bytes and flush them once");
+        Ensure(receiver.FlushConsumed(1, 1) == 0,
+            "flushing an already-returned receive state must not duplicate credit");
+
+        receiver.AcceptReceived(2, 1, 1);
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task FailedSendStreamShouldAcceptInFlightCreditBeforeReusingCapacity()
     {
         var controller = new StreamFlowController(4, 4, 1024, maxConcurrentStreams: 1);
