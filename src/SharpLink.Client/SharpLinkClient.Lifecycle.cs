@@ -24,6 +24,10 @@ internal sealed partial class SharpLinkClient
                 // The initialization attempt belongs to the client. A caller may cancel only its
                 // WaitAsync below; shutdown remains the operation's lifetime boundary.
                 _connectTask = ConnectInitialAsync(CancellationToken.None);
+                TrackFrameworkTask(
+                    _connectTask,
+                    "InitialConnect",
+                    TaskObservationMode.ExternallyObserved);
             }
             connectTask = _connectTask;
         }
@@ -118,6 +122,13 @@ internal sealed partial class SharpLinkClient
                 {
                     _connections.Add(clientConnection);
                     PublishReadySnapshotLocked();
+                    readySession.NotifyConnected();
+                    TrackFrameworkTask(
+                        RunHeartbeatSendLoopAsync(clientConnection, sessionCts.Token),
+                        "HeartbeatSendLoop");
+                    TrackFrameworkTask(
+                        RunProcessRequestLoopAsync(clientConnection, sessionCts.Token),
+                        "ProcessRequestLoop");
                 }
             }
             if (poolException is not null)
@@ -126,10 +137,6 @@ internal sealed partial class SharpLinkClient
                 await clientConnection.DisposeAsync().ConfigureAwait(false);
                 throw poolException;
             }
-
-            readySession.NotifyConnected();
-            TrackBackgroundTask(RunHeartbeatSendLoopAsync(clientConnection, sessionCts.Token));
-            TrackBackgroundTask(RunProcessRequestLoopAsync(clientConnection, sessionCts.Token));
             session = null;
             return clientConnection;
         }

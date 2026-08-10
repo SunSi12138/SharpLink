@@ -298,6 +298,9 @@ public class SharpLinkServerHostedServiceTests
         Ensure(elapsed < TimeSpan.FromSeconds(7), "server stop must be bounded by the cleanup budget");
         Ensure(server.HealthStatus == SharpLinkHealthStatus.Unhealthy,
             "framework cleanup timeout must leave the server unhealthy");
+        var deferred = ((SharpLinkServer)server).DeferredTaskSnapshotForDiagnostics;
+        Ensure(deferred.ShutdownCleanupObserver is not null and not TaskStatus.RanToCompletion,
+            "timed-out framework cleanup must remain continuously observed and diagnosable");
 
         transport.ReleaseDispose();
         await runTask.WaitAsync(TimeSpan.FromSeconds(2));

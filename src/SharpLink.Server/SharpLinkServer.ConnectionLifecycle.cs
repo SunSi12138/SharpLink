@@ -74,10 +74,6 @@ internal sealed partial class SharpLinkServer
         catch (Exception ex) when (IsExpectedCancellation(ex, ct))
         {
         }
-        catch (Exception ex)
-        {
-            LogServerBackgroundLoopUnhandledException(_logger, nameof(HeartbeatCheckLoop), ex);
-        }
     }
 
     private async Task HandleSessionLifecycleAsync(ServerConnectionState connection)
@@ -175,7 +171,12 @@ internal sealed partial class SharpLinkServer
         finally
         {
             if (added)
-                ObserveRetiredConnectionCleanup(connection);
+            {
+                if (connection.ActiveCalls == 0)
+                    await CompleteRetiredConnectionCleanupAsync(connection).ConfigureAwait(false);
+                else
+                    ObserveDeferredRetiredConnectionCleanup(connection);
+            }
         }
     }
 
@@ -190,15 +191,35 @@ internal sealed partial class SharpLinkServer
         finally
         {
             if (added)
-                ObserveRetiredConnectionCleanup(connection);
+            {
+                if (connection.ActiveCalls == 0)
+                    await CompleteRetiredConnectionCleanupAsync(connection).ConfigureAwait(false);
+                else
+                    ObserveDeferredRetiredConnectionCleanup(connection);
+            }
         }
     }
 
-    private void ObserveRetiredConnectionCleanup(ServerConnectionState connection)
+    private void ObserveDeferredRetiredConnectionCleanup(ServerConnectionState connection)
     {
-        var cleanup = CompleteRetiredConnectionCleanupAsync(connection);
-        if (connection.ActiveCalls == 0)
-            TrackFrameworkTask(cleanup);
+        Interlocked.Increment(ref _deferredConnectionCleanups);
+        _ = ObserveDeferredRetiredConnectionCleanupAsync(connection);
+    }
+
+    private async Task ObserveDeferredRetiredConnectionCleanupAsync(ServerConnectionState connection)
+    {
+        try
+        {
+            await CompleteRetiredConnectionCleanupAsync(connection).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            LogDeferredCleanupFailed(_logger, "ConnectionServices", exception);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _deferredConnectionCleanups);
+        }
     }
 
     private async Task CompleteRetiredConnectionCleanupAsync(ServerConnectionState connection)
@@ -206,10 +227,6 @@ internal sealed partial class SharpLinkServer
         try
         {
             await connection.ServiceCleanupTask.ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            LogDeferredCleanupFailed(_logger, "ConnectionServices", exception);
         }
         finally
         {

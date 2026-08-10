@@ -15,7 +15,6 @@ internal sealed partial class SharpLinkClient
         private readonly EndpointState[] _endpoints;
         private readonly Lock _gate = new();
         private readonly HashSet<ClientConnection> _retiringConnections = [];
-        private readonly HashSet<Task> _initialDialTasks = [];
         private EndpointState[] _readyEndpoints = [];
         private EndpointSelectionSnapshot _selectionSnapshot = EndpointSelectionSnapshot.Empty;
         private Task? _connectTask;
@@ -66,6 +65,12 @@ internal sealed partial class SharpLinkClient
         public int ActiveStreamCount => CountConnections(static connection =>
             ((StreamManager)connection.Session.StreamManager).ActiveStreamCount);
 
+        public void BeginStop()
+        {
+            lock (_gate)
+                Volatile.Write(ref _stopping, 1);
+        }
+
         public ValueTask ConnectAsync(CancellationToken cancellationToken)
         {
             Task task;
@@ -79,9 +84,21 @@ internal sealed partial class SharpLinkClient
                 // A cluster initialization attempt belongs to the client, not to the first caller.
                 // Individual callers still observe their own cancellation through WaitAsync below.
                 if (_connectTask is null || _connectTask.IsFaulted || _connectTask.IsCanceled)
+                {
                     _connectTask = ConnectInitialAsync(_client._shutdownCts.Token);
+                    _client.TrackFrameworkTask(
+                        _connectTask,
+                        "StaticClusterInitialConnect",
+                        TaskObservationMode.ExternallyObserved);
+                }
                 else if (_connectTask.IsCompleted)
+                {
                     _connectTask = WaitForRecoveryAsync();
+                    _client.TrackFrameworkTask(
+                        _connectTask,
+                        "StaticClusterRecoveryWait",
+                        TaskObservationMode.ExternallyObserved);
+                }
                 task = _connectTask;
             }
             return cancellationToken.CanBeCanceled ? new ValueTask(task.WaitAsync(cancellationToken)) : new ValueTask(task);
@@ -144,6 +161,8 @@ internal sealed partial class SharpLinkClient
             var forceClose = false;
             lock (_gate)
             {
+                if (Volatile.Read(ref _stopping) != 0)
+                    return;
                 endpoint = FindEndpointLocked(connection);
                 if (endpoint is null)
                     return;
@@ -166,17 +185,20 @@ internal sealed partial class SharpLinkClient
                 {
                     PublishReadySnapshotLocked();
                 }
-            }
-
-            if (forceClose)
-            {
-                connection.Fail(CreateConnectionClosedException(
-                    "The static cluster retiring-connection budget was exhausted."));
-                _client.TrackBackgroundTask(DisposeConnectionAsync(connection));
-            }
-            else if (retireImmediately)
-            {
-                _client.TrackBackgroundTask(DisposeConnectionAsync(connection));
+                if (forceClose)
+                {
+                    connection.Fail(CreateConnectionClosedException(
+                        "The static cluster retiring-connection budget was exhausted."));
+                    _client.TrackFrameworkTask(
+                        DisposeConnectionAsync(connection),
+                        "StaticClusterForcedRetirementCleanup");
+                }
+                else if (retireImmediately)
+                {
+                    _client.TrackFrameworkTask(
+                        DisposeConnectionAsync(connection),
+                        "StaticClusterRetiredConnectionCleanup");
+                }
             }
 
             EnsureReconnect(endpoint);
@@ -211,6 +233,8 @@ internal sealed partial class SharpLinkClient
             EndpointState? endpoint;
             lock (_gate)
             {
+                if (Volatile.Read(ref _stopping) != 0)
+                    return;
                 endpoint = FindEndpointLocked(connection);
                 if (endpoint is null)
                     return;
@@ -218,8 +242,10 @@ internal sealed partial class SharpLinkClient
                     return;
                 _retiringConnections.Remove(connection);
                 PublishReadySnapshotLocked();
+                _client.TrackFrameworkTask(
+                    DisposeConnectionAsync(connection),
+                    "StaticClusterIdleConnectionCleanup");
             }
-            _client.TrackBackgroundTask(DisposeConnectionAsync(connection));
             EnsureReconnect(endpoint);
         }
 
@@ -319,12 +345,14 @@ internal sealed partial class SharpLinkClient
             var tracked = attempts.ToArray();
             lock (_gate)
             {
-                foreach (var attempt in tracked)
-                    _initialDialTasks.Add(attempt);
                 _initialDialReservations += tracked.Length;
+                foreach (var attempt in tracked)
+                {
+                    _client.TrackFrameworkTask(
+                        ObserveInitialDialAsync(attempt),
+                        "StaticClusterInitialDialObserver");
+                }
             }
-            foreach (var attempt in tracked)
-                _client.TrackBackgroundTask(ObserveInitialDialAsync(attempt));
         }
 
         private async Task ObserveInitialDialAsync(Task<Exception?> attempt)
@@ -342,7 +370,6 @@ internal sealed partial class SharpLinkClient
             {
                 lock (_gate)
                 {
-                    _initialDialTasks.Remove(attempt);
                     _initialDialReservations--;
                 }
             }
@@ -434,10 +461,14 @@ internal sealed partial class SharpLinkClient
                         throw CreateConnectionClosedException("Client stopped while connecting.");
                     endpoint.Connections.Add(createdConnection);
                     PublishReadySnapshotLocked();
+                    session.NotifyConnected();
+                    _client.TrackFrameworkTask(
+                        _client.RunHeartbeatSendLoopAsync(createdConnection, sessionCts.Token),
+                        "StaticClusterHeartbeatSendLoop");
+                    _client.TrackFrameworkTask(
+                        _client.RunProcessRequestLoopAsync(createdConnection, sessionCts.Token),
+                        "StaticClusterProcessRequestLoop");
                 }
-                session.NotifyConnected();
-                _client.TrackBackgroundTask(_client.RunHeartbeatSendLoopAsync(createdConnection, sessionCts.Token));
-                _client.TrackBackgroundTask(_client.RunProcessRequestLoopAsync(createdConnection, sessionCts.Token));
                 session = null;
                 connection = null;
                 PublishClientReadiness();
@@ -461,13 +492,17 @@ internal sealed partial class SharpLinkClient
         {
             lock (_gate)
             {
+                if (Volatile.Read(ref _stopping) != 0)
+                    return;
                 if (!endpoint.Connections.Remove(connection))
                     return;
                 _retiringConnections.Remove(connection);
                 PublishReadySnapshotLocked();
+                connection.Fail(exception);
+                _client.TrackFrameworkTask(
+                    DisposeConnectionAsync(connection),
+                    "StaticClusterDisconnectedConnectionCleanup");
             }
-            connection.Fail(exception);
-            _client.TrackBackgroundTask(DisposeConnectionAsync(connection));
             if (Volatile.Read(ref _stopping) == 0)
             {
                 _client.TransitionTo(ReadyConnectionCount == 0
@@ -523,7 +558,7 @@ internal sealed partial class SharpLinkClient
                     return;
                 }
                 endpoint.ReconnectTask = ReconnectAsync(endpoint);
-                _client.TrackBackgroundTask(endpoint.ReconnectTask);
+                _client.TrackFrameworkTask(endpoint.ReconnectTask, "StaticClusterReconnect");
             }
         }
 
@@ -540,7 +575,7 @@ internal sealed partial class SharpLinkClient
                 }
 
                 endpoint.ExpansionTask = ExpandAsync(endpoint);
-                _client.TrackBackgroundTask(endpoint.ExpansionTask);
+                _client.TrackFrameworkTask(endpoint.ExpansionTask, "StaticClusterExpansion");
             }
         }
 
@@ -803,61 +838,18 @@ internal sealed partial class SharpLinkClient
                 try { await DisposeConnectionAsync(connections[index]).ConfigureAwait(false); }
                 catch (Exception exception) { cleanupFailures.Add(exception); }
             }
-            await WaitForWorkersAsync(cleanupFailures).ConfigureAwait(false);
+            ThrowCleanupFailures(cleanupFailures);
+        }
+
+        public async ValueTask DisposeResourcesAsync()
+        {
+            var cleanupFailures = new List<Exception>();
             for (var index = 0; index < _endpoints.Length; index++)
             {
                 try { await _endpoints[index].Configuration.TransportFactory.DisposeAsync().ConfigureAwait(false); }
                 catch (Exception exception) { cleanupFailures.Add(exception); }
             }
             ThrowCleanupFailures(cleanupFailures);
-        }
-
-        private async Task WaitForWorkersAsync(List<Exception> cleanupFailures)
-        {
-            while (true)
-            {
-                Task[] workers;
-                lock (_gate)
-                {
-                    var pending = new HashSet<Task>();
-                    if (_connectTask is { IsCompleted: false })
-                        pending.Add(_connectTask);
-                    foreach (var endpoint in _endpoints)
-                    {
-                        if (endpoint.ReconnectTask is { IsCompleted: false })
-                            pending.Add(endpoint.ReconnectTask);
-                        if (endpoint.ExpansionTask is { IsCompleted: false })
-                            pending.Add(endpoint.ExpansionTask);
-                    }
-                    foreach (var attempt in _initialDialTasks)
-                        if (!attempt.IsCompleted)
-                            pending.Add(attempt);
-                    workers = [.. pending];
-                }
-
-                if (workers.Length == 0)
-                    return;
-
-                try
-                {
-                    await Task.WhenAll(workers).ConfigureAwait(false);
-                }
-                catch
-                {
-                    for (var index = 0; index < workers.Length; index++)
-                    {
-                        var worker = workers[index];
-                        if (worker.Exception is { } aggregate)
-                        {
-                            cleanupFailures.AddRange(aggregate.Flatten().InnerExceptions);
-                        }
-                        else if (worker.IsCanceled && !_client._shutdownCts.IsCancellationRequested)
-                        {
-                            cleanupFailures.Add(new TaskCanceledException(worker));
-                        }
-                    }
-                }
-            }
         }
 
         private static void ThrowCleanupFailures(List<Exception> failures)

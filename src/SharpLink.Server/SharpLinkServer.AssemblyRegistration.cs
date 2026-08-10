@@ -324,6 +324,10 @@ internal sealed partial class SharpLinkServer
             }
         }
 
+        TrackFrameworkTask(
+            drainOperation!,
+            "DynamicAssemblyReplacementDrain",
+            TaskObservationMode.ExternallyObserved);
         _ = CompleteUnregisterOperationAsync(oldAssembly, oldModule!, gracefulTimeout, drainCompletion!);
         return WaitForReplacementAsync(drainOperation!, cancellationToken);
     }

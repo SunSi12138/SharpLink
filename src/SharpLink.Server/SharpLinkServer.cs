@@ -19,7 +19,8 @@ internal sealed partial class SharpLinkServer(
     IAsyncDisposable? ownedServiceProvider = null,
     IServiceProvider? serviceProvider = null,
     IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null,
-    SharpLinkAdmissionController? admissionController = null) : ISharpLinkServer
+    SharpLinkAdmissionController? admissionController = null,
+    ServerShutdownPlan? shutdownPlan = null) : ISharpLinkServer
 {
     private enum ServerState
     {
@@ -61,8 +62,8 @@ internal sealed partial class SharpLinkServer(
     private readonly CancellationTokenSource _acceptCts = new();
     private readonly CancellationTokenSource _forceStopCts = new();
     private readonly Lock _stateGate = new();
-    private readonly Lock _frameworkTasksGate = new();
-    private readonly HashSet<Task> _frameworkTasks = [];
+    private readonly FrameworkTaskSupervisor _frameworkTasks =
+        CreateFrameworkTaskSupervisor(loggerFactory);
     private readonly TaskCompletionSource<bool> _callsDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task? _runTask;
     private Task? _stopTask;
@@ -80,9 +81,11 @@ internal sealed partial class SharpLinkServer(
         exceptionMapper ?? new DefaultRpcExceptionMapper(includeDetails: false);
     private readonly ServerServiceCleanup _serviceCleanup = new(initialServices.Values, ownedServiceProvider);
     private readonly SharpLinkAdmissionController? _admissionController = admissionController;
+    private readonly ServerShutdownPlan _shutdownPlan = shutdownPlan ?? ServerShutdownPlan.Default;
     private Task? _deferredServiceCleanupTask;
     private Task? _shutdownCleanupObserver;
     private Task? _serviceCleanupObserver;
+    private int _deferredConnectionCleanups;
     private ServerStopDiagnosticSnapshot? _lastStopDiagnostics;
     private int _globalActiveCalls;
     private long _rejectedOneWayCalls;
@@ -116,10 +119,9 @@ internal sealed partial class SharpLinkServer(
 
     private async Task StopCoreAsync(TimeSpan gracefulTimeout)
     {
-        const int cleanupBudgetSeconds = 5;
         var started = Stopwatch.GetTimestamp();
         var gracefulDeadline = AddStopwatchDuration(started, gracefulTimeout);
-        var finalDeadline = AddStopwatchDuration(gracefulDeadline, TimeSpan.FromSeconds(cleanupBudgetSeconds));
+        var finalDeadline = AddStopwatchDuration(gracefulDeadline, _shutdownPlan.CleanupBudget);
         var faulted = false;
         List<Exception>? stopFailures = null;
 
@@ -127,6 +129,7 @@ internal sealed partial class SharpLinkServer(
             TransitionTo(ServerState.Draining);
         _admissionController?.StopAccepting();
         BeginDrainDynamicModules();
+        _frameworkTasks.Seal();
         CancelForShutdown(_acceptCts, _logger, "AcceptCancellation");
         var listenerDisposeTask = StartListenerDispose(transportListener);
         var goAwayTask = SendGoAwayToAllAsync();
@@ -153,7 +156,7 @@ internal sealed partial class SharpLinkServer(
 
             CancelForShutdown(_forceStopCts, _logger, "CallCancellation");
             var closeSessionsTask = DisposeAllSessionsAsync();
-            var frameworkTasksTask = WaitForFrameworkTasksAsync();
+            var frameworkTasksTask = _frameworkTasks.DrainAsync();
             var frameworkCleanupTask = Task.WhenAll(
                 listenerDisposeTask,
                 goAwayTask,
@@ -179,7 +182,7 @@ internal sealed partial class SharpLinkServer(
             if (!frameworkCleanupCompleted)
             {
                 faulted = true;
-                LogFrameworkCleanupTimeout(_logger, cleanupBudgetSeconds);
+                LogFrameworkCleanupTimeout(_logger, (int)_shutdownPlan.CleanupBudget.TotalSeconds);
                 _shutdownCleanupObserver = ObserveShutdownAndDisposeTokensAsync(
                     frameworkCleanupTask,
                     _acceptCts,
@@ -251,14 +254,14 @@ internal sealed partial class SharpLinkServer(
 
     private async Task CleanupAfterRunFailureAsync()
     {
-        const int cleanupBudgetSeconds = 5;
         var deadline = AddStopwatchDuration(
             Stopwatch.GetTimestamp(),
-            TimeSpan.FromSeconds(cleanupBudgetSeconds));
+            _shutdownPlan.CleanupBudget);
 
         CancelForShutdown(_acceptCts, _logger, "AcceptCancellation");
         _admissionController?.StopAccepting();
         BeginDrainDynamicModules();
+        _frameworkTasks.Seal();
         CancelForShutdown(_forceStopCts, _logger, "CallCancellation");
         if (Volatile.Read(ref _globalActiveCalls) == 0)
             _callsDrained.TrySetResult(true);
@@ -273,7 +276,7 @@ internal sealed partial class SharpLinkServer(
         var frameworkCleanupTask = Task.WhenAll(
             StartListenerDispose(transportListener),
             DisposeAllSessionsAsync(),
-            WaitForFrameworkTasksAsync());
+            _frameworkTasks.DrainAsync());
         var frameworkCleanupCompleted = false;
         try
         {
@@ -293,7 +296,7 @@ internal sealed partial class SharpLinkServer(
         }
         else
         {
-            LogFrameworkCleanupTimeout(_logger, cleanupBudgetSeconds);
+            LogFrameworkCleanupTimeout(_logger, (int)_shutdownPlan.CleanupBudget.TotalSeconds);
             _shutdownCleanupObserver = ObserveShutdownAndDisposeTokensAsync(
                 frameworkCleanupTask,
                 _acceptCts,
@@ -397,31 +400,11 @@ internal sealed partial class SharpLinkServer(
         }
     }
 
-    private void TrackFrameworkTask(Task task)
-    {
-        lock (_frameworkTasksGate)
-            _frameworkTasks.Add(task);
-
-        task.ContinueWith(
-            static (completedTask, state) =>
-            {
-                var server = (SharpLinkServer)state!;
-                lock (server._frameworkTasksGate)
-                    server._frameworkTasks.Remove(completedTask);
-
-                if (completedTask.Exception is { } exception)
-                {
-                    LogServerBackgroundLoopUnhandledException(
-                        server._logger,
-                        "FrameworkTask",
-                        exception.GetBaseException());
-                }
-            },
-            this,
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-    }
+    internal void TrackFrameworkTask(
+        Task task,
+        string operation,
+        TaskObservationMode observationMode = TaskObservationMode.FrameworkOwned)
+        => _frameworkTasks.Track(task, operation, observationMode, IsExpectedSessionShutdownException);
 
     private async Task DisposeAllSessionsAsync()
     {
@@ -463,28 +446,6 @@ internal sealed partial class SharpLinkServer(
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(unexpected[0]).Throw();
         if (unexpected is not null)
             throw new AggregateException(unexpected);
-    }
-
-    private async Task WaitForFrameworkTasksAsync()
-    {
-        while (true)
-        {
-            Task[] tasks;
-            lock (_frameworkTasksGate)
-                tasks = [.. _frameworkTasks];
-
-            if (tasks.Length == 0)
-                return;
-
-            try
-            {
-                await Task.WhenAll(tasks).ConfigureAwait(false);
-            }
-            catch
-            {
-                ThrowUnexpectedShutdownTaskFailures(tasks);
-            }
-        }
     }
 
     private static async Task<bool> WaitUntilAsync(Task task, long deadline)
@@ -737,6 +698,18 @@ internal sealed partial class SharpLinkServer(
     internal ServerStopDiagnosticSnapshot? LastStopDiagnostics
         => Volatile.Read(ref _lastStopDiagnostics);
 
+    internal FrameworkTaskSupervisorSnapshot FrameworkTaskSnapshotForDiagnostics
+        => _frameworkTasks.CaptureSnapshot();
+
+    internal ServerShutdownPlan ShutdownPlanForDiagnostics => _shutdownPlan;
+
+    internal ServerDeferredTaskDiagnosticSnapshot DeferredTaskSnapshotForDiagnostics
+        => new(
+            Volatile.Read(ref _deferredServiceCleanupTask)?.Status,
+            Volatile.Read(ref _shutdownCleanupObserver)?.Status,
+            Volatile.Read(ref _serviceCleanupObserver)?.Status,
+            Volatile.Read(ref _deferredConnectionCleanups));
+
     private ServerStopDiagnosticSnapshot CaptureStopDiagnostics(int activeCalls)
     {
         var connections = _connections.Values.ToArray();
@@ -763,6 +736,14 @@ internal sealed partial class SharpLinkServer(
         catch (ObjectDisposedException) when (CurrentState == ServerState.Stopped)
         {
         }
+    }
+
+    private static FrameworkTaskSupervisor CreateFrameworkTaskSupervisor(ILoggerFactory loggerFactory)
+    {
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+        var frameworkLogger = loggerFactory.CreateLogger<SharpLinkServer>();
+        return new FrameworkTaskSupervisor((operation, exception) =>
+            LogServerBackgroundLoopUnhandledException(frameworkLogger, operation, exception));
     }
 
 }

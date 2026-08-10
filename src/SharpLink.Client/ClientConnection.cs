@@ -230,10 +230,12 @@ internal sealed class ClientConnection :
                 }
                 if (!drain.IsCompletedSuccessfully)
                 {
-                    _client.TrackBackgroundTask(FinishCancellationAfterDispatchesAsync(
-                        drain,
-                        completion.RequestId,
-                        GetCancelReason(completion.Reason)));
+                    _client.TrackFrameworkTask(
+                        FinishCancellationAfterDispatchesAsync(
+                            drain,
+                            completion.RequestId,
+                            GetCancelReason(completion.Reason)),
+                        "CancellationDispatchCleanup");
                     return;
                 }
             }
