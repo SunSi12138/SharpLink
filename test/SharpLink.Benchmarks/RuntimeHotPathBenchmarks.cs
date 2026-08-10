@@ -243,6 +243,35 @@ public class FlowControlHotPathBenchmarks
 }
 
 [MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+[BenchmarkCategory("FlowControl", "Allocation")]
+public class ReceiveFlowStateAllocationBenchmarks
+{
+    private StreamFlowController _flowController = null!;
+    private long _requestId = 1;
+    private ushort _streamId = 1;
+    private int _encodedBytes = 32;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _flowController = new StreamFlowController(
+            streamWindow: 1024,
+            connectionWindow: 1024,
+            maxFramePayloadBytes: 4 * 1024 * 1024,
+            maxConcurrentStreams: 1);
+    }
+
+    [Benchmark]
+    public int ReceiveAndCompleteStream()
+    {
+        _flowController.AcceptReceived(_requestId, _streamId, _encodedBytes);
+        _ = _flowController.RecordConsumed(_requestId, _streamId, _encodedBytes);
+        return _flowController.FlushConsumed(_requestId, _streamId);
+    }
+}
+
+[MemoryDiagnoser]
 [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 5, iterationCount: 15)]
 public class CodecAndPreAdmissionHotPathBenchmarks
 {
