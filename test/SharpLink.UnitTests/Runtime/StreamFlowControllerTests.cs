@@ -244,6 +244,40 @@ public class StreamFlowControllerTests
     }
 
     [Test]
+    public async Task QueuedCrossStreamCreditMustSurviveReceiveStateReuseBeforeDrain()
+    {
+        var receiver = new StreamFlowController(4, 4, 1024, maxConcurrentStreams: 2);
+        receiver.AcceptReceived(71, 1, 1);
+        var retired = GetReceiveState(receiver, 71, 1);
+        Ensure(receiver.RecordConsumed(71, 1, 1) == 0,
+            "the first stream credit must remain pending until the connection threshold is reached");
+
+        receiver.AcceptReceived(72, 1, 1);
+        Ensure(receiver.RecordConsumed(72, 1, 1) == 1,
+            "the second stream must trigger a connection-threshold flush for the current key");
+
+        Ensure(receiver.FlushConsumed(71, 1) == 0,
+            "the already-flushed stream must complete without emitting duplicate credit");
+        Ensure(GetReceiveStateCount(receiver) == 1,
+            "the completed stream must leave its dictionary slot before reuse");
+
+        receiver.AcceptReceived(73, 1, 2);
+        var reused = GetReceiveState(receiver, 73, 1);
+        Ensure(ReferenceEquals(retired, reused),
+            "the newly admitted stream must reuse the completed stream's local state object");
+
+        Ensure(receiver.TryTakeConsumedCreditUpdate(out var requestId, out var streamId, out var credit),
+            "the earlier connection flush must retain its queued cross-stream credit after reuse");
+        Ensure(requestId == 71 && streamId == 1 && credit == 1,
+            "the queued update must preserve the retired stream identity and exact credit");
+        Ensure(receiver.RecordConsumed(73, 1, 2) == 2,
+            "draining an old queued update must not alter the reused stream's pending credit");
+        Ensure(!receiver.TryTakeConsumedCreditUpdate(out _, out _, out _),
+            "the old queued update must be drained exactly once");
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task CompletedReceiveStateShouldReleaseCapacityAfterItsFinalCreditReturns()
     {
         const int maxConcurrentStreams = 128;
