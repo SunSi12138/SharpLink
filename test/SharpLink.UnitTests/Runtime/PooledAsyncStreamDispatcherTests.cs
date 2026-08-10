@@ -670,6 +670,8 @@ public class PooledAsyncStreamDispatcherTests
     {
         private readonly ManualResetEventSlim _bothPrechecksEntered = new();
         private readonly ManualResetEventSlim _releaseDelayedReturn = new();
+        private readonly TaskCompletionSource _detached =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _coordinateReturns;
         private int _detachedReads;
 
@@ -703,7 +705,16 @@ public class PooledAsyncStreamDispatcherTests
         {
         }
 
-        public void CoordinateReturns() => Volatile.Write(ref _coordinateReturns, 1);
+        public ValueTask WaitForDetachedAsync(CancellationToken cancellationToken)
+            => cancellationToken.CanBeCanceled
+                ? new ValueTask(_detached.Task.WaitAsync(cancellationToken))
+                : new ValueTask(_detached.Task);
+
+        public void CoordinateReturns()
+        {
+            Volatile.Write(ref _coordinateReturns, 1);
+            _detached.TrySetResult();
+        }
 
         public bool WaitForBothPrechecks(TimeSpan timeout) => _bothPrechecksEntered.Wait(timeout);
 

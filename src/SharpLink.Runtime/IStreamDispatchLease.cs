@@ -19,5 +19,7 @@ internal interface IStreamDispatchState
 
     bool IsDetached { get; }
 
+    ValueTask WaitForDetachedAsync(CancellationToken cancellationToken);
+
     void Close();
 }

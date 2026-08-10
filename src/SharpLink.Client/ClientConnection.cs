@@ -209,11 +209,15 @@ internal sealed class ClientConnection :
         // flushed receive credit and detached its dispatcher. Remove the map entry if it
         // is still published, then join the winning completion before a late Cancel.
         Session.StreamManager.Unregister(requestId, 0);
-        if (dispatchState is null || dispatchState.IsDetached || !Session.IsConnected)
+        if (dispatchState is null || dispatchState.IsDetached)
         {
-            TrySendCancel(requestId, ProtocolV2CancelReason.ConsumerAbandoned);
+            if (Session.IsConnected)
+                TrySendCancel(requestId, ProtocolV2CancelReason.ConsumerAbandoned);
             return ValueTask.CompletedTask;
         }
+
+        if (!Session.IsConnected)
+            return ValueTask.CompletedTask;
 
         return AwaitRemoteCompletionAndSendCancelAsync(requestId, dispatchState);
     }
@@ -308,9 +312,17 @@ internal sealed class ClientConnection :
         long requestId,
         IStreamDispatchState dispatchState)
     {
-        while (!dispatchState.IsDetached && Session.IsConnected)
-            await Task.Yield();
-        TrySendCancel(requestId, ProtocolV2CancelReason.ConsumerAbandoned);
+        try
+        {
+            await dispatchState.WaitForDetachedAsync(Session.LifetimeToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!Session.IsConnected)
+        {
+            return;
+        }
+
+        if (Session.IsConnected)
+            TrySendCancel(requestId, ProtocolV2CancelReason.ConsumerAbandoned);
     }
 
     public ValueTask DisposeAsync()
