@@ -42,19 +42,19 @@ public class RpcSessionLifecycleTests
         var serverOutput = new Pipe();
         var mapped = new SharpLinkException(SharpLinkErrorCode.Internal, "mapped during construction");
         var mapperCalls = 0;
-        var client = new RpcSession(
+        var clientTransport = RpcSessionTestFixture.Transport(
             "complete-client",
             clientInput.Reader,
-            clientOutput.Writer,
-            static () => { },
-            static () => true,
+            clientOutput.Writer);
+        var client = new RpcSession(
+            clientTransport,
             new RpcSessionCreationOptions(RpcSessionRole.Client, clientContext));
-        var server = new RpcSession(
+        var serverTransport = RpcSessionTestFixture.Transport(
             "complete-server",
             serverInput.Reader,
-            serverOutput.Writer,
-            static () => { },
-            static () => true,
+            serverOutput.Writer);
+        var server = new RpcSession(
+            serverTransport,
             new RpcSessionCreationOptions(
                 RpcSessionRole.Server,
                 serverContext,
@@ -96,18 +96,107 @@ public class RpcSessionLifecycleTests
     }
 
     [Test]
+    public async Task TransportDisposeShouldBeSingleFlightAcrossFaultShutdownAndDisposeRaces()
+    {
+        var input = new Pipe();
+        var output = new Pipe();
+        var disposeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDispose = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var transportFailure = new IOException("transport dispose failed");
+        var transport = RpcSessionTestFixture.Transport(
+            "terminal-dispose-race",
+            input.Reader,
+            output.Writer,
+            DisposeTransportAsync);
+        var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions());
+        using var start = new ManualResetEventSlim();
+
+        var fault = Task.Run(() =>
+        {
+            start.Wait();
+            session.NotifyDisconnected(new IOException("read failed"));
+        });
+        var shutdown = Task.Run(() =>
+        {
+            start.Wait();
+            session.BeginShutdown();
+        });
+        var firstDispose = Task.Run(async () =>
+        {
+            start.Wait();
+            return await CaptureDisposeExceptionAsync(session);
+        });
+        var secondDispose = Task.Run(async () =>
+        {
+            start.Wait();
+            return await CaptureDisposeExceptionAsync(session);
+        });
+
+        start.Set();
+        await disposeStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        releaseDispose.SetResult();
+        await Task.WhenAll(fault, shutdown).WaitAsync(TimeSpan.FromSeconds(2));
+        var failures = await Task.WhenAll(firstDispose, secondDispose).WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(transport.DisposeCount == 1,
+            "Fault, BeginShutdown, and concurrent DisposeAsync calls must start transport disposal once");
+        foreach (var failure in failures)
+        {
+            Ensure(ReferenceEquals(failure, transportFailure),
+                "every DisposeAsync waiter must observe the same single-flight transport failure instance");
+        }
+        Ensure(!session.IsConnected,
+            "the terminal winner must keep the Session disconnected after disposal fails");
+
+        async ValueTask DisposeTransportAsync()
+        {
+            disposeStarted.TrySetResult();
+            await releaseDispose.Task.ConfigureAwait(false);
+            throw transportFailure;
+        }
+    }
+
+    [Test]
+    public async Task SynchronousTransportDisposeFailureShouldBecomeOneObservedTask()
+    {
+        var input = new Pipe();
+        var output = new Pipe();
+        var transportFailure = new IOException("synchronous transport dispose failed");
+        var transport = RpcSessionTestFixture.Transport(
+            "synchronous-dispose-failure",
+            input.Reader,
+            output.Writer,
+            DisposeTransport);
+        var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions());
+
+        session.NotifyDisconnected(new IOException("read failed"));
+        var failures = await Task.WhenAll(
+            CaptureDisposeExceptionAsync(session),
+            CaptureDisposeExceptionAsync(session));
+
+        Ensure(transport.DisposeCount == 1,
+            "a synchronous transport dispose throw must still be single-flight");
+        foreach (var failure in failures)
+        {
+            Ensure(ReferenceEquals(failure, transportFailure),
+                "the fault observer and every explicit disposal waiter must share the converted faulted task");
+        }
+        Ensure(!session.IsConnected,
+            "a synchronous transport cleanup failure must not reopen the terminal Session");
+
+        ValueTask DisposeTransport() => throw transportFailure;
+    }
+
+    [Test]
     public async Task FirstFaultShouldBePublishedOnceAndReusedByLaterSends()
     {
         var input = new Pipe();
         var output = new Pipe();
-        var disconnectCount = 0;
-        await using var session = new RpcSession(
+        var transport = RpcSessionTestFixture.Transport(
             "first-fault",
             input.Reader,
-            output.Writer,
-            () => Interlocked.Increment(ref disconnectCount),
-            static () => true,
-            RpcSessionTestFixture.ClientOptions());
+            output.Writer);
+        await using var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions());
         var publishedCount = 0;
         Exception? published = null;
         session.OnDisconnected += exception =>
@@ -124,7 +213,7 @@ public class RpcSessionLifecycleTests
         Ensure(ReferenceEquals(first, published), "the first structured failure should be published");
         Ensure(ReferenceEquals(first, thrown), "later sends should receive the first failure instance");
         Ensure(publishedCount == 1, "disconnect should be published once");
-        Ensure(disconnectCount == 1, "transport should be disconnected once");
+        Ensure(transport.DisposeCount == 1, "transport should be disposed once");
     }
 
     [Test]
@@ -132,14 +221,11 @@ public class RpcSessionLifecycleTests
     {
         var input = new Pipe();
         var output = new Pipe();
-        var disconnectCount = 0;
-        await using var session = new RpcSession(
+        var transport = RpcSessionTestFixture.Transport(
             "concurrent-fault",
             input.Reader,
-            output.Writer,
-            () => Interlocked.Increment(ref disconnectCount),
-            static () => true,
-            RpcSessionTestFixture.ClientOptions());
+            output.Writer);
+        await using var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions());
         var disconnected = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var publishedCount = 0;
         session.OnDisconnected += exception =>
@@ -166,7 +252,7 @@ public class RpcSessionLifecycleTests
         Ensure(terminal is SharpLinkException, "terminal failure should be structured");
         Ensure(ReferenceEquals(terminal, laterSend), "all waiters should observe the terminal instance");
         Ensure(publishedCount == 1, "competing faults should publish one disconnect");
-        Ensure(disconnectCount == 1, "competing faults should close transport once");
+        Ensure(transport.DisposeCount == 1, "competing faults should dispose transport once");
     }
 
     [Test]
@@ -176,14 +262,11 @@ public class RpcSessionLifecycleTests
         var output = new Pipe(new PipeOptions(
             pauseWriterThreshold: 4 * 1024 * 1024,
             resumeWriterThreshold: 2 * 1024 * 1024));
-        var disconnectCount = 0;
-        var session = new RpcSession(
+        var transport = RpcSessionTestFixture.Transport(
             "send-dispose",
             input.Reader,
-            output.Writer,
-            () => Interlocked.Increment(ref disconnectCount),
-            static () => true,
-            RpcSessionTestFixture.ClientOptions());
+            output.Writer);
+        var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions());
         var failures = new ConcurrentBag<SharpLinkException>();
         var senders = new Task[4];
         for (var senderIndex = 0; senderIndex < senders.Length; senderIndex++)
@@ -210,7 +293,7 @@ public class RpcSessionLifecycleTests
         await Task.WhenAll(senders).WaitAsync(TimeSpan.FromSeconds(5));
         await Task.WhenAll(dispose1, dispose2).WaitAsync(TimeSpan.FromSeconds(5));
 
-        Ensure(disconnectCount == 1, "concurrent disposal should close transport once");
+        Ensure(transport.DisposeCount == 1, "concurrent disposal should dispose transport once");
         foreach (var failure in failures)
             Ensure(failure.Code == SharpLinkErrorCode.ConnectionClosed, "closed sends should be structured");
     }
@@ -244,12 +327,10 @@ public class RpcSessionLifecycleTests
 
         var input = new Pipe();
         var output = new Pipe();
-        var session = new RpcSession(
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "late-notify",
             input.Reader,
             output.Writer,
-            static () => { },
-            static () => true,
             RpcSessionTestFixture.ClientOptions());
 
         await session.DisposeAsync();
@@ -263,12 +344,10 @@ public class RpcSessionLifecycleTests
     {
         var input = new Pipe();
         var output = new Pipe();
-        await using var session = new RpcSession(
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "flow-credit-flush",
             input.Reader,
             output.Writer,
-            static () => { },
-            static () => true,
             RpcSessionTestFixture.ClientOptions());
         session.NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl;
         session.EnableStreamFlowControl(4, 4);
@@ -305,14 +384,11 @@ public class RpcSessionLifecycleTests
     {
         var input = new Pipe();
         var output = new Pipe();
-        var disconnectCount = 0;
-        var session = new RpcSession(
+        var transport = RpcSessionTestFixture.Transport(
             "throwing-stream-completion",
             input.Reader,
-            output.Writer,
-            () => Interlocked.Increment(ref disconnectCount),
-            static () => true,
-            RpcSessionTestFixture.ClientOptions());
+            output.Writer);
+        var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions());
         var sibling = new TrackingCompletionDispatcher();
         session.StreamManager.Register(1, new ThrowingCompletionDispatcher());
         session.StreamManager.Register(1, 1, sibling);
@@ -329,7 +405,7 @@ public class RpcSessionLifecycleTests
             "dispatcher cleanup exceptions must not interrupt Session disposal");
         Ensure(sibling.CompletionCount == 1,
             "a throwing dispatcher must not strand sibling stream completion");
-        Ensure(disconnectCount == 1,
+        Ensure(transport.DisposeCount == 1,
             "a throwing dispatcher must not skip transport disposal");
     }
 
@@ -351,6 +427,19 @@ public class RpcSessionLifecycleTests
         try
         {
             action();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static async Task<Exception?> CaptureDisposeExceptionAsync(RpcSession session)
+    {
+        try
+        {
+            await session.DisposeAsync();
             return null;
         }
         catch (Exception exception)

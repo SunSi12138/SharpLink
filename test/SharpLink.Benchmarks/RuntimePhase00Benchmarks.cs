@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Pipelines;
 using System.Linq;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
@@ -55,11 +56,10 @@ public class RuntimePhase00Benchmarks
         _streams = new StreamManager();
         _sendInput = new Pipe();
         _sendSession = new RpcSession(
-            "phase00-send-pump",
-            _sendInput.Reader,
-            new DiscardingPipeWriter(),
-            static () => { },
-            static () => true,
+            new BenchmarkTransportConnection(
+                "phase00-send-pump",
+                _sendInput.Reader,
+                new DiscardingPipeWriter()),
             new RpcSessionCreationOptions(RpcSessionRole.Client, _context));
         _responsePayload = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(_responsePayload, 42);
@@ -83,6 +83,10 @@ public class RuntimePhase00Benchmarks
     [Benchmark]
     public ValueTask<int> UnarySendAndComplete()
         => _environment.Rpc.AddAsync(10, 20);
+
+    [Benchmark]
+    public bool SessionIsConnected()
+        => _sendSession.IsConnected;
 
     [Benchmark]
     public async ValueTask<int> PendingRegisterAndComplete()
@@ -158,6 +162,24 @@ public class RuntimePhase00Benchmarks
         }
 
         public void Complete(Exception? exception) => _ = exception;
+    }
+
+    private sealed class BenchmarkTransportConnection(
+        string id,
+        PipeReader input,
+        PipeWriter output) : ITransportConnection
+    {
+        public string Id { get; } = id;
+        public PipeReader Input { get; } = input;
+        public PipeWriter Output { get; } = output;
+        public EndPoint? LocalEndPoint => null;
+        public EndPoint? RemoteEndPoint => null;
+
+        public async ValueTask DisposeAsync()
+        {
+            await Output.CompleteAsync().ConfigureAwait(false);
+            await Input.CompleteAsync().ConfigureAwait(false);
+        }
     }
 
     private sealed class DiscardingPipeWriter : PipeWriter

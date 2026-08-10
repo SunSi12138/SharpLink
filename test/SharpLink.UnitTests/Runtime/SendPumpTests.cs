@@ -13,12 +13,10 @@ public class SendPumpTests
         var input = new Pipe();
         var output = new Pipe();
         using var context = new SharpLinkRuntimeContextBuilder().Build();
-        var session = new RpcSession(
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "huge-flush-latency",
             input.Reader,
             output.Writer,
-            static () => { },
-            static () => true,
             RpcSessionTestFixture.ClientOptions(
                 context,
                 new RpcSessionFlushOptions(1024 * 1024, TimeSpan.MaxValue)));
@@ -157,12 +155,10 @@ public class SendPumpTests
         var context = new SharpLinkRuntimeContextBuilder()
             .Configure(static options => options.PerformanceProfile = SharpLinkPerformanceProfile.Throughput)
             .Build();
-        var session = new RpcSession(
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "force-flush",
             input.Reader,
             output.Writer,
-            static () => { },
-            static () => true,
             RpcSessionTestFixture.ClientOptions(context));
         try
         {
@@ -187,12 +183,10 @@ public class SendPumpTests
         var context = new SharpLinkRuntimeContextBuilder()
             .Configure(options => options.FlowControl.MaxSendQueueBytes = maxSendQueueBytes)
             .Build();
-        return new RpcSession(
+        return RpcSessionTestFixture.CreateSessionOverTestTransport(
             "send-pump",
             input.Reader,
             output.Writer,
-            static () => { },
-            static () => true,
             RpcSessionTestFixture.ClientOptions(context));
     }
 

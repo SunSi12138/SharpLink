@@ -319,12 +319,10 @@ public class StreamFlowControllerTests
             .Build();
         var input = new Pipe();
         var output = new BlockingFlushPipeWriter();
-        await using var session = new RpcSession(
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "stream-completion-capacity",
             input.Reader,
             output,
-            static () => { },
-            static () => true,
             RpcSessionTestFixture.ClientOptions(context));
         session.NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl;
         session.EnableStreamFlowControl(4, 4);

@@ -301,16 +301,13 @@ public sealed class ServerRequestEnvelopeReaderTests
     {
         var input = new Pipe();
         var output = new Pipe();
-        return new RpcSession(
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "envelope-reader",
             input.Reader,
             output.Writer,
-            static () => { },
-            static () => true,
-            RpcSessionTestFixture.ServerOptions())
-        {
-            NegotiatedCapabilities = capabilities
-        };
+            RpcSessionTestFixture.ServerOptions());
+        session.NegotiatedCapabilities = capabilities;
+        return session;
     }
 
     private static SharpLinkException CaptureSharpLinkException(Action action)
