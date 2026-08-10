@@ -146,6 +146,9 @@ jobs:
       - name: Verify package metadata, XML documentation, and symbols
         run: ./eng/verify-packages.sh artifacts/nuget
 
+      - name: Verify Hosting direct Runtime dependency
+        run: ./eng/verify-hosting-package-dependency.sh artifacts/nuget
+
       - name: Verify Generated ABI Package Mixing
         run: ./eng/verify-generated-abi-mixing.sh
 

@@ -14,6 +14,7 @@
 
 - SharpLink 2.0 generates only API 4 manifests and Runtime accepts only Generated API 4 with Protocol 2. Generated stubs receive codecs when they are constructed, write responses through `IBufferWriter<byte>`, and no longer reference `SharpLink.Runtime`, `IRpcSession`, pooled stream dispatchers, or Runtime helper methods.
 - `SharpLink.Sdk` now depends only on `SharpLink.Abstractions` and carries the Analyzer/Source Generator. A contract-only project no longer receives `SharpLink.Runtime` transitively; Client, Server, and Hosting applications continue to obtain Runtime from their corresponding application packages.
+- `SharpLink.Hosting` now declares its direct `SharpLink.Runtime` dependency instead of relying on Client or Server to provide the assembly transitively for `IAnonymousPipeAllocatorAccessor`.
 - Public SharpPack adapter types now use the `SharpLink.Serializer.SharpPack` namespace instead of `SharpLink.Runtime`.
 
 ### Breaking
