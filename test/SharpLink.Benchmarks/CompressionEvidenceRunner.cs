@@ -27,11 +27,13 @@ internal static class CompressionEvidenceRunner
         var outputPath = GetOption(args, "--output") ??
             Path.Combine("artifacts", "performance", "current", "compression-provider.json");
         var inputShapes = GetInputShapes(args);
+        var levels = GetLevels(args);
+        var payloadSizes = GetPayloadSizes(args);
         var results = new List<CompressionEvidenceResult>(
-            s_levels.Length * s_payloadSizes.Length * 2 * inputShapes.Count * 5);
-        foreach (var level in s_levels)
+            levels.Count * payloadSizes.Count * 2 * inputShapes.Count * 5);
+        foreach (var level in levels)
         {
-            foreach (var payloadSize in s_payloadSizes)
+            foreach (var payloadSize in payloadSizes)
             {
                 foreach (var compressible in new[] { true, false })
                 {
@@ -174,6 +176,53 @@ internal static class CompressionEvidenceRunner
         if (inputShapes.Count == 0)
             throw new ArgumentOutOfRangeException(nameof(args), "At least one input shape is required.");
         return inputShapes;
+    }
+
+    private static IReadOnlyList<string> GetLevels(string[] args)
+    {
+        var option = GetOption(args, "--levels");
+        if (string.IsNullOrWhiteSpace(option))
+            return s_levels;
+
+        var levels = new List<string>();
+        foreach (var value in option.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var level = value.ToLowerInvariant();
+            if (Array.IndexOf(s_levels, level) < 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(args),
+                    "Levels must be fastest, optimal, or smallest.");
+            }
+            if (!levels.Contains(level))
+                levels.Add(level);
+        }
+        if (levels.Count == 0)
+            throw new ArgumentOutOfRangeException(nameof(args), "At least one compression level is required.");
+        return levels;
+    }
+
+    private static IReadOnlyList<int> GetPayloadSizes(string[] args)
+    {
+        var option = GetOption(args, "--payload-sizes");
+        if (string.IsNullOrWhiteSpace(option))
+            return s_payloadSizes;
+
+        var payloadSizes = new List<int>();
+        foreach (var value in option.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!int.TryParse(value, out var payloadSize) || Array.IndexOf(s_payloadSizes, payloadSize) < 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(args),
+                    "Payload sizes must be 4096, 65536, 262144, or 1048576.");
+            }
+            if (!payloadSizes.Contains(payloadSize))
+                payloadSizes.Add(payloadSize);
+        }
+        if (payloadSizes.Count == 0)
+            throw new ArgumentOutOfRangeException(nameof(args), "At least one payload size is required.");
+        return payloadSizes;
     }
 
     private static ReadOnlySequence<byte> CreateCompressedInput(
