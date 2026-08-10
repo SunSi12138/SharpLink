@@ -68,6 +68,7 @@ public class ServerConnectionStateTests
         var session = new RpcSession(transport, RpcSessionTestFixture.ServerOptions());
         var state = new ServerConnectionState(
             session,
+            new RpcSessionGeneratedServerBridge(session),
             CreateCallCancellations(),
             CancellationToken.None);
         var stream = new ShutdownJoiningDispatcher();
@@ -225,7 +226,11 @@ public class ServerConnectionStateTests
                 return ValueTask.CompletedTask;
             });
         var session = new RpcSession(transport, RpcSessionTestFixture.ServerOptions());
-        return new ServerConnectionState(session, CreateCallCancellations(), serverToken);
+        return new ServerConnectionState(
+            session,
+            new RpcSessionGeneratedServerBridge(session),
+            CreateCallCancellations(),
+            serverToken);
     }
 
     private static StripedLongMap<ServerCallCancellationState> CreateCallCancellations()

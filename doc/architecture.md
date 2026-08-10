@@ -34,7 +34,7 @@ SharpLink.Serializer.SharpPack
 
 - `SharpLink.Runtime`
   - `RpcSession`、`StreamManager`、`Request/Stream` 调度基础设施
-  - Generated Server Bridge 的实现，以及 dispatcher、flow control、frame、SendPump 与 stream terminal 的唯一所有权
+  - 无业务策略的 generated protocol bridge，以及 dispatcher、flow control、frame、SendPump 与 stream terminal 的唯一所有权
   - Context 所属的 `IRpcCodecProvider` 与内置不可变编解码器
   - 传输实现（Socket、NamedPipe、AnonymousPipe、SharedMemory 的 client factory / server listener / 独立 connection）
   - Protocol v2 帧编解码、发送泵、池化缓冲与并发容器
@@ -59,6 +59,7 @@ SharpLink.Serializer.SharpPack
   - 将当前 `sessionId + requestId + method descriptor + peer + 认证上下文 + deadline + metadata` 挂入 `SharpLinkCallContext`
   - 通过 `SharpLinkAuthorization` 在服务方法内部执行 `scope / tenant / expiry` 校验
   - 调用 `IRpcStub` 执行真实服务方法
+  - 每条连接持有 generated invocation bridge；在 Unary/client-stream/server-stream/duplex 边界调用 `IRpcExceptionMapper`，再把结构化 `SharpLinkException` 交给 Runtime 编码
 
 - `SharpLink.Hosting`
   - `AddSharpLinkServer()` / `AddSharpLinkClient()`

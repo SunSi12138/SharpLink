@@ -1,8 +1,8 @@
 namespace SharpLink.Runtime;
 
-public sealed partial class RpcSession : IRpcGeneratedServerBridge
+public sealed partial class RpcSession
 {
-    IAsyncEnumerable<T> IRpcGeneratedServerBridge.CreateInboundStream<T>(
+    internal IAsyncEnumerable<T> CreateGeneratedInboundStream<T>(
         long requestId,
         ushort streamId,
         IRpcCodec<T> codec,
@@ -27,58 +27,37 @@ public sealed partial class RpcSession : IRpcGeneratedServerBridge
         }
     }
 
-    async ValueTask IRpcGeneratedServerBridge.PumpOutboundStreamAsync<T>(
+    internal async ValueTask PumpGeneratedOutboundStreamAsync<T>(
         long requestId,
         ushort streamId,
         IAsyncEnumerable<T> stream,
         IRpcCodec<T> codec,
         bool payloadNullable,
-        long contractId,
-        long methodId,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(codec);
 
-        Exception? terminalError = null;
-        try
+        await foreach (var item in stream
+                           .WithCancellation(cancellationToken)
+                           .ConfigureAwait(false))
         {
-            await foreach (var item in stream
-                               .WithCancellation(cancellationToken)
-                               .ConfigureAwait(false))
+            if (!payloadNullable && default(T) is null && item is null)
             {
-                if (!payloadNullable && default(T) is null && item is null)
-                {
-                    throw new SharpLinkException(
-                        SharpLinkErrorCode.Internal,
-                        "A non-nullable RPC stream response was null.");
-                }
-
-                await SendGeneratedStreamChunkAsync(
-                    requestId,
-                    streamId,
-                    item,
-                    codec,
-                    cancellationToken).ConfigureAwait(false);
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.Internal,
+                    "A non-nullable RPC stream response was null.");
             }
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
-        {
-            terminalError = exception;
+
+            await SendGeneratedStreamChunkAsync(
+                requestId,
+                streamId,
+                item,
+                codec,
+                cancellationToken).ConfigureAwait(false);
         }
 
-        if (terminalError is null)
-        {
-            ((IRpcSession)this).SendStreamCompleteAsync(requestId, streamId);
-            return;
-        }
-
-        ((IRpcSession)this).SendStreamErrorAsync(
-            requestId,
-            streamId,
-            terminalError,
-            contractId,
-            methodId);
+        ((IRpcSession)this).SendStreamCompleteAsync(requestId, streamId);
     }
 
     // Keep the generated-server path concrete and codec-bound. The public IRpcSession
@@ -172,4 +151,41 @@ public sealed partial class RpcSession : IRpcGeneratedServerBridge
                 RuntimeContext.Buffers.Return(writer);
         }
     }
+}
+
+/// <summary>
+/// Exposes only generated stream protocol operations. Business exception policy belongs to the
+/// Server invocation bridge that composes this adapter.
+/// </summary>
+internal sealed class RpcSessionGeneratedServerBridge(RpcSession session) : IRpcGeneratedServerBridge
+{
+    public IAsyncEnumerable<T> CreateInboundStream<T>(
+        long requestId,
+        ushort streamId,
+        IRpcCodec<T> codec,
+        bool payloadNullable,
+        CancellationToken cancellationToken)
+        => session.CreateGeneratedInboundStream(
+            requestId,
+            streamId,
+            codec,
+            payloadNullable,
+            cancellationToken);
+
+    public ValueTask PumpOutboundStreamAsync<T>(
+        long requestId,
+        ushort streamId,
+        IAsyncEnumerable<T> stream,
+        IRpcCodec<T> codec,
+        bool payloadNullable,
+        long contractId,
+        long methodId,
+        CancellationToken cancellationToken)
+        => session.PumpGeneratedOutboundStreamAsync(
+            requestId,
+            streamId,
+            stream,
+            codec,
+            payloadNullable,
+            cancellationToken);
 }

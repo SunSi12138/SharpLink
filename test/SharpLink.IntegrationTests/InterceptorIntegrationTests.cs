@@ -103,6 +103,32 @@ public class InterceptorIntegrationTests
     }
 
     [Test]
+    public async Task ServerInterceptorShouldRetainMappedStreamFailureAfterNextReturns()
+    {
+        var interceptor = new RecordingServerInterceptor();
+        await using var harness = await InterceptorHarness.CreateAsync(serverInterceptor: interceptor);
+        var stream = harness.Client.Get<IInterceptorTestService>().FailStreamAsync().GetAsyncEnumerator();
+        try
+        {
+            Ensure(await stream.MoveNextAsync() && stream.Current == 1, "intercepted stream first item");
+            var failure = await CaptureSharpLinkException(stream.MoveNextAsync().AsTask());
+            Ensure(failure.Code == SharpLinkErrorCode.Internal, "intercepted stream wire status");
+        }
+        finally
+        {
+            await stream.DisposeAsync();
+        }
+        await interceptor.Completed.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(interceptor.StatusAfterNext == SharpLinkInvocationStatus.Failed,
+            "a mapped stream failure must not be overwritten with Succeeded after the bridge returns");
+        Ensure(interceptor.Context?.ErrorCode == SharpLinkErrorCode.Internal,
+            "the interceptor context must retain the mapped stream code");
+        Ensure(interceptor.Context?.Exception is InvalidOperationException,
+            "the interceptor context must retain the original service stream exception");
+    }
+
+    [Test]
     public async Task ResponseServerInterceptorMustInvokeItsContinuation()
     {
         var interceptor = new MissingNextServerInterceptor();
@@ -390,6 +416,83 @@ public class InterceptorIntegrationTests
         var exception = await CaptureSharpLinkException(service.FailAsync().AsTask());
         Ensure(exception.Code == SharpLinkErrorCode.Internal, "default mapper status");
         Ensure(!exception.Message.Contains("secret-service-detail", StringComparison.Ordinal), "default mapper hides detail");
+
+        var stream = service.FailStreamAsync().GetAsyncEnumerator();
+        try
+        {
+            Ensure(await stream.MoveNextAsync() && stream.Current == 1, "default stream first item");
+            var streamFailure = await CaptureSharpLinkException(stream.MoveNextAsync().AsTask());
+            Ensure(streamFailure.Code == SharpLinkErrorCode.Internal, "default stream mapper status");
+            Ensure(!streamFailure.Message.Contains("secret-service-detail", StringComparison.Ordinal),
+                "default stream mapper hides detail");
+        }
+        finally
+        {
+            await stream.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task DefaultExceptionMapperShouldPreserveStructuredServiceFailure()
+    {
+        await using var harness = await InterceptorHarness.CreateAsync();
+        var service = harness.Client.Get<IInterceptorTestService>();
+
+        var unary = await CaptureSharpLinkException(service.FailMappedAsync().AsTask());
+        Ensure(unary is { Code: SharpLinkErrorCode.ResourceExhausted, Message: "public-structured" },
+            "the default mapper must preserve an already structured unary failure");
+
+        var stream = service.FailMappedStreamAsync().GetAsyncEnumerator();
+        try
+        {
+            Ensure(await stream.MoveNextAsync() && stream.Current == 1, "structured stream first item");
+            var streamFailure = await CaptureSharpLinkException(stream.MoveNextAsync().AsTask());
+            Ensure(streamFailure is { Code: SharpLinkErrorCode.ResourceExhausted, Message: "public-structured" },
+                "the default mapper must preserve an already structured stream failure");
+        }
+        finally
+        {
+            await stream.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task ServerStreamCancellationShouldPreserveDeadlineAndCallerReason()
+    {
+        await using var harness = await InterceptorHarness.CreateAsync(
+            requestTimeout: TimeSpan.FromMilliseconds(150));
+        var service = harness.Client.Get<IInterceptorTestService>();
+
+        var deadlineStream = service.WaitStreamAsync(CancellationToken.None).GetAsyncEnumerator();
+        try
+        {
+            Ensure(await deadlineStream.MoveNextAsync() && deadlineStream.Current == 1,
+                "deadline stream first item");
+            var deadlineFailure = await CaptureSharpLinkException(deadlineStream.MoveNextAsync().AsTask());
+            Ensure(deadlineFailure.Code == SharpLinkErrorCode.DeadlineExceeded,
+                "server stream timeout must retain DeadlineExceeded");
+        }
+        finally
+        {
+            await deadlineStream.DisposeAsync();
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        var cancelledStream = service.WaitStreamAsync(cancellation.Token).GetAsyncEnumerator();
+        try
+        {
+            Ensure(await cancelledStream.MoveNextAsync() && cancelledStream.Current == 1,
+                "caller-cancelled stream first item");
+            cancellation.Cancel();
+            await EnsureOperationCancelled(cancelledStream.MoveNextAsync().AsTask());
+        }
+        finally
+        {
+            await cancelledStream.DisposeAsync();
+        }
+
+        Ensure(await service.DescribeNumberAsync(41) == 42,
+            "stream cancellation terminals must leave the connection usable");
     }
 
     [Test]
@@ -414,6 +517,11 @@ public class InterceptorIntegrationTests
         Ensure(unary.Code == SharpLinkErrorCode.FailedPrecondition, "custom unary status");
         Ensure(unary.Message == "public-failure", "custom unary message");
 
+        var clientStream = await CaptureSharpLinkException(
+            service.FailClientStreamAsync(FailureInput(), CancellationToken.None).AsTask());
+        Ensure(clientStream.Code == SharpLinkErrorCode.FailedPrecondition, "custom client-stream status");
+        Ensure(clientStream.Message == "public-failure", "custom client-stream message");
+
         var stream = service.FailStreamAsync().GetAsyncEnumerator();
         try
         {
@@ -426,6 +534,48 @@ public class InterceptorIntegrationTests
         {
             await stream.DisposeAsync();
         }
+
+        var duplex = service.FailDuplexAsync(FailureInput(), CancellationToken.None).GetAsyncEnumerator();
+        try
+        {
+            Ensure(await duplex.MoveNextAsync() && duplex.Current == 42, "duplex first item");
+            var duplexFailure = await CaptureSharpLinkException(duplex.MoveNextAsync().AsTask());
+            Ensure(duplexFailure.Code == SharpLinkErrorCode.FailedPrecondition, "custom duplex status");
+            Ensure(duplexFailure.Message == "public-failure", "custom duplex message");
+        }
+        finally
+        {
+            await duplex.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task ThrowingExceptionMapperShouldFallBackAndKeepConnectionUsable()
+    {
+        var mapper = new ThrowingExceptionMapper();
+        await using var harness = await InterceptorHarness.CreateAsync(exceptionMapper: mapper);
+        var service = harness.Client.Get<IInterceptorTestService>();
+
+        var unary = await CaptureSharpLinkException(service.FailAsync().AsTask());
+        var stream = service.FailStreamAsync().GetAsyncEnumerator();
+        SharpLinkException streamFailure;
+        try
+        {
+            Ensure(await stream.MoveNextAsync() && stream.Current == 1, "throwing mapper stream first item");
+            streamFailure = await CaptureSharpLinkException(stream.MoveNextAsync().AsTask());
+        }
+        finally
+        {
+            await stream.DisposeAsync();
+        }
+
+        Ensure(unary is { Code: SharpLinkErrorCode.Internal, Message: "Internal service error." },
+            "a throwing unary mapper must use the safe structured fallback");
+        Ensure(streamFailure is { Code: SharpLinkErrorCode.Internal, Message: "Internal service error." },
+            "a throwing stream mapper must use the same safe structured fallback");
+        Ensure(mapper.CallCount == 2, "both unary and stream failures must reach the configured mapper once");
+        Ensure(await service.DescribeNumberAsync(41) == 42,
+            "mapper failure must not terminate or poison the owning connection");
     }
 
     private static async Task<SharpLinkException> CaptureSharpLinkException(Task task)
@@ -438,6 +588,18 @@ public class InterceptorIntegrationTests
         catch (SharpLinkException exception)
         {
             return exception;
+        }
+    }
+
+    private static async Task EnsureOperationCancelled(Task task)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(3));
+            throw new Exception("assert failed: expected OperationCanceledException");
+        }
+        catch (OperationCanceledException)
+        {
         }
     }
 
@@ -473,6 +635,12 @@ public class InterceptorIntegrationTests
     {
         await Task.Yield();
         yield return 42;
+    }
+
+    private static async IAsyncEnumerable<int> FailureInput()
+    {
+        yield return 42;
+        await Task.Yield();
     }
 
     private static async IAsyncEnumerable<string?> OptionalNullInput()
@@ -582,16 +750,27 @@ public class InterceptorIntegrationTests
 
     private sealed class RecordingServerInterceptor : ISharpLinkServerInterceptor
     {
+        private readonly TaskCompletionSource _completed =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public SharpLinkServerInvocationContext? Context { get; private set; }
         public SharpLinkInvocationStatus StatusAfterNext { get; private set; }
+        public Task Completed => _completed.Task;
 
         public async ValueTask InvokeAsync(
             SharpLinkServerInvocationContext context,
             SharpLinkServerInvocationDelegate next)
         {
             Context = context;
-            await next(context);
-            StatusAfterNext = context.Status;
+            try
+            {
+                await next(context);
+                StatusAfterNext = context.Status;
+            }
+            finally
+            {
+                _completed.TrySetResult();
+            }
         }
     }
 
@@ -765,6 +944,19 @@ public class InterceptorIntegrationTests
             => new((SharpLinkErrorCode)int.MaxValue, "undefined", exception);
     }
 
+    private sealed class ThrowingExceptionMapper : IRpcExceptionMapper
+    {
+        private int _callCount;
+
+        internal int CallCount => Volatile.Read(ref _callCount);
+
+        public SharpLinkException Map(Exception exception, SharpLinkServerInvocationContext context)
+        {
+            Interlocked.Increment(ref _callCount);
+            throw new InvalidOperationException("mapper failed before returning a protocol error", exception);
+        }
+    }
+
     private sealed class InterceptorHarness : IAsyncDisposable
     {
         private readonly CancellationTokenSource _serverCts;
@@ -788,7 +980,8 @@ public class InterceptorIntegrationTests
             ISharpLinkClientInterceptor? clientInterceptor = null,
             ISharpLinkServerInterceptor? serverInterceptor = null,
             IRpcExceptionMapper? exceptionMapper = null,
-            bool enableDetailedErrors = false)
+            bool enableDetailedErrors = false,
+            TimeSpan? requestTimeout = null)
         {
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
@@ -812,6 +1005,8 @@ public class InterceptorIntegrationTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
             if (clientInterceptor is not null)
                 clientBuilder.AddInterceptor(clientInterceptor);
+            if (requestTimeout is { } timeout)
+                clientBuilder.UseRequestTimeout(timeout);
             var client = clientBuilder.Build();
             await client.ConnectAsync(cts.Token);
             return new InterceptorHarness(cts, serverTask, server, client);
@@ -839,6 +1034,8 @@ public interface IInterceptorTestService : IService
     [NonCancellable]
     ValueTask<int> FailAsync();
     [NonCancellable]
+    ValueTask<int> FailMappedAsync();
+    [NonCancellable]
     ValueTask<int> CountInvocationAsync();
     [NonCancellable]
     ValueTask<int> DelayedAsync();
@@ -857,8 +1054,16 @@ public interface IInterceptorTestService : IService
     [NonCancellable]
     ValueTask NotifyAsync(int value);
     ValueTask<int> SumStreamAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken);
+    ValueTask<int> FailClientStreamAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken);
     [NonCancellable]
     IAsyncEnumerable<int> FailStreamAsync();
+    [NonCancellable]
+    IAsyncEnumerable<int> FailMappedStreamAsync();
+    [SharpLink.Sdk.Timeout(0.15)]
+    IAsyncEnumerable<int> WaitStreamAsync(CancellationToken cancellationToken);
+    IAsyncEnumerable<int> FailDuplexAsync(
+        IAsyncEnumerable<int> values,
+        CancellationToken cancellationToken);
 }
 
 [RpcService]
@@ -895,6 +1100,11 @@ public sealed class InterceptorTestService : IInterceptorTestService
 
     public ValueTask<int> FailAsync()
         => throw new InvalidOperationException("secret-service-detail");
+
+    public ValueTask<int> FailMappedAsync()
+        => throw new SharpLinkException(
+            SharpLinkErrorCode.ResourceExhausted,
+            "public-structured");
 
     public ValueTask<int> CountInvocationAsync()
         => ValueTask.FromResult(Interlocked.Increment(ref _invocationCount));
@@ -947,10 +1157,45 @@ public sealed class InterceptorTestService : IInterceptorTestService
         return sum;
     }
 
+    public async ValueTask<int> FailClientStreamAsync(
+        IAsyncEnumerable<int> values,
+        CancellationToken cancellationToken)
+    {
+        await foreach (var _ in values.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+        }
+        throw new InvalidOperationException("secret-service-detail");
+    }
+
     public async IAsyncEnumerable<int> FailStreamAsync()
     {
         yield return 1;
         await Task.Yield();
+        throw new InvalidOperationException("secret-service-detail");
+    }
+
+    public async IAsyncEnumerable<int> FailMappedStreamAsync()
+    {
+        yield return 1;
+        await Task.Yield();
+        throw new SharpLinkException(
+            SharpLinkErrorCode.ResourceExhausted,
+            "public-structured");
+    }
+
+    public async IAsyncEnumerable<int> WaitStreamAsync(
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        yield return 1;
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async IAsyncEnumerable<int> FailDuplexAsync(
+        IAsyncEnumerable<int> values,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var value in values.WithCancellation(cancellationToken).ConfigureAwait(false))
+            yield return value;
         throw new InvalidOperationException("secret-service-detail");
     }
 

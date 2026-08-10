@@ -37,17 +37,11 @@ internal sealed partial class SharpLinkServer
                 new RpcSessionCreationOptions(
                     RpcSessionRole.Server,
                     _runtimeContext,
-                    _rpcSessionFlushOptions,
-                    (mappedSession, requestId, contractId, methodId, exception) =>
-                        MapStreamServiceException(
-                            callCancellations,
-                            mappedSession,
-                            requestId,
-                            contractId,
-                            methodId,
-                            exception)));
+                    _rpcSessionFlushOptions));
+            var generatedBridge = new ServerGeneratedBridge(this, session, callCancellations);
             connectionState = new ServerConnectionState(
                 session,
+                generatedBridge,
                 callCancellations,
                 cancellationToken,
                 _maxConcurrentCallsPerConnection);

@@ -157,7 +157,11 @@ internal sealed class ClientConnection :
         {
             try
             {
-                Session.SendStreamErrorAsync(requestId, streamId, exception);
+                var protocolError = exception as SharpLinkException ?? new SharpLinkException(
+                    SharpLinkErrorCode.Internal,
+                    "Internal client stream error.",
+                    exception);
+                Session.SendStreamErrorAsync(requestId, streamId, protocolError);
             }
             catch (SharpLinkException sendException) when (sendException.Code is
                 SharpLinkErrorCode.ConnectionClosed or

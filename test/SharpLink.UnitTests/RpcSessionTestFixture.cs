@@ -19,13 +19,11 @@ internal static class RpcSessionTestFixture
 
     internal static RpcSessionCreationOptions ServerOptions(
         SharpLinkRuntimeContext? runtimeContext = null,
-        RpcSessionFlushOptions? flushOptions = null,
-        RpcSessionServiceExceptionMapper? serviceExceptionMapper = null)
+        RpcSessionFlushOptions? flushOptions = null)
         => new(
             RpcSessionRole.Server,
             runtimeContext ?? RuntimeContext,
-            flushOptions,
-            serviceExceptionMapper);
+            flushOptions);
 
     internal static RpcSessionTestTransport Transport(
         string id,

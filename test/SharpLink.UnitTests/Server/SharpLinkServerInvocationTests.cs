@@ -349,6 +349,7 @@ public class SharpLinkServerInvocationTests
                 new ThrowingStub(),
                 lease,
                 session,
+                new RpcSessionGeneratedServerBridge(session),
                 1L,
                 1L,
                 ReadOnlySequence<byte>.Empty,
@@ -386,8 +387,12 @@ public class SharpLinkServerInvocationTests
         var unexpectedTransport = new ThrowingTransportConnection(
             "unexpected",
             new InvalidOperationException("unexpected sibling session cleanup failed"));
+        var unexpectedSession = new RpcSession(
+            unexpectedTransport,
+            RpcSessionTestFixture.ServerOptions());
         var unexpected = new ServerConnectionState(
-            new RpcSession(unexpectedTransport, RpcSessionTestFixture.ServerOptions()),
+            unexpectedSession,
+            new RpcSessionGeneratedServerBridge(unexpectedSession),
             CreateCallCancellations(),
             CancellationToken.None);
         connections.TryAdd(unexpected.Session.Id, unexpected);
@@ -399,8 +404,10 @@ public class SharpLinkServerInvocationTests
                 $"expected-{index}",
                 new IOException("expected session transport closure"));
             expectedTransports.Add(transport);
+            var session = new RpcSession(transport, RpcSessionTestFixture.ServerOptions());
             var connection = new ServerConnectionState(
-                new RpcSession(transport, RpcSessionTestFixture.ServerOptions()),
+                session,
+                new RpcSessionGeneratedServerBridge(session),
                 CreateCallCancellations(),
                 CancellationToken.None);
             connections.TryAdd(connection.Session.Id, connection);
@@ -640,7 +647,11 @@ public class SharpLinkServerInvocationTests
     }
 
     private static ServerConnectionState CreateConnection(RpcSession session)
-        => new(session, CreateCallCancellations(), CancellationToken.None);
+        => new(
+            session,
+            new RpcSessionGeneratedServerBridge(session),
+            CreateCallCancellations(),
+            CancellationToken.None);
 
     private static StripedLongMap<ServerCallCancellationState> CreateCallCancellations(
         SharpLinkRuntimeContext? runtimeContext = null)
@@ -975,6 +986,7 @@ public class SharpLinkServerInvocationTests
                 RpcSessionTestFixture.ServerOptions(runtimeContext));
             Connection = new ServerConnectionState(
                 Session,
+                new RpcSessionGeneratedServerBridge(Session),
                 CreateCallCancellations(runtimeContext),
                 CancellationToken.None);
             Ensure(Connection.MarkReady(null), "connection ready");

@@ -112,39 +112,31 @@ public static class RpcSessionExtensions
             }
         }
 
-        /// <summary>Maps and sends a bounded RPC response error.</summary>
-        public void SendRpcErrorAsync(long requestId, Exception exception)
+        /// <summary>Sends a bounded structured RPC response error.</summary>
+        public void SendRpcErrorAsync(long requestId, SharpLinkException exception)
         {
             ArgumentNullException.ThrowIfNull(exception);
-            var code = exception is SharpLinkException sharpLinkException
-                ? sharpLinkException.Code
-                : SharpLinkErrorCode.Internal;
-            var message = exception is SharpLinkException ? exception.Message : "Internal service error.";
             SendErrorFrame(
                 session,
                 ProtocolV2FrameType.Response,
                 requestId,
-                code,
-                message,
+                exception.Code,
+                exception.Message,
                 GetMaxErrorMessageBytes(session));
         }
 
         internal ValueTask SendRpcErrorWithBackpressureAsync(
             long requestId,
-            Exception exception,
+            SharpLinkException exception,
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(exception);
-            var code = exception is SharpLinkException sharpLinkException
-                ? sharpLinkException.Code
-                : SharpLinkErrorCode.Internal;
-            var message = exception is SharpLinkException ? exception.Message : "Internal service error.";
             return SendErrorFrameWithBackpressureAsync(
                 session,
                 ProtocolV2FrameType.Response,
                 requestId,
-                code,
-                message,
+                exception.Code,
+                exception.Message,
                 GetMaxErrorMessageBytes(session),
                 cancellationToken);
         }
@@ -375,17 +367,13 @@ public static class RpcSessionExtensions
             }
         }
 
-        /// <summary>Maps and sends terminal failure for one request stream.</summary>
+        /// <summary>Sends a structured terminal failure for one request stream.</summary>
         public void SendStreamErrorAsync(
             long requestId,
             ushort streamId,
-            Exception exception,
-            long contractId = 0,
-            long methodId = 0)
+            SharpLinkException exception)
         {
             ArgumentNullException.ThrowIfNull(exception);
-            exception = GetRuntimeSession(session).MapServiceException(
-                requestId, contractId, methodId, exception);
             var writer = GetRuntimeSession(session).RentFrameWriter();
             var ownsWriter = true;
             try
@@ -397,12 +385,12 @@ public static class RpcSessionExtensions
                 var idSpan = writer.GetSpan(sizeof(ushort));
                 BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
                 writer.Advance(sizeof(ushort));
-                var code = exception is SharpLinkException sharpLinkException
-                    ? sharpLinkException.Code
-                    : SharpLinkErrorCode.Internal;
-                var message = exception is SharpLinkException ? exception.Message : "Internal stream error.";
                 ProtocolV2PayloadCodec.WriteError(
-                    writer, code, message, GetMaxErrorMessageBytes(session), out var truncated);
+                    writer,
+                    exception.Code,
+                    exception.Message,
+                    GetMaxErrorMessageBytes(session),
+                    out var truncated);
                 writer.EndPacket(token);
                 if (truncated)
                     SetTruncatedFlag(writer, token);

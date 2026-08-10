@@ -268,7 +268,10 @@ internal sealed partial class SharpLinkServer
                         invokeTask, session, requestId, callState, requestCancellationMap, connection,
                         callContext, serviceInfo.Stub, request.MethodHash, invokeToken);
                 }
-                if (callContext is SharpLinkServerInvocationContext interceptorContext)
+                if (callContext is SharpLinkServerInvocationContext
+                    {
+                        Status: SharpLinkInvocationStatus.Pending
+                    } interceptorContext)
                     interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
                 var responseSend = ValueTask.CompletedTask;
                 if (TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
@@ -356,7 +359,10 @@ internal sealed partial class SharpLinkServer
                     requestCancellationMap, connection, responseCallContext,
                     serviceInfo.Stub, request.MethodHash, invokeToken);
             }
-            if (responseCallContext is SharpLinkServerInvocationContext interceptorContext)
+            if (responseCallContext is SharpLinkServerInvocationContext
+                {
+                    Status: SharpLinkInvocationStatus.Pending
+                } interceptorContext)
                 interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
             if (!TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
             {
@@ -408,10 +414,10 @@ internal sealed partial class SharpLinkServer
             CompleteFailedRequestStreams(session, requestId, e);
             if (!ownsWriter)
             {
-                if (e is SharpLinkCompressionProviderException)
+                if (e is SharpLinkCompressionProviderException compressionException)
                 {
                     var compressionErrorSend = session.SendRpcErrorWithBackpressureAsync(
-                        requestId, e, connection.ConnectionToken);
+                        requestId, compressionException, connection.ConnectionToken);
                     return ReleaseDispatchResourcesAfterResponseAsync(
                         compressionErrorSend, callState, requestId, requestCancellationMap, connection);
                 }
@@ -460,7 +466,10 @@ internal sealed partial class SharpLinkServer
         try
         {
             await invokeTask.ConfigureAwait(false);
-            if (callContext is SharpLinkServerInvocationContext interceptorContext)
+            if (callContext is SharpLinkServerInvocationContext
+                {
+                    Status: SharpLinkInvocationStatus.Pending
+                } interceptorContext)
                 interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
             if (TryClaimCallCompletion(callState))
             {
@@ -539,7 +548,10 @@ internal sealed partial class SharpLinkServer
         try
         {
             await invokeTask.ConfigureAwait(false);
-            if (callContext is SharpLinkServerInvocationContext interceptorContext)
+            if (callContext is SharpLinkServerInvocationContext
+                {
+                    Status: SharpLinkInvocationStatus.Pending
+                } interceptorContext)
                 interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
             if (!TryClaimCallCompletion(callState))
             {
@@ -580,11 +592,11 @@ internal sealed partial class SharpLinkServer
             CompleteFailedRequestStreams(session, requestId, e);
             if (!ownsWriter)
             {
-                if (e is SharpLinkCompressionProviderException)
+                if (e is SharpLinkCompressionProviderException compressionException)
                 {
                     await session.SendRpcErrorWithBackpressureAsync(
                         requestId,
-                        e,
+                        compressionException,
                         connection.ConnectionToken).ConfigureAwait(false);
                     return;
                 }

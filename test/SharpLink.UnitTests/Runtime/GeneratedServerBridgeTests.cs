@@ -25,7 +25,7 @@ public class GeneratedServerBridgeTests
         Exception? failure = null;
         try
         {
-            _ = ((IRpcGeneratedServerBridge)session).CreateInboundStream(
+            _ = new RpcSessionGeneratedServerBridge(session).CreateInboundStream(
                 41,
                 1,
                 new BridgeItemCodec(),
@@ -67,10 +67,12 @@ public class GeneratedServerBridgeTests
     }
 
     [Test]
-    public async Task ThrowingOutboundPumpShouldEmitOneErrorTerminalAndNoSuccessTerminal()
+    public async Task ThrowingOutboundPumpShouldRequireStructuredErrorFromItsServerOwner()
     {
-        var frames = await PumpAndReadFramesAsync(ValueThenFailure());
+        var (failure, frames) = await PumpFailureAndReadFramesAsync(ValueThenFailure());
 
+        Ensure(failure is InvalidOperationException { Message: "service stream failed" },
+            "the protocol bridge must preserve the business failure for its Server owner");
         Ensure(frames.Count == 2, "one item and one terminal frame must be emitted");
         Ensure(frames[0].Type == ProtocolV2FrameType.StreamData,
             "the item accepted before the service failure must remain ordered first");
@@ -82,10 +84,12 @@ public class GeneratedServerBridgeTests
     }
 
     [Test]
-    public async Task ThrowingOutboundCodecShouldEmitOneErrorTerminalAndNoDataOrSuccessTerminal()
+    public async Task ThrowingOutboundCodecShouldRequireStructuredErrorFromItsServerOwner()
     {
-        var frames = await PumpAndReadFramesAsync(Values(1), new ThrowingIntCodec());
+        var (failure, frames) = await PumpFailureAndReadFramesAsync(Values(1), new ThrowingIntCodec());
 
+        Ensure(failure is InvalidOperationException { Message: "codec serialization failed" },
+            "the protocol bridge must preserve the codec failure for its Server owner");
         Ensure(frames.Count == 1,
             "a serialization failure before publication must emit only its terminal frame");
         Ensure(frames.Count(static frame => frame.Type == ProtocolV2FrameType.StreamData) == 0,
@@ -115,7 +119,7 @@ public class GeneratedServerBridgeTests
         await session.AcquireStreamSendCreditAsync(72, 0, 4, CancellationToken.None);
         var serialized = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var pump = ((IRpcGeneratedServerBridge)session).PumpOutboundStreamAsync(
+        var pump = new RpcSessionGeneratedServerBridge(session).PumpOutboundStreamAsync(
             73,
             0,
             Values(1),
@@ -153,7 +157,7 @@ public class GeneratedServerBridgeTests
             output.Writer,
             RpcSessionTestFixture.ServerOptions());
 
-        await ((IRpcGeneratedServerBridge)session).PumpOutboundStreamAsync(
+        await new RpcSessionGeneratedServerBridge(session).PumpOutboundStreamAsync(
             73,
             0,
             stream,
@@ -166,6 +170,50 @@ public class GeneratedServerBridgeTests
         await output.Reader.CompleteAsync();
         await input.Writer.CompleteAsync();
         return frames;
+    }
+
+    private static async Task<(Exception Failure,
+        List<(ProtocolV2FrameType Type, ProtocolV2FrameFlags Flags)> Frames)>
+        PumpFailureAndReadFramesAsync(IAsyncEnumerable<int> stream, IRpcCodec<int>? codec = null)
+    {
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "bridge-outbound-failure",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ServerOptions());
+        var bridge = new RpcSessionGeneratedServerBridge(session);
+        Exception failure;
+        try
+        {
+            await bridge.PumpOutboundStreamAsync(
+                73,
+                0,
+                stream,
+                codec ?? session.RuntimeContext.Codecs.GetCodec<int>(),
+                payloadNullable: false,
+                contractId: 101,
+                methodId: 202,
+                CancellationToken.None);
+            throw new Exception("expected outbound pump failure");
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        ((IRpcSession)session).SendStreamErrorAsync(
+            73,
+            0,
+            new SharpLinkException(
+                SharpLinkErrorCode.FailedPrecondition,
+                "safe mapped stream failure",
+                failure));
+        var frames = await FlushAndReadFramesAsync(session, output, expectedRequestId: 73);
+        await output.Reader.CompleteAsync();
+        await input.Writer.CompleteAsync();
+        return (failure, frames);
     }
 
     private static async Task<List<(ProtocolV2FrameType Type, ProtocolV2FrameFlags Flags)>>

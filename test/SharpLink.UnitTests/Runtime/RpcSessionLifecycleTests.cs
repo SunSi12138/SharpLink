@@ -26,7 +26,7 @@ public class RpcSessionLifecycleTests
     }
 
     [Test]
-    public async Task ConstructorShouldPublishCompleteRoleContextMapperAndStableStreamManager()
+    public async Task ConstructorShouldPublishCompleteRoleContextAndStableStreamManager()
     {
         using var clientContext = new SharpLinkRuntimeContextBuilder()
             .Configure(static options => options.Protocol.MaxFramePayloadBytes = 2048)
@@ -40,8 +40,6 @@ public class RpcSessionLifecycleTests
         var clientOutput = new Pipe();
         var serverInput = new Pipe();
         var serverOutput = new Pipe();
-        var mapped = new SharpLinkException(SharpLinkErrorCode.Internal, "mapped during construction");
-        var mapperCalls = 0;
         var clientTransport = RpcSessionTestFixture.Transport(
             "complete-client",
             clientInput.Reader,
@@ -55,14 +53,7 @@ public class RpcSessionLifecycleTests
             serverOutput.Writer);
         var server = new RpcSession(
             serverTransport,
-            new RpcSessionCreationOptions(
-                RpcSessionRole.Server,
-                serverContext,
-                serviceExceptionMapper: (_, _, _, _, _) =>
-                {
-                    Interlocked.Increment(ref mapperCalls);
-                    return mapped;
-                }));
+            new RpcSessionCreationOptions(RpcSessionRole.Server, serverContext));
         var clientStreams = client.StreamManager;
         var serverStreams = server.StreamManager;
 
@@ -76,10 +67,6 @@ public class RpcSessionLifecycleTests
             "each Session must snapshot protocol limits from only its own Context");
         Ensure(!ReferenceEquals(clientStreams, serverStreams),
             "parallel Sessions must not share StreamManager state");
-        Ensure(ReferenceEquals(mapped, server.MapServiceException(1, 2, 3, new Exception("service"))) &&
-               mapperCalls == 1,
-            "the Server mapper must be usable without a post-construction patch");
-
         await Task.WhenAll(client.DisposeAsync().AsTask(), server.DisposeAsync().AsTask());
         Ensure(ReferenceEquals(clientStreams, client.StreamManager) &&
                ReferenceEquals(serverStreams, server.StreamManager),
