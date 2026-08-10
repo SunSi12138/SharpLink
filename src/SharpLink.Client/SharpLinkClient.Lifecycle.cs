@@ -316,27 +316,16 @@ internal sealed partial class SharpLinkClient
                 SharpLinkErrorCode.ResourceExhausted,
                 $"Authentication payload exceeds {_protocolOptions.MaxMetadataBytes} bytes.");
         }
-        var compressionProfiles = _runtimeContext.Compression.ProviderBindings.Count == 0
-            ? ReadOnlyMemory<string>.Empty
-            : _runtimeContext.Compression.ProviderBindings
-                .Select(static binding => binding.WireProfile)
-                .ToArray();
-        var supportedCapabilities =
-            ProtocolV2Capabilities.Metadata |
-            ProtocolV2Capabilities.FlowControl |
-            ProtocolV2Capabilities.HealthCheck |
-            ProtocolV2Capabilities.CancellationReason;
-        if (!compressionProfiles.IsEmpty)
-            supportedCapabilities |= ProtocolV2Capabilities.Compression;
-        var handshakeRequest = new ProtocolV2HandshakeRequest(
-            ProtocolV2Constants.MinorVersion,
-            supportedCapabilities,
-            ProtocolV2Capabilities.None,
+        var compressionProviders = _runtimeContext.Compression.ProviderBindings;
+        var negotiationPolicy = ProtocolV2Negotiator.CreateImplementedPolicy(
             _protocolOptions.MaxFramePayloadBytes,
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
-            authPayload,
-            compressionProfiles);
+            compressionProviders);
+        var handshakeRequest = ProtocolV2Negotiator.CreateClientOffer(
+            negotiationPolicy,
+            ProtocolV2Capabilities.None,
+            authPayload);
         await session.SendHandshakeRequestAndFlushAsync(handshakeRequest, _protocolOptions, ct).ConfigureAwait(false);
 
         var reader = session.Input;
@@ -360,24 +349,13 @@ internal sealed partial class SharpLinkClient
                     else if ((header.Flags & ProtocolV2FrameFlags.Error) == 0)
                     {
                         var response = ProtocolV2PayloadCodec.ReadHandshakeResponse(payload, _protocolOptions);
-                        if (response.MinorVersion > ProtocolV2Constants.MinorVersion)
+                        try
                         {
-                            handshakeException = new SharpLinkException(SharpLinkErrorCode.Unimplemented,
-                                $"Server requires unsupported protocol minor version {response.MinorVersion}.");
-                        }
-                        else
-                        {
-                            var runtimeSession = (RpcSession)session;
-                            var compressionBinding = ValidateNegotiatedCompression(
+                            var negotiated = ProtocolV2Negotiator.ValidateServerResponse(
+                                handshakeRequest,
                                 response,
-                                compressionProfiles.Span);
-                            var negotiated = new NegotiatedSessionOptions(
-                                response.MinorVersion,
-                                response.NegotiatedCapabilities,
-                                response.MaxFramePayloadBytes,
-                                response.StreamReceiveWindowBytes,
-                                response.ConnectionReceiveWindowBytes,
-                                compressionBinding);
+                                negotiationPolicy);
+                            var runtimeSession = (RpcSession)session;
                             if (!runtimeSession.TryCompleteHandshake(negotiated))
                             {
                                 handshakeException = CreateProtocolViolationException(
@@ -387,6 +365,10 @@ internal sealed partial class SharpLinkClient
                             {
                                 handshakeException = null;
                             }
+                        }
+                        catch (SharpLinkException exception)
+                        {
+                            handshakeException = exception;
                         }
                     }
                     else
@@ -430,38 +412,6 @@ internal sealed partial class SharpLinkClient
         return ct.IsCancellationRequested
             ? new OperationCanceledException(ct)
             : CreateConnectionClosedException("Server disconnected during handshake.");
-    }
-
-    private SharpLinkCompressionProviderBinding? ValidateNegotiatedCompression(
-        in ProtocolV2HandshakeResponse response,
-        ReadOnlySpan<string> offeredProfiles)
-    {
-        var negotiated =
-            (response.NegotiatedCapabilities & ProtocolV2Capabilities.Compression) != 0;
-        if (!negotiated)
-        {
-            if (response.CompressionProfile is not null)
-            {
-                throw CreateProtocolViolationException(
-                    "The server selected a compression profile without negotiating compression.");
-            }
-            return null;
-        }
-        if (response.CompressionProfile is not { } profile)
-            throw CreateProtocolViolationException("Negotiated compression is missing its selected profile.");
-
-        var offered = false;
-        foreach (var candidate in offeredProfiles)
-        {
-            if (string.Equals(candidate, profile, StringComparison.Ordinal))
-            {
-                offered = true;
-                break;
-            }
-        }
-        var binding = offered ? _runtimeContext.Compression.FindProviderBinding(profile) : null;
-        return binding ?? throw CreateProtocolViolationException(
-            $"The server selected compression profile '{profile}' that the client did not offer.");
     }
 
     private async Task ProcessRequestLoop(ClientConnection connection, CancellationToken ct)
