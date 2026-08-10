@@ -64,10 +64,11 @@ internal static class CompressionEvidenceRunner
                                 : index;
                             var compressedInput = compressedInputs[inputIndex];
                             WarmUpDecompression(provider, compressedInput.Sequence, payloadSize);
-                            var decompression = Measure(
+                            var decompression = MeasureDecompression(
                                 iterations,
-                                payloadSize,
-                                () => Decompress(provider, compressedInput.Sequence, payloadSize));
+                                provider,
+                                compressedInput.Sequence,
+                                payloadSize);
                             results.Add(new CompressionEvidenceResult(
                                 "brotli",
                                 level,
@@ -125,6 +126,16 @@ internal static class CompressionEvidenceRunner
         int originalLength)
     {
         var output = new ArrayBufferWriter<byte>(originalLength);
+        return Decompress(provider, compressed, output, originalLength);
+    }
+
+    private static int Decompress(
+        ISharpLinkCompressionProvider provider,
+        ReadOnlySequence<byte> compressed,
+        ArrayBufferWriter<byte> output,
+        int originalLength)
+    {
+        output.Clear();
         var result = provider.Decompress(
             compressed,
             output,
@@ -317,6 +328,30 @@ internal static class CompressionEvidenceRunner
         GC.KeepAlive(checksum);
         var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
         var megabytes = (long)payloadSize * iterations / (1024d * 1024d);
+        return new CompressionMeasurement(
+            megabytes / elapsed.TotalSeconds,
+            allocated / (double)iterations);
+    }
+
+    private static CompressionMeasurement MeasureDecompression(
+        int iterations,
+        ISharpLinkCompressionProvider provider,
+        ReadOnlySequence<byte> compressed,
+        int originalLength)
+    {
+        var output = new ArrayBufferWriter<byte>(originalLength);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        var started = Stopwatch.GetTimestamp();
+        var checksum = 0L;
+        for (var iteration = 0; iteration < iterations; iteration++)
+            checksum += Decompress(provider, compressed, output, originalLength);
+        var elapsed = Stopwatch.GetElapsedTime(started);
+        GC.KeepAlive(checksum);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+        var megabytes = (long)originalLength * iterations / (1024d * 1024d);
         return new CompressionMeasurement(
             megabytes / elapsed.TotalSeconds,
             allocated / (double)iterations);
