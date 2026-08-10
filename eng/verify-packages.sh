@@ -69,4 +69,10 @@ if unzip -p "$ARTIFACT_DIR/SharpLink.Abstractions.$EXPECTED_VERSION.nupkg" Sharp
   exit 1
 fi
 
+if ! unzip -p "$ARTIFACT_DIR/SharpLink.Hosting.$EXPECTED_VERSION.nupkg" SharpLink.Hosting.nuspec |
+   grep -F "<dependency id=\"SharpLink.Runtime\" version=\"$EXPECTED_VERSION\"" >/dev/null; then
+  echo "SharpLink.Hosting must directly depend on SharpLink.Runtime $EXPECTED_VERSION." >&2
+  exit 1
+fi
+
 echo "Verified ${#PACKAGES[@]} package and symbol pairs for $EXPECTED_VERSION at $EXPECTED_COMMIT."
