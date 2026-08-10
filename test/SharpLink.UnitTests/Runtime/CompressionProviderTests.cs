@@ -426,7 +426,7 @@ public class CompressionProviderTests
 
     private static ReadOnlySequence<byte> CreateSegmentedByCount(byte[] bytes, int segmentCount)
     {
-        if (segmentCount is <= 0 or > bytes.Length)
+        if (segmentCount <= 0 || segmentCount > bytes.Length)
             throw new ArgumentOutOfRangeException(nameof(segmentCount));
 
         var offsets = new int[segmentCount - 1];
