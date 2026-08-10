@@ -88,7 +88,9 @@ public class BufferWriterGrowthBenchmarks
     }
 }
 
-/// <summary>Prints non-timed growth evidence for the same generated-codec field shapes.</summary>
+/// <summary>
+/// Prints non-timed growth and capacity-waste evidence for the same generated-codec field shapes.
+/// </summary>
 public static class BufferWriterGrowthEvidenceRunner
 {
     private static readonly (int PayloadBytes, int FieldCount)[] s_cases =
@@ -123,7 +125,9 @@ public static class BufferWriterGrowthEvidenceRunner
                 $"[BufferWriterGrowth] payload={payloadBytes} fields={fieldCount} " +
                 $"written={writer.WrittenCount} finalCapacity={writer.Capacity} " +
                 $"growths={growthCount} copied={copiedBytes} " +
-                $"copyRatio={(double)copiedBytes / writer.WrittenCount:F4}");
+                $"copyRatio={(double)copiedBytes / writer.WrittenCount:F4} " +
+                $"capacityWaste={writer.Capacity - writer.WrittenCount} " +
+                $"capacityWasteRatio={(double)(writer.Capacity - writer.WrittenCount) / writer.WrittenCount:F4}");
         }
     }
 }
