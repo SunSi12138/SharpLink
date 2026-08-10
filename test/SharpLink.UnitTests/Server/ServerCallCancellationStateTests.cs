@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Threading;
 using SharpLink.Client;
 using SharpLink.Server;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Server;
 
@@ -351,7 +352,7 @@ public class ServerCallCancellationStateTests
         var limiter = new LateResponseLogLimiter();
         var emittedDiagnostics = 0;
         const long diagnosticWindowStart = 1;
-        using var pending = new PendingRequestTable(2);
+        using var pending = PendingRequestTableTestFixture.Create(2);
 
         for (var iteration = 1; iteration <= 100; iteration++)
         {

@@ -80,7 +80,7 @@ public class SharpLinkClientLifecycleStateTests
             session,
             connectionCancellation,
             8,
-            context.Codecs);
+            context);
         var runHeartbeat = typeof(SharpLinkClient).GetMethod(
             "RunHeartbeatSendLoopAsync",
             BindingFlags.Instance | BindingFlags.NonPublic)
@@ -602,7 +602,7 @@ public class SharpLinkClientLifecycleStateTests
             new RpcSession(transport),
             new CancellationTokenSource(),
             8,
-            context.Codecs);
+            context);
 
         var first = connection.DisposeAsync().AsTask();
         await transport.DisposeStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -629,7 +629,7 @@ public class SharpLinkClientLifecycleStateTests
             new RpcSession(new TestTransportConnection()),
             cancellation,
             8,
-            context.Codecs);
+            context);
         var operation = connection.PendingCalls.Rent<int>(out _);
         var terminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "connection failed");
 
@@ -666,7 +666,7 @@ public class SharpLinkClientLifecycleStateTests
             new RpcSession(new TestTransportConnection()),
             new CancellationTokenSource(),
             8,
-            context.Codecs);
+            context);
 
         connection.Session.NotifyConnected();
         Ensure(ReferenceEquals(EndpointSelectionKernel.SelectConnection([connection]), connection),
@@ -683,19 +683,19 @@ public class SharpLinkClientLifecycleStateTests
             new TestClientTransportFactory(),
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30));
-        var context = new SharpLinkRuntimeContextBuilder().Build();
+        using var context = new SharpLinkRuntimeContextBuilder().Build();
         await using var first = new ClientConnection(
             owner,
             new RpcSession(new TestTransportConnection()),
             new CancellationTokenSource(),
             8,
-            context.Codecs);
+            context);
         await using var second = new ClientConnection(
             owner,
             new RpcSession(new TestTransportConnection()),
             new CancellationTokenSource(),
             8,
-            context.Codecs);
+            context);
         var firstCall1 = first.PendingCalls.Rent<int>(out var firstId1);
         var firstCall2 = first.PendingCalls.Rent<int>(out var firstId2);
         var secondCall = second.PendingCalls.Rent<int>(out var secondId);
@@ -719,19 +719,19 @@ public class SharpLinkClientLifecycleStateTests
             new TestClientTransportFactory(),
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30));
-        var context = new SharpLinkRuntimeContextBuilder().Build();
+        using var context = new SharpLinkRuntimeContextBuilder().Build();
         await using var stale = new ClientConnection(
             owner,
             new RpcSession(new TestTransportConnection()),
             new CancellationTokenSource(),
             8,
-            context.Codecs);
+            context);
         await using var ready = new ClientConnection(
             owner,
             new RpcSession(new TestTransportConnection()),
             new CancellationTokenSource(),
             8,
-            context.Codecs);
+            context);
         stale.Session.NotifyConnected();
         ready.Session.NotifyConnected();
         Ensure(ready.TryBeginUntrackedCall(), "ready connection active-call setup");

@@ -106,7 +106,11 @@ public sealed class RuntimeArchitecturePhase00Tests
     {
         var random = new Random(RaceSeed);
         var owner = new RecordingPendingCallOwner();
-        using var table = new PendingRequestTable(1, owner: owner);
+        using var table = new PendingRequestTable(
+            1,
+            PendingRequestTableTestFixture.Codecs,
+            owner,
+            TimeProvider.System);
 
         for (var iteration = 0; iteration < RaceRepetitions; iteration++)
         {

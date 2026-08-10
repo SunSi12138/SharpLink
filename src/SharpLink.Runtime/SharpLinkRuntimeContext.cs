@@ -12,10 +12,12 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
         SharpLinkRuntimeOptions options,
         RuntimeConcurrencyOptions concurrency,
         BufferWriterPoolOptions bufferPool,
+        TimeProvider timeProvider,
         Func<Type, IRpcCodec?>? resolver,
         IReadOnlyDictionary<Type, IRpcCodec> codecs,
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> generatedManifests)
     {
+        TimeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _options = options.CloneValidated();
         Concurrency = concurrency.CloneValidated();
         Codecs = new RpcCodecProvider(resolver, codecs);
@@ -97,6 +99,8 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
     IRpcBufferWriterPool IRpcRuntimeContext.Buffers => Buffers;
 
     internal RuntimeConcurrencyOptions Concurrency { get; }
+
+    internal TimeProvider TimeProvider { get; }
 
     internal SharpLinkProtocolOptions Protocol => _options.Protocol;
 
@@ -204,6 +208,7 @@ public sealed class SharpLinkRuntimeContextBuilder
     private readonly RuntimeConcurrencyOptions _concurrency = new();
     private readonly BufferWriterPoolOptions _bufferPool = new();
     private readonly Dictionary<Type, IRpcCodec> _codecs = [];
+    private readonly TimeProvider _timeProvider = TimeProvider.System;
     private Func<Type, IRpcCodec?>? _resolver;
 
     /// <summary>Configures runtime and protocol limits.</summary>
@@ -267,7 +272,7 @@ public sealed class SharpLinkRuntimeContextBuilder
         var options = _options.CloneValidated();
         var concurrency = _concurrency.CloneValidated();
         var bufferPool = _bufferPool.CloneValidated();
-        return new SharpLinkRuntimeContext(options, concurrency, bufferPool, _resolver,
+        return new SharpLinkRuntimeContext(options, concurrency, bufferPool, _timeProvider, _resolver,
             new Dictionary<Type, IRpcCodec>(_codecs), generatedManifests);
     }
 }

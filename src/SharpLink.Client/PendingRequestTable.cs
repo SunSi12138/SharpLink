@@ -63,7 +63,8 @@ internal sealed class PendingRequestTable : IDisposable
     private readonly int _indexMask;
     private readonly PendingCall?[] _slots;
     private readonly IRpcCodecProvider _codecProvider;
-    private readonly IPendingCallOwner? _owner;
+    private readonly IPendingCallOwner _owner;
+    private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _slotAvailable;
     private readonly Timer _deadlineTimer;
     private long _nextId;
@@ -73,9 +74,10 @@ internal sealed class PendingRequestTable : IDisposable
     private int _disposed;
 
     public PendingRequestTable(
-        int capacity = 65_536,
-        IRpcCodecProvider? codecProvider = null,
-        IPendingCallOwner? owner = null)
+        int capacity,
+        IRpcCodecProvider codecProvider,
+        IPendingCallOwner owner,
+        TimeProvider timeProvider)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
         if (!System.Numerics.BitOperations.IsPow2(capacity))
@@ -87,10 +89,15 @@ internal sealed class PendingRequestTable : IDisposable
                 $"Pending request capacity cannot exceed {SharpLinkProtocolOptions.MaximumPendingRequestsPerConnection}.");
         }
 
+        ArgumentNullException.ThrowIfNull(codecProvider);
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(timeProvider);
+
         _slots = new PendingCall?[capacity];
         _indexMask = capacity - 1;
-        _codecProvider = codecProvider ?? new SharpLinkRuntimeContextBuilder().Build().Codecs;
+        _codecProvider = codecProvider;
         _owner = owner;
+        _timeProvider = timeProvider;
         _slotAvailable = new SemaphoreSlim(0, capacity);
         _deadlineTimer = new Timer(
             static state => ((PendingRequestTable)state!).ScanExpiredDeadlines(),
@@ -208,7 +215,7 @@ internal sealed class PendingRequestTable : IDisposable
                 }
                 else
                 {
-                    var remaining = absoluteDeadline - DateTimeOffset.UtcNow;
+                    var remaining = absoluteDeadline - _timeProvider.GetUtcNow();
                     if (remaining <= TimeSpan.Zero)
                         throw CreateDeadlineExceededException();
                     if (!await SharpLinkTimer.WaitAsync(
@@ -494,7 +501,7 @@ internal sealed class PendingRequestTable : IDisposable
     private void OnRegistered(PendingCall call)
     {
         SharpLinkTelemetry.AddPendingRequests(1);
-        _owner?.OnPendingCallRegistered();
+        _owner.OnPendingCallRegistered();
         call.MarkRegistered();
         if (call.DeadlineTimestamp > 0)
             UpdateEarliestDeadline(call.DeadlineTimestamp);
@@ -576,7 +583,7 @@ internal sealed class PendingRequestTable : IDisposable
         {
             try
             {
-                _owner?.OnProducerCancellationCallbackFailed(producerCancellationFailure);
+                _owner.OnProducerCancellationCallbackFailed(producerCancellationFailure);
             }
             catch
             {
@@ -612,7 +619,7 @@ internal sealed class PendingRequestTable : IDisposable
                     "A pending request completed without a result."));
         }
 
-        _owner?.OnPendingCallCompleted(in completion);
+        _owner.OnPendingCallCompleted(in completion);
         call.ReturnCompleted();
     }
 

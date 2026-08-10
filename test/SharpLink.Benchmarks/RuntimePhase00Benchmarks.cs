@@ -47,7 +47,11 @@ public class RuntimePhase00Benchmarks
         _context = new SharpLinkRuntimeContextBuilder()
             .AddCodec(new BenchmarkValueCodec())
             .Build(includeGeneratedAssemblyCatalog: false);
-        _pending = new PendingRequestTable(65_536, _context.Codecs);
+        _pending = new PendingRequestTable(
+            65_536,
+            _context.Codecs,
+            BenchmarkPendingCallOwner.Instance,
+            TimeProvider.System);
         _streams = new StreamManager();
         _sendInput = new Pipe();
         _sendSession = new RpcSession(
