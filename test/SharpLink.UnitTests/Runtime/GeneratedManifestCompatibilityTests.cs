@@ -7,6 +7,44 @@ namespace SharpLink.UnitTests.Runtime;
 public class GeneratedManifestCompatibilityTests
 {
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(5)]
+    [Arguments(0)]
+    [Arguments(-1)]
+    [Arguments(int.MinValue)]
+    [Arguments(int.MaxValue)]
+    public void ValidatorShouldRejectEveryUnsupportedApiBeforeReadingManifestShape(int apiVersion)
+    {
+        var manifest = new ProbeManifest(
+            apiVersion,
+            SharpLinkGeneratedManifestVersions.Protocol,
+            typeof(GeneratedManifestCompatibilityTests).Assembly);
+
+        var error = SharpLinkGeneratedManifestCompatibility.Validate(
+            manifest,
+            typeof(GeneratedManifestCompatibilityTests).Assembly);
+
+        Ensure(error is not null, $"API {apiVersion} should be rejected");
+        Ensure(error!.Code == SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+            $"API {apiVersion} should use the incompatible-manifest error code");
+        Ensure(error.Message.Contains(
+                $"API {apiVersion}/{SharpLinkGeneratedManifestVersions.Api}",
+                StringComparison.Ordinal),
+            "diagnostic should carry incoming and required API versions");
+        Ensure(error.Message.Contains(
+                $"Protocol {manifest.ProtocolVersion}/{SharpLinkGeneratedManifestVersions.Protocol}",
+                StringComparison.Ordinal),
+            "diagnostic should carry incoming and required Protocol versions");
+        Ensure(error.Message.Contains(manifest.GeneratorVersion, StringComparison.Ordinal),
+            "diagnostic should identify the incoming Generator");
+        Ensure(error.IncomingAssembly == typeof(GeneratedManifestCompatibilityTests).Assembly.FullName,
+            "diagnostic should identify the incoming owner assembly");
+        Ensure(manifest.ShapeReads == 0,
+            "unsupported API rejection must precede descriptor and Codec shape reads");
+    }
+
+    [Test]
     public void ValidatorShouldRejectVersionBeforeReadingManifestShape()
     {
         var manifest = new ProbeManifest(
@@ -32,12 +70,9 @@ public class GeneratedManifestCompatibilityTests
     }
 
     [Test]
-    public void ValidatorShouldRejectOwnershipBeforeReadingManifestShape()
+    public void ValidatorShouldValidateShapeBeforeRejectingOwnership()
     {
-        var manifest = new ProbeManifest(
-            SharpLinkGeneratedManifestVersions.Api,
-            SharpLinkGeneratedManifestVersions.Protocol,
-            typeof(string).Assembly);
+        var manifest = new OwnershipProbeManifest(typeof(string).Assembly);
 
         var error = SharpLinkGeneratedManifestCompatibility.Validate(
             manifest,
@@ -48,8 +83,8 @@ public class GeneratedManifestCompatibilityTests
             "ownership mismatch should use the invalid-manifest error code");
         Ensure(error.Message.Contains("does not match", StringComparison.Ordinal),
             "ownership diagnostic should state the mismatch");
-        Ensure(manifest.ShapeReads == 0,
-            "ownership rejection must happen before descriptor or Codec shape is read");
+        Ensure(manifest.ShapeReads >= 5,
+            "all required manifest shape fields must be validated before ownership");
     }
 
     [Test]
@@ -117,6 +152,58 @@ public class GeneratedManifestCompatibilityTests
         {
             Interlocked.Increment(ref _shapeReads);
             throw new InvalidOperationException("Manifest shape was read before compatibility preflight.");
+        }
+    }
+
+    private sealed class OwnershipProbeManifest(Assembly ownerAssembly) :
+        ISharpLinkGeneratedAssemblyManifest
+    {
+        private int _shapeReads;
+
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "p3-api4-test";
+        public Assembly OwnerAssembly => ownerAssembly;
+        public int ShapeReads => Volatile.Read(ref _shapeReads);
+        public string CompileTimeDescriptor
+        {
+            get
+            {
+                Interlocked.Increment(ref _shapeReads);
+                return "test";
+            }
+        }
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts
+        {
+            get
+            {
+                Interlocked.Increment(ref _shapeReads);
+                return [];
+            }
+        }
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services
+        {
+            get
+            {
+                Interlocked.Increment(ref _shapeReads);
+                return [];
+            }
+        }
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs
+        {
+            get
+            {
+                Interlocked.Increment(ref _shapeReads);
+                return [];
+            }
+        }
+        public IReadOnlyList<string> Dependencies
+        {
+            get
+            {
+                Interlocked.Increment(ref _shapeReads);
+                return [];
+            }
         }
     }
 }

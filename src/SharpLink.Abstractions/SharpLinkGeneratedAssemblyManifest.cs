@@ -17,9 +17,36 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
         ManifestType = manifestType ?? throw new ArgumentNullException(nameof(manifestType));
     }
 
+    /// <summary>Creates a self-describing manifest locator.</summary>
+    /// <param name="manifestType">A generated manifest type with a public parameterless constructor.</param>
+    /// <param name="apiVersion">The generated server API version.</param>
+    /// <param name="protocolVersion">The generated wire protocol version.</param>
+    /// <param name="generatorVersion">The source-generator version.</param>
+    public SharpLinkGeneratedAssemblyManifestAttribute(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+        Type manifestType,
+        int apiVersion,
+        int protocolVersion,
+        string generatorVersion)
+        : this(manifestType)
+    {
+        ApiVersion = apiVersion;
+        ProtocolVersion = protocolVersion;
+        GeneratorVersion = generatorVersion ?? throw new ArgumentNullException(nameof(generatorVersion));
+    }
+
     /// <summary>Gets the generated manifest implementation type.</summary>
     [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
     public Type ManifestType { get; }
+
+    /// <summary>Gets the declared generated API version, or zero for a legacy locator.</summary>
+    public int ApiVersion { get; }
+
+    /// <summary>Gets the declared wire protocol version, or zero for a legacy locator.</summary>
+    public int ProtocolVersion { get; }
+
+    /// <summary>Gets the declared Generator version, or <see langword="null"/> for a legacy locator.</summary>
+    public string? GeneratorVersion { get; }
 }
 
 /// <summary>Describes one generated RPC method for compatibility and conflict validation.</summary>
@@ -40,7 +67,7 @@ public sealed record SharpLinkGeneratedContractDescriptor(
     string Fingerprint,
     IReadOnlyList<SharpLinkGeneratedMethodDescriptor> Methods,
     Func<IRpcChannel, object> ProxyFactory,
-    Func<IRpcStub> StubFactory);
+    Func<IRpcCodecProvider, IRpcStub> StubFactory);
 
 /// <summary>Describes one service-owned generated activator.</summary>
 public sealed record SharpLinkGeneratedServiceDescriptor(
@@ -89,7 +116,7 @@ public interface ISharpLinkGeneratedAssemblyManifest
 public static class SharpLinkGeneratedManifestVersions
 {
     /// <summary>The current generated manifest API version.</summary>
-    public const int Api = 3;
+    public const int Api = 4;
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;

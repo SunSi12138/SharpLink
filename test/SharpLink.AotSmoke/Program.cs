@@ -230,9 +230,42 @@ public static class Program
         if (moved.X != 5 || moved.Y != 2)
             throw new Exception("unexpected struct result");
 
+        await svc.NotifyAsync(37).ConfigureAwait(false);
+
+        var uploadSum = await svc.SumAsync(ToAsyncEnumerable([3, 5, 7])).ConfigureAwait(false);
+        if (uploadSum != 15)
+            throw new Exception($"unexpected client-streaming sum: {uploadSum}");
+
+        var range = await CollectAsync(svc.RangeAsync(4)).ConfigureAwait(false);
+        if (!range.SequenceEqual([0, 1, 2, 3]))
+            throw new Exception("unexpected server-streaming values");
+
+        var duplex = await CollectAsync(svc.MultiplyStreamAsync(
+            ToAsyncEnumerable([2, 4, 6]),
+            3)).ConfigureAwait(false);
+        if (!duplex.SequenceEqual([6, 12, 18]))
+            throw new Exception("unexpected duplex-streaming values");
+
         var pair = await svc.EchoPairAsync(new AotPair(7, "pair")).ConfigureAwait(false);
         if (pair.Number != 14 || pair.Text != "pair-ok")
             throw new Exception("unexpected pair result");
+    }
+
+    private static async IAsyncEnumerable<int> ToAsyncEnumerable(IEnumerable<int> values)
+    {
+        foreach (var value in values)
+        {
+            yield return value;
+            await Task.Yield();
+        }
+    }
+
+    private static async Task<List<int>> CollectAsync(IAsyncEnumerable<int> values)
+    {
+        var result = new List<int>();
+        await foreach (var value in values.ConfigureAwait(false))
+            result.Add(value);
+        return result;
     }
 
     private static ISharpLinkMultiClusterClient CreateMultiClusterClient(
@@ -349,6 +382,15 @@ public interface IAotService : IService
     ValueTask<string[][]> EchoNestedStringsAsync(string[][] values);
     [NonCancellable]
     ValueTask<Point2D> OffsetAsync(Point2D point, int dx, int dy);
+    [Oneway]
+    [NonCancellable]
+    ValueTask NotifyAsync(int value);
+    [NonCancellable]
+    ValueTask<int> SumAsync(IAsyncEnumerable<int> values);
+    [NonCancellable]
+    IAsyncEnumerable<int> RangeAsync(int count);
+    [NonCancellable]
+    IAsyncEnumerable<int> MultiplyStreamAsync(IAsyncEnumerable<int> values, int factor);
     [NonCancellable]
     ValueTask<AotPair> EchoPairAsync(AotPair value);
 }
@@ -356,6 +398,9 @@ public interface IAotService : IService
 [RpcService]
 public class AotService : IAotService
 {
+    private static readonly TaskCompletionSource<int> NotificationObserved =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     internal static TaskCompletionSource<bool> FinalCall { get; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -376,6 +421,37 @@ public class AotService : IAotService
 
     public ValueTask<Point2D> OffsetAsync(Point2D point, int dx, int dy)
         => ValueTask.FromResult(new Point2D { X = point.X + dx, Y = point.Y + dy });
+
+    public ValueTask NotifyAsync(int value)
+    {
+        NotificationObserved.TrySetResult(value);
+        return ValueTask.CompletedTask;
+    }
+
+    public async ValueTask<int> SumAsync(IAsyncEnumerable<int> values)
+    {
+        var sum = 0;
+        await foreach (var value in values.ConfigureAwait(false))
+            sum += value;
+        return sum;
+    }
+
+    public async IAsyncEnumerable<int> RangeAsync(int count)
+    {
+        var notification = await NotificationObserved.Task.ConfigureAwait(false);
+        if (notification != 37)
+            throw new InvalidOperationException($"unexpected one-way value: {notification}");
+        for (var value = 0; value < count; value++)
+            yield return value;
+    }
+
+    public async IAsyncEnumerable<int> MultiplyStreamAsync(
+        IAsyncEnumerable<int> values,
+        int factor)
+    {
+        await foreach (var value in values.ConfigureAwait(false))
+            yield return value * factor;
+    }
 
     public ValueTask<AotPair> EchoPairAsync(AotPair value)
     {

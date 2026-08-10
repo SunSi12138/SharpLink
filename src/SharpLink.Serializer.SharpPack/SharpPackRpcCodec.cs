@@ -7,12 +7,12 @@ using SharpLink.Sdk;
 using SharpPack;
 
 [assembly: RpcCodecAdapterRegistration(
-    typeof(SharpLink.Runtime.SharpPackRpcCodecAdapter),
-    SharpLink.Runtime.SharpPackRpcCodecAdapter.AdapterIdentity,
-    SharpLink.Runtime.SharpPackRpcCodecAdapter.WireFormatIdentity,
+    typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter),
+    SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter.AdapterIdentity,
+    SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter.WireFormatIdentity,
     SelectorAttributeType = typeof(SharpPackableAttribute))]
 
-namespace SharpLink.Runtime;
+namespace SharpLink.Serializer.SharpPack;
 
 /// <summary>Creates explicit SharpPack Codecs backed by a caller-owned serializer Context.</summary>
 public static class SharpPackRpcCodec

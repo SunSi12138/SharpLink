@@ -25,7 +25,7 @@
 
 - `SharpLink.Abstractions`：契约标记、Protocol v2 公共模型、公共接口、通道与传输抽象
 - `SharpLink.Runtime`：`RpcSession`、`StreamManager`、实例级 Codec Provider、传输实现与底层收发逻辑
-- `SharpLink.Sdk`：契约项目的单一引用入口，提供分析器、源生成器及 1.0.0 类型转发兼容层
+- `SharpLink.Sdk`：契约项目的单一引用入口，依赖 Abstractions 并携带分析器与源生成器，不再传递引入 Runtime
 - `SharpLink.Client`：客户端 Builder、连接生命周期、请求管理与代理调用通道
 - `SharpLink.Server`：服务端 Builder、连接管理、Stub 分发、心跳与取消处理
 - `SharpLink.Hosting`：`IServiceCollection` 扩展与 HostedService 集成
@@ -215,10 +215,10 @@ public partial class PluginGraph
 ```csharp
 [assembly: RpcCodecAdapter(
     typeof(ThirdPartyGraph),
-    typeof(SharpPackRpcCodecAdapter))]
+    typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter))]
 ```
 
-Client/Server 不需要 resolver 或手工注册自动 Adapter Codec。高级自定义 formatter 可由调用方创建 `SharpPackSerializerContext`，再通过 `SharpPackRpcCodec.Create<T>(context)` 显式 `UseCodec`；该 Codec 仍保持最高优先级且 Context 所有权属于调用方。
+Client/Server 不需要 resolver 或手工注册自动 Adapter Codec。高级自定义 formatter 可由调用方创建 `SharpPackSerializerContext`，再通过 `SharpLink.Serializer.SharpPack.SharpPackRpcCodec.Create<T>(context)` 显式 `UseCodec`；该 Codec 仍保持最高优先级且 Context 所有权属于调用方。
 
 每个 Adapter Scope 按 `Runtime Context × generated Manifest × AdapterId` 隔离。同一 Manifest 的闭合类型共享一个 SharpPack Context；自动 Context 拥有独立 formatter graph，不使用进程级默认 formatter slot，不同 Client/Server、插件或替换代际不共享。进程 Catalog 只保存弱 Manifest 引用；动态模块排空后释放 Codec、Scope 和 Context。生成代码直接调用闭合 `CreateCodec<T>()`，不扫描程序集、不调用 `MakeGenericType` 或 `Activator.CreateInstance`。当前设计和迁移约束见 [`doc/contracts-and-codecs.md`](doc/contracts-and-codecs.md) 与 [`doc/migration.md`](doc/migration.md)。
 
@@ -332,6 +332,8 @@ var client = SharpClientBuilder.Create()
 该传输不提供 TLS；同用户隔离依赖命名管道权限、用户私有映射目录、随机 nonce 和映射头校验。SharpLink RPC 认证、授权、deadline、流控和心跳照常生效。普通日志和性能报告不会记录映射路径、nonce 或 payload。正式支持状态以三平台 JIT/NativeAOT、性能与长稳门禁为准；当前安全边界、容量和调优规则见 [`doc/transports.md`](doc/transports.md) 与 [`doc/limits-and-tuning.md`](doc/limits-and-tuning.md)。
 
 正式 NuGet 包中，`SharpLink.Sdk` 会携带 `SharpLink.Generator` Analyzer。通过 NuGet 使用时只需引用 SDK，无需再手工添加 Generator DLL 或 Analyzer 项目引用。
+
+从 2.0 起，`SharpLink.Sdk` 只传递引入 `SharpLink.Abstractions`。纯契约项目不需要 Runtime；Client、Server 或 Hosting 应用应显式引用自身对应的应用包。1.1.x 生成程序集使用 Generated API 3，不能在 2.0 进程内加载，升级时必须清理 `bin/obj` 并重新构建全部契约、服务和插件程序集。此变化不修改 Protocol v2，分别使用本进程匹配生成程序集的 1.1.x 与 2.0 进程仍可跨网络互操作。完整步骤见 [`doc/migration.md`](doc/migration.md)。
 
 ## Host 模式
 

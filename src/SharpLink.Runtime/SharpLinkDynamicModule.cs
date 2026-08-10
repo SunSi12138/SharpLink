@@ -62,12 +62,36 @@ internal static class SharpLinkAssemblyManifestLoader
                     "The assembly does not contain a source-generated SharpLink manifest locator.",
                     assembly);
             }
-            if (locator.ConstructorArguments.Count != 1 ||
-                locator.ConstructorArguments[0].Value is not Type manifestType)
+            if (locator.ConstructorArguments.Count == 1 &&
+                locator.ConstructorArguments[0].Value is Type)
+            {
+                return Failure(
+                    SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+                    $"Manifest compatibility mismatch: API 3/{SharpLinkGeneratedManifestVersions.Api}, " +
+                    $"Protocol 2/{SharpLinkGeneratedManifestVersions.Protocol}, " +
+                    "Generator '<unavailable: legacy API 3 locator>'.",
+                    assembly);
+            }
+            if (locator.ConstructorArguments.Count != 4 ||
+                locator.ConstructorArguments[0].Value is not Type manifestType ||
+                locator.ConstructorArguments[1].Value is not int apiVersion ||
+                locator.ConstructorArguments[2].Value is not int protocolVersion ||
+                locator.ConstructorArguments[3].Value is not string generatorVersion ||
+                string.IsNullOrWhiteSpace(generatorVersion))
             {
                 return Failure(
                     SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
-                    "The SharpLink manifest locator does not contain a valid manifest type.",
+                    "The SharpLink manifest locator is not a valid self-describing API 4 locator.",
+                    assembly);
+            }
+            if (apiVersion != SharpLinkGeneratedManifestVersions.Api ||
+                protocolVersion != SharpLinkGeneratedManifestVersions.Protocol)
+            {
+                return Failure(
+                    SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+                    $"Manifest compatibility mismatch: API {apiVersion}/{SharpLinkGeneratedManifestVersions.Api}, " +
+                    $"Protocol {protocolVersion}/{SharpLinkGeneratedManifestVersions.Protocol}, " +
+                    $"Generator '{generatorVersion}'.",
                     assembly);
             }
             if (!ReferenceEquals(manifestType.Assembly, assembly))
@@ -87,6 +111,15 @@ internal static class SharpLinkAssemblyManifestLoader
             var validationError = SharpLinkGeneratedManifestCompatibility.Validate(generated, assembly);
             if (validationError is not null)
                 return SharpLinkAssemblyRegistrationResult.Failure(validationError);
+            if (generated.ApiVersion != apiVersion ||
+                generated.ProtocolVersion != protocolVersion ||
+                !string.Equals(generated.GeneratorVersion, generatorVersion, StringComparison.Ordinal))
+            {
+                return Failure(
+                    SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                    "The materialized manifest metadata does not match its self-describing locator.",
+                    assembly);
+            }
 
             manifest = generated;
             return SharpLinkAssemblyRegistrationResult.Success();

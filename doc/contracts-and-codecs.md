@@ -37,7 +37,7 @@ builder.UseCodec<MyType>(new MyTypeCodec());
 
 `IRpcCodecAdapter` 用于由 Generator 生成闭合工厂，再由 Runtime Context 创建隔离 scope。Adapter identity、wire-format identity 和 schema identity 都参与注册兼容性判断。
 
-官方复杂对象图扩展是 `SharpLink.Serializer.SharpPack`。用 `[RpcCodecAdapter(typeof(SharpPackRpcCodecAdapter))]` 或项目约定把类型交给 SharpPack；每个 Runtime Context × Manifest × AdapterId 拥有独立 scope，不使用进程级默认 formatter slot。动态模块排空后，Codec、Adapter scope 和 collectible ALC 才能一起释放。
+官方复杂对象图扩展是 `SharpLink.Serializer.SharpPack`。用 `[RpcCodecAdapter(typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter))]` 或项目约定把类型交给 SharpPack；每个 Runtime Context × Manifest × AdapterId 拥有独立 scope，不使用进程级默认 formatter slot。动态模块排空后，Codec、Adapter scope 和 collectible ALC 才能一起释放。
 
 ## 协商压缩
 

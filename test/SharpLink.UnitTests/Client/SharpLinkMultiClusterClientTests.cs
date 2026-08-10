@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Reflection.Emit;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -16,7 +15,8 @@ namespace SharpLink.UnitTests.Client;
 public sealed class SharpLinkMultiClusterClientTests
 {
     private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
-    private static readonly Assembly TestManifestAssembly = CreateTestManifestAssembly();
+    private static readonly Assembly TestManifestAssembly =
+        typeof(SharpLinkMultiClusterClientTests).Assembly;
 
     [Test]
     public async Task StaticRouteShouldCreateTheTargetChildProxyAndConnectEverySlot()
@@ -1402,11 +1402,6 @@ public sealed class SharpLinkMultiClusterClientTests
             Address = new SharpLinkTcpAddress("127.0.0.1", port)
         };
 
-    private static Assembly CreateTestManifestAssembly()
-        => AssemblyBuilder.DefineDynamicAssembly(
-            new AssemblyName("SharpLink.MultiClusterClientTests.Manifest"),
-            AssemblyBuilderAccess.Run);
-
     private interface IOrdersContract : IService;
     private interface IUnroutedContract : IService;
     private sealed class OrdersProxy(IRpcChannel channel) : IOrdersContract
@@ -1428,10 +1423,10 @@ public sealed class SharpLinkMultiClusterClientTests
                 typeof(IOrdersContract),
                 typeof(IOrdersContract).FullName!,
                 8_101,
-                "orders-v1",
+                "0101010101010101010101010101010101010101010101010101010101010101",
                 [],
                 static channel => new OrdersProxy(channel),
-                static () => throw new NotSupportedException())
+                static _ => throw new NotSupportedException())
         ];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services { get; } = [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } = [];

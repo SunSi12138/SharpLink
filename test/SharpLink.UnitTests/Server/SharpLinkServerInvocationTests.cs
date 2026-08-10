@@ -772,17 +772,17 @@ public class SharpLinkServerInvocationTests
     {
         public long InterfaceHash => 1;
 
-        public ValueTask InvokeNoReturnAsync(object service, IRpcSession session, long methodHash,
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
             long requestId, ReadOnlySequence<byte> args) => Fail();
 
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcSession session, long methodHash,
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
             long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken) => Fail();
 
-        public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output) => Fail();
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output) => Fail();
 
-        public ValueTask InvokeCancellableAsync(object service, IRpcSession session, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output,
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
             CancellationToken cancellationToken) => Fail();
 
         private static ValueTask Fail()
@@ -806,17 +806,17 @@ public class SharpLinkServerInvocationTests
             return true;
         }
 
-        public ValueTask InvokeNoReturnAsync(object service, IRpcSession session, long methodHash,
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
             long requestId, ReadOnlySequence<byte> args) => Throw();
 
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcSession session, long methodHash,
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
             long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken) => Throw();
 
-        public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output) => Throw();
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output) => Throw();
 
-        public ValueTask InvokeCancellableAsync(object service, IRpcSession session, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output,
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
             CancellationToken cancellationToken) => Throw();
 
         private static ValueTask Throw()
@@ -841,24 +841,24 @@ public class SharpLinkServerInvocationTests
             return true;
         }
 
-        public ValueTask InvokeNoReturnAsync(object service, IRpcSession session, long methodHash,
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
             long requestId, ReadOnlySequence<byte> args) => ValueTask.CompletedTask;
 
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcSession session, long methodHash,
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
             long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
 
-        public ValueTask InvokeAsync(object service, IRpcSession session, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output)
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
         {
             output.Write([ResponseByte]);
             return ValueTask.CompletedTask;
         }
 
-        public ValueTask InvokeCancellableAsync(object service, IRpcSession session, long methodHash,
-            long requestId, ReadOnlySequence<byte> args, IRpcByteBufferWriter output,
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
             CancellationToken cancellationToken)
-            => InvokeAsync(service, session, methodHash, requestId, args, output);
+            => InvokeAsync(service, bridge, methodHash, requestId, args, output);
     }
 
     private sealed class CancelThenRecoverStub : IRpcStub
@@ -887,7 +887,7 @@ public class SharpLinkServerInvocationTests
 
         public ValueTask InvokeNoReturnAsync(
             object service,
-            IRpcSession session,
+            IRpcGeneratedServerBridge bridge,
             long methodHash,
             long requestId,
             ReadOnlySequence<byte> args)
@@ -895,7 +895,7 @@ public class SharpLinkServerInvocationTests
 
         public ValueTask InvokeNoReturnCancellableAsync(
             object service,
-            IRpcSession session,
+            IRpcGeneratedServerBridge bridge,
             long methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
@@ -910,20 +910,20 @@ public class SharpLinkServerInvocationTests
 
         public ValueTask InvokeAsync(
             object service,
-            IRpcSession session,
+            IRpcGeneratedServerBridge bridge,
             long methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
-            IRpcByteBufferWriter output)
+            IBufferWriter<byte> output)
             => throw new NotSupportedException();
 
         public ValueTask InvokeCancellableAsync(
             object service,
-            IRpcSession session,
+            IRpcGeneratedServerBridge bridge,
             long methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
-            IRpcByteBufferWriter output,
+            IBufferWriter<byte> output,
             CancellationToken cancellationToken)
             => throw new NotSupportedException();
     }

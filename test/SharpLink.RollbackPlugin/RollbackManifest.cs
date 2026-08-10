@@ -6,7 +6,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Abstractions;
 
-[assembly: SharpLinkGeneratedAssemblyManifest(typeof(SharpLink.RollbackPlugin.RollbackManifest))]
+[assembly: SharpLinkGeneratedAssemblyManifest(
+    typeof(SharpLink.RollbackPlugin.RollbackManifest),
+    4,
+    2,
+    "rollback-test")]
 
 namespace SharpLink.RollbackPlugin;
 

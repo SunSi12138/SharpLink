@@ -10,8 +10,8 @@ public class SharpClientBuilderTests
     [Test]
     public async Task StaticClientSnapshotShouldRejectIncompatibleManifestVersions()
     {
-        Ensure(SharpLinkGeneratedManifestVersions.Api == 3,
-            "Codec Adapter metadata requires generated manifest API 3");
+        Ensure(SharpLinkGeneratedManifestVersions.Api == 4,
+            "the 2.0 Runtime must require generated manifest API 4");
         await EnsureThrows<InvalidOperationException>(() =>
         {
             SharpLinkClient.ValidateStaticManifestCompatibility(new IncompatibleManifest());

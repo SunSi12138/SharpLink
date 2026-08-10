@@ -1,5 +1,6 @@
 using DemoBase;
 using SharpLink.Sdk;
+using SharpLink.Serializer.SharpPack;
 using SharpPack;
 using SharpLink.Runtime;
 

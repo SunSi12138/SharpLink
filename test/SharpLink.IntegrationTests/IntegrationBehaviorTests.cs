@@ -1809,6 +1809,19 @@ public class IntegrationBehaviorTests
 
         var client = (SharpLinkClient)harness.Client;
         var server = ServerLifecycleResourceInspector.Capture(harness.Server);
+        if (!ServerResourcesAreZero(server))
+        {
+            try
+            {
+                await WaitUntilAsync(() =>
+                    ServerResourcesAreZero(ServerLifecycleResourceInspector.Capture(harness.Server)));
+            }
+            catch (OperationCanceledException)
+            {
+                // Preserve the strict assertion below so a timeout reports the final counters.
+            }
+            server = ServerLifecycleResourceInspector.Capture(harness.Server);
+        }
         Ensure(harness.Client.State == SharpLinkConnectionState.Stopped,
             $"{scenario}: client stopped within the bound");
         Ensure(harness.Server.HealthStatus == SharpLinkHealthStatus.Unhealthy,
@@ -1827,6 +1840,17 @@ public class IntegrationBehaviorTests
         },
             $"{scenario}: server connection/call/admission resources are zero; actual {server}");
     }
+
+    private static bool ServerResourcesAreZero(ServerLifecycleResourceSnapshot snapshot)
+        => snapshot is
+        {
+            ActiveCalls: 0,
+            Connections: 0,
+            RetiredConnections: 0,
+            AdmissionPermits: 0,
+            AdmissionQueuedCalls: 0,
+            AdmissionQueuedBytes: 0
+        };
 
     private static async Task EnsureClientStreamProducerFailure(Task task, string name)
     {

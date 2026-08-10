@@ -15,5 +15,6 @@ global using SharpLink.Abstractions;
 global using SharpLink.Client;
 global using SharpLink.Runtime;
 global using SharpLink.Sdk;
+global using SharpLink.Serializer.SharpPack;
 global using SharpLink.Server;
 global using TUnit.Core;

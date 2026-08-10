@@ -1495,6 +1495,43 @@ public sealed class RuntimeAssemblyIntegrationTests
     }
 
     [Test]
+    [Arguments("normal")]
+    [Arguments("cancellation-before-first")]
+    [Arguments("cancellation-mid-stream")]
+    [Arguments("consumer-break")]
+    [Arguments("service-exception")]
+    [NotInParallel]
+    public async Task Api4DynamicStreamExitShouldReleaseItsCollectibleContext(string exitMode)
+    {
+        var weakContext = await ExecuteDynamicStreamExitAndUnloadAsync(exitMode);
+        for (var attempt = 0; attempt < 20 && weakContext.IsAlive; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            await Task.Delay(20);
+        }
+        Ensure(!weakContext.IsAlive,
+            $"API 4 dynamic stream '{exitMode}' must not retain its collectible ALC");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RejectedApi4DynamicRegistrationShouldReleaseItsCollectibleContext()
+    {
+        var weakContext = await RejectConflictingApi4AssemblyAndUnloadAsync();
+        for (var attempt = 0; attempt < 20 && weakContext.IsAlive; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            await Task.Delay(20);
+        }
+        Ensure(!weakContext.IsAlive,
+            "rejected API 4 registration must not retain its collectible ALC");
+    }
+
+    [Test]
     [NotInParallel]
     public async Task TenThousandRegisterUnregisterCyclesShouldLeaveRegistryReusable()
     {
@@ -1550,6 +1587,141 @@ public sealed class RuntimeAssemblyIntegrationTests
             TimeSpan.FromSeconds(2))).ReferencesReleased, "ALC client contract release");
         tracked.Add("AssemblyLoadContext", plugin.Unload());
         return tracked;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<WeakReference> ExecuteDynamicStreamExitAndUnloadAsync(string exitMode)
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        var plugin = PluginBundle.Load($"api4-stream-exit-{exitMode}");
+        RegisterAll(harness, plugin);
+        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+
+        if (string.Equals(exitMode, "normal", StringComparison.Ordinal))
+        {
+            Ensure((await CollectAsync(InvokeStream(
+                    proxy,
+                    plugin.ContractType,
+                    "ServerStreamAsync",
+                    3,
+                    CancellationToken.None))).SequenceEqual([0, 1, 2]),
+                "normal API 4 dynamic stream completes");
+        }
+        else if (string.Equals(exitMode, "service-exception", StringComparison.Ordinal))
+        {
+            try
+            {
+                _ = await CollectAsync(InvokeStream(
+                    proxy,
+                    plugin.ContractType,
+                    "ThrowingServerStreamAsync",
+                    CancellationToken.None));
+                throw new Exception("assert failed: dynamic service stream must fail");
+            }
+            catch (SharpLinkException exception)
+            {
+                Ensure(exception.Code == SharpLinkErrorCode.Internal,
+                    "dynamic service stream exception maps to Internal");
+            }
+        }
+        else if (string.Equals(exitMode, "cancellation-before-first", StringComparison.Ordinal))
+        {
+            using var cancellation = new CancellationTokenSource();
+            await using var enumerator = InvokeStream(
+                    proxy,
+                    plugin.ContractType,
+                    "ServerStreamAsync",
+                    int.MaxValue,
+                    cancellation.Token)
+                .GetAsyncEnumerator();
+            cancellation.Cancel();
+            var cancelled = false;
+            try
+            {
+                _ = await enumerator.MoveNextAsync();
+            }
+            catch (OperationCanceledException)
+            {
+                cancelled = true;
+            }
+            Ensure(cancelled,
+                "API 4 dynamic stream cancellation before the first item reaches the caller");
+        }
+        else
+        {
+            using var cancellation = new CancellationTokenSource();
+            var token = string.Equals(exitMode, "cancellation-mid-stream", StringComparison.Ordinal)
+                ? cancellation.Token
+                : CancellationToken.None;
+            await using var enumerator = InvokeStream(
+                    proxy,
+                    plugin.ContractType,
+                    "ServerStreamAsync",
+                    int.MaxValue,
+                    token)
+                .GetAsyncEnumerator();
+            Ensure(await enumerator.MoveNextAsync(),
+                $"API 4 dynamic stream '{exitMode}' starts before exit");
+            if (string.Equals(exitMode, "cancellation-mid-stream", StringComparison.Ordinal))
+            {
+                cancellation.Cancel();
+                var cancelled = false;
+                try
+                {
+                    _ = await enumerator.MoveNextAsync();
+                }
+                catch (OperationCanceledException)
+                {
+                    cancelled = true;
+                }
+                Ensure(cancelled,
+                    "API 4 dynamic stream cancellation after the first item reaches the caller");
+            }
+            else
+                Ensure(string.Equals(exitMode, "consumer-break", StringComparison.Ordinal),
+                    $"unknown dynamic stream exit mode '{exitMode}'");
+        }
+
+        if (!string.Equals(exitMode, "cancellation-before-first", StringComparison.Ordinal))
+        {
+            await plugin.GetStaticTask("ServerStreamDisposed").WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        proxy = null;
+        var service = await harness.Server.UnregisterAssemblyAsync(
+            plugin.ServiceAssembly,
+            TimeSpan.FromSeconds(2));
+        Ensure(service.ReferencesReleased,
+            $"API 4 dynamic stream '{exitMode}' releases its service module before dependants");
+        var serverContract = await harness.Server.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2));
+        var clientContract = await harness.Client.UnregisterAssemblyAsync(
+            plugin.ContractAssembly,
+            TimeSpan.FromSeconds(2));
+        Ensure(serverContract.ReferencesReleased && clientContract.ReferencesReleased,
+            $"API 4 dynamic stream '{exitMode}' releases all module references");
+        EnsureClientAndServerCountersAreZero(harness, $"API 4 dynamic stream '{exitMode}'");
+        return plugin.Unload();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<WeakReference> RejectConflictingApi4AssemblyAndUnloadAsync()
+    {
+        await using var harness = await DynamicHarness.CreateAsync();
+        using var accepted = PluginBundle.Load("api4-registration-accepted", loadService: false);
+        var rejected = PluginBundle.Load("api4-registration-rejected", loadService: false);
+        Ensure(harness.Client.RegisterAssembly(accepted.ContractAssembly).Succeeded,
+            "first API 4 dynamic contract registers");
+        var conflict = harness.Client.RegisterAssembly(rejected.ContractAssembly);
+        Ensure(!conflict.Succeeded &&
+               conflict.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.ContractConflict,
+            "conflicting API 4 dynamic contract is rejected before publication");
+        var weakContext = rejected.Unload();
+        Ensure((await harness.Client.UnregisterAssemblyAsync(
+            accepted.ContractAssembly,
+            TimeSpan.FromSeconds(2))).ReferencesReleased,
+            "accepted API 4 contract releases after conflict verification");
+        return weakContext;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
