@@ -31,7 +31,7 @@ namespace SharpLink.Benchmarks;
 /// </remarks>
 [MemoryDiagnoser(displayGenColumns: false)]
 [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 5, iterationCount: 15)]
-public sealed class StreamDispatcherMoveNextBenchmarks
+public class StreamDispatcherMoveNextBenchmarks
 {
     private const int LongStreamItemCount = 100_000;
     private const int BurstStreamItemCount = 1_024;
