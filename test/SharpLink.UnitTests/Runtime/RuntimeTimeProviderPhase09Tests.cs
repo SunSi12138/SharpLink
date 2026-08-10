@@ -258,6 +258,7 @@ public sealed class RuntimeTimeProviderPhase09Tests
 
         Ensure(await released,
             "owner completion immediately before the boundary must beat the timeout");
+        await releaseProvider.WaitForTimersDrainedAsync();
         Ensure(releaseProvider.ActiveTimerCount == 0,
             "owner completion must disarm the losing provider timer");
     }
