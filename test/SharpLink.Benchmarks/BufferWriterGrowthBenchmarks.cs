@@ -107,27 +107,57 @@ public static class BufferWriterGrowthEvidenceRunner
         {
             var payload = BufferWriterGrowthBenchmarks.StringFieldPayload.Create(payloadBytes, fieldCount);
             using var writer = new PooledByteBufferWriter(1024);
-            var growthCount = 0;
-            long copiedBytes = 0;
+            var trackingWriter = new GrowthTrackingBufferWriter(writer);
             foreach (var field in payload.Fields)
-            {
-                var capacity = writer.Capacity;
-                var written = writer.WrittenCount;
-                RpcGeneratedCodecWire.WriteString(writer, field);
-                if (writer.Capacity == capacity)
-                    continue;
-
-                growthCount++;
-                copiedBytes += written;
-            }
+                RpcGeneratedCodecWire.WriteString(trackingWriter, field);
 
             Console.WriteLine(
                 $"[BufferWriterGrowth] payload={payloadBytes} fields={fieldCount} " +
                 $"written={writer.WrittenCount} finalCapacity={writer.Capacity} " +
-                $"growths={growthCount} copied={copiedBytes} " +
-                $"copyRatio={(double)copiedBytes / writer.WrittenCount:F4} " +
+                $"growths={trackingWriter.GrowthCount} copied={trackingWriter.CopiedBytes} " +
+                $"copyRatio={(double)trackingWriter.CopiedBytes / writer.WrittenCount:F4} " +
                 $"capacityWaste={writer.Capacity - writer.WrittenCount} " +
                 $"capacityWasteRatio={(double)(writer.Capacity - writer.WrittenCount) / writer.WrittenCount:F4}");
+        }
+    }
+
+    /// <summary>
+    /// Observes each capacity-changing <c>GetMemory</c> or <c>GetSpan</c> call without changing
+    /// the writer's production path.
+    /// </summary>
+    private sealed class GrowthTrackingBufferWriter(PooledByteBufferWriter writer) : IBufferWriter<byte>
+    {
+        public int GrowthCount { get; private set; }
+
+        public long CopiedBytes { get; private set; }
+
+        public void Advance(int count) => writer.Advance(count);
+
+        public Memory<byte> GetMemory(int sizeHint = 0)
+        {
+            var capacity = writer.Capacity;
+            var written = writer.WrittenCount;
+            var memory = writer.GetMemory(sizeHint);
+            RecordGrowth(capacity, written);
+            return memory;
+        }
+
+        public Span<byte> GetSpan(int sizeHint = 0)
+        {
+            var capacity = writer.Capacity;
+            var written = writer.WrittenCount;
+            var span = writer.GetSpan(sizeHint);
+            RecordGrowth(capacity, written);
+            return span;
+        }
+
+        private void RecordGrowth(int previousCapacity, int writtenBeforeRequest)
+        {
+            if (writer.Capacity == previousCapacity)
+                return;
+
+            GrowthCount++;
+            CopiedBytes += writtenBeforeRequest;
         }
     }
 }
