@@ -1682,18 +1682,23 @@ public sealed class RuntimeAssemblyIntegrationTests
                     $"unknown dynamic stream exit mode '{exitMode}'");
         }
 
+        if (!string.Equals(exitMode, "cancellation-before-first", StringComparison.Ordinal))
+        {
+            await plugin.GetStaticTask("ServerStreamDisposed").WaitAsync(TimeSpan.FromSeconds(2));
+        }
         proxy = null;
         var service = await harness.Server.UnregisterAssemblyAsync(
             plugin.ServiceAssembly,
             TimeSpan.FromSeconds(2));
+        Ensure(service.ReferencesReleased,
+            $"API 4 dynamic stream '{exitMode}' releases its service module before dependants");
         var serverContract = await harness.Server.UnregisterAssemblyAsync(
             plugin.ContractAssembly,
             TimeSpan.FromSeconds(2));
         var clientContract = await harness.Client.UnregisterAssemblyAsync(
             plugin.ContractAssembly,
             TimeSpan.FromSeconds(2));
-        Ensure(service.ReferencesReleased && serverContract.ReferencesReleased &&
-               clientContract.ReferencesReleased,
+        Ensure(serverContract.ReferencesReleased && clientContract.ReferencesReleased,
             $"API 4 dynamic stream '{exitMode}' releases all module references");
         EnsureClientAndServerCountersAreZero(harness, $"API 4 dynamic stream '{exitMode}'");
         return plugin.Unload();

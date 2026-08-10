@@ -12,6 +12,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     private static TaskCompletionSource _synchronousBlockRelease = NewSignal();
     private static TaskCompletionSource _rejectResponseStarted = NewSignal();
     private static TaskCompletionSource _rejectResponseRelease = NewSignal();
+    private static TaskCompletionSource _serverStreamDisposed = NewSignal();
     private static int _created;
     private static int _disposed;
     private static int _notifications;
@@ -34,6 +35,8 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
 
     public static Task RejectResponseStarted => Volatile.Read(ref _rejectResponseStarted).Task;
 
+    public static Task ServerStreamDisposed => Volatile.Read(ref _serverStreamDisposed).Task;
+
     public static void Reset()
     {
         Volatile.Write(ref _blockStarted, NewSignal());
@@ -42,6 +45,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         Volatile.Write(ref _synchronousBlockRelease, NewSignal());
         Volatile.Write(ref _rejectResponseStarted, NewSignal());
         Volatile.Write(ref _rejectResponseRelease, NewSignal());
+        Volatile.Write(ref _serverStreamDisposed, NewSignal());
         Volatile.Write(ref _created, 0);
         Volatile.Write(ref _disposed, 0);
         Volatile.Write(ref _notifications, 0);
@@ -89,21 +93,35 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         int count,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        for (var index = 0; index < count; index++)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            yield return index;
-            await Task.Yield();
+            for (var index = 0; index < count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return index;
+                await Task.Yield();
+            }
+        }
+        finally
+        {
+            Volatile.Read(ref _serverStreamDisposed).TrySetResult();
         }
     }
 
     public async IAsyncEnumerable<int> ThrowingServerStreamAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        yield return 1;
-        await Task.Yield();
-        throw new InvalidOperationException("Dynamic service stream failure.");
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return 1;
+            await Task.Yield();
+            throw new InvalidOperationException("Dynamic service stream failure.");
+        }
+        finally
+        {
+            Volatile.Read(ref _serverStreamDisposed).TrySetResult();
+        }
     }
 
     public async IAsyncEnumerable<int> DuplexAsync(
