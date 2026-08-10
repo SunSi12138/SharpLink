@@ -41,6 +41,8 @@ public sealed partial class RpcSession : IRpcSession
     private int _cleanupStarted;
     private int _stopped;
     private readonly TaskCompletionSource<bool> _stoppedTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Lock _ctsGate = new();
+    private bool _ctsCancellationSignaled;
     private readonly Lock _transportDisposeGate = new();
     private Task? _transportDisposeTask;
 
@@ -184,7 +186,8 @@ public sealed partial class RpcSession : IRpcSession
         }
         ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
 
-        var result = GetOrCreatePump().TryEnqueue(new OwnedFrame(packet, forceFlush: false, flushCompletion: null));
+        var result = GetOrCreatePumpOrReturn(packet)
+            .TryEnqueue(new OwnedFrame(packet, forceFlush: false, flushCompletion: null));
         if (result == SendEnqueueResult.Full)
         {
             throw SharpLinkResourceExhaustion.Create(
@@ -239,7 +242,7 @@ public sealed partial class RpcSession : IRpcSession
             ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
             : null;
         var frame = new OwnedFrame(packet, forceFlush, completion);
-        var pump = GetOrCreatePump();
+        var pump = GetOrCreatePumpOrReturn(packet);
         var result = waitForCapacity
             ? await pump.EnqueueAsync(frame, ct).ConfigureAwait(false)
             : pump.TryEnqueue(frame);
@@ -281,7 +284,7 @@ public sealed partial class RpcSession : IRpcSession
             ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
 
             var frame = new OwnedFrame(packet, forceFlush: false, flushCompletion: null);
-            var pump = GetOrCreatePump();
+            var pump = GetOrCreatePumpOrReturn(packet);
             var result = pump.TryEnqueueForBackpressure(frame);
             if (result == SendEnqueueResult.Accepted)
                 return ValueTask.CompletedTask;
@@ -309,6 +312,9 @@ public sealed partial class RpcSession : IRpcSession
     {
         try
         {
+            if (Volatile.Read(ref _terminal) is { } terminal)
+                throw terminal.Exception;
+
             var length = packet.WrittenCount;
             if (length == 0)
             {
@@ -320,6 +326,11 @@ public sealed partial class RpcSession : IRpcSession
                 throw new InvalidOperationException("Outbound frame is shorter than the protocol header.");
 
             var protocolState = Volatile.Read(ref _protocolState);
+            if (protocolState.Phase is RpcSessionProtocolPhase.Stopping or RpcSessionProtocolPhase.Terminal &&
+                Volatile.Read(ref _terminal) is { } phaseTerminal)
+            {
+                throw phaseTerminal.Exception;
+            }
             var maxFramePayloadBytes = protocolState.Options?.MaxFramePayloadBytes ??
                 RuntimeContext.Protocol.MaxFramePayloadBytes;
             var payloadLength = length - ProtocolV2Constants.HeaderBytes;
@@ -419,7 +430,7 @@ public sealed partial class RpcSession : IRpcSession
 
         TransitionProtocolPhaseToTerminal();
         RecordTelemetryConnectionClosed();
-        _cts.Cancel();
+        CancelSession();
         Volatile.Read(ref _protocolState).FlowController?.Complete(structured);
         Volatile.Read(ref _pump)?.Stop();
         CompleteReceiveStreams(structured);
@@ -449,7 +460,7 @@ public sealed partial class RpcSession : IRpcSession
         {
             try
             {
-                _cts.Cancel();
+                CancelSession();
             }
             catch (Exception exception)
             {
@@ -480,8 +491,7 @@ public sealed partial class RpcSession : IRpcSession
         finally
         {
             TransitionProtocolPhaseToTerminal();
-            Volatile.Write(ref _stopped, 1);
-            _cts.Dispose();
+            DisposeSessionCancellation();
             if (cleanupException is null)
                 _stoppedTcs.TrySetResult(true);
             else
@@ -519,6 +529,28 @@ public sealed partial class RpcSession : IRpcSession
             }
         }
         Volatile.Read(ref _pump)?.Stop();
+    }
+
+    private void CancelSession()
+    {
+        lock (_ctsGate)
+        {
+            if (_ctsCancellationSignaled)
+                return;
+
+            // Publish ownership before callbacks run so cancellation cannot re-enter this path.
+            _ctsCancellationSignaled = true;
+            _cts.Cancel();
+        }
+    }
+
+    private void DisposeSessionCancellation()
+    {
+        lock (_ctsGate)
+        {
+            _cts.Dispose();
+            Volatile.Write(ref _stopped, 1);
+        }
     }
 
     private static Exception CombineCleanupExceptions(Exception? first, Exception next)
@@ -573,6 +605,21 @@ public sealed partial class RpcSession : IRpcSession
                 Fault);
             Volatile.Write(ref _pump, pump);
             return pump;
+        }
+    }
+
+    private SendPump GetOrCreatePumpOrReturn(IRpcByteBufferWriter packet)
+    {
+        try
+        {
+            if (Volatile.Read(ref _terminal) is { } terminal)
+                throw terminal.Exception;
+            return GetOrCreatePump();
+        }
+        catch
+        {
+            RuntimeContext.Buffers.Return(packet);
+            throw;
         }
     }
 
