@@ -78,6 +78,47 @@ public class StreamManagerTests
     }
 
     [Test]
+    public async Task CompleteAllShouldCloseLookupBeforeTheLastDispatchLeaseDrains()
+    {
+        var events = new List<string>();
+        var manager = new StreamManager();
+        var dispatcher = new GatedDispatcher(events);
+        manager.Register(51, dispatcher);
+
+        var activeDispatch = manager.DispatchChunkAsync(
+            51,
+            new ReadOnlySequence<byte>(new byte[] { 1 })).AsTask();
+        await dispatcher.Entered.WaitAsync(RaceCoordinationTimeout);
+
+        manager.CompleteAll(new SharpLinkException(
+            SharpLinkErrorCode.ConnectionClosed,
+            "session closed"));
+        manager.AssertAccountingInvariant();
+        Ensure(manager.ActiveStreamCount == 0,
+            "business-stream completion must retire its count before an older dispatch finishes");
+        Ensure(!activeDispatch.IsCompleted,
+            "the dispatch lease acquired before CompleteAll must stay valid until it releases");
+
+        var lateDispatch = manager.DispatchChunkAsync(
+            51,
+            new ReadOnlySequence<byte>(new byte[] { 2 }));
+        Ensure(lateDispatch.IsCompletedSuccessfully,
+            "Close must reject a post-termination lookup without waiting for the old dispatch");
+        Ensure(events.SequenceEqual(["dispatch-entered", "dispatcher-completed"]),
+            "CompleteAll must complete the dispatcher once without running a late dispatch");
+
+        dispatcher.Release();
+        await activeDispatch;
+        manager.AssertAccountingInvariant();
+        Ensure(events.SequenceEqual([
+                "dispatch-entered",
+                "dispatcher-completed",
+                "dispatch-released"
+            ]),
+            "the old dispatch releases after completion while the new lookup remains blocked");
+    }
+
+    [Test]
     public async Task CompleteRequestStreamsShouldRetireOnlyTheTargetRequest()
     {
         var manager = new StreamManager();

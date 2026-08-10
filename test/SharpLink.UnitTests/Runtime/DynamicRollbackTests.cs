@@ -50,6 +50,9 @@ public class DynamicRollbackTests
                 "a huge positive graceful timeout must not overflow the native delay range");
             Ensure(failure is null && result is { ReferencesReleased: true },
                 "the unregister operation must complete after its active lease drains");
+            module.AssertAccountingInvariant();
+            Ensure(module.RemainingCalls == 0 && module.RemainingStreams == 0,
+                "successful unregister must release every retained dynamic-module lease exactly once");
         }
         finally
         {
@@ -107,6 +110,9 @@ public class DynamicRollbackTests
             lease.Dispose();
             lease = default;
             await module.WaitForDrainAsync();
+            module.AssertAccountingInvariant();
+            Ensure(module.RemainingCalls == 0 && module.RemainingStreams == 0,
+                "the Client unregister drain must leave both module counters exactly zero");
             await client.StopAsync();
             await ownerProvider.WaitForTimersDrainedAsync();
             Ensure(module.State == SharpLinkDynamicModuleState.Released && !modules.ContainsKey(assembly),
@@ -170,6 +176,9 @@ public class DynamicRollbackTests
             lease.Dispose();
             lease = default;
             await module.WaitForDrainAsync();
+            module.AssertAccountingInvariant();
+            Ensure(module.RemainingCalls == 0 && module.RemainingStreams == 0,
+                "the Server unregister drain must leave both module counters exactly zero");
             await server.StopAsync(TimeSpan.Zero);
             await ownerProvider.WaitForTimersDrainedAsync();
             Ensure(module.State == SharpLinkDynamicModuleState.Released && !modules.ContainsKey(assembly),

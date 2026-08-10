@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO.Pipelines;
 using System.Linq;
 using System.Reflection;
@@ -332,10 +333,17 @@ public class NegotiatedSessionOptionsTests
             input.Reader,
             output.Writer,
             RpcSessionTestFixture.ClientOptions());
-        session.AddActiveRequest();
+        session.AssertStateInvariant();
 
         session.MarkDraining();
-        var rejection = CaptureSharpLinkException(session.AddActiveRequest);
+        session.AssertStateInvariant();
+        var rejection = CaptureSharpLinkException(() =>
+            session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Request)));
+        session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response));
+        session.SendPacket(CreateFrame(session, ProtocolV2FrameType.StreamData));
+        session.SendPacket(CreateFrame(session, ProtocolV2FrameType.WindowUpdate));
+        session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Cancel));
+        await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
 
         Ensure(session.ProtocolPhase == RpcSessionProtocolPhase.Draining && session.IsDraining,
             "MarkDraining must transition a Ready session exactly once");
@@ -343,12 +351,51 @@ public class NegotiatedSessionOptionsTests
             "new calls must be rejected with Unavailable while draining");
         Ensure(RpcSessionProtocolRules.IsFrameAllowed(session.ProtocolPhase, ProtocolV2FrameType.Response) &&
                RpcSessionProtocolRules.IsFrameAllowed(session.ProtocolPhase, ProtocolV2FrameType.StreamData) &&
+               RpcSessionProtocolRules.IsFrameAllowed(session.ProtocolPhase, ProtocolV2FrameType.WindowUpdate) &&
                RpcSessionProtocolRules.IsFrameAllowed(session.ProtocolPhase, ProtocolV2FrameType.Cancel) &&
                !RpcSessionProtocolRules.IsFrameAllowed(session.ProtocolPhase, ProtocolV2FrameType.Request),
-            "draining must preserve existing-call frames while blocking new Request frames");
-        session.ReleaseActiveRequest();
-        Ensure(session.ActiveRequestCount == 0,
-            "the active call accepted before draining must still release normally");
+            "draining must preserve existing-call control/data frames while blocking new Request frames");
+    }
+
+    [Test]
+    public async Task StoppingShouldPublishReceiveTerminationAndStopAnExistingSendPump()
+    {
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "stopping-accounting-invariant",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ClientOptions());
+        var firstDispatcher = new CompletionRecordingDispatcher();
+        session.StreamManager.Register(71, firstDispatcher);
+
+        // Create a real pump before stopping so the invariant must verify its stop request.
+        session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response));
+        session.BeginShutdown();
+        session.AssertStateInvariant();
+
+        var manager = (StreamManager)session.StreamManager;
+        Ensure(session.ProtocolPhase == RpcSessionProtocolPhase.Stopping &&
+               !session.CanAcceptCalls,
+            "BeginShutdown must publish a non-admitting stopping Session");
+        Ensure(manager.IsTerminated && manager.ActiveStreamCount == 0,
+            "stopping must publish stream termination and release every business-stream count");
+        Ensure(firstDispatcher.CompleteCount == 1 &&
+               firstDispatcher.LastException is SharpLinkException
+               {
+                   Code: SharpLinkErrorCode.ConnectionClosed
+               },
+            "stopping must complete an already-registered receive stream with the terminal reason");
+
+        var lateDispatcher = new CompletionRecordingDispatcher();
+        manager.Register(72, lateDispatcher);
+        Ensure(lateDispatcher.CompleteCount == 1 && manager.ActiveStreamCount == 0,
+            "a late stream registration must observe the published terminal state without incrementing accounting");
+        var rejection = CaptureSharpLinkException(() =>
+            session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response)));
+        Ensure(rejection.Code == SharpLinkErrorCode.ConnectionClosed,
+            "the stopped send pump/session must reject a new outbound frame with the terminal reason");
     }
 
     [Test]
@@ -418,6 +465,31 @@ public class NegotiatedSessionOptionsTests
         catch (SharpLinkException exception)
         {
             return exception;
+        }
+    }
+
+    private sealed class CompletionRecordingDispatcher : IStreamDispatcher
+    {
+        internal int CompleteCount { get; private set; }
+        internal Exception? LastException { get; private set; }
+
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+        {
+            _ = payload;
+            return ValueTask.CompletedTask;
+        }
+
+        public void Complete(bool isError, string? errorMessage)
+            => Complete(isError
+                ? new SharpLinkException(
+                    SharpLinkErrorCode.RemoteError,
+                    string.IsNullOrWhiteSpace(errorMessage) ? "Remote Error" : errorMessage)
+                : null);
+
+        public void Complete(Exception? exception)
+        {
+            CompleteCount++;
+            LastException = exception;
         }
     }
 

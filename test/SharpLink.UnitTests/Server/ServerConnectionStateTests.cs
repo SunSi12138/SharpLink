@@ -22,6 +22,8 @@ public class ServerConnectionStateTests
             "a handshaking connection must not publish a business request ID");
         Ensure(state.DefaultCallContext is null, "handshaking connection must not publish a call context");
         Ensure(state.MarkReady(authentication), "handshake should mark the connection ready");
+        state.Session.AssertStateInvariant();
+        state.AssertStateInvariant();
         Ensure(ReferenceEquals(authentication, state.AuthenticationContext), "authentication must belong to the connection");
         var callContext = state.DefaultCallContext ??
             throw new Exception("ready connection must publish a default call context");
@@ -45,11 +47,15 @@ public class ServerConnectionStateTests
         Ensure(state.LastAcceptedRequestId == 42, "last accepted request ID");
 
         state.MarkDraining();
+        state.Session.AssertStateInvariant();
+        state.AssertStateInvariant();
         Ensure(!state.TryRecordAcceptedRequest(43), "draining connection must reject new request IDs");
         Ensure(state.Session.ProtocolPhase == RpcSessionProtocolPhase.Draining,
             "server connection draining must update the shared Session protocol phase");
 
         await Task.WhenAll(state.CloseAsync().AsTask(), state.CloseAsync().AsTask());
+        state.Session.AssertStateInvariant();
+        state.AssertStateInvariant();
         Ensure(state.LifecycleState == ServerConnectionLifecycleState.Closed, "closed state");
         Ensure(state.SessionTask.IsCompletedSuccessfully, "session completion should be published");
         Ensure(state.AuthenticationContext is null, "closed connection must release authentication context");
@@ -153,6 +159,8 @@ public class ServerConnectionStateTests
         var second = CreateState(static () => { });
         Ensure(first.MarkReady(null), "first ready");
         Ensure(second.MarkReady(null), "second ready");
+        first.AssertStateInvariant();
+        second.AssertStateInvariant();
 
         Ensure(first.TryAcquireCall(1), "first call should acquire capacity");
         Ensure(!first.TryAcquireCall(1), "same connection should enforce its limit");

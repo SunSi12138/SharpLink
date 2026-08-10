@@ -8,7 +8,7 @@ namespace SharpLink.UnitTests.Runtime;
 public class DynamicModuleTests
 {
     [Test]
-    public void DrainShouldWaitUntilEveryConcurrentLeaseIsReleased()
+    public void DrainShouldBlockNewLeasesAndWaitUntilEveryConcurrentLeaseIsReleased()
     {
         using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
         var manifest = new EmptyManifest();
@@ -19,13 +19,25 @@ public class DynamicModuleTests
             registration);
         Ensure(module.TryAcquire(stream: false, out var first), "first lease");
         Ensure(module.TryAcquire(stream: false, out var second), "second lease");
+        module.AssertAccountingInvariant();
+        Ensure(module.RemainingCalls == 2 && module.RemainingStreams == 0,
+            "two non-stream leases must occupy exactly two call counters");
 
-        module.TryBeginDraining();
+        Ensure(module.TryBeginDraining(), "draining transition must publish once");
+        Ensure(!module.TryAcquire(stream: true, out var rejected),
+            "the drain barrier must reject a new stream lease");
+        Ensure(!rejected.IsAcquired && module.RemainingCalls == 2 && module.RemainingStreams == 0,
+            "a rejected post-drain acquire must not change either striped aggregate");
+        module.AssertAccountingInvariant();
         first.Dispose();
+        module.AssertAccountingInvariant();
         Ensure(!module.WaitForDrainAsync().IsCompleted,
             "first completion cannot release a module with another active call");
 
         second.Dispose();
+        module.AssertAccountingInvariant();
+        Ensure(module.RemainingCalls == 0 && module.RemainingStreams == 0,
+            "the final lease must release exactly the counters it acquired");
         Ensure(module.WaitForDrainAsync().IsCompletedSuccessfully,
             "last completion releases the drained module");
     }

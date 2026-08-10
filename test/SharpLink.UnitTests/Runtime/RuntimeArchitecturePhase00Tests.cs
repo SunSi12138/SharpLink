@@ -177,6 +177,120 @@ public sealed class RuntimeArchitecturePhase00Tests
         Ensure(owner.CompletedCount == RaceRepetitions, "every pending call must publish one terminal completion");
     }
 
+    [Test]
+    public async Task PendingTerminalMatrixShouldReleaseThePhysicalOwnerExactlyOnce()
+    {
+        foreach (var terminal in Enum.GetValues<PendingTerminal>())
+        {
+            var owner = new RecordingPendingCallOwner();
+            using var table = new PendingRequestTable(
+                1,
+                PendingRequestTableTestFixture.Codecs,
+                owner,
+                TimeProvider.System);
+            var operation = table.Rent<int>(out var requestId);
+
+            var won = CompletePendingTerminal(table, requestId, terminal);
+
+            Ensure(won, $"{terminal}: selected terminal cause must own its pending slot");
+            Ensure(!table.TryComplete(
+                    requestId,
+                    PendingCallCompletionReason.ConnectionClosed,
+                    new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "late terminal")),
+                $"{terminal}: a losing terminal cause must not complete the owner twice");
+
+            _ = await CaptureExceptionAsync(operation.AsValueTask().AsTask());
+            Ensure(table.Count == 0,
+                $"{terminal}: the terminal owner must remove the pending slot");
+            Ensure(owner.RegisteredCount == 1 && owner.CompletedCount == 1 &&
+                   owner.ActiveCount == 0 && owner.MinimumActiveCount >= 0,
+                $"{terminal}: physical ownership must register and release exactly once");
+        }
+    }
+
+    [Test]
+    public async Task PendingTerminalRacesShouldLeaveExactlyOnePhysicalOwner()
+    {
+        foreach (var terminal in Enum.GetValues<PendingTerminal>())
+        {
+            var owner = new RecordingPendingCallOwner();
+            using var table = new PendingRequestTable(
+                1,
+                PendingRequestTableTestFixture.Codecs,
+                owner,
+                TimeProvider.System);
+            var operation = table.Rent<int>(out var requestId);
+            var competingTerminal = terminal == PendingTerminal.GoAway
+                ? PendingTerminal.ConnectionFailure
+                : PendingTerminal.GoAway;
+            using var start = new ManualResetEventSlim();
+            var racers = new Task<bool>[]
+            {
+                Task.Run(() =>
+                {
+                    start.Wait();
+                    return CompletePendingTerminal(table, requestId, terminal);
+                }),
+                Task.Run(() =>
+                {
+                    start.Wait();
+                    return CompletePendingTerminal(table, requestId, competingTerminal);
+                })
+            };
+
+            start.Set();
+            var results = await Task.WhenAll(racers).WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(results.Count(static result => result) == 1,
+                $"{terminal}: competing terminal paths must have exactly one pending-slot winner");
+            _ = await CaptureExceptionAsync(operation.AsValueTask().AsTask());
+            Ensure(table.Count == 0,
+                $"{terminal}: a terminal race must remove the pending slot");
+            Ensure(owner.RegisteredCount == 1 && owner.CompletedCount == 1 &&
+                   owner.ActiveCount == 0 && owner.MinimumActiveCount >= 0,
+                $"{terminal}: a terminal race must release the physical owner exactly once");
+        }
+    }
+
+    private static bool CompletePendingTerminal(
+        PendingRequestTable table,
+        long requestId,
+        PendingTerminal terminal)
+        => terminal switch
+        {
+            PendingTerminal.Response => DispatchResponse(table, requestId),
+            PendingTerminal.RemoteError => table.DispatchError(
+                requestId,
+                new SharpLinkException(SharpLinkErrorCode.RemoteError, "phase13 remote error")),
+            PendingTerminal.UserCancellation => table.TryComplete(
+                requestId,
+                PendingCallCompletionReason.UserCancellation),
+            PendingTerminal.Deadline => table.TryComplete(
+                requestId,
+                PendingCallCompletionReason.DeadlineExceeded),
+            PendingTerminal.ConnectionFailure => table.TryComplete(
+                requestId,
+                PendingCallCompletionReason.ConnectionClosed,
+                new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "phase13 disconnect")),
+            PendingTerminal.GoAway => table.TryComplete(
+                requestId,
+                PendingCallCompletionReason.GoAway,
+                new SharpLinkException(SharpLinkErrorCode.Unavailable, "phase13 go-away")),
+            PendingTerminal.ConsumerAbandonment => table.TryComplete(
+                requestId,
+                PendingCallCompletionReason.ConsumerAbandoned),
+            PendingTerminal.SendFailure => table.TryComplete(
+                requestId,
+                PendingCallCompletionReason.SendFailure,
+                new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "phase13 send failure")),
+            _ => throw new ArgumentOutOfRangeException(nameof(terminal), terminal, null)
+        };
+
+    private static bool DispatchResponse(PendingRequestTable table, long requestId)
+    {
+        var payload = SResponsePayload;
+        return table.Dispatch(requestId, ref payload);
+    }
+
     private static async Task<Exception?> CaptureExceptionAsync(Task task)
     {
         try
@@ -203,6 +317,18 @@ public sealed class RuntimeArchitecturePhase00Tests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private enum PendingTerminal
+    {
+        Response,
+        RemoteError,
+        UserCancellation,
+        Deadline,
+        ConnectionFailure,
+        GoAway,
+        ConsumerAbandonment,
+        SendFailure
     }
 
     private sealed class RecordingPendingCallOwner : IPendingCallOwner
