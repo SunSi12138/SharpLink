@@ -304,6 +304,129 @@ public class StreamFlowControllerTests
     }
 
     [Test]
+    public async Task RemovedReceiveStateShouldReuseTheClassReferenceWithResetFields()
+    {
+        var receiver = new StreamFlowController(4, 8, 1024, maxConcurrentStreams: 2);
+        receiver.AcceptReceived(1, 1, 1);
+        var first = GetReceiveState(receiver, 1, 1);
+        receiver.AcceptReceived(1, 1, 1);
+        Ensure(ReferenceEquals(first, GetReceiveState(receiver, 1, 1)),
+            "an existing receive key must retain its dictionary class reference");
+
+        receiver.AcceptReceived(2, 1, 2);
+        var second = GetReceiveState(receiver, 2, 1);
+        Ensure(!ReferenceEquals(first, second), "different active receive keys require distinct states");
+
+        Ensure(receiver.FlushConsumed(1, 1) == 0, "completion should retain the first partial state");
+        Ensure(receiver.RecordConsumed(1, 1, 2) == 2, "the first final credit should release its state");
+        Ensure(receiver.FlushConsumed(2, 1) == 0, "completion should retain the second partial state");
+        Ensure(receiver.RecordConsumed(2, 1, 2) == 2, "the second final credit should release its state");
+
+        receiver.AcceptReceived(3, 1, 1);
+        var reused = GetReceiveState(receiver, 3, 1);
+        Ensure(ReferenceEquals(second, reused), "the last removed receive state should be reused locally");
+        Ensure(GetPrivateField<long>(reused, "Credit") == 3,
+            "a reused state must start with the full window before the new receive is reserved");
+        Ensure(GetPrivateField<long>(reused, "PendingConsumed") == 0,
+            "a reused state must not retain pending credit from the previous stream");
+        Ensure(!GetPrivateField<bool>(reused, "Completed"),
+            "a reused state must not retain the previous completion marker");
+        Ensure(GetPrivateField<object?>(reused, "Next") is null,
+            "an active reused state must not retain a pool link");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task CompletedReceiveStateShouldNotBeReusedBeforeLateCreditReturns()
+    {
+        var receiver = new StreamFlowController(4, 4, 1024, maxConcurrentStreams: 1);
+        receiver.AcceptReceived(10, 1, 1);
+        var retained = GetReceiveState(receiver, 10, 1);
+
+        Ensure(receiver.FlushConsumed(10, 1) == 0,
+            "completion must retain a state with unreturned receive credit");
+        Ensure(ReferenceEquals(retained, GetReceiveState(receiver, 10, 1)),
+            "completion alone must not replace or pool the live receive state");
+        try
+        {
+            receiver.AcceptReceived(11, 1, 1);
+            throw new Exception("expected completed receive tombstone capacity exhaustion");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+        }
+
+        Ensure(receiver.RecordConsumed(10, 1, 1) == 1,
+            "the late final credit must be returned exactly once");
+        Ensure(GetReceiveStateCount(receiver) == 0,
+            "the completed state may leave the dictionary only after its final credit returns");
+        receiver.AcceptReceived(11, 1, 1);
+        Ensure(ReferenceEquals(retained, GetReceiveState(receiver, 11, 1)),
+            "only the removed completed state may be reused by the replacement key");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task ReceiveStatePoolShouldRetainAtMostItsBoundedCapacity()
+    {
+        const int maxConcurrentStreams = 129;
+        var receiver = new StreamFlowController(
+            streamWindow: 1,
+            connectionWindow: maxConcurrentStreams,
+            maxFramePayloadBytes: 1024,
+            maxConcurrentStreams: maxConcurrentStreams);
+        for (var requestId = 1; requestId <= maxConcurrentStreams; requestId++)
+            receiver.AcceptReceived(requestId, 1, 1);
+
+        for (var requestId = 1; requestId <= maxConcurrentStreams; requestId++)
+        {
+            Ensure(receiver.FlushConsumed(requestId, 1) == 0,
+                "completion should retain each exhausted receive state until its final credit returns");
+            Ensure(receiver.RecordConsumed(requestId, 1, 1) == 1,
+                "each completed state should return its final credit once");
+        }
+
+        Ensure(GetPrivateField<int>(receiver, "_pooledReceiveStateCount") == 128,
+            "receive-state retention must be capped below the negotiated stream limit");
+        Ensure(GetPooledReceiveStateLinkCount(receiver) == 128,
+            "the free-state link chain must match the bounded retention count");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task CompleteShouldClearActiveAndPooledReceiveStateReferences()
+    {
+        var receiver = new StreamFlowController(4, 12, 1024, maxConcurrentStreams: 3);
+        receiver.AcceptReceived(21, 1, 2);
+        var first = GetReceiveState(receiver, 21, 1);
+        receiver.AcceptReceived(22, 1, 2);
+        var second = GetReceiveState(receiver, 22, 1);
+        receiver.AcceptReceived(23, 1, 1);
+        var active = GetReceiveState(receiver, 23, 1);
+
+        receiver.FlushConsumed(21, 1);
+        Ensure(receiver.RecordConsumed(21, 1, 2) == 2, "the first state should enter the free pool");
+        receiver.FlushConsumed(22, 1);
+        Ensure(receiver.RecordConsumed(22, 1, 2) == 2, "the second state should link ahead of the first");
+        Ensure(GetPooledReceiveStateLinkCount(receiver) == 2,
+            "the test must create a multi-node free-state chain before connection completion");
+
+        receiver.Complete(new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "closed"));
+
+        Ensure(GetReceiveStateCount(receiver) == 0, "connection completion must clear active receive states");
+        Ensure(GetPrivateField<object?>(receiver, "_pooledReceiveStates") is null,
+            "connection completion must release the free-state chain root");
+        Ensure(GetPrivateField<int>(receiver, "_pooledReceiveStateCount") == 0,
+            "connection completion must reset the free-state count");
+        Ensure(GetPooledReceiveStateLinkCount(receiver) == 0,
+            "connection completion must leave no reachable free-state references");
+        EnsureReceiveStateCleared(first, "first pooled state");
+        EnsureReceiveStateCleared(second, "second pooled state");
+        EnsureReceiveStateCleared(active, "active state");
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task FailedSendStreamShouldAcceptInFlightCreditBeforeReusingCapacity()
     {
         var controller = new StreamFlowController(4, 4, 1024, maxConcurrentStreams: 1);
@@ -543,6 +666,66 @@ public class StreamFlowControllerTests
         catch (Exception actual) when (ReferenceEquals(actual, expected))
         {
         }
+    }
+
+    private static object GetReceiveState(StreamFlowController controller, long requestId, ushort streamId)
+    {
+        var streamKeyType = typeof(StreamFlowController).GetNestedType(
+            "StreamKey",
+            System.Reflection.BindingFlags.NonPublic)
+            ?? throw new Exception("receive stream key type was not found");
+        var key = Activator.CreateInstance(streamKeyType, new object[] { requestId, streamId })
+            ?? throw new Exception("receive stream key could not be created");
+        var states = GetPrivateField<object>(controller, "_receiveStates");
+        var tryGetValue = states.GetType().GetMethod("TryGetValue")
+            ?? throw new Exception("receive state lookup was not found");
+        var arguments = new object?[] { key, null };
+        if (tryGetValue.Invoke(states, arguments) is not true || arguments[1] is null)
+            throw new Exception($"receive state ({requestId}, {streamId}) was not found");
+        return arguments[1]!;
+    }
+
+    private static int GetReceiveStateCount(StreamFlowController controller)
+    {
+        var states = GetPrivateField<object>(controller, "_receiveStates");
+        var count = states.GetType().GetProperty("Count")?.GetValue(states)
+            ?? throw new Exception("receive state count was not found");
+        return (int)count;
+    }
+
+    private static int GetPooledReceiveStateLinkCount(StreamFlowController controller)
+    {
+        var state = GetPrivateField<object?>(controller, "_pooledReceiveStates");
+        var count = 0;
+        while (state is not null)
+        {
+            if (++count > 128)
+                throw new Exception("receive-state pool link chain exceeded its bounded capacity");
+            state = GetPrivateField<object?>(state, "Next");
+        }
+        return count;
+    }
+
+    private static T GetPrivateField<T>(object owner, string name)
+    {
+        var field = owner.GetType().GetField(
+            name,
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic)
+            ?? throw new Exception($"private field {name} was not found");
+        return (T)field.GetValue(owner)!;
+    }
+
+    private static void EnsureReceiveStateCleared(object state, string description)
+    {
+        Ensure(GetPrivateField<long>(state, "Credit") == 0, $"{description} credit must be cleared");
+        Ensure(GetPrivateField<long>(state, "PendingConsumed") == 0,
+            $"{description} pending credit must be cleared");
+        Ensure(!GetPrivateField<bool>(state, "Completed"),
+            $"{description} completion marker must be cleared");
+        Ensure(GetPrivateField<object?>(state, "Next") is null,
+            $"{description} pool link must be cleared");
     }
 
     private static void Ensure(bool condition, string message)
