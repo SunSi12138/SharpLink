@@ -247,28 +247,40 @@ public class FlowControlHotPathBenchmarks
 [BenchmarkCategory("FlowControl", "Allocation")]
 public class ReceiveFlowStateAllocationBenchmarks
 {
-    private StreamFlowController _flowController = null!;
-    private long _requestId = 1;
-    private ushort _streamId = 1;
-    private int _encodedBytes = 32;
+    private ReceiveFlowStateShortWorkload _workload = null!;
+
+    [Params(1, 4, 64)]
+    public int ItemsPerStream { get; set; }
+
+    [Params(1, 8, 32, 128)]
+    public int ActiveStreams { get; set; }
 
     [GlobalSetup]
     public void Setup()
-    {
-        _flowController = new StreamFlowController(
-            streamWindow: 1024,
-            connectionWindow: 1024,
-            maxFramePayloadBytes: 4 * 1024 * 1024,
-            maxConcurrentStreams: 1);
-    }
+        => _workload = new ReceiveFlowStateShortWorkload(ItemsPerStream);
 
     [Benchmark]
-    public int ReceiveAndCompleteStream()
-    {
-        _flowController.AcceptReceived(_requestId, _streamId, _encodedBytes);
-        _ = _flowController.RecordConsumed(_requestId, _streamId, _encodedBytes);
-        return _flowController.FlushConsumed(_requestId, _streamId);
-    }
+    public int ReceiveAndCompleteShortStreams()
+        => _workload.Run(ActiveStreams);
+}
+
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+[BenchmarkCategory("FlowControl", "Allocation", "LongLivedControl")]
+public class ReceiveFlowStateLongLivedBenchmarks
+{
+    private ReceiveFlowStateLongLivedWorkload _workload = null!;
+
+    [Params(1, 4, 64)]
+    public int ItemsPerInvocation { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+        => _workload = new ReceiveFlowStateLongLivedWorkload(ItemsPerInvocation);
+
+    [Benchmark]
+    public int ReceiveOnExistingStream()
+        => _workload.Run();
 }
 
 [MemoryDiagnoser]

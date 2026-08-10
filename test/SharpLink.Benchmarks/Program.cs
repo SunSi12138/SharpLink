@@ -56,6 +56,12 @@ public static class Program
             BufferWriterGrowthEvidenceRunner.Run();
             return;
         }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--flow-control-evidence", StringComparison.Ordinal))
+        {
+            await FlowControlEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
         BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
     }
 }
