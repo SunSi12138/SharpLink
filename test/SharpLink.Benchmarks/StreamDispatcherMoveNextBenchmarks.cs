@@ -105,7 +105,9 @@ public class StreamDispatcherMoveNextBenchmarks
     // entire burst in the measured method. The first frame wakes the reusable source and the
     // remaining frames exercise the producer-side coalesced Signal path before any item is
     // consumed. Every dispatch is required to complete synchronously, so the producer never
-    // waits outside the work this benchmark measures.
+    // waits outside the work this benchmark measures. The consumer observes its first result
+    // only after the whole burst: the baseline async MoveNext wrapper may resume later even
+    // after its reusable source is physically signaled.
     [Benchmark(OperationsPerInvoke = BurstStreamItemCount)]
     public int FullBurstProducer_1024() => ConsumeFullBurstWithMeasuredProducer();
 
@@ -281,21 +283,24 @@ public class StreamDispatcherMoveNextBenchmarks
                 dispatch.GetAwaiter().GetResult();
             }
 
-            if (!firstMoveNext.IsCompletedSuccessfully || !firstMoveNext.Result)
-                throw new InvalidOperationException("The first full-burst item must complete the armed waiter.");
+            if (!firstMoveNext.GetAwaiter().GetResult())
+                throw new InvalidOperationException("The first full-burst item must eventually complete the armed waiter.");
 
-            var sum = enumerator.Current;
+            var sum = (int)enumerator.Current;
             for (var index = 1; index < BurstStreamItemCount; index++)
             {
                 var moveNext = enumerator.MoveNextAsync();
-                if (!moveNext.IsCompletedSuccessfully || !moveNext.Result)
-                    throw new InvalidOperationException("Every full-burst item must be immediately consumable.");
+                if (!moveNext.GetAwaiter().GetResult())
+                    throw new InvalidOperationException("Every full-burst item must be consumable.");
                 sum += enumerator.Current;
             }
 
+            if (sum != BurstStreamItemCount)
+                throw new InvalidOperationException("The full-burst consumer did not observe all expected payload values.");
+
             dispatcher.Complete(exception: null);
             var terminalMoveNext = enumerator.MoveNextAsync();
-            if (!terminalMoveNext.IsCompletedSuccessfully || terminalMoveNext.Result)
+            if (terminalMoveNext.GetAwaiter().GetResult())
                 throw new InvalidOperationException("The full-burst dispatcher must complete after all items are consumed.");
 
             return sum;
