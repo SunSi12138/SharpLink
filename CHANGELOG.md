@@ -6,6 +6,7 @@
 
 ### Added
 
+- `PendingRequestTable` now requires an explicit capacity, codec provider, pending-call owner, and time provider; Client connections supply the dependency set from their Runtime Context without transferring ownership.
 - Added the Runtime Architecture Phase 00 deterministic lifecycle/fake-time fixtures and a bounded six-path BenchmarkDotNet baseline. This is test/tooling evidence only and does not change production behavior, Protocol v2, contract/schema identity, or Generated API 4.
 - Generated Server API 4 introduces `IRpcGeneratedServerBridge`. Generated stubs now use this narrow operation-lifecycle bridge for inbound and outbound streams, while Runtime exclusively owns dispatchers, flow control, frame construction, send-pump behavior, and terminal arbitration.
 - Generated assembly locators now carry the manifest type, Generated API, Protocol version, and Generator version without materializing the manifest. Runtime uses that metadata to reject incompatible dynamic modules before publishing contracts, services, proxies, codecs, adapter scopes, or module leases.

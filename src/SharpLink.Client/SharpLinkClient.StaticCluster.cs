@@ -417,7 +417,7 @@ internal sealed partial class SharpLinkClient
                     session,
                     sessionCts,
                     _client._protocolOptions.MaxPendingRequestsPerConnection,
-                    _client._runtimeContext.Codecs,
+                    _client._runtimeContext,
                     endpoint.Configuration.Endpoint.Id);
                 connection = createdConnection;
                 createdConnection.Session.OnDisconnected += exception => HandleDisconnected(

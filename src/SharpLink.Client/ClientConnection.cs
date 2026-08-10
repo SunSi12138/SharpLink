@@ -28,15 +28,20 @@ internal sealed class ClientConnection :
         RpcSession session,
         CancellationTokenSource cancellation,
         int maxPendingCalls,
-        IRpcCodecProvider codecs,
+        SharpLinkRuntimeContext runtimeContext,
         string? endpointId = null,
         long endpointGeneration = 0)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         Session = session ?? throw new ArgumentNullException(nameof(session));
         _cancellation = cancellation ?? throw new ArgumentNullException(nameof(cancellation));
+        ArgumentNullException.ThrowIfNull(runtimeContext);
         _consumerAbandonedCallback = OnConsumerAbandonedAsync;
-        PendingCalls = new PendingRequestTable(maxPendingCalls, codecs, this);
+        PendingCalls = new PendingRequestTable(
+            maxPendingCalls,
+            runtimeContext.Codecs,
+            this,
+            runtimeContext.TimeProvider);
         EndpointId = endpointId;
         EndpointGeneration = endpointGeneration;
     }

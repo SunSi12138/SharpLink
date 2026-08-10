@@ -24,6 +24,7 @@ public class RuntimeHotPathBenchmarks
     private readonly SharpLinkCallContextSnapshot _callContext =
         new("benchmark", authentication: null);
     private readonly DateTimeOffset _deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+    private SharpLinkRuntimeContext _context = null!;
     private PendingRequestTable _pending = null!;
     private byte[] _responsePayload = null!;
     private ReadOnlySequence<byte> _requestFrame;
@@ -33,8 +34,12 @@ public class RuntimeHotPathBenchmarks
     [GlobalSetup]
     public void Setup()
     {
-        var context = new SharpLinkRuntimeContextBuilder().Build();
-        _pending = new PendingRequestTable(65_536, context.Codecs);
+        _context = new SharpLinkRuntimeContextBuilder().Build();
+        _pending = new PendingRequestTable(
+            65_536,
+            _context.Codecs,
+            BenchmarkPendingCallOwner.Instance,
+            TimeProvider.System);
         _responsePayload = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(_responsePayload, 42);
         _requestFrame = new ReadOnlySequence<byte>(CreateRequestFrame(includeMetadata: false));
@@ -49,6 +54,7 @@ public class RuntimeHotPathBenchmarks
     {
         _frameWriter.Dispose();
         _pending.Dispose();
+        _context.Dispose();
     }
 
     [Benchmark]

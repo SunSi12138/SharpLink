@@ -737,7 +737,7 @@ internal sealed partial class SharpLinkClient
                     session,
                     sessionCts,
                     _client._protocolOptions.MaxPendingRequestsPerConnection,
-                    _client._runtimeContext.Codecs,
+                    _client._runtimeContext,
                     endpoint.Configuration.Endpoint.Id,
                     endpoint.Generation);
                 connection = createdConnection;

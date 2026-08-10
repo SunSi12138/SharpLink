@@ -173,7 +173,7 @@ public class SharpLinkRuntimeContextTests
         var optionFailure = CaptureFailure(options.Validate);
         var tableFailure = CaptureFailure(() =>
         {
-            using var table = new PendingRequestTable(oversizedCapacity);
+            using var table = PendingRequestTableTestFixture.Create(oversizedCapacity);
         });
 
         Ensure(optionFailure is ArgumentOutOfRangeException,
