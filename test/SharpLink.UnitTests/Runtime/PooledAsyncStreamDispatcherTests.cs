@@ -206,11 +206,49 @@ public class PooledAsyncStreamDispatcherTests
             default,
             new ReferenceItemCodec());
         Ensure(ReferenceEquals(dispatcher, reused),
-            "a repeated disposal must not install a completed operation on the returned dispatcher");
+            "a repeated disposal must not install stale completion state on the returned dispatcher");
         reused.Complete(exception: null);
         await reused.DisposeAsync();
         Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
             "the next lease must still complete and return after an idempotent old disposal");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    [NotInParallel]
+    public void SynchronousNoWaiterDisposeShouldNotAllocateCompletionState()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var codec = new ReferenceItemCodec();
+
+        // Warm the exact terminal/disposal path before measuring it. The state intentionally
+        // remains attached during the measurement so ConcurrentStack pool-node allocation is
+        // excluded; this measures only the first no-waiter DisposeAsync coordination.
+        CompleteAndDisposeWhileAttached(codec);
+
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, codec);
+        var lease = (IStreamDispatchLease)dispatcher;
+        var dispatchState = new AttachedDispatchState();
+        lease.BindDispatchState(dispatchState);
+        dispatcher.Complete(exception: null);
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        dispatcher.DisposeAsync().GetAwaiter().GetResult();
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Ensure(allocated == 0,
+            $"a synchronous no-waiter disposal allocated {allocated} bytes for completion coordination");
+        Ensure(dispatchState.CloseCount == 2,
+            "remote completion and consumer disposal must each close the attached dispatch state");
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
+            "the attached terminal state must prevent pool return until it is detached");
+
+        dispatchState.Detach();
+        lease.OnDispatchesDrained();
+        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+            "the finalized no-waiter dispatcher must return once detach completes");
+        Ensure(!dispatcher.HasRetainedReferencesForTests,
+            "pool return after a no-waiter disposal must not retain a completion holder");
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
     }
 
@@ -560,13 +598,15 @@ public class PooledAsyncStreamDispatcherTests
             "the first disposal must return the exact old lease before the concurrent caller resumes");
         await concurrentDispose.WaitAsync(RaceCoordinationTimeout);
         Ensure(deferredContinuations.PostCount == 0,
-            "a concurrent disposal must await its stable operation instead of polling through a queued continuation");
+            "a concurrent disposal must await its generation-scoped completion instead of polling through a queued continuation");
         Ensure(state.IsDetached,
             "the terminal callback must detach the completed stream before disposal returns");
         reused.Complete(exception: null);
         await reused.DisposeAsync();
         Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
             "the dispatcher should become reusable only after terminal cleanup completes");
+        Ensure(!dispatcher.HasRetainedReferencesForTests,
+            "the old generation's concurrent-dispose completion must not remain on the reused pooled dispatcher");
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
     }
 
@@ -817,6 +857,18 @@ public class PooledAsyncStreamDispatcherTests
             throw new Exception(message);
     }
 
+    private static void CompleteAndDisposeWhileAttached(ReferenceItemCodec codec)
+    {
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, codec);
+        var lease = (IStreamDispatchLease)dispatcher;
+        var dispatchState = new AttachedDispatchState();
+        lease.BindDispatchState(dispatchState);
+        dispatcher.Complete(exception: null);
+        dispatcher.DisposeAsync().GetAwaiter().GetResult();
+        dispatchState.Detach();
+        lease.OnDispatchesDrained();
+    }
+
     private static async Task<Exception?> CaptureFailureAsync(Task task)
     {
         try
@@ -927,6 +979,27 @@ public class PooledAsyncStreamDispatcherTests
             Volatile.Write(ref _firstCloseReleased, 1);
             _releaseFirstClose.TrySetResult();
         }
+    }
+
+    private sealed class AttachedDispatchState : IStreamDispatchState
+    {
+        private int _closeCount;
+        private int _detached;
+
+        internal int CloseCount => Volatile.Read(ref _closeCount);
+
+        public bool HasActiveDispatches => false;
+
+        public bool IsDetached => Volatile.Read(ref _detached) != 0;
+
+        public ValueTask WaitForDispatchesDrainedAsync() => ValueTask.CompletedTask;
+
+        public ValueTask WaitForDetachedAsync(CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+
+        public void Close() => Interlocked.Increment(ref _closeCount);
+
+        internal void Detach() => Volatile.Write(ref _detached, 1);
     }
 
     private sealed class QueuedSynchronizationContext : SynchronizationContext
