@@ -45,6 +45,9 @@ public sealed partial class RpcSession
         bool allowRequestWhileDraining = false)
     {
         var phase = Volatile.Read(ref _protocolState).Phase;
+        if (Volatile.Read(ref _terminal) is { } terminal)
+            throw terminal.Exception;
+
         if (RpcSessionProtocolRules.IsFrameAllowed(phase, frameType) ||
             (allowRequestWhileDraining &&
              phase == RpcSessionProtocolPhase.Draining &&
