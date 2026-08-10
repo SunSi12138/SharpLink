@@ -16,9 +16,9 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     // 仅用于 WaitSource 的一致性（不是热路径锁）
     private readonly Lock _waitGate = new();
 
-    // Serializes terminal publication and late dispatch-state binding. Terminal work is cold.
-    private readonly Lock _terminalGate = new();
-
+    // Only dispatch-state paths need serialization. The common no-state terminal path must stay
+    // allocation-free and avoid this lock; it is the lifecycle measured by the pool benchmark.
+    private readonly Lock _dispatchStateGate = new();
 
     private ManualResetValueTaskSourceCore<bool> _waitSource;
 
@@ -45,8 +45,13 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     // retained across Reset so a delayed old-generation contender can identify that its disposal
     // already completed without observing fields from a later rental.
     private long _disposeFinalizedLeaseState;
-    private TaskCompletionSource? _disposeCompletion;
-    private long _disposeCompletionLeaseState;
+    private DisposeCompletion? _disposeCompletion;
+    private TaskCompletionSource? _remoteTerminalPublication;
+    private Action? _beforeConcurrentDisposeCompletionInstallForTests;
+    private int _terminalDispatchStateClosed;
+    // 0 = no remote terminal, 1 = terminal publication still owns dispatch-state close,
+    // 2 = remote terminal publication is complete.
+    private int _remoteTerminalPublicationState;
 
     // GetAsyncEnumerator 原子防御（审核 #4）：0/1
     private int _enumeratorTaken;
@@ -208,6 +213,10 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _flowControlStreamId = 0;
         _consumerAbandonedRequestId = 0;
         Volatile.Write(ref _consumerTerminal, 0);
+        Volatile.Write(ref _terminalDispatchStateClosed, 0);
+        Volatile.Write(ref _remoteTerminalPublication, null);
+        Volatile.Write(ref _beforeConcurrentDisposeCompletionInstallForTests, null);
+        Volatile.Write(ref _remoteTerminalPublicationState, 0);
     }
 
     /// <inheritdoc />
@@ -283,12 +292,12 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     void IStreamDispatchLease.BindDispatchState(IStreamDispatchState state)
     {
         ArgumentNullException.ThrowIfNull(state);
-        lock (_terminalGate)
+        lock (_dispatchStateGate)
         {
             if (Interlocked.CompareExchange(ref _dispatchState, state, null) is not null)
                 throw new InvalidOperationException("Stream dispatcher is already registered.");
             if (Volatile.Read(ref _completed) || Volatile.Read(ref _disposed))
-                state.Close();
+                CloseFirstTerminalDispatchState(state);
         }
     }
 
@@ -330,6 +339,12 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     }
 
     internal void ReleaseRegistrationRetention(long leaseState) => ReleaseDispatch(leaseState);
+
+    // This is deliberately reachable only through the existing Runtime → UnitTests friend
+    // boundary. It gates a rare second-dispose CAS so the old-generation/re-rent handoff can be
+    // tested deterministically without reflection; it is never read by a first disposal.
+    internal void SetBeforeConcurrentDisposeCompletionInstallForTests(Action? callback)
+        => Volatile.Write(ref _beforeConcurrentDisposeCompletionInstallForTests, callback);
 
     private static ValueTask RejectedDispatch()
     {
@@ -384,15 +399,37 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     /// <inheritdoc />
     public void Complete(Exception? exception)
     {
-        lock (_terminalGate)
-        {
-            if (Interlocked.CompareExchange(ref _consumerTerminal, 1, 0) != 0)
-                return;
+        if (Interlocked.CompareExchange(ref _consumerTerminal, 1, 0) != 0)
+            return;
 
-            _error = exception;
-            Volatile.Write(ref _completed, true);
-            Volatile.Read(ref _dispatchState)?.Close();
-            Signal();
+        // The no-state path is the regular server-stream lifecycle. Keep it free of locks and
+        // allocations; a consumer that catches the narrow remote-publication race joins through
+        // the lazy completion below instead of observing a partially published terminal state.
+        Volatile.Write(ref _remoteTerminalPublicationState, 1);
+        _error = exception;
+        Volatile.Write(ref _completed, true);
+        try
+        {
+            var dispatchState = Volatile.Read(ref _dispatchState);
+            if (dispatchState is null)
+            {
+                Signal();
+                return;
+            }
+
+            lock (_dispatchStateGate)
+            {
+                if (Volatile.Read(ref _dispatchState) is { } boundDispatchState)
+                    CloseFirstTerminalDispatchState(boundDispatchState);
+                Signal();
+            }
+        }
+        finally
+        {
+            // Publish only after the first remote Close and Signal are complete. A racing
+            // consumer DisposeAsync then performs its own second Close in sequence.
+            Volatile.Write(ref _remoteTerminalPublicationState, 2);
+            Volatile.Read(ref _remoteTerminalPublication)?.TrySetResult();
         }
     }
 
@@ -494,38 +531,26 @@ public sealed class PooledAsyncStreamDispatcher<T> :
                 : ValueTask.CompletedTask;
         }
 
-        var notifyConsumerAbandoned = false;
-        IStreamDispatchState? dispatchState;
-        lock (_terminalGate)
+        var terminal = Volatile.Read(ref _consumerTerminal);
+        if (terminal == 0 && Interlocked.CompareExchange(ref _consumerTerminal, 2, 0) == 0)
         {
-            if (!Volatile.Read(ref _completed) &&
-                Interlocked.CompareExchange(ref _consumerTerminal, 2, 0) == 0)
-            {
-                _error ??= new OperationCanceledException(
-                    "The response stream consumer stopped before remote completion.");
-                Volatile.Write(ref _completed, true);
-                notifyConsumerAbandoned = true;
-            }
-
-            // The terminal gate makes Complete's terminal state, state close, and wakeup
-            // indivisible to disposal. A late BindDispatchState observes this state and closes.
-            Volatile.Write(ref _disposed, true);
-            _current = default;
-            dispatchState = Volatile.Read(ref _dispatchState);
-            dispatchState?.Close();
-            Signal();
+            _error ??= new OperationCanceledException(
+                "The response stream consumer stopped before remote completion.");
+            Volatile.Write(ref _completed, true);
+            return MarkDisposedAndFinishDisposeAsync(
+                notifyConsumerAbandoned: true,
+                remoteTerminalPublished: false,
+                disposingLeaseState: disposingLeaseState);
         }
 
-        // Stop StreamManager from accepting another frame before observing that the
-        // already-acquired dispatches drained. This makes the final WindowUpdate and
-        // Cancel ordering deterministic without adding synchronization to normal reads.
-        if (dispatchState?.HasActiveDispatches == true)
-            return AwaitDispatchesAndFinishDisposeAsync(
-                notifyConsumerAbandoned,
-                dispatchState,
-                disposingLeaseState);
+        terminal = Volatile.Read(ref _consumerTerminal);
+        if (terminal == 1 && Volatile.Read(ref _remoteTerminalPublicationState) != 2)
+            return AwaitRemoteTerminalPublicationAndFinishDisposeAsync(disposingLeaseState);
 
-        return FinishDisposeAsync(notifyConsumerAbandoned, dispatchState, disposingLeaseState);
+        return MarkDisposedAndFinishDisposeAsync(
+            notifyConsumerAbandoned: false,
+            remoteTerminalPublished: terminal == 1,
+            disposingLeaseState: disposingLeaseState);
     }
 
     private ValueTask AwaitConcurrentDisposeAsync(long disposingLeaseState)
@@ -536,7 +561,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             return ValueTask.CompletedTask;
         }
 
-        lock (_terminalGate)
+        while (true)
         {
             if (Volatile.Read(ref _disposeFinalizedLeaseState) == disposingLeaseState ||
                 Volatile.Read(ref _leaseState) != disposingLeaseState)
@@ -544,16 +569,124 @@ public sealed class PooledAsyncStreamDispatcher<T> :
                 return ValueTask.CompletedTask;
             }
 
-            if (Volatile.Read(ref _disposeCompletionLeaseState) != disposingLeaseState)
+            var existing = Volatile.Read(ref _disposeCompletion);
+            if (existing is not null)
             {
-                var completion = new TaskCompletionSource(
-                    TaskCreationOptions.RunContinuationsAsynchronously);
-                Volatile.Write(ref _disposeCompletion, completion);
-                Volatile.Write(ref _disposeCompletionLeaseState, disposingLeaseState);
+                if (existing.LeaseState != disposingLeaseState)
+                {
+                    // A delayed old-generation contender can lose the return race and install
+                    // after this instance has already been rented again. Remove only the stale
+                    // holder it observed, then let the current generation establish its own.
+                    Interlocked.CompareExchange(ref _disposeCompletion, null, existing);
+                    continue;
+                }
+
+                if (Volatile.Read(ref _disposeFinalizedLeaseState) == disposingLeaseState ||
+                    Volatile.Read(ref _leaseState) != disposingLeaseState)
+                {
+                    existing.Completion.TrySetResult();
+                }
+
+                return new ValueTask(existing.Completion.Task);
             }
 
-            return new ValueTask(Volatile.Read(ref _disposeCompletion)!.Task);
+            var created = new DisposeCompletion(disposingLeaseState);
+            Volatile.Read(ref _beforeConcurrentDisposeCompletionInstallForTests)?.Invoke();
+            if (Interlocked.CompareExchange(ref _disposeCompletion, created, null) is not null)
+                continue;
+
+            if (Volatile.Read(ref _disposeFinalizedLeaseState) == disposingLeaseState ||
+                Volatile.Read(ref _leaseState) != disposingLeaseState)
+            {
+                created.Completion.TrySetResult();
+                Interlocked.CompareExchange(ref _disposeCompletion, null, created);
+            }
+
+            return new ValueTask(created.Completion.Task);
         }
+    }
+
+    private async ValueTask AwaitRemoteTerminalPublicationAndFinishDisposeAsync(long disposingLeaseState)
+    {
+        await WaitForRemoteTerminalPublicationAsync().ConfigureAwait(false);
+        await MarkDisposedAndFinishDisposeAsync(
+            notifyConsumerAbandoned: false,
+            remoteTerminalPublished: true,
+            disposingLeaseState: disposingLeaseState).ConfigureAwait(false);
+    }
+
+    private ValueTask WaitForRemoteTerminalPublicationAsync()
+    {
+        if (Volatile.Read(ref _remoteTerminalPublicationState) == 2)
+            return ValueTask.CompletedTask;
+
+        var completion = Volatile.Read(ref _remoteTerminalPublication);
+        if (completion is null)
+        {
+            var created = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            completion = Interlocked.CompareExchange(ref _remoteTerminalPublication, created, null) ?? created;
+        }
+
+        if (Volatile.Read(ref _remoteTerminalPublicationState) == 2)
+            completion.TrySetResult();
+
+        return new ValueTask(completion.Task);
+    }
+
+    private ValueTask MarkDisposedAndFinishDisposeAsync(
+        bool notifyConsumerAbandoned,
+        bool remoteTerminalPublished,
+        long disposingLeaseState)
+    {
+        Volatile.Write(ref _disposed, true);
+        _current = default;
+
+        var dispatchState = Volatile.Read(ref _dispatchState);
+        if (dispatchState is null)
+        {
+            Signal();
+        }
+        else
+        {
+            lock (_dispatchStateGate)
+            {
+                if (Volatile.Read(ref _dispatchState) is { } boundDispatchState)
+                {
+                    if (remoteTerminalPublished)
+                    {
+                        // A remote terminal close is already published. Consumer abandonment
+                        // intentionally performs the second close only after that close ended.
+                        boundDispatchState.Close();
+                    }
+                    else
+                    {
+                        CloseFirstTerminalDispatchState(boundDispatchState);
+                    }
+                }
+                Signal();
+            }
+        }
+
+        // Stop StreamManager from accepting another frame before observing that the
+        // already-acquired dispatches drained. This makes the final WindowUpdate and
+        // Cancel ordering deterministic without adding synchronization to normal reads.
+        if (dispatchState?.HasActiveDispatches == true)
+        {
+            return AwaitDispatchesAndFinishDisposeAsync(
+                notifyConsumerAbandoned,
+                dispatchState,
+                disposingLeaseState);
+        }
+
+        return FinishDisposeAsync(notifyConsumerAbandoned, dispatchState, disposingLeaseState);
+    }
+
+    // Must be called while _dispatchStateGate is held. It lets a late Bind race the first
+    // terminal publication without turning a state-free terminal path into a locked path.
+    private void CloseFirstTerminalDispatchState(IStreamDispatchState dispatchState)
+    {
+        if (Interlocked.CompareExchange(ref _terminalDispatchStateClosed, 1, 0) == 0)
+            dispatchState.Close();
     }
 
     private async ValueTask AwaitDispatchesAndFinishDisposeAsync(
@@ -625,24 +758,20 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
     private void FinalizeDispose(long disposingLeaseState)
     {
-        lock (_terminalGate)
+        if (Volatile.Read(ref _disposeFinalizedLeaseState) == disposingLeaseState ||
+            Volatile.Read(ref _leaseState) != disposingLeaseState)
         {
-            if (Volatile.Read(ref _disposeFinalizedLeaseState) == disposingLeaseState)
-                return;
-
-            // Signal and complete a real concurrent waiter before exposing this lease to return.
-            // RunContinuationsAsynchronously keeps arbitrary consumer continuations outside the
-            // terminal gate.
-            Signal();
-            if (Volatile.Read(ref _disposeCompletionLeaseState) == disposingLeaseState)
-            {
-                Volatile.Read(ref _disposeCompletion)?.TrySetResult();
-                Volatile.Write(ref _disposeCompletion, null);
-                Volatile.Write(ref _disposeCompletionLeaseState, 0);
-            }
-
-            Volatile.Write(ref _disposeFinalizedLeaseState, disposingLeaseState);
+            return;
         }
+
+        // Publish finalization before looking for the lazy concurrent-dispose waiter. A waiter
+        // installed immediately afterwards observes this state and completes itself, so the
+        // common first-dispose path needs neither a lock nor a completion allocation.
+        Signal();
+        Volatile.Write(ref _disposeFinalizedLeaseState, disposingLeaseState);
+        var completion = Volatile.Read(ref _disposeCompletion);
+        if (completion?.LeaseState == disposingLeaseState)
+            completion.Completion.TrySetResult();
 
         TryReturnToPool(disposingLeaseState);
     }
@@ -851,7 +980,8 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         _consumerAbandonedRequestId = 0;
         Volatile.Write(ref _dispatchState, null);
         Volatile.Write(ref _disposeCompletion, null);
-        Volatile.Write(ref _disposeCompletionLeaseState, 0);
+        Volatile.Write(ref _remoteTerminalPublication, null);
+        Volatile.Write(ref _beforeConcurrentDisposeCompletionInstallForTests, null);
 
         // 复位枚举器占用标记
         Volatile.Write(ref _enumeratorTaken, 0);
@@ -914,7 +1044,8 @@ public sealed class PooledAsyncStreamDispatcher<T> :
                 _additionalEnumerationToken.CanBeCanceled ||
                 !_enumerationCancellationRegistration.Equals(default) ||
                 !_additionalEnumerationCancellationRegistration.Equals(default) ||
-                Volatile.Read(ref _disposeCompletion) is not null)
+                Volatile.Read(ref _disposeCompletion) is not null ||
+                Volatile.Read(ref _remoteTerminalPublication) is not null)
             {
                 return true;
             }
@@ -973,6 +1104,14 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         internal readonly int[] EncodedByteCounts = new int[capacity];
         internal int Published;
         internal BufferSegment? Next;
+    }
+
+    private sealed class DisposeCompletion(long leaseState)
+    {
+        internal long LeaseState { get; } = leaseState;
+
+        internal TaskCompletionSource Completion { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
 }
