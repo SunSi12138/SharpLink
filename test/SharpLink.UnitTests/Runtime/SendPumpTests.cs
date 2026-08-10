@@ -19,8 +19,9 @@ public class SendPumpTests
             output.Writer,
             static () => { },
             static () => true,
-            new RpcSessionFlushOptions(1024 * 1024, TimeSpan.MaxValue));
-        session.BindRuntimeContext(context);
+            RpcSessionTestFixture.ClientOptions(
+                context,
+                new RpcSessionFlushOptions(1024 * 1024, TimeSpan.MaxValue)));
         var frame = CreateFrame(session, 32, requestId: 1);
 
         session.SendPacket(frame);
@@ -156,8 +157,13 @@ public class SendPumpTests
         var context = new SharpLinkRuntimeContextBuilder()
             .Configure(static options => options.PerformanceProfile = SharpLinkPerformanceProfile.Throughput)
             .Build();
-        var session = new RpcSession("force-flush", input.Reader, output.Writer, static () => { }, static () => true);
-        session.BindRuntimeContext(context);
+        var session = new RpcSession(
+            "force-flush",
+            input.Reader,
+            output.Writer,
+            static () => { },
+            static () => true,
+            RpcSessionTestFixture.ClientOptions(context));
         try
         {
             var frame = CreateFrame(session, 32, requestId: 1);
@@ -181,9 +187,13 @@ public class SendPumpTests
         var context = new SharpLinkRuntimeContextBuilder()
             .Configure(options => options.FlowControl.MaxSendQueueBytes = maxSendQueueBytes)
             .Build();
-        var session = new RpcSession("send-pump", input.Reader, output.Writer, static () => { }, static () => true);
-        session.BindRuntimeContext(context);
-        return session;
+        return new RpcSession(
+            "send-pump",
+            input.Reader,
+            output.Writer,
+            static () => { },
+            static () => true,
+            RpcSessionTestFixture.ClientOptions(context));
     }
 
     private static Pipe CreateBackpressuredPipe()

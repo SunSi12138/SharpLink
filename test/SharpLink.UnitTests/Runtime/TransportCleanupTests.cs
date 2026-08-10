@@ -64,7 +64,9 @@ public class TransportCleanupTests
     {
         var transport = new PipelineFailingTransport();
         transport.Output.Write(new byte[1]);
-        var session = new RpcSession(transport);
+        var session = new RpcSession(
+            transport,
+            RpcSessionTestFixture.ClientOptions());
 
         var failure = await CaptureAsync(session.DisposeAsync);
 

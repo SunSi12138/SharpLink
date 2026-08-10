@@ -9,10 +9,10 @@ internal sealed partial class SharpLinkServer(
     TimeSpan heartbeatCheckInterval,
     TimeSpan heartbeatTimeout,
     ILoggerFactory loggerFactory,
+    SharpLinkRuntimeContext runtimeContext,
     ISharpLinkServerAuthenticator? authenticator = null,
     bool authenticationRequired = false,
     SharpLinkProtocolOptions? protocolOptions = null,
-    SharpLinkRuntimeContext? runtimeContext = null,
     RpcSessionFlushOptions? rpcSessionFlushOptions = null,
     ISharpLinkServerInterceptor[]? serverInterceptors = null,
     IRpcExceptionMapper? exceptionMapper = null,
@@ -39,7 +39,8 @@ internal sealed partial class SharpLinkServer(
         ServerCapacityExhausted
     }
 
-    private readonly SharpLinkRuntimeContext _runtimeContext = runtimeContext ?? new SharpLinkRuntimeContextBuilder().Build();
+    private readonly SharpLinkRuntimeContext _runtimeContext =
+        runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
     private FrozenDictionary<long, ServiceRegistration> _services = initialServices;
     private readonly IServiceProvider _serviceProvider = serviceProvider ??
         throw new ArgumentNullException(nameof(serviceProvider));
@@ -67,12 +68,11 @@ internal sealed partial class SharpLinkServer(
     private Task? _stopTask;
     private int _state = (int)ServerState.Created;
     private readonly SharpLinkProtocolOptions _protocolOptions =
-        (protocolOptions ?? runtimeContext?.Protocol ?? new SharpLinkProtocolOptions()).CloneValidated();
+        (protocolOptions ?? runtimeContext.Protocol).CloneValidated();
     private readonly int _maxConcurrentCallsPerConnection =
-        (runtimeContext?.FlowControl.MaxConcurrentCallsPerConnection ?? 1024);
+        runtimeContext.FlowControl.MaxConcurrentCallsPerConnection;
     private readonly int _maxConcurrentCallsPerServer =
-        (runtimeContext?.FlowControl.MaxConcurrentCallsPerServer ??
-         SharpLinkFlowControlOptions.DefaultMaxConcurrentCallsPerServer);
+        runtimeContext.FlowControl.MaxConcurrentCallsPerServer;
     private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions = rpcSessionFlushOptions;
     private readonly ISharpLinkServerInterceptor[] _serverInterceptors =
         serverInterceptors is { Length: > 0 } ? [.. serverInterceptors] : [];

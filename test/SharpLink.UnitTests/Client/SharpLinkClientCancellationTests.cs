@@ -14,6 +14,7 @@ public class SharpLinkClientCancellationTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false),
             TimeSpan.FromMilliseconds(80));
 
         await client.ConnectAsync();
@@ -35,6 +36,7 @@ public class SharpLinkClientCancellationTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false),
             TimeSpan.FromSeconds(5));
 
         await client.ConnectAsync();
@@ -60,6 +62,7 @@ public class SharpLinkClientCancellationTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false),
             TimeSpan.FromSeconds(2));
 
         await client.ConnectAsync();
@@ -83,6 +86,7 @@ public class SharpLinkClientCancellationTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false),
             TimeSpan.FromMilliseconds(80));
 
         await client.ConnectAsync();
@@ -111,6 +115,7 @@ public class SharpLinkClientCancellationTests
             transport,
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30),
+            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false),
             TimeSpan.FromSeconds(5));
 
         await client.ConnectAsync();

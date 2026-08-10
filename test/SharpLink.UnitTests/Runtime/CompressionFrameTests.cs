@@ -188,8 +188,8 @@ public class CompressionFrameTests
             input.Reader,
             output.Writer,
             static () => { },
-            static () => true);
-        session.BindRuntimeContext(context);
+            static () => true,
+            RpcSessionTestFixture.ClientOptions(context));
         if (enableCompression)
         {
             session.NegotiatedCapabilities = ProtocolV2Capabilities.Compression;

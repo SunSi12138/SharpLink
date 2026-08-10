@@ -10,6 +10,92 @@ namespace SharpLink.UnitTests.Runtime;
 public class RpcSessionLifecycleTests
 {
     [Test]
+    public void CreationOptionsShouldRejectMissingContextAndUnknownRole()
+    {
+        var missingContext = CaptureException(() =>
+            _ = new RpcSessionCreationOptions(RpcSessionRole.Client, null!));
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var unknownRole = CaptureException(() =>
+            _ = new RpcSessionCreationOptions((RpcSessionRole)byte.MaxValue, context));
+
+        Ensure(missingContext is ArgumentNullException { ParamName: "runtimeContext" },
+            "Session creation must reject a missing RuntimeContext before transport ownership transfers");
+        Ensure(unknownRole is ArgumentOutOfRangeException { ParamName: "role" },
+            "Session creation must reject an unknown role before transport ownership transfers");
+    }
+
+    [Test]
+    public async Task ConstructorShouldPublishCompleteRoleContextMapperAndStableStreamManager()
+    {
+        using var clientContext = new SharpLinkRuntimeContextBuilder()
+            .Configure(static options => options.Protocol.MaxFramePayloadBytes = 2048)
+            .ConfigureStateStores(static options => options.StripeCount = 8)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        using var serverContext = new SharpLinkRuntimeContextBuilder()
+            .Configure(static options => options.Protocol.MaxFramePayloadBytes = 4096)
+            .ConfigureStateStores(static options => options.StripeCount = 16)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var clientInput = new Pipe();
+        var clientOutput = new Pipe();
+        var serverInput = new Pipe();
+        var serverOutput = new Pipe();
+        var mapped = new SharpLinkException(SharpLinkErrorCode.Internal, "mapped during construction");
+        var mapperCalls = 0;
+        var client = new RpcSession(
+            "complete-client",
+            clientInput.Reader,
+            clientOutput.Writer,
+            static () => { },
+            static () => true,
+            new RpcSessionCreationOptions(RpcSessionRole.Client, clientContext));
+        var server = new RpcSession(
+            "complete-server",
+            serverInput.Reader,
+            serverOutput.Writer,
+            static () => { },
+            static () => true,
+            new RpcSessionCreationOptions(
+                RpcSessionRole.Server,
+                serverContext,
+                serviceExceptionMapper: (_, _, _, _, _) =>
+                {
+                    Interlocked.Increment(ref mapperCalls);
+                    return mapped;
+                }));
+        var clientStreams = client.StreamManager;
+        var serverStreams = server.StreamManager;
+
+        Ensure(client.Role == RpcSessionRole.Client && server.Role == RpcSessionRole.Server,
+            "constructor role must distinguish Client and Server telemetry/protocol ownership");
+        Ensure(ReferenceEquals(client.RuntimeContext, clientContext) &&
+               ReferenceEquals(server.RuntimeContext, serverContext),
+            "each Session must publish its caller-supplied RuntimeContext immediately");
+        Ensure(client.NegotiatedMaxFramePayloadBytes == 2048 &&
+               server.NegotiatedMaxFramePayloadBytes == 4096,
+            "each Session must snapshot protocol limits from only its own Context");
+        Ensure(!ReferenceEquals(clientStreams, serverStreams),
+            "parallel Sessions must not share StreamManager state");
+        Ensure(ReferenceEquals(mapped, server.MapServiceException(1, 2, 3, new Exception("service"))) &&
+               mapperCalls == 1,
+            "the Server mapper must be usable without a post-construction patch");
+
+        await Task.WhenAll(client.DisposeAsync().AsTask(), server.DisposeAsync().AsTask());
+        Ensure(ReferenceEquals(clientStreams, client.StreamManager) &&
+               ReferenceEquals(serverStreams, server.StreamManager),
+            "StreamManager references must remain constant through terminal transitions");
+        await clientInput.Writer.CompleteAsync();
+        await clientOutput.Reader.CompleteAsync();
+        await serverInput.Writer.CompleteAsync();
+        await serverOutput.Reader.CompleteAsync();
+        clientContext.Dispose();
+        serverContext.Dispose();
+        Ensure(CaptureException(() => clientContext.Buffers.Rent()) is ObjectDisposedException &&
+               CaptureException(() => serverContext.Buffers.Rent()) is ObjectDisposedException,
+            "both isolated RuntimeContexts must reject resource acquisition after deterministic disposal");
+    }
+
+    [Test]
     public async Task FirstFaultShouldBePublishedOnceAndReusedByLaterSends()
     {
         var input = new Pipe();
@@ -20,7 +106,8 @@ public class RpcSessionLifecycleTests
             input.Reader,
             output.Writer,
             () => Interlocked.Increment(ref disconnectCount),
-            static () => true);
+            static () => true,
+            RpcSessionTestFixture.ClientOptions());
         var publishedCount = 0;
         Exception? published = null;
         session.OnDisconnected += exception =>
@@ -51,7 +138,8 @@ public class RpcSessionLifecycleTests
             input.Reader,
             output.Writer,
             () => Interlocked.Increment(ref disconnectCount),
-            static () => true);
+            static () => true,
+            RpcSessionTestFixture.ClientOptions());
         var disconnected = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var publishedCount = 0;
         session.OnDisconnected += exception =>
@@ -94,7 +182,8 @@ public class RpcSessionLifecycleTests
             input.Reader,
             output.Writer,
             () => Interlocked.Increment(ref disconnectCount),
-            static () => true);
+            static () => true,
+            RpcSessionTestFixture.ClientOptions());
         var failures = new ConcurrentBag<SharpLinkException>();
         var senders = new Task[4];
         for (var senderIndex = 0; senderIndex < senders.Length; senderIndex++)
@@ -129,7 +218,7 @@ public class RpcSessionLifecycleTests
     [Test]
     public async Task NotifyConnectedAfterDisposeShouldNotReopenConnectionMetric()
     {
-        const string side = "late-notify-test";
+        const string side = "client";
         var balance = 0L;
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meterListener) =>
@@ -160,8 +249,8 @@ public class RpcSessionLifecycleTests
             input.Reader,
             output.Writer,
             static () => { },
-            static () => true);
-        session.SetTelemetrySide(side);
+            static () => true,
+            RpcSessionTestFixture.ClientOptions());
 
         await session.DisposeAsync();
         session.NotifyConnected();
@@ -179,8 +268,8 @@ public class RpcSessionLifecycleTests
             input.Reader,
             output.Writer,
             static () => { },
-            static () => true);
-        session.BindRuntimeContext(new SharpLinkRuntimeContextBuilder().Build());
+            static () => true,
+            RpcSessionTestFixture.ClientOptions());
         session.NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl;
         session.EnableStreamFlowControl(4, 4);
         session.StreamManager.Register(1, 1, new ImmediateConsumingDispatcher());
@@ -222,7 +311,8 @@ public class RpcSessionLifecycleTests
             input.Reader,
             output.Writer,
             () => Interlocked.Increment(ref disconnectCount),
-            static () => true);
+            static () => true,
+            RpcSessionTestFixture.ClientOptions());
         var sibling = new TrackingCompletionDispatcher();
         session.StreamManager.Register(1, new ThrowingCompletionDispatcher());
         session.StreamManager.Register(1, 1, sibling);
@@ -248,6 +338,19 @@ public class RpcSessionLifecycleTests
         try
         {
             await task;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static Exception? CaptureException(Action action)
+    {
+        try
+        {
+            action();
             return null;
         }
         catch (Exception exception)

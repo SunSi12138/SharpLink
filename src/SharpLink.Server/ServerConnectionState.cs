@@ -31,13 +31,12 @@ internal sealed class ServerConnectionState
 
     internal ServerConnectionState(
         RpcSession session,
-        RuntimeConcurrencyOptions concurrency,
+        StripedLongMap<ServerCallCancellationState> callCancellations,
         CancellationToken serverToken,
         int maxConcurrentCalls = 1024)
     {
         Session = session ?? throw new ArgumentNullException(nameof(session));
-        ArgumentNullException.ThrowIfNull(concurrency);
-        CallCancellations = new StripedLongMap<ServerCallCancellationState>(concurrency);
+        CallCancellations = callCancellations ?? throw new ArgumentNullException(nameof(callCancellations));
         DeadlineScheduler = new ServerCallDeadlineScheduler(CallCancellations, maxConcurrentCalls);
         _connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
         _connectionToken = _connectionCancellation.Token;

@@ -193,12 +193,6 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
         if (failures is not null)
             throw new AggregateException(failures);
     }
-
-    // This process-wide fallback is used only before an instance-owned Context is attached.
-    // It must never snapshot weak manifest entries because it has no unregister boundary and
-    // would otherwise become a permanent root for collectible plugin load contexts.
-    internal static SharpLinkRuntimeContext Default { get; } =
-        new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
 }
 
 /// <summary>Builds and validates an immutable <see cref="SharpLinkRuntimeContext"/>.</summary>

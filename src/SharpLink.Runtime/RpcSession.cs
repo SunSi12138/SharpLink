@@ -8,9 +8,10 @@ public sealed partial class RpcSession : IRpcSession
     /// <inheritdoc />
     public string Id { get; }
     /// <summary>Gets the instance-owned runtime services used by this session.</summary>
-    public SharpLinkRuntimeContext RuntimeContext { get; private set; } = SharpLinkRuntimeContext.Default;
+    public SharpLinkRuntimeContext RuntimeContext { get; }
+    internal RpcSessionRole Role { get; }
     internal ProtocolV2Capabilities NegotiatedCapabilities { get; set; }
-    private int _negotiatedMaxFramePayloadBytes = SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes;
+    private int _negotiatedMaxFramePayloadBytes;
     internal int NegotiatedMaxFramePayloadBytes => Volatile.Read(ref _negotiatedMaxFramePayloadBytes);
     IRpcRuntimeContext IRpcSession.RuntimeContext => RuntimeContext;
     private long _lastActiveTimestamp = Stopwatch.GetTimestamp();
@@ -34,7 +35,7 @@ public sealed partial class RpcSession : IRpcSession
     private Task? _transportDisposeTask;
 
     /// <inheritdoc />
-    public IStreamManager StreamManager { get; private set; } = new StreamManager();
+    public IStreamManager StreamManager { get; }
     /// <inheritdoc />
     public bool IsConnected => Volatile.Read(ref _terminal) is null &&
                                (_transportConnection is not null || _isConnected());
@@ -47,23 +48,17 @@ public sealed partial class RpcSession : IRpcSession
     private StreamFlowController? _streamFlowControl;
     private int _activeRequests;
     private int _draining;
-    private string _telemetrySide = "unknown";
+    private readonly string _telemetrySide;
     private int _telemetryConnectionState;
     private const int TelemetryNotOpened = 0;
     private const int TelemetryOpened = 1;
     private const int TelemetryClosed = 2;
-    internal Func<long, long, long, Exception, SharpLinkException>? ServiceExceptionMapper { get; set; }
+    private readonly RpcSessionServiceExceptionMapper? _serviceExceptionMapper;
 
     internal void MarkActive()
     {
         Volatile.Write(ref _lastActiveTimestamp, Stopwatch.GetTimestamp());
         LastActive = DateTime.UtcNow;
-    }
-
-    internal void SetTelemetrySide(string side)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(side);
-        _telemetrySide = side;
     }
 
     internal SharpLinkException MapServiceException(
@@ -73,11 +68,11 @@ public sealed partial class RpcSession : IRpcSession
         Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
-        if (ServiceExceptionMapper is { } mapper)
+        if (_serviceExceptionMapper is { } mapper)
         {
             try
             {
-                return mapper(requestId, contractId, methodId, exception);
+                return mapper(this, requestId, contractId, methodId, exception);
             }
             catch
             {
@@ -96,66 +91,55 @@ public sealed partial class RpcSession : IRpcSession
     /// <param name="writer">The transport output writer.</param>
     /// <param name="disconnect">The callback that closes the underlying connection.</param>
     /// <param name="isConnected">The callback that reports underlying connection state.</param>
-    /// <param name="flushOptions">Optional session flush policy.</param>
-    public RpcSession(
+    /// <param name="creationOptions">The complete immutable session configuration.</param>
+    internal RpcSession(
         string id,
         PipeReader reader,
         PipeWriter writer,
         Action disconnect,
         Func<bool> isConnected,
-        RpcSessionFlushOptions? flushOptions = null)
+        RpcSessionCreationOptions creationOptions)
     {
-        if (flushOptions is { } configuredFlushOptions)
-        {
-            RpcSessionFlushOptions.Validate(
-                configuredFlushOptions.FlushSizeThreshold,
-                configuredFlushOptions.MaxLatency);
-        }
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        ArgumentNullException.ThrowIfNull(reader);
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(disconnect);
+        ArgumentNullException.ThrowIfNull(isConnected);
+        ArgumentNullException.ThrowIfNull(creationOptions);
 
         Id = id;
         Input = reader;
         Output = writer;
-
+        Role = creationOptions.Role;
+        RuntimeContext = creationOptions.RuntimeContext;
+        Volatile.Write(
+            ref _negotiatedMaxFramePayloadBytes,
+            creationOptions.RuntimeContext.Protocol.MaxFramePayloadBytes);
+        StreamManager = new StreamManager(
+            creationOptions.RuntimeContext.Concurrency,
+            AcceptReceivedStreamBytes,
+            OnStreamBytesConsumed,
+            OnReceiveStreamCompleted);
         _disconnect = disconnect;
         _isConnected = isConnected;
-        _flushOptions = flushOptions;
+        _flushOptions = creationOptions.FlushOptions;
+        _telemetrySide = creationOptions.TelemetrySide;
+        _serviceExceptionMapper = creationOptions.ServiceExceptionMapper;
     }
 
     /// <summary>Creates an RPC session that owns one transport connection.</summary>
     /// <param name="connection">The independently owned transport connection.</param>
-    /// <param name="flushOptions">Optional session flush policy.</param>
-    public RpcSession(ITransportConnection connection, RpcSessionFlushOptions? flushOptions = null)
+    /// <param name="creationOptions">The complete immutable session configuration.</param>
+    internal RpcSession(ITransportConnection connection, RpcSessionCreationOptions creationOptions)
         : this(
             (connection ?? throw new ArgumentNullException(nameof(connection))).Id,
             connection.Input,
             connection.Output,
             static () => { },
             static () => true,
-            flushOptions)
+            creationOptions)
     {
         _transportConnection = connection;
-    }
-
-    /// <summary>Binds the instance-owned runtime context before the session begins RPC I/O.</summary>
-    /// <param name="runtimeContext">The context owned by the connecting client or accepting server.</param>
-    public void BindRuntimeContext(SharpLinkRuntimeContext runtimeContext)
-    {
-        ArgumentNullException.ThrowIfNull(runtimeContext);
-        if (Volatile.Read(ref _terminal) is not null)
-            throw GetTerminalException();
-
-        lock (_pumpGate)
-        {
-            if (_pump is not null)
-                throw new InvalidOperationException("Runtime context must be bound before the first outbound frame.");
-            RuntimeContext = runtimeContext;
-            Volatile.Write(ref _negotiatedMaxFramePayloadBytes, runtimeContext.Protocol.MaxFramePayloadBytes);
-            StreamManager = new StreamManager(
-                runtimeContext.Concurrency,
-                AcceptReceivedStreamBytes,
-                OnStreamBytesConsumed,
-                OnReceiveStreamCompleted);
-        }
     }
 
     internal void SetNegotiatedMaxFramePayloadBytes(int value)

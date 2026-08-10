@@ -19,8 +19,8 @@ public class GeneratedServerBridgeTests
             input.Reader,
             output.Writer,
             static () => { },
-            static () => true);
-        session.BindRuntimeContext(new SharpLinkRuntimeContextBuilder().Build());
+            static () => true,
+            RpcSessionTestFixture.ServerOptions());
         var existing = new TrackingDispatcher();
         session.StreamManager.Register(41, 1, existing);
 
@@ -112,8 +112,8 @@ public class GeneratedServerBridgeTests
             input.Reader,
             output.Writer,
             static () => { },
-            static () => true);
-        session.BindRuntimeContext(new SharpLinkRuntimeContextBuilder().Build());
+            static () => true,
+            RpcSessionTestFixture.ServerOptions());
         session.NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl;
         session.EnableStreamFlowControl(streamWindowBytes: 4, connectionWindowBytes: 4);
         await session.AcquireStreamSendCreditAsync(72, 0, 4, CancellationToken.None);
@@ -156,8 +156,8 @@ public class GeneratedServerBridgeTests
             input.Reader,
             output.Writer,
             static () => { },
-            static () => true);
-        session.BindRuntimeContext(new SharpLinkRuntimeContextBuilder().Build());
+            static () => true,
+            RpcSessionTestFixture.ServerOptions());
 
         await ((IRpcGeneratedServerBridge)session).PumpOutboundStreamAsync(
             73,

@@ -324,8 +324,8 @@ public class StreamFlowControllerTests
             input.Reader,
             output,
             static () => { },
-            static () => true);
-        session.BindRuntimeContext(context);
+            static () => true,
+            RpcSessionTestFixture.ClientOptions(context));
         session.NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl;
         session.EnableStreamFlowControl(4, 4);
         await session.AcquireStreamSendCreditAsync(1, 1, 1, CancellationToken.None);

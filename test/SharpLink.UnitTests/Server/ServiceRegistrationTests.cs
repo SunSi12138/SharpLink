@@ -254,6 +254,7 @@ public class ServiceRegistrationTests
             TimeSpan.FromSeconds(1),
             TimeSpan.FromSeconds(1),
             NullLoggerFactory.Instance,
+            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false),
             serviceProvider: new EmptyServiceProvider());
 
     private static SharpLinkDynamicModule AddDynamicModule(

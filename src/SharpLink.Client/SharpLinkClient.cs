@@ -13,9 +13,7 @@ internal sealed partial class SharpLinkClient :
     private readonly IEndpointClusterRuntime? _cluster;
     // Retained for endpoint-aware diagnostics without routing fixed calls through cluster selection.
     private readonly SharpLinkEndpoint? _fixedEndpoint;
-    // A filtered multi-cluster child supplies its own context after construction. Do not snapshot
-    // the process-wide manifest catalog before that context is applied.
-    private readonly SharpLinkRuntimeContext _runtimeContext = SharpLinkRuntimeContext.Default;
+    private readonly SharpLinkRuntimeContext _runtimeContext;
     private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests;
     private FrozenDictionary<Type, ClientProxyRegistration> _proxies =
         FrozenDictionary<Type, ClientProxyRegistration>.Empty;
@@ -58,6 +56,7 @@ internal sealed partial class SharpLinkClient :
 
     private SharpLinkClient(
         IClientTransportFactory transportFactory,
+        SharpLinkRuntimeContext runtimeContext,
         StaticEndpointConfiguration[]? staticEndpoints = null,
         SharpLinkClusterOptions? clusterOptions = null,
         SharpLinkLoadBalancingStrategy loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
@@ -71,6 +70,7 @@ internal sealed partial class SharpLinkClient :
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null)
     {
         this.transportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
+        _runtimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
         _staticManifests = staticManifests ?? SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
         _fixedEndpoint = fixedEndpoint;
         _retryOptions = retryOptions;
@@ -103,10 +103,10 @@ internal sealed partial class SharpLinkClient :
         IClientTransportFactory transportFactory,
         TimeSpan heartbeatInterval,
         TimeSpan heartbeatTimeout,
+        SharpLinkRuntimeContext runtimeContext,
         TimeSpan? requestTimeout = null,
         ISharpLinkClientAuthenticator? authenticator = null,
         SharpLinkProtocolOptions? protocolOptions = null,
-        SharpLinkRuntimeContext? runtimeContext = null,
         RpcSessionFlushOptions? rpcSessionFlushOptions = null,
         SharpLinkConnectionPoolOptions? connectionPoolOptions = null,
         ISharpLinkClientInterceptor[]? clientInterceptors = null,
@@ -121,7 +121,7 @@ internal sealed partial class SharpLinkClient :
         ISharpLinkRetryPolicy? retryPolicy = null,
         ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null,
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null)
-        : this(transportFactory, staticEndpoints, clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint,
+        : this(transportFactory, runtimeContext, staticEndpoints, clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint,
             dynamicResolver, dynamicTransportFactory, retryOptions, retryPolicy, endpointAdmissionPolicy, staticManifests)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
@@ -138,7 +138,6 @@ internal sealed partial class SharpLinkClient :
         _heartbeatInterval = heartbeatInterval;
         _heartbeatTimeout = heartbeatTimeout;
         _authenticator = authenticator;
-        _runtimeContext = runtimeContext ?? new SharpLinkRuntimeContextBuilder().Build(_staticManifests);
         _protocolOptions = (protocolOptions ?? _runtimeContext.Protocol).CloneValidated();
         _rpcSessionFlushOptions = rpcSessionFlushOptions;
         _connectionPoolOptions = (connectionPoolOptions ?? new SharpLinkConnectionPoolOptions()).CloneValidated();
@@ -151,10 +150,10 @@ internal sealed partial class SharpLinkClient :
         TimeSpan heartbeatInterval,
         TimeSpan heartbeatTimeout,
         ILoggerFactory loggerFactory,
+        SharpLinkRuntimeContext runtimeContext,
         TimeSpan? requestTimeout = null,
         ISharpLinkClientAuthenticator? authenticator = null,
         SharpLinkProtocolOptions? protocolOptions = null,
-        SharpLinkRuntimeContext? runtimeContext = null,
         RpcSessionFlushOptions? rpcSessionFlushOptions = null,
         SharpLinkConnectionPoolOptions? connectionPoolOptions = null,
         ISharpLinkClientInterceptor[]? clientInterceptors = null,
@@ -169,8 +168,8 @@ internal sealed partial class SharpLinkClient :
         ISharpLinkRetryPolicy? retryPolicy = null,
         ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null,
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null)
-        : this(transportFactory, heartbeatInterval, heartbeatTimeout, requestTimeout, authenticator, protocolOptions,
-            runtimeContext, rpcSessionFlushOptions, connectionPoolOptions, clientInterceptors, staticEndpoints,
+        : this(transportFactory, heartbeatInterval, heartbeatTimeout, runtimeContext, requestTimeout, authenticator,
+            protocolOptions, rpcSessionFlushOptions, connectionPoolOptions, clientInterceptors, staticEndpoints,
             clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint, dynamicResolver, dynamicTransportFactory,
             retryOptions, retryPolicy, endpointAdmissionPolicy, staticManifests)
     {

@@ -47,7 +47,7 @@ public class PooledAsyncStreamDispatcherTests
         PooledAsyncStreamDispatcher<string>.ClearPoolForTests();
         var dispatcher = PooledAsyncStreamDispatcher<string>.Rent(
             default,
-            SharpLinkRuntimeContext.Default.Codecs);
+            RpcSessionTestFixture.RuntimeContext.Codecs);
 
         var failure = await CaptureDispatchFailureAsync(() => dispatcher.DispatchAsync(NullStringPayload));
         dispatcher.Complete(failure);
@@ -59,7 +59,7 @@ public class PooledAsyncStreamDispatcherTests
 
         var nullableDispatcher = PooledAsyncStreamDispatcher<string>.Rent(
             default,
-            SharpLinkRuntimeContext.Default.Codecs,
+            RpcSessionTestFixture.RuntimeContext.Codecs,
             payloadNullable: true);
         await nullableDispatcher.DispatchAsync(NullStringPayload);
         nullableDispatcher.Complete(exception: null);

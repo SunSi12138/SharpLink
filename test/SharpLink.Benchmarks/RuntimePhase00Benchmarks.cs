@@ -59,8 +59,8 @@ public class RuntimePhase00Benchmarks
             _sendInput.Reader,
             new DiscardingPipeWriter(),
             static () => { },
-            static () => true);
-        _sendSession.BindRuntimeContext(_context);
+            static () => true,
+            new RpcSessionCreationOptions(RpcSessionRole.Client, _context));
         _responsePayload = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(_responsePayload, 42);
         _streamPayload = new ReadOnlySequence<byte>(new byte[] { 42 });

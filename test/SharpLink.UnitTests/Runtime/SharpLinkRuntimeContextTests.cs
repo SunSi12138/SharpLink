@@ -11,21 +11,21 @@ public class SharpLinkRuntimeContextTests
     private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
 
     [Test]
-    public void ProcessDefaultShouldNotSnapshotGeneratedAssemblyCatalog()
+    public void ExplicitCatalogFreeContextShouldNotSnapshotGeneratedAssemblyCatalog()
     {
         var manifest = new CatalogManifest();
         SharpLinkGeneratedAssemblyCatalog.Register(manifest);
 
-        var instanceContext = new SharpLinkRuntimeContextBuilder().Build();
-        var processDefault = new SharpLinkRuntimeContextBuilder()
+        using var instanceContext = new SharpLinkRuntimeContextBuilder().Build();
+        using var catalogFreeContext = new SharpLinkRuntimeContextBuilder()
             .Build(includeGeneratedAssemblyCatalog: false);
 
         Ensure(instanceContext.Codecs.GetCodec<CatalogValue>() is CatalogCodec,
             "instance context snapshots generated manifest codecs");
         try
         {
-            _ = processDefault.Codecs.GetCodec<CatalogValue>();
-            throw new Exception("process default must not capture a catalog codec");
+            _ = catalogFreeContext.Codecs.GetCodec<CatalogValue>();
+            throw new Exception("an explicit catalog-free context must not capture a catalog codec");
         }
         catch (NotSupportedException)
         {

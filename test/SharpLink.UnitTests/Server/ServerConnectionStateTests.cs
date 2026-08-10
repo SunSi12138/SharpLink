@@ -16,6 +16,10 @@ public class ServerConnectionStateTests
         var authentication = new SharpLinkAuthenticationContext(subject: "alice");
 
         Ensure(state.LifecycleState == ServerConnectionLifecycleState.Handshaking, "initial state");
+        Ensure(!state.TryAcquireCall(1),
+            "a handshaking connection must not admit a business invocation");
+        Ensure(!state.TryRecordAcceptedRequest(1),
+            "a handshaking connection must not publish a business request ID");
         Ensure(state.DefaultCallContext is null, "handshaking connection must not publish a call context");
         Ensure(state.MarkReady(authentication), "handshake should mark the connection ready");
         Ensure(ReferenceEquals(authentication, state.AuthenticationContext), "authentication must belong to the connection");
@@ -63,10 +67,11 @@ public class ServerConnectionStateTests
             reader,
             output.Writer,
             () => Interlocked.Increment(ref disconnectCount),
-            static () => true);
+            static () => true,
+            RpcSessionTestFixture.ServerOptions());
         var state = new ServerConnectionState(
             session,
-            new RuntimeConcurrencyOptions(),
+            CreateCallCancellations(),
             CancellationToken.None);
         var stream = new ShutdownJoiningDispatcher();
         session.StreamManager.Register(7, 1, stream);
@@ -218,9 +223,13 @@ public class ServerConnectionStateTests
             input.Reader,
             output.Writer,
             disconnect,
-            static () => true);
-        return new ServerConnectionState(session, new RuntimeConcurrencyOptions(), serverToken);
+            static () => true,
+            RpcSessionTestFixture.ServerOptions());
+        return new ServerConnectionState(session, CreateCallCancellations(), serverToken);
     }
+
+    private static StripedLongMap<ServerCallCancellationState> CreateCallCancellations()
+        => new(RpcSessionTestFixture.RuntimeContext.Concurrency);
 
     private static ServiceRegistration CreateConnectionRegistration(ThrowingService service)
         => ServiceRegistration.CreateConnection(

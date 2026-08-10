@@ -306,7 +306,8 @@ public sealed class ServerRequestEnvelopeReaderTests
             input.Reader,
             output.Writer,
             static () => { },
-            static () => true)
+            static () => true,
+            RpcSessionTestFixture.ServerOptions())
         {
             NegotiatedCapabilities = capabilities
         };

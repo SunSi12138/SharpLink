@@ -330,7 +330,8 @@ public class ProtocolV2Tests
             input.Reader,
             output.Writer,
             static () => { },
-            static () => true);
+            static () => true,
+            RpcSessionTestFixture.ClientOptions());
 
         session.NegotiatedCapabilities = ProtocolV2Capabilities.CancellationReason;
         Ensure(

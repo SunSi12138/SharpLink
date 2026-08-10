@@ -403,10 +403,13 @@ internal sealed partial class SharpLinkClient
                 transport = await endpoint.Configuration.TransportFactory.ConnectAsync(attemptCts.Token).ConfigureAwait(false);
                 if (transport is ITransportSecurityInfo securityInfo)
                     LogTlsEstablished(_client._logger, securityInfo.Protocol, securityInfo.CipherSuite);
-                session = new RpcSession(transport, _client._rpcSessionFlushOptions);
+                session = new RpcSession(
+                    transport,
+                    new RpcSessionCreationOptions(
+                        RpcSessionRole.Client,
+                        _client._runtimeContext,
+                        _client._rpcSessionFlushOptions));
                 transport = null;
-                session.SetTelemetrySide("client");
-                session.BindRuntimeContext(_client._runtimeContext);
 
                 await _client.CompleteHandshakeAsync(session, attemptCts.Token, cancellationToken)
                     .ConfigureAwait(false);

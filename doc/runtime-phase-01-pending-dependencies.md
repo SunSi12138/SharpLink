@@ -22,16 +22,16 @@ It retained a child codec provider while losing the disposable Context owner. No
 fallback remains in `PendingRequestTable`, and every production, test, and benchmark call site
 now supplies an explicit dependency set.
 
-The repository-wide audit also found these separate Phase 02 targets:
+The repository-wide audit also found these separate Phase 02 targets, all of which are now
+resolved by `doc/runtime-phase-02-session-construction.md`:
 
 - `SharpLinkRuntimeContext.Default`, including the pre-binding defaults in `RpcSession` and
   `SharpLinkClient`;
 - nullable RuntimeContext constructor fallbacks in `SharpLinkClient` and `SharpLinkServer`;
 - the nullable codec fallback in `PooledAsyncStreamDispatcher`.
 
-Two test-only static codec fixtures in `StreamManagerTests` and `CodecSafetyTests` also retain
-only `Build().Codecs`. They do not affect production ownership and are recorded for the Phase 02
-test migration rather than expanding this PendingRequestTable change.
+The test-only codec fixtures remain explicitly named test dependencies; they are not production
+fallbacks and never participate in Session construction.
 
 ## Executable ownership evidence
 
