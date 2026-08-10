@@ -102,6 +102,50 @@ public class GeneratedServerBridgeTests
             "the serialization failure terminal must carry the error flag");
     }
 
+    [Test]
+    public async Task BackpressuredOutboundPumpShouldResumeWithOneDataAndOneSuccessTerminal()
+    {
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = new RpcSession(
+            "bridge-outbound-backpressure",
+            input.Reader,
+            output.Writer,
+            static () => { },
+            static () => true);
+        session.BindRuntimeContext(new SharpLinkRuntimeContextBuilder().Build());
+        session.NegotiatedCapabilities = ProtocolV2Capabilities.FlowControl;
+        session.EnableStreamFlowControl(streamWindowBytes: 4, connectionWindowBytes: 4);
+        await session.AcquireStreamSendCreditAsync(72, 0, 4, CancellationToken.None);
+        var serialized = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var pump = ((IRpcGeneratedServerBridge)session).PumpOutboundStreamAsync(
+            73,
+            0,
+            Values(1),
+            new SignalingIntCodec(serialized),
+            payloadNullable: false,
+            contractId: 101,
+            methodId: 202,
+            CancellationToken.None);
+        await serialized.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Ensure(!pump.IsCompleted,
+            "the generated bridge must await exhausted connection credit before publishing data");
+        session.ApplyWindowUpdate(72, new ProtocolV2WindowUpdate(0, 4));
+        await pump.AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+        var frames = await FlushAndReadFramesAsync(session, output, expectedRequestId: 73);
+        Ensure(frames.Count == 2, "one resumed item and one terminal frame must be emitted");
+        Ensure(frames[0] == (ProtocolV2FrameType.StreamData, ProtocolV2FrameFlags.None),
+            "the resumed item must be published exactly once before the terminal");
+        Ensure(frames[1] == (ProtocolV2FrameType.StreamComplete, ProtocolV2FrameFlags.None),
+            "the resumed stream must end with exactly one success terminal");
+
+        await output.Reader.CompleteAsync();
+        await input.Writer.CompleteAsync();
+    }
+
     private static async Task<List<(ProtocolV2FrameType Type, ProtocolV2FrameFlags Flags)>>
         PumpAndReadFramesAsync(IAsyncEnumerable<int> stream, IRpcCodec<int>? codec = null)
     {
@@ -124,6 +168,15 @@ public class GeneratedServerBridgeTests
             contractId: 101,
             methodId: 202,
             CancellationToken.None);
+        var frames = await FlushAndReadFramesAsync(session, output, expectedRequestId: 73);
+        await output.Reader.CompleteAsync();
+        await input.Writer.CompleteAsync();
+        return frames;
+    }
+
+    private static async Task<List<(ProtocolV2FrameType Type, ProtocolV2FrameFlags Flags)>>
+        FlushAndReadFramesAsync(RpcSession session, Pipe output, ulong expectedRequestId)
+    {
         await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
 
         var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
@@ -135,13 +188,12 @@ public class GeneratedServerBridgeTests
                    out var header,
                    out _))
         {
-            Ensure(header.RequestId == 73, "every bridge frame must retain the request ID");
+            Ensure(header.RequestId == expectedRequestId,
+                "every bridge frame must retain the request ID");
             frames.Add((header.Type, header.Flags));
         }
         Ensure(remaining.IsEmpty, "the bridge output must contain only complete Protocol v2 frames");
         output.Reader.AdvanceTo(read.Buffer.End);
-        await output.Reader.CompleteAsync();
-        await input.Writer.CompleteAsync();
         return frames;
     }
 
@@ -196,6 +248,20 @@ public class GeneratedServerBridgeTests
             _ = buffer;
             throw new NotSupportedException();
         }
+    }
+
+    private sealed class SignalingIntCodec(TaskCompletionSource serialized) : IRpcCodec<int>
+    {
+        public void Serialize(in int value, IBufferWriter<byte> buffer)
+        {
+            var span = buffer.GetSpan(sizeof(int));
+            BitConverter.TryWriteBytes(span, value);
+            buffer.Advance(sizeof(int));
+            serialized.TrySetResult();
+        }
+
+        public int Deserialize(in ReadOnlySequence<byte> buffer)
+            => BitConverter.ToInt32(buffer.FirstSpan);
     }
 
     private sealed class TrackingDispatcher : IStreamDispatcher
