@@ -11,12 +11,9 @@ public sealed class SharpLinkClientBackgroundTaskTests
     public async Task FaultedTrackedTaskShouldBeLoggedAfterItCompletes()
     {
         var loggerFactory = new CaptureLoggerFactory();
-        var client = new SharpLinkClient(
+        var client = ClientBuilderTestHelper.Build(
             new TestClientTransportFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            loggerFactory,
-            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false));
+            builder => builder.UseLoggerFactory(loggerFactory));
 
         client.TrackFrameworkTask(
             Task.FromException(new InvalidOperationException("tracked cleanup failed")),

@@ -36,14 +36,10 @@ public class LateResponseLogLimiterTests
     public async Task ClientConnectionLimiterShouldUseItsRuntimeProviderTimestamp()
     {
         var timeProvider = new ManualTimeProvider();
-        var runtimeContext = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(timeProvider)
-            .Build(includeGeneratedAssemblyCatalog: false);
-        await using var client = new SharpLinkClient(
+        await using var client = ClientBuilderTestHelper.Build(
             new TestClientTransportFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            runtimeContext);
+            builder => builder.UseTimeProvider(timeProvider));
+        var runtimeContext = (SharpLinkRuntimeContext)client.RuntimeContext;
         var input = new Pipe();
         var output = new Pipe();
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(

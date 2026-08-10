@@ -2,24 +2,7 @@ using System.Reflection;
 
 namespace SharpLink.Server;
 
-internal sealed partial class SharpLinkServer(
-    IServerTransportListener transportListener,
-    FrozenDictionary<long, ServiceRegistration> initialServices,
-    TimeSpan heartbeatCheckInterval,
-    TimeSpan heartbeatTimeout,
-    ILoggerFactory loggerFactory,
-    SharpLinkRuntimeContext runtimeContext,
-    ISharpLinkServerAuthenticator? authenticator = null,
-    bool authenticationRequired = false,
-    SharpLinkProtocolOptions? protocolOptions = null,
-    RpcSessionFlushOptions? rpcSessionFlushOptions = null,
-    ISharpLinkServerInterceptor[]? serverInterceptors = null,
-    IRpcExceptionMapper? exceptionMapper = null,
-    IAsyncDisposable? ownedServiceProvider = null,
-    IServiceProvider? serviceProvider = null,
-    IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null,
-    SharpLinkAdmissionController? admissionController = null,
-    ServerShutdownPlan? shutdownPlan = null) : ISharpLinkServer
+internal sealed partial class SharpLinkServer : ISharpLinkServer
 {
     private enum ServerState
     {
@@ -39,13 +22,13 @@ internal sealed partial class SharpLinkServer(
         ServerCapacityExhausted
     }
 
-    private readonly SharpLinkRuntimeContext _runtimeContext =
-        runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
-    private FrozenDictionary<long, ServiceRegistration> _services = initialServices;
-    private readonly IServiceProvider _serviceProvider = serviceProvider ??
-        throw new ArgumentNullException(nameof(serviceProvider));
-    private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests =
-        staticManifests ?? [];
+    private readonly IServerTransportListener _transportListener;
+    private readonly TimeSpan _heartbeatCheckInterval;
+    private readonly TimeSpan _heartbeatTimeout;
+    private readonly SharpLinkRuntimeContext _runtimeContext;
+    private FrozenDictionary<long, ServiceRegistration> _services;
+    private readonly IServiceProvider _serviceProvider;
+    private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests;
     private readonly Lock _registryGate = new();
     private readonly Dictionary<Assembly, SharpLinkDynamicModule> _dynamicModules =
         new(ReferenceEqualityComparer.Instance);
@@ -55,32 +38,26 @@ internal sealed partial class SharpLinkServer(
     private long _registryGeneration;
     private readonly ConcurrentDictionary<string, ServerConnectionState> _connections = [];
     private readonly ConcurrentDictionary<ServerConnectionState, byte> _retiredConnections = [];
-    private readonly ILogger _logger = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory))).CreateLogger<SharpLinkServer>();
-    private readonly ISharpLinkServerAuthenticator? _authenticator = authenticator;
-    private readonly bool _authenticationRequired = authenticationRequired;
+    private readonly ILogger _logger;
+    private readonly ISharpLinkServerAuthenticator? _authenticator;
+    private readonly bool _authenticationRequired;
     private readonly CancellationTokenSource _acceptCts = new();
     private readonly CancellationTokenSource _forceStopCts = new();
     private readonly Lock _stateGate = new();
-    private readonly FrameworkTaskSupervisor _frameworkTasks =
-        CreateFrameworkTaskSupervisor(loggerFactory);
+    private readonly FrameworkTaskSupervisor _frameworkTasks;
     private readonly TaskCompletionSource<bool> _callsDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task? _runTask;
     private Task? _stopTask;
     private int _state = (int)ServerState.Created;
-    private readonly SharpLinkProtocolOptions _protocolOptions =
-        (protocolOptions ?? runtimeContext.Protocol).CloneValidated();
-    private readonly int _maxConcurrentCallsPerConnection =
-        runtimeContext.FlowControl.MaxConcurrentCallsPerConnection;
-    private readonly int _maxConcurrentCallsPerServer =
-        runtimeContext.FlowControl.MaxConcurrentCallsPerServer;
-    private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions = rpcSessionFlushOptions;
-    private readonly ISharpLinkServerInterceptor[] _serverInterceptors =
-        serverInterceptors is { Length: > 0 } ? [.. serverInterceptors] : [];
-    private readonly IRpcExceptionMapper _exceptionMapper =
-        exceptionMapper ?? new DefaultRpcExceptionMapper(includeDetails: false);
-    private readonly ServerServiceCleanup _serviceCleanup = new(initialServices.Values, ownedServiceProvider);
-    private readonly SharpLinkAdmissionController? _admissionController = admissionController;
-    private readonly ServerShutdownPlan _shutdownPlan = shutdownPlan ?? ServerShutdownPlan.Default;
+    private readonly SharpLinkProtocolOptions _protocolOptions;
+    private readonly int _maxConcurrentCallsPerConnection;
+    private readonly int _maxConcurrentCallsPerServer;
+    private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions;
+    private readonly ISharpLinkServerInterceptor[] _serverInterceptors;
+    private readonly IRpcExceptionMapper _exceptionMapper;
+    private readonly ServerServiceCleanup _serviceCleanup;
+    private readonly SharpLinkAdmissionController? _admissionController;
+    private readonly ServerShutdownPlan _shutdownPlan;
     private Task? _deferredServiceCleanupTask;
     private Task? _shutdownCleanupObserver;
     private Task? _serviceCleanupObserver;
@@ -96,6 +73,36 @@ internal sealed partial class SharpLinkServer(
     private long _rejectedOneWayCalls;
     private long _oneWayAdmissionLogTimestamp;
     private int _oneWayAdmissionLogInitialized;
+
+    /// <summary>
+    /// Initializes a Server from the explicit composition materialized by
+    /// <see cref="SharpLinkServerBuilder"/>. It performs no mutable-option fallback, clone, catalog
+    /// lookup, listener/service-provider creation, or RuntimeContext materialization.
+    /// </summary>
+    internal SharpLinkServer(ServerRuntimeComposition composition)
+    {
+        ArgumentNullException.ThrowIfNull(composition);
+        _transportListener = composition.TransportListener;
+        _services = composition.Services;
+        _heartbeatCheckInterval = composition.HeartbeatCheckInterval;
+        _heartbeatTimeout = composition.HeartbeatTimeout;
+        _logger = composition.Logger;
+        _runtimeContext = composition.RuntimeContext;
+        _authenticator = composition.Authenticator;
+        _authenticationRequired = composition.AuthenticationRequired;
+        _protocolOptions = composition.ProtocolOptions;
+        _rpcSessionFlushOptions = composition.RpcSessionFlushOptions;
+        _serverInterceptors = composition.Interceptors;
+        _exceptionMapper = composition.ExceptionMapper;
+        _serviceProvider = composition.ServiceProvider;
+        _staticManifests = composition.StaticManifests;
+        _admissionController = composition.AdmissionController;
+        _shutdownPlan = composition.ShutdownPlan;
+        _maxConcurrentCallsPerConnection = _runtimeContext.FlowControl.MaxConcurrentCallsPerConnection;
+        _maxConcurrentCallsPerServer = _runtimeContext.FlowControl.MaxConcurrentCallsPerServer;
+        _serviceCleanup = composition.ServiceCleanup;
+        _frameworkTasks = CreateFrameworkTaskSupervisor(_logger);
+    }
 
     public SharpLinkHealthStatus HealthStatus => CurrentState switch
     {
@@ -143,7 +150,7 @@ internal sealed partial class SharpLinkServer(
         BeginDrainDynamicModules();
         _frameworkTasks.Seal();
         CancelForShutdown(_acceptCts, _logger, "AcceptCancellation");
-        var listenerDisposeTask = StartListenerDispose(transportListener);
+        var listenerDisposeTask = StartListenerDispose(_transportListener);
         var goAwayTask = SendGoAwayToAllAsync();
 
         try
@@ -297,7 +304,7 @@ internal sealed partial class SharpLinkServer(
         }
 
         var frameworkCleanupTask = Task.WhenAll(
-            StartListenerDispose(transportListener),
+            StartListenerDispose(_transportListener),
             DisposeAllSessionsAsync(),
             _frameworkTasks.DrainAsync());
         var frameworkCleanupCompleted = false;
@@ -882,12 +889,11 @@ internal sealed partial class SharpLinkServer(
         }
     }
 
-    private static FrameworkTaskSupervisor CreateFrameworkTaskSupervisor(ILoggerFactory loggerFactory)
+    private static FrameworkTaskSupervisor CreateFrameworkTaskSupervisor(ILogger logger)
     {
-        ArgumentNullException.ThrowIfNull(loggerFactory);
-        var frameworkLogger = loggerFactory.CreateLogger<SharpLinkServer>();
+        ArgumentNullException.ThrowIfNull(logger);
         return new FrameworkTaskSupervisor((operation, exception) =>
-            LogServerBackgroundLoopUnhandledException(frameworkLogger, operation, exception));
+            LogServerBackgroundLoopUnhandledException(logger, operation, exception));
     }
 
 }

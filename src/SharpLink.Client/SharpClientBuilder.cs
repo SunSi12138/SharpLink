@@ -31,6 +31,7 @@ public class SharpClientBuilder
     private ISharpLinkRetryPolicy? _retryPolicy;
     private ISharpLinkEndpointAdmissionPolicy? _endpointAdmissionPolicy;
     private bool _circuitBreakerConfigured;
+    private ISharpLinkReconnectJitter _reconnectJitter = RandomSharpLinkReconnectJitter.Instance;
 
     /// <summary>Creates a client builder with safe default runtime, heartbeat, timeout, and resilience settings.</summary>
     public static SharpClientBuilder Create() => new();
@@ -410,6 +411,16 @@ public class SharpClientBuilder
         return this;
     }
 
+    /// <summary>
+    /// Sets the reconnect-jitter strategy for deterministic internal lifecycle tests. Production
+    /// callers use the process-safe random strategy selected by the Builder default.
+    /// </summary>
+    internal SharpClientBuilder UseReconnectJitterForTesting(ISharpLinkReconnectJitter reconnectJitter)
+    {
+        Configure(() => _reconnectJitter = reconnectJitter ?? throw new ArgumentNullException(nameof(reconnectJitter)));
+        return this;
+    }
+
     /// <summary>Builds a normal client using one complete generated-manifest snapshot.</summary>
     public ISharpLinkClient Build()
         => Materialize(CompileForBuild(SharpLinkGeneratedManifestSource.FromCatalog));
@@ -503,7 +514,8 @@ public class SharpClientBuilder
             _endpointAdmissionPolicy,
             _authenticator,
             _loggerFactory ?? NullLoggerFactory.Instance,
-            [.. _interceptors]);
+            [.. _interceptors],
+            _reconnectJitter);
     }
 
     private ClientTopologyPlan CompileTopology(
@@ -651,13 +663,18 @@ public class SharpClientBuilder
                 }
 
             case DynamicResolverTopologyPlan dynamicTopology:
-                return CreateDynamicClusterClient(
-                    plan,
-                    plan.Resources.DynamicResolver ?? throw new InvalidOperationException(
-                        "A dynamic Client topology requires an endpoint resolver resource."),
-                    dynamicTopology.TransportFactory,
-                    plan.Cluster ?? throw new InvalidOperationException("A dynamic Client cluster requires cluster options."),
-                    runtimeContext);
+                {
+                    var resolver = plan.Resources.DynamicResolver ?? throw new InvalidOperationException(
+                        "A dynamic Client topology requires an endpoint resolver resource.");
+                    if (resolver is ISharpLinkRuntimeTimeProviderAwareResolver timeProviderAware)
+                        timeProviderAware.BindTimeProvider(runtimeContext.TimeProvider);
+                    return CreateDynamicClusterClient(
+                        plan,
+                        resolver,
+                        dynamicTopology.TransportFactory,
+                        plan.Cluster ?? throw new InvalidOperationException("A dynamic Client cluster requires cluster options."),
+                        runtimeContext);
+                }
 
             default:
                 throw new UnreachableException();
@@ -670,49 +687,28 @@ public class SharpClientBuilder
         SharpLinkRuntimeContext runtimeContext,
         SharpLinkConnectionPoolOptions connectionPool,
         SharpLinkEndpoint? fixedEndpoint)
-        => new SharpLinkClient(
-            transport,
-            plan.HeartbeatInterval,
-            plan.HeartbeatTimeout,
-            plan.LoggerFactory,
+        => CreateClient(
+            plan,
             runtimeContext,
-            plan.RequestTimeout,
-            plan.Authenticator,
-            runtimeContext.Protocol,
-            plan.RpcSessionFlushOptions,
-            connectionPool,
-            plan.CreateInterceptorSnapshot(),
-            fixedEndpoint: fixedEndpoint,
-            retryOptions: plan.Retry?.CreateOptions(),
-            retryPolicy: plan.RetryPolicy,
-            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(plan, runtimeContext),
-            staticManifests: plan.CreateStaticManifestSnapshot());
+            transport,
+            new FixedClientRuntimeTopologyComposition(fixedEndpoint),
+            connectionPool);
 
     private static ISharpLinkClient CreateClusterClient(
         ClientBuildPlan plan,
         StaticEndpointConfiguration[] configurations,
         ClientClusterPlan cluster,
         SharpLinkRuntimeContext runtimeContext)
-        => new SharpLinkClient(
-            configurations[0].TransportFactory,
-            plan.HeartbeatInterval,
-            plan.HeartbeatTimeout,
-            plan.LoggerFactory,
+        => CreateClient(
+            plan,
             runtimeContext,
-            plan.RequestTimeout,
-            plan.Authenticator,
-            runtimeContext.Protocol,
-            plan.RpcSessionFlushOptions,
-            new SharpLinkConnectionPoolOptions(),
-            plan.CreateInterceptorSnapshot(),
-            configurations,
-            cluster.CreateOptions(),
-            plan.LoadBalancingStrategy,
-            plan.EndpointSelector,
-            retryOptions: plan.Retry?.CreateOptions(),
-            retryPolicy: plan.RetryPolicy,
-            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(plan, runtimeContext),
-            staticManifests: plan.CreateStaticManifestSnapshot());
+            configurations[0].TransportFactory,
+            new StaticClientRuntimeTopologyComposition(
+                configurations,
+                cluster.CreateOptions(),
+                plan.LoadBalancingStrategy,
+                plan.EndpointSelector),
+            CreateDefaultConnectionPoolOptions());
 
     private static ISharpLinkClient CreateDynamicClusterClient(
         ClientBuildPlan plan,
@@ -720,27 +716,53 @@ public class SharpClientBuilder
         SharpLinkEndpointTransportFactory transportFactory,
         ClientClusterPlan cluster,
         SharpLinkRuntimeContext runtimeContext)
-        => new SharpLinkClient(
+        => CreateClient(
+            plan,
+            runtimeContext,
             DynamicClusterTransportPlaceholder.Instance,
+            new DynamicClientRuntimeTopologyComposition(
+                resolver,
+                transportFactory,
+                cluster.CreateOptions(),
+                plan.LoadBalancingStrategy,
+                plan.EndpointSelector),
+            CreateDefaultConnectionPoolOptions());
+
+    private static ISharpLinkClient CreateClient(
+        ClientBuildPlan plan,
+        SharpLinkRuntimeContext runtimeContext,
+        IClientTransportFactory transport,
+        ClientRuntimeTopologyComposition topology,
+        SharpLinkConnectionPoolOptions connectionPool)
+    {
+        var staticManifests = plan.CreateStaticManifestSnapshot();
+        var requestTimeout = plan.RequestTimeout;
+        var composition = new ClientRuntimeComposition(
+            transport,
+            topology,
+            runtimeContext,
+            staticManifests,
+            SharpLinkClient.BuildStaticProxySnapshot(staticManifests),
             plan.HeartbeatInterval,
             plan.HeartbeatTimeout,
-            plan.LoggerFactory,
-            runtimeContext,
-            plan.RequestTimeout,
+            requestTimeout.HasValue,
+            requestTimeout.GetValueOrDefault(),
             plan.Authenticator,
-            runtimeContext.Protocol,
+            runtimeContext.Protocol.CloneValidated(),
             plan.RpcSessionFlushOptions,
-            new SharpLinkConnectionPoolOptions(),
+            connectionPool,
             plan.CreateInterceptorSnapshot(),
-            dynamicResolver: resolver,
-            dynamicTransportFactory: transportFactory,
-            clusterOptions: cluster.CreateOptions(),
-            loadBalancingStrategy: plan.LoadBalancingStrategy,
-            endpointSelector: plan.EndpointSelector,
-            retryOptions: plan.Retry?.CreateOptions(),
-            retryPolicy: plan.RetryPolicy,
-            endpointAdmissionPolicy: CreateEndpointAdmissionPolicy(plan, runtimeContext),
-            staticManifests: plan.CreateStaticManifestSnapshot());
+            plan.Retry?.CreateOptions(),
+            plan.RetryPolicy,
+            CreateEndpointAdmissionPolicy(plan, runtimeContext),
+            plan.ReconnectJitter,
+            plan.LoggerFactory.CreateLogger<SharpLinkClient>());
+        var client = new SharpLinkClient(composition);
+        return client;
+    }
+
+    private static SharpLinkConnectionPoolOptions CreateDefaultConnectionPoolOptions()
+        => new SharpLinkConnectionPoolOptions().CloneValidated();
 
     private static ISharpLinkEndpointAdmissionPolicy? CreateEndpointAdmissionPolicy(
         ClientBuildPlan plan,

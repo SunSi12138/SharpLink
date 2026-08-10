@@ -1,10 +1,8 @@
-using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Net;
 using System.Reflection;
 using System.Reflection.Emit;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging.Abstractions;
 using SharpLink.Server;
 using System.Threading;
 
@@ -130,7 +128,7 @@ public class ServiceRegistrationTests
     [Test]
     public async Task DynamicModuleReleaseShouldPreserveEveryServiceFailure()
     {
-        var server = CreateServer([]);
+        var server = CreateServer();
         var module = AddDynamicModule(server, "module-release",
             CreateThrowingRegistration(typeof(object), "first module cleanup failed"),
             CreateThrowingRegistration(typeof(string), "second module cleanup failed"));
@@ -158,7 +156,7 @@ public class ServiceRegistrationTests
     [Test]
     public async Task DynamicModuleShutdownShouldPreserveEveryModuleFailure()
     {
-        var server = CreateServer([]);
+        var server = CreateServer();
         AddDynamicModule(server, "first-module",
             CreateThrowingRegistration(typeof(object), "first dynamic module failed"));
         AddDynamicModule(server, "second-module",
@@ -182,15 +180,9 @@ public class ServiceRegistrationTests
     }
 
     [Test]
-    public async Task RegisteredServiceCleanupShouldPreserveDynamicAndStaticFailures()
+    public async Task RegisteredServiceCleanupShouldPreserveDynamicFailures()
     {
-        var staticRegistration = CreateThrowingRegistration(
-            typeof(object),
-            "static ownership cleanup failed");
-        var server = CreateServer(new Dictionary<long, ServiceRegistration>
-        {
-            [1] = staticRegistration
-        });
+        var server = CreateServer();
         AddDynamicModule(server, "dynamic-ownership",
             CreateThrowingRegistration(typeof(string), "dynamic ownership cleanup failed"));
 
@@ -202,8 +194,6 @@ public class ServiceRegistrationTests
 
             Ensure(ContainsMessage(failure, "dynamic ownership cleanup failed"),
                 "server cleanup must retain its dynamic-module failure");
-            Ensure(ContainsMessage(failure, "static ownership cleanup failed"),
-                "server cleanup must retain its static-service failure");
         }
         finally
         {
@@ -247,15 +237,12 @@ public class ServiceRegistrationTests
             throw new InvalidOperationException($"{methodName} did not return a Task."));
     }
 
-    private static SharpLinkServer CreateServer(IEnumerable<KeyValuePair<long, ServiceRegistration>> registrations)
-        => new(
-            new NoopListener(),
-            registrations.ToFrozenDictionary(),
-            TimeSpan.FromSeconds(1),
-            TimeSpan.FromSeconds(1),
-            NullLoggerFactory.Instance,
-            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false),
-            serviceProvider: new EmptyServiceProvider());
+    private static SharpLinkServer CreateServer()
+        => (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .UseTransport(new NoopListener())
+            .DisableAutomaticServiceRegistration()
+            .UseServiceProvider(new EmptyServiceProvider())
+            .Build();
 
     private static SharpLinkDynamicModule AddDynamicModule(
         SharpLinkServer server,

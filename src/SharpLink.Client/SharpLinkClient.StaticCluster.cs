@@ -1,3 +1,5 @@
+using EndpointState = SharpLink.Client.StaticClientRuntimeEndpointState;
+
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
@@ -31,18 +33,14 @@ internal sealed partial class SharpLinkClient
 
         public StaticClusterRuntime(
             SharpLinkClient client,
-            StaticEndpointConfiguration[] configurations,
-            SharpLinkClusterOptions options,
-            SharpLinkLoadBalancingStrategy strategy,
-            ISharpLinkEndpointSelector? selector)
+            StaticClientRuntimeTopologyComposition topology)
         {
-            _client = client;
-            _options = options;
-            _strategy = strategy;
-            _selector = selector;
-            _endpoints = new EndpointState[configurations.Length];
-            for (var index = 0; index < configurations.Length; index++)
-                _endpoints[index] = new EndpointState(configurations[index], index);
+            _client = client ?? throw new ArgumentNullException(nameof(client));
+            ArgumentNullException.ThrowIfNull(topology);
+            _options = topology.ClusterOptions;
+            _strategy = topology.LoadBalancingStrategy;
+            _selector = topology.EndpointSelector;
+            _endpoints = topology.EndpointStates;
             SharpLinkTelemetry.AddClientActiveEndpoints(_endpoints.Length);
         }
 
@@ -867,65 +865,6 @@ internal sealed partial class SharpLinkClient
         {
             try { await connection.DisposeAsync().ConfigureAwait(false); }
             catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException) { }
-        }
-
-        private sealed class EndpointState
-        {
-            private readonly Func<int> _readyConnectionCountProvider;
-            private readonly Func<int> _activeCallCountProvider;
-            private ClientConnection[] _readyConnections = [];
-
-            public EndpointState(StaticEndpointConfiguration configuration, int index)
-            {
-                Configuration = configuration;
-                Index = index;
-                _readyConnectionCountProvider = GetReadyConnectionCount;
-                _activeCallCountProvider = GetActiveCallCount;
-            }
-
-            public StaticEndpointConfiguration Configuration { get; }
-            public int Index { get; }
-            public HashSet<ClientConnection> Connections { get; } = [];
-            public ClientConnection[] ReadyConnections => Volatile.Read(ref _readyConnections);
-            public Func<int> ReadyConnectionCountProvider => _readyConnectionCountProvider;
-            public Func<int> ActiveCallCountProvider => _activeCallCountProvider;
-            public int ConnectingCount { get; set; }
-            public int ReconnectDelayMilliseconds { get; set; } = 100;
-            public Task? ReconnectTask { get; set; }
-            public Task? ExpansionTask { get; set; }
-            public int NonRetiringConnectionCount
-            {
-                get
-                {
-                    var count = 0;
-                    foreach (var connection in Connections)
-                        if (connection.State == ClientConnectionState.Ready)
-                            count++;
-                    return count;
-                }
-            }
-
-            public int ActiveCallCount => GetActiveCallCount();
-
-            private int GetReadyConnectionCount() => ReadyConnections.Length;
-
-            private int GetActiveCallCount()
-            {
-                var connections = ReadyConnections;
-                var count = 0;
-                for (var index = 0; index < connections.Length; index++)
-                    count += connections[index].ActiveCallCount;
-                return count;
-            }
-
-            public void PublishReadyConnections()
-            {
-                var ready = new List<ClientConnection>(Connections.Count);
-                foreach (var connection in Connections)
-                    if (connection.CanAcceptCalls)
-                        ready.Add(connection);
-                Volatile.Write(ref _readyConnections, ready.ToArray());
-            }
         }
 
         private sealed class EndpointSelectionSnapshot(

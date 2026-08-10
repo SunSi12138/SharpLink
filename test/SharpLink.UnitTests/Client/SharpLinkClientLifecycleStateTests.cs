@@ -18,11 +18,7 @@ public class SharpLinkClientLifecycleStateTests
     public async Task ConcurrentConnectsShouldShareOneAttemptAndReadyLoopSet()
     {
         var transport = new TestClientTransportFactory();
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext());
+        await using var client = ClientBuilderTestHelper.Build(transport);
 
         var connects = new Task[16];
         for (var index = 0; index < connects.Length; index++)
@@ -39,11 +35,9 @@ public class SharpLinkClientLifecycleStateTests
     public async Task FutureWallClockActivityShouldNotSuppressHeartbeatTimeout()
     {
         var transport = new TestClientTransportFactory();
-        await using var client = new SharpLinkClient(
+        await using var client = ClientBuilderTestHelper.Build(
             transport,
-            TimeSpan.FromMilliseconds(10),
-            TimeSpan.FromMilliseconds(30),
-            CreateRuntimeContext());
+            builder => builder.UseHeartbeat(TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(30)));
         await client.ConnectAsync();
         var readyConnectionsField = typeof(SharpLinkClient).GetField(
             "_readyConnections",
@@ -64,15 +58,12 @@ public class SharpLinkClientLifecycleStateTests
         var provider = new ManualTimeProvider();
         var transport = new TestClientTransportFactory();
         var jitter = new FixedReconnectJitter(TimeSpan.FromMilliseconds(100));
-        using var context = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(provider)
-            .Build(includeGeneratedAssemblyCatalog: false);
-        var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(5),
-            TimeSpan.FromSeconds(10),
-            context,
-            reconnectJitter: jitter);
+        var client = ClientBuilderTestHelper.Build(transport, builder =>
+        {
+            builder.UseTimeProvider(provider);
+            builder.UseHeartbeat(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10));
+            builder.UseReconnectJitterForTesting(jitter);
+        });
         try
         {
             await client.ConnectAsync();
@@ -125,14 +116,10 @@ public class SharpLinkClientLifecycleStateTests
     [Test]
     public async Task FullSendQueueHeartbeatShouldWaitForCapacityWithoutClosingConnection()
     {
-        using var context = new SharpLinkRuntimeContextBuilder()
-            .Configure(static options => options.FlowControl.MaxSendQueueBytes = 1)
-            .Build();
-        await using var client = new SharpLinkClient(
+        await using var client = ClientBuilderTestHelper.Build(
             new NonConnectingFactory(),
-            TimeSpan.FromHours(1),
-            TimeSpan.FromHours(2),
-            runtimeContext: context);
+            builder => builder.UseRuntime(static options => options.FlowControl.MaxSendQueueBytes = 1));
+        var context = (SharpLinkRuntimeContext)client.RuntimeContext;
         var input = new Pipe();
         var output = new BlockingFlushPipeWriter();
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
@@ -236,11 +223,7 @@ public class SharpLinkClientLifecycleStateTests
     public async Task SharedFixedConnectShouldSurviveFirstWaiterCancellation()
     {
         var transport = new BlockingInitialTransportFactory();
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext());
+        await using var client = ClientBuilderTestHelper.Build(transport);
         using var cancellation = new CancellationTokenSource();
 
         var cancelledWaiter = client.ConnectAsync(cancellation.Token).AsTask();
@@ -294,11 +277,7 @@ public class SharpLinkClientLifecycleStateTests
     [Test]
     public async Task StopAsyncShouldNotRunShutdownCallbacksBeforeReturning()
     {
-        var client = new SharpLinkClient(
-            new TestClientTransportFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext());
+        var client = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
         var shutdownField = typeof(SharpLinkClient).GetField(
             "_shutdownCts",
             BindingFlags.Instance | BindingFlags.NonPublic)
@@ -337,11 +316,7 @@ public class SharpLinkClientLifecycleStateTests
     [Test]
     public async Task FailedConnectShouldPreservePrimaryAndCleanupFailures()
     {
-        await using var client = new SharpLinkClient(
-            new CleanupFailingHandshakeTransportFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext());
+        await using var client = ClientBuilderTestHelper.Build(new CleanupFailingHandshakeTransportFactory());
 
         Exception failure;
         try
@@ -365,11 +340,7 @@ public class SharpLinkClientLifecycleStateTests
     [Test]
     public async Task InitialConnectFailureShouldRemainExternallyObservedAndNotFailStopTwice()
     {
-        var client = new SharpLinkClient(
-            new NonConnectingFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext());
+        var client = ClientBuilderTestHelper.Build(new NonConnectingFactory());
 
         Exception connectFailure;
         try
@@ -398,16 +369,13 @@ public class SharpLinkClientLifecycleStateTests
     [Test]
     public async Task InitialPoolRollbackShouldPreserveConnectAndCleanupFailures()
     {
-        var client = new SharpLinkClient(
+        var client = ClientBuilderTestHelper.Build(
             new InitialPoolRollbackFailingTransportFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext(),
-            connectionPoolOptions: new SharpLinkConnectionPoolOptions
+            builder => builder.UseConnectionPool(options =>
             {
-                MinConnections = 2,
-                MaxConnections = 2
-            });
+                options.MinConnections = 2;
+                options.MaxConnections = 2;
+            }));
 
         Exception failure;
         try
@@ -442,11 +410,7 @@ public class SharpLinkClientLifecycleStateTests
     public async Task StopShouldBeIdempotentAndRejectLaterConnects()
     {
         var transport = new TestClientTransportFactory();
-        var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext());
+        var client = ClientBuilderTestHelper.Build(transport);
         await client.ConnectAsync();
 
         await Task.WhenAll(
@@ -468,11 +432,7 @@ public class SharpLinkClientLifecycleStateTests
     [Test]
     public async Task StopShouldPreserveAnUnexpectedCompletedFrameworkFailure()
     {
-        var client = new SharpLinkClient(
-            new NonConnectingFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext());
+        var client = ClientBuilderTestHelper.Build(new NonConnectingFactory());
         client.TrackFrameworkTask(
             Task.FromException(new InvalidOperationException("unexpected reconnect cleanup failure")),
             "ReconnectLoop");
@@ -498,11 +458,7 @@ public class SharpLinkClientLifecycleStateTests
     [Test]
     public async Task FrameworkSupervisorShouldNotHideAnUnexpectedNestedFailure()
     {
-        var client = new SharpLinkClient(
-            new NonConnectingFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext());
+        var client = ClientBuilderTestHelper.Build(new NonConnectingFactory());
         var expected = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var unexpected = new TaskCompletionSource(
@@ -566,11 +522,7 @@ public class SharpLinkClientLifecycleStateTests
     public async Task DisconnectedReadySessionShouldReconnectWithFreshConnection()
     {
         var transport = new SequenceClientTransportFactory();
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext());
+        await using var client = ClientBuilderTestHelper.Build(transport);
         await client.ConnectAsync();
         var first = await transport.WaitForConnectionAsync(0);
 
@@ -588,15 +540,12 @@ public class SharpLinkClientLifecycleStateTests
         var clock = new TimerArmObservingTimeProvider(provider, TimeSpan.FromMilliseconds(100));
         var transport = new SequenceClientTransportFactory();
         var jitter = new FixedReconnectJitter(TimeSpan.FromMilliseconds(100));
-        using var context = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(clock)
-            .Build(includeGeneratedAssemblyCatalog: false);
-        var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromHours(1),
-            TimeSpan.FromHours(2),
-            context,
-            reconnectJitter: jitter);
+        var client = ClientBuilderTestHelper.Build(transport, builder =>
+        {
+            builder.UseTimeProvider(clock);
+            builder.UseHeartbeat(TimeSpan.FromHours(1), TimeSpan.FromHours(2));
+            builder.UseReconnectJitterForTesting(jitter);
+        });
         try
         {
             await client.ConnectAsync();
@@ -639,15 +588,12 @@ public class SharpLinkClientLifecycleStateTests
         var clock = new TimerArmObservingTimeProvider(provider, TimeSpan.FromMilliseconds(100));
         var transport = new SequenceClientTransportFactory();
         var jitter = new FixedReconnectJitter(TimeSpan.FromMilliseconds(100));
-        using var context = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(clock)
-            .Build(includeGeneratedAssemblyCatalog: false);
-        var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromHours(1),
-            TimeSpan.FromHours(2),
-            context,
-            reconnectJitter: jitter);
+        var client = ClientBuilderTestHelper.Build(transport, builder =>
+        {
+            builder.UseTimeProvider(clock);
+            builder.UseHeartbeat(TimeSpan.FromHours(1), TimeSpan.FromHours(2));
+            builder.UseReconnectJitterForTesting(jitter);
+        });
         await client.ConnectAsync();
         GetOnlyReadyConnection(client).Session.NotifyDisconnected(
             new IOException("fixed reconnect stop race disconnect"));
@@ -683,25 +629,21 @@ public class SharpLinkClientLifecycleStateTests
             new StaticEndpointConfiguration(CreateEndpoint("static-first", 5001), firstFactory),
             new StaticEndpointConfiguration(CreateEndpoint("static-second", 5002), secondFactory)
         };
-        using var context = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(clock)
-            .Build(includeGeneratedAssemblyCatalog: false);
-        var client = new SharpLinkClient(
-            new NonConnectingFactory(),
-            TimeSpan.FromHours(1),
-            TimeSpan.FromHours(2),
-            context,
-            staticEndpoints: endpoints,
-            clusterOptions: new SharpLinkClusterOptions
+        var client = ClientBuilderTestHelper.BuildStatic(endpoints, builder =>
+        {
+            builder.UseTimeProvider(clock);
+            builder.UseHeartbeat(TimeSpan.FromHours(1), TimeSpan.FromHours(2));
+            builder.UseCluster(options =>
             {
                 // A one-endpoint target makes the first configured endpoint the
                 // deterministic initial dial owner. The second configuration stays
                 // present to prove its reconnect worker is not spuriously started.
-                MinReadyEndpoints = 1,
-                MaxConnections = 2,
-                MaxConnectionsPerEndpoint = 1
-            },
-            reconnectJitter: jitter);
+                options.MinReadyEndpoints = 1;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            });
+            builder.UseReconnectJitterForTesting(jitter);
+        });
         try
         {
             await client.ConnectAsync();
@@ -744,24 +686,19 @@ public class SharpLinkClientLifecycleStateTests
         var resolver = new ChannelSnapshotResolver(new SharpLinkEndpointSnapshot(
             1,
             [CreateEndpoint("dynamic-provider", 5003)]));
-        using var context = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(clock)
-            .Build(includeGeneratedAssemblyCatalog: false);
-        var client = new SharpLinkClient(
-            new NonConnectingFactory(),
-            TimeSpan.FromHours(1),
-            TimeSpan.FromHours(2),
-            context,
-            dynamicResolver: resolver,
-            dynamicTransportFactory: _ => transport,
-            clusterOptions: new SharpLinkClusterOptions
+        var client = ClientBuilderTestHelper.BuildDynamic(resolver, _ => transport, builder =>
+        {
+            builder.UseTimeProvider(clock);
+            builder.UseHeartbeat(TimeSpan.FromHours(1), TimeSpan.FromHours(2));
+            builder.UseCluster(options =>
             {
-                MaxEndpoints = 1,
-                MinReadyEndpoints = 1,
-                MaxConnections = 1,
-                MaxConnectionsPerEndpoint = 1
-            },
-            reconnectJitter: jitter);
+                options.MaxEndpoints = 1;
+                options.MinReadyEndpoints = 1;
+                options.MaxConnections = 1;
+                options.MaxConnectionsPerEndpoint = 1;
+            });
+            builder.UseReconnectJitterForTesting(jitter);
+        });
         try
         {
             await client.ConnectAsync();
@@ -801,11 +738,7 @@ public class SharpLinkClientLifecycleStateTests
     {
         const int immediatelyDrainedReconnects = 8;
         var transport = new SequenceClientTransportFactory(immediatelyDrainedReconnects);
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext());
+        await using var client = ClientBuilderTestHelper.Build(transport);
         await client.ConnectAsync();
         var first = await transport.WaitForConnectionAsync(0);
 
@@ -825,17 +758,15 @@ public class SharpLinkClientLifecycleStateTests
     {
         var transport = new SequenceClientTransportFactory(failedConnectsAfterInitial: 1);
         var loggerFactory = new CaptureLoggerFactory();
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            loggerFactory,
-            CreateRuntimeContext(),
-            connectionPoolOptions: new SharpLinkConnectionPoolOptions
+        await using var client = ClientBuilderTestHelper.Build(transport, builder =>
+        {
+            builder.UseLoggerFactory(loggerFactory);
+            builder.UseConnectionPool(options =>
             {
-                MinConnections = 1,
-                MaxConnections = 2
+                options.MinConnections = 1;
+                options.MaxConnections = 2;
             });
+        });
         await client.ConnectAsync();
         var firstConnection = await transport.WaitForConnectionAsync(0);
 
@@ -868,16 +799,12 @@ public class SharpLinkClientLifecycleStateTests
     public async Task ConnectShouldEstablishConfiguredMinimumPoolSize()
     {
         var transport = new SequenceClientTransportFactory();
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext(),
-            connectionPoolOptions: new SharpLinkConnectionPoolOptions
+        await using var client = ClientBuilderTestHelper.Build(transport, builder =>
+            builder.UseConnectionPool(options =>
             {
-                MinConnections = 2,
-                MaxConnections = 2
-            });
+                options.MinConnections = 2;
+                options.MaxConnections = 2;
+            }));
 
         await client.ConnectAsync();
         Ensure(transport.ConnectCount == 2, "minimum pool should be ready when ConnectAsync returns");
@@ -887,11 +814,7 @@ public class SharpLinkClientLifecycleStateTests
     [Test]
     public async Task ConcurrentClientConnectionDisposersShouldAwaitPhysicalCleanup()
     {
-        await using var owner = new SharpLinkClient(
-            new NonConnectingFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false));
+        await using var owner = ClientBuilderTestHelper.Build(new NonConnectingFactory());
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         var transport = new BlockingDisposeConnection();
         var connection = new ClientConnection(
@@ -913,11 +836,7 @@ public class SharpLinkClientLifecycleStateTests
     [Test]
     public async Task CancellationCallbackFailureMustNotStrandPendingCalls()
     {
-        await using var owner = new SharpLinkClient(
-            new NonConnectingFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false));
+        await using var owner = ClientBuilderTestHelper.Build(new NonConnectingFactory());
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         using var cancellation = new CancellationTokenSource();
         using var callback = cancellation.Token.Register(
@@ -954,11 +873,7 @@ public class SharpLinkClientLifecycleStateTests
     public async Task EndpointSelectionKernelShouldHandleEmptyAndSingleConnectionSnapshots()
     {
         Ensure(EndpointSelectionKernel.SelectConnection([]) is null, "empty connection snapshot");
-        await using var owner = new SharpLinkClient(
-            new TestClientTransportFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false));
+        await using var owner = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         await using var connection = new ClientConnection(
             owner,
@@ -983,12 +898,8 @@ public class SharpLinkClientLifecycleStateTests
     public async Task SecondHandshakeResponseShouldTerminateThePublishedSession()
     {
         var transport = new TestClientTransportFactory();
-        using var context = CreateRuntimeContext();
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            context);
+        await using var client = ClientBuilderTestHelper.Build(transport);
+        var context = (SharpLinkRuntimeContext)client.RuntimeContext;
         await client.ConnectAsync();
         var readyConnectionsField = typeof(SharpLinkClient).GetField(
             "_readyConnections",
@@ -1028,11 +939,7 @@ public class SharpLinkClientLifecycleStateTests
     [Test]
     public async Task PowerOfTwoChoiceShouldSelectLowerActiveConnection()
     {
-        await using var owner = new SharpLinkClient(
-            new TestClientTransportFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false));
+        await using var owner = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         await using var first = new ClientConnection(
             owner,
@@ -1065,11 +972,7 @@ public class SharpLinkClientLifecycleStateTests
     [Test]
     public async Task ClusterSelectionShouldFallBackFromAStalePooledConnection()
     {
-        await using var owner = new SharpLinkClient(
-            new TestClientTransportFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false));
+        await using var owner = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         await using var stale = new ClientConnection(
             owner,
@@ -1105,12 +1008,9 @@ public class SharpLinkClientLifecycleStateTests
     public async Task AdmissionRetryAfterShouldSurviveAStaleGrantedConnection()
     {
         var policy = new AdmitFirstRejectSecondPolicy(TimeSpan.FromMilliseconds(100));
-        await using var client = new SharpLinkClient(
+        await using var client = ClientBuilderTestHelper.Build(
             new TestClientTransportFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext(),
-            endpointAdmissionPolicy: policy);
+            builder => builder.UseEndpointAdmission(policy));
         var stateType = typeof(SharpLinkClient).GetNestedType("AttemptOutcomeState", BindingFlags.NonPublic)
             ?? throw new Exception("cannot find attempt outcome state");
         var method = new RpcMethodDescriptor(1, 2, RpcMethodKind.Unary, true, false, false, null);
@@ -1146,16 +1046,12 @@ public class SharpLinkClientLifecycleStateTests
     public async Task GoAwayShouldDrainOnlyItsConnectionAndRefillMinimumPool()
     {
         var transport = new SequenceClientTransportFactory();
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext(),
-            connectionPoolOptions: new SharpLinkConnectionPoolOptions
+        await using var client = ClientBuilderTestHelper.Build(transport, builder =>
+            builder.UseConnectionPool(options =>
             {
-                MinConnections = 2,
-                MaxConnections = 2
-            });
+                options.MinConnections = 2;
+                options.MaxConnections = 2;
+            }));
         await client.ConnectAsync();
         var drainingConnection = await transport.WaitForConnectionAsync(0);
         await InjectGoAwayAsync(drainingConnection);
@@ -1181,13 +1077,10 @@ public class SharpLinkClientLifecycleStateTests
             BreakDuration = TimeSpan.FromSeconds(5),
             HalfOpenMaxCalls = 1
         }.CloneValidated());
-        await using var client = new SharpLinkClient(
+        await using var client = ClientBuilderTestHelper.BuildEndpoint(
+            endpoint,
             transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext(),
-            fixedEndpoint: endpoint,
-            endpointAdmissionPolicy: breaker);
+            builder => builder.UseEndpointAdmission(breaker));
         await client.ConnectAsync();
 
         await InjectGoAwayAsync(transport.Connection);
@@ -1198,9 +1091,6 @@ public class SharpLinkClientLifecycleStateTests
             () => !breaker.TryAcquire(candidate, method).IsAllowed,
             () => "GoAway was not recorded as an endpoint infrastructure failure");
     }
-
-    private static SharpLinkRuntimeContext CreateRuntimeContext()
-        => new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
 
     private static ClientConnection GetOnlyReadyConnection(SharpLinkClient client)
     {

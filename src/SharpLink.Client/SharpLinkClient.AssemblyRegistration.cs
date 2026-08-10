@@ -322,7 +322,7 @@ internal sealed partial class SharpLinkClient
         throw new System.Diagnostics.UnreachableException();
     }
 
-    private static FrozenDictionary<Type, ClientProxyRegistration> BuildStaticProxySnapshot(
+    internal static FrozenDictionary<Type, ClientProxyRegistration> BuildStaticProxySnapshot(
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests)
     {
         var registrations = new Dictionary<Type, ClientProxyRegistration>();
@@ -529,7 +529,7 @@ internal sealed partial class SharpLinkClient
             ExistingFingerprint: existingContract.Fingerprint,
             IncomingFingerprint: incomingContract.Fingerprint);
 
-    private sealed record ClientProxyRegistration(
+    internal sealed record ClientProxyRegistration(
         SharpLinkGeneratedContractDescriptor Descriptor,
         SharpLinkDynamicModule? Module);
 

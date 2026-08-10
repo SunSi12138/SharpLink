@@ -39,20 +39,15 @@ internal sealed partial class SharpLinkClient
 
         public DynamicClusterRuntime(
             SharpLinkClient client,
-            ISharpLinkEndpointResolver resolver,
-            SharpLinkEndpointTransportFactory transportFactory,
-            SharpLinkClusterOptions options,
-            SharpLinkLoadBalancingStrategy strategy,
-            ISharpLinkEndpointSelector? selector)
+            DynamicClientRuntimeTopologyComposition topology)
         {
-            _client = client;
-            if (resolver is ISharpLinkRuntimeTimeProviderAwareResolver timeProviderAware)
-                timeProviderAware.BindTimeProvider(client._runtimeContext.TimeProvider);
-            _resolver = resolver;
-            _transportFactory = transportFactory;
-            _options = options;
-            _strategy = strategy;
-            _selector = selector;
+            _client = client ?? throw new ArgumentNullException(nameof(client));
+            ArgumentNullException.ThrowIfNull(topology);
+            _resolver = topology.Resolver;
+            _transportFactory = topology.TransportFactory;
+            _options = topology.ClusterOptions;
+            _strategy = topology.LoadBalancingStrategy;
+            _selector = topology.EndpointSelector;
         }
 
         public int ReadyConnectionCount
