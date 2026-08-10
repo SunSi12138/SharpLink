@@ -33,6 +33,10 @@ public class DispatcherPoolAllocationBenchmarks
 {
     private const int MaxRetainedDispatchers = 1_024;
     private const int TotalOperations = 131_072;
+    // IterationSetup makes BenchmarkDotNet execute one benchmark invocation per iteration.
+    // Keep each invocation in the steady state long enough for a meaningful timing sample.
+    private const int BatchesPerInvocation = 32;
+    private const int OperationsPerInvocation = TotalOperations * BatchesPerInvocation;
 
     private static readonly PoolItemCodec SCodec = new();
 
@@ -112,15 +116,44 @@ public class DispatcherPoolAllocationBenchmarks
     }
 
     /// <summary>
-    /// Performs 131,072 total rent/return cycles. BenchmarkDotNet reports time and allocation per cycle.
+    /// Performs a batched steady-state sequence of rent/return cycles.
     /// </summary>
-    [Benchmark(OperationsPerInvoke = TotalOperations)]
+    /// <remarks>
+    /// <para>
+    /// <see cref="IterationSetupAttribute"/> forces BenchmarkDotNet to one invocation per
+    /// iteration, so the runner cannot extend a sample by invoking this method repeatedly.
+    /// Repeating the same <see cref="WorkerCommand.Run"/> command here keeps the worker-held
+    /// leases established by iteration setup while making each timed sample long enough to
+    /// stabilize. <see cref="BenchmarkAttribute.OperationsPerInvoke"/> still normalizes time
+    /// and allocations to one rent/return cycle.
+    /// </para>
+    /// <para>
+    /// The accumulated-operation invariant intentionally fails if a runner ever invokes this
+    /// method more than once per setup, rather than silently reporting a mis-normalized result.
+    /// </para>
+    /// </remarks>
+    [Benchmark(OperationsPerInvoke = OperationsPerInvocation)]
     public int RentCompleteDisposeReturn()
     {
-        ExecuteCommand(WorkerCommand.Run);
+        for (var batch = 0; batch < BatchesPerInvocation; batch++)
+        {
+            ExecuteCommand(WorkerCommand.Run);
+
+            var expectedCompleted = checked((batch + 1) * TotalOperations);
+            var completedAfterBatch = Volatile.Read(ref _completedOperations);
+            if (completedAfterBatch != expectedCompleted)
+            {
+                throw new InvalidOperationException(
+                    $"Only {completedAfterBatch}/{expectedCompleted} pool operations completed in batch {batch + 1}.");
+            }
+        }
+
         var completed = Volatile.Read(ref _completedOperations);
-        if (completed != TotalOperations)
-            throw new InvalidOperationException($"Only {completed}/{TotalOperations} pool operations completed.");
+        if (completed != OperationsPerInvocation)
+        {
+            throw new InvalidOperationException(
+                $"Only {completed}/{OperationsPerInvocation} pool operations completed.");
+        }
         return completed;
     }
 

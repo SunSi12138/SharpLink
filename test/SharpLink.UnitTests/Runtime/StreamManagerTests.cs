@@ -691,6 +691,249 @@ public class StreamManagerTests
             "the final credit flush must follow the last acquired dispatch");
     }
 
+    [Test]
+    public async Task DetachBeforeWaitShouldCompleteSynchronouslyWithoutLostWakeup()
+    {
+        var manager = new StreamManager();
+        var dispatcher = new CapturingLeaseDispatcher();
+        manager.Register(60, dispatcher);
+        var state = dispatcher.DispatchState;
+
+        manager.Unregister(60);
+
+        var detached = state.WaitForDetachedAsync(CancellationToken.None);
+        Ensure(detached.IsCompletedSuccessfully,
+            "an already-detached entry must not wait for a new completion path");
+        await detached;
+        Ensure(dispatcher.DispatchesDrainedCount == 1,
+            "the detached entry must notify its lease exactly once");
+    }
+
+    [Test]
+    public async Task DetachWaitShouldCompleteEveryRegisteredWaiterOnce()
+    {
+        var manager = new StreamManager();
+        var dispatcher = new CapturingLeaseDispatcher();
+        manager.Register(61, dispatcher);
+        var state = dispatcher.DispatchState;
+
+        var first = state.WaitForDetachedAsync(CancellationToken.None).AsTask();
+        var second = state.WaitForDetachedAsync(CancellationToken.None).AsTask();
+        Ensure(!first.IsCompleted && !second.IsCompleted,
+            "registered waiters must remain pending until terminal detach");
+        Ensure(ReferenceEquals(first, second),
+            "every waiter for one entry must share the same lazy detach completion");
+
+        manager.Unregister(61);
+
+        await Task.WhenAll(first, second).WaitAsync(RaceCoordinationTimeout);
+        Ensure(dispatcher.DispatchesDrainedCount == 1,
+            "one detach transition must notify the dispatcher lease once");
+    }
+
+    [Test]
+    public async Task DetachRacingWaiterRegistrationShouldNotLoseWakeup()
+    {
+        for (var iteration = 0; iteration < 128; iteration++)
+        {
+            var manager = new StreamManager();
+            var dispatcher = new CapturingLeaseDispatcher();
+            var requestId = iteration + 2000;
+            manager.Register(requestId, dispatcher);
+            var state = dispatcher.DispatchState;
+            using var start = new ManualResetEventSlim();
+            var wait = Task.Run(async () =>
+            {
+                start.Wait();
+                await state.WaitForDetachedAsync(CancellationToken.None);
+            });
+            var detach = Task.Run(() =>
+            {
+                start.Wait();
+                manager.Unregister(requestId);
+            });
+
+            start.Set();
+            await Task.WhenAll(wait, detach).WaitAsync(RaceCoordinationTimeout);
+            Ensure(state.IsDetached,
+                "the detach/register race must publish a terminal completion to its waiter");
+            Ensure(dispatcher.DispatchesDrainedCount == 1,
+                "the detach/register race must retain one dispatcher-drained notification");
+        }
+    }
+
+    [Test]
+    public async Task DetachWaitCancellationShouldNotPreventLaterDetach()
+    {
+        var manager = new StreamManager();
+        var dispatcher = new CapturingLeaseDispatcher();
+        manager.Register(62, dispatcher);
+        var state = dispatcher.DispatchState;
+        using var cancellation = new CancellationTokenSource();
+        var waiting = state.WaitForDetachedAsync(cancellation.Token).AsTask();
+
+        cancellation.Cancel();
+
+        try
+        {
+            await waiting;
+            throw new Exception("expected detach wait cancellation");
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+
+        manager.Unregister(62);
+        await state.WaitForDetachedAsync(CancellationToken.None);
+        Ensure(state.IsDetached,
+            "cancelling one waiter must not change the entry terminal detach state");
+    }
+
+    [Test]
+    public async Task DetachAndCancellationRaceShouldNeverLoseWakeupOrDoubleSignal()
+    {
+        for (var iteration = 0; iteration < 128; iteration++)
+        {
+            var manager = new StreamManager();
+            var dispatcher = new CapturingLeaseDispatcher();
+            var requestId = iteration + 1000;
+            manager.Register(requestId, dispatcher);
+            var state = dispatcher.DispatchState;
+            using var cancellation = new CancellationTokenSource();
+            using var start = new ManualResetEventSlim();
+            var waiting = state.WaitForDetachedAsync(cancellation.Token).AsTask();
+            var cancel = Task.Run(() =>
+            {
+                start.Wait();
+                cancellation.Cancel();
+            });
+            var detach = Task.Run(() =>
+            {
+                start.Wait();
+                manager.Unregister(requestId);
+            });
+
+            start.Set();
+            try
+            {
+                await waiting.WaitAsync(RaceCoordinationTimeout);
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+            }
+
+            await Task.WhenAll(cancel, detach).WaitAsync(RaceCoordinationTimeout);
+            Ensure(state.IsDetached,
+                "the detach winner must publish terminal state despite cancellation racing it");
+            Ensure(dispatcher.DispatchesDrainedCount == 1,
+                "the detach race must retain exactly one dispatcher-drained notification");
+        }
+    }
+
+    [Test]
+    public async Task DetachCompletionShouldFollowTheFinalCreditCallback()
+    {
+        var events = new List<string>();
+        var creditEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCredit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var manager = new StreamManager(
+            new RuntimeConcurrencyOptions(),
+            null,
+            null,
+            (_, _) =>
+            {
+                events.Add("credit-enqueued");
+                creditEntered.TrySetResult();
+                releaseCredit.Task.GetAwaiter().GetResult();
+            });
+        var dispatcher = new CapturingLeaseDispatcher();
+        manager.Register(63, dispatcher);
+        var detached = dispatcher.DispatchState.WaitForDetachedAsync(CancellationToken.None).AsTask();
+
+        var unregister = Task.Run(() => manager.Unregister(63));
+        await creditEntered.Task.WaitAsync(RaceCoordinationTimeout);
+        Ensure(!detached.IsCompleted,
+            "detach must remain unpublished while the final receive-credit callback is active");
+
+        releaseCredit.TrySetResult();
+        await unregister.WaitAsync(RaceCoordinationTimeout);
+        await detached.WaitAsync(RaceCoordinationTimeout);
+        events.Add("detached");
+        Ensure(events.SequenceEqual(["credit-enqueued", "detached"]),
+            "the final receive-credit callback must complete before detach is observable");
+    }
+
+    [Test]
+    public async Task DetachShouldNotReturnAnActiveDispatcherLeaseBeforeItsLastRelease()
+    {
+        var manager = new StreamManager();
+        var dispatcher = new GatedLeaseDispatcher();
+        manager.Register(64, dispatcher);
+        var state = dispatcher.DispatchState;
+
+        var dispatch = manager.DispatchChunkAsync(
+            64,
+            new ReadOnlySequence<byte>(new byte[] { 1 })).AsTask();
+        await dispatcher.DispatchEntered.WaitAsync(RaceCoordinationTimeout);
+
+        manager.Unregister(64);
+        await state.WaitForDetachedAsync(CancellationToken.None);
+        Ensure(dispatcher.DispatchesDrainedCount == 0,
+            "detach alone must not return a lease while an acquired dispatch remains active");
+
+        dispatcher.ReleaseDispatch();
+        await dispatch.WaitAsync(RaceCoordinationTimeout);
+        await dispatcher.DispatchesDrained.WaitAsync(RaceCoordinationTimeout);
+        Ensure(dispatcher.DispatchesDrainedCount == 1,
+            "the final active dispatch release must return the detached dispatcher lease once");
+    }
+
+    [Test]
+    public async Task DispatchDrainAndDetachWaitsShouldRemainIndependentWhenSharingCompletions()
+    {
+        var finalCreditEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFinalCredit = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var manager = new StreamManager(
+            new RuntimeConcurrencyOptions(),
+            null,
+            null,
+            (_, _) =>
+            {
+                finalCreditEntered.TrySetResult();
+                releaseFinalCredit.Task.GetAwaiter().GetResult();
+            });
+        var dispatcher = new GatedLeaseDispatcher();
+        manager.Register(65, dispatcher);
+        var state = dispatcher.DispatchState;
+
+        var dispatch = manager.DispatchChunkAsync(
+            65,
+            new ReadOnlySequence<byte>(new byte[] { 1 })).AsTask();
+        await dispatcher.DispatchEntered.WaitAsync(RaceCoordinationTimeout);
+
+        var dispatchDrain = manager.CompleteStreamAfterDispatchesAsync(
+            65,
+            0,
+            new OperationCanceledException()).AsTask();
+        var stateDispatchDrain = state.WaitForDispatchesDrainedAsync().AsTask();
+        var detached = state.WaitForDetachedAsync(CancellationToken.None).AsTask();
+        Ensure(!dispatchDrain.IsCompleted && !stateDispatchDrain.IsCompleted && !detached.IsCompleted,
+            "the distinct drain and detach signals must both remain pending before the acquired dispatch releases");
+
+        dispatcher.ReleaseDispatch();
+        await finalCreditEntered.Task.WaitAsync(RaceCoordinationTimeout);
+        await stateDispatchDrain.WaitAsync(RaceCoordinationTimeout);
+        Ensure(!dispatchDrain.IsCompleted && !detached.IsCompleted && !state.IsDetached,
+            "the dispatch-drained signal must not complete detach before the final credit callback reaches Detach");
+
+        releaseFinalCredit.TrySetResult();
+        await Task.WhenAll(dispatch, dispatchDrain, stateDispatchDrain, detached).WaitAsync(RaceCoordinationTimeout);
+        Ensure(state.IsDetached && dispatcher.DispatchesDrainedCount == 1,
+            "draining the acquired dispatch must finalize both distinct signals and return the lease once");
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
@@ -755,6 +998,101 @@ public class StreamManagerTests
         }
 
         public void Release() => _release.TrySetResult();
+    }
+
+    private sealed class CapturingLeaseDispatcher : IStreamDispatcher, IStreamDispatchLease
+    {
+        private readonly TaskCompletionSource _dispatchesDrained =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _dispatchesDrainedCount;
+
+        internal IStreamDispatchState DispatchState { get; private set; } = null!;
+
+        internal int DispatchesDrainedCount => Volatile.Read(ref _dispatchesDrainedCount);
+
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+        {
+            _ = payload;
+            return ValueTask.CompletedTask;
+        }
+
+        public void Complete(bool isError, string? errorMessage)
+        {
+            _ = isError;
+            _ = errorMessage;
+        }
+
+        public void Complete(Exception? exception) => _ = exception;
+
+        void IStreamDispatchLease.BindDispatchState(IStreamDispatchState state)
+            => DispatchState = state;
+
+        ValueTask IStreamDispatchLease.DispatchAcquiredAsync(
+            ReadOnlySequence<byte> payload,
+            int encodedByteCount)
+        {
+            _ = encodedByteCount;
+            return DispatchAsync(payload);
+        }
+
+        void IStreamDispatchLease.OnDispatchesDrained()
+        {
+            Interlocked.Increment(ref _dispatchesDrainedCount);
+            _dispatchesDrained.TrySetResult();
+        }
+    }
+
+    private sealed class GatedLeaseDispatcher : IStreamDispatcher, IStreamDispatchLease
+    {
+        private readonly TaskCompletionSource _dispatchEntered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseDispatch =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _dispatchesDrained =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _dispatchesDrainedCount;
+
+        internal IStreamDispatchState DispatchState { get; private set; } = null!;
+
+        internal Task DispatchEntered => _dispatchEntered.Task;
+
+        internal Task DispatchesDrained => _dispatchesDrained.Task;
+
+        internal int DispatchesDrainedCount => Volatile.Read(ref _dispatchesDrainedCount);
+
+        public async ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+        {
+            _ = payload;
+            _dispatchEntered.TrySetResult();
+            await _releaseDispatch.Task.ConfigureAwait(false);
+        }
+
+        public void Complete(bool isError, string? errorMessage)
+        {
+            _ = isError;
+            _ = errorMessage;
+        }
+
+        public void Complete(Exception? exception) => _ = exception;
+
+        internal void ReleaseDispatch() => _releaseDispatch.TrySetResult();
+
+        void IStreamDispatchLease.BindDispatchState(IStreamDispatchState state)
+            => DispatchState = state;
+
+        ValueTask IStreamDispatchLease.DispatchAcquiredAsync(
+            ReadOnlySequence<byte> payload,
+            int encodedByteCount)
+        {
+            _ = encodedByteCount;
+            return DispatchAsync(payload);
+        }
+
+        void IStreamDispatchLease.OnDispatchesDrained()
+        {
+            Interlocked.Increment(ref _dispatchesDrainedCount);
+            _dispatchesDrained.TrySetResult();
+        }
     }
 
     private sealed class ThrowingReplayDispatcher : IStreamConsumptionAwareDispatcher

@@ -281,7 +281,7 @@ public class StreamManager : IStreamManager
         RequestDispatchers requestDispatchers,
         DispatcherEntry entry)
     {
-        await entry.WaitForDispatchesAsync().ConfigureAwait(false);
+        await entry.WaitForDispatchesDrainedAsync().ConfigureAwait(false);
         FinalizeLocallyTerminatedStream(requestId, streamId, requestDispatchers, entry);
     }
 
@@ -726,7 +726,8 @@ public class StreamManager : IStreamManager
         private const int ClosedMask = int.MinValue;
         private const int CountMask = int.MaxValue;
         private int _state;
-        private TaskCompletionSource? _dispatchesDrained;
+        // Lazily shares the distinct drain/detach completions without growing common entries.
+        private DispatcherEntryCompletions? _completions;
 
         internal DispatcherEntry(IStreamDispatcher dispatcher)
         {
@@ -764,31 +765,40 @@ public class StreamManager : IStreamManager
                 throw new InvalidOperationException("Stream dispatcher lease underflowed.");
             if ((state & ClosedMask) != 0 && (state & CountMask) == 0)
             {
-                Volatile.Read(ref _dispatchesDrained)?.TrySetResult();
+                Volatile.Read(ref _completions)?.SignalDispatchesDrained();
                 if (IsDetached && Dispatcher is IStreamDispatchLease lease)
                     lease.OnDispatchesDrained();
             }
         }
 
-        internal ValueTask WaitForDispatchesAsync()
+        public ValueTask WaitForDispatchesDrainedAsync()
         {
             if (!HasActiveDispatches)
                 return ValueTask.CompletedTask;
 
-            var completion = Volatile.Read(ref _dispatchesDrained);
-            if (completion is null)
+            var completions = GetOrCreateCompletions();
+            if (!HasActiveDispatches)
             {
-                var created = new TaskCompletionSource(
-                    TaskCreationOptions.RunContinuationsAsynchronously);
-                completion = Interlocked.CompareExchange(
-                    ref _dispatchesDrained,
-                    created,
-                    null) ?? created;
+                completions.SignalDispatchesDrained();
+                return ValueTask.CompletedTask;
             }
 
-            if (!HasActiveDispatches)
-                completion.TrySetResult();
-            return new ValueTask(completion.Task);
+            return completions.WaitForDispatchesDrainedAsync();
+        }
+
+        public ValueTask WaitForDetachedAsync(CancellationToken cancellationToken)
+        {
+            if (IsDetached)
+                return ValueTask.CompletedTask;
+
+            var completions = GetOrCreateCompletions();
+            if (IsDetached)
+            {
+                completions.SignalDetached();
+                return ValueTask.CompletedTask;
+            }
+
+            return completions.WaitForDetachedAsync(cancellationToken);
         }
 
         public void Close()
@@ -808,8 +818,75 @@ public class StreamManager : IStreamManager
             Close();
             if (Interlocked.Exchange(ref _detached, 1) != 0)
                 return;
+            Volatile.Read(ref _completions)?.SignalDetached();
             if (!HasActiveDispatches && Dispatcher is IStreamDispatchLease lease)
                 lease.OnDispatchesDrained();
+        }
+
+        private DispatcherEntryCompletions GetOrCreateCompletions()
+        {
+            var completions = Volatile.Read(ref _completions);
+            if (completions is not null)
+                return completions;
+
+            var created = new DispatcherEntryCompletions();
+            return Interlocked.CompareExchange(ref _completions, created, null) ?? created;
+        }
+
+        private sealed class DispatcherEntryCompletions
+        {
+            private int _dispatchesDrainedSignaled;
+            private int _detachedSignaled;
+            private TaskCompletionSource? _dispatchesDrainedCompletion;
+            private TaskCompletionSource? _detachedCompletion;
+
+            internal void SignalDispatchesDrained()
+            {
+                if (Interlocked.Exchange(ref _dispatchesDrainedSignaled, 1) == 0)
+                    Volatile.Read(ref _dispatchesDrainedCompletion)?.TrySetResult();
+            }
+
+            internal void SignalDetached()
+            {
+                if (Interlocked.Exchange(ref _detachedSignaled, 1) == 0)
+                    Volatile.Read(ref _detachedCompletion)?.TrySetResult();
+            }
+
+            internal ValueTask WaitForDispatchesDrainedAsync()
+            {
+                if (Volatile.Read(ref _dispatchesDrainedSignaled) != 0)
+                    return ValueTask.CompletedTask;
+
+                var completion = GetOrCreateCompletion(ref _dispatchesDrainedCompletion);
+                if (Volatile.Read(ref _dispatchesDrainedSignaled) != 0)
+                    completion.TrySetResult();
+                return new ValueTask(completion.Task);
+            }
+
+            internal ValueTask WaitForDetachedAsync(CancellationToken cancellationToken)
+            {
+                if (Volatile.Read(ref _detachedSignaled) != 0)
+                    return ValueTask.CompletedTask;
+
+                var completion = GetOrCreateCompletion(ref _detachedCompletion);
+                if (Volatile.Read(ref _detachedSignaled) != 0)
+                    completion.TrySetResult();
+                return cancellationToken.CanBeCanceled
+                    ? new ValueTask(completion.Task.WaitAsync(cancellationToken))
+                    : new ValueTask(completion.Task);
+            }
+
+            private static TaskCompletionSource GetOrCreateCompletion(
+                ref TaskCompletionSource? completion)
+            {
+                var existing = Volatile.Read(ref completion);
+                if (existing is not null)
+                    return existing;
+
+                var created = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                return Interlocked.CompareExchange(ref completion, created, null) ?? created;
+            }
         }
     }
 }

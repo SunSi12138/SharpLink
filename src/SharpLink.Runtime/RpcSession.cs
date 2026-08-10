@@ -44,6 +44,7 @@ public sealed partial class RpcSession : IRpcSession
     private PipeWriter Output => _transport.Output;
 
     private readonly CancellationTokenSource _cts = new();
+    private readonly CancellationToken _lifetimeToken;
     private readonly ITransportConnection _transport;
     internal EndPoint? LocalEndPoint => _transport.LocalEndPoint;
     internal EndPoint? RemoteEndPoint => _transport.RemoteEndPoint;
@@ -60,6 +61,7 @@ public sealed partial class RpcSession : IRpcSession
     public IStreamManager StreamManager { get; }
     /// <inheritdoc />
     public bool IsConnected => Volatile.Read(ref _terminal) is null;
+    internal CancellationToken LifetimeToken => _lifetimeToken;
 
     private readonly Lock _pumpGate = new();
     private readonly RpcSessionFlushOptions? _flushOptions;
@@ -89,6 +91,7 @@ public sealed partial class RpcSession : IRpcSession
         ArgumentNullException.ThrowIfNull(connection.Output);
 
         _transport = connection;
+        _lifetimeToken = _cts.Token;
         Id = connection.Id;
         Role = creationOptions.Role;
         RuntimeContext = creationOptions.RuntimeContext;
