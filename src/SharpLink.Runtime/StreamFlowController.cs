@@ -7,17 +7,23 @@ namespace SharpLink.Runtime;
 internal sealed class StreamFlowController
 {
     private const int MaxPendingSendStateWaiters = 1;
+    private const int MaxPooledReceiveStates = 128;
     private readonly Lock _gate = new();
     private readonly int _streamWindow;
     private readonly int _connectionWindow;
     private readonly int _maxFramePayloadBytes;
     private readonly int _maxConcurrentStreams;
+    private readonly int _maxPooledReceiveStates;
     private readonly int _streamUpdateThreshold;
     private readonly int _connectionUpdateThreshold;
     private readonly Dictionary<StreamKey, SendState> _sendStates = [];
     private readonly Dictionary<StreamKey, ReceiveState> _receiveStates = [];
     private readonly LinkedList<CreditWaiter> _waiters = [];
     private Queue<ConsumedCreditUpdate>? _consumedCreditUpdates;
+    // Keep pooling controller-local and below the negotiated maximum. At most 128 receive
+    // states retain roughly 6 KiB on 64-bit runtimes, rather than retaining every idle stream.
+    private ReceiveState? _pooledReceiveStates;
+    private int _pooledReceiveStateCount;
     // Completed states can remain as tombstones until their final in-flight credit arrives.
     // The active count distinguishes hard live-stream exhaustion from tombstone pressure;
     // the state dictionary itself remains bounded by the negotiated stream limit.
@@ -45,6 +51,7 @@ internal sealed class StreamFlowController
         _connectionWindow = connectionWindow;
         _maxFramePayloadBytes = maxFramePayloadBytes;
         _maxConcurrentStreams = maxConcurrentStreams;
+        _maxPooledReceiveStates = Math.Min(maxConcurrentStreams, MaxPooledReceiveStates);
         _streamUpdateThreshold = Math.Max(1, streamWindow / 2);
         _connectionUpdateThreshold = Math.Max(1, connectionWindow / 2);
         _sendConnectionCredit = connectionWindow;
@@ -317,7 +324,7 @@ internal sealed class StreamFlowController
             {
                 if (_receiveStates.Count >= _maxConcurrentStreams)
                     throw Violation("The peer exceeded the negotiated concurrent stream limit.");
-                state = new ReceiveState(_streamWindow);
+                state = RentReceiveState();
                 _receiveStates.Add(key, state);
             }
 
@@ -359,7 +366,7 @@ internal sealed class StreamFlowController
             {
                 var completedDelta = TakePendingCredit(state);
                 if (state.Credit == _streamWindow)
-                    _receiveStates.Remove(key);
+                    RemoveReceiveState(key, state);
                 return completedDelta;
             }
             if (state.PendingConsumed >= _streamUpdateThreshold)
@@ -419,7 +426,7 @@ internal sealed class StreamFlowController
             state.Completed = true;
             var delta = TakePendingCredit(state);
             if (state.Credit == _streamWindow)
-                _receiveStates.Remove(key);
+                RemoveReceiveState(key, state);
             return delta;
         }
     }
@@ -443,7 +450,10 @@ internal sealed class StreamFlowController
             _pendingSendStateWaiterCount = 0;
             _sendStates.Clear();
             _activeSendStreamCount = 0;
+            foreach (var state in _receiveStates.Values)
+                state.Clear();
             _receiveStates.Clear();
+            ClearPooledReceiveStates();
             _consumedCreditUpdates?.Clear();
             _consumedCreditUpdates = null;
         }
@@ -485,6 +495,53 @@ internal sealed class StreamFlowController
         _sendStates.Add(key, state);
         _activeSendStreamCount++;
         return state;
+    }
+
+    private ReceiveState RentReceiveState()
+    {
+        var state = _pooledReceiveStates;
+        if (state is null)
+        {
+            state = new ReceiveState();
+        }
+        else
+        {
+            _pooledReceiveStates = state.Next;
+            _pooledReceiveStateCount--;
+        }
+
+        state.Reset(_streamWindow);
+        return state;
+    }
+
+    private void RemoveReceiveState(StreamKey key, ReceiveState state)
+    {
+        if (_receiveStates.Remove(key))
+            ReturnReceiveState(state);
+    }
+
+    private void ReturnReceiveState(ReceiveState state)
+    {
+        state.Clear();
+        if (_pooledReceiveStateCount >= _maxPooledReceiveStates)
+            return;
+
+        state.Next = _pooledReceiveStates;
+        _pooledReceiveStates = state;
+        _pooledReceiveStateCount++;
+    }
+
+    private void ClearPooledReceiveStates()
+    {
+        var state = _pooledReceiveStates;
+        _pooledReceiveStates = null;
+        _pooledReceiveStateCount = 0;
+        while (state is not null)
+        {
+            var next = state.Next;
+            state.Clear();
+            state = next;
+        }
     }
 
     private bool CanReserve(long streamCredit, long connectionCredit, int encodedBytes)
@@ -606,7 +663,11 @@ internal sealed class StreamFlowController
         if (completed is not null)
         {
             for (var index = 0; index < completed.Count; index++)
-                _receiveStates.Remove(completed[index]);
+            {
+                var key = completed[index];
+                if (_receiveStates.TryGetValue(key, out var state))
+                    RemoveReceiveState(key, state);
+            }
         }
 
         return currentCredit;
@@ -685,11 +746,28 @@ internal sealed class StreamFlowController
         public Exception? AbortException;
     }
 
-    private sealed class ReceiveState(long initialCredit)
+    private sealed class ReceiveState
     {
-        public long Credit = initialCredit;
+        public long Credit;
         public long PendingConsumed;
         public bool Completed;
+        public ReceiveState? Next;
+
+        public void Reset(long initialCredit)
+        {
+            Credit = initialCredit;
+            PendingConsumed = 0;
+            Completed = false;
+            Next = null;
+        }
+
+        public void Clear()
+        {
+            Credit = 0;
+            PendingConsumed = 0;
+            Completed = false;
+            Next = null;
+        }
     }
 
     private sealed class CreditWaiter(
