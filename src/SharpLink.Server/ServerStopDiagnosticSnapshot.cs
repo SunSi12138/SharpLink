@@ -21,3 +21,9 @@ internal sealed record ServerCallDiagnosticSnapshot(
     string CancellationReason,
     DateTimeOffset? Deadline,
     long DeadlineTimestamp);
+
+internal sealed record ServerDeferredTaskDiagnosticSnapshot(
+    TaskStatus? DeferredServiceCleanup,
+    TaskStatus? ShutdownCleanupObserver,
+    TaskStatus? ServiceCleanupObserver,
+    int DeferredConnectionCleanups);

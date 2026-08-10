@@ -310,7 +310,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                 ownedServiceProvider,
                 serviceProvider,
                 manifests,
-                admissionController);
+                admissionController,
+                ServerShutdownPlan.Default);
             _transport = null;
             return server;
         }

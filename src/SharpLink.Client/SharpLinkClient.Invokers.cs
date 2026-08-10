@@ -202,13 +202,15 @@ internal sealed partial class SharpLinkClient
             cancellationToken,
             responseCodec,
             method.ResponseNullable);
-        TrackBackgroundTask(StartServerStreamingInvokerAsync(
-            dispatcher,
-            method,
-            request,
-            requestCodec,
-            control,
-            cancellationToken));
+        TrackFrameworkTask(
+            StartServerStreamingInvokerAsync(
+                dispatcher,
+                method,
+                request,
+                requestCodec,
+                control,
+                cancellationToken),
+            "ServerStreamingInvoker");
         return dispatcher;
     }
 
@@ -416,14 +418,16 @@ internal sealed partial class SharpLinkClient
             cancellationToken,
             responseCodec,
             method.ResponseNullable);
-        TrackBackgroundTask(StartDuplexStreamingInvokerAsync(
-            dispatcher,
-            method,
-            request,
-            requestCodec,
-            streams,
-            control,
-            cancellationToken));
+        TrackFrameworkTask(
+            StartDuplexStreamingInvokerAsync(
+                dispatcher,
+                method,
+                request,
+                requestCodec,
+                streams,
+                control,
+                cancellationToken),
+            "DuplexStreamingInvoker");
         return dispatcher;
     }
 
@@ -774,7 +778,7 @@ internal sealed partial class SharpLinkClient
                     streamCancellationToken,
                     producerLease);
                 producerLease = default;
-                TrackBackgroundTask(producerTask);
+                TrackFrameworkTask(producerTask, "ClientStreamingProducer");
             }
         }
         catch (Exception exception)

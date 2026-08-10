@@ -199,7 +199,6 @@ internal sealed partial class SharpLinkMultiClusterClient
                 "replace",
                 cluster,
                 gracefulTimeout);
-            ObserveBackgroundFailure(cleanup);
             failureStage = "retired_cleanup_wait";
             var released = await WaitForRetiredCleanupAsync(
                 cleanup,
@@ -282,7 +281,6 @@ internal sealed partial class SharpLinkMultiClusterClient
                 "remove",
                 cluster,
                 gracefulTimeout);
-            ObserveBackgroundFailure(cleanup);
             failureStage = "retired_cleanup_wait";
             var released = await WaitForRetiredCleanupAsync(
                 cleanup,
@@ -443,20 +441,7 @@ internal sealed partial class SharpLinkMultiClusterClient
             operation,
             cluster,
             gracefulTimeout);
-        lock (_gate)
-            _retiredCleanupOperations.Add(cleanup);
-        _ = cleanup.ContinueWith(
-            completed =>
-            {
-                if (completed.Status == TaskStatus.RanToCompletion)
-                {
-                    lock (_gate)
-                        _retiredCleanupOperations.Remove(cleanup);
-                }
-            },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
+        TrackFrameworkTask(cleanup, $"MultiClusterRetiredSlot{operation}");
         return cleanup;
     }
 

@@ -24,6 +24,13 @@ internal sealed partial class SharpLinkClient
             operation = completion.Task;
             _unregisterOperations.Add(assembly, operation);
             _ = CompleteUnregisterOperationAsync(assembly, module, gracefulTimeout, completion);
+            if (State != SharpLinkConnectionState.Draining)
+            {
+                TrackFrameworkTask(
+                    operation,
+                    "DynamicAssemblyUnregister",
+                    TaskObservationMode.ExternallyObserved);
+            }
         }
         return WaitForUnregisterAsync(operation, cancellationToken);
     }
@@ -46,7 +53,9 @@ internal sealed partial class SharpLinkClient
                 if (!drainTask.IsCompleted)
                 {
                     module.MarkDrainTimedOut();
-                    TrackBackgroundTask(CompleteTimedOutUnregisterAsync(assembly, module, drainTask));
+                    TrackFrameworkTask(
+                        CompleteTimedOutUnregisterAsync(assembly, module, drainTask),
+                        "DynamicAssemblyTimedOutUnregisterCleanup");
                     return new SharpLinkAssemblyUnregisterResult
                     {
                         ReferencesReleased = false,

@@ -534,9 +534,25 @@ public class SharpLinkServerInvocationTests
     }
 
     [Test]
-    public async Task FrameworkJoinShouldNotHideAnUnexpectedSiblingFailure()
+    public async Task BuilderShouldPublishImmutableFiveSecondShutdownCleanupPlan()
     {
-        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+        var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .DisableAutomaticServiceRegistration()
+            .UseTransport(new IdleListener())
+            .Build();
+
+        Ensure(server.ShutdownPlanForDiagnostics.CleanupBudget == TimeSpan.FromSeconds(5),
+            "builder must publish the existing five-second cleanup budget as an immutable plan");
+        Ensure(ReferenceEquals(server.ShutdownPlanForDiagnostics, ServerShutdownPlan.Default),
+            "the default server path must consume the validated shared shutdown plan snapshot");
+
+        await server.StopAsync(TimeSpan.Zero);
+    }
+
+    [Test]
+    public async Task FrameworkSupervisorShouldNotHideAnUnexpectedSiblingFailure()
+    {
+        var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
             .DisableAutomaticServiceRegistration()
             .UseTransport(new IdleListener())
             .Build();
@@ -545,17 +561,7 @@ public class SharpLinkServerInvocationTests
         var unexpected = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var mixed = Task.WhenAll(expected.Task, unexpected.Task);
-        var track = typeof(SharpLinkServer).GetMethod(
-            "TrackFrameworkTask",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find Server framework task tracker");
-        track.Invoke(server, [mixed]);
-        var wait = CreatePrivateCall<Func<SharpLinkServer, Task>>(
-            typeof(SharpLinkServer).GetMethod(
-                "WaitForFrameworkTasksAsync",
-                BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find Server framework task join"));
-        var joined = wait(server);
+        server.TrackFrameworkTask(mixed, "MixedServerWorker");
         await Task.Yield();
         expected.TrySetException(new IOException("expected framework transport closure"));
         unexpected.TrySetException(new InvalidOperationException("unexpected framework sibling failure"));
@@ -563,7 +569,7 @@ public class SharpLinkServerInvocationTests
         Exception? failure = null;
         try
         {
-            await joined;
+            await server.StopAsync(TimeSpan.Zero);
         }
         catch (Exception exception)
         {

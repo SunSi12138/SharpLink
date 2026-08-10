@@ -148,19 +148,12 @@ internal sealed partial class SharpLinkClient
 
     private void HandleDisconnected(ClientConnection connection, Exception ex)
     {
-        if (!RemoveReadyConnection(connection))
+        if (!TryStartConnectionCleanup(connection, "DisconnectedConnectionCleanup", ex))
             return;
 
         var session = connection.Session;
         using var sessionScope = BeginSessionLogScope(_logger, session.Id);
         LogClientDisconnectedWithError(_logger, ex);
-
-        connection.Fail(ex);
-        TrackBackgroundTask(DisposeDisconnectedConnectionAsync(connection));
-
-        if (_shutdownCts.IsCancellationRequested ||
-            State is SharpLinkConnectionState.Stopped)
-            return;
 
         if (ReadyConnectionCount != 0)
         {
@@ -184,7 +177,10 @@ internal sealed partial class SharpLinkClient
             if (_shutdownCts.IsCancellationRequested)
                 return;
             if (_reconnectTask is not { IsCompleted: false })
+            {
                 _reconnectTask = ReconnectLoopAsync();
+                TrackFrameworkTask(_reconnectTask, "ReconnectLoop");
+            }
             if (_reconnectSignal.CurrentCount == 0)
                 _reconnectSignal.Release();
         }
@@ -311,6 +307,29 @@ internal sealed partial class SharpLinkClient
         }
     }
 
+    private bool TryStartConnectionCleanup(
+        ClientConnection connection,
+        string operation,
+        Exception? failure = null)
+    {
+        lock (_poolGate)
+        {
+            // Once Stop has closed the pool admission gate, the connection remains published
+            // for StopCore to snapshot and dispose. Before that point, task start and Track are
+            // one indivisible owner transition relative to Seal.
+            if (_poolStopping || !_connections.Remove(connection))
+                return false;
+
+            PublishReadySnapshotLocked();
+            if (failure is not null)
+                connection.Fail(failure);
+            TrackFrameworkTask(
+                DisposeDisconnectedConnectionAsync(connection),
+                operation);
+            return true;
+        }
+    }
+
     private void MarkConnectionDraining(ClientConnection connection)
     {
         if (!connection.MarkDraining())
@@ -367,12 +386,10 @@ internal sealed partial class SharpLinkClient
         }
         if (connection.State != ClientConnectionState.Draining ||
             connection.ActiveCallCount != 0 ||
-            !RemoveReadyConnection(connection))
+            !TryStartConnectionCleanup(connection, "DrainingConnectionCleanup"))
         {
             return;
         }
-
-        TrackBackgroundTask(DisposeDisconnectedConnectionAsync(connection));
     }
 
     private void EnsureExpansion()
@@ -389,6 +406,7 @@ internal sealed partial class SharpLinkClient
                 return;
             }
             _expansionTask = ExpandOneAsync();
+            TrackFrameworkTask(_expansionTask, "ConnectionPoolExpansion");
         }
     }
 

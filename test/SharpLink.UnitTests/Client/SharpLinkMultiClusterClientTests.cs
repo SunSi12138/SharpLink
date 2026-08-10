@@ -1324,7 +1324,7 @@ public sealed class SharpLinkMultiClusterClientTests
                exception.Message.Contains("retired cleanup failed", StringComparison.Ordinal),
             "the retired child must expose the controlled cleanup failure");
         await WaitForConditionAsync(
-            () => GetRetiredCleanupOperations(client).Any(static operation => operation.IsFaulted),
+            () => client.FrameworkTaskSnapshotForDiagnostics.RetainedFailures != 0,
             "the coordinator must retain the faulted cleanup until shutdown consumes it");
 
         var shutdownFailure = await CaptureExceptionAsync(client.StopAsync().AsTask());
@@ -1358,11 +1358,6 @@ public sealed class SharpLinkMultiClusterClientTests
             return exception;
         }
     }
-
-    private static HashSet<Task> GetRetiredCleanupOperations(SharpLinkMultiClusterClient client)
-        => (HashSet<Task>)typeof(SharpLinkMultiClusterClient)
-            .GetField("_retiredCleanupOperations", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(client)!;
 
     private static async Task WaitForConditionAsync(Func<bool> condition, string failureMessage)
     {

@@ -26,11 +26,11 @@ internal sealed partial class SharpLinkClient :
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly Lock _stateGate = new();
     private readonly Lock _poolGate = new();
-    private readonly Lock _backgroundTasksGate = new();
+    private readonly FrameworkTaskSupervisor _frameworkTasks;
     private readonly SemaphoreSlim _reconnectSignal = new(0, 1);
-    private readonly HashSet<Task> _backgroundTasks = [];
     private ClientConnection[] _readyConnections = [];
     private readonly HashSet<ClientConnection> _connections = [];
+    private bool _poolStopping;
     private Task? _connectTask;
     private Task? _reconnectTask;
     private Task? _expansionTask;
@@ -71,6 +71,8 @@ internal sealed partial class SharpLinkClient :
     {
         this.transportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
         _runtimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
+        _frameworkTasks = new FrameworkTaskSupervisor((operation, exception) =>
+            LogClientBackgroundLoopUnhandledException(_logger, operation, exception));
         _staticManifests = staticManifests ?? SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
         _fixedEndpoint = fixedEndpoint;
         _retryOptions = retryOptions;
@@ -207,8 +209,16 @@ internal sealed partial class SharpLinkClient :
         }
 
         var cleanupFailures = new List<Exception>();
+        lock (_stateGate)
+            TransitionTo(SharpLinkConnectionState.Draining);
         lock (_registryGate)
             TransitionTo(SharpLinkConnectionState.Draining);
+        lock (_poolGate)
+        {
+            _poolStopping = true;
+            // Serializes Seal with connection publication, retirement, and cleanup registration.
+            _frameworkTasks.Seal();
+        }
         try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         Volatile.Read(ref _readySignal).TrySetResult(true);
@@ -229,32 +239,6 @@ internal sealed partial class SharpLinkClient :
             catch (Exception exception) { cleanupFailures.Add(exception); }
         }
 
-        Task? connectTask;
-        Task? reconnectTask;
-        Task? expansionTask;
-        lock (_stateGate)
-        {
-            connectTask = _connectTask;
-            reconnectTask = _reconnectTask;
-            expansionTask = _expansionTask;
-        }
-        // ConnectAsync exposes the initial attempt directly to its caller. Do not report that
-        // same already-observable failure a second time from DisposeAsync/StopAsync.
-        try { await IgnoreExpectedStopExceptionAsync(connectTask, ignoreUnexpected: true).ConfigureAwait(false); }
-        catch (Exception exception) { cleanupFailures.Add(exception); }
-        if (!ReferenceEquals(reconnectTask, connectTask))
-        {
-            try { await IgnoreExpectedStopExceptionAsync(reconnectTask).ConfigureAwait(false); }
-            catch (Exception exception) { cleanupFailures.Add(exception); }
-        }
-        if (!ReferenceEquals(expansionTask, connectTask) && !ReferenceEquals(expansionTask, reconnectTask))
-        {
-            try { await IgnoreExpectedStopExceptionAsync(expansionTask).ConfigureAwait(false); }
-            catch (Exception exception) { cleanupFailures.Add(exception); }
-        }
-        try { await WaitForBackgroundTasksAsync().ConfigureAwait(false); }
-        catch (Exception exception) { cleanupFailures.Add(exception); }
-
         Assembly[] dynamicAssemblies;
         lock (_registryGate)
             dynamicAssemblies = [.. _dynamicModules.Keys];
@@ -263,6 +247,9 @@ internal sealed partial class SharpLinkClient :
             try { await UnregisterAssemblyAsync(dynamicAssemblies[index], TimeSpan.Zero).ConfigureAwait(false); }
             catch (Exception exception) { cleanupFailures.Add(exception); }
         }
+
+        try { await _frameworkTasks.DrainAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
 
         try { await transportFactory.DisposeAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
@@ -279,14 +266,16 @@ internal sealed partial class SharpLinkClient :
     private async Task StopStaticClusterCoreAsync()
     {
         var cleanupFailures = new List<Exception>();
+        lock (_stateGate)
+            TransitionTo(SharpLinkConnectionState.Draining);
         lock (_registryGate)
             TransitionTo(SharpLinkConnectionState.Draining);
+        _cluster!.BeginStop();
+        _frameworkTasks.Seal();
         try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         Volatile.Read(ref _readySignal).TrySetResult(true);
-        try { await _cluster!.StopAsync().ConfigureAwait(false); }
-        catch (Exception exception) { cleanupFailures.Add(exception); }
-        try { await WaitForBackgroundTasksAsync().ConfigureAwait(false); }
+        try { await _cluster.StopAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
 
         Assembly[] dynamicAssemblies;
@@ -297,6 +286,11 @@ internal sealed partial class SharpLinkClient :
             try { await UnregisterAssemblyAsync(dynamicAssemblies[index], TimeSpan.Zero).ConfigureAwait(false); }
             catch (Exception exception) { cleanupFailures.Add(exception); }
         }
+
+        try { await _frameworkTasks.DrainAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
+        try { await _cluster.DisposeResourcesAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
 
         try { _reconnectSignal.Dispose(); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
@@ -317,106 +311,18 @@ internal sealed partial class SharpLinkClient :
         throw new AggregateException(failures);
     }
 
-    private async Task IgnoreExpectedStopExceptionAsync(
-        Task? task,
-        bool ignoreUnexpected = false)
-    {
-        if (task is null)
-            return;
-        try
-        {
-            await task.ConfigureAwait(false);
-        }
-        catch (Exception exception) when (_shutdownCts.IsCancellationRequested)
-        {
-            if (ignoreUnexpected)
-                return;
-            var failures = exception is AggregateException aggregate
-                ? aggregate.Flatten().InnerExceptions
-                : [exception];
-            List<Exception>? unexpected = null;
-            for (var index = 0; index < failures.Count; index++)
-            {
-                var failure = failures[index];
-                if (IsExpectedStopException(failure))
-                    continue;
-                (unexpected ??= []).Add(failure);
-            }
-
-            if (unexpected is { Count: 1 })
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(unexpected[0]).Throw();
-            if (unexpected is not null)
-                throw new AggregateException(unexpected);
-        }
-    }
-
     private static bool IsExpectedStopException(Exception exception)
         => exception is OperationCanceledException or ObjectDisposedException or IOException or SocketException or
             SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed or SharpLinkErrorCode.Unavailable };
 
-    internal void TrackBackgroundTask(Task task)
-    {
-        lock (_backgroundTasksGate)
-            _backgroundTasks.Add(task);
+    internal void TrackFrameworkTask(
+        Task task,
+        string operation,
+        TaskObservationMode observationMode = TaskObservationMode.FrameworkOwned)
+        => _frameworkTasks.Track(task, operation, observationMode, IsExpectedStopException);
 
-        task.ContinueWith(
-            static (completedTask, state) =>
-            {
-                var client = (SharpLinkClient)state!;
-                lock (client._backgroundTasksGate)
-                    client._backgroundTasks.Remove(completedTask);
-
-                if (completedTask.Exception is { } exception)
-                {
-                    LogClientBackgroundLoopUnhandledException(
-                        client._logger,
-                        "BackgroundTask",
-                        exception.GetBaseException());
-                }
-            },
-            this,
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-    }
-
-    private async Task WaitForBackgroundTasksAsync()
-    {
-        while (true)
-        {
-            Task[] tasks;
-            lock (_backgroundTasksGate)
-                tasks = [.. _backgroundTasks];
-
-            if (tasks.Length == 0)
-                return;
-
-            try
-            {
-                await Task.WhenAll(tasks).ConfigureAwait(false);
-            }
-            catch
-            {
-                List<Exception>? unexpected = null;
-                for (var taskIndex = 0; taskIndex < tasks.Length; taskIndex++)
-                {
-                    if (tasks[taskIndex].Exception is not { } aggregate)
-                        continue;
-                    foreach (var exception in aggregate.Flatten().InnerExceptions)
-                    {
-                        if (IsExpectedStopException(exception))
-                            continue;
-                        (unexpected ??= []).Add(exception);
-                    }
-                }
-
-                if (unexpected is { Count: 1 })
-                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(unexpected[0]).Throw();
-                if (unexpected is not null)
-                    throw new AggregateException(unexpected);
-            }
-        }
-    }
+    internal FrameworkTaskSupervisorSnapshot FrameworkTaskSnapshotForDiagnostics
+        => _frameworkTasks.CaptureSnapshot();
 
     private static SharpLinkException CreateAuthenticationRejectedException(string message)
         => new(SharpLinkErrorCode.AuthenticationRejected, message);
