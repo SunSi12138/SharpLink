@@ -59,14 +59,13 @@ internal interface IPendingCallCompletionObserver
 /// </remarks>
 internal sealed class PendingRequestTable : IDisposable
 {
-    private static readonly TimeSpan MaxTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue);
     private readonly int _indexMask;
     private readonly PendingCall?[] _slots;
     private readonly IRpcCodecProvider _codecProvider;
     private readonly IPendingCallOwner _owner;
     private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _slotAvailable;
-    private readonly Timer _deadlineTimer;
+    private readonly ITimer _deadlineTimer;
     private long _nextId;
     private long _approximateEarliestDeadline = long.MaxValue;
     private int _deadlineScanRunning;
@@ -99,7 +98,7 @@ internal sealed class PendingRequestTable : IDisposable
         _owner = owner;
         _timeProvider = timeProvider;
         _slotAvailable = new SemaphoreSlim(0, capacity);
-        _deadlineTimer = new Timer(
+        _deadlineTimer = _timeProvider.CreateTimer(
             static state => ((PendingRequestTable)state!).ScanExpiredDeadlines(),
             this,
             Timeout.InfiniteTimeSpan,
@@ -127,14 +126,14 @@ internal sealed class PendingRequestTable : IDisposable
         => Rent(
             responseCodec,
             PendingCallKind.Unary,
-            deadlineTimestamp: 0,
+            default,
             CancellationToken.None,
             out id);
 
     public RpcRequestOperation<T> Rent<T>(
         IRpcCodec<T> responseCodec,
         PendingCallKind kind,
-        long deadlineTimestamp,
+        RpcDeadline deadline,
         CancellationToken cancellationToken,
         out long id,
         IPendingCallCompletionObserver? completionObserver = null,
@@ -144,7 +143,7 @@ internal sealed class PendingRequestTable : IDisposable
         ArgumentNullException.ThrowIfNull(responseCodec);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (TryRent(
-                responseCodec, kind, deadlineTimestamp, cancellationToken, hasResponsePayload, responseNullable,
+                responseCodec, kind, deadline, cancellationToken, hasResponsePayload, responseNullable,
                 completionObserver, out id, out var operation))
             return operation;
 
@@ -153,35 +152,32 @@ internal sealed class PendingRequestTable : IDisposable
 
     public ValueTask<PendingRequestLease<T>> RentAsync<T>(
         bool waitForSlot,
-        DateTimeOffset? deadline,
+        RpcDeadline deadline,
         CancellationToken cancellationToken)
         => RentAsync(
             _codecProvider.GetCodec<T>(),
             PendingCallKind.Unary,
-            deadlineTimestamp: 0,
-            waitForSlot,
             deadline,
+            waitForSlot,
             cancellationToken);
 
     public ValueTask<PendingRequestLease<T>> RentAsync<T>(
         IRpcCodec<T> responseCodec,
         bool waitForSlot,
-        DateTimeOffset? deadline,
+        RpcDeadline deadline,
         CancellationToken cancellationToken)
         => RentAsync(
             responseCodec,
             PendingCallKind.Unary,
-            deadlineTimestamp: 0,
-            waitForSlot,
             deadline,
+            waitForSlot,
             cancellationToken);
 
     public async ValueTask<PendingRequestLease<T>> RentAsync<T>(
         IRpcCodec<T> responseCodec,
         PendingCallKind kind,
-        long deadlineTimestamp,
+        RpcDeadline deadline,
         bool waitForSlot,
-        DateTimeOffset? deadline,
         CancellationToken cancellationToken,
         IPendingCallCompletionObserver? completionObserver = null,
         bool hasResponsePayload = true,
@@ -190,7 +186,7 @@ internal sealed class PendingRequestTable : IDisposable
         ArgumentNullException.ThrowIfNull(responseCodec);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (TryRent(
-                responseCodec, kind, deadlineTimestamp, cancellationToken, hasResponsePayload, responseNullable,
+                responseCodec, kind, deadline, cancellationToken, hasResponsePayload, responseNullable,
                 completionObserver, out var id, out var operation))
             return new PendingRequestLease<T>(id, operation);
         if (!waitForSlot)
@@ -205,22 +201,20 @@ internal sealed class PendingRequestTable : IDisposable
             try
             {
                 if (TryRent(
-                        responseCodec, kind, deadlineTimestamp, cancellationToken, hasResponsePayload, responseNullable,
+                        responseCodec, kind, deadline, cancellationToken, hasResponsePayload, responseNullable,
                         completionObserver, out id, out operation))
                     return new PendingRequestLease<T>(id, operation);
 
-                if (deadline is not { } absoluteDeadline)
+                if (!deadline.HasValue)
                 {
                     await _slotAvailable.WaitAsync(cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
-                    var remaining = absoluteDeadline - _timeProvider.GetUtcNow();
-                    if (remaining <= TimeSpan.Zero)
-                        throw CreateDeadlineExceededException();
                     if (!await SharpLinkTimer.WaitAsync(
                             _slotAvailable,
-                            remaining,
+                            deadline,
+                            _timeProvider,
                             cancellationToken).ConfigureAwait(false))
                     {
                         throw CreateDeadlineExceededException();
@@ -233,7 +227,7 @@ internal sealed class PendingRequestTable : IDisposable
             }
 
             if (TryRent(
-                    responseCodec, kind, deadlineTimestamp, cancellationToken, hasResponsePayload, responseNullable,
+                    responseCodec, kind, deadline, cancellationToken, hasResponsePayload, responseNullable,
                     completionObserver, out id, out operation))
                 return new PendingRequestLease<T>(id, operation);
         }
@@ -242,7 +236,7 @@ internal sealed class PendingRequestTable : IDisposable
     public long RegisterStream(
         PendingCallKind kind,
         IStreamDispatcher dispatcher,
-        long deadlineTimestamp,
+        RpcDeadline deadline,
         CancellationToken cancellationToken,
         IPendingCallCompletionObserver? completionObserver = null)
     {
@@ -255,7 +249,7 @@ internal sealed class PendingRequestTable : IDisposable
                 kind,
                 operation: null,
                 dispatcher,
-                deadlineTimestamp,
+                deadline,
                 cancellationToken,
                 out var id,
                 completionObserver))
@@ -267,7 +261,7 @@ internal sealed class PendingRequestTable : IDisposable
     }
 
     public PendingRequestLease<RpcEmptyRequest> RegisterOneWayClientStream(
-        long deadlineTimestamp,
+        RpcDeadline deadline,
         CancellationToken cancellationToken,
         IPendingCallCompletionObserver? completionObserver = null)
     {
@@ -277,7 +271,7 @@ internal sealed class PendingRequestTable : IDisposable
                 PendingCallKind.OneWayClientStreaming,
                 operation,
                 dispatcher: null,
-                deadlineTimestamp,
+                deadline,
                 cancellationToken,
                 out var id,
                 RpcEmptyRequestCodec.Instance,
@@ -393,7 +387,7 @@ internal sealed class PendingRequestTable : IDisposable
     private bool TryRent<T>(
         IRpcCodec<T> responseCodec,
         PendingCallKind kind,
-        long deadlineTimestamp,
+        RpcDeadline deadline,
         CancellationToken cancellationToken,
         bool hasResponsePayload,
         bool responseNullable,
@@ -406,7 +400,7 @@ internal sealed class PendingRequestTable : IDisposable
                 kind,
                 operation,
                 dispatcher: null,
-                deadlineTimestamp,
+                deadline,
                 cancellationToken,
                 out id,
                 responseCodec,
@@ -426,7 +420,7 @@ internal sealed class PendingRequestTable : IDisposable
         PendingCallKind kind,
         RpcRequestOperation<T> operation,
         IStreamDispatcher? dispatcher,
-        long deadlineTimestamp,
+        RpcDeadline deadline,
         CancellationToken cancellationToken,
         out long id,
         IRpcCodec<T> responseCodec,
@@ -444,7 +438,7 @@ internal sealed class PendingRequestTable : IDisposable
                 kind,
                 operation,
                 dispatcher,
-                deadlineTimestamp,
+                deadline,
                 cancellationToken,
                 completionObserver);
             var index = (int)(id & _indexMask);
@@ -466,7 +460,7 @@ internal sealed class PendingRequestTable : IDisposable
         PendingCallKind kind,
         IRpcOperation? operation,
         IStreamDispatcher? dispatcher,
-        long deadlineTimestamp,
+        RpcDeadline deadline,
         CancellationToken cancellationToken,
         out long id,
         IPendingCallCompletionObserver? completionObserver = null)
@@ -480,7 +474,7 @@ internal sealed class PendingRequestTable : IDisposable
                 kind,
                 operation,
                 dispatcher,
-                deadlineTimestamp,
+                deadline,
                 cancellationToken,
                 completionObserver);
             var index = (int)(id & _indexMask);
@@ -503,8 +497,8 @@ internal sealed class PendingRequestTable : IDisposable
         SharpLinkTelemetry.AddPendingRequests(1);
         _owner.OnPendingCallRegistered();
         call.MarkRegistered();
-        if (call.DeadlineTimestamp > 0)
-            UpdateEarliestDeadline(call.DeadlineTimestamp);
+        if (call.Deadline.HasValue)
+            UpdateEarliestDeadline(call.Deadline.Timestamp);
         if (call.CancellationToken.IsCancellationRequested)
             TryComplete(call.Id, PendingCallCompletionReason.UserCancellation);
     }
@@ -697,16 +691,16 @@ internal sealed class PendingRequestTable : IDisposable
         try
         {
             Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);
-            var now = Stopwatch.GetTimestamp();
+            var now = _timeProvider.GetTimestamp();
             for (var index = 0; index < _slots.Length; index++)
             {
                 var call = Volatile.Read(ref _slots[index]);
-                if (call is null || call.DeadlineTimestamp <= 0)
+                if (call is null || !call.Deadline.HasValue)
                     continue;
-                if (call.DeadlineTimestamp <= now)
+                if (call.Deadline.Timestamp <= now)
                     TryComplete(call.Id, PendingCallCompletionReason.DeadlineExceeded);
                 else
-                    UpdateEarliestDeadline(call.DeadlineTimestamp);
+                    UpdateEarliestDeadline(call.Deadline.Timestamp);
             }
         }
         finally
@@ -723,12 +717,12 @@ internal sealed class PendingRequestTable : IDisposable
         if (Volatile.Read(ref _disposed) != 0)
             return;
 
-        var remainingTicks = deadlineTimestamp - Stopwatch.GetTimestamp();
-        var delay = remainingTicks <= 0
-            ? TimeSpan.Zero
-            : TimeSpan.FromSeconds((double)remainingTicks / Stopwatch.Frequency);
-        if (delay > MaxTimerDelay)
-            delay = MaxTimerDelay;
+        var delay = RpcDeadline.GetRemaining(
+            deadlineTimestamp,
+            _timeProvider.GetTimestamp(),
+            _timeProvider.TimestampFrequency);
+        if (delay > SharpLinkTimer.MaximumDelay)
+            delay = SharpLinkTimer.MaximumDelay;
         try
         {
             _deadlineTimer.Change(delay, Timeout.InfiniteTimeSpan);
@@ -796,7 +790,7 @@ internal sealed class PendingRequestTable : IDisposable
         public PendingCallKind Kind { get; private set; }
         public IRpcOperation? Operation { get; private set; }
         public IStreamDispatcher? Dispatcher { get; private set; }
-        public long DeadlineTimestamp { get; private set; }
+        public RpcDeadline Deadline { get; private set; }
         public CancellationToken CancellationToken { get; private set; }
         public CancellationToken ProducerCancellationToken
             => _producerCancellation?.Token ?? CancellationToken.None;
@@ -808,7 +802,7 @@ internal sealed class PendingRequestTable : IDisposable
             PendingCallKind kind,
             IRpcOperation? operation,
             IStreamDispatcher? dispatcher,
-            long deadlineTimestamp,
+            RpcDeadline deadline,
             CancellationToken cancellationToken,
             IPendingCallCompletionObserver? completionObserver)
         {
@@ -823,7 +817,7 @@ internal sealed class PendingRequestTable : IDisposable
             call.Kind = kind;
             call.Operation = operation;
             call.Dispatcher = dispatcher;
-            call.DeadlineTimestamp = deadlineTimestamp;
+            call.Deadline = deadline;
             call.CancellationToken = cancellationToken;
             call._completionObserver = completionObserver;
             call._producerCancellation = kind is
@@ -906,7 +900,7 @@ internal sealed class PendingRequestTable : IDisposable
             Kind = default;
             Operation = null;
             Dispatcher = null;
-            DeadlineTimestamp = 0;
+            Deadline = default;
             CancellationToken = CancellationToken.None;
             _producerCancellation = null;
             _completionObserver = null;

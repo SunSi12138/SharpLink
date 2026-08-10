@@ -72,7 +72,8 @@ public class ServerConnectionStateTests
             session,
             new RpcSessionGeneratedServerBridge(session),
             CreateCallCancellations(),
-            CancellationToken.None);
+            CancellationToken.None,
+            RpcSessionTestFixture.RuntimeContext.TimeProvider);
         var stream = new ShutdownJoiningDispatcher();
         session.StreamManager.Register(7, 1, stream);
         var streamDispatch = session.StreamManager.DispatchChunkAsync(
@@ -233,7 +234,8 @@ public class ServerConnectionStateTests
             session,
             new RpcSessionGeneratedServerBridge(session),
             CreateCallCancellations(),
-            serverToken);
+            serverToken,
+            RpcSessionTestFixture.RuntimeContext.TimeProvider);
     }
 
     private static StripedLongMap<ServerCallCancellationState> CreateCallCancellations()

@@ -46,8 +46,8 @@ public class DynamicModuleTests
         var token = module.ForcedCancellation;
         using var callState = ServerCallCancellationState.Rent(
             requestId: 1,
-            deadline: null,
-            deadlineTimestamp: 0,
+            deadline: default,
+            timeProvider: TimeProvider.System,
             connectionClosedToken: CancellationToken.None,
             serverStoppingToken: CancellationToken.None,
             moduleDrainingToken: token,

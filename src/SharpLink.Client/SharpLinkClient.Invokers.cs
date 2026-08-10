@@ -459,7 +459,7 @@ internal sealed partial class SharpLinkClient
             var operation = connection.PendingCalls.Rent(
                 responseCodec,
                 PendingCallKind.Unary,
-                control.DeadlineTimestamp,
+                control.Deadline,
                 cancellationToken,
                 out var requestId,
                 outcome,
@@ -506,9 +506,8 @@ internal sealed partial class SharpLinkClient
             var lease = await connection.PendingCalls.RentAsync(
                 responseCodec,
                 PendingCallKind.Unary,
-                control.DeadlineTimestamp,
-                waitForSlot: true,
                 control.Deadline,
+                waitForSlot: true,
                 cancellationToken,
                 outcome,
                 hasResponsePayload: method.HasResponsePayload,
@@ -547,7 +546,7 @@ internal sealed partial class SharpLinkClient
         var flags = hasResponsePayload
             ? ProtocolV2FrameFlags.HasReturn
             : ProtocolV2FrameFlags.None;
-        if (cancellationToken.CanBeCanceled || control.Deadline is not null)
+        if (cancellationToken.CanBeCanceled || control.Deadline.HasValue)
             flags |= ProtocolV2FrameFlags.Cancellable;
 
         try
@@ -562,7 +561,7 @@ internal sealed partial class SharpLinkClient
                     flags,
                     request,
                     requestCodec,
-                    control.Deadline,
+                    control.Deadline.UtcDeadline,
                     control.Metadata);
             }
         }
@@ -598,7 +597,7 @@ internal sealed partial class SharpLinkClient
                 outcome).ConfigureAwait(false)
             : GetReadyConnection(method, retrySelection: null, outcome);
         var flags = ProtocolV2FrameFlags.OneWay;
-        if (method.HasClientStreams && (cancellationToken.CanBeCanceled || control.Deadline is not null))
+        if (method.HasClientStreams && (cancellationToken.CanBeCanceled || control.Deadline.HasValue))
             flags |= ProtocolV2FrameFlags.Cancellable;
 
         PendingRequestLease<RpcEmptyRequest> oneWayStreamLease = default;
@@ -608,7 +607,7 @@ internal sealed partial class SharpLinkClient
             if (method.HasClientStreams)
             {
                 oneWayStreamLease = connection.PendingCalls.RegisterOneWayClientStream(
-                    control.DeadlineTimestamp,
+                    control.Deadline,
                     cancellationToken,
                     outcome);
                 requestId = oneWayStreamLease.Id;
@@ -653,7 +652,7 @@ internal sealed partial class SharpLinkClient
                     flags,
                     request,
                     requestCodec,
-                    control.Deadline,
+                    control.Deadline.UtcDeadline,
                     control.Metadata);
                 if (method.HasClientStreams)
                 {
@@ -717,7 +716,7 @@ internal sealed partial class SharpLinkClient
                 operation = connection.PendingCalls.Rent(
                     responseCodec,
                     PendingCallKind.ClientStreaming,
-                    control.DeadlineTimestamp,
+                    control.Deadline,
                     cancellationToken,
                     out requestId,
                     outcome,
@@ -735,9 +734,8 @@ internal sealed partial class SharpLinkClient
                 var lease = await connection.PendingCalls.RentAsync(
                     responseCodec,
                     PendingCallKind.ClientStreaming,
-                    control.DeadlineTimestamp,
-                    waitForSlot: true,
                     control.Deadline,
+                    waitForSlot: true,
                     cancellationToken,
                     outcome,
                     hasResponsePayload: method.HasResponsePayload,
@@ -769,7 +767,7 @@ internal sealed partial class SharpLinkClient
                     flags,
                     request,
                     requestCodec,
-                    control.Deadline,
+                    control.Deadline.UtcDeadline,
                     control.Metadata);
                 var producerTask = RunGeneratedClientStreamsAsync(
                     connection,
@@ -847,12 +845,12 @@ internal sealed partial class SharpLinkClient
                 method.ContractId,
                 method.MethodId,
                 requestId,
-                cancellationToken.CanBeCanceled || control.Deadline is not null
+                cancellationToken.CanBeCanceled || control.Deadline.HasValue
                     ? ProtocolV2FrameFlags.Cancellable
                     : ProtocolV2FrameFlags.None,
                 request,
                 requestCodec,
-                control.Deadline,
+                control.Deadline.UtcDeadline,
                 control.Metadata);
         }
         catch (Exception exception)
@@ -900,7 +898,7 @@ internal sealed partial class SharpLinkClient
                 ProtocolV2FrameFlags.Cancellable,
                 request,
                 requestCodec,
-                control.Deadline,
+                control.Deadline.UtcDeadline,
                 control.Metadata);
             await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
         }
@@ -938,7 +936,7 @@ internal sealed partial class SharpLinkClient
             requestId = connection.PendingCalls.RegisterStream(
                 kind,
                 dispatcher,
-                control.DeadlineTimestamp,
+                control.Deadline,
                 cancellationToken,
                 outcome);
             if (!connection.PendingCalls.Contains(requestId))

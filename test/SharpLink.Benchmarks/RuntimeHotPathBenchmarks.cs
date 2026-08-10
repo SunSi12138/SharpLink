@@ -369,14 +369,31 @@ public class CodecAndPreAdmissionHotPathBenchmarks
 public class ServerCallCancellationStateBenchmarks
 {
     private static readonly long SDeadlineOffset = 30L * Stopwatch.Frequency;
+    private StripedLongMap<ServerCallCancellationState> _scheduledCalls = null!;
+    private ServerCallDeadlineScheduler _scheduler = null!;
+    private long _nextRequestId;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _scheduledCalls = new StripedLongMap<ServerCallCancellationState>(
+            new RuntimeConcurrencyOptions());
+        _scheduler = new ServerCallDeadlineScheduler(
+            _scheduledCalls,
+            maxCalls: 1024,
+            TimeProvider.System);
+    }
+
+    [GlobalCleanup]
+    public void Cleanup() => _scheduler.Dispose();
 
     [Benchmark(Baseline = true)]
     public void NoDeadline()
     {
         var state = ServerCallCancellationState.Rent(
             1,
-            null,
-            0,
+            default,
+            TimeProvider.System,
             CancellationToken.None,
             CancellationToken.None,
             supportsCooperativeCancellation: false);
@@ -388,8 +405,10 @@ public class ServerCallCancellationStateBenchmarks
     {
         var state = ServerCallCancellationState.Rent(
             2,
-            DateTimeOffset.UtcNow.AddSeconds(30),
-            Stopwatch.GetTimestamp() + SDeadlineOffset,
+            RpcDeadline.Create(
+                DateTimeOffset.UtcNow.AddSeconds(30),
+                Stopwatch.GetTimestamp() + SDeadlineOffset),
+            TimeProvider.System,
             CancellationToken.None,
             CancellationToken.None,
             supportsCooperativeCancellation: true);
@@ -401,8 +420,10 @@ public class ServerCallCancellationStateBenchmarks
     {
         var state = ServerCallCancellationState.Rent(
             3,
-            DateTimeOffset.UtcNow.AddSeconds(30),
-            Stopwatch.GetTimestamp() + SDeadlineOffset,
+            RpcDeadline.Create(
+                DateTimeOffset.UtcNow.AddSeconds(30),
+                Stopwatch.GetTimestamp() + SDeadlineOffset),
+            TimeProvider.System,
             CancellationToken.None,
             CancellationToken.None,
             supportsCooperativeCancellation: false);
@@ -414,12 +435,30 @@ public class ServerCallCancellationStateBenchmarks
     {
         var state = ServerCallCancellationState.Rent(
             4,
-            null,
-            0,
+            default,
+            TimeProvider.System,
             CancellationToken.None,
             CancellationToken.None,
             supportsCooperativeCancellation: true);
         state.TryCancel(ServerCallCancellationReason.RemoteCancel);
+        state.Dispose();
+    }
+
+    [Benchmark]
+    public void ScheduleDeadlineRegisterAndComplete()
+    {
+        var requestId = ++_nextRequestId;
+        var state = ServerCallCancellationState.Rent(
+            requestId,
+            RpcDeadline.Create(DateTimeOffset.MaxValue, long.MaxValue),
+            TimeProvider.System,
+            CancellationToken.None,
+            CancellationToken.None,
+            supportsCooperativeCancellation: false);
+        _scheduledCalls.Set(requestId, state);
+        _scheduler.Register(state);
+        if (!_scheduledCalls.TryRemove(requestId, state))
+            throw new InvalidOperationException("Scheduled benchmark call was not removed.");
         state.Dispose();
     }
 }

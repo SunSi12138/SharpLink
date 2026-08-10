@@ -34,12 +34,16 @@ internal sealed class ServerConnectionState
         IRpcGeneratedServerBridge generatedBridge,
         StripedLongMap<ServerCallCancellationState> callCancellations,
         CancellationToken serverToken,
+        TimeProvider timeProvider,
         int maxConcurrentCalls = 1024)
     {
         Session = session ?? throw new ArgumentNullException(nameof(session));
         GeneratedBridge = generatedBridge ?? throw new ArgumentNullException(nameof(generatedBridge));
         CallCancellations = callCancellations ?? throw new ArgumentNullException(nameof(callCancellations));
-        DeadlineScheduler = new ServerCallDeadlineScheduler(CallCancellations, maxConcurrentCalls);
+        DeadlineScheduler = new ServerCallDeadlineScheduler(
+            CallCancellations,
+            maxConcurrentCalls,
+            timeProvider ?? throw new ArgumentNullException(nameof(timeProvider)));
         _connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
         _connectionToken = _connectionCancellation.Token;
     }
@@ -223,8 +227,8 @@ internal sealed class ServerConnectionState
                 calls.Add(new ServerCallDiagnosticSnapshot(
                     entry.Key,
                     entry.Value.Reason.ToString(),
-                    entry.Value.Deadline,
-                    entry.Value.DeadlineTimestamp));
+                    entry.Value.Deadline.UtcDeadline,
+                    entry.Value.Deadline.Timestamp));
             }
             finally
             {

@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace SharpLink.Client;
 
 internal enum ClientConnectionState : byte
@@ -16,6 +14,7 @@ internal sealed class ClientConnection :
     IAsyncDisposable
 {
     private readonly SharpLinkClient _client;
+    private readonly TimeProvider _timeProvider;
     private readonly CancellationTokenSource _cancellation;
     private readonly Func<long, IStreamDispatchState?, ValueTask> _consumerAbandonedCallback;
     private LateResponseLogLimiter _lateResponseLogLimiter;
@@ -36,6 +35,8 @@ internal sealed class ClientConnection :
         Session = session ?? throw new ArgumentNullException(nameof(session));
         _cancellation = cancellation ?? throw new ArgumentNullException(nameof(cancellation));
         ArgumentNullException.ThrowIfNull(runtimeContext);
+        _timeProvider = runtimeContext.TimeProvider;
+        _lateResponseLogLimiter = new LateResponseLogLimiter(_timeProvider.TimestampFrequency);
         _consumerAbandonedCallback = OnConsumerAbandonedAsync;
         PendingCalls = new PendingRequestTable(
             maxPendingCalls,
@@ -70,7 +71,7 @@ internal sealed class ClientConnection :
         => _consumerAbandonedCallback;
 
     internal bool ShouldLogLateResponse(out int suppressedCount)
-        => _lateResponseLogLimiter.ShouldLog(Stopwatch.GetTimestamp(), out suppressedCount);
+        => _lateResponseLogLimiter.ShouldLog(_timeProvider.GetTimestamp(), out suppressedCount);
 
     public bool MarkDraining()
     {
@@ -345,10 +346,20 @@ internal sealed partial class SharpLinkClient
 
 internal struct LateResponseLogLimiter
 {
-    internal static readonly long IntervalTimestampTicks = 5L * Stopwatch.Frequency;
-
+    private readonly long _intervalTimestampTicks;
     private long _nextLogTimestamp;
     private int _suppressedCount;
+
+    internal LateResponseLogLimiter(long timestampFrequency)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(timestampFrequency);
+        _intervalTimestampTicks = timestampFrequency > long.MaxValue / 5
+            ? long.MaxValue
+            : timestampFrequency * 5;
+        _nextLogTimestamp = long.MinValue;
+    }
+
+    internal long IntervalTimestampTicks => _intervalTimestampTicks;
 
     internal bool ShouldLog(long timestamp, out int suppressedCount)
     {
@@ -362,9 +373,9 @@ internal struct LateResponseLogLimiter
                 return false;
             }
 
-            var newNext = timestamp > long.MaxValue - IntervalTimestampTicks
+            var newNext = timestamp > long.MaxValue - _intervalTimestampTicks
                 ? long.MaxValue
-                : timestamp + IntervalTimestampTicks;
+                : timestamp + _intervalTimestampTicks;
             if (Interlocked.CompareExchange(ref _nextLogTimestamp, newNext, next) != next)
                 continue;
 

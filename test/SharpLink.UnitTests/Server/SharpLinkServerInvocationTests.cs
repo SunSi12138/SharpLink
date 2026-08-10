@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SharpLink.Server;
+using SharpLink.UnitTests.Runtime;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
@@ -394,7 +395,8 @@ public class SharpLinkServerInvocationTests
             unexpectedSession,
             new RpcSessionGeneratedServerBridge(unexpectedSession),
             CreateCallCancellations(),
-            CancellationToken.None);
+            CancellationToken.None,
+            RpcSessionTestFixture.RuntimeContext.TimeProvider);
         connections.TryAdd(unexpected.Session.Id, unexpected);
 
         var expectedTransports = new List<ThrowingTransportConnection>();
@@ -409,7 +411,8 @@ public class SharpLinkServerInvocationTests
                 session,
                 new RpcSessionGeneratedServerBridge(session),
                 CreateCallCancellations(),
-                CancellationToken.None);
+                CancellationToken.None,
+                RpcSessionTestFixture.RuntimeContext.TimeProvider);
             connections.TryAdd(connection.Session.Id, connection);
         }
         Ensure(!ReferenceEquals(connections.Values.First(), unexpected),
@@ -550,6 +553,28 @@ public class SharpLinkServerInvocationTests
     }
 
     [Test]
+    public async Task BuilderShouldForwardTheApplicationOwnedTimeProvider()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .DisableAutomaticServiceRegistration()
+            .UseTimeProvider(timeProvider)
+            .UseTransport(new IdleListener())
+            .Build();
+        var runtimeContext = (SharpLinkRuntimeContext)(
+            typeof(SharpLinkServer).GetField(
+                "_runtimeContext",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(server)!);
+
+        Ensure(ReferenceEquals(runtimeContext.TimeProvider, timeProvider),
+            "server builder must preserve the configured provider instance");
+        await server.StopAsync(TimeSpan.Zero);
+        Ensure(timeProvider.ActiveTimerCount == 0,
+            "stopping the server must release its timer without disposing the application-owned provider");
+    }
+
+    [Test]
     public async Task FrameworkSupervisorShouldNotHideAnUnexpectedSiblingFailure()
     {
         var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
@@ -657,7 +682,8 @@ public class SharpLinkServerInvocationTests
             session,
             new RpcSessionGeneratedServerBridge(session),
             CreateCallCancellations(),
-            CancellationToken.None);
+            CancellationToken.None,
+            RpcSessionTestFixture.RuntimeContext.TimeProvider);
 
     private static StripedLongMap<ServerCallCancellationState> CreateCallCancellations(
         SharpLinkRuntimeContext? runtimeContext = null)
@@ -994,7 +1020,8 @@ public class SharpLinkServerInvocationTests
                 Session,
                 new RpcSessionGeneratedServerBridge(Session),
                 CreateCallCancellations(runtimeContext),
-                CancellationToken.None);
+                CancellationToken.None,
+                runtimeContext.TimeProvider);
             Ensure(Connection.MarkReady(null), "connection ready");
             var registration = ServiceRegistration.CreateSingleton(
                 typeof(ThrowingService),

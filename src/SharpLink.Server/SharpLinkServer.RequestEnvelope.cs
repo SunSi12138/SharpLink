@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
@@ -9,18 +7,15 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> payload,
         ProtocolV2FrameFlags flags)
     {
-        var utcNow = DateTimeOffset.UtcNow;
-        var monotonicNow = Stopwatch.GetTimestamp();
         return ServerRequestEnvelopeReader.Read(
             session,
             payload,
             flags,
             _protocolOptions.MaxMetadataBytes,
-            utcNow,
-            monotonicNow);
+            _runtimeContext.TimeProvider);
     }
 
-    private static bool IsDeadlineExceeded(long deadlineTimestamp)
-        => deadlineTimestamp > 0 && deadlineTimestamp <= Stopwatch.GetTimestamp();
+    private bool IsDeadlineExceeded(RpcDeadline deadline)
+        => deadline.IsExpired(_runtimeContext.TimeProvider);
 
 }

@@ -17,7 +17,7 @@ internal sealed partial class SharpLinkServer
         var hasReturnPayload = (flags & ProtocolV2FrameFlags.HasReturn) != 0;
 
         var request = ReadRequestEnvelope(session, payload, flags);
-        if (IsDeadlineExceeded(request.DeadlineTimestamp))
+        if (IsDeadlineExceeded(request.RpcDeadline))
         {
             ValueTask responseSend;
             try
@@ -80,8 +80,7 @@ internal sealed partial class SharpLinkServer
             admittedCallState = CreateAdmissionWaitState(
                 connection,
                 requestId,
-                request.Deadline,
-                request.DeadlineTimestamp,
+                request.RpcDeadline,
                 serverLoopToken,
                 serviceInfo.ModuleCancellation,
                 requestCancellationMap);
@@ -210,7 +209,7 @@ internal sealed partial class SharpLinkServer
             CompleteFailedRequestStreams(session, requestId, exception);
             var responseSend = session.SendRpcErrorWithBackpressureAsync(
                 requestId,
-                MapServerCancellationException(admittedCallState, request.DeadlineTimestamp),
+                MapServerCancellationException(admittedCallState, request.RpcDeadline),
                 connection.ConnectionToken);
             return ReleaseDispatchResourcesAfterResponseAsync(
                 responseSend, admittedCallState, requestId, requestCancellationMap, connection);
@@ -230,8 +229,7 @@ internal sealed partial class SharpLinkServer
         var callState = admittedCallState ?? CreateTrackedCallState(
             connection,
             requestId,
-            request.Deadline,
-            request.DeadlineTimestamp,
+            request.RpcDeadline,
             serverLoopToken,
             serviceInfo.ModuleCancellation,
             supportsCooperativeCancellation,
@@ -239,7 +237,7 @@ internal sealed partial class SharpLinkServer
         if (decodedRequestOwner is not null)
         {
             callState = EnsureTrackedCallState(
-                connection, callState, requestId, request.Deadline, request.DeadlineTimestamp,
+                connection, callState, requestId, request.RpcDeadline,
                 serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);
             callState.AttachPayloadOwner(_runtimeContext.Buffers, decodedRequestOwner);
             decodedRequestOwner = null;
@@ -262,7 +260,7 @@ internal sealed partial class SharpLinkServer
                 if (!invokeTask.IsCompletedSuccessfully)
                 {
                     callState = EnsureTrackedCallState(
-                        connection, callState, requestId, request.Deadline, request.DeadlineTimestamp,
+                        connection, callState, requestId, request.RpcDeadline,
                         serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);
                     return AwaitDispatchRpcNoReturnAsync(
                         invokeTask, session, requestId, callState, requestCancellationMap, connection,
@@ -274,7 +272,7 @@ internal sealed partial class SharpLinkServer
                     } interceptorContext)
                     interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
                 var responseSend = ValueTask.CompletedTask;
-                if (TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
+                if (TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken))
                 {
                     responseSend = session.SendPacketWithBackpressureAsync(
                         ProtocolV2FrameType.Response,
@@ -294,11 +292,11 @@ internal sealed partial class SharpLinkServer
             {
                 CompleteFailedRequestStreams(session, requestId, exception);
                 var responseSend = ValueTask.CompletedTask;
-                if (TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
+                if (TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken))
                 {
                     responseSend = session.SendRpcErrorWithBackpressureAsync(
                         requestId,
-                        MapServerCancellationException(callState, request.DeadlineTimestamp),
+                        MapServerCancellationException(callState, request.RpcDeadline),
                         connection.ConnectionToken);
                 }
                 else
@@ -313,7 +311,7 @@ internal sealed partial class SharpLinkServer
             {
                 CompleteFailedRequestStreams(session, requestId, e);
                 var responseSend = ValueTask.CompletedTask;
-                if (TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
+                if (TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken))
                 {
                     responseSend = session.SendRpcErrorWithBackpressureAsync(
                         requestId,
@@ -353,7 +351,7 @@ internal sealed partial class SharpLinkServer
             if (!invokeTask.IsCompletedSuccessfully)
             {
                 callState = EnsureTrackedCallState(
-                    connection, callState, requestId, request.Deadline, request.DeadlineTimestamp,
+                    connection, callState, requestId, request.RpcDeadline,
                     serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);
                 return AwaitDispatchRpcAsync(invokeTask, session, requestId, writer, token, callState,
                     requestCancellationMap, connection, responseCallContext,
@@ -364,7 +362,7 @@ internal sealed partial class SharpLinkServer
                     Status: SharpLinkInvocationStatus.Pending
                 } interceptorContext)
                 interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
-            if (!TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
+            if (!TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken))
             {
                 _runtimeContext.Buffers.Return(writer);
                 ownsWriter = false;
@@ -394,11 +392,11 @@ internal sealed partial class SharpLinkServer
 
             _runtimeContext.Buffers.Return(writer);
             var responseSend = ValueTask.CompletedTask;
-            if (TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
+            if (TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken))
             {
                 responseSend = session.SendRpcErrorWithBackpressureAsync(
                     requestId,
-                    MapServerCancellationException(callState, request.DeadlineTimestamp),
+                    MapServerCancellationException(callState, request.RpcDeadline),
                     connection.ConnectionToken);
             }
             else
@@ -426,7 +424,7 @@ internal sealed partial class SharpLinkServer
 
             _runtimeContext.Buffers.Return(writer);
             var responseSend = ValueTask.CompletedTask;
-            if (TryClaimCallCompletion(callState, request.DeadlineTimestamp, serverLoopToken))
+            if (TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken))
             {
                 responseSend = session.SendRpcErrorWithBackpressureAsync(
                     requestId,
@@ -492,7 +490,7 @@ internal sealed partial class SharpLinkServer
             {
                 await session.SendRpcErrorWithBackpressureAsync(
                     requestId,
-                    MapServerCancellationException(callState, callState.DeadlineTimestamp),
+                    MapServerCancellationException(callState, callState.Deadline),
                     connection.ConnectionToken).ConfigureAwait(false);
             }
             else
@@ -578,7 +576,7 @@ internal sealed partial class SharpLinkServer
             {
                 await session.SendRpcErrorWithBackpressureAsync(
                     requestId,
-                    MapServerCancellationException(callState, callState.DeadlineTimestamp),
+                    MapServerCancellationException(callState, callState.Deadline),
                     connection.ConnectionToken).ConfigureAwait(false);
             }
             else

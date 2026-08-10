@@ -5,8 +5,7 @@ internal sealed partial class SharpLinkServer
     private ServerCallCancellationState? CreateTrackedCallState(
         ServerConnectionState connection,
         long requestId,
-        DateTimeOffset? deadline,
-        long deadlineTimestamp,
+        RpcDeadline deadline,
         CancellationToken serverLoopToken,
         CancellationToken moduleDrainingToken,
         bool supportsCooperativeCancellation,
@@ -19,7 +18,7 @@ internal sealed partial class SharpLinkServer
         var callState = ServerCallCancellationState.Rent(
             requestId,
             deadline,
-            deadlineTimestamp,
+            _runtimeContext.TimeProvider,
             serverLoopToken,
             _forceStopCts.Token,
             moduleDrainingToken,
@@ -35,8 +34,7 @@ internal sealed partial class SharpLinkServer
         ServerConnectionState connection,
         ServerCallCancellationState? callState,
         long requestId,
-        DateTimeOffset? deadline,
-        long deadlineTimestamp,
+        RpcDeadline deadline,
         CancellationToken serverLoopToken,
         CancellationToken moduleDrainingToken,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap)
@@ -47,7 +45,7 @@ internal sealed partial class SharpLinkServer
         callState = ServerCallCancellationState.Rent(
             requestId,
             deadline,
-            deadlineTimestamp,
+            _runtimeContext.TimeProvider,
             serverLoopToken,
             _forceStopCts.Token,
             moduleDrainingToken,
@@ -73,13 +71,13 @@ internal sealed partial class SharpLinkServer
 
     private bool TryClaimCallCompletion(
         ServerCallCancellationState? callState,
-        long deadlineTimestamp,
+        RpcDeadline deadline,
         CancellationToken serverLoopToken)
     {
         if (callState is not null)
             return TryClaimCallCompletion(callState);
 
-        var reason = IsDeadlineExceeded(deadlineTimestamp)
+        var reason = IsDeadlineExceeded(deadline)
             ? ServerCallCancellationReason.DeadlineExceeded
             : serverLoopToken.IsCancellationRequested
                 ? ServerCallCancellationReason.ConnectionClosed
@@ -94,12 +92,12 @@ internal sealed partial class SharpLinkServer
         return false;
     }
 
-    private static SharpLinkException MapServerCancellationException(
+    private SharpLinkException MapServerCancellationException(
         ServerCallCancellationState? callState,
-        long deadlineTimestamp)
+        RpcDeadline deadline)
         => ServerCallTerminationMapper.CreateServerCancellationException(
             callState?.Reason,
-            callState is null && IsDeadlineExceeded(deadlineTimestamp));
+            callState is null && IsDeadlineExceeded(deadline));
 
     private static ValueTask TrySendModuleDrainError(
         ServerCallCancellationState? callState,

@@ -82,12 +82,12 @@ internal sealed partial class SharpLinkClient
                     delay = admissionDelay;
                 if (delay == TimeSpan.Zero)
                 {
-                    if (control.Deadline is { } zeroDelayDeadline && DateTimeOffset.UtcNow >= zeroDelayDeadline)
+                    if (control.Deadline.IsExpired(_runtimeContext.TimeProvider))
                         throw CreateDeadlineExceededException();
                     continue;
                 }
 
-                if (control.Deadline is { } deadline && WouldReachDeadline(deadline, delay))
+                if (WouldReachDeadline(control.Deadline, delay))
                     throw CreateDeadlineExceededException();
                 await DelayForRetryOrAdmissionAsync(delay, cancellationToken).ConfigureAwait(false);
             }
@@ -164,7 +164,7 @@ internal sealed partial class SharpLinkClient
             var operation = connection.PendingCalls.Rent(
                 responseCodec,
                 PendingCallKind.Unary,
-                control.DeadlineTimestamp,
+                control.Deadline,
                 cancellationToken,
                 out var requestId,
                 outcome,
@@ -210,9 +210,8 @@ internal sealed partial class SharpLinkClient
             var lease = await connection.PendingCalls.RentAsync(
                 responseCodec,
                 PendingCallKind.Unary,
-                control.DeadlineTimestamp,
-                waitForSlot: true,
                 control.Deadline,
+                waitForSlot: true,
                 cancellationToken,
                 outcome,
                 hasResponsePayload: hasResponsePayload,
@@ -241,7 +240,7 @@ internal sealed partial class SharpLinkClient
         RpcMethodDescriptor method,
         EndpointRetrySelectionState selection,
         AttemptOutcomeState outcome,
-        DateTimeOffset? deadline,
+        RpcDeadline deadline,
         CancellationToken cancellationToken)
     {
         while (true)
@@ -263,7 +262,7 @@ internal sealed partial class SharpLinkClient
                     var delay = retryAfter > TimeSpan.Zero
                         ? retryAfter
                         : TimeSpan.FromMilliseconds(1);
-                    if (deadline is { } retryDeadline && WouldReachDeadline(retryDeadline, delay))
+                    if (WouldReachDeadline(deadline, delay))
                         throw CreateDeadlineExceededException();
                     await DelayForRetryOrAdmissionAsync(delay, cancellationToken).ConfigureAwait(false);
                     continue;
@@ -273,18 +272,16 @@ internal sealed partial class SharpLinkClient
                     throw;
 
                 var signal = Volatile.Read(ref _readySignal).Task;
-                if (deadline is not { } absoluteDeadline)
+                if (!deadline.HasValue)
                 {
                     await signal.WaitAsync(cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
-                var remaining = absoluteDeadline - DateTimeOffset.UtcNow;
-                if (remaining <= TimeSpan.Zero)
-                    throw CreateDeadlineExceededException();
                 if (!await SharpLinkTimer.WaitAsync(
                         signal,
-                        remaining,
+                        deadline,
+                        _runtimeContext.TimeProvider,
                         cancellationToken).ConfigureAwait(false))
                 {
                     throw CreateDeadlineExceededException();

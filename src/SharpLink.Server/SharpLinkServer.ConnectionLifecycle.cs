@@ -44,6 +44,7 @@ internal sealed partial class SharpLinkServer
                 generatedBridge,
                 callCancellations,
                 cancellationToken,
+                _runtimeContext.TimeProvider,
                 _maxConcurrentCallsPerConnection);
             connectionState.MarkSessionLoopStarted();
             connection = null;
