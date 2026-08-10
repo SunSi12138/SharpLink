@@ -394,6 +394,67 @@ public class StreamFlowControllerTests
     }
 
     [Test]
+    public async Task ReceiveStatePoolShouldRespectSmallNegotiatedLimitAcrossChurn()
+    {
+        const int maxConcurrentStreams = 2;
+        const int churnCycles = 8;
+        var receiver = new StreamFlowController(
+            streamWindow: 1,
+            connectionWindow: maxConcurrentStreams,
+            maxFramePayloadBytes: 1024,
+            maxConcurrentStreams: maxConcurrentStreams);
+        Ensure(GetPrivateField<int>(receiver, "_maxPooledReceiveStates") == maxConcurrentStreams,
+            "a negotiated limit below the static cap must bound the local receive-state pool");
+
+        object? initialFirst = null;
+        object? initialSecond = null;
+        for (var cycle = 0; cycle < churnCycles; cycle++)
+        {
+            var firstRequestId = (cycle * 2L) + 1;
+            var secondRequestId = firstRequestId + 1;
+            receiver.AcceptReceived(firstRequestId, 1, 1);
+            receiver.AcceptReceived(secondRequestId, 1, 1);
+            var first = GetReceiveState(receiver, firstRequestId, 1);
+            var second = GetReceiveState(receiver, secondRequestId, 1);
+            Ensure(!ReferenceEquals(first, second), "two active receive keys must remain distinct");
+
+            if (cycle == 0)
+            {
+                initialFirst = first;
+                initialSecond = second;
+            }
+            else
+            {
+                var expectedFirst = initialFirst
+                    ?? throw new Exception("initial first receive state was not captured");
+                var expectedSecond = initialSecond
+                    ?? throw new Exception("initial second receive state was not captured");
+                Ensure(
+                    (ReferenceEquals(first, expectedFirst) && ReferenceEquals(second, expectedSecond)) ||
+                    (ReferenceEquals(first, expectedSecond) && ReferenceEquals(second, expectedFirst)),
+                    "small-limit churn must recycle only the two bounded receive-state instances");
+            }
+
+            Ensure(receiver.FlushConsumed(firstRequestId, 1) == 0,
+                "the first exhausted state should await its final credit");
+            Ensure(receiver.RecordConsumed(firstRequestId, 1, 1) == 1,
+                "the first final credit should recycle its state");
+            Ensure(receiver.FlushConsumed(secondRequestId, 1) == 0,
+                "the second exhausted state should await its final credit");
+            Ensure(receiver.RecordConsumed(secondRequestId, 1, 1) == 1,
+                "the second final credit should recycle its state");
+            Ensure(GetReceiveStateCount(receiver) == 0,
+                "every churn cycle must remove both completed receive states before pooling");
+            Ensure(GetPrivateField<int>(receiver, "_pooledReceiveStateCount") == maxConcurrentStreams,
+                "the pool must retain no more than the negotiated two-state limit");
+            Ensure(GetPooledReceiveStateLinkCount(receiver) == maxConcurrentStreams,
+                "the free-state chain must remain bounded by the negotiated limit during churn");
+        }
+
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task CompleteShouldClearActiveAndPooledReceiveStateReferences()
     {
         var receiver = new StreamFlowController(4, 12, 1024, maxConcurrentStreams: 3);
