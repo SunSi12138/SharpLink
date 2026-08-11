@@ -220,13 +220,30 @@ public static class Program
         {
             foreach (var concurrency in options.ConcurrencyConfig)
             {
+                var warmupDurationSeconds = 0d;
                 if (options.WarmupSeconds > 0)
                 {
                     Console.WriteLine($"[Warmup] op={operation} c={concurrency} for {options.WarmupSeconds}s");
-                    _ = await ExecuteStageAsync(rpc, operation, options, options.WarmupSeconds, concurrency, isWarmup: true);
+                    var warmupStarted = Stopwatch.GetTimestamp();
+                    _ = await ExecuteStageAsync(
+                        rpc,
+                        operation,
+                        options,
+                        options.WarmupSeconds,
+                        0,
+                        concurrency,
+                        isWarmup: true);
+                    warmupDurationSeconds = Stopwatch.GetElapsedTime(warmupStarted).TotalSeconds;
                 }
 
-                var result = await ExecuteStageAsync(rpc, operation, options, options.DurationSeconds, concurrency, isWarmup: false);
+                var result = await ExecuteStageAsync(
+                    rpc,
+                    operation,
+                    options,
+                    options.DurationSeconds,
+                    warmupDurationSeconds,
+                    concurrency,
+                    isWarmup: false);
                 Console.WriteLine($"[Result] op={result.Operation} c={result.Concurrency} qps={result.Qps:F2} ok={result.Success} fail={result.Failure} validationFail={result.ValidationFailure} cancelled={result.Cancelled} err={result.ErrorRatePercent:F2}% p50={FormatLatency(result.P50Us)} p95={FormatLatency(result.P95Us)} p99={FormatLatency(result.P99Us)} p999={FormatLatency(result.P999Us)} avg={FormatLatency(result.AvgUs)} min={FormatLatency(result.MinUs)} max={FormatLatency(result.MaxUs)} measurement={result.MeasurementDurationSeconds:F2}s drain={result.DrainDurationSeconds:F3}s");
                 if (result.ValidatedMessages > 0)
                     Console.WriteLine($"[EquivalentDuplex] messages={result.ValidatedMessages} msgps={result.MessagesPerSecond:F2} directionalMiBps={result.DirectionalBusinessMiBPerSecond:F2}");
@@ -249,6 +266,7 @@ public static class Program
         string operation,
         StreamLoadOptions options,
         int durationSeconds,
+        double warmupDurationSeconds,
         int concurrency,
         bool isWarmup)
     {
@@ -426,7 +444,7 @@ public static class Program
             formalStatistics?.AverageUs ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Average),
             formalStatistics?.MinUs ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Min),
             formalStatistics?.MaxUs ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Max),
-            options.WarmupSeconds,
+            warmupDurationSeconds,
             elapsed,
             drainSeconds,
             operationsStarted,

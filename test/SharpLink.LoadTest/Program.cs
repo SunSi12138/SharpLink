@@ -370,18 +370,22 @@ public static class Program
                 options.Operation == "oneway" && options.MaxSendQueueBytes.HasValue;
             foreach (var concurrency in options.ConcurrencyConfig)
             {
+                var warmupDurationSeconds = 0d;
                 if (options.WarmupSeconds > 0)
                 {
                     Console.WriteLine($"[Client] warmup {options.WarmupSeconds}s @ c={concurrency}");
+                    var warmupStarted = Stopwatch.GetTimestamp();
                     _ = await ExecuteStageAsync(
                         rpc,
                         tailObserverRpc,
                         options,
                         options.WarmupSeconds,
+                        0,
                         concurrency,
                         metrics,
                         retryOneWaySendQueueBackpressure,
                         isWarmup: true);
+                    warmupDurationSeconds = Stopwatch.GetElapsedTime(warmupStarted).TotalSeconds;
                 }
 
                 var result = await ExecuteStageAsync(
@@ -389,6 +393,7 @@ public static class Program
                     tailObserverRpc,
                     options,
                     options.DurationSeconds,
+                    warmupDurationSeconds,
                     concurrency,
                     metrics,
                     retryOneWaySendQueueBackpressure,
@@ -427,6 +432,7 @@ public static class Program
         ILoadTestService? tailObserverRpc,
         LoadTestOptions options,
         int durationSeconds,
+        double warmupDurationSeconds,
         int concurrency,
         MetricsRegistry metrics,
         bool retryOneWaySendQueueBackpressure,
@@ -726,7 +732,7 @@ public static class Program
             formalStatistics?.AverageUs ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Average),
             formalStatistics?.MinUs ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Min),
             formalStatistics?.MaxUs ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Max),
-            options.WarmupSeconds,
+            warmupDurationSeconds,
             measurementSeconds,
             drainSeconds,
             operationsStarted,

@@ -21,7 +21,13 @@ internal static class LatencyRecorderBaselineAnalyzer
         }
 
         var expectedRuns = int.Parse(args[2]);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(expectedRuns);
+        if (expectedRuns < 5)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(expectedRuns),
+                expectedRuns,
+                "A formal interference gate requires at least five alternating runs.");
+        }
         var failures = new List<string>();
         var sourceCommit = ValidateMicro(args[0], expectedRuns, failures);
 

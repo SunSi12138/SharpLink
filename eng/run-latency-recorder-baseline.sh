@@ -11,6 +11,11 @@ MAXIMUM_SAMPLES="${SHARPLINK_RECORDER_MAXIMUM_SAMPLES:-25000000}"
 MICRO_RECORDS="${SHARPLINK_RECORDER_MICRO_RECORDS:-1000000}"
 SOURCE_COMMIT="${SHARPLINK_COMMIT:-$(git -C "$ROOT" rev-parse HEAD)}"
 
+if (( RUNS < 5 )); then
+  echo "SHARPLINK_RECORDER_RUNS must be at least 5 for a formal gate." >&2
+  exit 2
+fi
+
 if [[ -e "$OUTPUT_ROOT" ]]; then
   echo "Output path already exists; choose a fresh directory: $OUTPUT_ROOT" >&2
   exit 2
@@ -121,7 +126,7 @@ for entry in \
   read -r component scenario <<< "$entry"
   dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj \
     -c Release --no-build -- \
-    --feature-evidence "$component" "$scenario" 1000 "$MEASUREMENT_SECONDS" 1000000 \
+    --feature-evidence "$component" "$scenario" 1000 "$MEASUREMENT_SECONDS" "$MAXIMUM_SAMPLES" \
     "$OUTPUT_ROOT/feature/${component}-${scenario}.json" \
     > "$OUTPUT_ROOT/feature/${component}-${scenario}.stdout"
 done
@@ -132,6 +137,11 @@ for transport in tcp sharedmemory; do
       run_load "$OUTPUT_ROOT/matrix/${transport}-${profile}-${operation}.json" \
         --transport "$transport" --profile "$profile" --operation "$operation" \
         --concurrency 1,8,32,128,512 --recording formal
+      if [[ "$operation" == "echo" ]]; then
+        run_load "$OUTPUT_ROOT/matrix/${transport}-${profile}-echo-medium.json" \
+          --transport "$transport" --profile "$profile" --operation echo \
+          --payload-size 65536 --concurrency 1,8,32,128 --recording formal
+      fi
     done
   done
 done
