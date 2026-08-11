@@ -89,6 +89,15 @@ public static class Program
         try
         {
             await client.ConnectAsync(cancellationToken);
+            var fixedReadiness = await client.WaitForReadinessAsync(1, cancellationToken);
+            VerifyReadinessSnapshot(
+                fixedReadiness,
+                expectedActiveEndpoints: 1,
+                expectedTargetReadyEndpoints: 1);
+            VerifyReadinessSnapshot(
+                client.GetReadinessSnapshot(),
+                expectedActiveEndpoints: 1,
+                expectedTargetReadyEndpoints: 1);
 
             var proxy = client.Get<IPackageSmokeService>();
             var result = await proxy.AddAsync(20, 22);
@@ -202,6 +211,15 @@ public static class Program
         try
         {
             await client.ConnectAsync(cancellationToken);
+            var staticReadiness = await client.WaitForReadinessAsync(2, cancellationToken);
+            VerifyReadinessSnapshot(
+                staticReadiness,
+                expectedActiveEndpoints: 2,
+                expectedTargetReadyEndpoints: 2);
+            VerifyReadinessSnapshot(
+                client.GetReadinessSnapshot(),
+                expectedActiveEndpoints: 2,
+                expectedTargetReadyEndpoints: 2);
             if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
                 throw new InvalidOperationException("Static endpoint package smoke returned an unexpected result.");
 
@@ -214,6 +232,15 @@ public static class Program
                 .UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin)
                 .Build();
             await dynamicClient.ConnectAsync(cancellationToken);
+            var dynamicReadiness = await dynamicClient.WaitForReadinessAsync(2, cancellationToken);
+            VerifyReadinessSnapshot(
+                dynamicReadiness,
+                expectedActiveEndpoints: 2,
+                expectedTargetReadyEndpoints: 2);
+            VerifyReadinessSnapshot(
+                dynamicClient.GetReadinessSnapshot(),
+                expectedActiveEndpoints: 2,
+                expectedTargetReadyEndpoints: 2);
             if (await dynamicClient.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
                 throw new InvalidOperationException("Dynamic endpoint package smoke returned an unexpected result.");
         }
@@ -224,6 +251,22 @@ public static class Program
             await secondServer.DisposeAsync();
             await Task.WhenAny(firstTask, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
             await Task.WhenAny(secondTask, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
+        }
+    }
+
+    private static void VerifyReadinessSnapshot(
+        SharpLinkClientReadinessSnapshot snapshot,
+        int expectedActiveEndpoints,
+        int expectedTargetReadyEndpoints)
+    {
+        if (!snapshot.MeetsTarget ||
+            snapshot.State != SharpLinkConnectionState.Ready ||
+            snapshot.ActiveEndpoints != expectedActiveEndpoints ||
+            snapshot.ReadyEndpoints != expectedActiveEndpoints ||
+            snapshot.ReadyConnections < snapshot.ReadyEndpoints ||
+            snapshot.TargetReadyEndpoints != expectedTargetReadyEndpoints)
+        {
+            throw new InvalidOperationException($"Unexpected Client readiness snapshot: {snapshot}.");
         }
     }
 

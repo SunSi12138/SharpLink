@@ -31,6 +31,21 @@ builder
 
 `UseDnsEndpoints` 是内置 TCP DNS resolver。DNS 不是服务注册中心：它没有权重/区域/健康语义，TTL 和 OS resolver 行为也可能不同；需要这些能力时实现显式 Resolver SPI。
 
+## 连接成功与拓扑就绪
+
+`ConnectAsync` 保留各 topology 原有的 connectivity 生命周期（通常取得至少一条可用连接；dynamic accepted empty 仍按原语义成功），不等待全部目标 endpoint 收敛。需要在接流量前等待指定数量的 endpoint 可用时，显式使用 readiness API：
+
+```csharp
+await client.ConnectAsync(cancellationToken);
+var readiness = await client.WaitForReadinessAsync(
+    minimumReadyEndpoints: 2,
+    cancellationToken);
+```
+
+`GetReadinessSnapshot()` 是无锁的瞬时观察，不是连接租约，也不保证返回后的状态继续保持。`ActiveEndpoints` 只统计当前路由拓扑；动态 resolver 已退役、仍在排空的旧 generation 不计入其中。`ReadyEndpoints` 统计至少有一条可接受调用连接的 endpoint，`ReadyConnections` 则是这些 endpoint 上所有可接受调用连接的总数。`TargetReadyEndpoints` 对固定拓扑为 1，对静态拓扑为 `min(MinReadyEndpoints, endpoint 数)`，对动态拓扑为 `min(MinReadyEndpoints, 当前 endpoint 数)`。只有 Client 状态为 `Ready`、目标大于 0、至少有一条 ready connection 且 endpoint 数达到目标时，`MeetsTarget` 才为 `true`。
+
+等待不会提高配置的 convergence target，也不会为 caller threshold 额外扩容；从 `Created` 等尚未建立 connectivity 的状态调用时，它会先启动或加入既有 `ConnectAsync` 生命周期。固定拓扑最多等待 1 个 endpoint；静态拓扑最多等待其构建时目标；动态拓扑最多等待配置的 `MinReadyEndpoints`，因此可以跨越当前不足或空 snapshot，等待 resolver 将来发布更大的拓扑。调用方取消只取消自己的等待。`Reconnecting` 会继续等待；初始 `ConnectAsync` 失败会原样传播，如果 race 中直接观察到 `Faulted` 则以 `Unavailable` 结束；Client 进入 `Draining` 或 `Stopped` 时以 `ConnectionClosed` 结束。Resolver 接受空 snapshot 时 readiness 为 `0/0/0/0`，且 `MeetsTarget=false`，但这不会改变 `ConnectAsync` 已有的 connectivity 语义。
+
 ## Retry
 
 Retry 默认关闭，只对标注 `[Idempotent]` 的 Unary 生效。`MaxAttempts` 是总尝试数（含首次），范围 1–10。Streaming 与 OneWay 不 retry；业务拒绝和明确参数错误不应通过换 endpoint 重试。

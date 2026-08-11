@@ -56,7 +56,7 @@ jobs:
           --maximum-parallel-tests 1
           --timeout 120s
 
-      - name: Run Independent-process Shared-memory AOT Smoke
+      - name: Run NativeAOT Transport and Topology Smoke
         env:
           SHARPLINK_AOT_RID: linux-x64
         run: ./eng/run-shared-memory-aot-process-smoke.sh

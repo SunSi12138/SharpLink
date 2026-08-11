@@ -253,8 +253,21 @@ internal sealed class ClientConnection :
                 }
                 catch (Exception exception)
                 {
-                    Fail(exception);
-                    ReleaseActiveCall();
+                    try
+                    {
+                        Fail(exception);
+                    }
+                    finally
+                    {
+                        try
+                        {
+                            _client.HandleConnectionFatalFailure(this, exception);
+                        }
+                        finally
+                        {
+                            ReleaseActiveCall();
+                        }
+                    }
                     return;
                 }
                 if (!drain.IsCompletedSuccessfully)
@@ -300,7 +313,14 @@ internal sealed class ClientConnection :
         }
         catch (Exception exception)
         {
-            Fail(exception);
+            try
+            {
+                Fail(exception);
+            }
+            finally
+            {
+                _client.HandleConnectionFatalFailure(this, exception);
+            }
         }
         finally
         {

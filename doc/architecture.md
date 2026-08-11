@@ -218,7 +218,7 @@ SharpLink.Serializer.SharpPack
 - 压缩在 Generated Codec 序列化之后、SendPump 之前运行；候选无收益即归还。每个自定义 provider 的 wire profile 在 Runtime Context Build 时与 provider 实例成对冻结，后续协商、查找和诊断不重读可变属性。接收端先验证未压缩 envelope 和原始长度，再租借精确有界 owner，调用/stream dispatch 完成后归还。未启用时 Session 热路径只增加一个可预测的空引用分支，SendPump、静态路由和 Codec 热路径不增加锁。
 - 主动 admission 默认关闭，并在 Service/Scope/Codec/interceptor 之前累计取得 Global、Contract、Method 与可选 Partition permit；同步 AttemptAcquire 是启用态快路径。常见的单 concurrency limiter 使用精确 slot 和单 lease，不创建 retained/acquired 数组；组合规则与排队路径仍保留逐级 lease 所有权。异步等待同时受总 call/byte 预算、deadline、取消、断连和 Draining 约束；客户端流以生成的 `ClientStreamCount` 预留 stream ID，压缩 frame 按 wire bytes spool，permit 到达后才解压和 dispatch。
 - 分区池只在 miss/release 时机会式回收，无清理线程；持有 permit、waiter 或 stream spool 的 entry 不可回收。所有 lease 都挂在既有 ServerCallCancellationState 上，沿 Unary、OneWay 和完整 Streaming 生命周期一次释放；未启用时只读取空 controller 引用，不创建 Task、状态机、TagList 或每调用对象。
-- Server 状态映射为 Starting/Stopped/Faulted=`Unhealthy`、Running=`Ready`、Draining=`Draining`。Hosted readiness 直接读取 Server 原子状态，Client accessor 只在至少一条连接 Ready 后发布。
+- Server 状态映射为 Starting/Stopped/Faulted=`Unhealthy`、Running=`Ready`、Draining=`Draining`。Hosted readiness 直接读取 Server 原子状态；Client accessor 在 topology-specific `ConnectAsync` connectivity boundary 完成后发布，dynamic accepted-empty 保持既有成功语义。需要多 endpoint 收敛的应用另行等待 Client readiness。
 - Stop 先进入 Draining，再停止 accept 并发送强制 flush 的 GoAway；grace 内等待 active calls，超时后取消 session 调用，最后等待后台任务并释放 service/provider。
 
 ## 动态程序集 Registry

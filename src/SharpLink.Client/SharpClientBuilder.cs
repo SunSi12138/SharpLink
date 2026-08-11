@@ -741,6 +741,7 @@ public class SharpClientBuilder
         var composition = new ClientRuntimeComposition(
             transport,
             topology,
+            CreateReadinessConfiguration(plan),
             runtimeContext,
             staticManifests,
             SharpLinkClient.BuildStaticProxySnapshot(staticManifests),
@@ -760,6 +761,34 @@ public class SharpClientBuilder
             logger,
             SharpLinkClient.CreateFrameworkTaskSupervisor(logger));
         return new SharpLinkClient(composition);
+    }
+
+    private static ClientReadinessConfiguration CreateReadinessConfiguration(ClientBuildPlan plan)
+    {
+        return plan.Topology switch
+        {
+            FixedTransportTopologyPlan => new ClientReadinessConfiguration(1, 1, 1),
+            StaticEndpointsTopologyPlan { EndpointCount: 1 } =>
+                new ClientReadinessConfiguration(1, 1, 1),
+            StaticEndpointsTopologyPlan staticTopology => CreateStaticReadinessConfiguration(
+                staticTopology,
+                plan.Cluster ?? throw new InvalidOperationException(
+                    "A static Client cluster requires cluster options.")),
+            DynamicResolverTopologyPlan => new ClientReadinessConfiguration(
+                0,
+                0,
+                (plan.Cluster ?? throw new InvalidOperationException(
+                    "A dynamic Client cluster requires cluster options.")).MinReadyEndpoints),
+            _ => throw new UnreachableException()
+        };
+    }
+
+    private static ClientReadinessConfiguration CreateStaticReadinessConfiguration(
+        StaticEndpointsTopologyPlan topology,
+        ClientClusterPlan cluster)
+    {
+        var target = Math.Min(cluster.MinReadyEndpoints, topology.EndpointCount);
+        return new ClientReadinessConfiguration(topology.EndpointCount, target, target);
     }
 
     private static SharpLinkConnectionPoolOptions CreateDefaultConnectionPoolOptions()

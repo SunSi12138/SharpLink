@@ -6,6 +6,7 @@
 
 ### Added
 
+- Client readiness snapshots now expose lifecycle state, active/ready endpoint counts, ready connection count, and the current convergence target. Built-in fixed, static, and resolver topologies support caller-selected endpoint thresholds without raising configured convergence targets or changing `ConnectAsync` connectivity semantics.
 - Runtime sessions now receive one immutable creation snapshot containing their Client/Server role, real Runtime Context, and flush policy. Context-derived protocol limits and the sole StreamManager instance are established before the constructor returns.
 - `PendingRequestTable` now requires an explicit capacity, codec provider, pending-call owner, and time provider; Client connections supply the dependency set from their Runtime Context without transferring ownership.
 - Added the Runtime Architecture Phase 00 deterministic lifecycle/fake-time fixtures and a bounded six-path BenchmarkDotNet baseline. This is test/tooling evidence only and does not change production behavior, Protocol v2, contract/schema identity, or Generated API 4.

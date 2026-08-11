@@ -25,6 +25,7 @@ internal sealed partial class SharpLinkClient :
     private long _registryGeneration;
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly Lock _stateGate = new();
+    private readonly Lock _readySignalGate = new();
     private readonly Lock _poolGate = new();
     private readonly FrameworkTaskSupervisor _frameworkTasks;
     private readonly SemaphoreSlim _reconnectSignal = new(0, 1);
@@ -35,6 +36,7 @@ internal sealed partial class SharpLinkClient :
     private Task? _reconnectTask;
     private Task? _expansionTask;
     private Task? _stopTask;
+    private int _stopStarted;
     private TaskCompletionSource<bool> _readySignal = CreateReadySignal();
     private int _activeLogicalInvocations;
     private int _state = (int)SharpLinkConnectionState.Created;
@@ -64,6 +66,14 @@ internal sealed partial class SharpLinkClient :
     internal SharpLinkClient(ClientRuntimeComposition composition)
     {
         ArgumentNullException.ThrowIfNull(composition);
+        _maximumReadinessWaitThreshold = composition.Readiness.MaximumWaitThreshold;
+        _readinessFacts = new ClientReadinessFacts(
+            composition.Readiness.InitialActiveEndpoints,
+            ReadyEndpoints: 0,
+            ReadyConnections: 0,
+            composition.Readiness.InitialTargetReadyEndpoints);
+        _readinessPublication = new ClientReadinessPublication(
+            CreateReadinessSnapshotLocked());
         transportFactory = composition.TransportFactory;
         _runtimeContext = composition.RuntimeContext;
         _staticManifests = composition.StaticManifests;
@@ -128,7 +138,11 @@ internal sealed partial class SharpLinkClient :
         Task stopTask;
         lock (_stateGate)
         {
-            _stopTask ??= StopCoreAsync();
+            if (_stopTask is null)
+            {
+                Volatile.Write(ref _stopStarted, 1);
+                _stopTask = StopCoreAsync();
+            }
             stopTask = _stopTask;
         }
 
@@ -158,7 +172,7 @@ internal sealed partial class SharpLinkClient :
         }
         try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
-        Volatile.Read(ref _readySignal).TrySetResult(true);
+        PulseReadySignal();
 
         var stoppingException = CreateConnectionClosedException("Client is stopping.");
         ClientConnection[] connections;
@@ -166,7 +180,7 @@ internal sealed partial class SharpLinkClient :
         {
             connections = [.. _connections];
             _connections.Clear();
-            Volatile.Write(ref _readyConnections, []);
+            PublishReadySnapshotLocked();
         }
         for (var index = 0; index < connections.Length; index++)
         {
@@ -211,7 +225,7 @@ internal sealed partial class SharpLinkClient :
         _frameworkTasks.Seal();
         try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
-        Volatile.Read(ref _readySignal).TrySetResult(true);
+        PulseReadySignal();
         try { await _cluster.StopAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
 
@@ -274,18 +288,68 @@ internal sealed partial class SharpLinkClient :
         => new(SharpLinkErrorCode.ProtocolViolation, message);
 
     private void TransitionTo(SharpLinkConnectionState state)
-        => Interlocked.Exchange(ref _state, (int)state);
+    {
+        TaskCompletionSource? changed;
+        lock (_readinessGate)
+        {
+            var currentState = (SharpLinkConnectionState)Volatile.Read(ref _state);
+            if (currentState == SharpLinkConnectionState.Stopped)
+                return;
+
+            var stopStarted = Volatile.Read(ref _stopStarted) != 0;
+            if (stopStarted &&
+                state is not SharpLinkConnectionState.Draining and not SharpLinkConnectionState.Stopped)
+            {
+                return;
+            }
+
+            state = NormalizeAvailabilityState(
+                state,
+                currentState,
+                _readinessFacts.ReadyConnections,
+                stopStarted);
+            Interlocked.Exchange(ref _state, (int)state);
+            changed = PublishReadinessLocked();
+            UpdateReadySignalLevelLocked();
+        }
+        changed?.TrySetResult();
+    }
+
+    private static SharpLinkConnectionState NormalizeAvailabilityState(
+        SharpLinkConnectionState requestedState,
+        SharpLinkConnectionState currentState,
+        int readyConnections,
+        bool stopStarted)
+    {
+        // Connection and topology writers publish their immutable facts before lifecycle work
+        // continues outside the pool/cluster gate. A later writer can therefore overtake a stale
+        // availability-derived state request. Resolve those requests against
+        // the latest serialized facts so an older continuation cannot leave the public state and
+        // the routable connection snapshot in conflict.
+        if (readyConnections == 0 && requestedState == SharpLinkConnectionState.Ready)
+        {
+            return currentState == SharpLinkConnectionState.Ready
+                ? SharpLinkConnectionState.Reconnecting
+                : currentState;
+        }
+        if (readyConnections != 0 && !stopStarted &&
+            (requestedState is SharpLinkConnectionState.Connecting or
+                SharpLinkConnectionState.Reconnecting or
+                SharpLinkConnectionState.Faulted or
+                SharpLinkConnectionState.Draining))
+        {
+            return SharpLinkConnectionState.Ready;
+        }
+        return requestedState;
+    }
 
     private static TaskCompletionSource<bool> CreateReadySignal()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private void ResetReadySignal()
+    private void PulseReadySignal()
     {
-        lock (_stateGate)
-        {
-            if (_readySignal.Task.IsCompleted)
-                _readySignal = CreateReadySignal();
-        }
+        lock (_readySignalGate)
+            _readySignal.TrySetResult(true);
     }
 
     internal int ReadyConnectionCount => _cluster?.ReadyConnectionCount ?? Volatile.Read(ref _readyConnections).Length;

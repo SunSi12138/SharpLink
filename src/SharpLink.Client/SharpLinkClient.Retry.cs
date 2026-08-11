@@ -252,7 +252,9 @@ internal sealed partial class SharpLinkClient
             }
             catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.Unavailable)
             {
-                if (State == SharpLinkConnectionState.Stopped || _shutdownCts.IsCancellationRequested)
+                if (Volatile.Read(ref _stopStarted) != 0 ||
+                    State == SharpLinkConnectionState.Stopped ||
+                    _shutdownCts.IsCancellationRequested)
                     throw CreateConnectionClosedException("Client has stopped.");
 
                 if (outcome.ShouldHonorAdmissionRetryAfter)
