@@ -35,7 +35,7 @@ public sealed class LatencyHistogram
         if (count <= 0)
             return 0;
 
-        var target = (long)Math.Ceiling(count * (p / 100.0));
+        var target = decimal.ToInt64(decimal.Ceiling(count * ((decimal)p / 100m)));
         long running = 0;
         for (var i = 0; i < _buckets.Length; i++)
         {
@@ -68,6 +68,8 @@ public sealed class LatencyHistogram
     }
 
     public double Max => Interlocked.Read(ref _maxUs);
+
+    public long Count => Interlocked.Read(ref _count);
 
     private void UpdateMin(long value)
     {

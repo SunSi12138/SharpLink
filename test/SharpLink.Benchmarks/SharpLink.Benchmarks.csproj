@@ -16,6 +16,7 @@
     <ProjectReference Include="..\..\src\SharpLink.Generator\SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\SharpLink.DynamicContracts\SharpLink.DynamicContracts.csproj" />
     <ProjectReference Include="..\SharpLink.DynamicServices\SharpLink.DynamicServices.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\SharpLink.LoadTestBase\SharpLink.LoadTestBase.csproj" />
   </ItemGroup>
 
   <ItemGroup>
