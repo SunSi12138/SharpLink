@@ -300,33 +300,41 @@ public static class Program
                 long operationsStarted = 0;
                 long workerOperationId = 0;
                 await lifecycle.ReadyAndWaitForStartAsync(workerIndex).ConfigureAwait(false);
-                while (lifecycle.CanStartOperation)
+                while (lifecycle.TryBeginOperationStart(workerIndex, out var admission))
                 {
                     operationsStarted++;
-                    var start = workerRecorder is not null || diagnosticHistogram is not null
-                        ? Stopwatch.GetTimestamp()
-                        : 0;
                     try
                     {
-                        var operationId = ((long)workerIndex << 48) | ++workerOperationId;
-                        var messages = await InvokeOperationAsync(
-                            rpc,
-                            operation,
-                            operationId,
-                            payload,
-                            equivalentMessages,
-                            options,
-                            CancellationToken.None);
+                        PendingStreamOperation pendingOperation;
+                        using (admission)
+                        {
+                            var operationId = ((long)workerIndex << 48) | ++workerOperationId;
+                            pendingOperation = new PendingStreamOperation(
+                                workerRecorder is not null || diagnosticHistogram is not null
+                                    ? Stopwatch.GetTimestamp()
+                                    : 0,
+                                InvokeOperationAsync(
+                                    rpc,
+                                    operation,
+                                    operationId,
+                                    payload,
+                                    equivalentMessages,
+                                    options,
+                                    CancellationToken.None));
+                        }
+
+                        var messages = await pendingOperation.Completion.ConfigureAwait(false);
                         if (workerRecorder is not null)
                         {
-                            var elapsedTicks = Stopwatch.GetTimestamp() - start;
+                            var elapsedTicks = Stopwatch.GetTimestamp() - pendingOperation.StartedTimestamp;
                             workerRecorder.RecordTicks(workerIndex, elapsedTicks);
                             if (diagnosticHistogram is not null)
                                 diagnosticHistogram.Record(formalRecorder!.TicksToMicroseconds(elapsedTicks));
                         }
                         else if (diagnosticHistogram is not null)
                         {
-                            diagnosticHistogram.Record(Stopwatch.GetElapsedTime(start).TotalMicroseconds);
+                            diagnosticHistogram.Record(
+                                Stopwatch.GetElapsedTime(pendingOperation.StartedTimestamp).TotalMicroseconds);
                         }
                         validatedMessages += messages;
                         success++;
@@ -766,6 +774,8 @@ internal readonly record struct StreamWorkerOutcome(
     long Cancelled,
     long ValidatedMessages,
     long OperationsStarted);
+
+internal readonly record struct PendingStreamOperation(long StartedTimestamp, Task<int> Completion);
 
 [RpcContract]
 public interface IStreamLoadService : IService

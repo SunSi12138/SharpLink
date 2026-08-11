@@ -52,6 +52,135 @@ public class MeasurementStageLifecycleTests
     }
 
     [Test]
+    public async Task OperationAdmissionShouldBeAtomicWithTheStopBoundary()
+    {
+        var lifecycle = new MeasurementStageLifecycle(workerCount: 1);
+        var worker = lifecycle.ReadyAndWaitForStartAsync(0);
+        await lifecycle.AllWorkersReady.WaitAsync(TimeSpan.FromSeconds(2));
+        lifecycle.StartMeasurement();
+        await worker.WaitAsync(TimeSpan.FromSeconds(2));
+
+        using var operationFactoryEntered = new ManualResetEventSlim();
+        using var releaseOperationFactory = new ManualResetEventSlim();
+        var admission = Task.Run(() =>
+        {
+            var admitted = lifecycle.TryBeginOperationStart(0, out var admission);
+            using (admission)
+            {
+                operationFactoryEntered.Set();
+                if (!releaseOperationFactory.Wait(TimeSpan.FromSeconds(2)))
+                    throw new TimeoutException("The test did not release the operation start.");
+            }
+            return admitted;
+        });
+        Ensure(operationFactoryEntered.Wait(TimeSpan.FromSeconds(2)),
+            "the admitted operation factory starts while holding the lifecycle boundary");
+
+        var stopAttempted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var stop = Task.Run(() =>
+        {
+            stopAttempted.SetResult();
+            return lifecycle.StopStartingNewOperations();
+        });
+        await stopAttempted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Yield();
+        Ensure(!stop.IsCompleted,
+            "stop cannot publish its timestamp while an admitted operation is being invoked");
+
+        releaseOperationFactory.Set();
+        var admittedOperation = await admission.WaitAsync(TimeSpan.FromSeconds(2));
+        var stoppedTimestamp = await stop.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(admittedOperation && stoppedTimestamp > 0,
+            "the already-admitted invocation completes before the stop boundary is published");
+
+        var invokedAfterStop = false;
+        var admittedAfterStop = lifecycle.TryBeginOperationStart(0, out var rejectedAdmission);
+        if (admittedAfterStop)
+        {
+            using (rejectedAdmission)
+                invokedAfterStop = true;
+        }
+        Ensure(!admittedAfterStop && !invokedAfterStop,
+            "no operation factory can run after the stop boundary");
+    }
+
+    [Test]
+    public async Task IndependentWorkerAdmissionSlotsShouldNotSerializeOperationFactories()
+    {
+        var lifecycle = new MeasurementStageLifecycle(workerCount: 2);
+        var firstWorker = lifecycle.ReadyAndWaitForStartAsync(0);
+        var secondWorker = lifecycle.ReadyAndWaitForStartAsync(1);
+        await lifecycle.AllWorkersReady.WaitAsync(TimeSpan.FromSeconds(2));
+        lifecycle.StartMeasurement();
+        await Task.WhenAll(firstWorker, secondWorker).WaitAsync(TimeSpan.FromSeconds(2));
+
+        using var firstFactoryEntered = new ManualResetEventSlim();
+        using var releaseFirstFactory = new ManualResetEventSlim();
+        var firstAdmission = Task.Run(() =>
+        {
+            var admitted = lifecycle.TryBeginOperationStart(0, out var admission);
+            using (admission)
+            {
+                firstFactoryEntered.Set();
+                if (!releaseFirstFactory.Wait(TimeSpan.FromSeconds(2)))
+                    throw new TimeoutException("The test did not release the first operation start.");
+            }
+            return admitted;
+        });
+        Ensure(firstFactoryEntered.Wait(TimeSpan.FromSeconds(2)),
+            "the first worker is inside its operation factory");
+
+        var secondFactoryInvoked = false;
+        var secondAdmission = lifecycle.TryBeginOperationStart(1, out var secondAdmissionScope);
+        if (secondAdmission)
+        {
+            using (secondAdmissionScope)
+                secondFactoryInvoked = true;
+        }
+        Ensure(secondAdmission && secondFactoryInvoked,
+            "a different worker can initiate its RPC without waiting for the first worker");
+
+        releaseFirstFactory.Set();
+        Ensure(await firstAdmission.WaitAsync(TimeSpan.FromSeconds(2)),
+            "the first worker remains admitted after its factory is released");
+        lifecycle.StopStartingNewOperations();
+    }
+
+    [Test]
+    public async Task OperationAdmissionSlotsShouldBePaddedAndAllocationFree()
+    {
+        Ensure(MeasurementStageLifecycle.OperationAdmissionSlotStrideBytes == 128,
+            "worker-owned admission flags are separated by two conventional cache lines");
+
+        var lifecycle = new MeasurementStageLifecycle(workerCount: 1);
+        var worker = lifecycle.ReadyAndWaitForStartAsync(0);
+        await lifecycle.AllWorkersReady.WaitAsync(TimeSpan.FromSeconds(2));
+        lifecycle.StartMeasurement();
+        await worker.WaitAsync(TimeSpan.FromSeconds(2));
+
+        for (var index = 0; index < 100; index++)
+        {
+            Ensure(lifecycle.TryBeginOperationStart(0, out var warmupAdmission),
+                "warmup admission remains open");
+            warmupAdmission.Dispose();
+        }
+
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < 10_000; index++)
+        {
+            if (!lifecycle.TryBeginOperationStart(0, out var admission))
+                throw new Exception("Measurement unexpectedly stopped during allocation validation.");
+            admission.Dispose();
+        }
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+
+        Ensure(allocated == 0,
+            $"operation admission must not allocate in the measurement hot path; allocated={allocated}");
+        lifecycle.StopStartingNewOperations();
+    }
+
+    [Test]
     public async Task DrainShouldWaitForAndObserveInflightCompletion()
     {
         var lifecycle = new MeasurementStageLifecycle(workerCount: 1);

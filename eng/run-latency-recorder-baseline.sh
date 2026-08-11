@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TIMESTAMP="$(date -u +%Y%m%d-%H%M%S)"
 OUTPUT_ROOT="${1:-$ROOT/artifacts/latency-recorder-baseline/$TIMESTAMP}"
+if [[ "$OUTPUT_ROOT" != /* ]]; then
+  OUTPUT_ROOT="$PWD/$OUTPUT_ROOT"
+fi
 RUNS="${SHARPLINK_RECORDER_RUNS:-5}"
 WARMUP_SECONDS="${SHARPLINK_RECORDER_WARMUP_SECONDS:-5}"
 MEASUREMENT_SECONDS="${SHARPLINK_RECORDER_MEASUREMENT_SECONDS:-10}"

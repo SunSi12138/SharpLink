@@ -67,6 +67,19 @@ public class LoadTestRecordingModeTests
     }
 
     [Test]
+    public void TailObserverShouldHonorTheConfiguredFormalSampleCapacity()
+    {
+        var options = LoadTestOptions.Parse([
+            "--operation", "add",
+            "--tail-observer",
+            "--maximum-recorded-operations", "1500001"
+        ]);
+
+        Ensure(options.TailObserverMaximumRecordedOperations == 1_500_001,
+            "tail probes use the configured capacity instead of an undocumented one-million cap");
+    }
+
+    [Test]
     public void RecordingOptionShouldRejectUnknownValues()
     {
         var failure = CaptureFailure(() => LoadTestOptions.Parse(["--recording", "approximate"]));

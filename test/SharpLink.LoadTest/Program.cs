@@ -449,9 +449,11 @@ public static class Program
         SharpLink.LoadTestBase.LatencyHistogram? realtimeRef = LatencyRecordingPolicy.StartsRealtimeReporter(recordingMode)
             ? new SharpLink.LoadTestBase.LatencyHistogram(200_000)
             : null;
-        var lifecycle = new MeasurementStageLifecycle(concurrency);
+        var lifecycle = new MeasurementStageLifecycle(
+            concurrency,
+            options.TailObserver && !isWarmup ? 1 : 0);
         var tailObserverRecorder = options.TailObserver && !isWarmup
-            ? new StageLatencyRecorder(1, Math.Min(options.MaximumRecordedOperations, 1_000_000))
+            ? new StageLatencyRecorder(1, options.TailObserverMaximumRecordedOperations)
             : null;
         var failures = new FailureRecorder();
         long realtimeSuccess = 0;
@@ -508,12 +510,19 @@ public static class Program
                 long failure = 0;
                 observerReady.TrySetResult();
                 await lifecycle.WaitForStartAsync().ConfigureAwait(false);
-                while (lifecycle.CanStartOperation)
+                while (lifecycle.TryBeginOperationStart(concurrency, out var admission))
                 {
-                    var started = Stopwatch.GetTimestamp();
                     try
                     {
-                        var value = await tailObserverRpc!.AddAsync(7, 9).ConfigureAwait(false);
+                        long started;
+                        ValueTask<int> completion;
+                        using (admission)
+                        {
+                            started = Stopwatch.GetTimestamp();
+                            completion = tailObserverRpc!.AddAsync(7, 9);
+                        }
+
+                        var value = await completion.ConfigureAwait(false);
                         if (value != 16)
                             throw new InvalidOperationException($"Tail observer received {value}, expected 16.");
                         observer.RecordTicks(0, Stopwatch.GetTimestamp() - started);
@@ -548,7 +557,7 @@ public static class Program
                 long operationsStarted = 0;
                 await lifecycle.ReadyAndWaitForStartAsync(workerIndex).ConfigureAwait(false);
 
-                while (lifecycle.CanStartOperation)
+                while (lifecycle.TryBeginOperationStart(workerIndex, out var admission))
                 {
                     operationsStarted++;
                     var start = workerRecorder is not null || diagnosticHistogram is not null
@@ -558,29 +567,22 @@ public static class Program
                     {
                         try
                         {
-                            if (operation == "echo")
+                            PendingLoadOperation pendingOperation;
+                            using (admission)
+                                pendingOperation = StartLoadOperation(rpc, operation, echoPayload);
+                            switch (pendingOperation.Kind)
                             {
-                                _ = await rpc.EchoAsync(echoPayload);
-                            }
-                            else if (operation == "empty")
-                            {
-                                await rpc.PingAsync();
-                            }
-                            else if (operation == "yield")
-                            {
-                                _ = await rpc.YieldAsync(7, 9);
-                            }
-                            else if (operation == "delay")
-                            {
-                                _ = await rpc.DelayAsync(7, 9);
-                            }
-                            else if (operation == "oneway")
-                            {
-                                await rpc.NotifyAsync(7, 9);
-                            }
-                            else
-                            {
-                                _ = await rpc.AddAsync(7, 9);
+                                case PendingLoadOperationKind.Void:
+                                    await pendingOperation.VoidCompletion.ConfigureAwait(false);
+                                    break;
+                                case PendingLoadOperationKind.Int32:
+                                    _ = await pendingOperation.Int32Completion.ConfigureAwait(false);
+                                    break;
+                                case PendingLoadOperationKind.String:
+                                    _ = await pendingOperation.StringCompletion.ConfigureAwait(false);
+                                    break;
+                                default:
+                                    throw new InvalidOperationException("Unknown pending load operation kind.");
                             }
 
                             if (workerRecorder is not null)
@@ -614,14 +616,14 @@ public static class Program
                                     ex))
                             {
                                 sendQueueBackpressureRetries++;
-                                if (!lifecycle.CanStartOperation)
+                                await Task.Yield();
+                                if (!lifecycle.TryBeginOperationStart(workerIndex, out admission))
                                 {
                                     failures.Record(ex);
                                     failure++;
                                     break;
                                 }
 
-                                await Task.Yield();
                                 continue;
                             }
 
@@ -768,6 +770,20 @@ public static class Program
             ? $"{microseconds.Value.ToString("F2", CultureInfo.InvariantCulture)}us"
             : "n/a";
 
+    private static PendingLoadOperation StartLoadOperation(
+        ILoadTestService rpc,
+        string operation,
+        string echoPayload)
+        => operation switch
+        {
+            "echo" => PendingLoadOperation.From(rpc.EchoAsync(echoPayload)),
+            "empty" => PendingLoadOperation.From(rpc.PingAsync()),
+            "yield" => PendingLoadOperation.From(rpc.YieldAsync(7, 9)),
+            "delay" => PendingLoadOperation.From(rpc.DelayAsync(7, 9)),
+            "oneway" => PendingLoadOperation.From(rpc.NotifyAsync(7, 9)),
+            _ => PendingLoadOperation.From(rpc.AddAsync(7, 9))
+        };
+
     internal static bool ShouldYieldAfterBackpressure(string operation, Exception exception)
         => operation == "oneway" &&
            exception is SharpLinkException { Code: SharpLinkErrorCode.ResourceExhausted };
@@ -898,6 +914,7 @@ public sealed class LoadTestOptions
     public int MaximumRecordedOperations { get; private init; } = 30_000_000;
     public int DrainTimeoutSeconds { get; private init; } = 5;
     public bool TailObserver { get; private init; }
+    public int TailObserverMaximumRecordedOperations => MaximumRecordedOperations;
     public bool DisableRequestTimeout => RequestTimeoutMode == "disabled";
     public TimeSpan? RequestTimeout => RequestTimeoutMode switch
     {
@@ -1232,6 +1249,29 @@ internal readonly record struct WorkerStageOutcome(
     long Failure,
     long SendQueueBackpressureRetries,
     long OperationsStarted);
+
+internal enum PendingLoadOperationKind
+{
+    Void,
+    Int32,
+    String
+}
+
+internal readonly record struct PendingLoadOperation(
+    PendingLoadOperationKind Kind,
+    ValueTask VoidCompletion,
+    ValueTask<int> Int32Completion,
+    ValueTask<string> StringCompletion)
+{
+    public static PendingLoadOperation From(ValueTask completion)
+        => new(PendingLoadOperationKind.Void, completion, default, default);
+
+    public static PendingLoadOperation From(ValueTask<int> completion)
+        => new(PendingLoadOperationKind.Int32, default, completion, default);
+
+    public static PendingLoadOperation From(ValueTask<string> completion)
+        => new(PendingLoadOperationKind.String, default, default, completion);
+}
 
 internal readonly record struct TailObserverOutcome(long SampleCount, long Failure)
 {
