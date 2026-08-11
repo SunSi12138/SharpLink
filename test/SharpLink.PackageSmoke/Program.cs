@@ -52,6 +52,17 @@ public sealed class PackageSmokeService : IPackageSmokeService
 
 public static class Program
 {
+    private static readonly string[] RuntimeRawDispatcherTypeNames =
+    [
+        "SharpLink.Runtime.IStreamDispatcher",
+        "SharpLink.Runtime.IStreamConsumptionAwareDispatcher",
+        "SharpLink.Runtime.IStreamDispatchLease",
+        "SharpLink.Runtime.IStreamDispatchState",
+        "SharpLink.Runtime.PooledAsyncStreamDispatcher`1",
+        "SharpLink.Runtime.PreAdmissionStreamDispatcher",
+        "SharpLink.Runtime.DiscardingStreamDispatcher"
+    ];
+
     public static async Task Main()
     {
         AssertEnginePublicApiBoundary();
@@ -391,6 +402,71 @@ public static class Program
             var engineType = runtime.GetType(name, throwOnError: false);
             if (engineType is null || engineType.IsPublic)
                 throw new InvalidOperationException($"Runtime engine API is still public: {name}.");
+        }
+
+        var rawDispatcherTypes = new Dictionary<string, Type>(StringComparer.Ordinal);
+        foreach (var name in RuntimeRawDispatcherTypeNames)
+        {
+            var rawDispatcherType = runtime.GetType(name, throwOnError: false);
+            if (rawDispatcherType is null)
+                throw new InvalidOperationException($"Runtime raw stream dispatcher type is missing: {name}.");
+            if (rawDispatcherType.IsPublic || rawDispatcherType.IsNestedPublic || rawDispatcherType.IsVisible)
+            {
+                throw new InvalidOperationException(
+                    $"Runtime raw stream dispatcher type is externally visible: {name}.");
+            }
+            rawDispatcherTypes.Add(name, rawDispatcherType);
+        }
+
+        var streamDispatcher = rawDispatcherTypes["SharpLink.Runtime.IStreamDispatcher"];
+        var dispatchLease = rawDispatcherTypes["SharpLink.Runtime.IStreamDispatchLease"];
+        var dispatchState = rawDispatcherTypes["SharpLink.Runtime.IStreamDispatchState"];
+        var expectedRawDispatcherTypeNames = RuntimeRawDispatcherTypeNames.ToHashSet(StringComparer.Ordinal);
+        var discoveredRawDispatcherTypeNames = runtime.GetTypes()
+            .Where(type =>
+                !type.IsNested &&
+                (streamDispatcher.IsAssignableFrom(type) ||
+                 dispatchLease.IsAssignableFrom(type) ||
+                 dispatchState.IsAssignableFrom(type)))
+            .Select(static type => type.FullName!)
+            .ToHashSet(StringComparer.Ordinal);
+        if (!expectedRawDispatcherTypeNames.SetEquals(discoveredRawDispatcherTypeNames))
+        {
+            var missing = expectedRawDispatcherTypeNames
+                .Except(discoveredRawDispatcherTypeNames)
+                .OrderBy(static name => name, StringComparer.Ordinal);
+            var unexpected = discoveredRawDispatcherTypeNames
+                .Except(expectedRawDispatcherTypeNames)
+                .OrderBy(static name => name, StringComparer.Ordinal);
+            throw new InvalidOperationException(
+                $"Runtime raw stream dispatcher inventory changed. Missing: {string.Join(", ", missing)}; " +
+                $"unexpected: {string.Join(", ", unexpected)}.");
+        }
+
+        var explicitlyDeniedExports = runtime.GetExportedTypes()
+            .Select(static type => type.FullName)
+            .Where(name => name is not null && expectedRawDispatcherTypeNames.Contains(name))
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+        if (explicitlyDeniedExports.Length != 0)
+        {
+            throw new InvalidOperationException(
+                $"Explicitly denied Runtime raw stream dispatcher types are exported: " +
+                $"{string.Join(", ", explicitlyDeniedExports)}.");
+        }
+
+        var exportedRawDispatchers = new[] { abstractions, runtime }
+            .SelectMany(static assembly => assembly.GetExportedTypes())
+            .Where(static type =>
+                type.Name.Contains("Dispatcher", StringComparison.Ordinal) ||
+                type.Name is "IStreamDispatchLease" or "IStreamDispatchState")
+            .Select(static type => type.FullName ?? type.Name)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+        if (exportedRawDispatchers.Length != 0)
+        {
+            throw new InvalidOperationException(
+                $"Raw stream dispatcher types are still exported: {string.Join(", ", exportedRawDispatchers)}.");
         }
 
         AssertPublicType<IRpcGeneratedServerBridge>();

@@ -11,7 +11,7 @@ The following engine APIs are no longer exported:
 | Removed public surface | Replacement / rationale |
 |---|---|
 | `IRpcSession` | No public Session control object. Application code uses client/server builders, call contexts, and diagnostics snapshots. |
-| `IStreamManager`, `IStreamDispatcher`, `IStreamConsumptionAwareDispatcher` | Runtime owns raw frame routing, dispatcher registration, completion races, and receive-credit accounting. Generated streaming exposes `IAsyncEnumerable<T>`. |
+| `IStreamManager`, `IStreamDispatcher`, `IStreamConsumptionAwareDispatcher`, `PooledAsyncStreamDispatcher<T>` | Runtime owns raw frame routing, dispatcher registration, completion races, pooling, and receive-credit accounting. Generated streaming exposes `IAsyncEnumerable<T>`. |
 | `RpcSession`, `StreamManager`, `RpcSessionExtensions` | Internal Runtime engine implementation; callers cannot create sessions, mutate peer activity, access protocol readers, or emit arbitrary control frames. |
 
 `IRpcGeneratedServerBridge` is unchanged. It is the sole Generated ABI capability for typed inbound
@@ -48,7 +48,8 @@ binary reference to any removed engine type must be rebuilt against the 2.0 publ
 ## Verification
 
 `LegacyApiSurfaceTests.EngineControlSurfaceShouldNotBeExportedAndApprovedSpisRemainImplementable`
-checks the metadata-level boundary in the unit suite. The external
+and `RawStreamDispatcherTypesShouldNotBeExported` check the metadata-level boundary, including the
+exact `SharpLink.Runtime.PooledAsyncStreamDispatcher\`1` sentinel and exported-type inventory. The external
 `SharpLink.PackageSmoke.AssertEnginePublicApiBoundary` check compiles real transport, codec, and
 interceptor implementations solely against published packages. Generator tests continue to reject
 generated references to `SharpLink.Runtime`, `IRpcSession`, `RuntimeContext`, pooled dispatchers,

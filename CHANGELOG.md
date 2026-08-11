@@ -31,8 +31,9 @@
 
 ### Breaking
 
-- `IRpcSession`, `IStreamManager`, raw stream dispatcher interfaces, public `RpcSession`,
-  public `StreamManager`, and public `RpcSessionExtensions` have been removed from the business API.
+- `IRpcSession`, `IStreamManager`, raw stream dispatcher interfaces, public
+  `PooledAsyncStreamDispatcher<T>`, public `RpcSession`, public `StreamManager`, and public
+  `RpcSessionExtensions` have been removed from the business API.
   Custom transports continue to use `ITransportConnection` through transport factories/listeners;
   generated stubs continue to use the narrow API 4 `IRpcGeneratedServerBridge`. No compatibility
   adapter or legacy Session control path is provided. See

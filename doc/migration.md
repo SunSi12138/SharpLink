@@ -19,8 +19,8 @@ Generated API 不参与网络握手。1.1.x Client 与 2.0 Server、2.0 Client �
 
 ## Runtime engine API boundary
 
-`IRpcSession`、`IStreamManager`、raw stream dispatcher interfaces、`RpcSession`、`StreamManager`
-和 `RpcSessionExtensions` 不再是公开扩展面。不要构造或控制 Session、读取其 PipeReader、注册 raw
+`IRpcSession`、`IStreamManager`、raw stream dispatcher interfaces、`PooledAsyncStreamDispatcher<T>`、
+`RpcSession`、`StreamManager` 和 `RpcSessionExtensions` 不再是公开扩展面。不要构造或控制 Session、读取其 PipeReader、注册 raw
 dispatcher、设置 peer activity，或直接发送 protocol control frame。自定义传输应实现
 `ITransportConnection` 并经 `IClientTransportFactory` 或 `IServerTransportListener` 配置到 Builder；
 generated server code 继续使用 API 4 的 `IRpcGeneratedServerBridge`。完整的 public API diff、保留 SPI
