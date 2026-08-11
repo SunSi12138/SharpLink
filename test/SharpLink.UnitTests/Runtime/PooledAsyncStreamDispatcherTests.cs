@@ -1,7 +1,7 @@
+using System.Collections.Generic;
 using System.Threading;
 using System.Runtime.CompilerServices;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 
 namespace SharpLink.UnitTests.Runtime;
 
@@ -175,6 +175,140 @@ public class PooledAsyncStreamDispatcherTests
         Ensure(!dispatcher.HasRetainedReferencesForTests,
             "codec, callbacks, cancellation registration and decoded items must be cleared");
         cancellation.Cancel();
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task PoolReturnShouldClearActiveSegmentWhenFreeSegmentStackIsEmpty()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        var enumerator = dispatcher.GetAsyncEnumerator();
+
+        await dispatcher.DispatchAsync(Payload);
+        Ensure(await enumerator.MoveNextAsync(), "the active-segment item must be consumable");
+        Ensure(IsFreeSegmentStackEmpty(dispatcher),
+            "a one-item stream must not create a recycled free segment");
+
+        // TryDequeue clears consumed slots, so seed stale state to exercise the pool cleanup itself.
+        var activeSegment = GetPrivateField(dispatcher, "_consumerSegment");
+        SeedStaleSegmentState(activeSegment);
+
+        dispatcher.Complete(exception: null);
+        await enumerator.DisposeAsync();
+
+        EnsureSegmentStateWasCleared(activeSegment, "the active segment");
+        Ensure(!dispatcher.HasRetainedReferencesForTests,
+            "pooling with an empty free-segment stack must not retain a stale item");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task PoolReturnShouldClearAndRecycleFreeSegmentsWhenStackIsNonempty()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        var enumerator = dispatcher.GetAsyncEnumerator();
+        for (var index = 0; index < 17; index++)
+            await dispatcher.DispatchAsync(Payload);
+        for (var index = 0; index < 17; index++)
+            Ensure(await enumerator.MoveNextAsync(), $"item {index} must be consumable");
+
+        var recycledSegment = GetOnlyFreeSegment(dispatcher);
+        // TryDequeue clears consumed slots, so seed stale state to exercise the pool cleanup itself.
+        SeedStaleSegmentState(recycledSegment);
+
+        dispatcher.Complete(exception: null);
+        await enumerator.DisposeAsync();
+
+        EnsureSegmentStateWasCleared(recycledSegment, "the recycled free segment");
+        Ensure(!dispatcher.HasRetainedReferencesForTests,
+            "pooling with recycled free segments must not retain a stale item");
+
+        var reused = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        Ensure(ReferenceEquals(dispatcher, reused),
+            "the test must rent the dispatcher that owns the cleared recycled segment");
+        var reusedEnumerator = reused.GetAsyncEnumerator();
+        for (var index = 0; index < 33; index++)
+            await reused.DispatchAsync(Payload);
+        reused.Complete(exception: null);
+
+        var received = 0;
+        while (await reusedEnumerator.MoveNextAsync())
+            received++;
+        await reusedEnumerator.DisposeAsync();
+
+        Ensure(received == 33,
+            "the next lease must safely reuse every cleared free segment");
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task PoolReturnShouldClearAndRecycleEveryFreeSegmentWhenStackIsNonempty()
+    {
+        const int FirstLeaseItemCount = 49;
+        const int ReusedLeaseItemCount = 112;
+
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        var enumerator = dispatcher.GetAsyncEnumerator();
+        for (var index = 0; index < FirstLeaseItemCount; index++)
+            await dispatcher.DispatchAsync(Payload);
+        for (var index = 0; index < FirstLeaseItemCount; index++)
+            Ensure(await enumerator.MoveNextAsync(), $"item {index} must be consumable");
+
+        var recycledSegments = GetFreeSegments(dispatcher);
+        Ensure(recycledSegments.Length == 2,
+            "49 items must recycle the initial 16-slot and the next 32-slot segments");
+        foreach (var recycledSegment in recycledSegments)
+            SeedStaleSegmentState(recycledSegment);
+
+        dispatcher.Complete(exception: null);
+        await enumerator.DisposeAsync();
+
+        foreach (var recycledSegment in recycledSegments)
+            EnsureSegmentStateWasCleared(recycledSegment, "a recycled free segment");
+        Ensure(!dispatcher.HasRetainedReferencesForTests,
+            "pooling with multiple recycled free segments must not retain stale items");
+
+        var reused = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        Ensure(ReferenceEquals(dispatcher, reused),
+            "the test must rent the dispatcher that owns the cleared recycled segments");
+        var reusedEnumerator = reused.GetAsyncEnumerator();
+        for (var index = 0; index < ReusedLeaseItemCount; index++)
+            await reused.DispatchAsync(Payload);
+
+        var activeSegment = GetPrivateField(reused, "_consumerSegment");
+        var firstReusedFreeSegment = GetPrivateField(activeSegment, "Next");
+        var secondReusedFreeSegment = GetPrivateField(firstReusedFreeSegment, "Next");
+        Ensure(ContainsReference(recycledSegments, firstReusedFreeSegment),
+            "the next lease must reuse a cleared free segment after its active segment fills");
+        Ensure(ContainsReference(recycledSegments, secondReusedFreeSegment),
+            "the next lease must reuse the second cleared free segment after the first one fills");
+        Ensure(!ReferenceEquals(firstReusedFreeSegment, secondReusedFreeSegment),
+            "the next lease must traverse two distinct recycled free segments");
+
+        reused.Complete(exception: null);
+        var received = 0;
+        while (await reusedEnumerator.MoveNextAsync())
+            received++;
+        await reusedEnumerator.DisposeAsync();
+
+        Ensure(received == ReusedLeaseItemCount,
+            "the next lease must safely read across both recycled free segments");
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
     }
 
@@ -1026,6 +1160,107 @@ public class PooledAsyncStreamDispatcherTests
         {
             return exception;
         }
+    }
+
+    private static bool IsFreeSegmentStackEmpty(PooledAsyncStreamDispatcher<ReferenceItem> dispatcher)
+    {
+        var freeSegments = GetPrivateField(dispatcher, "_freeSegments");
+        var isEmpty = freeSegments.GetType().GetProperty(
+            "IsEmpty",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)
+            ?? throw new Exception("cannot find the free-segment stack IsEmpty property");
+        return (bool)(isEmpty.GetValue(freeSegments)
+            ?? throw new Exception("cannot read the free-segment stack IsEmpty property"));
+    }
+
+    private static object GetOnlyFreeSegment(PooledAsyncStreamDispatcher<ReferenceItem> dispatcher)
+    {
+        var freeSegments = (System.Collections.IEnumerable)GetPrivateField(dispatcher, "_freeSegments");
+        var enumerator = freeSegments.GetEnumerator();
+        try
+        {
+            Ensure(enumerator.MoveNext(), "the test must create a recycled free segment");
+            var segment = enumerator.Current
+                ?? throw new Exception("the free-segment stack returned a null segment");
+            Ensure(!enumerator.MoveNext(), "the test must create exactly one recycled free segment");
+            return segment;
+        }
+        finally
+        {
+            (enumerator as IDisposable)?.Dispose();
+        }
+    }
+
+    private static object[] GetFreeSegments(PooledAsyncStreamDispatcher<ReferenceItem> dispatcher)
+    {
+        var freeSegments = (System.Collections.IEnumerable)GetPrivateField(dispatcher, "_freeSegments");
+        var segments = new List<object>();
+        var enumerator = freeSegments.GetEnumerator();
+        try
+        {
+            while (enumerator.MoveNext())
+            {
+                segments.Add(enumerator.Current
+                    ?? throw new Exception("the free-segment stack returned a null segment"));
+            }
+        }
+        finally
+        {
+            (enumerator as IDisposable)?.Dispose();
+        }
+        return [.. segments];
+    }
+
+    private static bool ContainsReference(object[] candidates, object candidate)
+    {
+        foreach (var item in candidates)
+        {
+            if (ReferenceEquals(item, candidate))
+                return true;
+        }
+        return false;
+    }
+
+    private static object GetPrivateField(object target, string fieldName)
+    {
+        var field = GetPrivateFieldInfo(target, fieldName);
+        return field.GetValue(target)
+            ?? throw new Exception($"private field {fieldName} was null");
+    }
+
+    private static System.Reflection.FieldInfo GetPrivateFieldInfo(object target, string fieldName)
+        => target.GetType().GetField(
+            fieldName,
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.Public)
+            ?? throw new Exception($"cannot find private field {fieldName}");
+
+    private static void SeedStaleSegmentState(object segment)
+    {
+        var items = (ReferenceItem[])GetPrivateField(segment, "Items");
+        var encodedByteCounts = (int[])GetPrivateField(segment, "EncodedByteCounts");
+        var published = GetPrivateFieldInfo(segment, "Published");
+        var next = GetPrivateFieldInfo(segment, "Next");
+
+        items[0] = new ReferenceItem(new object());
+        encodedByteCounts[0] = 7;
+        published.SetValue(segment, 1);
+        next.SetValue(segment, segment);
+    }
+
+    private static void EnsureSegmentStateWasCleared(object segment, string segmentName)
+    {
+        var items = (ReferenceItem[])GetPrivateField(segment, "Items");
+        var encodedByteCounts = (int[])GetPrivateField(segment, "EncodedByteCounts");
+        var published = GetPrivateFieldInfo(segment, "Published");
+        var next = GetPrivateFieldInfo(segment, "Next");
+
+        Ensure(items[0] is null, $"{segmentName} must clear stale item references");
+        Ensure(encodedByteCounts[0] == 0, $"{segmentName} must clear stale byte counts");
+        Ensure((int)(published.GetValue(segment) ?? -1) == 0,
+            $"{segmentName} must reset its published count");
+        Ensure(next.GetValue(segment) is null, $"{segmentName} must clear stale links");
     }
 
     private sealed record ReferenceItem(object Marker);

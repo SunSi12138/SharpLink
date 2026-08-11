@@ -1003,13 +1003,17 @@ public sealed class PooledAsyncStreamDispatcher<T> :
             Array.Clear(active.EncodedByteCounts);
             Volatile.Write(ref active.Published, 0);
             Volatile.Write(ref active.Next, null);
-            foreach (var segment in _freeSegments)
+            // ConcurrentStack<T>.GetEnumerator allocates even when the stack is empty.
+            if (!_freeSegments.IsEmpty)
             {
-                if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
-                    Array.Clear(segment.Items);
-                Array.Clear(segment.EncodedByteCounts);
-                Volatile.Write(ref segment.Published, 0);
-                Volatile.Write(ref segment.Next, null);
+                foreach (var segment in _freeSegments)
+                {
+                    if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+                        Array.Clear(segment.Items);
+                    Array.Clear(segment.EncodedByteCounts);
+                    Volatile.Write(ref segment.Published, 0);
+                    Volatile.Write(ref segment.Next, null);
+                }
             }
             _firstSegment = active;
         }
