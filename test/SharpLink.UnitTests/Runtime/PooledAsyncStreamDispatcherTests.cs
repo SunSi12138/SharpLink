@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Runtime.CompilerServices;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 
 namespace SharpLink.UnitTests.Runtime;
 
