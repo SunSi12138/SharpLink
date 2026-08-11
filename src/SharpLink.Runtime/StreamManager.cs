@@ -1,7 +1,7 @@
 namespace SharpLink.Runtime;
 
 /// <summary>Provides concurrent request-scoped routing for active RPC streams.</summary>
-public class StreamManager : IStreamManager
+internal sealed class StreamManager
 {
     private readonly StripedLongMap<RequestDispatchers> _dispatchersByRequestId;
     private readonly Action<long, ushort, int>? _acceptBytes;
@@ -12,13 +12,13 @@ public class StreamManager : IStreamManager
     private Termination? _termination;
 
     /// <summary>Creates a stream manager with default concurrency settings.</summary>
-    public StreamManager() : this(new RuntimeConcurrencyOptions())
+    internal StreamManager() : this(new RuntimeConcurrencyOptions())
     {
     }
 
     /// <summary>Creates a stream manager with explicit concurrency settings.</summary>
     /// <param name="concurrencyOptions">The stripe and sizing policy for active stream lookup.</param>
-    public StreamManager(RuntimeConcurrencyOptions concurrencyOptions)
+    internal StreamManager(RuntimeConcurrencyOptions concurrencyOptions)
         : this(concurrencyOptions, null, null, null)
     {
     }
@@ -36,10 +36,10 @@ public class StreamManager : IStreamManager
     }
 
     /// <inheritdoc />
-    public void Register(long requestId, IStreamDispatcher dispatcher) => Register(requestId, 0, dispatcher);
+    internal void Register(long requestId, IStreamDispatcher dispatcher) => Register(requestId, 0, dispatcher);
 
     /// <inheritdoc />
-    public void Register(long requestId, ushort streamId, IStreamDispatcher dispatcher)
+    internal void Register(long requestId, ushort streamId, IStreamDispatcher dispatcher)
         => Register(requestId, streamId, dispatcher, ignoreExisting: false);
 
     private void Register(
@@ -93,10 +93,10 @@ public class StreamManager : IStreamManager
     }
 
     /// <inheritdoc />
-    public void Unregister(long requestId) => Unregister(requestId, 0);
+    internal void Unregister(long requestId) => Unregister(requestId, 0);
 
     /// <inheritdoc />
-    public void Unregister(long requestId, ushort streamId)
+    internal void Unregister(long requestId, ushort streamId)
     {
         if (!_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
             return;
@@ -121,11 +121,11 @@ public class StreamManager : IStreamManager
     }
 
     /// <inheritdoc />
-    public ValueTask DispatchChunkAsync(long requestId, ReadOnlySequence<byte> payload)
+    internal ValueTask DispatchChunkAsync(long requestId, ReadOnlySequence<byte> payload)
         => DispatchChunkAsync(requestId, 0, payload);
 
     /// <inheritdoc />
-    public ValueTask DispatchChunkAsync(long requestId, ushort streamId, ReadOnlySequence<byte> payload)
+    internal ValueTask DispatchChunkAsync(long requestId, ushort streamId, ReadOnlySequence<byte> payload)
     {
         if (_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
             requestDispatchers.TryAcquire(streamId, out var entry))
@@ -184,31 +184,31 @@ public class StreamManager : IStreamManager
     }
 
     /// <inheritdoc />
-    public void CompleteStream(long requestId, bool isError, string? msg)
+    internal void CompleteStream(long requestId, bool isError, string? msg)
     {
         CompleteStream(requestId, 0, CreateCompletionException(isError, msg));
     }
 
     /// <inheritdoc />
-    public void CompleteStream(long requestId, ushort streamId, bool isError, string? msg)
+    internal void CompleteStream(long requestId, ushort streamId, bool isError, string? msg)
     {
         CompleteStream(requestId, streamId, CreateCompletionException(isError, msg));
     }
 
     /// <inheritdoc />
-    public void CompleteAll(bool isError, string? msg)
+    internal void CompleteAll(bool isError, string? msg)
     {
         CompleteAll(CreateCompletionException(isError, msg));
     }
 
     /// <inheritdoc />
-    public void CompleteStream(long requestId, Exception? exception)
+    internal void CompleteStream(long requestId, Exception? exception)
     {
         CompleteStream(requestId, 0, exception);
     }
 
     /// <inheritdoc />
-    public void CompleteStream(long requestId, ushort streamId, Exception? exception)
+    internal void CompleteStream(long requestId, ushort streamId, Exception? exception)
     {
         if (!_dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
             return;
@@ -305,7 +305,7 @@ public class StreamManager : IStreamManager
     }
 
     /// <inheritdoc />
-    public void CompleteAll(Exception? exception)
+    internal void CompleteAll(Exception? exception)
     {
         var termination = new Termination(exception);
         if (Interlocked.CompareExchange(ref _termination, termination, null) is not null)

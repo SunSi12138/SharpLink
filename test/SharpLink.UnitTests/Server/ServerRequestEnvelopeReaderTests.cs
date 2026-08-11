@@ -244,7 +244,7 @@ public sealed class ServerRequestEnvelopeReaderTests
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static long ReadBatch(
-        IRpcSession session,
+        RpcSession session,
         ReadOnlySequence<byte> sequence,
         TimeProvider timeProvider,
         int iterations)
@@ -312,7 +312,7 @@ public sealed class ServerRequestEnvelopeReaderTests
     }
 
     private static ServerRequestEnvelope Read(
-        IRpcSession session,
+        RpcSession session,
         ReadOnlySequence<byte> payload,
         ProtocolV2FrameFlags flags,
         int maxMetadataBytes,

@@ -24,7 +24,7 @@
 核心项目（`src/`）：
 
 - `SharpLink.Abstractions`：契约标记、Protocol v2 公共模型、公共接口、通道与传输抽象
-- `SharpLink.Runtime`：`RpcSession`、`StreamManager`、实例级 Codec Provider、传输实现与底层收发逻辑
+- `SharpLink.Runtime`：内部 `RpcSession`、`StreamManager`、实例级 Codec Provider、传输实现与底层收发逻辑（业务代码不直接控制 Session 或 raw stream dispatcher）
 - `SharpLink.Sdk`：契约项目的单一引用入口，依赖 Abstractions 并携带分析器与源生成器，不再传递引入 Runtime
 - `SharpLink.Client`：客户端 Builder、连接生命周期、请求管理与代理调用通道
 - `SharpLink.Server`：服务端 Builder、连接管理、Stub 分发、心跳与取消处理

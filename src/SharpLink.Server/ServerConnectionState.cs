@@ -288,7 +288,7 @@ internal sealed class ServerConnectionState
             Session.Id,
             LifecycleState.ToString(),
             ActiveCalls,
-            Session.StreamManager is StreamManager manager ? manager.ActiveStreamCount : -1,
+            Session.StreamManager.ActiveStreamCount,
             calls);
     }
 

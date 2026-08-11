@@ -391,7 +391,7 @@ internal sealed partial class SharpLinkClient :
             var connections = Volatile.Read(ref _readyConnections);
             var count = 0;
             for (var index = 0; index < connections.Length; index++)
-                count += ((StreamManager)connections[index].Session.StreamManager).ActiveStreamCount;
+                count += connections[index].Session.StreamManager.ActiveStreamCount;
             return count;
         }
     }

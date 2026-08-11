@@ -22,11 +22,10 @@ platform timer range.
 
 ## `LastActive` compatibility and hot path
 
-`IRpcSession.LastActive` keeps its existing UTC `DateTime` API. Each real activity update records
-both the context provider's current UTC value and its monotonic timestamp. An explicit setter value
-is normalized to UTC and remains visible until the next real activity. The two values deliberately
-serve different purposes: `LastActive` is diagnostic wall-clock state, while heartbeat and timeout
-decisions use only the monotonic timestamp.
+The Runtime-internal Session activity snapshot records both the context provider's current UTC value
+and its monotonic timestamp. The two values deliberately serve different purposes: UTC activity is
+diagnostic wall-clock state, while heartbeat and timeout decisions use only the monotonic timestamp.
+It is no longer a public mutable Session API.
 
 An alternative implementation that projected `LastActive` from an immutable UTC/monotonic anchor
 was measured because it removes the UTC read from `MarkActive`. Although that candidate improved

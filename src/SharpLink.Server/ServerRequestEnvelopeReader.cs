@@ -3,7 +3,7 @@ namespace SharpLink.Server;
 internal static class ServerRequestEnvelopeReader
 {
     internal static ServerRequestEnvelope Read(
-        IRpcSession session,
+        RpcSession session,
         ReadOnlySequence<byte> payload,
         ProtocolV2FrameFlags flags,
         int maxMetadataBytes,
@@ -45,8 +45,7 @@ internal static class ServerRequestEnvelopeReader
         SharpLinkMetadata? metadata = null;
         if ((flags & ProtocolV2FrameFlags.HasMetadata) != 0)
         {
-            if (session is not RpcSession runtimeSession ||
-                (runtimeSession.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) == 0)
+            if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) == 0)
             {
                 throw new SharpLinkException(
                     SharpLinkErrorCode.ProtocolViolation,

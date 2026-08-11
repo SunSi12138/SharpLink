@@ -318,7 +318,7 @@ internal sealed partial class SharpLinkClient
         throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
     }
 
-    private async Task<Exception?> ProcessHandshakeAsync(IRpcSession session, CancellationToken ct)
+    private async Task<Exception?> ProcessHandshakeAsync(RpcSession session, CancellationToken ct)
     {
         var authPayload = _authenticator is null
             ? ReadOnlyMemory<byte>.Empty
@@ -356,7 +356,7 @@ internal sealed partial class SharpLinkClient
                            ref buffer, _protocolOptions, out var header, out var payload))
                 {
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
-                    ((RpcSession)session).EnsureInboundFrameAllowed(header.Type);
+                    session.EnsureInboundFrameAllowed(header.Type);
                     if (header.Type != ProtocolV2FrameType.HandshakeResponse)
                         handshakeException = CreateProtocolViolationException("Received unexpected packet during handshake.");
                     else if ((header.Flags & ProtocolV2FrameFlags.Error) == 0)
@@ -368,7 +368,7 @@ internal sealed partial class SharpLinkClient
                                 handshakeRequest,
                                 response,
                                 negotiationPolicy);
-                            var runtimeSession = (RpcSession)session;
+                            var runtimeSession = session;
                             if (!runtimeSession.TryCompleteHandshake(negotiated))
                             {
                                 handshakeException = CreateProtocolViolationException(

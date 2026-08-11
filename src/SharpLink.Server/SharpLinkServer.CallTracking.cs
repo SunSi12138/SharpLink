@@ -101,7 +101,7 @@ internal sealed partial class SharpLinkServer
 
     private static ValueTask TrySendModuleDrainError(
         ServerCallCancellationState? callState,
-        IRpcSession session,
+        RpcSession session,
         long requestId,
         CancellationToken cancellationToken)
     {

@@ -31,6 +31,12 @@
 
 ### Breaking
 
+- `IRpcSession`, `IStreamManager`, raw stream dispatcher interfaces, public `RpcSession`,
+  public `StreamManager`, and public `RpcSessionExtensions` have been removed from the business API.
+  Custom transports continue to use `ITransportConnection` through transport factories/listeners;
+  generated stubs continue to use the narrow API 4 `IRpcGeneratedServerBridge`. No compatibility
+  adapter or legacy Session control path is provided. See
+  [`doc/runtime-phase-16-engine-api.md`](doc/runtime-phase-16-engine-api.md).
 - `SharpClientBuilder` and `SharpLinkServerBuilder` are single-use. After any Build attempt, whether
   it succeeds or fails, create a new builder; subsequent Build or configuration calls throw
   `InvalidOperationException("This SharpLink builder has already been consumed.")`. Client topology

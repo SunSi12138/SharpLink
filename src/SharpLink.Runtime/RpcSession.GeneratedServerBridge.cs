@@ -1,6 +1,6 @@
 namespace SharpLink.Runtime;
 
-public sealed partial class RpcSession
+internal sealed partial class RpcSession
 {
     internal IAsyncEnumerable<T> CreateGeneratedInboundStream<T>(
         long requestId,
@@ -57,12 +57,12 @@ public sealed partial class RpcSession
                 cancellationToken).ConfigureAwait(false);
         }
 
-        ((IRpcSession)this).SendStreamCompleteAsync(requestId, streamId);
+        this.SendStreamCompleteAsync(requestId, streamId);
     }
 
-    // Keep the generated-server path concrete and codec-bound. The public IRpcSession
-    // extension remains a separate client hot path so one stream item does not cross an
-    // extra generic async wrapper merely to select its codec.
+    // Keep the generated-server path concrete and codec-bound. The internal Runtime helper
+    // remains a separate client hot path so one stream item does not cross an extra generic
+    // async wrapper merely to select its codec.
     private ValueTask SendGeneratedStreamChunkAsync<T>(
         long requestId,
         ushort streamId,

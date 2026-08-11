@@ -83,7 +83,7 @@ internal sealed partial class SharpLinkClient
         => Task.FromException(new InvalidOperationException(
             "Client streams must use the connection-bound sink supplied to generated stream writers."));
 
-    private static ValueTask DispatchStreamChunkAsync(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
+    private static ValueTask DispatchStreamChunkAsync(RpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out short streamIdBits))

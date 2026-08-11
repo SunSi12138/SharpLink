@@ -17,6 +17,15 @@ SharpLink 2.0 将进程内 Generated Server ABI 从 API 3 原子升级为 API 4�
 
 Generated API 不参与网络握手。1.1.x Client 与 2.0 Server、2.0 Client 与 1.1.x Server 仍可通过 Protocol v2 互操作，但每个进程只能加载与本进程 Runtime 匹配的生成程序集，并且两端契约的 wire schema 必须兼容。
 
+## Runtime engine API boundary
+
+`IRpcSession`、`IStreamManager`、raw stream dispatcher interfaces、`RpcSession`、`StreamManager`
+和 `RpcSessionExtensions` 不再是公开扩展面。不要构造或控制 Session、读取其 PipeReader、注册 raw
+dispatcher、设置 peer activity，或直接发送 protocol control frame。自定义传输应实现
+`ITransportConnection` 并经 `IClientTransportFactory` 或 `IServerTransportListener` 配置到 Builder；
+generated server code 继续使用 API 4 的 `IRpcGeneratedServerBridge`。完整的 public API diff、保留 SPI
+和 ownership 说明见 [`runtime-phase-16-engine-api.md`](runtime-phase-16-engine-api.md)。
+
 ## Builder 构建计划与单次使用
 
 `SharpClientBuilder` 和 `SharpLinkServerBuilder` 现在在 `Build()` 中先冻结完整

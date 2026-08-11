@@ -136,7 +136,7 @@ internal sealed partial class SharpLinkServer
         {
             if (_admissionController is not null)
             {
-                payload = ((RpcSession)session).DecodeInboundPayload(
+                payload = session.DecodeInboundPayload(
                     ProtocolV2FrameType.Request,
                     flags,
                     payload,
@@ -164,7 +164,7 @@ internal sealed partial class SharpLinkServer
         }
         catch
         {
-            ((RpcSession)session).ReturnDecodedPayload(decodedRequestOwner);
+            session.ReturnDecodedPayload(decodedRequestOwner);
             DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
             ReleaseOneWayDispatchResources(
                 admittedCallState, requestId, requestCancellationMap, connection);
@@ -258,7 +258,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
-        IRpcSession session,
+        RpcSession session,
         IRpcStub stub,
         long methodId,
         CancellationToken cancellationToken)
@@ -432,7 +432,7 @@ internal sealed partial class SharpLinkServer
             request.Deadline);
 
     private ValueTask RejectAdmission(
-        IRpcSession session,
+        RpcSession session,
         long requestId,
         AdmissionDecision decision,
         bool oneWay,
@@ -526,19 +526,16 @@ internal sealed partial class SharpLinkServer
         };
 
     private static void ReleasePendingAdmissionState(
-        IRpcSession session,
+        RpcSession session,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         long requestId,
         ServerCallCancellationState callState)
     {
-        if (session.StreamManager is StreamManager streamManager)
-        {
-            streamManager.CompleteRequestStreams(
-                requestId,
-                new SharpLinkException(
-                    SharpLinkErrorCode.ResourceExhausted,
-                    "Call ended before stream admission completed."));
-        }
+        session.StreamManager.CompleteRequestStreams(
+            requestId,
+            new SharpLinkException(
+                SharpLinkErrorCode.ResourceExhausted,
+                "Call ended before stream admission completed."));
         ReleaseAdmissionCallState(requestCancellationMap, requestId, callState);
     }
 

@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.Diagnostics;
+using System.IO.Pipelines;
 using System.Net;
 using System.Net.Sockets;
 using SharpLink.Abstractions;
@@ -52,6 +54,7 @@ public static class Program
 {
     public static async Task Main()
     {
+        AssertEnginePublicApiBoundary();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await RunTransportSmokeAsync(useSharedMemory: false, timeout.Token);
         await RunTransportSmokeAsync(useSharedMemory: true, timeout.Token);
@@ -361,4 +364,239 @@ public static class Program
 
     private static void ConfigureCompression(SharpLinkRuntimeOptions options)
         => options.Compression.Providers.Add(SharpLinkCompressionProviders.CreateBrotli());
+
+    private static void AssertEnginePublicApiBoundary()
+    {
+        var abstractions = typeof(IRpcGeneratedServerBridge).Assembly;
+        foreach (var name in new[]
+                 {
+                     "SharpLink.Abstractions.IRpcSession",
+                     "SharpLink.Abstractions.IStreamManager",
+                     "SharpLink.Abstractions.IStreamDispatcher",
+                     "SharpLink.Abstractions.IStreamConsumptionAwareDispatcher"
+                 })
+        {
+            if (abstractions.GetType(name, throwOnError: false) is not null)
+                throw new InvalidOperationException($"Removed Runtime engine API is still exported: {name}.");
+        }
+
+        var runtime = typeof(SharpLinkRuntimeContext).Assembly;
+        foreach (var name in new[]
+                 {
+                     "SharpLink.Runtime.RpcSession",
+                     "SharpLink.Runtime.StreamManager",
+                     "SharpLink.Runtime.RpcSessionExtensions"
+                 })
+        {
+            var engineType = runtime.GetType(name, throwOnError: false);
+            if (engineType is null || engineType.IsPublic)
+                throw new InvalidOperationException($"Runtime engine API is still public: {name}.");
+        }
+
+        AssertPublicType<IRpcGeneratedServerBridge>();
+
+        var connection = new PackageTransport();
+        var codec = new PackageCodec();
+        var clientTransport = new PackageClientTransportFactory();
+        var serverListener = new PackageServerTransportListener();
+        var clientAuthenticator = new PackageClientAuthenticator();
+        var serverAuthenticator = new PackageServerAuthenticator();
+        var endpointResolver = new PackageEndpointResolver();
+        var endpointSelector = new PackageEndpointSelector();
+        var retryPolicy = new PackageRetryPolicy();
+        var admissionPolicy = new PackageEndpointAdmissionPolicy();
+        var clientInterceptor = new PackageClientInterceptor();
+        var serverInterceptor = new PackageInterceptor();
+
+        AssertPublicSpi<ITransportConnection, PackageTransport>(connection);
+        AssertPublicSpi<IRpcCodec<int>, PackageCodec>(codec);
+        AssertPublicSpi<IClientTransportFactory, PackageClientTransportFactory>(clientTransport);
+        AssertPublicSpi<IServerTransportListener, PackageServerTransportListener>(serverListener);
+        AssertPublicSpi<ISharpLinkClientAuthenticator, PackageClientAuthenticator>(clientAuthenticator);
+        AssertPublicSpi<ISharpLinkServerAuthenticator, PackageServerAuthenticator>(serverAuthenticator);
+        AssertPublicSpi<ISharpLinkEndpointResolver, PackageEndpointResolver>(endpointResolver);
+        AssertPublicSpi<ISharpLinkEndpointSelector, PackageEndpointSelector>(endpointSelector);
+        AssertPublicSpi<ISharpLinkRetryPolicy, PackageRetryPolicy>(retryPolicy);
+        AssertPublicSpi<ISharpLinkEndpointAdmissionPolicy, PackageEndpointAdmissionPolicy>(admissionPolicy);
+        AssertPublicSpi<ISharpLinkClientInterceptor, PackageClientInterceptor>(clientInterceptor);
+        AssertPublicSpi<ISharpLinkServerInterceptor, PackageInterceptor>(serverInterceptor);
+
+        var directClientBuilder = SharpClientBuilder.Create();
+        AssertBuilderReturnsSelf(
+            directClientBuilder,
+            directClientBuilder
+                .UseTransport(clientTransport)
+                .UseAuthenticator(clientAuthenticator)
+                .AddInterceptor(clientInterceptor)
+                .UseEndpointSelector(endpointSelector)
+                .UseRetry(retryPolicy)
+                .UseEndpointAdmission(admissionPolicy),
+            "SharpClientBuilder direct transport and policy SPI configuration");
+
+        SharpLinkEndpointTransportFactory endpointTransportFactory =
+            static _ => new PackageClientTransportFactory();
+        AssertPublicType<SharpLinkEndpointTransportFactory>();
+        var resolverClientBuilder = SharpClientBuilder.Create();
+        AssertBuilderReturnsSelf(
+            resolverClientBuilder,
+            resolverClientBuilder.UseEndpointResolver(endpointResolver, endpointTransportFactory),
+            "SharpClientBuilder endpoint resolver SPI configuration");
+
+        var serverBuilder = SharpLinkServerBuilder.Create();
+        AssertBuilderReturnsSelf(
+            serverBuilder,
+            serverBuilder
+                .UseTransport(serverListener)
+                .UseAuthenticator(serverAuthenticator)
+                .AddInterceptor(serverInterceptor),
+            "SharpLinkServerBuilder transport and policy SPI configuration");
+    }
+
+    private static void AssertPublicType<T>()
+    {
+        if (!typeof(T).IsPublic)
+            throw new InvalidOperationException($"Supported SharpLink API is not public: {typeof(T).FullName}.");
+    }
+
+    private static void AssertPublicSpi<TContract, TImplementation>(TContract instance)
+        where TImplementation : TContract
+    {
+        AssertPublicType<TContract>();
+        if (!typeof(TContract).IsAssignableFrom(typeof(TImplementation)))
+        {
+            throw new InvalidOperationException(
+                $"Package consumer type {typeof(TImplementation).FullName} does not implement {typeof(TContract).FullName}.");
+        }
+        if (!typeof(TImplementation).IsInstanceOfType(instance))
+        {
+            throw new InvalidOperationException(
+                $"Package consumer SPI instance has the wrong runtime type for {typeof(TContract).FullName}.");
+        }
+    }
+
+    private static void AssertBuilderReturnsSelf<TBuilder>(TBuilder expected, TBuilder actual, string operation)
+        where TBuilder : class
+    {
+        if (!ReferenceEquals(expected, actual))
+            throw new InvalidOperationException($"{operation} did not preserve the configured builder instance.");
+    }
+
+    private sealed class PackageTransport : ITransportConnection
+    {
+        public string Id => "package-smoke-transport";
+
+        public PipeReader Input => PipeReader.Create(Stream.Null);
+
+        public PipeWriter Output => PipeWriter.Create(Stream.Null);
+
+        public EndPoint? LocalEndPoint => null;
+
+        public EndPoint? RemoteEndPoint => null;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class PackageClientTransportFactory : IClientTransportFactory
+    {
+        public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(
+                new NotSupportedException("Package SPI compile probe does not connect."));
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class PackageServerTransportListener : IServerTransportListener
+    {
+        public EndPoint? LocalEndPoint => null;
+
+        public ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<ITransportConnection>(
+                new NotSupportedException("Package SPI compile probe does not accept connections."));
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class PackageClientAuthenticator : ISharpLinkClientAuthenticator
+    {
+        public ValueTask<ReadOnlyMemory<byte>> CreatePayloadAsync(CancellationToken cancellationToken)
+            => ValueTask.FromResult(ReadOnlyMemory<byte>.Empty);
+    }
+
+    private sealed class PackageServerAuthenticator : ISharpLinkServerAuthenticator
+    {
+        public ValueTask<SharpLinkAuthenticationResult> AuthenticateAsync(
+            SharpLinkAuthenticationRequest request,
+            CancellationToken cancellationToken)
+            => ValueTask.FromResult(SharpLinkAuthenticationResult.Success);
+    }
+
+    private sealed class PackageEndpointResolver : ISharpLinkEndpointResolver
+    {
+        public ValueTask<SharpLinkEndpointSnapshot> ResolveAsync(CancellationToken cancellationToken)
+            => ValueTask.FromResult(new SharpLinkEndpointSnapshot(0, []));
+
+        public IAsyncEnumerable<SharpLinkEndpointSnapshot> WatchAsync(CancellationToken cancellationToken)
+            => EmptySnapshots();
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        private static async IAsyncEnumerable<SharpLinkEndpointSnapshot> EmptySnapshots()
+        {
+            await Task.Yield();
+            yield break;
+        }
+    }
+
+    private sealed class PackageEndpointSelector : ISharpLinkEndpointSelector
+    {
+        public int Select(in SharpLinkEndpointSelectionContext context)
+            => context.Count == 0 ? -1 : 0;
+    }
+
+    private sealed class PackageRetryPolicy : ISharpLinkRetryPolicy
+    {
+        public SharpLinkRetryDecision Evaluate(in SharpLinkRetryContext context)
+            => new(false, TimeSpan.Zero);
+    }
+
+    private sealed class PackageEndpointAdmissionPolicy : ISharpLinkEndpointAdmissionPolicy
+    {
+        public SharpLinkEndpointAdmissionDecision TryAcquire(
+            in SharpLinkEndpointCandidate endpoint,
+            in RpcMethodDescriptor method)
+            => new(true, Token: 0, RetryAfter: null);
+
+        public void Report(in SharpLinkEndpointOutcome outcome, long token)
+        {
+        }
+    }
+
+    private sealed class PackageClientInterceptor : ISharpLinkClientInterceptor
+    {
+        public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+            => next(context);
+    }
+
+    private sealed class PackageCodec : IRpcCodec<int>
+    {
+        public void Serialize(in int value, IBufferWriter<byte> buffer)
+        {
+            var span = buffer.GetSpan(sizeof(int));
+            BitConverter.TryWriteBytes(span, value);
+            buffer.Advance(sizeof(int));
+        }
+
+        public int Deserialize(in ReadOnlySequence<byte> buffer)
+            => BitConverter.ToInt32(buffer.ToArray());
+    }
+
+    private sealed class PackageInterceptor : ISharpLinkServerInterceptor
+    {
+        public ValueTask InvokeAsync(
+            SharpLinkServerInvocationContext context,
+            SharpLinkServerInvocationDelegate next)
+            => next(context);
+    }
 }

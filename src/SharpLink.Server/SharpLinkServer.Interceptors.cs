@@ -5,7 +5,7 @@ internal sealed partial class SharpLinkServer
     private ValueTask InvokeServiceAsync(
         ServiceRegistration registration,
         ServerConnectionState connection,
-        IRpcSession session,
+        RpcSession session,
         long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
@@ -140,7 +140,7 @@ internal sealed partial class SharpLinkServer
     private static async ValueTask CompleteDynamicSingletonInvocationAsync(
         ValueTask invocation,
         SharpLinkDynamicModuleLease moduleLease,
-        IRpcSession session,
+        RpcSession session,
         long requestId,
         bool hasRequestStreams)
     {
@@ -164,7 +164,7 @@ internal sealed partial class SharpLinkServer
     private ValueTask InvokeAcquiredServiceAsync(
         IRpcStub stub,
         ServiceLease lease,
-        IRpcSession session,
+        RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
         long methodId,
         long requestId,
@@ -207,7 +207,7 @@ internal sealed partial class SharpLinkServer
     private async ValueTask InvokeServiceAfterAcquisitionAsync(
         ValueTask<ServiceLease> acquisition,
         IRpcStub stub,
-        IRpcSession session,
+        RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
         long methodId,
         long requestId,
@@ -247,7 +247,7 @@ internal sealed partial class SharpLinkServer
     private ValueTask InvokeServiceTrackedAsync(
         IRpcStub stub,
         object service,
-        IRpcSession session,
+        RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
         long methodId,
         long requestId,
@@ -290,7 +290,7 @@ internal sealed partial class SharpLinkServer
     private async ValueTask InvokeServiceWithLeaseAsync(
         IRpcStub stub,
         ServiceLease lease,
-        IRpcSession session,
+        RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
         long methodId,
         long requestId,
@@ -346,13 +346,13 @@ internal sealed partial class SharpLinkServer
         => first is null ? next : new AggregateException(first, next);
 
     private static void CompleteDynamicRequestStreams(
-        IRpcSession session,
+        RpcSession session,
         long requestId,
         bool hasRequestStreams)
     {
-        if (hasRequestStreams && session.StreamManager is StreamManager manager)
+        if (hasRequestStreams)
         {
-            manager.CompleteRequestStreams(
+            session.StreamManager.CompleteRequestStreams(
                 requestId,
                 new OperationCanceledException(
                     "The RPC handler completed before its request streams drained."));
@@ -362,7 +362,7 @@ internal sealed partial class SharpLinkServer
     private ValueTask InvokeServiceCoreAsync(
         IRpcStub stub,
         object service,
-        IRpcSession session,
+        RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
         long methodId,
         long requestId,
@@ -402,7 +402,7 @@ internal sealed partial class SharpLinkServer
     private async ValueTask InvokeInterceptedWithOwnedArgumentsAsync(
         IRpcStub stub,
         object service,
-        IRpcSession session,
+        RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
         long methodId,
         long requestId,
@@ -412,7 +412,7 @@ internal sealed partial class SharpLinkServer
         SharpLinkServerInvocationContext context)
     {
         var length = checked((int)arguments.Length);
-        var maxArgumentsBytes = ((RpcSession)session).NegotiatedMaxFramePayloadBytes;
+        var maxArgumentsBytes = session.NegotiatedMaxFramePayloadBytes;
         if (length > maxArgumentsBytes)
         {
             throw new SharpLinkException(
@@ -480,7 +480,7 @@ internal sealed partial class SharpLinkServer
     private SharpLinkException MapServiceException(
         Exception exception,
         SharpLinkCallContextSnapshot callContext,
-        IRpcSession session,
+        RpcSession session,
         IRpcStub stub,
         long methodId,
         long requestId,
@@ -524,7 +524,7 @@ internal sealed partial class SharpLinkServer
 
     internal SharpLinkException MapStreamServiceException(
         StripedLongMap<ServerCallCancellationState> callCancellations,
-        IRpcSession session,
+        RpcSession session,
         long requestId,
         long contractId,
         long methodId,
@@ -574,7 +574,7 @@ internal sealed partial class SharpLinkServer
         private readonly ISharpLinkServerInterceptor[] _interceptors;
         private readonly IRpcStub _stub;
         private readonly object _service;
-        private readonly IRpcSession _session;
+        private readonly RpcSession _session;
         private readonly IRpcGeneratedServerBridge _generatedBridge;
         private readonly long _methodId;
         private readonly long _requestId;
@@ -588,7 +588,7 @@ internal sealed partial class SharpLinkServer
             ISharpLinkServerInterceptor[] interceptors,
             IRpcStub stub,
             object service,
-            IRpcSession session,
+            RpcSession session,
             IRpcGeneratedServerBridge generatedBridge,
             long methodId,
             long requestId,

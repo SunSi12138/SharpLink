@@ -56,7 +56,7 @@ internal sealed class ServerGeneratedBridge(
                 contractId,
                 methodId,
                 exception);
-            ((IRpcSession)session).SendStreamErrorAsync(requestId, streamId, protocolError);
+            session.SendStreamErrorAsync(requestId, streamId, protocolError);
         }
     }
 }

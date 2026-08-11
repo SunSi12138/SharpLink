@@ -27,18 +27,17 @@ internal sealed partial class SharpLinkServer
                     {
                         SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
                         session.MarkActive();
-                        ((RpcSession)session).EnsureInboundFrameAllowed(
+                        session.EnsureInboundFrameAllowed(
                             header.Type,
                             allowRequestWhileDraining: true);
                         IRpcByteBufferWriter? decodedOwner = null;
                         try
                         {
                             if (header.Type == ProtocolV2FrameType.StreamData &&
-                                (header.Flags & ProtocolV2FrameFlags.Compressed) != 0 &&
-                                session.StreamManager is StreamManager preAdmissionStreams)
+                                (header.Flags & ProtocolV2FrameFlags.Compressed) != 0)
                             {
-                                var rpcSession = (RpcSession)session;
-                                rpcSession.ValidateInboundPayloadEnvelope(
+                                var preAdmissionStreams = session.StreamManager;
+                                session.ValidateInboundPayloadEnvelope(
                                     header.Type, header.Flags, payload);
                                 var requestId = unchecked((long)header.RequestId);
                                 var streamId = RpcSession.ReadCompressedStreamId(payload);
@@ -58,12 +57,12 @@ internal sealed partial class SharpLinkServer
                             if (header.Type == ProtocolV2FrameType.Request &&
                                 _admissionController is not null)
                             {
-                                ((RpcSession)session).ValidateInboundPayloadEnvelope(
+                                session.ValidateInboundPayloadEnvelope(
                                     header.Type, header.Flags, payload);
                             }
                             else
                             {
-                                payload = ((RpcSession)session).DecodeInboundPayload(
+                                payload = session.DecodeInboundPayload(
                                     header.Type, header.Flags, payload, ct, out decodedOwner);
                             }
                         }
@@ -153,7 +152,7 @@ internal sealed partial class SharpLinkServer
                                 case ProtocolV2FrameType.Cancel:
                                     var cancelRequestId = unchecked((long)header.RequestId);
                                     var cancelReason = session.ReadNegotiatedCancelReason(payload);
-                                    ((RpcSession)session).AbortSendStreams(
+                                    session.AbortSendStreams(
                                         cancelRequestId,
                                         ServerCallTerminationMapper.CreateRemoteCancellationException(cancelReason));
                                     if (requestCancellationMap.TryCapture(
@@ -181,14 +180,14 @@ internal sealed partial class SharpLinkServer
                                         session, unchecked((long)header.RequestId), header.Flags, payload, _protocolOptions);
                                     break;
                                 case ProtocolV2FrameType.WindowUpdate:
-                                    ((RpcSession)session).ApplyWindowUpdate(
+                                    session.ApplyWindowUpdate(
                                         unchecked((long)header.RequestId),
                                         ProtocolV2PayloadCodec.ReadWindowUpdate(payload));
                                     break;
                                 case ProtocolV2FrameType.GoAway:
                                     return;
                                 case ProtocolV2FrameType.HealthCheck:
-                                    if ((((RpcSession)session).NegotiatedCapabilities &
+                                    if ((session.NegotiatedCapabilities &
                                          ProtocolV2Capabilities.HealthCheck) == 0)
                                     {
                                         throw new SharpLinkException(
@@ -213,7 +212,7 @@ internal sealed partial class SharpLinkServer
                         }
                         finally
                         {
-                            ((RpcSession)session).ReturnDecodedPayload(decodedOwner);
+                            session.ReturnDecodedPayload(decodedOwner);
                         }
                     }
 
@@ -267,7 +266,7 @@ internal sealed partial class SharpLinkServer
     private void ObserveUserCall(ValueTask dispatchTask, long requestId)
         => _ = AwaitDispatchAsync(dispatchTask, requestId);
 
-    private static async Task DispatchStreamChunkAsync(IRpcSession session, long requestId, ReadOnlySequence<byte> payload)
+    private static async Task DispatchStreamChunkAsync(RpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out short streamIdBits))
@@ -278,7 +277,7 @@ internal sealed partial class SharpLinkServer
     }
 
     private static void DispatchStreamComplete(
-        IRpcSession session,
+        RpcSession session,
         long requestId,
         ProtocolV2FrameFlags flags,
         ReadOnlySequence<byte> payload,
