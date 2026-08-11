@@ -85,7 +85,9 @@ internal sealed partial class SharpLinkClient
                     throw;
             }
 
-            if (State == SharpLinkConnectionState.Stopped || _shutdownCts.IsCancellationRequested)
+            if (Volatile.Read(ref _stopStarted) != 0 ||
+                State == SharpLinkConnectionState.Stopped ||
+                _shutdownCts.IsCancellationRequested)
                 throw CreateConnectionClosedException("Client has stopped.");
 
             var signal = Volatile.Read(ref _readySignal).Task;

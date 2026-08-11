@@ -51,7 +51,9 @@ public sealed class SharpLinkServerHealthCheck(ISharpLinkServerReadiness readine
 }
 
 /// <summary>Queries a connected SharpLink server through the protocol health control frame.</summary>
-/// <param name="clientAccessor">Provides a client only after at least one connection is ready.</param>
+/// <param name="clientAccessor">
+/// Provides a client after its topology-specific connectivity boundary completes.
+/// </param>
 public sealed class SharpLinkRemoteHealthCheck(ISharpLinkClientAccessor clientAccessor) : IHealthCheck
 {
     /// <inheritdoc />

@@ -6,6 +6,51 @@ public interface ISharpLinkClient : IAsyncDisposable
     /// <summary>Gets the current atomic client lifecycle state.</summary>
     SharpLinkConnectionState State { get; }
 
+    /// <summary>
+    /// Gets an immutable point-in-time observation of the active endpoint topology without waiting,
+    /// locking, or traversing endpoint collections.
+    /// </summary>
+    /// <returns>The latest published topology readiness snapshot.</returns>
+    /// <exception cref="NotSupportedException">
+    /// This implementation does not expose endpoint readiness details.
+    /// </exception>
+    SharpLinkClientReadinessSnapshot GetReadinessSnapshot()
+        => throw new NotSupportedException(
+            "This ISharpLinkClient implementation does not expose endpoint readiness details.");
+
+    /// <summary>
+    /// Starts or joins the topology's existing connectivity lifecycle when necessary, then waits
+    /// until a point-in-time Ready-state observation contains at least the requested number of ready
+    /// endpoints. A successful result is not a lease or a guarantee that topology readiness will be
+    /// retained after the method returns. The wait does not raise the configured convergence target.
+    /// </summary>
+    /// <param name="minimumReadyEndpoints">The minimum number of active ready endpoints to observe.</param>
+    /// <param name="cancellationToken">Cancels only this caller's wait.</param>
+    /// <returns>The snapshot that satisfied the requested threshold.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="minimumReadyEndpoints"/> is less than one or exceeds this topology's configured
+    /// readiness limit.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// This implementation does not support endpoint readiness waits.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was canceled. The Client-owned connectivity lifecycle continues.
+    /// </exception>
+    /// <exception cref="SharpLinkException">
+    /// The joined initial connectivity attempt failed, the observed attempt entered Faulted, or the
+    /// Client began draining or stopped.
+    /// </exception>
+    ValueTask<SharpLinkClientReadinessSnapshot> WaitForReadinessAsync(
+        int minimumReadyEndpoints,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(minimumReadyEndpoints, 1);
+        return ValueTask.FromException<SharpLinkClientReadinessSnapshot>(
+            new NotSupportedException(
+                "This ISharpLinkClient implementation does not support endpoint readiness waits."));
+    }
+
     /// <summary>Atomically registers the source-generated artifacts owned by an already loaded assembly.</summary>
     /// <param name="assembly">The assembly containing a generated SharpLink manifest.</param>
     /// <returns>A non-throwing registration result with structured diagnostics after rejection.</returns>
@@ -32,8 +77,13 @@ public interface ISharpLinkClient : IAsyncDisposable
         TimeSpan gracefulTimeout,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Connects and completes only after the RPC handshake succeeds.</summary>
-    /// <param name="cancellationToken">Cancels the shared connection attempt.</param>
+    /// <summary>
+    /// Starts the topology-specific connectivity lifecycle and completes according to its existing
+    /// connectivity boundary. This method does not wait for multi-endpoint convergence.
+    /// </summary>
+    /// <param name="cancellationToken">
+    /// Cancels only this caller's wait; the shared client-owned connection attempt continues.
+    /// </param>
     /// <exception cref="SharpLinkException">The transport or handshake failed.</exception>
     ValueTask ConnectAsync(CancellationToken cancellationToken = default);
 

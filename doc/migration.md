@@ -33,6 +33,10 @@ options 不会影响已经编译的 plan。多集群会用同一个 child plan �
 
 详见 [`runtime-phase-11-build-plan.md`](runtime-phase-11-build-plan.md)。
 
+## Client readiness API
+
+`ISharpLinkClient` 新增 `GetReadinessSnapshot()` 和 `WaitForReadinessAsync(...)`。内置 Client 提供固定、静态与 resolver 拓扑的精确快照；`ConnectAsync` 仍只承担 connectivity，不会等待多 endpoint 收敛。已有第三方 `ISharpLinkClient` 实现无需重新编译即可继续加载：接口默认实现会明确抛出 `NotSupportedException`，不会伪造单 endpoint 数据。包装或代理实现如果希望支持 readiness，应转发这两个成员并保留调用方独立取消与终止状态语义。
+
 ## 包依赖变化
 
 `SharpLink.Sdk` 2.0 只依赖 `SharpLink.Abstractions` 并携带 Analyzer/Source Generator，不再传递引入 `SharpLink.Runtime`。纯契约项目继续只引用 SDK；Client、Server 或 Hosting 应用引用相应应用包，由应用包引入 Runtime。直接使用 Runtime API 的库必须显式引用 `SharpLink.Runtime`。

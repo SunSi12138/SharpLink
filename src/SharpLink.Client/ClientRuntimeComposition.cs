@@ -9,6 +9,12 @@ internal abstract class ClientRuntimeTopologyComposition
 {
 }
 
+/// <summary>Immutable readiness scalars frozen by the Client build plan.</summary>
+internal readonly record struct ClientReadinessConfiguration(
+    int InitialActiveEndpoints,
+    int InitialTargetReadyEndpoints,
+    int MaximumWaitThreshold);
+
 /// <summary>Represents the direct-transport (including one static endpoint) Client fast path.</summary>
 internal sealed class FixedClientRuntimeTopologyComposition(
     SharpLinkEndpoint? endpoint) : ClientRuntimeTopologyComposition
@@ -160,6 +166,7 @@ internal sealed class ClientRuntimeComposition
     internal ClientRuntimeComposition(
         IClientTransportFactory transportFactory,
         ClientRuntimeTopologyComposition topology,
+        ClientReadinessConfiguration readiness,
         SharpLinkRuntimeContext runtimeContext,
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> staticManifests,
         FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> staticProxies,
@@ -181,6 +188,16 @@ internal sealed class ClientRuntimeComposition
     {
         TransportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
         Topology = topology ?? throw new ArgumentNullException(nameof(topology));
+        ArgumentOutOfRangeException.ThrowIfNegative(readiness.InitialActiveEndpoints);
+        ArgumentOutOfRangeException.ThrowIfNegative(readiness.InitialTargetReadyEndpoints);
+        ArgumentOutOfRangeException.ThrowIfLessThan(readiness.MaximumWaitThreshold, 1);
+        if (readiness.InitialTargetReadyEndpoints > readiness.MaximumWaitThreshold)
+        {
+            throw new ArgumentException(
+                "The initial readiness target cannot exceed the maximum wait threshold.",
+                nameof(readiness));
+        }
+        Readiness = readiness;
         RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
         ArgumentNullException.ThrowIfNull(staticManifests);
         ArgumentNullException.ThrowIfNull(staticProxies);
@@ -218,6 +235,8 @@ internal sealed class ClientRuntimeComposition
     internal IClientTransportFactory TransportFactory { get; }
 
     internal ClientRuntimeTopologyComposition Topology { get; }
+
+    internal ClientReadinessConfiguration Readiness { get; }
 
     internal SharpLinkRuntimeContext RuntimeContext { get; }
 

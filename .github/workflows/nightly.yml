@@ -92,7 +92,7 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Run Independent-process Shared-memory AOT Smoke
+      - name: Run NativeAOT Transport and Topology Smoke
         shell: bash
         env:
           SHARPLINK_AOT_RID: ${{ matrix.rid }}

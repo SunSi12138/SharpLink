@@ -53,7 +53,7 @@ public static class Program
         if (role != "local")
             throw new ArgumentException($"Unsupported AOT smoke role '{role}'.");
 
-        var cts = new CancellationTokenSource();
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var runToken = cts.Token;
 
         var serverBuilder = SharpLinkServerBuilder.Create()
@@ -111,6 +111,8 @@ public static class Program
         try
         {
             await VerifyClientAsync(client, runToken).ConfigureAwait(false);
+            if (!useSharedMemory)
+                await VerifyStaticReadinessClientAsync(port, runToken).ConfigureAwait(false);
             await using var multiClusterClient = CreateMultiClusterClient(useSharedMemory, sharedMemoryName, port);
             await VerifyMultiClusterClientAsync(multiClusterClient, runToken).ConfigureAwait(false);
 
@@ -164,13 +166,14 @@ public static class Program
 
     private static async Task<int> RunClientOnlyAsync(string name)
     {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await using var client = SharpClientBuilder.Create()
             .UseSharedMemory(name)
             .UseRuntime(ConfigureCompression)
             .Build();
         try
         {
-            await VerifyClientAsync(client, CancellationToken.None).ConfigureAwait(false);
+            await VerifyClientAsync(client, timeout.Token).ConfigureAwait(false);
             Console.WriteLine("AOT_SMOKE_CLIENT_PASS");
             return 0;
         }
@@ -193,6 +196,17 @@ public static class Program
     {
         VerifyRuntimeAssemblyBoundary(client);
         await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
+        var readiness = await client.WaitForReadinessAsync(1, cancellationToken).ConfigureAwait(false);
+        if (!readiness.MeetsTarget ||
+            readiness.State != SharpLinkConnectionState.Ready ||
+            readiness.ActiveEndpoints != 1 ||
+            readiness.ReadyEndpoints != 1 ||
+            readiness.ReadyConnections < 1 ||
+            readiness.TargetReadyEndpoints != 1 ||
+            client.GetReadinessSnapshot() != readiness)
+        {
+            throw new Exception($"unexpected Client readiness snapshot: {readiness}");
+        }
 
         var health = await client.CheckHealthAsync(cancellationToken).ConfigureAwait(false);
         if (health.Status != SharpLinkHealthStatus.Ready)
@@ -267,6 +281,51 @@ public static class Program
         var pair = await svc.EchoPairAsync(new AotPair(7, "pair")).ConfigureAwait(false);
         if (pair.Number != 14 || pair.Text != "pair-ok")
             throw new Exception("unexpected pair result");
+    }
+
+    private static async Task VerifyStaticReadinessClientAsync(
+        int port,
+        CancellationToken cancellationToken)
+    {
+        var endpoints = new[]
+        {
+            new SharpLinkEndpoint
+            {
+                Id = "aot-static-first",
+                Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), port)
+            },
+            new SharpLinkEndpoint
+            {
+                Id = "aot-static-second",
+                Address = new SharpLinkTcpAddress(IPAddress.Loopback.ToString(), port)
+            }
+        };
+        await using var client = SharpClientBuilder.Create()
+            .UseRuntime(ConfigureCompression)
+            .UseEndpoints(endpoints, SharpLinkTransportFactories.Sockets())
+            .UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 2;
+                options.MaxConnections = 2;
+                options.MaxConnectionsPerEndpoint = 1;
+            })
+            .Build();
+
+        await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
+        var readiness = await client.WaitForReadinessAsync(2, cancellationToken).ConfigureAwait(false);
+        if (!readiness.MeetsTarget ||
+            readiness.State != SharpLinkConnectionState.Ready ||
+            readiness.ActiveEndpoints != 2 ||
+            readiness.ReadyEndpoints != 2 ||
+            readiness.ReadyConnections != 2 ||
+            readiness.TargetReadyEndpoints != 2 ||
+            client.GetReadinessSnapshot() != readiness)
+        {
+            throw new Exception($"unexpected static Client readiness snapshot: {readiness}");
+        }
+        if (await client.Get<IAotService>().PingAsync().ConfigureAwait(false) != "pong")
+            throw new Exception("unexpected static Client AOT result");
+        Console.WriteLine("STATIC_READINESS_PASS");
     }
 
     private static async IAsyncEnumerable<int> ToAsyncEnumerable(IEnumerable<int> values)

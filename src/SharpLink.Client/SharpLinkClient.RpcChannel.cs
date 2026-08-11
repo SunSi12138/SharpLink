@@ -162,13 +162,25 @@ internal sealed partial class SharpLinkClient
             return;
         }
 
-        ResetReadySignal();
         var stableDuration = _runtimeContext.TimeProvider.GetElapsedTime(
             Volatile.Read(ref _readyTimestamp));
         if (stableDuration >= TimeSpan.FromSeconds(30))
             Volatile.Write(ref _reconnectDelayMilliseconds, 100);
         TransitionTo(SharpLinkConnectionState.Reconnecting);
         EnsureReconnectLoop();
+    }
+
+    internal void HandleConnectionFatalFailure(ClientConnection connection, Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(exception);
+        if (_cluster is not null)
+        {
+            _cluster.HandleConnectionFailure(connection, exception);
+            return;
+        }
+
+        HandleDisconnected(connection, exception);
     }
 
     private void EnsureReconnectLoop()
@@ -353,7 +365,6 @@ internal sealed partial class SharpLinkClient
             EnsureReconnectLoop();
             return;
         }
-        ResetReadySignal();
         TransitionTo(SharpLinkConnectionState.Draining);
         EnsureReconnectLoop();
     }

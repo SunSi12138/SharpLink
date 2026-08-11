@@ -47,4 +47,9 @@ grep -q "AOT_SMOKE_SERVER_PASS" "$SERVER_LOG"
 rm -f "$COMPLETION_FILE"
 trap - EXIT
 
-echo "Shared-memory independent-process NativeAOT smoke passed ($RID)."
+LOCAL_LOG="$OUTPUT/local-topologies.log"
+"$EXE" | tee "$LOCAL_LOG"
+grep -q "STATIC_READINESS_PASS" "$LOCAL_LOG"
+grep -q "AOT_SMOKE_PASS transport=tcp" "$LOCAL_LOG"
+
+echo "Shared-memory process and local endpoint-topology NativeAOT smokes passed ($RID)."

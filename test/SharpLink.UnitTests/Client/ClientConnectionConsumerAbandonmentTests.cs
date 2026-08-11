@@ -1,8 +1,10 @@
 using System.Collections.Generic;
 using System.IO.Pipelines;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using SharpLink.Client;
+using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Client;
 
@@ -130,6 +132,147 @@ public class ClientConnectionConsumerAbandonmentTests
         }
     }
 
+    [Test]
+    [NotInParallel]
+    public async Task ThrowingCancellationCompletionShouldEvictFatalConnectionBeforeReadinessWait()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var transport = new ReadyThenBlockingTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(transport, builder =>
+        {
+            builder.UseTimeProvider(timeProvider);
+            builder.UseHeartbeat(TimeSpan.FromHours(1), TimeSpan.FromHours(2));
+            builder.UseReconnectJitterForTesting(new FixedReconnectJitter(
+                TimeSpan.FromMilliseconds(100)));
+        });
+        await client.ConnectAsync();
+        var connection = GetReadyConnections(client).Single();
+        Ensure(client.GetReadinessSnapshot() == new SharpLinkClientReadinessSnapshot(
+                SharpLinkConnectionState.Ready,
+                ActiveEndpoints: 1,
+                ReadyEndpoints: 1,
+                ReadyConnections: 1,
+                TargetReadyEndpoints: 1) &&
+               client.ReadyConnectionCount == 1,
+            "the real fixed client must begin with exactly one published ready connection");
+
+        var triggerFailure = new InvalidOperationException(
+            "deterministic server-stream completion failure");
+        var ownerCleanupFailure = new InvalidOperationException(
+            "deterministic owner-wide stream cleanup failure");
+        var dispatcher = new ThrowingCompleteDispatcher(triggerFailure);
+        var requestId = connection.PendingCalls.RegisterStream(
+            PendingCallKind.ServerStreaming,
+            dispatcher,
+            deadline: default,
+            cancellationToken: CancellationToken.None);
+        connection.Session.StreamManager.Register(requestId, dispatcher);
+        connection.Session.StreamManager.Register(
+            requestId + 1,
+            new ThrowingCompleteDispatcher(ownerCleanupFailure));
+
+        var completionFailure = CaptureException(() => connection.PendingCalls.TryComplete(
+            requestId,
+            PendingCallCompletionReason.UserCancellation));
+        Ensure(ReferenceEquals(completionFailure, ownerCleanupFailure),
+            "the second registered stream must make ClientConnection.Fail surface its exact completion failure");
+
+        var disconnected = client.GetReadinessSnapshot();
+        Ensure(disconnected == new SharpLinkClientReadinessSnapshot(
+                SharpLinkConnectionState.Reconnecting,
+                ActiveEndpoints: 1,
+                ReadyEndpoints: 0,
+                ReadyConnections: 0,
+                TargetReadyEndpoints: 1),
+            "a fatal dispatcher completion failure must synchronously publish Reconnecting/0");
+        Ensure(connection.State == ClientConnectionState.Closed &&
+               !connection.PendingCalls.Contains(requestId),
+            "fatal stream cleanup must close the connection and settle the pending call");
+        Ensure(client.ReadyConnectionCount == 0 && GetReadyConnections(client).Length == 0,
+            "the failed owner must be absent from both the ready count and selection snapshot");
+
+        using var waiterCancellation = new CancellationTokenSource();
+        var readiness = client.WaitForReadinessAsync(1, waiterCancellation.Token).AsTask();
+        await transport.LaterAttemptStarted.Task.WaitAsync(RaceCoordinationTimeout);
+        Ensure(!readiness.IsCompleted &&
+               client.ReadyConnectionCount == 0 &&
+               GetReadyConnections(client).Length == 0,
+            "WaitForReadinessAsync(1) must remain pending instead of observing the retired snapshot");
+
+        waiterCancellation.Cancel();
+        var cancellation = await CaptureExceptionAsync(readiness);
+        Ensure(cancellation is OperationCanceledException,
+            "cancelling the test waiter must end only that pending readiness observation");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task AsyncDrainFailureShouldEvictConnectionAfterOutstandingDispatchReleases()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var transport = new ReadyThenBlockingTransportFactory();
+        await using var client = ClientBuilderTestHelper.Build(transport, builder =>
+        {
+            builder.UseTimeProvider(timeProvider);
+            builder.UseHeartbeat(TimeSpan.FromHours(1), TimeSpan.FromHours(2));
+            builder.UseReconnectJitterForTesting(new FixedReconnectJitter(
+                TimeSpan.FromMilliseconds(100)));
+        });
+        await client.ConnectAsync();
+        var connection = GetReadyConnections(client).Single();
+        var drainFailure = new InvalidOperationException(
+            "deterministic asynchronous drain finalization failure");
+        var dispatcher = new AsyncDrainThrowingDispatcher(drainFailure);
+        var requestId = connection.PendingCalls.RegisterStream(
+            PendingCallKind.ServerStreaming,
+            dispatcher,
+            deadline: default,
+            cancellationToken: CancellationToken.None);
+        connection.Session.StreamManager.Register(requestId, dispatcher);
+
+        var dispatch = connection.Session.StreamManager.DispatchChunkAsync(
+            requestId,
+            new ReadOnlySequence<byte>(new byte[] { 1 })).AsTask();
+        await dispatcher.DispatchEntered.Task.WaitAsync(RaceCoordinationTimeout);
+        Ensure(!dispatch.IsCompleted,
+            "the controlled stream dispatch must hold the manager's active lease");
+
+        Ensure(connection.PendingCalls.TryComplete(
+                requestId,
+                PendingCallCompletionReason.UserCancellation),
+            "user cancellation must start the asynchronous drain path");
+        await dispatcher.CompleteCalled.Task.WaitAsync(RaceCoordinationTimeout);
+        Ensure(client.GetReadinessSnapshot().State == SharpLinkConnectionState.Ready &&
+               client.ReadyConnectionCount == 1 &&
+               connection.State == ClientConnectionState.Ready,
+            "the owner must remain published until the outstanding dispatch actually drains");
+
+        dispatcher.ReleaseDispatch();
+        await dispatch.WaitAsync(RaceCoordinationTimeout);
+        await dispatcher.DrainFailureRaised.Task.WaitAsync(RaceCoordinationTimeout);
+        var disconnected = await WaitForReadinessSnapshotAsync(
+            client,
+            static snapshot => snapshot.State == SharpLinkConnectionState.Reconnecting &&
+                               snapshot.ReadyConnections == 0);
+
+        Ensure(disconnected == new SharpLinkClientReadinessSnapshot(
+                SharpLinkConnectionState.Reconnecting,
+                ActiveEndpoints: 1,
+                ReadyEndpoints: 0,
+                ReadyConnections: 0,
+                TargetReadyEndpoints: 1),
+            "an asynchronous drain finalization failure must publish Reconnecting/0");
+        Ensure(connection.State == ClientConnectionState.Closed &&
+               client.ReadyConnectionCount == 0 &&
+               GetReadyConnections(client).Length == 0,
+            "async fatal cleanup must close and remove the owner before another call can select it");
+
+        await client.StopAsync().AsTask().WaitAsync(RaceCoordinationTimeout);
+        Ensure(connection.ActiveCallCount == 0 &&
+               client.FrameworkTaskSnapshotForDiagnostics.ActiveTasks == 0,
+            "Stop must deterministically join the async cleanup and release its active call");
+    }
+
     private static async Task<List<(ProtocolV2FrameType Type, ulong RequestId)>> FlushAndReadFramesAsync(
         RpcSession session,
         Pipe output)
@@ -156,6 +299,194 @@ public class ClientConnectionConsumerAbandonmentTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private static ClientConnection[] GetReadyConnections(SharpLinkClient client)
+        => (ClientConnection[])(typeof(SharpLinkClient).GetField(
+                "_readyConnections",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(client) ?? throw new Exception("cannot find ready connection selection snapshot"));
+
+    private static async Task<SharpLinkClientReadinessSnapshot> WaitForReadinessSnapshotAsync(
+        SharpLinkClient client,
+        Func<SharpLinkClientReadinessSnapshot, bool> predicate)
+    {
+        while (true)
+        {
+            var publication = client.ReadinessPublicationForTesting;
+            if (predicate(publication.Snapshot))
+                return publication.Snapshot;
+            await publication.Changed.Task.WaitAsync(RaceCoordinationTimeout);
+        }
+    }
+
+    private static async Task<Exception> CaptureExceptionAsync(Task operation)
+    {
+        try
+        {
+            await operation;
+            return new Exception("expected the operation to fail");
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static Exception CaptureException(Action operation)
+    {
+        try
+        {
+            operation();
+            return new Exception("expected the operation to fail");
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private sealed class ReadyThenBlockingTransportFactory : IClientTransportFactory
+    {
+        private readonly Lock _gate = new();
+        private readonly List<TestTransportConnection> _connections = [];
+        private readonly TaskCompletionSource _laterRelease =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _connectCount;
+
+        internal TaskCompletionSource LaterAttemptStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask<ITransportConnection> ConnectAsync(
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _connectCount) > 1)
+            {
+                LaterAttemptStarted.TrySetResult();
+                await _laterRelease.Task.WaitAsync(cancellationToken);
+            }
+
+            var connection = new TestTransportConnection();
+            using var payload = new PooledByteBufferWriter();
+            ProtocolV2PayloadCodec.WriteHandshakeResponse(payload, new ProtocolV2HandshakeResponse(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.None,
+                4 * 1024 * 1024,
+                1024 * 1024,
+                16 * 1024 * 1024));
+            await connection.InjectFrameAsync(
+                ProtocolV2FrameType.HandshakeResponse,
+                ProtocolV2FrameFlags.None,
+                0,
+                payload.WrittenMemory,
+                cancellationToken);
+            lock (_gate)
+                _connections.Add(connection);
+            return connection;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            _laterRelease.TrySetResult();
+            TestTransportConnection[] connections;
+            lock (_gate)
+                connections = [.. _connections];
+            for (var index = 0; index < connections.Length; index++)
+                await connections[index].DisposeAsync();
+        }
+    }
+
+    private sealed class FixedReconnectJitter(TimeSpan delay) : ISharpLinkReconnectJitter
+    {
+        public TimeSpan AddQuarterWindow(int baseDelayMilliseconds)
+        {
+            _ = baseDelayMilliseconds;
+            return delay;
+        }
+
+        public TimeSpan ScaleTwentyPercent(int baseDelayMilliseconds)
+        {
+            _ = baseDelayMilliseconds;
+            return delay;
+        }
+    }
+
+    private sealed class ThrowingCompleteDispatcher(Exception failure) : IStreamDispatcher
+    {
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+        {
+            _ = payload;
+            return ValueTask.CompletedTask;
+        }
+
+        public void Complete(bool isError, string? errorMessage)
+        {
+            _ = isError;
+            _ = errorMessage;
+            throw failure;
+        }
+
+        public void Complete(Exception? exception)
+        {
+            _ = exception;
+            throw failure;
+        }
+    }
+
+    private sealed class AsyncDrainThrowingDispatcher(Exception failure) :
+        IStreamDispatcher,
+        IStreamDispatchLease
+    {
+        private readonly TaskCompletionSource _dispatchRelease =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource DispatchEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource CompleteCalled { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource DrainFailureRaised { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+            => DispatchAcquiredAsync(payload, checked((int)payload.Length));
+
+        public void Complete(bool isError, string? errorMessage)
+        {
+            _ = isError;
+            _ = errorMessage;
+            CompleteCalled.TrySetResult();
+        }
+
+        public void Complete(Exception? exception)
+        {
+            _ = exception;
+            CompleteCalled.TrySetResult();
+        }
+
+        public void BindDispatchState(IStreamDispatchState state)
+        {
+            _ = state;
+        }
+
+        public ValueTask DispatchAcquiredAsync(
+            ReadOnlySequence<byte> payload,
+            int encodedByteCount)
+        {
+            _ = payload;
+            _ = encodedByteCount;
+            DispatchEntered.TrySetResult();
+            return new ValueTask(_dispatchRelease.Task);
+        }
+
+        public void OnDispatchesDrained()
+        {
+            DrainFailureRaised.TrySetResult();
+            throw failure;
+        }
+
+        internal void ReleaseDispatch() => _dispatchRelease.TrySetResult();
     }
 
     private sealed class CreditHoldingLeaseDispatcher :
