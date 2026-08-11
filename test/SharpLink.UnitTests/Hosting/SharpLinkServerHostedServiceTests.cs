@@ -400,6 +400,7 @@ public class SharpLinkServerHostedServiceTests
 
         Ensure(completed,
             "owner completion must finish the long graceful wait successfully");
+        await provider.WaitForTimersDrainedAsync();
         Ensure(provider.ActiveTimerCount == 0,
             "owner completion must dispose the provider timer without a real-time wait");
     }
