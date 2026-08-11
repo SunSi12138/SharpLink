@@ -34,7 +34,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         int configuredConnectionBudget = 0,
         ILoggerFactory? loggerFactory = null)
     {
-        _ = routeManifestSnapshot;
+        ArgumentNullException.ThrowIfNull(routeManifestSnapshot);
         _options = options;
         _snapshot = new MultiClusterSnapshot(
             clusters,

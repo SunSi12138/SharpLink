@@ -531,18 +531,21 @@ internal sealed partial class SharpLinkServer
         Exception exception)
     {
         if (exception is OperationCanceledException &&
-            callCancellations.TryGetValue(requestId, out var callState) &&
-            callState.TryAcquire(requestId))
+            callCancellations.TryCapture(
+                requestId,
+                static (capturedRequestId, state) => state.CaptureLease(capturedRequestId),
+                out var callLease) &&
+            callLease.TryAcquire())
         {
             try
             {
                 exception = MapServerCancellationException(
-                    callState,
-                    callState.Deadline);
+                    callLease.State,
+                    callLease.State.Deadline);
             }
             finally
             {
-                callState.ReleaseUse();
+                callLease.ReleaseUse();
             }
         }
 

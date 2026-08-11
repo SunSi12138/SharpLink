@@ -23,7 +23,7 @@ public class SharpClientBuilderTests
     [Test]
     public async Task BuildShouldUseThirtySecondUnaryTimeoutByDefault()
     {
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .Build();
 
@@ -34,7 +34,7 @@ public class SharpClientBuilderTests
     [Test]
     public async Task UseRequestTimeoutShouldRejectNonPositiveValues()
     {
-        var builder = SharpClientBuilder.Create();
+        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty);
         await EnsureThrows<ArgumentOutOfRangeException>(() =>
         {
             builder.UseRequestTimeout(TimeSpan.Zero);
@@ -45,7 +45,7 @@ public class SharpClientBuilderTests
     [Test]
     public async Task BuildShouldCarryConfiguredRequestTimeout()
     {
-        var builder = SharpClientBuilder.Create()
+        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .UseRequestTimeout(TimeSpan.FromSeconds(2));
 
@@ -59,7 +59,7 @@ public class SharpClientBuilderTests
     public async Task BuildShouldForwardTheApplicationOwnedTimeProvider()
     {
         var timeProvider = new ManualTimeProvider();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTimeProvider(timeProvider)
             .UseTransport(new NoopTransport())
             .Build();
@@ -75,7 +75,7 @@ public class SharpClientBuilderTests
     [Test]
     public async Task BuildShouldClearRequestTimeoutAfterDisable()
     {
-        var builder = SharpClientBuilder.Create()
+        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .UseRequestTimeout(TimeSpan.FromSeconds(2))
             .DisableRequestTimeout();
@@ -89,7 +89,7 @@ public class SharpClientBuilderTests
     [Test]
     public async Task UseRpcSessionFlushShouldRejectInvalidValues()
     {
-        var builder = SharpClientBuilder.Create();
+        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty);
         await EnsureThrows<ArgumentOutOfRangeException>(() =>
         {
             builder.UseRpcSessionFlush(0, TimeSpan.FromMilliseconds(1));
@@ -106,7 +106,7 @@ public class SharpClientBuilderTests
     [Test]
     public async Task BuildShouldCarryRpcSessionFlushWithoutMutatingTransport()
     {
-        var builder = SharpClientBuilder.Create()
+        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .UseRpcSessionFlush(8192, TimeSpan.FromMilliseconds(2));
 
@@ -120,7 +120,7 @@ public class SharpClientBuilderTests
     [Test]
     public async Task BuildShouldRejectInvalidProtocolLimits()
     {
-        var builder = SharpClientBuilder.Create()
+        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .UseProtocol(static options =>
                 options.MaxFramePayloadBytes = SharpLinkProtocolOptions.MinMaxFramePayloadBytes - 1);
@@ -135,7 +135,7 @@ public class SharpClientBuilderTests
     [Test]
     public async Task BuildShouldRejectPendingRequestCapacityThatIsNotPowerOfTwo()
     {
-        var builder = SharpClientBuilder.Create()
+        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .UseProtocol(static options => options.MaxPendingRequestsPerConnection = 1000);
 
@@ -149,7 +149,7 @@ public class SharpClientBuilderTests
     [Test]
     public async Task BuildShouldFreezeProtocolLimitSnapshot()
     {
-        var builder = SharpClientBuilder.Create()
+        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .UseProtocol(static options => options.MaxFramePayloadBytes = 2048);
 
@@ -172,7 +172,7 @@ public class SharpClientBuilderTests
     [Test]
     public async Task BuildShouldAllowDefaultSessionFlush()
     {
-        var builder = SharpClientBuilder.Create()
+        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport());
 
         var client = builder.Build();
@@ -183,14 +183,14 @@ public class SharpClientBuilderTests
     [Test]
     public async Task ConnectionPoolShouldDefaultToOneAndFreezeExplicitBounds()
     {
-        var defaultBuilder = SharpClientBuilder.Create()
+        var defaultBuilder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport());
         var defaultClient = defaultBuilder.Build();
         Ensure(ReadConnectionPool(defaultClient) is { MinConnections: 1, MaxConnections: 1 },
             "balanced default pool");
 
         SharpLinkConnectionPoolOptions? configuredDraft = null;
-        var configuredBuilder = SharpClientBuilder.Create()
+        var configuredBuilder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .UseConnectionPool(options =>
         {
@@ -215,7 +215,7 @@ public class SharpClientBuilderTests
     [Test]
     public async Task ThroughputProfileShouldUseBoundedMultiConnectionDefault()
     {
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .UseRuntime(options => options.PerformanceProfile = SharpLinkPerformanceProfile.Throughput)
             .Build();
@@ -228,7 +228,7 @@ public class SharpClientBuilderTests
     [Test]
     public async Task BuildShouldRejectInvalidConnectionPoolBounds()
     {
-        var builder = SharpClientBuilder.Create()
+        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .UseConnectionPool(options =>
             {
@@ -246,7 +246,7 @@ public class SharpClientBuilderTests
     public async Task DirectTransportShouldBeTransferredByOnlyOneBuild()
     {
         var transport = new TrackingTransport();
-        var builder = SharpClientBuilder.Create().UseTransport(transport);
+        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(transport);
         var first = builder.Build();
 
         await EnsureThrows<InvalidOperationException>(() =>
@@ -263,7 +263,7 @@ public class SharpClientBuilderTests
     public async Task EndpointResolverShouldBeTransferredByOnlyOneBuild()
     {
         var resolver = new TrackingResolver();
-        var builder = SharpClientBuilder.Create()
+        var builder = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseEndpointResolver(resolver, static _ => new NoopTransport());
         var first = builder.Build();
 

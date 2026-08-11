@@ -8,7 +8,7 @@ namespace SharpLink.Server;
 internal sealed class ServerRuntimeComposition
 {
     private readonly ISharpLinkServerInterceptor[] _interceptors;
-    private readonly ISharpLinkGeneratedAssemblyManifest[] _staticManifests;
+    private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests;
 
     internal ServerRuntimeComposition(
         IServerTransportListener transportListener,
@@ -48,9 +48,9 @@ internal sealed class ServerRuntimeComposition
         FrameworkTasks = frameworkTasks ?? throw new ArgumentNullException(nameof(frameworkTasks));
 
         _interceptors = [.. interceptors];
-        _staticManifests = new ISharpLinkGeneratedAssemblyManifest[staticManifests.Count];
-        for (var index = 0; index < _staticManifests.Length; index++)
-            _staticManifests[index] = staticManifests[index] ?? throw new ArgumentException("Static manifests cannot contain null.", nameof(staticManifests));
+        for (var index = 0; index < staticManifests.Count; index++)
+            _ = staticManifests[index] ?? throw new ArgumentException("Static manifests cannot contain null.", nameof(staticManifests));
+        _staticManifests = staticManifests;
         HeartbeatCheckInterval = heartbeatCheckInterval;
         HeartbeatTimeout = heartbeatTimeout;
         Authenticator = authenticator;

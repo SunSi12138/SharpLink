@@ -5,7 +5,6 @@ using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
 
-[NotInParallel]
 public class GeneratedServerBridgeTests
 {
     [Test]

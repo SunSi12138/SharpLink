@@ -8,7 +8,6 @@ using SharpLink.Server;
 
 namespace SharpLink.UnitTests.Builder;
 
-[NotInParallel]
 public sealed class BuildPlanBuilderTests
 {
     private const string ConsumedBuilderMessage = "This SharpLink builder has already been consumed.";
@@ -28,7 +27,7 @@ public sealed class BuildPlanBuilderTests
 
         foreach (var testCase in cases)
         {
-            var builder = SharpClientBuilder.Create();
+            var builder = CreateClientBuilder();
             ConfigureTopology(builder, testCase.First);
 
             var failure = Capture(() => ConfigureTopology(builder, testCase.Second));
@@ -50,7 +49,7 @@ public sealed class BuildPlanBuilderTests
                      ClientTopology.Dynamic
                  })
         {
-            var builder = SharpClientBuilder.Create();
+            var builder = CreateClientBuilder();
             ConfigureTopology(builder, topology);
 
             var failure = Capture(() => ConfigureTopology(builder, topology));
@@ -66,7 +65,7 @@ public sealed class BuildPlanBuilderTests
     public void ClientBuilderShouldStayConsumedAfterCompileFailureAndReleaseItsOwnedTransport()
     {
         var transport = new TrackingClientTransport();
-        var builder = SharpClientBuilder.Create()
+        var builder = CreateClientBuilder()
             .UseTransport(transport)
             .UseProtocol(static options =>
                 options.MaxFramePayloadBytes = SharpLinkProtocolOptions.MinMaxFramePayloadBytes - 1);
@@ -85,7 +84,7 @@ public sealed class BuildPlanBuilderTests
     public void IncompatibleManifestShouldFailDuringCompileWithoutMaterializingAClientRuntime()
     {
         var transport = new TrackingClientTransport();
-        var builder = SharpClientBuilder.Create().UseTransport(transport);
+        var builder = CreateClientBuilder().UseTransport(transport);
 
         var failure = Capture(() => _ = builder.CompileForMultiCluster([new IncompatibleManifest()]));
 
@@ -109,7 +108,7 @@ public sealed class BuildPlanBuilderTests
     {
         var adapter = new DeferredAdapter();
         var factory = new DeferredAdapterCodecFactory(adapter);
-        var builder = SharpClientBuilder.Create().UseTransport(new TrackingClientTransport());
+        var builder = CreateClientBuilder().UseTransport(new TrackingClientTransport());
 
         var plan = builder.CompileForMultiCluster([new DeferredAdapterManifest(factory)]);
 
@@ -126,14 +125,14 @@ public sealed class BuildPlanBuilderTests
     public async Task ServerBuilderShouldStayConsumedAfterSuccessAndFailure()
     {
         var successfulTransport = new TrackingServerListener();
-        var successfulBuilder = SharpLinkServerBuilder.Create().UseTransport(successfulTransport);
+        var successfulBuilder = CreateServerBuilder().UseTransport(successfulTransport);
         await using var server = successfulBuilder.Build();
 
         EnsureConsumed(() => _ = successfulBuilder.Build());
         EnsureConsumed(() => successfulBuilder.UseHeartbeat(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)));
 
         var failedTransport = new TrackingServerListener();
-        var failedBuilder = SharpLinkServerBuilder.Create()
+        var failedBuilder = CreateServerBuilder()
             .UseTransport(failedTransport)
             .RequireAuthentication();
         var failure = Capture(() => _ = failedBuilder.Build());
@@ -151,7 +150,7 @@ public sealed class BuildPlanBuilderTests
     public void ClientAndServerBuildersShouldStayConsumedAfterMaterializeFailure()
     {
         var clientTransport = new ProfileFailureClientTransport();
-        var clientBuilder = SharpClientBuilder.Create().UseTransport(clientTransport);
+        var clientBuilder = CreateClientBuilder().UseTransport(clientTransport);
 
         var clientFailure = Capture(() => _ = clientBuilder.Build());
 
@@ -163,7 +162,7 @@ public sealed class BuildPlanBuilderTests
         EnsureConsumed(() => clientBuilder.UseRequestTimeout(TimeSpan.FromSeconds(1)));
 
         var serverTransport = new ProfileFailureServerListener();
-        var serverBuilder = SharpLinkServerBuilder.Create().UseTransport(serverTransport);
+        var serverBuilder = CreateServerBuilder().UseTransport(serverTransport);
 
         var serverFailure = Capture(() => _ = serverBuilder.Build());
 
@@ -179,11 +178,12 @@ public sealed class BuildPlanBuilderTests
     public async Task ClientBuildAndConfigurationRaceShouldHaveOneWinnerAndOneStableConsumedFailure()
     {
         var transport = new BlockingClientTransport();
-        var builder = SharpClientBuilder.Create()
+        var builder = CreateClientBuilder()
             .UseTransport(transport)
             .UseProtocol(static options => options.MaxFramePayloadBytes = 2_048);
 
-        var build = Task.Run(builder.Build);
+        var build = LongRunningTestWorker.Run(builder.Build);
+        ISharpLinkClient? client = null;
         try
         {
             Ensure(transport.ProfileBindingEntered.Wait(TimeSpan.FromSeconds(2)),
@@ -191,27 +191,31 @@ public sealed class BuildPlanBuilderTests
 
             EnsureConsumed(() => _ = builder.Build());
             EnsureConsumed(() => builder.UseProtocol(static options => options.MaxFramePayloadBytes = 4_096));
+
+            transport.ReleaseProfileBinding();
+            client = await build.WaitAsync(TimeSpan.FromSeconds(2));
+            var context = (SharpLinkRuntimeContext)((IRpcChannel)client).RuntimeContext;
+            Ensure(context.Protocol.MaxFramePayloadBytes == 2_048,
+                "a rejected concurrent configuration must not alter the frozen Client plan");
         }
         finally
         {
             transport.ReleaseProfileBinding();
+            client ??= await build.WaitAsync(TimeSpan.FromSeconds(5));
+            await client.DisposeAsync();
         }
-
-        await using var client = await build.WaitAsync(TimeSpan.FromSeconds(2));
-        var context = (SharpLinkRuntimeContext)((IRpcChannel)client).RuntimeContext;
-        Ensure(context.Protocol.MaxFramePayloadBytes == 2_048,
-            "a rejected concurrent configuration must not alter the frozen Client plan");
     }
 
     [Test]
     public async Task ServerBuildAndConfigurationRaceShouldHaveOneWinnerAndOneStableConsumedFailure()
     {
         var listener = new BlockingServerListener();
-        var builder = SharpLinkServerBuilder.Create()
+        var builder = CreateServerBuilder()
             .UseTransport(listener)
             .UseProtocol(static options => options.MaxFramePayloadBytes = 2_048);
 
-        var build = Task.Run(builder.Build);
+        var build = LongRunningTestWorker.Run(builder.Build);
+        ISharpLinkServer? server = null;
         try
         {
             Ensure(listener.ProfileBindingEntered.Wait(TimeSpan.FromSeconds(2)),
@@ -219,16 +223,19 @@ public sealed class BuildPlanBuilderTests
 
             EnsureConsumed(() => _ = builder.Build());
             EnsureConsumed(() => builder.UseProtocol(static options => options.MaxFramePayloadBytes = 4_096));
+
+            listener.ReleaseProfileBinding();
+            server = await build.WaitAsync(TimeSpan.FromSeconds(2));
+            var context = ReadPrivate<SharpLinkRuntimeContext>(server, "_runtimeContext");
+            Ensure(context.Protocol.MaxFramePayloadBytes == 2_048,
+                "a rejected concurrent configuration must not alter the frozen Server plan");
         }
         finally
         {
             listener.ReleaseProfileBinding();
+            server ??= await build.WaitAsync(TimeSpan.FromSeconds(5));
+            await server.DisposeAsync();
         }
-
-        await using var server = await build.WaitAsync(TimeSpan.FromSeconds(2));
-        var context = ReadPrivate<SharpLinkRuntimeContext>(server, "_runtimeContext");
-        Ensure(context.Protocol.MaxFramePayloadBytes == 2_048,
-            "a rejected concurrent configuration must not alter the frozen Server plan");
     }
 
     [Test]
@@ -247,7 +254,7 @@ public sealed class BuildPlanBuilderTests
         var source = new CountingEndpointEnumerable(endpoints);
         var factoryCalls = 0;
         SharpLinkEndpoint? materializedEndpoint = null;
-        var builder = SharpClientBuilder.Create().UseEndpoints(source, endpoint =>
+        var builder = CreateClientBuilder().UseEndpoints(source, endpoint =>
         {
             factoryCalls++;
             materializedEndpoint = endpoint;
@@ -277,7 +284,7 @@ public sealed class BuildPlanBuilderTests
     {
         var source = new ThrowingEndpointEnumerable();
         var factoryCalls = 0;
-        var builder = SharpClientBuilder.Create().UseEndpoints(source, _ =>
+        var builder = CreateClientBuilder().UseEndpoints(source, _ =>
         {
             factoryCalls++;
             return new TrackingClientTransport();
@@ -297,7 +304,7 @@ public sealed class BuildPlanBuilderTests
     public async Task ManifestInputShouldBeSnapshottedBeforeMaterialize()
     {
         var manifests = new CountingManifestList([new EmptyManifest()]);
-        var builder = SharpClientBuilder.Create().UseTransport(new TrackingClientTransport());
+        var builder = CreateClientBuilder().UseTransport(new TrackingClientTransport());
 
         var plan = builder.CompileForMultiCluster(manifests);
         var accessesAfterCompile = manifests.AccessCount;
@@ -316,7 +323,7 @@ public sealed class BuildPlanBuilderTests
     {
         var listener = new BlockingServerListener();
         SharpLinkConcurrencyLimitOptions? capturedLimit = null;
-        var builder = SharpLinkServerBuilder.Create()
+        var builder = CreateServerBuilder()
             .UseTransport(listener)
             .UseAdmissionControl(options =>
             {
@@ -324,40 +331,45 @@ public sealed class BuildPlanBuilderTests
                 capturedLimit = options.Global.Concurrency;
             });
 
-        var build = Task.Run(builder.Build);
+        var build = LongRunningTestWorker.Run(builder.Build);
+        SharpLinkServer? server = null;
         try
         {
             Ensure(listener.ProfileBindingEntered.Wait(TimeSpan.FromSeconds(2)),
                 "the Server Build must have completed Compile before the admission mutation");
             capturedLimit!.PermitLimit = 2;
+            listener.ReleaseProfileBinding();
+
+            server = (SharpLinkServer)await build.WaitAsync(TimeSpan.FromSeconds(2));
+            var controller = ReadPrivate<SharpLinkAdmissionController>(server, "_admissionController");
+            var context = new SharpLinkAdmissionContext(
+                contractId: 1,
+                methodId: 1,
+                methodKind: RpcMethodKind.Unary,
+                connectionId: "phase11-admission",
+                authenticationContext: null,
+                metadata: null,
+                deadline: null);
+            var first = await controller.AcquireAsync(
+                context, retainedBytes: 1, allowQueue: false, CancellationToken.None);
+            var second = await controller.AcquireAsync(
+                context, retainedBytes: 1, allowQueue: false, CancellationToken.None);
+            try
+            {
+                Ensure(first.IsAcquired && !second.IsAcquired && second.Reason == "concurrency",
+                    "post-Compile mutation of admission options must not alter the frozen permit limit");
+            }
+            finally
+            {
+                first.Lease?.Dispose();
+                second.Lease?.Dispose();
+            }
         }
         finally
         {
             listener.ReleaseProfileBinding();
-        }
-
-        var builtServer = await build.WaitAsync(TimeSpan.FromSeconds(2));
-        await using var server = (SharpLinkServer)builtServer;
-        var controller = ReadPrivate<SharpLinkAdmissionController>(server, "_admissionController");
-        var context = new SharpLinkAdmissionContext(
-            contractId: 1,
-            methodId: 1,
-            methodKind: RpcMethodKind.Unary,
-            connectionId: "phase11-admission",
-            authenticationContext: null,
-            metadata: null,
-            deadline: null);
-        var first = await controller.AcquireAsync(context, retainedBytes: 1, allowQueue: false, CancellationToken.None);
-        var second = await controller.AcquireAsync(context, retainedBytes: 1, allowQueue: false, CancellationToken.None);
-        try
-        {
-            Ensure(first.IsAcquired && !second.IsAcquired && second.Reason == "concurrency",
-                "post-Compile mutation of admission options must not alter the frozen permit limit");
-        }
-        finally
-        {
-            first.Lease?.Dispose();
-            second.Lease?.Dispose();
+            server ??= (SharpLinkServer)await build.WaitAsync(TimeSpan.FromSeconds(5));
+            await server.DisposeAsync();
         }
     }
 
@@ -379,6 +391,14 @@ public sealed class BuildPlanBuilderTests
         }
     }
 
+    private static SharpClientBuilder CreateClientBuilder()
+        => SharpClientBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty);
+
+    private static SharpLinkServerBuilder CreateServerBuilder()
+        => SharpLinkServerBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty);
+
     private static SharpLinkEndpoint Endpoint(string id, int port)
         => new()
         {
@@ -397,7 +417,7 @@ public sealed class BuildPlanBuilderTests
         var adapter = new DeferredAdapter();
         var factory = new DeferredAdapterCodecFactory(adapter);
         var transport = new ProfileTrackingClientTransport();
-        var builder = SharpClientBuilder.Create().UseTransport(transport);
+        var builder = CreateClientBuilder().UseTransport(transport);
 
         var failure = Capture(() => _ = builder.CompileForMultiCluster([
             new DeferredAdapterManifest(factory),

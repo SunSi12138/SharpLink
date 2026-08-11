@@ -4,7 +4,6 @@ using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
 
-[NotInParallel]
 public class SendPumpTests
 {
     [Test]
@@ -12,7 +11,8 @@ public class SendPumpTests
     {
         var input = new Pipe();
         var output = new Pipe();
-        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Build(includeGeneratedAssemblyCatalog: false);
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "huge-flush-latency",
             input.Reader,

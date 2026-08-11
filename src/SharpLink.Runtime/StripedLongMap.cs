@@ -57,6 +57,30 @@ internal sealed class StripedLongMap<TValue> where TValue : class
             return _maps[stripe].TryGetValue(key, out value!);
     }
 
+    /// <summary>
+    /// Captures an immutable projection while the entry remains protected by its stripe lock.
+    /// This lets pooled values publish a generation-bound lease without a lookup-to-capture ABA gap.
+    /// </summary>
+    internal bool TryCapture<TSnapshot>(
+        long key,
+        Func<long, TValue, TSnapshot> capture,
+        out TSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(capture);
+        var stripe = GetStripe(key);
+        lock (_locks[stripe])
+        {
+            if (_maps[stripe].TryGetValue(key, out var value))
+            {
+                snapshot = capture(key, value);
+                return true;
+            }
+        }
+
+        snapshot = default!;
+        return false;
+    }
+
     public bool TryRemove(long key, out TValue value)
     {
         var stripe = GetStripe(key);
@@ -94,11 +118,26 @@ internal sealed class StripedLongMap<TValue> where TValue : class
         return values;
     }
 
-    /// <summary>Copies a bounded point-in-time view of the current entries.</summary>
+    /// <summary>
+    /// Copies a bounded per-stripe consistent view. Different stripes can advance between locks,
+    /// while each projected entry remains stable for the duration of its capture callback.
+    /// </summary>
     /// <param name="destination">A destination large enough for the map's configured upper bound.</param>
     /// <returns>The number of copied entries.</returns>
     internal int CopyEntries(Span<KeyValuePair<long, TValue>> destination)
+        => CopyEntries(
+            destination,
+            static (key, value) => new KeyValuePair<long, TValue>(key, value));
+
+    /// <summary>
+    /// Copies immutable projections while each source entry remains protected by its stripe lock.
+    /// The result is per-stripe consistent rather than one whole-map instant.
+    /// </summary>
+    internal int CopyEntries<TSnapshot>(
+        Span<TSnapshot> destination,
+        Func<long, TValue, TSnapshot> capture)
     {
+        ArgumentNullException.ThrowIfNull(capture);
         var count = 0;
         for (var index = 0; index < _maps.Length; index++)
         {
@@ -112,7 +151,7 @@ internal sealed class StripedLongMap<TValue> where TValue : class
                         nameof(destination));
                 }
                 foreach (var entry in map)
-                    destination[count++] = entry;
+                    destination[count++] = capture(entry.Key, entry.Value);
             }
         }
         return count;

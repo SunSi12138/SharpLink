@@ -11,7 +11,6 @@ using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Client;
 
-[NotInParallel]
 public class SharpLinkClientLifecycleStateTests
 {
     [Test]
@@ -245,7 +244,7 @@ public class SharpLinkClientLifecycleStateTests
     public async Task EndpointClusterHandshakeTimeoutsShouldRetainStructuredCause()
     {
         var staticFactories = new List<HangingHandshakeTransportFactory>();
-        await using (var staticClient = SharpClientBuilder.Create()
+        await using (var staticClient = CreateClientBuilder()
             .UseEndpoints(
                 [CreateEndpoint("first", 5001), CreateEndpoint("second", 5002)],
                 _ =>
@@ -263,7 +262,7 @@ public class SharpLinkClientLifecycleStateTests
         }
 
         var dynamicFactory = new HangingHandshakeTransportFactory();
-        await using var dynamicClient = SharpClientBuilder.Create()
+        await using var dynamicClient = CreateClientBuilder()
             .UseEndpointResolver(
                 new FixedSnapshotResolver(new SharpLinkEndpointSnapshot(1, [CreateEndpoint("dynamic", 5003)])),
                 _ => dynamicFactory)
@@ -284,7 +283,7 @@ public class SharpLinkClientLifecycleStateTests
             ?? throw new Exception("cannot find client shutdown source");
         var shutdown = (CancellationTokenSource)shutdownField.GetValue(client)!;
         var callbackStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseCallback = new ManualResetEventSlim();
+        using var releaseCallback = new ManualResetEventSlim();
         using var registration = shutdown.Token.Register(() =>
         {
             callbackStarted.TrySetResult();
@@ -292,25 +291,29 @@ public class SharpLinkClientLifecycleStateTests
         });
         var stopReturned = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var invocation = Task.Run(() =>
+        var invocation = LongRunningTestWorker.Run(() =>
         {
             var stop = client.StopAsync().AsTask();
             stopReturned.TrySetResult(stop);
         });
-        await callbackStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         try
         {
+            await callbackStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
             Ensure(stopReturned.Task.IsCompleted,
                 "an async StopAsync call must return before a blocking cancellation callback finishes");
+
+            releaseCallback.Set();
+            await invocation.WaitAsync(TimeSpan.FromSeconds(2));
+            await (await stopReturned.Task).WaitAsync(TimeSpan.FromSeconds(2));
         }
         finally
         {
             releaseCallback.Set();
+            await LongRunningTestWorker.JoinAsync(invocation, TimeSpan.FromSeconds(2));
+            if (stopReturned.Task.IsCompletedSuccessfully)
+                await LongRunningTestWorker.JoinAsync(await stopReturned.Task, TimeSpan.FromSeconds(2));
+            await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
         }
-
-        await invocation.WaitAsync(TimeSpan.FromSeconds(2));
-        await (await stopReturned.Task).WaitAsync(TimeSpan.FromSeconds(2));
-        releaseCallback.Dispose();
     }
 
     [Test]
@@ -487,7 +490,7 @@ public class SharpLinkClientLifecycleStateTests
     [Test]
     public async Task StaticClusterSupervisorShouldNotHideAnUnexpectedNestedFailure()
     {
-        var client = (SharpLinkClient)SharpClientBuilder.Create()
+        var client = (SharpLinkClient)CreateClientBuilder()
             .UseEndpoints(
                 [CreateEndpoint("first", 5001), CreateEndpoint("second", 5002)],
                 _ => new NonConnectingFactory())
@@ -815,7 +818,7 @@ public class SharpLinkClientLifecycleStateTests
     public async Task ConcurrentClientConnectionDisposersShouldAwaitPhysicalCleanup()
     {
         await using var owner = ClientBuilderTestHelper.Build(new NonConnectingFactory());
-        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        using var context = CreateRuntimeContext();
         var transport = new BlockingDisposeConnection();
         var connection = new ClientConnection(
             owner,
@@ -837,7 +840,7 @@ public class SharpLinkClientLifecycleStateTests
     public async Task CancellationCallbackFailureMustNotStrandPendingCalls()
     {
         await using var owner = ClientBuilderTestHelper.Build(new NonConnectingFactory());
-        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        using var context = CreateRuntimeContext();
         using var cancellation = new CancellationTokenSource();
         using var callback = cancellation.Token.Register(
             static () => throw new InvalidOperationException("connection cancellation callback failed"));
@@ -874,7 +877,7 @@ public class SharpLinkClientLifecycleStateTests
     {
         Ensure(EndpointSelectionKernel.SelectConnection([]) is null, "empty connection snapshot");
         await using var owner = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
-        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        using var context = CreateRuntimeContext();
         await using var connection = new ClientConnection(
             owner,
             CreateReadySession(context),
@@ -940,7 +943,7 @@ public class SharpLinkClientLifecycleStateTests
     public async Task PowerOfTwoChoiceShouldSelectLowerActiveConnection()
     {
         await using var owner = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
-        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        using var context = CreateRuntimeContext();
         await using var first = new ClientConnection(
             owner,
             CreateReadySession(context),
@@ -973,7 +976,7 @@ public class SharpLinkClientLifecycleStateTests
     public async Task ClusterSelectionShouldFallBackFromAStalePooledConnection()
     {
         await using var owner = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
-        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        using var context = CreateRuntimeContext();
         await using var stale = new ClientConnection(
             owner,
             CreateReadySession(context),
@@ -1091,6 +1094,15 @@ public class SharpLinkClientLifecycleStateTests
             () => !breaker.TryAcquire(candidate, method).IsAllowed,
             () => "GoAway was not recorded as an endpoint infrastructure failure");
     }
+
+    private static SharpClientBuilder CreateClientBuilder()
+        => SharpClientBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty);
+
+    private static SharpLinkRuntimeContext CreateRuntimeContext()
+        => new SharpLinkRuntimeContextBuilder()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .Build();
 
     private static ClientConnection GetOnlyReadyConnection(SharpLinkClient client)
     {

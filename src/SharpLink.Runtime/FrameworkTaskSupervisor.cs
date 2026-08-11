@@ -74,6 +74,7 @@ internal sealed class FrameworkTaskSupervisor
     private long _nextSequence;
     private long _totalTracked;
     private int _droppedFailures;
+    private int _pendingDroppedFailures;
     private int _suppressedShutdownFailures;
     private int _lateRegistrations;
     private int _rejectedRegistrations;
@@ -298,7 +299,10 @@ internal sealed class FrameworkTaskSupervisor
         if (_failures.Count < MaximumRetainedFailures)
             _failures.Add(ExceptionDispatchInfo.Capture(exception));
         else
+        {
             _droppedFailures++;
+            _pendingDroppedFailures++;
+        }
     }
 
     private async Task DrainCoreAsync(Task signal)
@@ -309,7 +313,9 @@ internal sealed class FrameworkTaskSupervisor
         lock (_gate)
         {
             failures = [.. _failures];
-            dropped = _droppedFailures;
+            _failures.Clear();
+            dropped = _pendingDroppedFailures;
+            _pendingDroppedFailures = 0;
         }
 
         if (failures.Length == 0 && dropped == 0)

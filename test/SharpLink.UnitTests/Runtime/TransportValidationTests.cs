@@ -182,9 +182,9 @@ public class TransportValidationTests
         await Assert.That(() => new SocketClientTransportFactory(
                 new DnsEndPoint("localhost", 0)))
             .Throws<ArgumentOutOfRangeException>();
-        await Assert.That(() => SharpClientBuilder.Create().UseTcp("127.0.0.1", 0))
+        await Assert.That(() => SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTcp("127.0.0.1", 0))
             .Throws<ArgumentOutOfRangeException>();
-        await Assert.That(() => SharpClientBuilder.Create().UseTcp(
+        await Assert.That(() => SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTcp(
                 "127.0.0.1",
                 0,
                 new SslClientAuthenticationOptions()))

@@ -360,7 +360,8 @@ public class ServerCallCancellationStateTests
                 CancellationToken.None,
                 CancellationToken.None,
                 supportsCooperativeCancellation: true);
-            Ensure(state.TryAcquire(requestId), "cancel observer should acquire state lifetime");
+            var stateLease = state.CaptureLease(requestId);
+            Ensure(stateLease.TryAcquire(), "cancel observer should acquire state lifetime");
 
             Parallel.Invoke(
                 () =>
@@ -371,7 +372,7 @@ public class ServerCallCancellationStateTests
                     }
                     finally
                     {
-                        state.ReleaseUse();
+                        stateLease.ReleaseUse();
                     }
                 },
                 () =>
@@ -520,27 +521,204 @@ public class ServerCallCancellationStateTests
     }
 
     [Test]
+    // The assertion forces reuse through the process-wide ServerCallCancellationState pool.
     [NotInParallel]
-    public void OldSnapshotShouldNotAcquireAReusedPooledState()
+    public void OldSnapshotFromAnotherMapShouldNotAcquireAReusedSameIdState()
+        => AssertOldSnapshotCannotAcquireReusedSameIdState(reuseSameMap: false);
+
+    [Test]
+    public async Task TryCaptureShouldKeepTheEntryStableUntilItsLeaseProjectionCompletes()
     {
         var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
+        var state = Rent(
+            49, null, 0, CancellationToken.None, CancellationToken.None,
+            supportsCooperativeCancellation: false);
+        calls.Set(state.RequestId, state);
+        using var captureEntered = new ManualResetEventSlim();
+        using var releaseCapture = new ManualResetEventSlim();
+
+        var capture = LongRunningTestWorker.Run(() => calls.TryCapture(
+            state.RequestId,
+            (requestId, capturedState) =>
+            {
+                captureEntered.Set();
+                releaseCapture.Wait();
+                return capturedState.CaptureLease(requestId);
+            },
+            out var lease)
+            ? lease
+            : default);
+        Task<bool>? remove = null;
+        var capturedLease = default(ServerCallCancellationLease);
+        var leaseAcquired = false;
+        try
+        {
+            Ensure(captureEntered.Wait(RaceCoordinationTimeout),
+                "the lease projection must execute while its stripe is locked");
+            remove = LongRunningTestWorker.Run(() => calls.TryRemove(state.RequestId, state));
+            await Task.Delay(50);
+            Ensure(!remove.IsCompleted,
+                "same-stripe removal must not pass a generation capture still inside its callback");
+
+            releaseCapture.Set();
+            capturedLease = await capture.WaitAsync(RaceCoordinationTimeout);
+            Ensure(await remove.WaitAsync(RaceCoordinationTimeout),
+                "removal must continue after the projection releases its stripe lock");
+            leaseAcquired = capturedLease.TryAcquire();
+            Ensure(leaseAcquired,
+                "the atomically projected lease must retain the pre-removal generation");
+        }
+        finally
+        {
+            releaseCapture.Set();
+            await LongRunningTestWorker.JoinAsync(capture, RaceCoordinationTimeout);
+            if (remove is not null)
+                await LongRunningTestWorker.JoinAsync(remove, RaceCoordinationTimeout);
+            if (leaseAcquired)
+                capturedLease.ReleaseUse();
+            _ = calls.TryRemove(state.RequestId, state);
+            state.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task CopyEntriesShouldProjectUnderEachStripeLockWithoutBlockingOtherStripes()
+    {
+        var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions
+        {
+            StripeCount = 2,
+            InitialMapCapacityPerStripe = 1
+        });
+        var capturedState = Rent(
+            100, null, 0, CancellationToken.None, CancellationToken.None,
+            supportsCooperativeCancellation: false);
+        var otherStripeState = Rent(
+            101, null, 0, CancellationToken.None, CancellationToken.None,
+            supportsCooperativeCancellation: false);
+        calls.Set(capturedState.RequestId, capturedState);
+        calls.Set(otherStripeState.RequestId, otherStripeState);
+        using var projectionEntered = new ManualResetEventSlim();
+        using var releaseProjection = new ManualResetEventSlim();
+        using var sameStripeRemoveStarted = new ManualResetEventSlim();
+        var leases = new ServerCallCancellationLease[2];
+        var copy = LongRunningTestWorker.Run(() => calls.CopyEntries(
+            leases,
+            (requestId, state) =>
+            {
+                if (requestId == capturedState.RequestId)
+                {
+                    projectionEntered.Set();
+                    releaseProjection.Wait();
+                }
+                return state.CaptureLease(requestId);
+            }));
+        Task<bool>? sameStripeRemove = null;
+        Task<bool>? otherStripeRemove = null;
+        var capturedLeaseAcquired = false;
+        try
+        {
+            Ensure(projectionEntered.Wait(RaceCoordinationTimeout),
+                "CopyEntries must enter the first stripe projection before removal races begin");
+            sameStripeRemove = LongRunningTestWorker.Run(() =>
+            {
+                sameStripeRemoveStarted.Set();
+                return calls.TryRemove(capturedState.RequestId, capturedState);
+            });
+            Ensure(sameStripeRemoveStarted.Wait(RaceCoordinationTimeout),
+                "same-stripe removal must reach the locked operation");
+            otherStripeRemove = LongRunningTestWorker.Run(
+                () => calls.TryRemove(otherStripeState.RequestId, otherStripeState));
+
+            Ensure(await otherStripeRemove.WaitAsync(RaceCoordinationTimeout),
+                "a blocked projection must not serialize an independent stripe");
+            Ensure(!sameStripeRemove.IsCompleted,
+                "same-stripe removal must not pass a CopyEntries projection still using the pooled state");
+
+            releaseProjection.Set();
+            Ensure(await copy.WaitAsync(RaceCoordinationTimeout) == 1,
+                "the per-stripe snapshot must exclude the independently removed later-stripe entry");
+            Ensure(await sameStripeRemove.WaitAsync(RaceCoordinationTimeout),
+                "same-stripe removal must continue after its projection releases the stripe lock");
+            capturedLeaseAcquired = leases[0].TryAcquire();
+            Ensure(capturedLeaseAcquired,
+                "the projected lease must retain the generation that was stable under the stripe lock");
+        }
+        finally
+        {
+            releaseProjection.Set();
+            await LongRunningTestWorker.JoinAsync(copy, RaceCoordinationTimeout);
+            if (sameStripeRemove is not null)
+                await LongRunningTestWorker.JoinAsync(sameStripeRemove, RaceCoordinationTimeout);
+            if (otherStripeRemove is not null)
+                await LongRunningTestWorker.JoinAsync(otherStripeRemove, RaceCoordinationTimeout);
+            if (capturedLeaseAcquired)
+                leases[0].ReleaseUse();
+            _ = calls.TryRemove(capturedState.RequestId, capturedState);
+            _ = calls.TryRemove(otherStripeState.RequestId, otherStripeState);
+            capturedState.Dispose();
+            otherStripeState.Dispose();
+        }
+    }
+
+    [Test]
+    // The assertion forces reuse through the process-wide ServerCallCancellationState pool.
+    [NotInParallel]
+    public void OldSnapshotFromSameMapShouldNotAcquireAReusedSameIdState()
+        => AssertOldSnapshotCannotAcquireReusedSameIdState(reuseSameMap: true);
+
+    private static void AssertOldSnapshotCannotAcquireReusedSameIdState(bool reuseSameMap)
+    {
+        var oldCalls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
+        var newCalls = reuseSameMap
+            ? oldCalls
+            : new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
         var first = Rent(
             50, null, 0, CancellationToken.None, CancellationToken.None,
             supportsCooperativeCancellation: false);
-        calls.Set(first.RequestId, first);
-        var snapshot = new KeyValuePair<long, ServerCallCancellationState>[1];
-        Ensure(calls.CopyEntries(snapshot) == 1, "snapshot count");
-        Ensure(calls.TryRemove(first.RequestId, first), "remove old call");
+        oldCalls.Set(first.RequestId, first);
+        var snapshot = new ServerCallCancellationLease[1];
+        Ensure(oldCalls.CopyEntries(
+                   snapshot,
+                   static (requestId, state) => state.CaptureLease(requestId)) == 1,
+            "snapshot count");
+        var wrongIdLease = new ServerCallCancellationLease(
+            snapshot[0].State,
+            snapshot[0].RequestId + 1,
+            snapshot[0].Generation);
+        var wrongIdAcquired = wrongIdLease.TryAcquire();
+        if (wrongIdAcquired)
+            wrongIdLease.ReleaseUse();
+        Ensure(!wrongIdAcquired,
+            "a generation match must not let a lease acquire the wrong request ID");
+        Ensure(oldCalls.TryRemove(first.RequestId, first), "remove old call");
         first.Dispose();
 
         var reused = Rent(
+            50, null, 0, CancellationToken.None, CancellationToken.None,
+            supportsCooperativeCancellation: false);
+        Ensure(ReferenceEquals(first, reused),
+            "a rejected wrong-ID lease must not leak an external owner that prevents immediate reuse");
+        newCalls.Set(reused.RequestId, reused);
+        var staleSnapshotAcquired = snapshot[0].TryAcquire();
+        if (staleSnapshotAcquired)
+            snapshot[0].ReleaseUse();
+        Ensure(!staleSnapshotAcquired,
+            "an old snapshot must not acquire a same-ID state after its pooled generation changes");
+        Ensure(newCalls.TryCapture(
+                   reused.RequestId,
+                   static (requestId, state) => state.CaptureLease(requestId),
+                   out var currentLease) &&
+               currentLease.TryAcquire(),
+            "a freshly captured lease must acquire the current same-ID generation");
+        currentLease.ReleaseUse();
+        Ensure(newCalls.TryRemove(reused.RequestId, reused), "remove new call");
+        reused.Dispose();
+        var returned = Rent(
             51, null, 0, CancellationToken.None, CancellationToken.None,
             supportsCooperativeCancellation: false);
-        Ensure(ReferenceEquals(snapshot[0].Value, reused),
-            "the test must exercise the same pooled state instance");
-        Ensure(!snapshot[0].Value.TryAcquire(snapshot[0].Key),
-            "an old request ID must not acquire a new lease");
-        reused.Dispose();
+        Ensure(ReferenceEquals(reused, returned),
+            "a rejected stale-generation lease must not leak an external owner after final disposal");
+        returned.Dispose();
     }
 
     private static ServerCallCancellationState Rent(
@@ -602,24 +780,32 @@ public class ServerCallCancellationStateTests
         using var start = new ManualResetEventSlim(initialState: false);
         var responseWon = false;
         var cancellationWon = false;
-        var response = Task.Run(() =>
+        var response = LongRunningTestWorker.Run(() =>
         {
             ready.Signal();
             start.Wait();
             responseWon = state.TryClaimResponse();
         });
-        var cancellation = Task.Run(() =>
+        var cancellation = LongRunningTestWorker.Run(() =>
         {
             ready.Signal();
             start.Wait();
             cancellationWon = state.TryCancel(cancellationReason);
         });
-
-        Ensure(ready.Wait(RaceCoordinationTimeout), $"{scenario}: workers must reach the start gate");
-        start.Set();
-        Ensure(Task.WaitAll([response, cancellation], RaceCoordinationTimeout),
-            $"{scenario}: workers must finish within the race bound");
-        return (responseWon, cancellationWon);
+        try
+        {
+            Ensure(ready.Wait(RaceCoordinationTimeout), $"{scenario}: workers must reach the start gate");
+            start.Set();
+            Ensure(Task.WaitAll([response, cancellation], RaceCoordinationTimeout),
+                $"{scenario}: workers must finish within the race bound");
+            return (responseWon, cancellationWon);
+        }
+        finally
+        {
+            start.Set();
+            LongRunningTestWorker.Join(response, RaceCoordinationTimeout);
+            LongRunningTestWorker.Join(cancellation, RaceCoordinationTimeout);
+        }
     }
 
     private static async Task<Exception?> CaptureExceptionAsync(Task task)

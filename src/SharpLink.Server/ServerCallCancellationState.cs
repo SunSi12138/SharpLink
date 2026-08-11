@@ -14,6 +14,36 @@ internal enum ServerCallCancellationReason : byte
 }
 
 /// <summary>
+/// An immutable lookup/snapshot lease that binds a pooled call state to one request generation.
+/// </summary>
+internal readonly struct ServerCallCancellationLease
+{
+    private readonly ServerCallCancellationState? _state;
+
+    internal ServerCallCancellationLease(
+        ServerCallCancellationState state,
+        long requestId,
+        long generation)
+    {
+        _state = state ?? throw new ArgumentNullException(nameof(state));
+        RequestId = requestId;
+        Generation = generation;
+    }
+
+    internal long RequestId { get; }
+
+    internal long Generation { get; }
+
+    internal ServerCallCancellationState State
+        => _state ?? throw new InvalidOperationException("The server call cancellation lease is empty.");
+
+    internal bool TryAcquire()
+        => _state?.TryAcquire(RequestId, Generation) == true;
+
+    internal void ReleaseUse() => State.ReleaseUse();
+}
+
+/// <summary>
 /// Owns cancellation, deadline timing and terminal-response eligibility for one server invocation.
 /// The first terminal source wins and all later sources become no-ops.
 /// </summary>
@@ -33,6 +63,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     private int _moduleDrainResponseClaimed;
     private bool _disposeRequested;
     private int _externalUsers;
+    private long _leaseGeneration;
     private AdmissionLease? _admissionLease;
     private SharpLinkBufferWriterPool? _payloadPool;
     private IRpcByteBufferWriter? _payloadOwner;
@@ -84,6 +115,7 @@ internal sealed class ServerCallCancellationState : IDisposable
         else
             Interlocked.Decrement(ref s_retainedCount);
 
+        _ = Interlocked.Increment(ref state._leaseGeneration);
         state.RequestId = requestId;
         state.Deadline = deadline;
         state._timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
@@ -149,11 +181,15 @@ internal sealed class ServerCallCancellationState : IDisposable
         _payloadPool = pool;
     }
 
-    public bool TryAcquire(long expectedRequestId)
+    internal ServerCallCancellationLease CaptureLease(long requestId)
+        => new(this, requestId, Volatile.Read(ref _leaseGeneration));
+
+    internal bool TryAcquire(long expectedRequestId, long expectedGeneration)
     {
         lock (_lifetimeGate)
         {
-            if (_disposeRequested || RequestId != expectedRequestId)
+            if (_disposeRequested || RequestId != expectedRequestId ||
+                _leaseGeneration != expectedGeneration)
                 return false;
             _externalUsers++;
             return true;

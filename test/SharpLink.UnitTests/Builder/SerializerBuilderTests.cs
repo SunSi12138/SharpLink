@@ -11,20 +11,20 @@ public class SerializerBuilderTests
     [Test]
     public async Task RequiredAuthenticationShouldNeedServerProviderWhileAnonymousRemainsDefault()
     {
-        var anonymous = SharpLinkServerBuilder.Create()
+        var anonymous = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .Build();
         await DisposeAsync(anonymous);
 
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpLinkServerBuilder.Create()
+            _ = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
                 .UseTransport(new NoopTransport())
                 .RequireAuthentication()
                 .Build();
         });
 
-        var authenticated = SharpLinkServerBuilder.Create()
+        var authenticated = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .UseAuthenticator(SharpLinkAuthenticator.CreateServer(
                 static (_, _) => ValueTask.FromResult(SharpLinkAuthenticationResult.Success)))
@@ -38,19 +38,19 @@ public class SerializerBuilderTests
     {
         var firstCodec = new TaggedCodec("first");
         var secondCodec = new TaggedCodec("second");
-        var firstClient = SharpClientBuilder.Create()
+        var firstClient = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .UseSerializer(type => type == typeof(Payload) ? firstCodec : null)
             .Build();
-        var secondClient = SharpClientBuilder.Create()
+        var secondClient = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .UseSerializer(type => type == typeof(Payload) ? secondCodec : null)
             .Build();
-        var firstServer = SharpLinkServerBuilder.Create()
+        var firstServer = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .UseSerializer(type => type == typeof(Payload) ? firstCodec : null)
             .Build();
-        var secondServer = SharpLinkServerBuilder.Create()
+        var secondServer = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new NoopTransport())
             .UseSerializer(type => type == typeof(Payload) ? secondCodec : null)
             .Build();

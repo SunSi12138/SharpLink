@@ -9,6 +9,8 @@ public sealed class SharpLinkMultiClusterClientBuilder
 {
     private readonly SharpLinkMultiClusterOptions _options = new();
     private readonly Dictionary<SharpLinkClusterKey, ClusterConfiguration> _clusters = [];
+    private IGeneratedManifestSource _manifestSource = GlobalCatalogManifestSource.Instance;
+    private IGeneratedClusterRouteSource _routeSource = GlobalCatalogClusterRouteSource.Instance;
     private ILoggerFactory? _loggerFactory;
 
     /// <summary>Creates a multi-cluster client builder.</summary>
@@ -19,6 +21,19 @@ public sealed class SharpLinkMultiClusterClientBuilder
     {
         ArgumentNullException.ThrowIfNull(configure);
         configure(_options);
+        return this;
+    }
+
+    /// <summary>
+    /// Uses instance-scoped bootstrap sources for coordinator Compile. Each source is queried once;
+    /// each compiled child retains only the filtered immutable manifest closure that it owns.
+    /// </summary>
+    internal SharpLinkMultiClusterClientBuilder UseGeneratedDiscoverySources(
+        IGeneratedManifestSource manifestSource,
+        IGeneratedClusterRouteSource routeSource)
+    {
+        _manifestSource = manifestSource ?? throw new ArgumentNullException(nameof(manifestSource));
+        _routeSource = routeSource ?? throw new ArgumentNullException(nameof(routeSource));
         return this;
     }
 
@@ -56,15 +71,15 @@ public sealed class SharpLinkMultiClusterClientBuilder
         if (_clusters.Count > options.MaxClusters)
             throw new InvalidOperationException($"Configured cluster count exceeds MaxClusters ({options.MaxClusters}).");
 
-        var routeManifestSnapshot = SharpLinkGeneratedClusterRouteCatalog.CreateSnapshot();
-        var configuredRoutes = routeManifestSnapshot
-            .SelectMany(static manifest => manifest.Routes)
+        var configuredRoutes = GeneratedClusterRouteSnapshot.Capture(_routeSource).Routes
             .Where(route => _clusters.ContainsKey(route.Cluster))
             .ToArray();
+        InitializeRoutedAssemblyModules(configuredRoutes);
+        var manifestSnapshot = GeneratedManifestSnapshot.Capture(_manifestSource);
         var routedAssemblies = new HashSet<Assembly>(ReferenceEqualityComparer.Instance);
         foreach (var route in configuredRoutes)
             routedAssemblies.Add(route.ContractAssembly);
-        var manifestByAssembly = LoadRoutedManifestGraph(routedAssemblies);
+        var manifestByAssembly = LoadRoutedManifestGraph(routedAssemblies, manifestSnapshot);
 
         var manifestsByCluster = _clusters.Keys.ToDictionary(
             static key => key,
@@ -120,7 +135,10 @@ public sealed class SharpLinkMultiClusterClientBuilder
             {
                 var plan = configuration.Builder.CompileForMultiCluster(staticManifests);
                 configuredConnections = checked(configuredConnections + plan.MaximumConnections);
-                compiledPlans.Add(new CompiledClusterPlan(configuration, plan, staticManifests));
+                compiledPlans.Add(new CompiledClusterPlan(
+                    configuration,
+                    plan,
+                    plan.RuntimeContext.GeneratedManifests));
             }
             catch (Exception buildException)
             {
@@ -160,7 +178,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
                 options,
                 slots,
                 routes,
-                routeManifestSnapshot,
+                [],
                 configuredConnections,
                 _loggerFactory);
             transaction.Commit();
@@ -186,18 +204,34 @@ public sealed class SharpLinkMultiClusterClientBuilder
         SharpLinkClusterKey cluster,
         SharpClientBuilder builder,
         bool allowDynamicContracts)
+        => PrepareRuntimeCluster(
+            cluster,
+            builder,
+            allowDynamicContracts,
+            GlobalCatalogManifestSource.Instance,
+            GlobalCatalogClusterRouteSource.Instance);
+
+    internal static SharpLinkPreparedCluster PrepareRuntimeCluster(
+        SharpLinkClusterKey cluster,
+        SharpClientBuilder builder,
+        bool allowDynamicContracts,
+        IGeneratedManifestSource manifestSource,
+        IGeneratedClusterRouteSource routeSource)
     {
         ValidateCluster(cluster);
         ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(manifestSource);
+        ArgumentNullException.ThrowIfNull(routeSource);
 
-        var configuredRoutes = SharpLinkGeneratedClusterRouteCatalog.CreateSnapshot()
-            .SelectMany(static manifest => manifest.Routes)
+        var configuredRoutes = GeneratedClusterRouteSnapshot.Capture(routeSource).Routes
             .Where(route => route.Cluster == cluster)
             .ToArray();
+        InitializeRoutedAssemblyModules(configuredRoutes);
+        var manifestSnapshot = GeneratedManifestSnapshot.Capture(manifestSource);
         var routedAssemblies = new HashSet<Assembly>(ReferenceEqualityComparer.Instance);
         foreach (var route in configuredRoutes)
             routedAssemblies.Add(route.ContractAssembly);
-        var manifestsByAssembly = LoadRoutedManifestGraph(routedAssemblies);
+        var manifestsByAssembly = LoadRoutedManifestGraph(routedAssemblies, manifestSnapshot);
         var manifestsByCluster = new Dictionary<SharpLinkClusterKey, Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest>>
         {
             [cluster] = new(ReferenceEqualityComparer.Instance)
@@ -248,7 +282,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
                 child,
                 allowDynamicContracts,
                 connectionBudget,
-                staticManifests);
+                plan.RuntimeContext.GeneratedManifests);
             var slots = new Dictionary<SharpLinkClusterKey, SharpLinkClusterSlot> { [cluster] = slot }
                 .ToFrozenDictionary();
             var routes = BuildStaticRoutes(slots, assemblyOwners, manifestsByAssembly);
@@ -285,7 +319,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
                 child,
                 existingSlot.AllowDynamicContracts,
                 connectionBudget,
-                staticManifests);
+                plan.RuntimeContext.GeneratedManifests);
             var prepared = new SharpLinkPreparedCluster(
                 slot,
                 FrozenDictionary<Type, SharpLinkClusterRouteRegistration>.Empty);
@@ -368,8 +402,15 @@ public sealed class SharpLinkMultiClusterClientBuilder
     }
 
     private static Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest> LoadRoutedManifestGraph(
-        IEnumerable<Assembly> routedAssemblies)
+        IEnumerable<Assembly> routedAssemblies,
+        GeneratedManifestSnapshot manifestSnapshot)
     {
+        ArgumentNullException.ThrowIfNull(manifestSnapshot);
+        var availableManifests = new Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest>(
+            ReferenceEqualityComparer.Instance);
+        foreach (var manifest in manifestSnapshot.Manifests)
+            availableManifests.TryAdd(manifest.OwnerAssembly, manifest);
+
         var manifestsByAssembly = new Dictionary<Assembly, ISharpLinkGeneratedAssemblyManifest>(ReferenceEqualityComparer.Instance);
         var pendingAssemblies = new Queue<Assembly>(routedAssemblies);
         while (pendingAssemblies.TryDequeue(out var assembly))
@@ -377,8 +418,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
             if (manifestsByAssembly.ContainsKey(assembly))
                 continue;
 
-            RuntimeHelpers.RunModuleConstructor(assembly.ManifestModule.ModuleHandle);
-            if (!TryGetRegisteredManifest(assembly, out var manifest))
+            if (!availableManifests.TryGetValue(assembly, out var manifest))
                 continue;
 
             SharpLinkClient.ValidateStaticManifestCompatibility(manifest);
@@ -394,21 +434,16 @@ public sealed class SharpLinkMultiClusterClientBuilder
         return manifestsByAssembly;
     }
 
-    private static bool TryGetRegisteredManifest(
-        Assembly assembly,
-        out ISharpLinkGeneratedAssemblyManifest manifest)
+    private static void InitializeRoutedAssemblyModules(
+        IReadOnlyList<SharpLinkGeneratedClusterAssemblyRoute> routes)
     {
-        foreach (var candidate in SharpLinkGeneratedAssemblyCatalog.CreateSnapshot())
+        var initialized = new HashSet<Assembly>(ReferenceEqualityComparer.Instance);
+        for (var index = 0; index < routes.Count; index++)
         {
-            if (ReferenceEquals(candidate.OwnerAssembly, assembly))
-            {
-                manifest = candidate;
-                return true;
-            }
+            var assembly = routes[index].ContractAssembly;
+            if (initialized.Add(assembly))
+                RuntimeHelpers.RunModuleConstructor(assembly.ManifestModule.ModuleHandle);
         }
-
-        manifest = null!;
-        return false;
     }
 
     private static Assembly? ResolveDependencyAssembly(Assembly ownerAssembly, string dependencyIdentity)

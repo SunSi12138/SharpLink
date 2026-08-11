@@ -13,7 +13,6 @@ public class ClientConnectionConsumerAbandonmentTests
     private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
 
     [Test]
-    [NotInParallel]
     public async Task ConsumerAbandonmentShouldEnqueueFinalCreditBeforeCancelAfterDetach()
     {
         await using var owner = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
@@ -49,41 +48,51 @@ public class ClientConnectionConsumerAbandonmentTests
             requestId,
             new ReadOnlySequence<byte>(new byte[] { 1 }));
 
-        var remoteCompletion = Task.Run(
+        var remoteCompletion = LongRunningTestWorker.Run(
             () => connection.PendingCalls.TryComplete(
                 requestId,
                 PendingCallCompletionReason.RemoteStreamComplete));
-        await dispatcher.CompleteEntered.WaitAsync(RaceCoordinationTimeout);
-        Ensure(!connection.PendingCalls.Contains(requestId),
-            "the remote terminal winner must remove the pending slot before the abandon loser joins it");
+        Task? consumerAbandonment = null;
+        try
+        {
+            await dispatcher.CompleteEntered.WaitAsync(RaceCoordinationTimeout);
+            Ensure(!connection.PendingCalls.Contains(requestId),
+                "the remote terminal winner must remove the pending slot before the abandon loser joins it");
 
-        var consumerAbandonment = connection.OnConsumerAbandonedAsync(
-            requestId,
-            dispatcher.DispatchState).AsTask();
-        Ensure(!consumerAbandonment.IsCompleted,
-            "consumer abandonment must wait for remote final-credit completion and detach");
+            consumerAbandonment = connection.OnConsumerAbandonedAsync(
+                requestId,
+                dispatcher.DispatchState).AsTask();
+            Ensure(!consumerAbandonment.IsCompleted,
+                "consumer abandonment must wait for remote final-credit completion and detach");
 
-        dispatcher.ReleaseCompletion();
-        Ensure(await remoteCompletion.WaitAsync(RaceCoordinationTimeout),
-            "the remote terminal transition must own the pending completion race");
-        await consumerAbandonment.WaitAsync(RaceCoordinationTimeout);
-        Ensure(connection.ActiveCallCount == 0 && !connection.PendingCalls.Contains(requestId),
-            "remote completion and consumer abandonment must settle the pending slot and active count exactly once");
+            dispatcher.ReleaseCompletion();
+            Ensure(await remoteCompletion.WaitAsync(RaceCoordinationTimeout),
+                "the remote terminal transition must own the pending completion race");
+            await consumerAbandonment.WaitAsync(RaceCoordinationTimeout);
+            Ensure(connection.ActiveCallCount == 0 && !connection.PendingCalls.Contains(requestId),
+                "remote completion and consumer abandonment must settle the pending slot and active count exactly once");
 
-        var frames = await FlushAndReadFramesAsync(session, output);
-        var orderedFrames = frames
-            .Where(frame => frame.RequestId == unchecked((ulong)requestId))
-            .Select(frame => frame.Type)
-            .ToArray();
-        Ensure(orderedFrames.SequenceEqual([
-                ProtocolV2FrameType.WindowUpdate,
-                ProtocolV2FrameType.Cancel
-            ]),
-            "the final WindowUpdate must enter the shared send pump before ConsumerAbandoned Cancel");
+            var frames = await FlushAndReadFramesAsync(session, output);
+            var orderedFrames = frames
+                .Where(frame => frame.RequestId == unchecked((ulong)requestId))
+                .Select(frame => frame.Type)
+                .ToArray();
+            Ensure(orderedFrames.SequenceEqual([
+                    ProtocolV2FrameType.WindowUpdate,
+                    ProtocolV2FrameType.Cancel
+                ]),
+                "the final WindowUpdate must enter the shared send pump before ConsumerAbandoned Cancel");
+        }
+        finally
+        {
+            dispatcher.ReleaseCompletion();
+            await LongRunningTestWorker.JoinAsync(remoteCompletion, RaceCoordinationTimeout);
+            if (consumerAbandonment is not null)
+                await LongRunningTestWorker.JoinAsync(consumerAbandonment, RaceCoordinationTimeout);
+        }
     }
 
     [Test]
-    [NotInParallel]
     public async Task SessionDisconnectShouldCancelDetachWaitWithoutSendingCancel()
     {
         await using var owner = ClientBuilderTestHelper.Build(new TestClientTransportFactory());

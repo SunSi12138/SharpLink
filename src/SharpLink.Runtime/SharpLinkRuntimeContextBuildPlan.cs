@@ -12,7 +12,7 @@ internal sealed class SharpLinkRuntimeContextBuildPlan
     private readonly RuntimeConcurrencyOptions _concurrency;
     private readonly BufferWriterPoolOptions _bufferPool;
     private readonly FrozenDictionary<Type, IRpcCodec> _codecs;
-    private readonly SharpLinkGeneratedManifestSource _manifestSource;
+    private readonly GeneratedManifestSnapshot _generatedManifests;
 
     internal SharpLinkRuntimeContextBuildPlan(
         SharpLinkRuntimeOptions options,
@@ -21,7 +21,7 @@ internal sealed class SharpLinkRuntimeContextBuildPlan
         TimeProvider timeProvider,
         Func<Type, IRpcCodec?>? resolver,
         IReadOnlyDictionary<Type, IRpcCodec> codecs,
-        SharpLinkGeneratedManifestSource manifestSource)
+        GeneratedManifestSnapshot generatedManifests)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _concurrency = concurrency ?? throw new ArgumentNullException(nameof(concurrency));
@@ -32,7 +32,7 @@ internal sealed class SharpLinkRuntimeContextBuildPlan
         _codecs = codecs.Count == 0
             ? FrozenDictionary<Type, IRpcCodec>.Empty
             : codecs.ToFrozenDictionary();
-        _manifestSource = manifestSource ?? throw new ArgumentNullException(nameof(manifestSource));
+        _generatedManifests = generatedManifests ?? throw new ArgumentNullException(nameof(generatedManifests));
     }
 
     /// <summary>Gets the frozen performance profile required by client construction planning.</summary>
@@ -44,6 +44,12 @@ internal sealed class SharpLinkRuntimeContextBuildPlan
     /// <summary>Gets the optional application-owned fallback resolver.</summary>
     internal Func<Type, IRpcCodec?>? Resolver { get; }
 
+    /// <summary>
+    /// Gets the exact frozen manifest snapshot shared by Runtime, Client, and Server planning.
+    /// </summary>
+    internal IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> GeneratedManifests
+        => _generatedManifests.Manifests;
+
     /// <summary>Creates the Context-owned pool, codec provider, and generated registration scopes.</summary>
     internal SharpLinkRuntimeContext Materialize()
         => new(
@@ -53,54 +59,5 @@ internal sealed class SharpLinkRuntimeContextBuildPlan
             TimeProvider,
             Resolver,
             _codecs,
-            _manifestSource.CreateMaterializationSnapshot());
-}
-
-/// <summary>
-/// Owns one strong, point-in-time generated-manifest snapshot. It deliberately has no discovery
-/// behavior after construction, so compile-time validation never observes a changing catalog.
-/// </summary>
-internal sealed class SharpLinkGeneratedManifestSource
-{
-    private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _manifests;
-
-    private SharpLinkGeneratedManifestSource(IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests)
-    {
-        ArgumentNullException.ThrowIfNull(manifests);
-        var snapshot = new ISharpLinkGeneratedAssemblyManifest[manifests.Count];
-        for (var index = 0; index < snapshot.Length; index++)
-            snapshot[index] = manifests[index] ?? throw new ArgumentException("Generated manifest snapshots cannot contain null.", nameof(manifests));
-        _manifests = Array.AsReadOnly(snapshot);
-    }
-
-    /// <summary>Captures the process catalog exactly once for one compile operation.</summary>
-    internal static SharpLinkGeneratedManifestSource FromCatalog()
-        => new(SharpLinkGeneratedAssemblyCatalog.CreateSnapshot());
-
-    /// <summary>Freezes a caller-supplied manifest snapshot for one compile operation.</summary>
-    internal static SharpLinkGeneratedManifestSource FromSnapshot(
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests)
-        => new(manifests);
-
-    /// <summary>Creates an explicit catalog-free source for isolated runtime construction.</summary>
-    internal static SharpLinkGeneratedManifestSource Empty { get; } = new([]);
-
-    /// <summary>Returns a fresh array so no materializer can mutate the frozen source.</summary>
-    internal IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> CreateMaterializationSnapshot()
-    {
-        var snapshot = new ISharpLinkGeneratedAssemblyManifest[_manifests.Count];
-        for (var index = 0; index < snapshot.Length; index++)
-            snapshot[index] = _manifests[index];
-        return snapshot;
-    }
-
-    /// <summary>
-    /// Performs pure API/Protocol, descriptor-shape, and ownership validation against the frozen
-    /// manifest snapshot without creating Codec or adapter resources.
-    /// </summary>
-    internal void ValidateForPlanCompilation()
-    {
-        for (var index = 0; index < _manifests.Count; index++)
-            SharpLinkGeneratedManifestCompatibility.ThrowIfIncompatible(_manifests[index]);
-    }
+            _generatedManifests.Manifests);
 }

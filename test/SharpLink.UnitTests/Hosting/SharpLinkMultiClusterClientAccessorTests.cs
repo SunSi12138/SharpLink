@@ -27,7 +27,7 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
     {
         var accessor = new SharpLinkMultiClusterClientAccessor();
         var service = new SharpLinkMultiClusterClientHostedService(
-            SharpLinkMultiClusterClientBuilder.Create(),
+            SharpLinkMultiClusterClientBuilder.Create().UseGeneratedDiscoverySources(FixedGeneratedManifestSource.Empty, FixedGeneratedClusterRouteSource.Empty),
             accessor,
             Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
         var client = new BlockingStopMultiClusterClient();
@@ -51,7 +51,7 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
     {
         var accessor = new SharpLinkMultiClusterClientAccessor();
         var service = new SharpLinkMultiClusterClientHostedService(
-            SharpLinkMultiClusterClientBuilder.Create(),
+            SharpLinkMultiClusterClientBuilder.Create().UseGeneratedDiscoverySources(FixedGeneratedManifestSource.Empty, FixedGeneratedClusterRouteSource.Empty),
             accessor,
             Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
         var client = new DisposalTrackingMultiClusterClient();
