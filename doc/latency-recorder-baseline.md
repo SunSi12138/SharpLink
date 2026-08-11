@@ -36,7 +36,7 @@ recording-off still omits unavailable workload percentiles.
 
 ## Current dev evidence
 
-- Integration base: `83e0fe9c28f851660857c62e8b9163550df87e12`
+- Integration base: `0dd56ddc833ea3b0953beaa4be236952065047ff`
 - Host: Apple arm64, 10 logical CPUs
 - OS/runtime: macOS 26.6, .NET SDK 10.0.102, runtime 10.0.2
 - Macro protocol: local TCP Add, alternating formal/off order, five fresh
