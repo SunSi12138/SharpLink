@@ -56,6 +56,18 @@ public static class Program
             BufferWriterGrowthEvidenceRunner.Run();
             return;
         }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--latency-recorder-evidence", StringComparison.Ordinal))
+        {
+            LatencyRecorderEvidenceRunner.Run(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--analyze-latency-recorder-baseline", StringComparison.Ordinal))
+        {
+            LatencyRecorderBaselineAnalyzer.Run(args[1..]);
+            return;
+        }
         BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
     }
 }

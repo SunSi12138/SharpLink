@@ -61,6 +61,8 @@ public static class Program
         Console.WriteLine("  --max-send-queue-bytes 67108864 (optional bounded throughput-test override)");
         Console.WriteLine("  --shm-name sharplink-stream-loadtest --shm-capacity 8388608 --shm-spin-count 8");
         Console.WriteLine("  --detailed-shm-evidence (diagnostic counters; do not use for formal timing)");
+        Console.WriteLine("  --recording off|formal|diagnostic|validation-dual");
+        Console.WriteLine("  --maximum-recorded-operations 30000000 --drain-timeout 30");
         Console.WriteLine("  --json-output artifacts/perf/stream.json");
         Console.WriteLine("  --heartbeat-interval 10 --heartbeat-check-interval 10 --heartbeat-timeout 120");
         Console.WriteLine();
@@ -82,7 +84,9 @@ public static class Program
             $"pool={options.MinConnections}/{options.MaxConnections} profile={options.PerformanceProfile} " +
             $"sendQueue={options.MaxSendQueueBytes?.ToString() ?? "profile-default"}B " +
             $"delay={options.ConsumerDelayMilliseconds}ms earlyBreak={options.EarlyBreakAfter} " +
-            $"pause={options.PauseAfter}/{options.PauseMilliseconds}ms");
+            $"pause={options.PauseAfter}/{options.PauseMilliseconds}ms " +
+            $"recording={options.RecordingMode} sampleCapacity={options.MaximumRecordedOperations} " +
+            $"drainTimeout={options.DrainTimeoutSeconds}s");
 
         if (options.Transport == TransportMode.Tcp)
             Console.WriteLine($"[Config] tcp://{options.Host}:{options.Port} (bind={options.BindIp})");
@@ -219,11 +223,11 @@ public static class Program
                 if (options.WarmupSeconds > 0)
                 {
                     Console.WriteLine($"[Warmup] op={operation} c={concurrency} for {options.WarmupSeconds}s");
-                    _ = await ExecuteStageAsync(rpc, operation, options, options.WarmupSeconds, concurrency);
+                    _ = await ExecuteStageAsync(rpc, operation, options, options.WarmupSeconds, concurrency, isWarmup: true);
                 }
 
-                var result = await ExecuteStageAsync(rpc, operation, options, options.DurationSeconds, concurrency);
-                Console.WriteLine($"[Result] op={result.Operation} c={result.Concurrency} qps={result.Qps:F2} ok={result.Success} fail={result.Failure} validationFail={result.ValidationFailure} cancelled={result.Cancelled} err={result.ErrorRatePercent:F2}% p50={result.P50Us:F2}us p95={result.P95Us:F2}us p99={result.P99Us:F2}us avg={result.AvgUs:F2}us max={result.MaxUs:F2}us dur={result.ElapsedSeconds:F2}s");
+                var result = await ExecuteStageAsync(rpc, operation, options, options.DurationSeconds, concurrency, isWarmup: false);
+                Console.WriteLine($"[Result] op={result.Operation} c={result.Concurrency} qps={result.Qps:F2} ok={result.Success} fail={result.Failure} validationFail={result.ValidationFailure} cancelled={result.Cancelled} err={result.ErrorRatePercent:F2}% p50={FormatLatency(result.P50Us)} p95={FormatLatency(result.P95Us)} p99={FormatLatency(result.P99Us)} p999={FormatLatency(result.P999Us)} avg={FormatLatency(result.AvgUs)} min={FormatLatency(result.MinUs)} max={FormatLatency(result.MaxUs)} measurement={result.MeasurementDurationSeconds:F2}s drain={result.DrainDurationSeconds:F3}s");
                 if (result.ValidatedMessages > 0)
                     Console.WriteLine($"[EquivalentDuplex] messages={result.ValidatedMessages} msgps={result.MessagesPerSecond:F2} directionalMiBps={result.DirectionalBusinessMiBPerSecond:F2}");
                 if (!string.IsNullOrEmpty(result.TopFailures))
@@ -245,37 +249,48 @@ public static class Program
         string operation,
         StreamLoadOptions options,
         int durationSeconds,
-        int concurrency)
+        int concurrency,
+        bool isWarmup)
     {
-        var histogram = new LatencyHistogram();
+        var recordingMode = isWarmup ? LatencyRecordingMode.Off : options.RecordingMode;
+        var formalRecorder = LatencyRecordingPolicy.CreatesFormalRecorder(recordingMode)
+            ? new StageLatencyRecorder(concurrency, options.MaximumRecordedOperations)
+            : null;
+        var diagnosticHistogram = LatencyRecordingPolicy.CreatesDiagnosticRecorder(recordingMode)
+            ? new LatencyHistogram()
+            : null;
+        var lifecycle = new MeasurementStageLifecycle(concurrency);
         var failures = new FailureRecorder();
         var payload = Enumerable.Range(1, options.StreamSize).ToArray();
         var equivalentMessages = operation == "duplex-equivalent"
             ? EquivalentDuplexWorkload.CreateMessages(options.MessageBytes, options.MessagesPerStream)
             : null;
 
-        long success = 0;
-        long failure = 0;
-        long validationFailure = 0;
-        long cancelled = 0;
-        long validatedMessages = 0;
-        long nextOperationId = 0;
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(durationSeconds));
-        var token = cts.Token;
-        var timer = Stopwatch.StartNew();
-        var evidenceBefore = s_evidenceCollector!.Capture();
-        var workers = new Task[concurrency];
+        var workers = new Task<StreamWorkerOutcome>[concurrency];
 
         for (var i = 0; i < concurrency; i++)
         {
+            var workerIndex = i;
+            var workerRecorder = formalRecorder?.GetWorker(workerIndex);
             workers[i] = Task.Run(async () =>
             {
-                while (!token.IsCancellationRequested)
+                long success = 0;
+                long failure = 0;
+                long validationFailure = 0;
+                long cancelled = 0;
+                long validatedMessages = 0;
+                long operationsStarted = 0;
+                long workerOperationId = 0;
+                await lifecycle.ReadyAndWaitForStartAsync(workerIndex).ConfigureAwait(false);
+                while (lifecycle.CanStartOperation)
                 {
-                    var start = Stopwatch.GetTimestamp();
+                    operationsStarted++;
+                    var start = workerRecorder is not null || diagnosticHistogram is not null
+                        ? Stopwatch.GetTimestamp()
+                        : 0;
                     try
                     {
-                        var operationId = Interlocked.Increment(ref nextOperationId);
+                        var operationId = ((long)workerIndex << 48) | ++workerOperationId;
                         var messages = await InvokeOperationAsync(
                             rpc,
                             operation,
@@ -283,38 +298,100 @@ public static class Program
                             payload,
                             equivalentMessages,
                             options,
-                            token);
-                        var us = Stopwatch.GetElapsedTime(start).TotalMilliseconds * 1000.0;
-                        histogram.Record(us);
-                        Interlocked.Add(ref validatedMessages, messages);
-                        Interlocked.Increment(ref success);
+                            CancellationToken.None);
+                        if (workerRecorder is not null)
+                        {
+                            var elapsedTicks = Stopwatch.GetTimestamp() - start;
+                            workerRecorder.RecordTicks(workerIndex, elapsedTicks);
+                            if (diagnosticHistogram is not null)
+                                diagnosticHistogram.Record(formalRecorder!.TicksToMicroseconds(elapsedTicks));
+                        }
+                        else if (diagnosticHistogram is not null)
+                        {
+                            diagnosticHistogram.Record(Stopwatch.GetElapsedTime(start).TotalMicroseconds);
+                        }
+                        validatedMessages += messages;
+                        success++;
+                    }
+                    catch (LatencySampleCapacityExceededException)
+                    {
+                        throw;
                     }
                     catch (EquivalentDuplexValidationException ex)
                     {
                         failures.Record(ex);
-                        Interlocked.Increment(ref validationFailure);
-                        Interlocked.Increment(ref failure);
+                        validationFailure++;
+                        failure++;
                     }
-                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    catch (OperationCanceledException)
                     {
-                        Interlocked.Increment(ref cancelled);
+                        cancelled++;
                         break;
                     }
                     catch (Exception ex)
                     {
-                        if (token.IsCancellationRequested)
-                            break;
-
                         failures.Record(ex);
-                        Interlocked.Increment(ref failure);
+                        failure++;
                     }
                 }
+
+                return new StreamWorkerOutcome(
+                    success,
+                    failure,
+                    validationFailure,
+                    cancelled,
+                    validatedMessages,
+                    operationsStarted);
             }, CancellationToken.None);
         }
 
-        await Task.WhenAll(workers);
+        var workersTask = Task.WhenAll(workers);
+        await lifecycle.AllWorkersReady.ConfigureAwait(false);
+        var evidenceBefore = s_evidenceCollector!.Capture();
+        var measurementStarted = lifecycle.StartMeasurement();
+        var measurementDelay = Task.Delay(TimeSpan.FromSeconds(durationSeconds));
+        var firstWorkerFinished = Task.WhenAny(workers);
+        var boundary = await Task.WhenAny(measurementDelay, firstWorkerFinished).ConfigureAwait(false);
+        var measurementStopped = lifecycle.StopStartingNewOperations();
+        double drainSeconds;
+        try
+        {
+            drainSeconds = await lifecycle.WaitForDrainAsync(
+                workersTask,
+                TimeSpan.FromSeconds(options.DrainTimeoutSeconds)).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            throw new TimeoutException(
+                $"Stream load-test drain exceeded {options.DrainTimeoutSeconds}s; the run is invalid.");
+        }
 
-        var elapsed = Math.Max(0.001, timer.Elapsed.TotalSeconds);
+        if (boundary == firstWorkerFinished)
+        {
+            var first = await firstWorkerFinished.ConfigureAwait(false);
+            await first.ConfigureAwait(false);
+            throw new InvalidOperationException("A stream load-test worker exited before the measurement boundary.");
+        }
+
+        long success = 0;
+        long failure = 0;
+        long validationFailure = 0;
+        long cancelled = 0;
+        long validatedMessages = 0;
+        long operationsStarted = 0;
+        foreach (var outcome in await workersTask.ConfigureAwait(false))
+        {
+            success = checked(success + outcome.Success);
+            failure = checked(failure + outcome.Failure);
+            validationFailure = checked(validationFailure + outcome.ValidationFailure);
+            cancelled = checked(cancelled + outcome.Cancelled);
+            validatedMessages = checked(validatedMessages + outcome.ValidatedMessages);
+            operationsStarted = checked(operationsStarted + outcome.OperationsStarted);
+        }
+
+        var elapsed = Math.Max(
+            0.001,
+            Stopwatch.GetElapsedTime(measurementStarted, measurementStopped).TotalSeconds);
         var total = success + failure;
         var errRate = total == 0 ? 0 : failure * 100.0 / total;
         var equivalentRates = EquivalentDuplexRates.Calculate(
@@ -326,6 +403,11 @@ public static class Program
         var evidence = PerformanceEvidenceCollector.Delta(
             evidenceBefore,
             s_evidenceCollector.Capture());
+        var formalStatistics = formalRecorder?.Complete();
+        if (recordingMode == LatencyRecordingMode.ValidationDual)
+            LatencyRecorderValidation.ValidateAgainstLegacy(
+                formalStatistics!.Value,
+                diagnosticHistogram!);
         return new StageResult(
             operation,
             concurrency,
@@ -333,20 +415,41 @@ public static class Program
             failure,
             validationFailure,
             cancelled,
-            success / elapsed,
+            LatencyRecordingPolicy.CalculateThroughput(success, elapsed),
             validatedMessages,
             equivalentRates.MessagesPerSecond,
             equivalentRates.DirectionalBusinessMiBPerSecond,
-            histogram.Percentile(50),
-            histogram.Percentile(95),
-            histogram.Percentile(99),
-            histogram.Average,
-            histogram.Max,
+            formalStatistics?.P50Us ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Percentile(50)),
+            formalStatistics?.P95Us ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Percentile(95)),
+            formalStatistics?.P99Us ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Percentile(99)),
+            formalStatistics?.P999Us ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Percentile(99.9)),
+            formalStatistics?.AverageUs ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Average),
+            formalStatistics?.MinUs ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Min),
+            formalStatistics?.MaxUs ?? (diagnosticHistogram is null ? null : diagnosticHistogram.Max),
+            options.WarmupSeconds,
             elapsed,
+            drainSeconds,
+            operationsStarted,
+            success + failure + cancelled,
+            formalStatistics?.Count ?? diagnosticHistogram?.Count ?? 0,
+            formalRecorder?.MaximumTotalSamples ?? 0,
+            recordingMode.ToString().ToLowerInvariant(),
+            recordingMode switch
+            {
+                LatencyRecordingMode.Formal => StageLatencyRecorder.Version,
+                LatencyRecordingMode.Off => "off-v1",
+                LatencyRecordingMode.Diagnostic => "legacy-diagnostic-v1",
+                _ => "validation-dual-v1"
+            },
+            Stopwatch.Frequency,
+            LatencyRecordingPolicy.IsFormalComparable(recordingMode),
             errRate,
             failures.Top(3),
             evidence);
     }
+
+    private static string FormatLatency(double? microseconds)
+        => microseconds.HasValue ? $"{microseconds.Value:F2}us" : "n/a";
 
     private static async Task<int> InvokeOperationAsync(
         IStreamLoadService rpc,
@@ -455,6 +558,9 @@ public sealed class StreamLoadOptions
     public SharpLinkPerformanceProfile PerformanceProfile { get; private init; } = SharpLinkPerformanceProfile.Balanced;
     public int? MaxSendQueueBytes { get; private init; }
     public string? JsonOutputPath { get; private init; }
+    public LatencyRecordingMode RecordingMode { get; private init; } = LatencyRecordingMode.Formal;
+    public int MaximumRecordedOperations { get; private init; } = 30_000_000;
+    public int DrainTimeoutSeconds { get; private init; } = 30;
 
     public static StreamLoadOptions Parse(string[] args)
     {
@@ -523,6 +629,26 @@ public sealed class StreamLoadOptions
         var messageBytes = int.Parse(map.GetValueOrDefault("message-bytes", EquivalentDuplexWorkload.DefaultMessageBytes.ToString()));
         var messagesPerStream = int.Parse(map.GetValueOrDefault("messages-per-stream", EquivalentDuplexWorkload.DefaultMessagesPerStream.ToString()));
         EquivalentDuplexWorkload.ValidateDimensions(messageBytes, messagesPerStream);
+        var recordingModeText = map.GetValueOrDefault("recording", "formal").ToLowerInvariant();
+        var recordingMode = recordingModeText switch
+        {
+            "off" => LatencyRecordingMode.Off,
+            "formal" => LatencyRecordingMode.Formal,
+            "diagnostic" => LatencyRecordingMode.Diagnostic,
+            "validation-dual" => LatencyRecordingMode.ValidationDual,
+            _ => throw new ArgumentException($"Unsupported recording mode: {recordingModeText}.")
+        };
+        var maximumRecordedOperations = int.Parse(
+            map.GetValueOrDefault("maximum-recorded-operations", "30000000"));
+        if (maximumRecordedOperations <= 0 ||
+            recordingMode is LatencyRecordingMode.Formal or LatencyRecordingMode.ValidationDual &&
+            concurrencyConfig.Any(concurrency => maximumRecordedOperations < concurrency))
+        {
+            throw new ArgumentOutOfRangeException(nameof(maximumRecordedOperations));
+        }
+        var drainTimeoutSeconds = int.Parse(map.GetValueOrDefault("drain-timeout", "30"));
+        if (drainTimeoutSeconds is < 1 or > 3600)
+            throw new ArgumentOutOfRangeException(nameof(drainTimeoutSeconds));
 
         return new StreamLoadOptions
         {
@@ -556,7 +682,10 @@ public sealed class StreamLoadOptions
             PauseMilliseconds = ParseNonNegative(map, "pause-ms"),
             PerformanceProfile = profile,
             MaxSendQueueBytes = maxSendQueueBytes,
-            JsonOutputPath = map.GetValueOrDefault("json-output")
+            JsonOutputPath = map.GetValueOrDefault("json-output"),
+            RecordingMode = recordingMode,
+            MaximumRecordedOperations = maximumRecordedOperations,
+            DrainTimeoutSeconds = drainTimeoutSeconds
         };
     }
 
@@ -581,21 +710,44 @@ public sealed record StageResult(
     long ValidatedMessages,
     double MessagesPerSecond,
     double DirectionalBusinessMiBPerSecond,
-    double P50Us,
-    double P95Us,
-    double P99Us,
-    double AvgUs,
-    double MaxUs,
-    double ElapsedSeconds,
+    double? P50Us,
+    double? P95Us,
+    double? P99Us,
+    double? P999Us,
+    double? AvgUs,
+    double? MinUs,
+    double? MaxUs,
+    double WarmupDurationSeconds,
+    double MeasurementDurationSeconds,
+    double DrainDurationSeconds,
+    long OperationsStartedDuringMeasurement,
+    long OperationsCompleted,
+    long SampleCount,
+    int MaximumSampleCapacity,
+    string RecorderMode,
+    string RecorderVersion,
+    long StopwatchFrequency,
+    bool FormalComparable,
     double ErrorRatePercent,
     string TopFailures,
-    PerformanceStageEvidence Evidence);
+    PerformanceStageEvidence Evidence)
+{
+    public int WorkerCount => Concurrency;
+}
 
 [JsonSourceGenerationOptions(
     WriteIndented = true,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(PerformanceReport<StreamLoadOptions, StageResult>))]
 internal sealed partial class StreamLoadTestJsonContext : JsonSerializerContext;
+
+internal readonly record struct StreamWorkerOutcome(
+    long Success,
+    long Failure,
+    long ValidationFailure,
+    long Cancelled,
+    long ValidatedMessages,
+    long OperationsStarted);
 
 [RpcContract]
 public interface IStreamLoadService : IService
