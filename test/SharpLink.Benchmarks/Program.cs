@@ -63,6 +63,12 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--generated-string-growth-evidence", StringComparison.Ordinal))
+        {
+            GeneratedStringDtoGrowthEvidenceRunner.Run();
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--latency-recorder-evidence", StringComparison.Ordinal))
         {
             LatencyRecorderEvidenceRunner.Run(args[1..]);
