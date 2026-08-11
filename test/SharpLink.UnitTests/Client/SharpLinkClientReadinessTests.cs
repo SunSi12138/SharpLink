@@ -412,6 +412,26 @@ public sealed class SharpLinkClientReadinessTests
     }
 
     [Test]
+    public async Task StopAdmissionShouldRejectSatisfiedReadinessBeforeDrainingPublishes()
+    {
+        await using var client = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
+        await client.ConnectAsync();
+        client.CloseStopAdmissionForTesting();
+        Ensure(client.GetReadinessSnapshot().State == SharpLinkConnectionState.Ready,
+            "closing Stop admission alone must leave the pre-Draining publication observable");
+
+        var waiter = client.WaitForReadinessAsync(1).AsTask();
+
+        Ensure(!waiter.IsCompletedSuccessfully,
+            "a satisfied fast or slow readiness path must not return Ready after Stop admission closes");
+        var stop = client.StopAsync().AsTask();
+        var failure = await CaptureExceptionAsync(waiter);
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed },
+            "the stop-racing readiness wait must terminate with the connection-closed taxonomy");
+        await stop.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
     public async Task StoppingDuringInitialConnectivityShouldMapOnlyInternalCancellationToConnectionClosed()
     {
         var transport = new BlockingInitialTransportFactory();

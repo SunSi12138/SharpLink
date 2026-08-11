@@ -46,6 +46,9 @@ internal sealed partial class SharpLinkClient
     internal ClientReadinessPublication ReadinessPublicationForTesting
         => Volatile.Read(ref _readinessPublication);
 
+    internal void CloseStopAdmissionForTesting()
+        => Volatile.Write(ref _stopStarted, 1);
+
     internal Task ReadySignalForTesting
         => Volatile.Read(ref _readySignal).Task;
 
@@ -108,12 +111,13 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private static bool IsReadinessSatisfied(
+    private bool IsReadinessSatisfied(
         SharpLinkClientReadinessSnapshot snapshot,
         int minimumReadyEndpoints)
         => snapshot.State == SharpLinkConnectionState.Ready &&
            snapshot.ReadyConnections > 0 &&
-           snapshot.ReadyEndpoints >= minimumReadyEndpoints;
+           snapshot.ReadyEndpoints >= minimumReadyEndpoints &&
+           Volatile.Read(ref _stopStarted) == 0;
 
     private static void ThrowIfReadinessWaitCannotContinue(SharpLinkConnectionState state)
     {
