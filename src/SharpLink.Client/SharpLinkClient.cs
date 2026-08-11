@@ -16,8 +16,7 @@ internal sealed partial class SharpLinkClient :
     private readonly SharpLinkEndpoint? _fixedEndpoint;
     private readonly SharpLinkRuntimeContext _runtimeContext;
     private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests;
-    private FrozenDictionary<Type, ClientProxyRegistration> _proxies =
-        FrozenDictionary<Type, ClientProxyRegistration>.Empty;
+    private FrozenDictionary<Type, ClientProxyRegistration> _proxies;
     private readonly Lock _registryGate = new();
     private readonly Dictionary<Assembly, SharpLinkDynamicModule> _dynamicModules =
         new(ReferenceEqualityComparer.Instance);
@@ -26,6 +25,7 @@ internal sealed partial class SharpLinkClient :
     private long _registryGeneration;
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly Lock _stateGate = new();
+    private readonly Lock _readySignalGate = new();
     private readonly Lock _poolGate = new();
     private readonly FrameworkTaskSupervisor _frameworkTasks;
     private readonly SemaphoreSlim _reconnectSignal = new(0, 1);
@@ -36,154 +36,91 @@ internal sealed partial class SharpLinkClient :
     private Task? _reconnectTask;
     private Task? _expansionTask;
     private Task? _stopTask;
+    private int _stopStarted;
     private TaskCompletionSource<bool> _readySignal = CreateReadySignal();
     private int _activeLogicalInvocations;
     private int _state = (int)SharpLinkConnectionState.Created;
     private int _reconnectDelayMilliseconds = 100;
     private long _readyTimestamp;
-    private readonly TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(10);
-    private readonly TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(30);
+    private readonly TimeSpan _heartbeatInterval;
+    private readonly TimeSpan _heartbeatTimeout;
     private readonly bool _hasRequestTimeout;
     private readonly TimeSpan _requestTimeoutValue;
     private readonly ISharpLinkClientAuthenticator? _authenticator;
-    private readonly SharpLinkProtocolOptions _protocolOptions = new();
-    private readonly ILogger _logger = NullLogger<SharpLinkClient>.Instance;
+    private readonly SharpLinkProtocolOptions _protocolOptions;
+    private readonly ILogger _logger;
     private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions;
-    private readonly SharpLinkConnectionPoolOptions _connectionPoolOptions = new();
-    private readonly ISharpLinkClientInterceptor[] _clientInterceptors = [];
+    private readonly SharpLinkConnectionPoolOptions _connectionPoolOptions;
+    private readonly ISharpLinkClientInterceptor[] _clientInterceptors;
     private readonly SharpLinkRetryOptions? _retryOptions;
     private readonly ISharpLinkRetryPolicy? _retryPolicy;
     private readonly ISharpLinkEndpointAdmissionPolicy? _endpointAdmissionPolicy;
     private readonly ISharpLinkReconnectJitter _reconnectJitter;
 
-    private SharpLinkClient(
-        IClientTransportFactory transportFactory,
-        SharpLinkRuntimeContext runtimeContext,
-        StaticEndpointConfiguration[]? staticEndpoints = null,
-        SharpLinkClusterOptions? clusterOptions = null,
-        SharpLinkLoadBalancingStrategy loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
-        ISharpLinkEndpointSelector? endpointSelector = null,
-        SharpLinkEndpoint? fixedEndpoint = null,
-        ISharpLinkEndpointResolver? dynamicResolver = null,
-        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null,
-        SharpLinkRetryOptions? retryOptions = null,
-        ISharpLinkRetryPolicy? retryPolicy = null,
-        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null,
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null,
-        ISharpLinkReconnectJitter? reconnectJitter = null)
+    /// <summary>
+    /// Initializes a Client from the explicit composition materialized by <see cref="SharpClientBuilder"/>.
+    /// It intentionally performs no catalog discovery, option clone/default, topology selection, endpoint
+    /// factory call, or RuntimeContext materialization. The already-tagged topology is bound here so the
+    /// Client is fully valid when construction completes.
+    /// </summary>
+    internal SharpLinkClient(ClientRuntimeComposition composition)
     {
-        this.transportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
-        _runtimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
-        _frameworkTasks = new FrameworkTaskSupervisor((operation, exception) =>
-            LogClientBackgroundLoopUnhandledException(_logger, operation, exception));
-        _staticManifests = staticManifests ?? SharpLinkGeneratedAssemblyCatalog.CreateSnapshot();
-        _fixedEndpoint = fixedEndpoint;
-        _retryOptions = retryOptions;
-        _retryPolicy = retryPolicy;
-        _endpointAdmissionPolicy = endpointAdmissionPolicy;
-        _reconnectJitter = reconnectJitter ?? RandomSharpLinkReconnectJitter.Instance;
-        if (staticEndpoints is not null && dynamicResolver is not null)
-            throw new ArgumentException("Static endpoints and an endpoint resolver cannot both be configured.");
-        if (staticEndpoints is not null)
+        ArgumentNullException.ThrowIfNull(composition);
+        _maximumReadinessWaitThreshold = composition.Readiness.MaximumWaitThreshold;
+        _readinessFacts = new ClientReadinessFacts(
+            composition.Readiness.InitialActiveEndpoints,
+            ReadyEndpoints: 0,
+            ReadyConnections: 0,
+            composition.Readiness.InitialTargetReadyEndpoints);
+        _readinessPublication = new ClientReadinessPublication(
+            CreateReadinessSnapshotLocked());
+        transportFactory = composition.TransportFactory;
+        _runtimeContext = composition.RuntimeContext;
+        _staticManifests = composition.StaticManifests;
+        _proxies = composition.StaticProxies;
+        _heartbeatInterval = composition.HeartbeatInterval;
+        _heartbeatTimeout = composition.HeartbeatTimeout;
+        _hasRequestTimeout = composition.HasRequestTimeout;
+        _requestTimeoutValue = composition.RequestTimeout;
+        _authenticator = composition.Authenticator;
+        _protocolOptions = composition.ProtocolOptions;
+        _rpcSessionFlushOptions = composition.RpcSessionFlushOptions;
+        _connectionPoolOptions = composition.ConnectionPoolOptions;
+        _clientInterceptors = composition.Interceptors;
+        _retryOptions = composition.RetryOptions;
+        _retryPolicy = composition.RetryPolicy;
+        _endpointAdmissionPolicy = composition.EndpointAdmissionPolicy;
+        _reconnectJitter = composition.ReconnectJitter;
+        _logger = composition.Logger;
+        _frameworkTasks = composition.FrameworkTasks;
+
+        // Builder has already selected and materialized exactly one tagged topology. Creating the
+        // Client-owned cluster object here does not enumerate endpoints, invoke a transport factory,
+        // or reinterpret mutable Builder state.
+        switch (composition.Topology)
         {
-            _cluster = new StaticClusterRuntime(
-                this,
-                staticEndpoints,
-                clusterOptions ?? throw new ArgumentNullException(nameof(clusterOptions)),
-                loadBalancingStrategy,
-                endpointSelector);
-        }
-        else if (dynamicResolver is not null)
-        {
-            _cluster = new DynamicClusterRuntime(
-                this,
-                dynamicResolver,
-                dynamicTransportFactory ?? throw new ArgumentNullException(nameof(dynamicTransportFactory)),
-                clusterOptions ?? throw new ArgumentNullException(nameof(clusterOptions)),
-                loadBalancingStrategy,
-                endpointSelector);
+            case FixedClientRuntimeTopologyComposition fixedTopology:
+                _fixedEndpoint = fixedTopology.Endpoint;
+                _cluster = null;
+                break;
+            case StaticClientRuntimeTopologyComposition staticTopology:
+                _fixedEndpoint = null;
+                _cluster = new StaticClusterRuntime(this, staticTopology);
+                break;
+            case DynamicClientRuntimeTopologyComposition dynamicTopology:
+                _fixedEndpoint = null;
+                _cluster = new DynamicClusterRuntime(this, dynamicTopology);
+                break;
+            default:
+                throw new UnreachableException();
         }
     }
 
-    public SharpLinkClient(
-        IClientTransportFactory transportFactory,
-        TimeSpan heartbeatInterval,
-        TimeSpan heartbeatTimeout,
-        SharpLinkRuntimeContext runtimeContext,
-        TimeSpan? requestTimeout = null,
-        ISharpLinkClientAuthenticator? authenticator = null,
-        SharpLinkProtocolOptions? protocolOptions = null,
-        RpcSessionFlushOptions? rpcSessionFlushOptions = null,
-        SharpLinkConnectionPoolOptions? connectionPoolOptions = null,
-        ISharpLinkClientInterceptor[]? clientInterceptors = null,
-        StaticEndpointConfiguration[]? staticEndpoints = null,
-        SharpLinkClusterOptions? clusterOptions = null,
-        SharpLinkLoadBalancingStrategy loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
-        ISharpLinkEndpointSelector? endpointSelector = null,
-        SharpLinkEndpoint? fixedEndpoint = null,
-        ISharpLinkEndpointResolver? dynamicResolver = null,
-        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null,
-        SharpLinkRetryOptions? retryOptions = null,
-        ISharpLinkRetryPolicy? retryPolicy = null,
-        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null,
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null,
-        ISharpLinkReconnectJitter? reconnectJitter = null)
-        : this(transportFactory, runtimeContext, staticEndpoints, clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint,
-            dynamicResolver, dynamicTransportFactory, retryOptions, retryPolicy, endpointAdmissionPolicy, staticManifests,
-            reconnectJitter)
+    internal static FrameworkTaskSupervisor CreateFrameworkTaskSupervisor(ILogger logger)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatTimeout, TimeSpan.Zero);
-        if (heartbeatTimeout <= heartbeatInterval)
-            throw new ArgumentException("Heartbeat timeout must be greater than interval.");
-        if (requestTimeout is { } timeout)
-        {
-            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
-            _hasRequestTimeout = true;
-            _requestTimeoutValue = timeout;
-        }
-
-        _heartbeatInterval = heartbeatInterval;
-        _heartbeatTimeout = heartbeatTimeout;
-        _authenticator = authenticator;
-        _protocolOptions = (protocolOptions ?? _runtimeContext.Protocol).CloneValidated();
-        _rpcSessionFlushOptions = rpcSessionFlushOptions;
-        _connectionPoolOptions = (connectionPoolOptions ?? new SharpLinkConnectionPoolOptions()).CloneValidated();
-        _clientInterceptors = clientInterceptors is { Length: > 0 } ? [.. clientInterceptors] : [];
-        _proxies = BuildStaticProxySnapshot(_staticManifests);
-    }
-
-    public SharpLinkClient(
-        IClientTransportFactory transportFactory,
-        TimeSpan heartbeatInterval,
-        TimeSpan heartbeatTimeout,
-        ILoggerFactory loggerFactory,
-        SharpLinkRuntimeContext runtimeContext,
-        TimeSpan? requestTimeout = null,
-        ISharpLinkClientAuthenticator? authenticator = null,
-        SharpLinkProtocolOptions? protocolOptions = null,
-        RpcSessionFlushOptions? rpcSessionFlushOptions = null,
-        SharpLinkConnectionPoolOptions? connectionPoolOptions = null,
-        ISharpLinkClientInterceptor[]? clientInterceptors = null,
-        StaticEndpointConfiguration[]? staticEndpoints = null,
-        SharpLinkClusterOptions? clusterOptions = null,
-        SharpLinkLoadBalancingStrategy loadBalancingStrategy = SharpLinkLoadBalancingStrategy.PowerOfTwoChoices,
-        ISharpLinkEndpointSelector? endpointSelector = null,
-        SharpLinkEndpoint? fixedEndpoint = null,
-        ISharpLinkEndpointResolver? dynamicResolver = null,
-        SharpLinkEndpointTransportFactory? dynamicTransportFactory = null,
-        SharpLinkRetryOptions? retryOptions = null,
-        ISharpLinkRetryPolicy? retryPolicy = null,
-        ISharpLinkEndpointAdmissionPolicy? endpointAdmissionPolicy = null,
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? staticManifests = null,
-        ISharpLinkReconnectJitter? reconnectJitter = null)
-        : this(transportFactory, heartbeatInterval, heartbeatTimeout, runtimeContext, requestTimeout, authenticator,
-            protocolOptions, rpcSessionFlushOptions, connectionPoolOptions, clientInterceptors, staticEndpoints,
-            clusterOptions, loadBalancingStrategy, endpointSelector, fixedEndpoint, dynamicResolver, dynamicTransportFactory,
-            retryOptions, retryPolicy, endpointAdmissionPolicy, staticManifests, reconnectJitter)
-    {
-        ArgumentNullException.ThrowIfNull(loggerFactory);
-        _logger = loggerFactory.CreateLogger<SharpLinkClient>();
+        ArgumentNullException.ThrowIfNull(logger);
+        return new FrameworkTaskSupervisor((operation, exception) =>
+            LogClientBackgroundLoopUnhandledException(logger, operation, exception));
     }
 
     public IRpcRuntimeContext RuntimeContext => _runtimeContext;
@@ -201,7 +138,11 @@ internal sealed partial class SharpLinkClient :
         Task stopTask;
         lock (_stateGate)
         {
-            _stopTask ??= StopCoreAsync();
+            if (_stopTask is null)
+            {
+                Volatile.Write(ref _stopStarted, 1);
+                _stopTask = StopCoreAsync();
+            }
             stopTask = _stopTask;
         }
 
@@ -231,7 +172,7 @@ internal sealed partial class SharpLinkClient :
         }
         try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
-        Volatile.Read(ref _readySignal).TrySetResult(true);
+        PulseReadySignal();
 
         var stoppingException = CreateConnectionClosedException("Client is stopping.");
         ClientConnection[] connections;
@@ -239,7 +180,7 @@ internal sealed partial class SharpLinkClient :
         {
             connections = [.. _connections];
             _connections.Clear();
-            Volatile.Write(ref _readyConnections, []);
+            PublishReadySnapshotLocked();
         }
         for (var index = 0; index < connections.Length; index++)
         {
@@ -284,7 +225,7 @@ internal sealed partial class SharpLinkClient :
         _frameworkTasks.Seal();
         try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
-        Volatile.Read(ref _readySignal).TrySetResult(true);
+        PulseReadySignal();
         try { await _cluster.StopAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
 
@@ -347,18 +288,68 @@ internal sealed partial class SharpLinkClient :
         => new(SharpLinkErrorCode.ProtocolViolation, message);
 
     private void TransitionTo(SharpLinkConnectionState state)
-        => Interlocked.Exchange(ref _state, (int)state);
+    {
+        TaskCompletionSource? changed;
+        lock (_readinessGate)
+        {
+            var currentState = (SharpLinkConnectionState)Volatile.Read(ref _state);
+            if (currentState == SharpLinkConnectionState.Stopped)
+                return;
+
+            var stopStarted = Volatile.Read(ref _stopStarted) != 0;
+            if (stopStarted &&
+                state is not SharpLinkConnectionState.Draining and not SharpLinkConnectionState.Stopped)
+            {
+                return;
+            }
+
+            state = NormalizeAvailabilityState(
+                state,
+                currentState,
+                _readinessFacts.ReadyConnections,
+                stopStarted);
+            Interlocked.Exchange(ref _state, (int)state);
+            changed = PublishReadinessLocked();
+            UpdateReadySignalLevelLocked();
+        }
+        changed?.TrySetResult();
+    }
+
+    private static SharpLinkConnectionState NormalizeAvailabilityState(
+        SharpLinkConnectionState requestedState,
+        SharpLinkConnectionState currentState,
+        int readyConnections,
+        bool stopStarted)
+    {
+        // Connection and topology writers publish their immutable facts before lifecycle work
+        // continues outside the pool/cluster gate. A later writer can therefore overtake a stale
+        // availability-derived state request. Resolve those requests against
+        // the latest serialized facts so an older continuation cannot leave the public state and
+        // the routable connection snapshot in conflict.
+        if (readyConnections == 0 && requestedState == SharpLinkConnectionState.Ready)
+        {
+            return currentState == SharpLinkConnectionState.Ready
+                ? SharpLinkConnectionState.Reconnecting
+                : currentState;
+        }
+        if (readyConnections != 0 && !stopStarted &&
+            (requestedState is SharpLinkConnectionState.Connecting or
+                SharpLinkConnectionState.Reconnecting or
+                SharpLinkConnectionState.Faulted or
+                SharpLinkConnectionState.Draining))
+        {
+            return SharpLinkConnectionState.Ready;
+        }
+        return requestedState;
+    }
 
     private static TaskCompletionSource<bool> CreateReadySignal()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private void ResetReadySignal()
+    private void PulseReadySignal()
     {
-        lock (_stateGate)
-        {
-            if (_readySignal.Task.IsCompleted)
-                _readySignal = CreateReadySignal();
-        }
+        lock (_readySignalGate)
+            _readySignal.TrySetResult(true);
     }
 
     internal int ReadyConnectionCount => _cluster?.ReadyConnectionCount ?? Volatile.Read(ref _readyConnections).Length;

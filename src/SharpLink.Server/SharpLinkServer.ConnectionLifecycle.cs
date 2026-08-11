@@ -242,13 +242,13 @@ internal sealed partial class SharpLinkServer
         while (!ct.IsCancellationRequested)
         {
             await SharpLinkTimer.DelayAsync(
-                heartbeatCheckInterval,
+                _heartbeatCheckInterval,
                 _runtimeContext.TimeProvider,
                 ct).ConfigureAwait(false);
             foreach (var (id, connection) in _connections)
             {
                 var session = connection.Session;
-                if (session.TimeSinceLastActivity <= heartbeatTimeout || !session.IsConnected)
+                if (session.TimeSinceLastActivity <= _heartbeatTimeout || !session.IsConnected)
                     continue;
 
                 using var sessionScope = BeginSessionLogScope(_logger, session.Id);

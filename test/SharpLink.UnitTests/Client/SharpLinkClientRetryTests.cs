@@ -141,18 +141,14 @@ public class SharpLinkClientRetryTests
         for (var iteration = 0; iteration < 32; iteration++)
         {
             var transport = new TestClientTransportFactory();
-            await using var client = new SharpLinkClient(
-                transport,
-                TimeSpan.FromSeconds(10),
-                TimeSpan.FromSeconds(30),
-                CreateRuntimeContext(),
-                retryOptions: new SharpLinkRetryOptions
+            await using var client = ClientBuilderTestHelper.Build(transport, builder =>
+                builder.UseRetry(options =>
                 {
-                    MaxAttempts = 2,
-                    InitialBackoff = TimeSpan.MaxValue,
-                    MaxBackoff = TimeSpan.MaxValue,
-                    JitterRatio = 1
-                });
+                    options.MaxAttempts = 2;
+                    options.InitialBackoff = TimeSpan.MaxValue;
+                    options.MaxBackoff = TimeSpan.MaxValue;
+                    options.JitterRatio = 1;
+                }));
             await client.ConnectAsync();
 
             var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
@@ -195,14 +191,12 @@ public class SharpLinkClientRetryTests
         var transport = new TestClientTransportFactory();
         var interceptor = new CountingInterceptor();
         var invalidPolicy = new NegativeDelayPolicy();
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext(),
-            clientInterceptors: [interceptor],
-            retryOptions: RetryOptions(2, TimeSpan.Zero),
-            retryPolicy: invalidPolicy);
+        await using var client = ClientBuilderTestHelper.Build(transport, builder =>
+        {
+            builder.AddInterceptor(interceptor);
+            ConfigureRetry(builder, RetryOptions(2, TimeSpan.Zero));
+            builder.UseRetry(invalidPolicy);
+        });
         await client.ConnectAsync();
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
@@ -225,15 +219,12 @@ public class SharpLinkClientRetryTests
             new StaticEndpointConfiguration(Endpoint("first", 5001), first),
             new StaticEndpointConfiguration(Endpoint("second", 5002), second)
         };
-        await using var client = new SharpLinkClient(
-            first,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext(),
-            staticEndpoints: endpoints,
-            clusterOptions: new SharpLinkClusterOptions(),
-            endpointSelector: new FirstAvailableSelector(),
-            retryOptions: RetryOptions(3, TimeSpan.Zero));
+        await using var client = ClientBuilderTestHelper.BuildStatic(endpoints, builder =>
+        {
+            builder.UseCluster(_ => { });
+            builder.UseEndpointSelector(new FirstAvailableSelector());
+            ConfigureRetry(builder, RetryOptions(3, TimeSpan.Zero));
+        });
         await client.ConnectAsync();
         await WaitForReadyConnectionCountAsync(client, 2);
 
@@ -259,15 +250,12 @@ public class SharpLinkClientRetryTests
             new StaticEndpointConfiguration(Endpoint("first", 5001), first),
             new StaticEndpointConfiguration(Endpoint("second", 5002), second)
         };
-        await using var client = new SharpLinkClient(
-            first,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext(),
-            staticEndpoints: endpoints,
-            clusterOptions: new SharpLinkClusterOptions(),
-            endpointSelector: new FirstAvailableSelector(),
-            endpointAdmissionPolicy: policy);
+        await using var client = ClientBuilderTestHelper.BuildStatic(endpoints, builder =>
+        {
+            builder.UseCluster(_ => { });
+            builder.UseEndpointSelector(new FirstAvailableSelector());
+            builder.UseEndpointAdmission(policy);
+        });
         await client.ConnectAsync();
         await WaitForReadyConnectionCountAsync(client, 2);
 
@@ -289,14 +277,12 @@ public class SharpLinkClientRetryTests
     {
         var transport = new TestClientTransportFactory();
         var admission = new RejectOnceWithRetryAfterPolicy(TimeSpan.FromMilliseconds(100));
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext(),
-            fixedEndpoint: Endpoint("retry", 5001),
-            retryOptions: RetryOptions(2, TimeSpan.Zero),
-            endpointAdmissionPolicy: admission);
+        await using var client = ClientBuilderTestHelper.BuildEndpoint(
+            Endpoint("retry", 5001), transport, builder =>
+            {
+                ConfigureRetry(builder, RetryOptions(2, TimeSpan.Zero));
+                builder.UseEndpointAdmission(admission);
+            });
         await client.ConnectAsync();
 
         var started = Stopwatch.GetTimestamp();
@@ -316,14 +302,12 @@ public class SharpLinkClientRetryTests
     {
         var transport = new TestClientTransportFactory();
         var admission = new SignaledRejectWithRetryAfterPolicy(TimeSpan.MaxValue);
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext(),
-            fixedEndpoint: Endpoint("retry-admission", 5001),
-            retryOptions: RetryOptions(2, TimeSpan.Zero),
-            endpointAdmissionPolicy: admission);
+        await using var client = ClientBuilderTestHelper.BuildEndpoint(
+            Endpoint("retry-admission", 5001), transport, builder =>
+            {
+                ConfigureRetry(builder, RetryOptions(2, TimeSpan.Zero));
+                builder.UseEndpointAdmission(admission);
+            });
         await client.ConnectAsync();
 
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
@@ -353,16 +337,17 @@ public class SharpLinkClientRetryTests
             new StaticEndpointConfiguration(Endpoint("second", 5002), second),
             new StaticEndpointConfiguration(Endpoint("third", 5003), third)
         };
-        await using var client = new SharpLinkClient(
-            first,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext(),
-            staticEndpoints: endpoints,
-            clusterOptions: new SharpLinkClusterOptions { MinReadyEndpoints = 3, MaxConnections = 3 },
-            endpointSelector: new FirstUnexcludedSelector(),
-            retryOptions: RetryOptions(2, TimeSpan.Zero),
-            endpointAdmissionPolicy: new RejectFirstEndpointWithDelayPolicy(TimeSpan.FromSeconds(30)));
+        await using var client = ClientBuilderTestHelper.BuildStatic(endpoints, builder =>
+        {
+            builder.UseCluster(options =>
+            {
+                options.MinReadyEndpoints = 3;
+                options.MaxConnections = 3;
+            });
+            builder.UseEndpointSelector(new FirstUnexcludedSelector());
+            ConfigureRetry(builder, RetryOptions(2, TimeSpan.Zero));
+            builder.UseEndpointAdmission(new RejectFirstEndpointWithDelayPolicy(TimeSpan.FromSeconds(30)));
+        });
         await client.ConnectAsync();
         await WaitForReadyConnectionCountAsync(client, 3);
 
@@ -635,17 +620,13 @@ public class SharpLinkClientRetryTests
         var provider = new ManualTimeProvider();
         var transport = new TestClientTransportFactory();
         var admission = new CountingAdmissionPolicy();
-        using var context = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(provider)
-            .Build(includeGeneratedAssemblyCatalog: false);
-        var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            context,
-            fixedEndpoint: Endpoint("retry-deadline", 5001),
-            retryOptions: RetryOptions(2, TimeSpan.FromSeconds(5)),
-            endpointAdmissionPolicy: admission);
+        var client = ClientBuilderTestHelper.BuildEndpoint(
+            Endpoint("retry-deadline", 5001), transport, builder =>
+            {
+                builder.UseTimeProvider(provider);
+                ConfigureRetry(builder, RetryOptions(2, TimeSpan.FromSeconds(5)));
+                builder.UseEndpointAdmission(admission);
+            });
         try
         {
             await client.ConnectAsync();
@@ -729,16 +710,26 @@ public class SharpLinkClientRetryTests
         ISharpLinkRetryPolicy? policy,
         int maxAttempts,
         TimeSpan? initialBackoff = null)
-        => new(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            CreateRuntimeContext(),
-            retryOptions: RetryOptions(maxAttempts, initialBackoff ?? TimeSpan.Zero),
-            retryPolicy: policy);
+    {
+        var options = RetryOptions(maxAttempts, initialBackoff ?? TimeSpan.Zero);
+        return ClientBuilderTestHelper.Build(transport, builder =>
+        {
+            ConfigureRetry(builder, options);
+            if (policy is not null)
+                builder.UseRetry(policy);
+        });
+    }
 
-    private static SharpLinkRuntimeContext CreateRuntimeContext()
-        => new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+    private static void ConfigureRetry(SharpClientBuilder builder, SharpLinkRetryOptions options)
+    {
+        builder.UseRetry(configured =>
+        {
+            configured.MaxAttempts = options.MaxAttempts;
+            configured.InitialBackoff = options.InitialBackoff;
+            configured.MaxBackoff = options.MaxBackoff;
+            configured.JitterRatio = options.JitterRatio;
+        });
+    }
 
     private static SharpLinkRetryOptions RetryOptions(int maxAttempts, TimeSpan initialBackoff)
         => new()

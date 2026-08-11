@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO.Pipelines;
+using System.Runtime.CompilerServices;
 using SharpLink.Server;
 using SharpLink.Sdk;
 
@@ -228,24 +229,35 @@ public sealed class ServerRequestEnvelopeReaderTests
         var payload = CreatePayload(deadlineMilliseconds: null, metadata: null, arguments: [1, 2, 3, 4]);
         var sequence = new ReadOnlySequence<byte>(payload);
         var timeProvider = new FixedTimeProvider(UtcNow, timestamp: 1);
-        for (var index = 0; index < 2_000; index++)
-            _ = ServerRequestEnvelopeReader.Read(
-                session, sequence, ProtocolV2FrameFlags.None, 1, timeProvider);
+        _ = ReadBatch(session, sequence, timeProvider, 100_000);
+        _ = GC.GetAllocatedBytesForCurrentThread();
 
         const int iterations = 20_000;
-        long checksum = 0;
         var before = GC.GetAllocatedBytesForCurrentThread();
+        var checksum = ReadBatch(session, sequence, timeProvider, iterations);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        GC.KeepAlive(checksum);
+
+        Ensure(allocated == 0,
+            $"steady-state envelope parsing allocated {allocated} bytes over {iterations} calls");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long ReadBatch(
+        IRpcSession session,
+        ReadOnlySequence<byte> sequence,
+        TimeProvider timeProvider,
+        int iterations)
+    {
+        long checksum = 0;
         for (var index = 0; index < iterations; index++)
         {
             var envelope = ServerRequestEnvelopeReader.Read(
                 session, sequence, ProtocolV2FrameFlags.None, 1, timeProvider);
             checksum += envelope.InterfaceHash + envelope.Arguments.Length;
         }
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-        GC.KeepAlive(checksum);
 
-        Ensure(allocated == 0,
-            $"steady-state envelope parsing allocated {allocated} bytes over {iterations} calls");
+        return checksum;
     }
 
     private static void AssertEnvelope(

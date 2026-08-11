@@ -1,3 +1,5 @@
+using EndpointState = SharpLink.Client.StaticClientRuntimeEndpointState;
+
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
@@ -31,18 +33,14 @@ internal sealed partial class SharpLinkClient
 
         public StaticClusterRuntime(
             SharpLinkClient client,
-            StaticEndpointConfiguration[] configurations,
-            SharpLinkClusterOptions options,
-            SharpLinkLoadBalancingStrategy strategy,
-            ISharpLinkEndpointSelector? selector)
+            StaticClientRuntimeTopologyComposition topology)
         {
-            _client = client;
-            _options = options;
-            _strategy = strategy;
-            _selector = selector;
-            _endpoints = new EndpointState[configurations.Length];
-            for (var index = 0; index < configurations.Length; index++)
-                _endpoints[index] = new EndpointState(configurations[index], index);
+            _client = client ?? throw new ArgumentNullException(nameof(client));
+            ArgumentNullException.ThrowIfNull(topology);
+            _options = topology.ClusterOptions;
+            _strategy = topology.LoadBalancingStrategy;
+            _selector = topology.EndpointSelector;
+            _endpoints = topology.EndpointStates;
             SharpLinkTelemetry.AddClientActiveEndpoints(_endpoints.Length);
         }
 
@@ -76,7 +74,9 @@ internal sealed partial class SharpLinkClient
             Task task;
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested)
+                if (Volatile.Read(ref _client._stopStarted) != 0 ||
+                    Volatile.Read(ref _stopping) != 0 ||
+                    _client._shutdownCts.IsCancellationRequested)
                     return ValueTask.FromException(CreateConnectionClosedException("Client has stopped."));
                 if (ReadyConnectionCount != 0)
                     return ValueTask.CompletedTask;
@@ -226,6 +226,21 @@ internal sealed partial class SharpLinkClient
             }
         }
 
+        public void HandleConnectionFailure(ClientConnection connection, Exception exception)
+        {
+            ArgumentNullException.ThrowIfNull(connection);
+            ArgumentNullException.ThrowIfNull(exception);
+            EndpointState? endpoint;
+            lock (_gate)
+            {
+                if (Volatile.Read(ref _stopping) != 0)
+                    return;
+                endpoint = FindEndpointLocked(connection);
+            }
+            if (endpoint is not null)
+                HandleDisconnected(endpoint, connection, exception);
+        }
+
         public void RetireDrainingConnectionIfIdle(ClientConnection connection)
         {
             if (connection.State != ClientConnectionState.Draining || connection.ActiveCallCount != 0)
@@ -328,6 +343,8 @@ internal sealed partial class SharpLinkClient
             while (true)
             {
                 if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested)
+                    throw new OperationCanceledException(_client._shutdownCts.Token);
+                if (Volatile.Read(ref _client._stopStarted) != 0)
                     throw new OperationCanceledException(_client._shutdownCts.Token);
                 if (ReadyConnectionCount != 0)
                     return;
@@ -645,43 +662,47 @@ internal sealed partial class SharpLinkClient
                 return;
             _client._readyTimestamp = _client._runtimeContext.TimeProvider.GetTimestamp();
             _client.TransitionTo(SharpLinkConnectionState.Ready);
-            Volatile.Read(ref _client._readySignal).TrySetResult(true);
         }
 
         private void PublishReadySnapshotLocked()
         {
             var ready = new List<EndpointState>(_endpoints.Length);
+            var readyConnections = 0;
             for (var index = 0; index < _endpoints.Length; index++)
             {
                 var endpoint = _endpoints[index];
                 endpoint.PublishReadyConnections();
-                if (endpoint.ReadyConnections.Length != 0)
+                var endpointReadyConnections = endpoint.ReadyConnections.Length;
+                if (endpointReadyConnections != 0)
+                {
                     ready.Add(endpoint);
+                    readyConnections += endpointReadyConnections;
+                }
             }
             var endpoints = ready.ToArray();
             var existing = Volatile.Read(ref _readyEndpoints);
-            if (HasSameMembership(existing, endpoints))
+            if (!HasSameMembership(existing, endpoints))
             {
-                if (endpoints.Length == 0)
-                    _client.ResetReadySignal();
-                return;
+                var candidates = new SharpLinkEndpointCandidate[endpoints.Length];
+                for (var index = 0; index < endpoints.Length; index++)
+                {
+                    var endpoint = endpoints[index];
+                    candidates[index] = new SharpLinkEndpointCandidate(
+                        endpoint.Configuration.Endpoint,
+                        endpoint.ReadyConnectionCountProvider,
+                        endpoint.ActiveCallCountProvider,
+                        generation: 1);
+                }
+                Volatile.Write(ref _readyEndpoints, endpoints);
+                Volatile.Write(ref _selectionSnapshot, new EndpointSelectionSnapshot(endpoints, candidates));
+                SharpLinkTelemetry.AddClientReadyEndpoints(endpoints.Length - _telemetryReadyEndpointCount);
+                _telemetryReadyEndpointCount = endpoints.Length;
             }
-            var candidates = new SharpLinkEndpointCandidate[endpoints.Length];
-            for (var index = 0; index < endpoints.Length; index++)
-            {
-                var endpoint = endpoints[index];
-                candidates[index] = new SharpLinkEndpointCandidate(
-                    endpoint.Configuration.Endpoint,
-                    endpoint.ReadyConnectionCountProvider,
-                    endpoint.ActiveCallCountProvider,
-                    generation: 1);
-            }
-            Volatile.Write(ref _readyEndpoints, endpoints);
-            Volatile.Write(ref _selectionSnapshot, new EndpointSelectionSnapshot(endpoints, candidates));
-            SharpLinkTelemetry.AddClientReadyEndpoints(endpoints.Length - _telemetryReadyEndpointCount);
-            _telemetryReadyEndpointCount = endpoints.Length;
-            if (endpoints.Length == 0)
-                _client.ResetReadySignal();
+            _client.PublishReadinessFacts(new ClientReadinessFacts(
+                ActiveEndpoints: _endpoints.Length,
+                ReadyEndpoints: endpoints.Length,
+                ReadyConnections: readyConnections,
+                TargetReadyEndpoints: TargetReadyEndpointCount));
         }
 
         private static bool HasSameMembership(EndpointState[] left, EndpointState[] right)
@@ -831,6 +852,11 @@ internal sealed partial class SharpLinkClient
                 Volatile.Write(ref _selectionSnapshot, EndpointSelectionSnapshot.Empty);
                 SharpLinkTelemetry.AddClientReadyEndpoints(-_telemetryReadyEndpointCount);
                 _telemetryReadyEndpointCount = 0;
+                _client.PublishReadinessFacts(new ClientReadinessFacts(
+                    ActiveEndpoints: _endpoints.Length,
+                    ReadyEndpoints: 0,
+                    ReadyConnections: 0,
+                    TargetReadyEndpoints: TargetReadyEndpointCount));
             }
             SharpLinkTelemetry.AddClientActiveEndpoints(-_endpoints.Length);
             var stopping = CreateConnectionClosedException("Client is stopping.");
@@ -867,65 +893,6 @@ internal sealed partial class SharpLinkClient
         {
             try { await connection.DisposeAsync().ConfigureAwait(false); }
             catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException) { }
-        }
-
-        private sealed class EndpointState
-        {
-            private readonly Func<int> _readyConnectionCountProvider;
-            private readonly Func<int> _activeCallCountProvider;
-            private ClientConnection[] _readyConnections = [];
-
-            public EndpointState(StaticEndpointConfiguration configuration, int index)
-            {
-                Configuration = configuration;
-                Index = index;
-                _readyConnectionCountProvider = GetReadyConnectionCount;
-                _activeCallCountProvider = GetActiveCallCount;
-            }
-
-            public StaticEndpointConfiguration Configuration { get; }
-            public int Index { get; }
-            public HashSet<ClientConnection> Connections { get; } = [];
-            public ClientConnection[] ReadyConnections => Volatile.Read(ref _readyConnections);
-            public Func<int> ReadyConnectionCountProvider => _readyConnectionCountProvider;
-            public Func<int> ActiveCallCountProvider => _activeCallCountProvider;
-            public int ConnectingCount { get; set; }
-            public int ReconnectDelayMilliseconds { get; set; } = 100;
-            public Task? ReconnectTask { get; set; }
-            public Task? ExpansionTask { get; set; }
-            public int NonRetiringConnectionCount
-            {
-                get
-                {
-                    var count = 0;
-                    foreach (var connection in Connections)
-                        if (connection.State == ClientConnectionState.Ready)
-                            count++;
-                    return count;
-                }
-            }
-
-            public int ActiveCallCount => GetActiveCallCount();
-
-            private int GetReadyConnectionCount() => ReadyConnections.Length;
-
-            private int GetActiveCallCount()
-            {
-                var connections = ReadyConnections;
-                var count = 0;
-                for (var index = 0; index < connections.Length; index++)
-                    count += connections[index].ActiveCallCount;
-                return count;
-            }
-
-            public void PublishReadyConnections()
-            {
-                var ready = new List<ClientConnection>(Connections.Count);
-                foreach (var connection in Connections)
-                    if (connection.CanAcceptCalls)
-                        ready.Add(connection);
-                Volatile.Write(ref _readyConnections, ready.ToArray());
-            }
         }
 
         private sealed class EndpointSelectionSnapshot(

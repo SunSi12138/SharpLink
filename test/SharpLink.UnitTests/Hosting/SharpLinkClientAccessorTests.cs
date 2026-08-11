@@ -139,6 +139,61 @@ public class SharpLinkClientAccessorTests
     }
 
     [Test]
+    public async Task HostedStartShouldPublishConnectivityBeforeStaticReadinessTargetConverges()
+    {
+        var first = new GatedConnectTransportFactory();
+        var second = new GatedConnectTransportFactory();
+        var accessor = new SharpLinkClientAccessor();
+        await using var service = new SharpLinkClientHostedService(
+            SharpClientBuilder.Create()
+                .UseEndpoints(
+                [
+                    new SharpLinkEndpoint
+                    {
+                        Id = "first",
+                        Address = new SharpLinkTcpAddress("127.0.0.1", 5001)
+                    },
+                    new SharpLinkEndpoint
+                    {
+                        Id = "second",
+                        Address = new SharpLinkTcpAddress("127.0.0.1", 5002)
+                    }
+                ],
+                endpoint => endpoint.Id == "first" ? first : second)
+                .UseCluster(options =>
+                {
+                    options.MinReadyEndpoints = 2;
+                    options.MaxConnections = 2;
+                    options.MaxConnectionsPerEndpoint = 1;
+                }),
+            accessor,
+            NullLoggerFactory.Instance);
+
+        var accessorWait = accessor.GetClientAsync().AsTask();
+        var hostedStart = service.StartAsync(CancellationToken.None);
+        await Task.WhenAll(first.ConnectStarted.Task, second.ConnectStarted.Task)
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(!hostedStart.IsCompleted && !accessorWait.IsCompleted,
+            "hosted publication must remain pending while neither endpoint has connected");
+
+        first.ReleaseConnect();
+        await hostedStart.WaitAsync(TimeSpan.FromSeconds(2));
+        var client = await accessorWait.WaitAsync(TimeSpan.FromSeconds(2));
+        var snapshot = client.GetReadinessSnapshot();
+
+        Ensure(first.ConnectCompleted.Task.IsCompleted && !second.ConnectCompleted.Task.IsCompleted,
+            "HostedService must publish after the first connection without releasing the second endpoint gate");
+        Ensure(snapshot.State == SharpLinkConnectionState.Ready &&
+               snapshot.ActiveEndpoints == 2 &&
+               snapshot.ReadyEndpoints == 1 &&
+               snapshot.ReadyConnections == 1 &&
+               snapshot.TargetReadyEndpoints == 2,
+            "the published client must distinguish connectivity from the unconverged static target");
+        Ensure(!snapshot.MeetsTarget,
+            "one ready endpoint must not satisfy a configured two-endpoint readiness target");
+    }
+
+    [Test]
     public async Task DuplicateHostedStartShouldNotDisposeTheExistingClient()
     {
         var accessor = new SharpLinkClientAccessor();
@@ -303,6 +358,33 @@ public class SharpLinkClientAccessorTests
 
         public ValueTask DisposeAsync()
             => ValueTask.FromException(new InvalidOperationException("hosted cleanup failed"));
+    }
+
+    private sealed class GatedConnectTransportFactory : IClientTransportFactory
+    {
+        private readonly TestClientTransportFactory _inner = new();
+        private readonly TaskCompletionSource _release =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ConnectStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ConnectCompleted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask<ITransportConnection> ConnectAsync(
+            CancellationToken cancellationToken = default)
+        {
+            ConnectStarted.TrySetResult();
+            await _release.Task.WaitAsync(cancellationToken);
+            var connection = await _inner.ConnectAsync(cancellationToken);
+            ConnectCompleted.TrySetResult();
+            return connection;
+        }
+
+        internal void ReleaseConnect() => _release.TrySetResult();
+
+        public ValueTask DisposeAsync() => _inner.DisposeAsync();
     }
 
     private sealed class BlockingStopClient : ISharpLinkClient

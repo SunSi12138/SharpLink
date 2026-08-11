@@ -221,7 +221,6 @@ internal sealed partial class SharpLinkClient
                 return;
             _readyTimestamp = _runtimeContext.TimeProvider.GetTimestamp();
             TransitionTo(SharpLinkConnectionState.Ready);
-            _readySignal.TrySetResult(true);
         }
     }
 
@@ -237,6 +236,11 @@ internal sealed partial class SharpLinkClient
         if (index != snapshot.Length)
             Array.Resize(ref snapshot, index);
         Volatile.Write(ref _readyConnections, snapshot);
+        PublishReadinessFacts(new ClientReadinessFacts(
+            ActiveEndpoints: 1,
+            ReadyEndpoints: snapshot.Length == 0 ? 0 : 1,
+            ReadyConnections: snapshot.Length,
+            TargetReadyEndpoints: 1));
     }
 
     private int CountReadyConnectionsLocked()

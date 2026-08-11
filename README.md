@@ -347,7 +347,8 @@ var client = SharpClientBuilder.Create()
 ## 错误模型
 
 - 运行时失败使用 `SharpLinkException` 和 `SharpLinkErrorCode` 区分认证、deadline、资源耗尽、断连和协议错误
-- `await client.ConnectAsync(ct)` 成功后才返回；连接或握手失败直接抛结构化异常，不再返回 `bool`
+- `await client.ConnectAsync(ct)` 保持 topology-specific connectivity 语义且不等待多 endpoint 收敛；连接或握手失败直接抛结构化异常，不再返回 `bool`
+- 多 endpoint 收敛使用 `GetReadinessSnapshot()` 或 `WaitForReadinessAsync(minimumReadyEndpoints, ct)`；等待可启动/加入既有 Connect 生命周期，但不会提高配置目标或为 caller threshold 额外扩容
 - 用户 `CancellationToken` 取消保留为本地 `OperationCanceledException`；deadline 到期为 `SharpLinkException(DeadlineExceeded)`
 
 ## 认证
@@ -566,6 +567,7 @@ if (health.Status != SharpLinkHealthStatus.Ready)
 - 服务注册与生命周期：`[RpcService]`、`EnableService` / `ExcludeService` / `ReplaceService`、`UseServiceProvider(...)` 与 `SharpLinkServiceLifetime`
 - 运行时插件：Client/Server `RegisterAssembly(...)` 与 `UnregisterAssemblyAsync(...)`
 - 健康检查：`CheckHealthAsync()`、`ISharpLinkServer.HealthStatus` 与 Hosting health checks
+- Client 拓扑就绪：`GetReadinessSnapshot()` 与 `WaitForReadinessAsync(...)`
 - 请求超时：`UseRequestTimeout(...)`；需要真正无默认超时时使用 `DisableRequestTimeout()`
 - `RpcSession` flush：`UseRpcSessionFlush(...)`
 - 实例级 Buffer Writer Pool：`UseBufferWriterPool(...)`

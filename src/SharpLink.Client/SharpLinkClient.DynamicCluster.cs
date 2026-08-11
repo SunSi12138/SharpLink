@@ -21,6 +21,7 @@ internal sealed partial class SharpLinkClient
         private EndpointState[] _current = [];
         private EndpointState[] _readyEndpoints = [];
         private EndpointSelectionSnapshot _selectionSnapshot = EndpointSelectionSnapshot.Empty;
+        private TaskCompletionSource _topologyChanged = CreateTopologyChangedSignal();
         private Task? _connectTask;
         private Task? _resolverTask;
         private Task? _stopTask;
@@ -39,20 +40,15 @@ internal sealed partial class SharpLinkClient
 
         public DynamicClusterRuntime(
             SharpLinkClient client,
-            ISharpLinkEndpointResolver resolver,
-            SharpLinkEndpointTransportFactory transportFactory,
-            SharpLinkClusterOptions options,
-            SharpLinkLoadBalancingStrategy strategy,
-            ISharpLinkEndpointSelector? selector)
+            DynamicClientRuntimeTopologyComposition topology)
         {
-            _client = client;
-            if (resolver is ISharpLinkRuntimeTimeProviderAwareResolver timeProviderAware)
-                timeProviderAware.BindTimeProvider(client._runtimeContext.TimeProvider);
-            _resolver = resolver;
-            _transportFactory = transportFactory;
-            _options = options;
-            _strategy = strategy;
-            _selector = selector;
+            _client = client ?? throw new ArgumentNullException(nameof(client));
+            ArgumentNullException.ThrowIfNull(topology);
+            _resolver = topology.Resolver;
+            _transportFactory = topology.TransportFactory;
+            _options = topology.ClusterOptions;
+            _strategy = topology.LoadBalancingStrategy;
+            _selector = topology.EndpointSelector;
         }
 
         public int ReadyConnectionCount
@@ -85,7 +81,9 @@ internal sealed partial class SharpLinkClient
             Task task;
             lock (_gate)
             {
-                if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested)
+                if (Volatile.Read(ref _client._stopStarted) != 0 ||
+                    Volatile.Read(ref _stopping) != 0 ||
+                    _client._shutdownCts.IsCancellationRequested)
                     return ValueTask.FromException(CreateConnectionClosedException("Client has stopped."));
                 if (ReadyConnectionCount != 0)
                     return ValueTask.CompletedTask;
@@ -223,6 +221,21 @@ internal sealed partial class SharpLinkClient
             }
         }
 
+        public void HandleConnectionFailure(ClientConnection connection, Exception exception)
+        {
+            ArgumentNullException.ThrowIfNull(connection);
+            ArgumentNullException.ThrowIfNull(exception);
+            EndpointState? endpoint;
+            lock (_gate)
+            {
+                if (Volatile.Read(ref _stopping) != 0)
+                    return;
+                endpoint = FindEndpointLocked(connection);
+            }
+            if (endpoint is not null)
+                HandleDisconnected(endpoint, connection, exception);
+        }
+
         public void RetireDrainingConnectionIfIdle(ClientConnection connection)
         {
             if (connection.State != ClientConnectionState.Draining || connection.ActiveCallCount != 0)
@@ -274,7 +287,10 @@ internal sealed partial class SharpLinkClient
                 await ConnectCurrentEndpointsAsync(cancellationToken).ConfigureAwait(false);
                 UpdateClientReadiness();
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _client._shutdownCts.IsCancellationRequested)
+            catch (OperationCanceledException) when (
+                cancellationToken.IsCancellationRequested ||
+                _client._shutdownCts.IsCancellationRequested ||
+                Volatile.Read(ref _client._stopStarted) != 0)
             {
                 throw;
             }
@@ -297,14 +313,19 @@ internal sealed partial class SharpLinkClient
             {
                 if (Volatile.Read(ref _stopping) != 0 || _client._shutdownCts.IsCancellationRequested)
                     throw new OperationCanceledException(_client._shutdownCts.Token);
+                if (Volatile.Read(ref _client._stopStarted) != 0)
+                    throw new OperationCanceledException(_client._shutdownCts.Token);
                 if (ReadyConnectionCount != 0 || HasAcceptedEmptyTopology())
                     return;
 
                 EnsureMinimumReadyEndpoints();
-                var signal = Volatile.Read(ref _client._readySignal).Task;
-                if (ReadyConnectionCount != 0 || HasAcceptedEmptyTopology())
+                var topologyChanged = CaptureTopologyChangedSignal(out var acceptedEmptyTopology);
+                if (acceptedEmptyTopology)
                     return;
-                await signal.ConfigureAwait(false);
+                var signal = Volatile.Read(ref _client._readySignal).Task;
+                if (ReadyConnectionCount != 0)
+                    return;
+                await Task.WhenAny(signal, topologyChanged).ConfigureAwait(false);
             }
         }
 
@@ -313,6 +334,18 @@ internal sealed partial class SharpLinkClient
             lock (_gate)
                 return _lastAcceptedVersion >= 0 && _current.Length == 0;
         }
+
+        private Task CaptureTopologyChangedSignal(out bool acceptedEmptyTopology)
+        {
+            lock (_gate)
+            {
+                acceptedEmptyTopology = _lastAcceptedVersion >= 0 && _current.Length == 0;
+                return _topologyChanged.Task;
+            }
+        }
+
+        private static TaskCompletionSource CreateTopologyChangedSignal()
+            => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         private void StartResolverWorker(bool resolveBeforeWatch)
         {
@@ -456,6 +489,7 @@ internal sealed partial class SharpLinkClient
             var rejectedForFactoryOwnership = false;
             var connectionsToDispose = new List<ClientConnection>();
             var statesToRelease = new List<EndpointState>();
+            TaskCompletionSource? topologyChanged = null;
             EndpointState[] current;
             lock (_gate)
             {
@@ -507,6 +541,8 @@ internal sealed partial class SharpLinkClient
                         _currentById.Add(pair.Key, pair.Value);
                     _current = current;
                     _lastAcceptedVersion = snapshot.Version;
+                    topologyChanged = _topologyChanged;
+                    _topologyChanged = CreateTopologyChangedSignal();
                     SharpLinkTelemetry.AddClientActiveEndpoints(current.Length - _telemetryActiveEndpointCount);
                     _telemetryActiveEndpointCount = current.Length;
                     PublishReadySnapshotLocked(force: true);
@@ -520,6 +556,8 @@ internal sealed partial class SharpLinkClient
                         ScheduleRetiredStateReleaseLocked(statesToRelease[index]);
                 }
             }
+
+            topologyChanged?.TrySetResult();
 
             if (abandoned || rejectedForFactoryOwnership)
             {
@@ -536,8 +574,6 @@ internal sealed partial class SharpLinkClient
                 return false;
             }
 
-            if (current.Length == 0)
-                Volatile.Read(ref _client._readySignal).TrySetResult(true);
             if (!deferInitialReconciliation)
                 EnsureMinimumReadyEndpoints();
             SharpLinkTelemetry.RecordClientResolverUpdate();
@@ -607,16 +643,24 @@ internal sealed partial class SharpLinkClient
                         throw new OperationCanceledException(
                             cancellationToken.IsCancellationRequested ? cancellationToken : _client._shutdownCts.Token);
                     }
+                    if (Volatile.Read(ref _client._stopStarted) != 0)
+                        throw new OperationCanceledException(_client._shutdownCts.Token);
                     if (ReadyConnectionCount != 0 || HasAcceptedEmptyTopology())
                     {
                         EnsureMinimumReadyEndpoints();
                         return;
                     }
 
+                    var topologyChanged = CaptureTopologyChangedSignal(out var acceptedEmptyTopology);
+                    if (acceptedEmptyTopology)
+                    {
+                        EnsureMinimumReadyEndpoints();
+                        return;
+                    }
                     var readySignal = Volatile.Read(ref _client._readySignal).Task;
                     var nextDial = Task.WhenAny(remaining);
-                    var completed = await Task.WhenAny(nextDial, readySignal).ConfigureAwait(false);
-                    if (ReferenceEquals(completed, readySignal))
+                    var completed = await Task.WhenAny(nextDial, readySignal, topologyChanged).ConfigureAwait(false);
+                    if (!ReferenceEquals(completed, nextDial))
                         continue;
 
                     var dial = await nextDial.ConfigureAwait(false);
@@ -975,12 +1019,10 @@ internal sealed partial class SharpLinkClient
             {
                 _client._readyTimestamp = _client._runtimeContext.TimeProvider.GetTimestamp();
                 _client.TransitionTo(SharpLinkConnectionState.Ready);
-                Volatile.Read(ref _client._readySignal).TrySetResult(true);
                 return;
             }
             if (Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested)
             {
-                _client.ResetReadySignal();
                 _client.TransitionTo(SharpLinkConnectionState.Reconnecting);
             }
         }
@@ -988,37 +1030,42 @@ internal sealed partial class SharpLinkClient
         private void PublishReadySnapshotLocked(bool force = false)
         {
             var ready = new List<EndpointState>(_current.Length);
+            var readyConnections = 0;
             for (var index = 0; index < _current.Length; index++)
             {
                 var endpoint = _current[index];
                 endpoint.PublishReadyConnections();
-                if (endpoint.ReadyConnections.Length != 0)
+                var endpointReadyConnections = endpoint.ReadyConnections.Length;
+                if (endpointReadyConnections != 0)
+                {
                     ready.Add(endpoint);
+                    readyConnections += endpointReadyConnections;
+                }
             }
             var endpoints = ready.ToArray();
             var existing = Volatile.Read(ref _readyEndpoints);
-            if (!force && HasSameMembership(existing, endpoints))
+            if (force || !HasSameMembership(existing, endpoints))
             {
-                if (endpoints.Length == 0)
-                    _client.ResetReadySignal();
-                return;
+                var candidates = new SharpLinkEndpointCandidate[endpoints.Length];
+                for (var index = 0; index < endpoints.Length; index++)
+                {
+                    var endpoint = endpoints[index];
+                    candidates[index] = new SharpLinkEndpointCandidate(
+                        endpoint.Configuration.Endpoint,
+                        endpoint.ReadyConnectionCountProvider,
+                        endpoint.ActiveCallCountProvider,
+                        endpoint.Generation);
+                }
+                Volatile.Write(ref _readyEndpoints, endpoints);
+                Volatile.Write(ref _selectionSnapshot, new EndpointSelectionSnapshot(endpoints, candidates));
+                SharpLinkTelemetry.AddClientReadyEndpoints(endpoints.Length - _telemetryReadyEndpointCount);
+                _telemetryReadyEndpointCount = endpoints.Length;
             }
-            var candidates = new SharpLinkEndpointCandidate[endpoints.Length];
-            for (var index = 0; index < endpoints.Length; index++)
-            {
-                var endpoint = endpoints[index];
-                candidates[index] = new SharpLinkEndpointCandidate(
-                    endpoint.Configuration.Endpoint,
-                    endpoint.ReadyConnectionCountProvider,
-                    endpoint.ActiveCallCountProvider,
-                    endpoint.Generation);
-            }
-            Volatile.Write(ref _readyEndpoints, endpoints);
-            Volatile.Write(ref _selectionSnapshot, new EndpointSelectionSnapshot(endpoints, candidates));
-            SharpLinkTelemetry.AddClientReadyEndpoints(endpoints.Length - _telemetryReadyEndpointCount);
-            _telemetryReadyEndpointCount = endpoints.Length;
-            if (endpoints.Length == 0)
-                _client.ResetReadySignal();
+            _client.PublishReadinessFacts(new ClientReadinessFacts(
+                ActiveEndpoints: _current.Length,
+                ReadyEndpoints: endpoints.Length,
+                ReadyConnections: readyConnections,
+                TargetReadyEndpoints: Math.Min(_client._maximumReadinessWaitThreshold, _current.Length)));
         }
 
         private int SelectEndpoint(EndpointState[] endpoints, SharpLinkEndpointCandidate[] candidates, ulong excluded)
@@ -1218,6 +1265,11 @@ internal sealed partial class SharpLinkClient
                 _telemetryActiveEndpointCount = 0;
                 _telemetryReadyEndpointCount = 0;
                 _telemetryDrainingEndpointCount = 0;
+                _client.PublishReadinessFacts(new ClientReadinessFacts(
+                    ActiveEndpoints: 0,
+                    ReadyEndpoints: 0,
+                    ReadyConnections: 0,
+                    TargetReadyEndpoints: 0));
             }
 
             if (Interlocked.Exchange(ref _resolverDisposed, 1) == 0)
