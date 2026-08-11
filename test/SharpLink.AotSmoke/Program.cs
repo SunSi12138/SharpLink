@@ -53,7 +53,7 @@ public static class Program
         if (role != "local")
             throw new ArgumentException($"Unsupported AOT smoke role '{role}'.");
 
-        var cts = new CancellationTokenSource();
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var runToken = cts.Token;
 
         var serverBuilder = SharpLinkServerBuilder.Create()
@@ -166,13 +166,14 @@ public static class Program
 
     private static async Task<int> RunClientOnlyAsync(string name)
     {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await using var client = SharpClientBuilder.Create()
             .UseSharedMemory(name)
             .UseRuntime(ConfigureCompression)
             .Build();
         try
         {
-            await VerifyClientAsync(client, CancellationToken.None).ConfigureAwait(false);
+            await VerifyClientAsync(client, timeout.Token).ConfigureAwait(false);
             Console.WriteLine("AOT_SMOKE_CLIENT_PASS");
             return 0;
         }
