@@ -38,10 +38,48 @@ public class GeneratedManifestCompatibilityTests
             "diagnostic should carry incoming and required Protocol versions");
         Ensure(error.Message.Contains(manifest.GeneratorVersion, StringComparison.Ordinal),
             "diagnostic should identify the incoming Generator");
+        Ensure(error.Message.Contains("Action: delete stale generated outputs", StringComparison.Ordinal) &&
+               error.Message.Contains("regenerate and rebuild", StringComparison.Ordinal) &&
+               error.Message.Contains("SharpLink SDK", StringComparison.Ordinal),
+            "diagnostic should provide an actionable regeneration and rebuild path");
         Ensure(error.IncomingAssembly == typeof(GeneratedManifestCompatibilityTests).Assembly.FullName,
             "diagnostic should identify the incoming owner assembly");
+        Ensure(error.IncomingLoadContext == SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(
+                   typeof(GeneratedManifestCompatibilityTests).Assembly),
+            "diagnostic should identify the incoming AssemblyLoadContext");
         Ensure(manifest.ShapeReads == 0,
             "unsupported API rejection must precede descriptor and Codec shape reads");
+    }
+
+    [Test]
+    public void ValidatorShouldRejectWrongProtocolBeforeReadingManifestShape()
+    {
+        var manifest = new ProbeManifest(
+            SharpLinkGeneratedManifestVersions.Api,
+            SharpLinkGeneratedManifestVersions.Protocol + 1,
+            typeof(GeneratedManifestCompatibilityTests).Assembly);
+
+        var error = SharpLinkGeneratedManifestCompatibility.Validate(
+            manifest,
+            typeof(GeneratedManifestCompatibilityTests).Assembly);
+
+        Ensure(error?.Code == SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+            "wrong Protocol should use the incompatible-manifest error code");
+        Ensure(error!.Message.Contains(
+                   $"API {SharpLinkGeneratedManifestVersions.Api}/{SharpLinkGeneratedManifestVersions.Api}",
+                   StringComparison.Ordinal) &&
+               error.Message.Contains(
+                   $"Protocol {manifest.ProtocolVersion}/{SharpLinkGeneratedManifestVersions.Protocol}",
+                   StringComparison.Ordinal) &&
+               error.Message.Contains(manifest.GeneratorVersion, StringComparison.Ordinal) &&
+               error.Message.Contains("regenerate and rebuild", StringComparison.Ordinal),
+            "wrong-Protocol diagnostic should carry both version axes, Generator, and action");
+        Ensure(error.IncomingAssembly == typeof(GeneratedManifestCompatibilityTests).Assembly.FullName &&
+               error.IncomingLoadContext == SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(
+                   typeof(GeneratedManifestCompatibilityTests).Assembly),
+            "wrong-Protocol diagnostic should carry Assembly and ALC identities");
+        Ensure(manifest.ShapeReads == 0,
+            "wrong Protocol rejection must precede descriptor and Codec shape reads");
     }
 
     [Test]
@@ -108,6 +146,15 @@ public class GeneratedManifestCompatibilityTests
         Ensure(failure is InvalidOperationException, "runtime build should reject the manifest");
         Ensure(failure!.Message.Contains("incompatible", StringComparison.OrdinalIgnoreCase),
             "runtime rejection should preserve the compatibility cause");
+        Ensure(failure.Message.Contains("regenerate and rebuild", StringComparison.Ordinal) &&
+               failure.Message.Contains(
+                   typeof(GeneratedManifestCompatibilityTests).Assembly.FullName!,
+                   StringComparison.Ordinal) &&
+               failure.Message.Contains(
+                   SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(
+                       typeof(GeneratedManifestCompatibilityTests).Assembly),
+                   StringComparison.Ordinal),
+            "runtime rejection should preserve the action, Assembly, and ALC fields");
         Ensure(manifest.ShapeReads == 0,
             "runtime rejection must precede Codec enumeration and adapter-scope creation");
     }

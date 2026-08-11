@@ -47,9 +47,10 @@ internal static class SharpLinkGeneratedManifestCompatibility
         {
             return Error(
                 SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
-                $"Manifest compatibility mismatch: API {apiVersion}/{SharpLinkGeneratedManifestVersions.Api}, " +
-                $"Protocol {protocolVersion}/{SharpLinkGeneratedManifestVersions.Protocol}, " +
-                $"Generator '{TryGetGeneratorVersion(manifest)}'.",
+                FormatVersionMismatch(
+                    apiVersion,
+                    protocolVersion,
+                    TryGetGeneratorVersion(manifest)),
                 expectedOwner ?? manifest.GetType().Assembly,
                 "Manifest");
         }
@@ -61,8 +62,24 @@ internal static class SharpLinkGeneratedManifestCompatibility
     {
         var error = Validate(manifest);
         if (error is not null)
-            throw new InvalidOperationException($"{error.Code}: {error.Message}");
+        {
+            throw new InvalidOperationException(
+                $"{error.Code}: {error.Message} " +
+                $"Assembly='{error.IncomingAssembly ?? "<unknown assembly>"}', " +
+                $"ALC='{error.IncomingLoadContext ?? "<unknown ALC>"}'.");
+        }
     }
+
+    internal static string FormatVersionMismatch(
+        int actualApiVersion,
+        int actualProtocolVersion,
+        string? generatorVersion)
+        => $"Manifest compatibility mismatch: " +
+           $"API {actualApiVersion}/{SharpLinkGeneratedManifestVersions.Api}, " +
+           $"Protocol {actualProtocolVersion}/{SharpLinkGeneratedManifestVersions.Protocol}, " +
+           $"Generator '{(string.IsNullOrWhiteSpace(generatorVersion) ? "<unknown>" : generatorVersion)}'. " +
+           "Action: delete stale generated outputs, then regenerate and rebuild this assembly " +
+           "with the SharpLink SDK version that matches the current Runtime.";
 
     private static SharpLinkAssemblyRegistrationError? ValidateShape(
         ISharpLinkGeneratedAssemblyManifest manifest,
