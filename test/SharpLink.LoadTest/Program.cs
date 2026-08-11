@@ -63,6 +63,7 @@ public static class Program
             $"payload={options.PayloadSize}B pool={options.MinConnections}/{options.MaxConnections} " +
             $"staticEndpoints={options.StaticEndpointCount} dynamicEndpoints={options.DynamicEndpointCount} dynamicResolver={options.UseDynamicResolver} lb={options.StaticLoadBalancingStrategy} " +
             $"profile={options.PerformanceProfile} requestTimeout={options.RequestTimeoutMode} " +
+            $"recording={options.RecordingMode} maximumSamples={options.MaximumRecordedOperations} " +
             $"admission={options.AdmissionMode} compression={options.CompressionAlgorithm}/{options.CompressionLevel} " +
             $"thresholds={options.CompressionMinimumPayloadBytes}B/{options.CompressionMinimumSavingsBytes}B/{options.CompressionMinimumSavingsRatio:P0} " +
             $"sendQueue={options.MaxSendQueueBytes?.ToString(CultureInfo.InvariantCulture) ?? "profile-default"}B " +
@@ -93,6 +94,7 @@ public static class Program
         Console.WriteLine("  --transport tcp|uds|namedpipe|anonymous|sharedmemory");
         Console.WriteLine("  --host 127.0.0.1 --bind-ip 0.0.0.0 --port 19100");
         Console.WriteLine("  --duration 20 --warmup 5 --concurrency 1,2,4,8,16,32");
+        Console.WriteLine("  --recording formal|diagnostic|off --maximum-recorded-operations 5000000");
         Console.WriteLine("  --operation empty|add|echo|oneway|yield|delay|hold --payload-size 64");
         Console.WriteLine("  --client-count 4 --concurrency-per-client 2048 --hold-duration 30 (hold only)");
         Console.WriteLine("  --max-concurrent-calls-per-connection 2048 --max-concurrent-calls-per-server 32768");
@@ -348,6 +350,7 @@ public static class Program
                     Console.WriteLine($"[Client] warmup {options.WarmupSeconds}s @ c={concurrency}");
                     _ = await ExecuteStageAsync(
                         rpc,
+                        options,
                         options.Operation,
                         options.PayloadSize,
                         options.PayloadPattern,
@@ -360,6 +363,7 @@ public static class Program
 
                 var result = await ExecuteStageAsync(
                     rpc,
+                    options,
                     options.Operation,
                     options.PayloadSize,
                     options.PayloadPattern,
@@ -397,6 +401,7 @@ public static class Program
 
     private static async Task<StageResult> ExecuteStageAsync(
         ILoadTestService rpc,
+        LoadTestOptions options,
         string operation,
         int payloadSize,
         string payloadPattern,
@@ -406,9 +411,12 @@ public static class Program
         bool retryOneWaySendQueueBackpressure,
         bool isWarmup)
     {
-        var histogram = new LatencyHistogram();
-        var realtimeHistogram = new LatencyHistogram(200_000);
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(durationSeconds));
+        var recordingMode = isWarmup ? "off" : options.RecordingMode;
+        var formalRecorder = recordingMode == "formal"
+            ? new StageLatencyRecorder(concurrency, options.MaximumRecordedOperations)
+            : null;
+        var realtimeHistogram = recordingMode == "diagnostic" ? new LatencyHistogram(200_000) : null;
+        using var cts = new CancellationTokenSource();
         var token = cts.Token;
         var failures = new FailureRecorder();
         long success = 0;
@@ -416,13 +424,15 @@ public static class Program
         long sendQueueBackpressureRetries = 0;
         long realtimeSuccess = 0;
         var workers = new Task[concurrency];
-        var stageTimer = Stopwatch.StartNew();
+        var stageTimer = new Stopwatch();
+        using var ready = new CountdownEvent(concurrency);
+        var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var evidenceBefore = s_evidenceCollector!.Capture();
         var lastRealtimeUpdate = stageTimer.Elapsed;
         var realtimeRef = realtimeHistogram;
 
         Task? realtimeReporter = null;
-        if (!isWarmup)
+        if (recordingMode == "diagnostic")
         {
             realtimeReporter = Task.Run(async () =>
             {
@@ -441,7 +451,7 @@ public static class Program
                     var windowSeconds = Math.Max(0.001, (now - lastRealtimeUpdate).TotalSeconds);
                     lastRealtimeUpdate = now;
                     var windowSuccess = Interlocked.Exchange(ref realtimeSuccess, 0);
-                    var windowHistogram = Interlocked.Exchange(ref realtimeRef, new LatencyHistogram(200_000));
+                    var windowHistogram = Interlocked.Exchange(ref realtimeRef, new LatencyHistogram(200_000))!;
 
                     metrics.UpdateRealtime(new RealtimeResult(
                         operation,
@@ -457,15 +467,18 @@ public static class Program
 
         for (var i = 0; i < workers.Length; i++)
         {
+            var workerRecorder = formalRecorder?.GetWorker(i);
             // StringCodec writes UTF-16 bytes; keep the requested business payload size exact.
             var echoPayload = operation == "echo"
                 ? CreateEchoPayload(payloadSize, payloadPattern, i)
                 : string.Empty;
             workers[i] = Task.Run(async () =>
             {
+                ready.Signal();
+                await startGate.Task.ConfigureAwait(false);
                 while (!token.IsCancellationRequested)
                 {
-                    var start = Stopwatch.GetTimestamp();
+                    var start = recordingMode == "off" ? 0 : Stopwatch.GetTimestamp();
                     while (!token.IsCancellationRequested)
                     {
                         try
@@ -495,15 +508,18 @@ public static class Program
                                 _ = await rpc.AddAsync(7, 9);
                             }
 
-                            var elapsedUs = Stopwatch.GetElapsedTime(start).TotalMilliseconds * 1000.0;
-                            histogram.Record(elapsedUs);
-                            Volatile.Read(ref realtimeRef).Record(elapsedUs);
+                            if (workerRecorder is not null)
+                                workerRecorder.RecordTicks(Stopwatch.GetTimestamp() - start);
+                            else if (realtimeRef is not null)
+                                Volatile.Read(ref realtimeRef)!.Record(Stopwatch.GetElapsedTime(start).TotalMilliseconds * 1000.0);
                             Interlocked.Increment(ref success);
                             Interlocked.Increment(ref realtimeSuccess);
                             break;
                         }
                         catch (Exception ex)
                         {
+                            if (ex is LatencyCapacityExceededException)
+                                throw;
                             if (token.IsCancellationRequested)
                                 break;
 
@@ -528,8 +544,13 @@ public static class Program
             }, CancellationToken.None);
         }
 
+        ready.Wait();
+        stageTimer.Start();
+        cts.CancelAfter(TimeSpan.FromSeconds(durationSeconds));
+        startGate.SetResult();
+
         var workersTask = Task.WhenAll(workers);
-        var gracefulStopTask = Task.Delay(TimeSpan.FromSeconds(durationSeconds + 5), CancellationToken.None);
+        var gracefulStopTask = Task.Delay(TimeSpan.FromSeconds(5), CancellationToken.None);
         var completed = await Task.WhenAny(workersTask, gracefulStopTask);
         if (completed != workersTask)
             throw new TimeoutException("Load test stage did not stop in grace window; possible in-flight RPC stall.");
@@ -538,7 +559,10 @@ public static class Program
         if (realtimeReporter is not null)
             await realtimeReporter;
 
-        var elapsedSeconds = Math.Max(0.001, stageTimer.Elapsed.TotalSeconds);
+        var elapsedSeconds = Math.Max(0.001, durationSeconds);
+        var drainDuration = stageTimer.Elapsed - TimeSpan.FromSeconds(durationSeconds);
+        if (drainDuration < TimeSpan.Zero)
+            drainDuration = TimeSpan.Zero;
         var qps = success / elapsedSeconds;
         var oneWayPayloadMegabytesPerSecond = operation == "echo"
             ? qps * payloadSize / (1024d * 1024d)
@@ -549,6 +573,7 @@ public static class Program
         var evidence = PerformanceEvidenceCollector.Delta(
             evidenceBefore,
             s_evidenceCollector.Capture());
+        var latency = formalRecorder?.Complete() ?? LatencyStatistics.Empty;
         var result = new StageResult(
             operation,
             concurrency,
@@ -558,16 +583,25 @@ public static class Program
             qps,
             oneWayPayloadMegabytesPerSecond,
             roundTripPayloadMegabytesPerSecond,
-            histogram.Percentile(50),
-            histogram.Percentile(95),
-            histogram.Percentile(99),
-            histogram.Percentile(99.9),
-            histogram.Average,
-            histogram.Min,
-            histogram.Max,
+            latency.P50Us,
+            latency.P95Us,
+            latency.P99Us,
+            latency.P999Us,
+            latency.AverageUs,
+            latency.MinUs,
+            latency.MaxUs,
             elapsedSeconds,
             errorRate,
             failures.Top(3),
+            recordingMode,
+            recordingMode == "formal" ? "worker-local-raw-v1" : recordingMode == "diagnostic" ? "legacy-histogram-v1" : "none",
+            Stopwatch.Frequency,
+            latency.Count,
+            formalRecorder?.MaximumTotalSamples ?? 0,
+            recordingMode == "formal",
+            options.WarmupSeconds,
+            durationSeconds,
+            drainDuration.TotalSeconds,
             evidence);
 
         if (!isWarmup)
@@ -670,6 +704,8 @@ public sealed class LoadTestOptions
     public bool DetailedSharedMemoryEvidence { get; private init; }
     public int DurationSeconds { get; private init; } = 20;
     public int WarmupSeconds { get; private init; } = 5;
+    public string RecordingMode { get; private init; } = "formal";
+    public int MaximumRecordedOperations { get; private init; } = 5_000_000;
     public int[] ConcurrencyConfig { get; private init; } = [1, 2, 4, 8, 16, 32];
     public string Operation { get; private init; } = "add";
     public int PayloadSize { get; private init; } = 64;
@@ -768,6 +804,14 @@ public sealed class LoadTestOptions
         if (operation is not ("empty" or "add" or "echo" or "oneway" or "yield" or "delay" or "hold"))
             throw new ArgumentException(
                 $"Unsupported operation: {operation}. Supported: empty, add, echo, oneway, yield, delay, hold.");
+        var recordingMode = map.GetValueOrDefault("recording", "formal").ToLowerInvariant();
+        if (recordingMode is not ("formal" or "diagnostic" or "off"))
+            throw new ArgumentException($"Unsupported recording mode: {recordingMode}.");
+        var maximumRecordedOperations = int.Parse(
+            map.GetValueOrDefault("maximum-recorded-operations", "5000000"),
+            CultureInfo.InvariantCulture);
+        if (maximumRecordedOperations <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maximumRecordedOperations));
 
         var profileText = map.GetValueOrDefault("profile", "balanced");
         var profile = profileText.ToLowerInvariant() switch
@@ -898,6 +942,8 @@ public sealed class LoadTestOptions
                                            bool.Parse(detailedEvidence),
             DurationSeconds = int.Parse(map.GetValueOrDefault("duration", "20")),
             WarmupSeconds = int.Parse(map.GetValueOrDefault("warmup", "5")),
+            RecordingMode = recordingMode,
+            MaximumRecordedOperations = maximumRecordedOperations,
             ConcurrencyConfig = concurrencyNum.Length == 0 ? [1] : concurrencyNum,
             Operation = operation,
             PayloadSize = int.Parse(map.GetValueOrDefault("payload-size", "64")),
@@ -956,6 +1002,15 @@ public sealed record StageResult(
     double ElapsedSeconds,
     double ErrorRatePercent,
     string TopFailures,
+    string RecorderMode,
+    string RecorderVersion,
+    long StopwatchFrequency,
+    int SampleCount,
+    int MaximumSampleCapacity,
+    bool FormalComparable,
+    double WarmupDurationSeconds,
+    double MeasurementDurationSeconds,
+    double DrainDurationSeconds,
     PerformanceStageEvidence Evidence);
 
 public sealed record RealtimeResult(

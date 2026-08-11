@@ -243,3 +243,22 @@ StreamLoadTest 专有：
 - `sharplink_load_test_stage_latency_us{concurrency,operation,quantile}`
 - `sharplink_load_test_realtime_qps{concurrency,operation}`
 - `sharplink_load_test_realtime_latency_us{concurrency,operation,quantile}`
+# Formal latency recording
+
+Unary load tests default to `--recording formal`. Formal recording preallocates a
+bounded raw-tick buffer across all workers, gives each worker an exclusive slice,
+and performs merge, sorting, tick conversion, and exact nearest-rank percentile
+calculation only after every in-flight operation has drained. Use
+`--maximum-recorded-operations N` to set the hard per-stage sample bound. Reaching
+the bound invalidates the run rather than silently dropping or clamping samples.
+
+Use `--recording off` for the recorder-overhead control. This path neither
+allocates sample buffers nor reads the latency timestamp for each request. Use
+`--recording diagnostic` only for live Prometheus latency reporting; diagnostic
+runs use the legacy shared histogram and are marked `formalComparable=false`.
+Formal mode deliberately does not start that realtime reporter.
+
+Performance evidence schema version 2 records the recorder mode and version,
+stopwatch frequency, sample count and capacity, warmup/measurement/drain timing,
+and formal-comparability marker. Schema version 1 and version 2 reports must not
+be used in a direct percentage comparison.
