@@ -40,10 +40,12 @@ public class DispatcherPoolAllocationBenchmarks
 
     private static readonly PoolItemCodec SCodec = new();
 
-    private Barrier? _barrier;
+    private readonly object _commandLock = new();
+    private CountdownEvent? _commandCompleted;
     private Thread[] _workers = [];
     private ExceptionDispatchInfo? _workerFailure;
     private int _command;
+    private int _commandGeneration;
     private int _completedOperations;
 
     /// <summary>Number of dispatchers returned to the pool before worker-held leases are rented.</summary>
@@ -60,7 +62,7 @@ public class DispatcherPoolAllocationBenchmarks
         if (TotalOperations % WorkerCount != 0)
             throw new InvalidOperationException("Total operations must divide evenly across pool workers.");
 
-        _barrier = new Barrier(WorkerCount + 1);
+        _commandCompleted = new CountdownEvent(WorkerCount);
         _workers = new Thread[WorkerCount];
         for (var worker = 0; worker < _workers.Length; worker++)
         {
@@ -85,7 +87,7 @@ public class DispatcherPoolAllocationBenchmarks
         {
             foreach (var worker in _workers)
                 worker.Join();
-            _barrier?.Dispose();
+            _commandCompleted?.Dispose();
             PooledAsyncStreamDispatcher<PoolItem>.ClearPoolForTests();
         }
     }
@@ -175,10 +177,19 @@ public class DispatcherPoolAllocationBenchmarks
         if (throwOnFailure)
             ThrowIfWorkerFailed();
 
-        Volatile.Write(ref _command, (int)command);
-        var barrier = _barrier ?? throw new InvalidOperationException("Pool benchmark was not initialized.");
-        barrier.SignalAndWait();
-        barrier.SignalAndWait();
+        var commandCompleted = _commandCompleted ??
+            throw new InvalidOperationException("Pool benchmark was not initialized.");
+        lock (_commandLock)
+        {
+            // Keep the 128 workers out of Barrier's simultaneous phase-transition path. The
+            // generation makes a command observable even when a worker has not started waiting
+            // yet, while the reusable countdown preserves one completion from every worker.
+            commandCompleted.Reset(WorkerCount);
+            _command = (int)command;
+            _commandGeneration++;
+            Monitor.PulseAll(_commandLock);
+        }
+        commandCompleted.Wait();
 
         if (throwOnFailure)
             ThrowIfWorkerFailed();
@@ -187,65 +198,70 @@ public class DispatcherPoolAllocationBenchmarks
     private void WorkerLoop()
     {
         PooledAsyncStreamDispatcher<PoolItem>? heldDispatcher = null;
-        try
+        var observedGeneration = 0;
+        while (true)
         {
-            while (true)
+            WorkerCommand command;
+            lock (_commandLock)
             {
-                var barrier = _barrier ?? throw new InvalidOperationException("Pool benchmark barrier is unavailable.");
-                barrier.SignalAndWait();
-
-                var shouldStop = false;
-                try
-                {
-                    switch ((WorkerCommand)Volatile.Read(ref _command))
-                    {
-                        case WorkerCommand.Prepare:
-                            if (heldDispatcher is not null)
-                                throw new InvalidOperationException("Worker already holds a dispatcher.");
-                            heldDispatcher = PooledAsyncStreamDispatcher<PoolItem>.Rent(default, SCodec);
-                            break;
-                        case WorkerCommand.Run:
-                            for (var operation = 0; operation < TotalOperations / WorkerCount; operation++)
-                            {
-                                Return(heldDispatcher ?? throw new InvalidOperationException(
-                                    "Worker has no dispatcher to return."));
-                                heldDispatcher = PooledAsyncStreamDispatcher<PoolItem>.Rent(default, SCodec);
-                            }
-                            Interlocked.Add(ref _completedOperations, TotalOperations / WorkerCount);
-                            break;
-                        case WorkerCommand.Release:
-                            if (heldDispatcher is not null)
-                            {
-                                Return(heldDispatcher);
-                                heldDispatcher = null;
-                            }
-                            break;
-                        case WorkerCommand.Stop:
-                            if (heldDispatcher is not null)
-                                Return(heldDispatcher);
-                            heldDispatcher = null;
-                            shouldStop = true;
-                            break;
-                        default:
-                            throw new InvalidOperationException("Pool worker received no command.");
-                    }
-                }
-                catch (Exception exception)
-                {
-                    Interlocked.CompareExchange(
-                        ref _workerFailure,
-                        ExceptionDispatchInfo.Capture(exception),
-                        null);
-                }
-
-                barrier.SignalAndWait();
-                if (shouldStop)
-                    return;
+                while (observedGeneration == _commandGeneration)
+                    Monitor.Wait(_commandLock);
+                observedGeneration = _commandGeneration;
+                command = (WorkerCommand)_command;
             }
-        }
-        catch (Exception exception)
-        {
-            Interlocked.CompareExchange(ref _workerFailure, ExceptionDispatchInfo.Capture(exception), null);
+
+            var shouldStop = false;
+            try
+            {
+                switch (command)
+                {
+                    case WorkerCommand.Prepare:
+                        if (heldDispatcher is not null)
+                            throw new InvalidOperationException("Worker already holds a dispatcher.");
+                        heldDispatcher = PooledAsyncStreamDispatcher<PoolItem>.Rent(default, SCodec);
+                        break;
+                    case WorkerCommand.Run:
+                        for (var operation = 0; operation < TotalOperations / WorkerCount; operation++)
+                        {
+                            Return(heldDispatcher ?? throw new InvalidOperationException(
+                                "Worker has no dispatcher to return."));
+                            heldDispatcher = PooledAsyncStreamDispatcher<PoolItem>.Rent(default, SCodec);
+                        }
+                        Interlocked.Add(ref _completedOperations, TotalOperations / WorkerCount);
+                        break;
+                    case WorkerCommand.Release:
+                        if (heldDispatcher is not null)
+                        {
+                            Return(heldDispatcher);
+                            heldDispatcher = null;
+                        }
+                        break;
+                    case WorkerCommand.Stop:
+                        if (heldDispatcher is not null)
+                            Return(heldDispatcher);
+                        heldDispatcher = null;
+                        shouldStop = true;
+                        break;
+                    default:
+                        throw new InvalidOperationException("Pool worker received no command.");
+                }
+            }
+            catch (Exception exception)
+            {
+                Interlocked.CompareExchange(
+                    ref _workerFailure,
+                    ExceptionDispatchInfo.Capture(exception),
+                    null);
+            }
+            finally
+            {
+                // A managed worker failure must not strand the controller or the remaining
+                // workers; ExecuteCommand reports the captured exception after all acknowledge.
+                _commandCompleted?.Signal();
+            }
+
+            if (shouldStop)
+                return;
         }
     }
 
