@@ -13,7 +13,6 @@ public sealed class StageLatencyRecorder
     public const string Version = "worker-local-raw-v1";
 
     private readonly WorkerLatencyRecorder[] _workers;
-    private readonly long[] _samples;
     private readonly long _stopwatchFrequency;
 
     public StageLatencyRecorder(
@@ -36,16 +35,13 @@ public sealed class StageLatencyRecorder
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_stopwatchFrequency);
 
         MaximumTotalSamples = maximumTotalSamples;
-        _samples = GC.AllocateUninitializedArray<long>(maximumTotalSamples);
         _workers = new WorkerLatencyRecorder[workerCount];
         var baseCapacity = maximumTotalSamples / workerCount;
         var extraCapacity = maximumTotalSamples % workerCount;
-        var offset = 0;
         for (var worker = 0; worker < workerCount; worker++)
         {
             var capacity = baseCapacity + (worker < extraCapacity ? 1 : 0);
-            _workers[worker] = new WorkerLatencyRecorder(worker, _samples, offset, capacity);
-            offset += capacity;
+            _workers[worker] = new WorkerLatencyRecorder(worker, capacity);
         }
     }
 
@@ -67,27 +63,28 @@ public sealed class StageLatencyRecorder
         if (total == 0)
             return LatencyStatistics.Empty;
 
+        var samples = new long[total];
         var destination = 0;
         foreach (var worker in _workers)
         {
-            worker.CopyTo(_samples.AsSpan(destination, worker.Count));
+            worker.CopyTo(samples.AsSpan(destination, worker.Count));
             destination += worker.Count;
         }
 
-        Array.Sort(_samples, 0, total);
+        Array.Sort(samples);
         var sum = 0d;
-        for (var index = 0; index < total; index++)
-            sum += TicksToMicroseconds(_samples[index]);
+        foreach (var ticks in samples)
+            sum += TicksToMicroseconds(ticks);
 
         return new LatencyStatistics(
             total,
-            TicksToMicroseconds(_samples[0]),
-            TicksToMicroseconds(_samples[total - 1]),
+            TicksToMicroseconds(samples[0]),
+            TicksToMicroseconds(samples[^1]),
             sum / total,
-            Percentile(_samples, total, 50),
-            Percentile(_samples, total, 95),
-            Percentile(_samples, total, 99),
-            Percentile(_samples, total, 99.9));
+            Percentile(samples, 50),
+            Percentile(samples, 95),
+            Percentile(samples, 99),
+            Percentile(samples, 99.9));
     }
 
     public double TicksToMicroseconds(long ticks)
@@ -96,11 +93,11 @@ public sealed class StageLatencyRecorder
         return ticks * 1_000_000d / _stopwatchFrequency;
     }
 
-    private double Percentile(long[] sortedSamples, int count, double percentile)
+    private double Percentile(long[] sortedSamples, double percentile)
     {
         var rank = decimal.ToInt32(decimal.Ceiling(
-            count * ((decimal)percentile / 100m)));
-        var index = Math.Clamp(rank - 1, 0, count - 1);
+            sortedSamples.Length * ((decimal)percentile / 100m)));
+        var index = Math.Clamp(rank - 1, 0, sortedSamples.Length - 1);
         return TicksToMicroseconds(sortedSamples[index]);
     }
 }
@@ -110,19 +107,15 @@ public sealed class WorkerLatencyRecorder
 {
     private readonly int _workerIndex;
     private readonly long[] _elapsedTicks;
-    private readonly int _offset;
-    private readonly int _capacity;
     private int _count;
 
-    internal WorkerLatencyRecorder(int workerIndex, long[] elapsedTicks, int offset, int capacity)
+    internal WorkerLatencyRecorder(int workerIndex, int capacity)
     {
         _workerIndex = workerIndex;
-        _elapsedTicks = elapsedTicks;
-        _offset = offset;
-        _capacity = capacity;
+        _elapsedTicks = GC.AllocateUninitializedArray<long>(capacity);
     }
 
-    public int Capacity => _capacity;
+    public int Capacity => _elapsedTicks.Length;
 
     public int Count => _count;
 
@@ -136,20 +129,20 @@ public sealed class WorkerLatencyRecorder
         }
 
         ArgumentOutOfRangeException.ThrowIfNegative(elapsedTicks);
-        if (_count >= _capacity)
+        if (_count >= _elapsedTicks.Length)
         {
             throw new LatencySampleCapacityExceededException(
-                $"Formal latency sample capacity {_capacity} was exhausted for worker {_workerIndex}; the run is invalid.");
+                $"Formal latency sample capacity {_elapsedTicks.Length} was exhausted for worker {_workerIndex}; the run is invalid.");
         }
 
-        _elapsedTicks[_offset + _count++] = elapsedTicks;
+        _elapsedTicks[_count++] = elapsedTicks;
     }
 
     internal void CopyTo(Span<long> destination)
     {
         if (destination.Length != _count)
             throw new ArgumentException("Destination length must equal the recorded sample count.", nameof(destination));
-        _elapsedTicks.AsSpan(_offset, _count).CopyTo(destination);
+        _elapsedTicks.AsSpan(0, _count).CopyTo(destination);
     }
 }
 

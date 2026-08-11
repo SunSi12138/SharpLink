@@ -21,9 +21,9 @@ exhaustion or drain timeout fails the run; samples are never clamped or silently
 dropped. Throughput uses only `measurementDuration`, while in-flight operations
 complete during the separately reported bounded `drainDuration`.
 
-The default formal hard bound is 30,000,000 samples for both runners. Worker
-recorders own disjoint slices of one preallocated backing array, so post-drain
-compaction and sorting do not allocate a second maximum-sized sample buffer.
+The default formal hard bound is 30,000,000 samples for both runners. Each
+worker owns its own preallocated buffer. The merged sort buffer is allocated
+only after measurement and drain, so it cannot perturb workload timing.
 
 Schema 2 records `sourceCommit`, `recorderMode`, `recorderVersion`,
 `stopwatchFrequency`, `warmupDuration`, `measurementDuration`, `drainDuration`,
