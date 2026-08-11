@@ -19,7 +19,8 @@ public static class PerformanceReportWriter
         string workload,
         TConfiguration configuration,
         IReadOnlyList<TResult> results,
-        JsonSerializerContext serializerContext)
+        JsonSerializerContext serializerContext,
+        int schemaVersion = 1)
     {
         if (string.IsNullOrWhiteSpace(path))
             return;
@@ -30,7 +31,7 @@ public static class PerformanceReportWriter
             Directory.CreateDirectory(directory);
 
         var report = new PerformanceReport<TConfiguration, TResult>(
-            2,
+            schemaVersion,
             workload,
             DateTimeOffset.UtcNow,
             ReadCommit(),

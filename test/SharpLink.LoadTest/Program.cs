@@ -311,7 +311,8 @@ public static class Program
                 "SharpLink.LoadTest.HoldCapacity",
                 options,
                 [result],
-                LoadTestJsonContext.Default);
+                LoadTestJsonContext.Default,
+                schemaVersion: 2);
             return;
         }
 
@@ -376,8 +377,7 @@ public static class Program
                 Console.WriteLine(
                     $"[Result] op={result.Operation} c={result.Concurrency} qps={result.Qps:F2} ok={result.Success} fail={result.Failure} " +
                     $"sendQueueRetries={result.SendQueueBackpressureRetries} " +
-                    $"err={result.ErrorRatePercent:F2}% p50={result.P50Us:F2}us p95={result.P95Us:F2}us p99={result.P99Us:F2}us p999={result.P999Us:F2}us " +
-                    $"avg={result.AvgUs:F2}us min={result.MinUs:F2}us max={result.MaxUs:F2}us dur={result.ElapsedSeconds:F2}s " +
+                    $"err={result.ErrorRatePercent:F2}% formalLatency={FormatFormalLatency(result)} " +
                     $"payload={result.OneWayPayloadMegabytesPerSecond:F2}/{result.RoundTripPayloadMegabytesPerSecond:F2} MiB/s(one-way/round-trip)");
 
                 if (!string.IsNullOrEmpty(result.TopFailures))
@@ -390,7 +390,8 @@ public static class Program
                 "SharpLink.LoadTest",
                 options,
                 results,
-                LoadTestJsonContext.Default);
+                LoadTestJsonContext.Default,
+                schemaVersion: 2);
         }
         finally
         {
@@ -421,6 +422,7 @@ public static class Program
         var failures = new FailureRecorder();
         long success = 0;
         long failure = 0;
+        long operationsStartedDuringMeasurement = 0;
         long sendQueueBackpressureRetries = 0;
         long realtimeSuccess = 0;
         var workers = new Task[concurrency];
@@ -478,8 +480,9 @@ public static class Program
                 await startGate.Task.ConfigureAwait(false);
                 while (!token.IsCancellationRequested)
                 {
+                    Interlocked.Increment(ref operationsStartedDuringMeasurement);
                     var start = recordingMode == "off" ? 0 : Stopwatch.GetTimestamp();
-                    while (!token.IsCancellationRequested)
+                    while (true)
                     {
                         try
                         {
@@ -520,9 +523,6 @@ public static class Program
                         {
                             if (ex is LatencyCapacityExceededException)
                                 throw;
-                            if (token.IsCancellationRequested)
-                                break;
-
                             if (ShouldRetryOneWaySendQueueBackpressure(
                                     retryOneWaySendQueueBackpressure,
                                     operation,
@@ -546,10 +546,15 @@ public static class Program
 
         ready.Wait();
         stageTimer.Start();
-        cts.CancelAfter(TimeSpan.FromSeconds(durationSeconds));
+        var measurementStartTimestamp = Stopwatch.GetTimestamp();
         startGate.SetResult();
 
+        await Task.Delay(TimeSpan.FromSeconds(durationSeconds), CancellationToken.None);
+        var measurementEndTimestamp = Stopwatch.GetTimestamp();
+        cts.Cancel();
+
         var workersTask = Task.WhenAll(workers);
+        // The grace period starts only after admission of new operations has stopped.
         var gracefulStopTask = Task.Delay(TimeSpan.FromSeconds(5), CancellationToken.None);
         var completed = await Task.WhenAny(workersTask, gracefulStopTask);
         if (completed != workersTask)
@@ -559,10 +564,11 @@ public static class Program
         if (realtimeReporter is not null)
             await realtimeReporter;
 
-        var elapsedSeconds = Math.Max(0.001, durationSeconds);
-        var drainDuration = stageTimer.Elapsed - TimeSpan.FromSeconds(durationSeconds);
-        if (drainDuration < TimeSpan.Zero)
-            drainDuration = TimeSpan.Zero;
+        var drainEndTimestamp = Stopwatch.GetTimestamp();
+        var elapsedSeconds = Math.Max(
+            0.001,
+            Stopwatch.GetElapsedTime(measurementStartTimestamp, measurementEndTimestamp).TotalSeconds);
+        var drainDuration = Stopwatch.GetElapsedTime(measurementEndTimestamp, drainEndTimestamp);
         var qps = success / elapsedSeconds;
         var oneWayPayloadMegabytesPerSecond = operation == "echo"
             ? qps * payloadSize / (1024d * 1024d)
@@ -573,7 +579,9 @@ public static class Program
         var evidence = PerformanceEvidenceCollector.Delta(
             evidenceBefore,
             s_evidenceCollector.Capture());
-        var latency = formalRecorder?.Complete() ?? LatencyStatistics.Empty;
+        LatencyStatistics? latency = formalRecorder?.Complete();
+        if (latency is { Count: 0 })
+            latency = null;
         var result = new StageResult(
             operation,
             concurrency,
@@ -583,25 +591,27 @@ public static class Program
             qps,
             oneWayPayloadMegabytesPerSecond,
             roundTripPayloadMegabytesPerSecond,
-            latency.P50Us,
-            latency.P95Us,
-            latency.P99Us,
-            latency.P999Us,
-            latency.AverageUs,
-            latency.MinUs,
-            latency.MaxUs,
+            latency?.P50Us,
+            latency?.P95Us,
+            latency?.P99Us,
+            latency?.P999Us,
+            latency?.AverageUs,
+            latency?.MinUs,
+            latency?.MaxUs,
             elapsedSeconds,
             errorRate,
             failures.Top(3),
             recordingMode,
             recordingMode == "formal" ? "worker-local-raw-v1" : recordingMode == "diagnostic" ? "legacy-histogram-v1" : "none",
             Stopwatch.Frequency,
-            latency.Count,
+            latency?.Count ?? 0,
             formalRecorder?.MaximumTotalSamples ?? 0,
             recordingMode == "formal",
             options.WarmupSeconds,
-            durationSeconds,
+            elapsedSeconds,
             drainDuration.TotalSeconds,
+            operationsStartedDuringMeasurement,
+            success + failure,
             evidence);
 
         if (!isWarmup)
@@ -626,6 +636,12 @@ public static class Program
                Message: var message
            } &&
            message.Contains("(send_queue_capacity)", StringComparison.Ordinal);
+
+    private static string FormatFormalLatency(StageResult result)
+        => result.P50Us is null
+            ? "unavailable"
+            : $"p50={result.P50Us:F2}us p95={result.P95Us:F2}us p99={result.P99Us:F2}us " +
+              $"p999={result.P999Us:F2}us avg={result.AvgUs:F2}us min={result.MinUs:F2}us max={result.MaxUs:F2}us";
 
     private static SharpLinkServerBuilder ConfigureServer(
         SharpLinkServerBuilder builder,
@@ -992,13 +1008,13 @@ public sealed record StageResult(
     double Qps,
     double OneWayPayloadMegabytesPerSecond,
     double RoundTripPayloadMegabytesPerSecond,
-    double P50Us,
-    double P95Us,
-    double P99Us,
-    double P999Us,
-    double AvgUs,
-    double MinUs,
-    double MaxUs,
+    double? P50Us,
+    double? P95Us,
+    double? P99Us,
+    double? P999Us,
+    double? AvgUs,
+    double? MinUs,
+    double? MaxUs,
     double ElapsedSeconds,
     double ErrorRatePercent,
     string TopFailures,
@@ -1011,6 +1027,8 @@ public sealed record StageResult(
     double WarmupDurationSeconds,
     double MeasurementDurationSeconds,
     double DrainDurationSeconds,
+    long OperationsStartedDuringMeasurement,
+    long OperationsCompletedDuringMeasurementOrDrain,
     PerformanceStageEvidence Evidence);
 
 public sealed record RealtimeResult(
@@ -1181,16 +1199,20 @@ internal sealed class MetricsRegistry
             $"sharplink_load_test_total_send_queue_backpressure_retries {Interlocked.Read(ref _totalSendQueueBackpressureRetries)}");
         sb.AppendLine("# TYPE sharplink_load_test_stage_qps gauge");
         sb.AppendLine("# TYPE sharplink_load_test_stage_error_rate_percent gauge");
-        sb.AppendLine("# TYPE sharplink_load_test_stage_latency_us gauge");
+        if (_stageByConcurrency.Values.Any(static result => result.P50Us.HasValue))
+            sb.AppendLine("# TYPE sharplink_load_test_stage_latency_us gauge");
         foreach (var (concurrency, result) in _stageByConcurrency.OrderBy(x => x.Key))
         {
             sb.AppendLine($"sharplink_load_test_stage_qps{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\"}} {result.Qps:F2}");
             sb.AppendLine($"sharplink_load_test_stage_error_rate_percent{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\"}} {result.ErrorRatePercent:F2}");
-            sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.50\"}} {result.P50Us:F2}");
-            sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.95\"}} {result.P95Us:F2}");
-            sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.99\"}} {result.P99Us:F2}");
-            sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.999\"}} {result.P999Us:F2}");
-            sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"avg\"}} {result.AvgUs:F2}");
+            if (result.P50Us.HasValue)
+            {
+                sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.50\"}} {result.P50Us:F2}");
+                sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.95\"}} {result.P95Us:F2}");
+                sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.99\"}} {result.P99Us:F2}");
+                sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"0.999\"}} {result.P999Us:F2}");
+                sb.AppendLine($"sharplink_load_test_stage_latency_us{{concurrency=\"{concurrency}\",operation=\"{result.Operation}\",quantile=\"avg\"}} {result.AvgUs:F2}");
+            }
         }
 
         sb.AppendLine("# TYPE sharplink_load_test_realtime_qps gauge");

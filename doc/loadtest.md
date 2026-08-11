@@ -258,7 +258,11 @@ allocates sample buffers nor reads the latency timestamp for each request. Use
 runs use the legacy shared histogram and are marked `formalComparable=false`.
 Formal mode deliberately does not start that realtime reporter.
 
-Performance evidence schema version 2 records the recorder mode and version,
-stopwatch frequency, sample count and capacity, warmup/measurement/drain timing,
-and formal-comparability marker. Schema version 1 and version 2 reports must not
-be used in a direct percentage comparison.
+Unary `SharpLink.LoadTest` evidence schema version 2 records the recorder mode
+and version, stopwatch frequency, sample count and capacity, actual observed
+measurement/drain timing, admitted-operation and completed-operation counts, and
+the formal-comparability marker. Off and diagnostic reports omit formal latency
+fields and stage-latency gauges rather than representing unavailable latency as
+zero. `SharpLink.StreamLoadTest` remains schema version 1 until its measurement
+semantics are migrated. Schema version 1 and version 2 reports must not be used
+in a direct percentage comparison.
