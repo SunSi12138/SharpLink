@@ -10,11 +10,7 @@ public class SharpLinkClientTimeoutTests
     public async Task InvokeWithTimeoutNoPayloadAsyncShouldTimeoutAndSendCancel()
     {
         var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
-        await using var client = new SharpLinkClient(
-            transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false));
+        await using var client = ClientBuilderTestHelper.Build(transport);
 
         await client.ConnectAsync();
 
@@ -35,12 +31,9 @@ public class SharpLinkClientTimeoutTests
     public async Task InvokeCancellableNoPayloadAsyncTimeoutAndUserCancelShouldSendSingleCancel()
     {
         var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
-        await using var client = new SharpLinkClient(
+        await using var client = ClientBuilderTestHelper.Build(
             transport,
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false),
-            TimeSpan.FromSeconds(1));
+            builder => builder.UseRequestTimeout(TimeSpan.FromSeconds(1)));
 
         await client.ConnectAsync();
 

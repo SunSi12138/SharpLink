@@ -15,7 +15,7 @@ namespace SharpLink.UnitTests.Builder;
 public class BuilderOwnershipRollbackTests
 {
     [Test]
-    public void DirectClientProfileFailureShouldDisposeTransportAndPreserveBothFailures()
+    public void ClientProfileFailureShouldDisposeTransportAndPreserveBothFailures()
     {
         var transport = new TrackingClientTransport(
             bindingFailure: "direct Client profile binding failed",
@@ -33,7 +33,7 @@ public class BuilderOwnershipRollbackTests
     }
 
     [Test]
-    public void DirectClientConstructionFailureShouldDisposeTransportAndPreserveBothFailures()
+    public void ClientFinalMaterializationFailureShouldDisposeTransportAndPreserveBothFailures()
     {
         var transport = new TrackingClientTransport(
             bindingFailure: null,
@@ -46,7 +46,7 @@ public class BuilderOwnershipRollbackTests
             .Build());
 
         Ensure(Contains(failure, "direct Client logger construction failed"),
-            "direct Client build retains constructor failure");
+            "Client build retains final materialization failure");
         Ensure(Contains(failure, "direct Client construction transport cleanup failed"),
             "direct Client construction retains transport cleanup failure");
         Ensure(transport.DisposeCount == 1, "failed direct Client construction disposes its transport once");
@@ -139,7 +139,7 @@ public class BuilderOwnershipRollbackTests
     }
 
     [Test]
-    public void ClientConstructionFailureMustNotDisposeCallerProvidedCodec()
+    public void ClientFinalMaterializationFailureMustNotDisposeCallerProvidedCodec()
     {
         var transport = new TrackingClientTransport(bindingFailure: null, cleanupFailure: null);
         var codec = new TrackingCodec();
@@ -209,7 +209,7 @@ public class BuilderOwnershipRollbackTests
     }
 
     [Test]
-    public void ServerConstructorFailureShouldDisposeRuntimeContextAndPreserveBothFailures()
+    public void ServerFinalMaterializationFailureShouldDisposeRuntimeContextAndPreserveBothFailures()
     {
         RollbackState.TestIsolation.Wait();
         try
@@ -224,12 +224,12 @@ public class BuilderOwnershipRollbackTests
                     .Build());
 
                 Ensure(Contains(failure, "Server logger construction failed"),
-                    "Server build retains constructor failure");
+                    "Server build retains final materialization failure");
                 Ensure(Contains(failure, "rollback Adapter scope cleanup failed"),
-                    "Server constructor rollback retains Runtime Context cleanup failure");
+                    "Server final materialization rollback retains Runtime Context cleanup failure");
                 Ensure(Contains(failure, "Server transport cleanup failed"),
-                    "Server constructor rollback retains transport cleanup failure");
-                Ensure(RollbackState.ScopeDisposeCount == 1, "Server constructor rollback disposes Context once");
+                    "Server final materialization rollback retains transport cleanup failure");
+                Ensure(RollbackState.ScopeDisposeCount == 1, "Server final materialization rollback disposes Context once");
                 Ensure(transport.DisposeCount == 1, "failed Server build disposes its listener once");
                 Ensure(logger.DisposeCount == 0, "Server build failure must not dispose the caller logger factory");
             });

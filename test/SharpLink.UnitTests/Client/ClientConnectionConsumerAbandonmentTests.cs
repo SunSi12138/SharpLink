@@ -14,13 +14,8 @@ public class ClientConnectionConsumerAbandonmentTests
     [NotInParallel]
     public async Task ConsumerAbandonmentShouldEnqueueFinalCreditBeforeCancelAfterDetach()
     {
-        using var runtimeContext = new SharpLinkRuntimeContextBuilder().Build(
-            includeGeneratedAssemblyCatalog: false);
-        await using var owner = new SharpLinkClient(
-            new TestClientTransportFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            runtimeContext);
+        await using var owner = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
+        var runtimeContext = (SharpLinkRuntimeContext)owner.RuntimeContext;
         var input = new Pipe();
         var output = new Pipe();
         await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
@@ -89,13 +84,8 @@ public class ClientConnectionConsumerAbandonmentTests
     [NotInParallel]
     public async Task SessionDisconnectShouldCancelDetachWaitWithoutSendingCancel()
     {
-        using var runtimeContext = new SharpLinkRuntimeContextBuilder().Build(
-            includeGeneratedAssemblyCatalog: false);
-        await using var owner = new SharpLinkClient(
-            new TestClientTransportFactory(),
-            TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(30),
-            runtimeContext);
+        await using var owner = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
+        var runtimeContext = (SharpLinkRuntimeContext)owner.RuntimeContext;
         var input = new Pipe();
         var output = new Pipe();
         await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(

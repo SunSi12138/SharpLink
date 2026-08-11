@@ -43,7 +43,7 @@ internal sealed partial class SharpLinkServer
                 ITransportConnection? connection = null;
                 try
                 {
-                    connection = await transportListener.AcceptAsync(acceptToken).ConfigureAwait(false);
+                    connection = await _transportListener.AcceptAsync(acceptToken).ConfigureAwait(false);
                     TrackFrameworkTask(
                         HandleAcceptedConnectionAsync(connection, _forceStopCts.Token),
                         "AcceptedConnectionSession");
