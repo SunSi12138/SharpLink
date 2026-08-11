@@ -9,7 +9,26 @@ WARMUP_SECONDS="${SHARPLINK_RECORDER_WARMUP_SECONDS:-5}"
 MEASUREMENT_SECONDS="${SHARPLINK_RECORDER_MEASUREMENT_SECONDS:-10}"
 MAXIMUM_SAMPLES="${SHARPLINK_RECORDER_MAXIMUM_SAMPLES:-25000000}"
 MICRO_RECORDS="${SHARPLINK_RECORDER_MICRO_RECORDS:-1000000}"
-SOURCE_COMMIT="${SHARPLINK_COMMIT:-$(git -C "$ROOT" rev-parse HEAD)}"
+HEAD_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+
+if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=normal)" ]]; then
+  echo "Performance evidence requires a clean working tree." >&2
+  exit 2
+fi
+
+if [[ -n "${SHARPLINK_COMMIT:-}" ]]; then
+  if ! SOURCE_COMMIT="$(git -C "$ROOT" rev-parse --verify "${SHARPLINK_COMMIT}^{commit}" 2>/dev/null)"; then
+    echo "SHARPLINK_COMMIT does not resolve to a commit: $SHARPLINK_COMMIT" >&2
+    exit 2
+  fi
+else
+  SOURCE_COMMIT="$HEAD_COMMIT"
+fi
+
+if [[ "$SOURCE_COMMIT" != "$HEAD_COMMIT" ]]; then
+  echo "SHARPLINK_COMMIT must identify the checked-out HEAD: $HEAD_COMMIT" >&2
+  exit 2
+fi
 
 if (( RUNS < 5 )); then
   echo "SHARPLINK_RECORDER_RUNS must be at least 5 for a formal gate." >&2
@@ -163,5 +182,11 @@ for transport in tcp sharedmemory; do
       --concurrency 1,8,32,128 --recording formal
   done
 done
+
+dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj \
+  -c Release --no-build -- \
+  --validate-performance-reports "$SOURCE_COMMIT" \
+  "$OUTPUT_ROOT/report-validation.json" "$OUTPUT_ROOT/matrix" "$OUTPUT_ROOT/stream" \
+  > "$OUTPUT_ROOT/report-validation.stdout"
 
 printf 'Latency recorder baseline complete: %s\n' "$OUTPUT_ROOT"

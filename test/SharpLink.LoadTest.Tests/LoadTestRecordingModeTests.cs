@@ -47,6 +47,26 @@ public class LoadTestRecordingModeTests
     }
 
     [Test]
+    public void TailObserverShouldRejectStaticAndDynamicEndpointTopologies()
+    {
+        foreach (var topologyOption in new[] { "--static-endpoints", "--dynamic-endpoints" })
+        {
+            var failure = CaptureFailure(() => LoadTestOptions.Parse([
+                "--operation", "add",
+                "--tail-observer",
+                topologyOption, "4"
+            ]));
+            Ensure(failure is ArgumentException &&
+                   failure.Message.Contains("fixed TCP endpoint", StringComparison.Ordinal),
+                $"{topologyOption} cannot make the observer connect to an unresolved/default port");
+        }
+
+        var topologyWithoutObserver = LoadTestOptions.Parse(["--static-endpoints", "4"]);
+        Ensure(topologyWithoutObserver.UseStaticEndpoints,
+            "the topology workload itself remains supported when no tail observer is requested");
+    }
+
+    [Test]
     public void RecordingOptionShouldRejectUnknownValues()
     {
         var failure = CaptureFailure(() => LoadTestOptions.Parse(["--recording", "approximate"]));

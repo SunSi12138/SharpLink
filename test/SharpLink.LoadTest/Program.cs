@@ -1034,6 +1034,11 @@ public sealed class LoadTestOptions
             throw new ArgumentException("The tail observer currently requires --operation add.");
         if (tailObserver && transport != TransportMode.Tcp)
             throw new ArgumentException("The tail observer currently requires --transport tcp.");
+        if (tailObserver && (useStaticEndpoints || useDynamicResolver))
+        {
+            throw new ArgumentException(
+                "The tail observer requires a fixed TCP endpoint and cannot be combined with endpoint topology mode.");
+        }
 
         var minConnections = int.Parse(map.GetValueOrDefault("min-connections", "1"));
         var maxConnections = int.Parse(map.GetValueOrDefault("max-connections", "1"));

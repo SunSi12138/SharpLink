@@ -68,6 +68,12 @@ public static class Program
             LatencyRecorderBaselineAnalyzer.Run(args[1..]);
             return;
         }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--validate-performance-reports", StringComparison.Ordinal))
+        {
+            PerformanceReportValidationRunner.Run(args[1..]);
+            return;
+        }
         BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
     }
 }
