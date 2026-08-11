@@ -23,7 +23,8 @@ internal sealed class StreamFlowController
     // Keep pooling controller-local and below the negotiated maximum. At most 128 receive
     // states retain roughly 6 KiB on 64-bit runtimes, rather than retaining every idle stream.
     private ReceiveState? _pooledReceiveStates;
-    private int _pooledReceiveStateCount;
+    // The head is the hot slot; count only nodes after it so single-state churn avoids counter writes.
+    private int _pooledReceiveStateOverflowCount;
     // Completed states can remain as tombstones until their final in-flight credit arrives.
     // The active count distinguishes hard live-stream exhaustion from tombstone pressure;
     // the state dictionary itself remains bounded by the negotiated stream limit.
@@ -501,16 +502,25 @@ internal sealed class StreamFlowController
     {
         var state = _pooledReceiveStates;
         if (state is null)
+            return new ReceiveState(_streamWindow);
+
+        Debug.Assert(state.Credit == _streamWindow);
+        Debug.Assert(state.PendingConsumed == 0);
+        Debug.Assert(state.Completed);
+        var next = state.Next;
+        _pooledReceiveStates = next;
+        if (next is not null)
         {
-            state = new ReceiveState();
+            Debug.Assert(_pooledReceiveStateOverflowCount > 0);
+            _pooledReceiveStateOverflowCount--;
+            state.Next = null;
         }
         else
         {
-            _pooledReceiveStates = state.Next;
-            _pooledReceiveStateCount--;
+            Debug.Assert(_pooledReceiveStateOverflowCount == 0);
         }
 
-        state.Reset(_streamWindow);
+        state.Completed = false;
         return state;
     }
 
@@ -522,20 +532,31 @@ internal sealed class StreamFlowController
 
     private void ReturnReceiveState(ReceiveState state)
     {
-        state.Clear();
-        if (_pooledReceiveStateCount >= _maxPooledReceiveStates)
+        Debug.Assert(state.Credit == _streamWindow);
+        Debug.Assert(state.PendingConsumed == 0);
+        Debug.Assert(state.Completed);
+        Debug.Assert(state.Next is null);
+        var pooledState = _pooledReceiveStates;
+        if (pooledState is null)
+        {
+            Debug.Assert(_pooledReceiveStateOverflowCount == 0);
+            _pooledReceiveStates = state;
+            return;
+        }
+
+        if (_pooledReceiveStateOverflowCount >= _maxPooledReceiveStates - 1)
             return;
 
-        state.Next = _pooledReceiveStates;
+        state.Next = pooledState;
         _pooledReceiveStates = state;
-        _pooledReceiveStateCount++;
+        _pooledReceiveStateOverflowCount++;
     }
 
     private void ClearPooledReceiveStates()
     {
         var state = _pooledReceiveStates;
         _pooledReceiveStates = null;
-        _pooledReceiveStateCount = 0;
+        _pooledReceiveStateOverflowCount = 0;
         while (state is not null)
         {
             var next = state.Next;
@@ -746,20 +767,12 @@ internal sealed class StreamFlowController
         public Exception? AbortException;
     }
 
-    private sealed class ReceiveState
+    private sealed class ReceiveState(long initialCredit)
     {
-        public long Credit;
+        public long Credit = initialCredit;
         public long PendingConsumed;
         public bool Completed;
         public ReceiveState? Next;
-
-        public void Reset(long initialCredit)
-        {
-            Credit = initialCredit;
-            PendingConsumed = 0;
-            Completed = false;
-            Next = null;
-        }
 
         public void Clear()
         {
