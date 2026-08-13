@@ -155,7 +155,7 @@ public partial class RpcGenerator
                             ContractCompatibilityKind.BaselineInvalid,
                             Location.None,
                             options.BaselinePath,
-                            "one or more payload or DTO member entries are missing a non-empty wireFormatId",
+                            "one or more payload, DTO member, or Codec identity entries are missing a required non-empty identity value",
                             "regenerate the baseline with the current SharpLink SDK"));
                     }
                     else if (string.IsNullOrWhiteSpace(baseline.SchemaFingerprint) ||
@@ -678,8 +678,10 @@ public partial class RpcGenerator
             }
 
             var wireChanged = !string.Equals(oldCodec.WireFormatId, newCodec.WireFormatId, StringComparison.Ordinal);
-            var schemaChanged = string.Equals(oldCodec.Kind, "Custom", StringComparison.Ordinal) &&
-                                !string.Equals(oldCodec.SchemaId, newCodec.SchemaId, StringComparison.Ordinal);
+            var schemaChanged =
+                (string.Equals(oldCodec.Kind, "Custom", StringComparison.Ordinal) ||
+                 string.Equals(newCodec.Kind, "Custom", StringComparison.Ordinal)) &&
+                !string.Equals(oldCodec.SchemaId, newCodec.SchemaId, StringComparison.Ordinal);
             if (!wireChanged && !schemaChanged)
                 continue;
 
