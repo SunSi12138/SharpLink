@@ -366,10 +366,12 @@ internal sealed partial class SharpLinkClient
         if (error is not null)
             return default;
 
-        var byId = currentProxies.Values.ToDictionary(
+        var nextProxies = new Dictionary<Type, ClientProxyRegistration>();
+        foreach (var pair in currentProxies)
+            nextProxies[pair.Key] = new ClientProxyRegistration(pair.Value.Descriptor, pair.Value.Module);
+        var byId = nextProxies.Values.ToDictionary(
             static registration => registration.Descriptor.ContractId,
             static registration => registration);
-        var nextProxies = currentProxies.ToDictionary(static pair => pair.Key, static pair => pair.Value);
         foreach (var contract in incoming.Contracts)
         {
             if (byId.TryGetValue(contract.ContractId, out var existing))
