@@ -166,7 +166,7 @@ internal sealed partial class RpcSession
                        ProtocolV2FrameFlags.None,
                        unchecked((ulong)requestId)))
             {
-                writer.GetSpan(sizeof(ushort) + encodedBytes);
+                writer.GetSpan(sizeof(ushort) + encodedBytes + 4);
                 writer.Advance(0);
                 var idSpan = writer.GetSpan(sizeof(ushort));
                 BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
