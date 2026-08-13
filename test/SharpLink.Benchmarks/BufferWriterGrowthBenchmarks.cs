@@ -121,43 +121,4 @@ public static class BufferWriterGrowthEvidenceRunner
         }
     }
 
-    /// <summary>
-    /// Observes each capacity-changing <c>GetMemory</c> or <c>GetSpan</c> call without changing
-    /// the writer's production path.
-    /// </summary>
-    private sealed class GrowthTrackingBufferWriter(PooledByteBufferWriter writer) : IBufferWriter<byte>
-    {
-        public int GrowthCount { get; private set; }
-
-        public long CopiedBytes { get; private set; }
-
-        public void Advance(int count) => writer.Advance(count);
-
-        public Memory<byte> GetMemory(int sizeHint = 0)
-        {
-            var capacity = writer.Capacity;
-            var written = writer.WrittenCount;
-            var memory = writer.GetMemory(sizeHint);
-            RecordGrowth(capacity, written);
-            return memory;
-        }
-
-        public Span<byte> GetSpan(int sizeHint = 0)
-        {
-            var capacity = writer.Capacity;
-            var written = writer.WrittenCount;
-            var span = writer.GetSpan(sizeHint);
-            RecordGrowth(capacity, written);
-            return span;
-        }
-
-        private void RecordGrowth(int previousCapacity, int writtenBeforeRequest)
-        {
-            if (writer.Capacity == previousCapacity)
-                return;
-
-            GrowthCount++;
-            CopiedBytes += writtenBeforeRequest;
-        }
-    }
 }
