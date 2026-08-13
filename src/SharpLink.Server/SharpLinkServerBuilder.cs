@@ -482,10 +482,17 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     }
 
     private static bool IsLoopback(IPAddress address)
-        => address.Equals(IPAddress.Loopback) ||
-           address.Equals(IPAddress.IPv6Loopback) ||
-           (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
-            address.GetAddressBytes()[0] == 127);
+    {
+        if (address.Equals(IPAddress.Loopback) ||
+            address.Equals(IPAddress.IPv6Loopback))
+        {
+            return true;
+        }
+
+        var ipv4 = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+        return ipv4.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+               ipv4.GetAddressBytes()[0] == 127;
+    }
 
     private ISharpLinkServer Materialize(ServerBuildPlan plan)
     {

@@ -162,6 +162,18 @@ public sealed class BuildPlanBuilderTests
     }
 
     [Test]
+    public void Ipv4MappedLoopbackShouldBeTreatedAsLoopback()
+    {
+        var isLoopback = typeof(SharpLinkServerBuilder).GetMethod(
+            "IsLoopback",
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+        var mappedLoopback = IPAddress.Parse("::ffff:127.0.0.1");
+
+        Ensure((bool)isLoopback.Invoke(null, [mappedLoopback])!,
+            "IPv4-mapped loopback addresses must not require network-exposure opt-ins.");
+    }
+
+    [Test]
     public async Task NonLoopbackPlaintextShouldRequireExplicitOptIn()
     {
         var failure = Capture(() => CreateServerBuilder()
