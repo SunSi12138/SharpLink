@@ -611,6 +611,15 @@ public partial class RpcGenerator
         }
 
         sb.AppendLine("        var __snapshot = new __SizedSnapshot();");
+        var baseSize = model.IsReferenceType ? 2 : 1;
+        foreach (var member in model.Members)
+        {
+            if (member.Kind != GeneratedMemberKind.Fixed)
+                continue;
+            baseSize = checked(baseSize + GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize)) + member.FixedSize);
+        }
+
+        sb.AppendLine($"        size = {baseSize.ToString(InvariantCulture)};");
         for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
         {
             var member = model.Members[memberIndex];
@@ -629,37 +638,22 @@ public partial class RpcGenerator
                     sb.AppendLine($"        __snapshot.__nullable_{memberIndex} = {value};");
                     break;
                 case GeneratedMemberKind.Complex:
-                    sb.AppendLine($"        __snapshot.__complex_{memberIndex} = {value};");
-                    break;
+                    {
+                        sb.AppendLine($"        __snapshot.__complex_{memberIndex} = {value};");
+                        var index = complexIndexes[member.Name];
+                        sb.AppendLine(
+                            $"        if (__codec_{index} is not IRpcSizedCodec<{member.TypeName}> __sized_{index} ||");
+                        sb.AppendLine($"            !__sized_{index}.CanExactSize ||");
+                        sb.AppendLine(
+                            $"            !__sized_{index}.TryGetEncodedSize(__snapshot.__complex_{memberIndex}, out __snapshot.__nestedSize_{index}, out __snapshot.__nestedSnapshot_{index}))");
+                        sb.AppendLine("        {");
+                        sb.AppendLine("            size = 0;");
+                        sb.AppendLine("            snapshot = null;");
+                        sb.AppendLine("            return false;");
+                        sb.AppendLine("        }");
+                        break;
+                    }
             }
-        }
-
-        var baseSize = model.IsReferenceType ? 2 : 1;
-        foreach (var member in model.Members)
-        {
-            if (member.Kind != GeneratedMemberKind.Fixed)
-                continue;
-            baseSize = checked(baseSize + GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize)) + member.FixedSize);
-        }
-
-        sb.AppendLine($"        size = {baseSize.ToString(InvariantCulture)};");
-        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
-        {
-            var member = model.Members[memberIndex];
-            if (member.Kind != GeneratedMemberKind.Complex)
-                continue;
-
-            var index = complexIndexes[member.Name];
-            sb.AppendLine(
-                $"        if (__codec_{index} is not IRpcSizedCodec<{member.TypeName}> __sized_{index} ||");
-            sb.AppendLine($"            !__sized_{index}.CanExactSize ||");
-            sb.AppendLine(
-                $"            !__sized_{index}.TryGetEncodedSize(__snapshot.__complex_{memberIndex}, out __snapshot.__nestedSize_{index}, out __snapshot.__nestedSnapshot_{index}))");
-            sb.AppendLine("        {");
-            sb.AppendLine("            size = 0;");
-            sb.AppendLine("            snapshot = null;");
-            sb.AppendLine("            return false;");
-            sb.AppendLine("        }");
         }
 
         sb.AppendLine("        checked");
@@ -873,7 +867,7 @@ public partial class RpcGenerator
                     sb.AppendLine($"        RpcGeneratedCodecWire.WriteFieldKey(buffer, {fieldId}, RpcGeneratedWireType.LengthDelimited);");
                     sb.AppendLine($"        var lengthToken_{index} = RpcGeneratedCodecWire.BeginLength(rpcWriter);");
                     sb.AppendLine(
-                        $"        if (__codec_{index} is IRpcSizedCodec<{member.TypeName}> __sized_{index} && __snapshot.__nestedSnapshot_{index} is not null)");
+                        $"        if (__codec_{index} is IRpcSizedCodec<{member.TypeName}> __sized_{index})");
                     sb.AppendLine($"            __sized_{index}.SerializeSized(__snapshot.__complex_{memberIndex}, buffer, __snapshot.__nestedSize_{index}, __snapshot.__nestedSnapshot_{index});");
                     sb.AppendLine("        else");
                     sb.AppendLine($"            __codec_{index}.Serialize(__snapshot.__complex_{memberIndex}, buffer);");
