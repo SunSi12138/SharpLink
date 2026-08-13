@@ -15,34 +15,92 @@ public static class TransportExtensions
             return builder.UseTransport(new NamedPipeServerTransportListener(name));
         }
 
-        /// <summary>Listens on a TCP endpoint without TLS.</summary>
-        public SharpLinkServerBuilder UseTcp(int port, string ip = "0.0.0.0", int backlog = 512)
+        /// <summary>Listens on the loopback TCP endpoint without TLS.</summary>
+        public SharpLinkServerBuilder UseTcp(int port, int backlog = 512)
         {
-            if (port is < IPEndPoint.MinPort or > IPEndPoint.MaxPort)
-                throw new ArgumentOutOfRangeException(nameof(port));
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(backlog);
+            ValidateTcpPort(port);
+            ValidateBacklog(backlog);
+
+            var endPoint = new IPEndPoint(IPAddress.Loopback, port);
+            return builder.UseTransport(new SocketServerTransportListener(endPoint, backlog));
+        }
+
+        /// <summary>Listens on a TCP endpoint without TLS.</summary>
+        public SharpLinkServerBuilder UseTcp(int port, IPAddress address, int backlog = 512)
+        {
+            ArgumentNullException.ThrowIfNull(address);
+            ValidateTcpPort(port);
+            ValidateBacklog(backlog);
+
+            var endPoint = new IPEndPoint(address, port);
+            return builder.UseTransport(new SocketServerTransportListener(endPoint, backlog));
+        }
+
+        /// <summary>Legacy TCP overload that binds to a parsed IP address without TLS.</summary>
+        /// <remarks>Prefer the typed IPAddress overload or <c>UseTcp(port).ListenOn(address)</c>.</remarks>
+        public SharpLinkServerBuilder UseTcp(int port, string ip, int backlog = 512)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(ip);
+            ValidateTcpPort(port);
+            ValidateBacklog(backlog);
 
             var endPoint = new IPEndPoint(IPAddress.Parse(ip), port);
             return builder.UseTransport(new SocketServerTransportListener(endPoint, backlog));
         }
 
-        /// <summary>Uses TCP with TLS completed before the SharpLink protocol handshake.</summary>
-        /// <param name="port">The TCP port to bind.</param>
-        /// <param name="tlsOptions">TLS server authentication settings.</param>
-        /// <param name="ip">The local IP address to bind.</param>
-        /// <param name="backlog">The operating-system accept backlog.</param>
-        /// <param name="tlsHandshakeTimeout">Independent positive TLS handshake timeout, up to 2,147,483,647 milliseconds. Defaults to 10 seconds.</param>
+        /// <summary>Uses loopback TCP with TLS completed before the SharpLink protocol handshake.</summary>
         public SharpLinkServerBuilder UseTcp(
             int port,
             SslServerAuthenticationOptions tlsOptions,
-            string ip = "0.0.0.0",
             int backlog = 512,
             TimeSpan? tlsHandshakeTimeout = null)
         {
             ArgumentNullException.ThrowIfNull(tlsOptions);
-            if (port is < IPEndPoint.MinPort or > IPEndPoint.MaxPort)
-                throw new ArgumentOutOfRangeException(nameof(port));
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(backlog);
+            ValidateTcpPort(port);
+            ValidateBacklog(backlog);
+
+            var endPoint = new IPEndPoint(IPAddress.Loopback, port);
+            return builder.UseTransport(new SocketServerTransportListener(
+                endPoint,
+                backlog,
+                tlsOptions: tlsOptions,
+                tlsHandshakeTimeout: tlsHandshakeTimeout));
+        }
+
+        /// <summary>Uses TCP with TLS completed before the SharpLink protocol handshake.</summary>
+        public SharpLinkServerBuilder UseTcp(
+            int port,
+            SslServerAuthenticationOptions tlsOptions,
+            IPAddress address,
+            int backlog = 512,
+            TimeSpan? tlsHandshakeTimeout = null)
+        {
+            ArgumentNullException.ThrowIfNull(tlsOptions);
+            ArgumentNullException.ThrowIfNull(address);
+            ValidateTcpPort(port);
+            ValidateBacklog(backlog);
+
+            var endPoint = new IPEndPoint(address, port);
+            return builder.UseTransport(new SocketServerTransportListener(
+                endPoint,
+                backlog,
+                tlsOptions: tlsOptions,
+                tlsHandshakeTimeout: tlsHandshakeTimeout));
+        }
+
+        /// <summary>Legacy TCP-with-TLS overload that binds to a parsed IP address.</summary>
+        /// <remarks>Prefer the typed IPAddress TLS overload.</remarks>
+        public SharpLinkServerBuilder UseTcp(
+            int port,
+            SslServerAuthenticationOptions tlsOptions,
+            string ip,
+            int backlog = 512,
+            TimeSpan? tlsHandshakeTimeout = null)
+        {
+            ArgumentNullException.ThrowIfNull(tlsOptions);
+            ArgumentException.ThrowIfNullOrWhiteSpace(ip);
+            ValidateTcpPort(port);
+            ValidateBacklog(backlog);
 
             var endPoint = new IPEndPoint(IPAddress.Parse(ip), port);
             return builder.UseTransport(new SocketServerTransportListener(
@@ -80,5 +138,13 @@ public static class TransportExtensions
             return builder.UseTransport(new SharedMemoryServerTransportListener(name, options));
         }
 
+        private static void ValidateTcpPort(int port)
+        {
+            if (port is < IPEndPoint.MinPort or > IPEndPoint.MaxPort)
+                throw new ArgumentOutOfRangeException(nameof(port));
+        }
+
+        private static void ValidateBacklog(int backlog)
+            => ArgumentOutOfRangeException.ThrowIfNegativeOrZero(backlog);
     }
 }

@@ -5,9 +5,29 @@ SharpLink 的协议、错误、心跳和生命周期位于 transport 之上。�
 ## TCP 与 TLS
 
 ```csharp
-serverBuilder.UseTcp(19090, "0.0.0.0");
+// 默认仅监听 loopback，且保持明文，适合本机开发和单机进程间调用。
+serverBuilder.UseTcp(19090);
 clientBuilder.UseTcp("127.0.0.1", 19090);
+
+// 需要向其他网卡暴露时，显式扩大监听范围。
+serverBuilder
+    .UseTcp(19090)
+    .ListenOnAnyAddress()
+    .UseTls(serverTlsOptions)
+    .AllowUnauthenticated();
+
+// 仅在可信网络、反向代理后等受控场景显式允许明文 TCP。
+serverBuilder
+    .UseTcp(19090)
+    .ListenOnAnyAddress()
+    .AllowUnencrypted()
+    .AllowUnauthenticated();
 ```
+
+`UseTcp(port)` 现在默认绑定 `IPAddress.Loopback`。`ListenOnAnyAddress()`、`ListenOn(IPAddress)` 和
+`UseTls(...)` 彼此独立；非 loopback 且无 TLS 的 TCP 配置会在 `Build()` 时被拒绝，直到调用
+`AllowUnencrypted()` 与 `AllowUnauthenticated()` 分别显式 opt-in。旧的字符串式 `UseTcp(port, ip)` 重载保留兼容，
+但新代码应优先使用 typed `IPAddress` 重载或 `ListenOn(address)`。
 
 TLS 在 SharpLink 握手前完成，拥有独立的 TLS handshake timeout。Client 默认保留系统证书验证；不要在生产中用总是返回 true 的回调。多 endpoint TLS factory 会复制认证选项，并优先使用 endpoint `Authority` 作为 SNI/TargetHost。
 

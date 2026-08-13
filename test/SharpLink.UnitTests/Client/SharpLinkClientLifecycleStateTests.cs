@@ -737,6 +737,7 @@ public class SharpLinkClientLifecycleStateTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task ImmediatelyDrainedReconnectShouldNotLoseTheNextReconnectSignal()
     {
         const int immediatelyDrainedReconnects = 8;
@@ -750,7 +751,8 @@ public class SharpLinkClientLifecycleStateTests
             () => transport.ConnectCount >= immediatelyDrainedReconnects + 2 &&
                   client.State == SharpLinkConnectionState.Ready,
             () => $"reconnect stalled after {transport.ConnectCount} attempts in state {client.State} " +
-                  $"with {client.ReadyConnectionCount} ready connections");
+                  $"with {client.ReadyConnectionCount} ready connections",
+            TimeSpan.FromSeconds(10));
 
         Ensure(client.ReadyConnectionCount == 1,
             "a reconnect drained before its worker exits must schedule a replacement");
@@ -1241,15 +1243,18 @@ public class SharpLinkClientLifecycleStateTests
             payload.WrittenMemory);
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition, Func<string>? timeoutMessage = null)
+    private static async Task WaitUntilAsync(
+        Func<bool> condition,
+        Func<string>? timeoutMessage = null,
+        TimeSpan? timeout = null)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        using var timeoutSource = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(3));
         try
         {
             while (!condition())
-                await Task.Delay(10, timeout.Token);
+                await Task.Delay(10, timeoutSource.Token);
         }
-        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested)
         {
             throw new TimeoutException(timeoutMessage?.Invoke() ?? "The expected client state was not reached.");
         }
