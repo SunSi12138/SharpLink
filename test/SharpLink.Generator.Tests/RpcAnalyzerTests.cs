@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -800,6 +801,65 @@ public interface IHelloService : SharpLink.Sdk.IService
         Ensure(manifest.Contains(".Factory()"), "codec factories belong to the assembly manifest");
         Ensure(codecs.Contains("case 7U:"), "explicit field ID");
         Ensure(codecs.Contains("Missing required RPC member 'Name'"), "required member validation");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task DirectStringDtosShouldCacheExactUtf8SizesAndPreReserveOnce()
+    {
+        var source = BuildDirectStringDtoSource(1, 4, 16, 64);
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+
+        Ensure(CountOccurrences(generated, "internal static class __SharpLinkGeneratedUtf8") == 1,
+            "one assembly-private UTF-8 helper must be shared by all eligible generated Codecs");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.GetByteCount(__string_") == 85,
+            "each direct string must be counted exactly once across the 1/4/16/64-field shapes");
+        Ensure(CountOccurrences(generated, "StrictEncoding.GetByteCount(") == 1,
+            "the known-size write helper must never traverse UTF-16 again");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.WriteStringKnownSize(writer, __string_") == 85,
+            "each direct string must reuse its cached value and byte count");
+        Ensure(CountOccurrences(generated, "if (writer is IRpcByteBufferWriter __rpcWriter)") == 4,
+            "each eligible DTO must gate whole-payload reservation on the SharpLink packet writer");
+        Ensure(CountOccurrences(generated, "__rpcWriter.GetSpan(checked(__encodedSize + 4));") == 4,
+            "each eligible DTO must make one capacity request including existing varuint request slack");
+        Ensure(CountOccurrences(generated, "__rpcWriter.Advance(0);") == 4,
+            "the discarded reservation must complete its buffer lease");
+        Ensure(CountOccurrences(generated, "var __encodedSize =") == 4,
+            "each eligible DTO must compute one checked encoded size");
+        Ensure(!generated.Contains("RpcGeneratedCodecWire.WriteString(writer, value.Field", StringComparison.Ordinal),
+            "eligible DTOs must not call the byte-counting public string primitive after pre-sizing");
+        Ensure(generated.Contains("new global::System.Text.UTF8Encoding(false, true)", StringComparison.Ordinal),
+            "the generated helper must preserve strict UTF-8 encoder semantics");
+        Ensure(generated.Contains("global::System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian", StringComparison.Ordinal) &&
+               generated.Contains("var payload = writer.GetSpan(byteCount);", StringComparison.Ordinal),
+            "known-size writes must preserve the little-endian prefix and separate payload request");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task DtosWithComplexMembersShouldKeepTheExistingStreamingWritePath()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcSerializable]
+public sealed class MixedPayload
+{
+    public string Name { get; set; } = string.Empty;
+    public NestedPayload Nested { get; set; } = new();
+}
+
+[SharpLink.Sdk.RpcSerializable]
+public sealed class NestedPayload
+{
+    public int Value { get; set; }
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(!generated.Contains("internal static class __SharpLinkGeneratedUtf8", StringComparison.Ordinal) &&
+               !generated.Contains("var __encodedSize =", StringComparison.Ordinal),
+            "a nested DTO graph must not claim an exact top-level size");
+        Ensure(generated.Contains("RpcGeneratedCodecWire.WriteString(writer, value.Name);", StringComparison.Ordinal),
+            "ineligible DTOs must retain the existing string write path");
         return Task.CompletedTask;
     }
 
@@ -3098,6 +3158,25 @@ namespace SharpLink.Abstractions
 
 {{contract}}
 """;
+    }
+
+    private static string BuildDirectStringDtoSource(params int[] fieldCounts)
+    {
+        var source = new StringBuilder();
+        foreach (var fieldCount in fieldCounts)
+        {
+            source.AppendLine("[SharpLink.Sdk.RpcSerializable]");
+            source.Append("public sealed class DirectStrings").Append(fieldCount).AppendLine();
+            source.AppendLine("{");
+            for (var fieldId = 1; fieldId <= fieldCount; fieldId++)
+            {
+                source.Append("    [SharpLink.Sdk.RpcMember(").Append(fieldId).Append(")] public string Field")
+                    .Append(fieldId.ToString("D2"))
+                    .AppendLine(" { get; set; } = string.Empty;");
+            }
+            source.AppendLine("}");
+        }
+        return BuildSource(source.ToString());
     }
 
     private static string AddAssemblyAttribute(string source, string attribute)

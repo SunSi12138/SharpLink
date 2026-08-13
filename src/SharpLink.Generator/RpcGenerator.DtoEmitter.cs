@@ -30,6 +30,9 @@ public partial class RpcGenerator
             sb.AppendLine();
         }
 
+        if (codecs.Any(CanPreReserveDto))
+            AppendGeneratedUtf8Helper(sb);
+
         foreach (var codec in codecs)
         {
             if (codec.Kind == GeneratedCodecKind.Adapter)
@@ -62,6 +65,29 @@ public partial class RpcGenerator
         sb.AppendLine($"            return new {model.CustomCodecType}();");
         sb.AppendLine("        }");
         sb.AppendLine($"        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<{model.TypeName}>;");
+        sb.AppendLine("    }");
+        sb.AppendLine("}");
+        sb.AppendLine();
+    }
+
+    private static void AppendGeneratedUtf8Helper(StringBuilder sb)
+    {
+        sb.AppendLine("internal static class __SharpLinkGeneratedUtf8");
+        sb.AppendLine("{");
+        sb.AppendLine("    private static readonly global::System.Text.UTF8Encoding StrictEncoding = new global::System.Text.UTF8Encoding(false, true);");
+        sb.AppendLine();
+        sb.AppendLine("    internal static int GetByteCount(string value) => StrictEncoding.GetByteCount(value);");
+        sb.AppendLine();
+        sb.AppendLine("    internal static void WriteStringKnownSize(IBufferWriter<byte> writer, string value, int byteCount)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        var length = writer.GetSpan(sizeof(uint));");
+        sb.AppendLine("        global::System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(length, checked((uint)byteCount));");
+        sb.AppendLine("        writer.Advance(sizeof(uint));");
+        sb.AppendLine("        if (byteCount == 0)");
+        sb.AppendLine("            return;");
+        sb.AppendLine("        var payload = writer.GetSpan(byteCount);");
+        sb.AppendLine("        var written = StrictEncoding.GetBytes(value, payload);");
+        sb.AppendLine("        writer.Advance(written);");
         sb.AppendLine("    }");
         sb.AppendLine("}");
         sb.AppendLine();
@@ -108,6 +134,7 @@ public partial class RpcGenerator
 
     private static void AppendDtoCodec(StringBuilder sb, GeneratedCodecModel model)
     {
+        var canPreReserve = CanPreReserveDto(model);
         var complexMembers = model.Members
             .Where(static member => member.Kind == GeneratedMemberKind.Complex)
             .ToArray();
@@ -141,10 +168,22 @@ public partial class RpcGenerator
             sb.AppendLine("            RpcGeneratedCodecWire.WritePresence(writer, false);");
             sb.AppendLine("            return;");
             sb.AppendLine("        }");
+            if (canPreReserve)
+                AppendDtoPreReservation(sb, model);
             sb.AppendLine("        RpcGeneratedCodecWire.WritePresence(writer, true);");
         }
-        foreach (var member in model.Members)
-            AppendDtoMemberWrite(sb, member, complexIndexes);
+        else if (canPreReserve)
+        {
+            AppendDtoPreReservation(sb, model);
+        }
+        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
+        {
+            AppendDtoMemberWrite(
+                sb,
+                model.Members[memberIndex],
+                complexIndexes,
+                canPreReserve ? memberIndex : -1);
+        }
         sb.AppendLine("        RpcGeneratedCodecWire.WriteObjectEnd(writer);");
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -222,9 +261,16 @@ public partial class RpcGenerator
     private static void AppendDtoMemberWrite(
         StringBuilder sb,
         GeneratedMemberModel member,
-        Dictionary<string, int> complexIndexes)
+        Dictionary<string, int> complexIndexes,
+        int cachedMemberIndex)
     {
-        var value = $"value.{EscapeIdentifier(member.Identifier)}";
+        var value = member.Kind switch
+        {
+            GeneratedMemberKind.Fixed when cachedMemberIndex >= 0 => $"__fixed_{cachedMemberIndex}",
+            GeneratedMemberKind.String when cachedMemberIndex >= 0 => $"__string_{cachedMemberIndex}",
+            GeneratedMemberKind.NullableFixed when cachedMemberIndex >= 0 => $"__nullable_{cachedMemberIndex}",
+            _ => $"value.{EscapeIdentifier(member.Identifier)}"
+        };
         var fieldId = member.FieldId.ToString(InvariantCulture) + "U";
         switch (member.Kind)
         {
@@ -247,7 +293,15 @@ public partial class RpcGenerator
                 sb.AppendLine("        else");
                 sb.AppendLine("        {");
                 sb.AppendLine($"            RpcGeneratedCodecWire.WriteFieldKey(writer, {fieldId}, RpcGeneratedWireType.LengthDelimited);");
-                sb.AppendLine($"            RpcGeneratedCodecWire.WriteString(writer, {value});");
+                if (cachedMemberIndex >= 0)
+                {
+                    sb.AppendLine(
+                        $"            __SharpLinkGeneratedUtf8.WriteStringKnownSize(writer, {value}, __stringByteCount_{cachedMemberIndex});");
+                }
+                else
+                {
+                    sb.AppendLine($"            RpcGeneratedCodecWire.WriteString(writer, {value});");
+                }
                 sb.AppendLine("        }");
                 break;
             default:
@@ -259,6 +313,94 @@ public partial class RpcGenerator
                 break;
         }
     }
+
+    private static bool CanPreReserveDto(GeneratedCodecModel model)
+        => model.Kind == GeneratedCodecKind.Dto &&
+           model.Members.Any(static member => member.Kind == GeneratedMemberKind.String) &&
+           model.Members.All(static member => member.Kind != GeneratedMemberKind.Complex);
+
+    private static void AppendDtoPreReservation(StringBuilder sb, GeneratedCodecModel model)
+    {
+        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
+        {
+            var member = model.Members[memberIndex];
+            var value = $"value.{EscapeIdentifier(member.Identifier)}";
+            if (member.Kind == GeneratedMemberKind.String)
+            {
+                sb.AppendLine($"        var __string_{memberIndex} = {value};");
+                sb.AppendLine(
+                    $"        var __stringByteCount_{memberIndex} = __string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf8.GetByteCount(__string_{memberIndex});");
+            }
+            else if (member.Kind == GeneratedMemberKind.NullableFixed)
+            {
+                sb.AppendLine($"        var __nullable_{memberIndex} = {value};");
+            }
+            else if (member.Kind == GeneratedMemberKind.Fixed)
+            {
+                sb.AppendLine($"        var __fixed_{memberIndex} = {value};");
+            }
+        }
+
+        var baseSize = model.IsReferenceType ? 2 : 1;
+        foreach (var member in model.Members)
+        {
+            if (member.Kind != GeneratedMemberKind.Fixed)
+                continue;
+            baseSize = checked(baseSize + GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize)) + member.FixedSize);
+        }
+
+        sb.AppendLine($"        var __encodedSize = {baseSize.ToString(InvariantCulture)};");
+        sb.AppendLine("        checked");
+        sb.AppendLine("        {");
+        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
+        {
+            var member = model.Members[memberIndex];
+            if (member.Kind == GeneratedMemberKind.String)
+            {
+                var nullSize = GetFieldKeySize(member.FieldId, 0);
+                var valueOverhead = GetFieldKeySize(member.FieldId, 6) + sizeof(uint);
+                sb.AppendLine(
+                    $"            __encodedSize += __string_{memberIndex} is null ? {nullSize.ToString(InvariantCulture)} : {valueOverhead.ToString(InvariantCulture)} + __stringByteCount_{memberIndex};");
+            }
+            else if (member.Kind == GeneratedMemberKind.NullableFixed)
+            {
+                var nullSize = GetFieldKeySize(member.FieldId, 0);
+                var valueSize = GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize)) + member.FixedSize;
+                sb.AppendLine(
+                    $"            __encodedSize += __nullable_{memberIndex}.HasValue ? {valueSize.ToString(InvariantCulture)} : {nullSize.ToString(InvariantCulture)};");
+            }
+        }
+        sb.AppendLine("        }");
+        // Existing varuint primitives request five bytes even when they advance only one. Reserving
+        // four bytes beyond the exact wire size prevents the terminator from forcing another growth
+        // and preserves the bounded writer's established successful-capacity threshold. Restrict the
+        // whole-payload reservation to the SharpLink packet writer, which supports a single large
+        // contiguous lease; segmented or generic writers retain the per-field streaming path.
+        sb.AppendLine("        if (writer is IRpcByteBufferWriter __rpcWriter)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            __rpcWriter.GetSpan(checked(__encodedSize + 4));");
+        sb.AppendLine("            __rpcWriter.Advance(0);");
+        sb.AppendLine("        }");
+    }
+
+    private static int GetFieldKeySize(uint fieldId, int wireType)
+        => GetVarUInt32Size((fieldId << 3) | checked((uint)wireType));
+
+    private static int GetFixedWireTypeValue(int fixedSize) => fixedSize switch
+    {
+        1 => 1,
+        2 => 2,
+        4 => 3,
+        8 => 4,
+        16 => 5,
+        _ => throw new ArgumentOutOfRangeException(nameof(fixedSize))
+    };
+
+    private static int GetVarUInt32Size(uint value)
+        => value < 1U << 7 ? 1 :
+            value < 1U << 14 ? 2 :
+            value < 1U << 21 ? 3 :
+            value < 1U << 28 ? 4 : 5;
 
     private static void AppendDtoMemberRead(
         StringBuilder sb,
