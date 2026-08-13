@@ -243,6 +243,47 @@ public class FlowControlHotPathBenchmarks
 }
 
 [MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+[BenchmarkCategory("FlowControl", "Allocation")]
+public class ReceiveFlowStateAllocationBenchmarks
+{
+    private ReceiveFlowStateShortWorkload _workload = null!;
+
+    [Params(1, 4, 64)]
+    public int ItemsPerStream { get; set; }
+
+    [Params(1, 8, 32, 128)]
+    public int ActiveStreams { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+        => _workload = new ReceiveFlowStateShortWorkload(ItemsPerStream);
+
+    [Benchmark]
+    public int ReceiveAndCompleteShortStreams()
+        => _workload.Run(ActiveStreams);
+}
+
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3, iterationCount: 10)]
+[BenchmarkCategory("FlowControl", "Allocation", "LongLivedControl")]
+public class ReceiveFlowStateLongLivedBenchmarks
+{
+    private ReceiveFlowStateLongLivedWorkload _workload = null!;
+
+    [Params(1, 4, 64)]
+    public int ItemsPerInvocation { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+        => _workload = new ReceiveFlowStateLongLivedWorkload(ItemsPerInvocation);
+
+    [Benchmark]
+    public int ReceiveOnExistingStream()
+        => _workload.Run();
+}
+
+[MemoryDiagnoser]
 [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 5, iterationCount: 15)]
 public class CodecAndPreAdmissionHotPathBenchmarks
 {

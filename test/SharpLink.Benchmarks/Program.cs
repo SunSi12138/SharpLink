@@ -57,6 +57,12 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--flow-control-evidence", StringComparison.Ordinal))
+        {
+            await FlowControlEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--latency-recorder-evidence", StringComparison.Ordinal))
         {
             LatencyRecorderEvidenceRunner.Run(args[1..]);
