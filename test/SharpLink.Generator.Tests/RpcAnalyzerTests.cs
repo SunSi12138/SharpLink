@@ -123,16 +123,19 @@ public interface IServerStubCodecService : SharpLink.Sdk.IService
 
         var stub = RunGeneratorAndGetSources(source)
             .Single(static text => text.Contains("private sealed class __Stub_", StringComparison.Ordinal));
-        var dispatchStart = stub.IndexOf(
-            "private ValueTask InvokeNoReturnCoreAsync",
+        var constructorStart = stub.IndexOf("internal __Stub_", StringComparison.Ordinal);
+        var constructorEnd = stub.IndexOf(
+            "public bool SupportsCancellation",
+            constructorStart,
             StringComparison.Ordinal);
-        Ensure(dispatchStart > 0, "generated Stub must contain its dispatch method");
+        Ensure(constructorStart > 0 && constructorEnd > constructorStart,
+            "generated Stub must contain a bounded constructor");
 
-        var construction = stub[..dispatchStart];
-        var dispatch = stub[dispatchStart..];
-        Ensure(construction.Contains("GetCodec<", StringComparison.Ordinal),
-            "generated Stub constructor must resolve Codec fields");
-        Ensure(!dispatch.Contains("GetCodec<", StringComparison.Ordinal),
+        var constructor = stub[constructorStart..constructorEnd];
+        var outsideConstructor = stub[constructorEnd..];
+        Ensure(CountOccurrences(constructor, "GetCodec<string>()") == 2,
+            "generated Stub constructor must resolve both request and response string Codec fields");
+        Ensure(!outsideConstructor.Contains("GetCodec<", StringComparison.Ordinal),
             "generated Stub dispatch must not perform per-call Codec lookup");
         return Task.CompletedTask;
     }
