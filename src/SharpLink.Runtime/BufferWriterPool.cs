@@ -8,15 +8,9 @@ public sealed class SharpLinkBufferWriterPool : IRpcBufferWriterPool, IDisposabl
     private readonly int _maxPooledWriters;
     private readonly int _maxRetainedCapacityBytes;
     private int _pooledCount;
-    private int _activeLeaseCount;
-    private int _peakActiveLeaseCount;
 
     /// <summary>Gets the minimum array capacity rented for each new writer lease.</summary>
     public int InitialCapacity => _initialCapacity;
-
-    internal int ActiveLeaseCount => Volatile.Read(ref _activeLeaseCount);
-
-    internal int PeakActiveLeaseCount => Volatile.Read(ref _peakActiveLeaseCount);
 
     /// <summary>Creates a pool from a validated immutable option snapshot.</summary>
     /// <param name="options">Pool capacity and retention limits.</param>
@@ -50,8 +44,6 @@ public sealed class SharpLinkBufferWriterPool : IRpcBufferWriterPool, IDisposabl
             Interlocked.Decrement(ref _pooledCount);
 
         writer.Activate(Math.Min(_initialCapacity, maxWrittenBytes), maxWrittenBytes);
-        var active = Interlocked.Increment(ref _activeLeaseCount);
-        InterlockedMax(ref _peakActiveLeaseCount, active);
         return writer;
     }
 
@@ -62,10 +54,8 @@ public sealed class SharpLinkBufferWriterPool : IRpcBufferWriterPool, IDisposabl
         if (writer is not PooledByteBufferWriter pooledWriter)
         {
             writer.Dispose();
-            Interlocked.Decrement(ref _activeLeaseCount);
             return;
         }
-        Interlocked.Decrement(ref _activeLeaseCount);
         if (!pooledWriter.TryReturnToPool(_maxRetainedCapacityBytes))
             return;
         var pool = Volatile.Read(ref _pool);
@@ -89,18 +79,6 @@ public sealed class SharpLinkBufferWriterPool : IRpcBufferWriterPool, IDisposabl
         pool.Enqueue(pooledWriter);
         if (Volatile.Read(ref _pool) is null)
             DrainRetainedWriters(pool);
-    }
-
-    private static void InterlockedMax(ref int target, int value)
-    {
-        var current = Volatile.Read(ref target);
-        while (value > current)
-        {
-            var replaced = Interlocked.CompareExchange(ref target, value, current);
-            if (replaced == current)
-                return;
-            current = replaced;
-        }
     }
 
     /// <summary>Releases every idle writer retained by this pool and rejects subsequent rents.</summary>

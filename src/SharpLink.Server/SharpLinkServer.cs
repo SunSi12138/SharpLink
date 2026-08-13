@@ -53,8 +53,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     private readonly int _maxConcurrentCallsPerConnection;
     private readonly int _maxConcurrentCallsPerServer;
     private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions;
-
-    internal SharpLinkBufferWriterPool Buffers => _runtimeContext.Buffers;
     private readonly ISharpLinkServerInterceptor[] _serverInterceptors;
     private readonly IRpcExceptionMapper _exceptionMapper;
     private readonly ServerServiceCleanup _serviceCleanup;

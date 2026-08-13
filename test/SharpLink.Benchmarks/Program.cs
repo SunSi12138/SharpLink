@@ -75,12 +75,6 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
-            args[0], "--response-writer-lease-evidence", StringComparison.Ordinal))
-        {
-            await ResponseWriterLeaseEvidenceRunner.RunAsync();
-            return;
-        }
-        if (args.Length > 0 && string.Equals(
             args[0], "--generated-nested-growth-evidence", StringComparison.Ordinal))
         {
             GeneratedNestedDtoGrowthEvidenceRunner.Run();
