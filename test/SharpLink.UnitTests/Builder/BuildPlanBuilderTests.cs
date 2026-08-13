@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Net;
+using System.Net.Security;
 using System.Reflection;
 using System.Threading;
 using SharpLink.Client;
@@ -144,6 +145,62 @@ public sealed class BuildPlanBuilderTests
             "server Compile failure must release its configured listener once");
         EnsureConsumed(() => _ = failedBuilder.Build());
         EnsureConsumed(() => failedBuilder.UseTransport(new TrackingServerListener()));
+    }
+
+    [Test]
+    public async Task TcpDefaultsShouldBindLoopbackAndAllowSecureBuild()
+    {
+        var builder = CreateServerBuilder().UseTcp(0);
+
+        var bound = builder.Transport!.LocalEndPoint as IPEndPoint;
+        Ensure(bound is not null && bound.Address.Equals(IPAddress.Loopback),
+            "UseTcp(port) must bind loopback by default.");
+
+        await using var server = builder.Build();
+        Ensure(server is not null, "loopback plaintext TCP must build by default.");
+    }
+
+    [Test]
+    public async Task NonLoopbackPlaintextShouldRequireExplicitOptIn()
+    {
+        var failure = Capture(() => CreateServerBuilder()
+            .UseTcp(0)
+            .ListenOnAnyAddress()
+            .Build());
+
+        Ensure(failure is InvalidOperationException &&
+               failure.Message.Contains("AllowUnencrypted()", StringComparison.Ordinal),
+            "non-loopback plaintext TCP must require AllowUnencrypted.");
+    }
+
+    [Test]
+    public async Task NonLoopbackPlaintextShouldBuildAfterExplicitOptIn()
+    {
+        var unencryptedBuilder = CreateServerBuilder()
+            .UseTcp(0)
+            .ListenOnAnyAddress()
+            .AllowUnencrypted();
+        await using var unencryptedServer = unencryptedBuilder.Build();
+
+        Ensure(unencryptedServer is not null,
+            "AllowUnencrypted must be accepted for non-loopback plaintext TCP.");
+    }
+
+    [Test]
+    public async Task NonLoopbackTlsShouldBuildWithoutLoweringEncryption()
+    {
+        var tlsOptions = new SslServerAuthenticationOptions
+        {
+            ServerCertificateSelectionCallback = static (_, _) => null!
+        };
+
+        var builder = CreateServerBuilder()
+            .UseTcp(0)
+            .ListenOnAnyAddress()
+            .UseTls(tlsOptions);
+
+        await using var server = builder.Build();
+        Ensure(server is not null, "non-loopback TLS must not require plaintext opt-in.");
     }
 
     [Test]

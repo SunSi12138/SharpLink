@@ -399,6 +399,10 @@ var expiresAt = SharpLinkCallContext.Current?.Authentication?.ExpiresAt;
 
 TLS 在 TCP 建连后、SharpLink Protocol v2 handshake 前完成，并拥有独立的 10 秒默认超时。客户端默认使用平台证书链和 hostname 校验；框架不提供“接受所有证书”的默认 helper。
 
+`UseTcp(port)` 默认只监听 loopback。需要向其他网卡暴露服务时，使用
+`.ListenOnAnyAddress()` 或 `.ListenOn(IPAddress)`；非 loopback 且无 TLS 的 TCP 会在
+`Build()` 时拒绝启动，必须在可信网络等受控场景显式调用 `AllowUnencrypted()`。
+
 ```csharp
 var server = SharpLinkServerBuilder.Create()
     .UseTcp(5000, new SslServerAuthenticationOptions

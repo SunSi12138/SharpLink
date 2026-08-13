@@ -35,7 +35,7 @@ public static class LoadTestTransportFactory
 
         return transport switch
         {
-            TransportMode.Tcp => builder.UseTcp(port, bindIp).Build(),
+            TransportMode.Tcp => builder.UseTcp(port, System.Net.IPAddress.Parse(bindIp)).AllowUnencrypted().Build(),
             TransportMode.Uds => builder.UseUds(udsPath).Build(),
             TransportMode.NamedPipe => builder.UseNamedPipe(pipeName).Build(),
             TransportMode.SharedMemory => builder.UseSharedMemory(

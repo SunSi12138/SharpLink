@@ -136,13 +136,14 @@ public sealed class SocketClientTransportFactory : IClientTransportFactory
 /// <summary>Listens for TCP or Unix-domain socket connections.</summary>
 public sealed class SocketServerTransportListener : IServerTransportListener
 {
-    private readonly Socket _listener;
+    private Socket _listener;
     private readonly SocketTransportOptions _options;
-    private readonly SslServerAuthenticationOptions? _tlsOptions;
-    private readonly TimeSpan _tlsHandshakeTimeout;
+    private SslServerAuthenticationOptions? _tlsOptions;
+    private TimeSpan _tlsHandshakeTimeout;
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly string? _ownedUnixSocketPath;
     private readonly UnixSocketPathIdentity? _ownedUnixSocketIdentity;
+    private readonly int _backlog;
     private int _disposed;
 
     /// <summary>Creates, binds, and starts a socket listener.</summary>
@@ -160,6 +161,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
     {
         ArgumentNullException.ThrowIfNull(localEndPoint);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(backlog);
+        _backlog = backlog;
         _options = (options ?? new SocketTransportOptions()).CloneValidated();
         _tlsOptions = TlsAuthenticationOptionsSnapshot.Clone(tlsOptions);
         _tlsHandshakeTimeout = TlsAuthenticationOptionsSnapshot.ValidateTimeout(tlsHandshakeTimeout);
@@ -184,7 +186,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
             boundUnixPath = unixPath;
             if (unixPath is not null)
                 boundUnixIdentity = UnixSocketPathIdentity.Capture(unixPath);
-            _listener.Listen(backlog);
+            _listener.Listen(_backlog);
             LocalEndPoint = _listener.LocalEndPoint;
             _ownedUnixSocketPath = unixPath;
             _ownedUnixSocketIdentity = boundUnixIdentity;
@@ -201,7 +203,48 @@ public sealed class SocketServerTransportListener : IServerTransportListener
     }
 
     /// <inheritdoc />
-    public EndPoint? LocalEndPoint { get; }
+    public EndPoint? LocalEndPoint { get; private set; }
+
+    internal bool UsesTls => _tlsOptions is not null;
+
+    internal void ConfigureListenAddress(IPAddress address)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (LocalEndPoint is not IPEndPoint current)
+            throw new InvalidOperationException("The listen address can only be changed for TCP listeners.");
+
+        var replacementEndPoint = new IPEndPoint(address, current.Port);
+        var replacement = SocketTransportSocketFactory.Create(replacementEndPoint);
+        try
+        {
+            replacement.Bind(replacementEndPoint);
+            replacement.Listen(_backlog);
+        }
+        catch
+        {
+            replacement.Dispose();
+            throw;
+        }
+
+        var previous = _listener;
+        _listener = replacement;
+        LocalEndPoint = replacement.LocalEndPoint;
+        previous.Dispose();
+    }
+
+    internal void ConfigureTls(
+        SslServerAuthenticationOptions tlsOptions,
+        TimeSpan? tlsHandshakeTimeout)
+    {
+        ArgumentNullException.ThrowIfNull(tlsOptions);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (LocalEndPoint is not IPEndPoint)
+            throw new InvalidOperationException("TLS can only be configured for TCP listeners.");
+
+        _tlsOptions = TlsAuthenticationOptionsSnapshot.Clone(tlsOptions);
+        _tlsHandshakeTimeout = TlsAuthenticationOptionsSnapshot.ValidateTimeout(tlsHandshakeTimeout);
+    }
 
     /// <inheritdoc />
     public async ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)

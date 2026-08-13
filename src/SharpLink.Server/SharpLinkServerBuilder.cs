@@ -23,6 +23,8 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     private ILoggerFactory? _loggerFactory;
     private ISharpLinkServerAuthenticator? _authenticator;
     private bool _authenticationRequired;
+    private bool _allowUnencrypted;
+    private bool _allowUnauthenticated;
     private IRpcExceptionMapper? _exceptionMapper;
     private bool _includeExceptionDetails;
     private SharpLinkAdmissionControlOptions? _admissionControlOptions;
@@ -68,6 +70,60 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     public SharpLinkServerBuilder RequireAuthentication()
     {
         Configure(() => _authenticationRequired = true);
+        return this;
+    }
+
+    /// <summary>Explicitly allows a non-loopback TCP listener to use plaintext instead of TLS.</summary>
+    public SharpLinkServerBuilder AllowUnencrypted()
+    {
+        Configure(() =>
+        {
+            _allowUnencrypted = true;
+            _allowUnauthenticated = true;
+        });
+        return this;
+    }
+
+    /// <summary>Explicitly allows a non-loopback TCP listener to run without required authentication.</summary>
+    public SharpLinkServerBuilder AllowUnauthenticated()
+    {
+        Configure(() => _allowUnauthenticated = true);
+        return this;
+    }
+
+    /// <summary>Changes a configured TCP listener to bind to <see cref="IPAddress.Any"/>.</summary>
+    public SharpLinkServerBuilder ListenOnAnyAddress()
+        => ListenOn(IPAddress.Any);
+
+    /// <summary>Changes a configured TCP listener to bind to <see cref="IPAddress.Loopback"/>.</summary>
+    public SharpLinkServerBuilder ListenOnLoopback()
+        => ListenOn(IPAddress.Loopback);
+
+    /// <summary>Changes a configured TCP listener to bind to the supplied address.</summary>
+    public SharpLinkServerBuilder ListenOn(IPAddress address)
+    {
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(address);
+            if (_transport is not SocketServerTransportListener socket)
+                throw new InvalidOperationException("A TCP transport must be configured before changing the listen address.");
+            socket.ConfigureListenAddress(address);
+        });
+        return this;
+    }
+
+    /// <summary>Configures TLS for the currently configured TCP listener.</summary>
+    public SharpLinkServerBuilder UseTls(
+        SslServerAuthenticationOptions tlsOptions,
+        TimeSpan? tlsHandshakeTimeout = null)
+    {
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(tlsOptions);
+            if (_transport is not SocketServerTransportListener socket)
+                throw new InvalidOperationException("TLS can only be configured for a TCP transport.");
+            socket.ConfigureTls(tlsOptions, tlsHandshakeTimeout);
+        });
         return this;
     }
 
@@ -378,6 +434,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         var transport = _transport ?? throw new InvalidOperationException("Transport must be set before building the server.");
         if (_authenticationRequired && _authenticator is null)
             throw new InvalidOperationException("RequireAuthentication needs an ISharpLinkServerAuthenticator.");
+        ValidateTransportSecurity(transport);
 
         var runtimeContext = _runtimeContextBuilder.Compile();
         var manifests = runtimeContext.GeneratedManifests;
@@ -403,6 +460,36 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             _serviceProvider,
             _admissionControlOptions?.CloneValidated());
     }
+
+    private void ValidateTransportSecurity(IServerTransportListener transport)
+    {
+        if (transport is not SocketServerTransportListener socket ||
+            socket.LocalEndPoint is not IPEndPoint ipEndPoint)
+        {
+            return;
+        }
+
+        if (!IsLoopback(ipEndPoint.Address))
+        {
+            if (!socket.UsesTls && !_allowUnencrypted)
+            {
+                throw new InvalidOperationException(
+                    "A non-loopback TCP listener without TLS requires an explicit AllowUnencrypted() opt-in.");
+            }
+
+            if (!socket.UsesTls && !_authenticationRequired && !_allowUnauthenticated)
+            {
+                throw new InvalidOperationException(
+                    "A non-loopback TCP listener without required authentication requires an explicit AllowUnauthenticated() opt-in.");
+            }
+        }
+    }
+
+    private static bool IsLoopback(IPAddress address)
+        => address.Equals(IPAddress.Loopback) ||
+           address.Equals(IPAddress.IPv6Loopback) ||
+           (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+            address.GetAddressBytes()[0] == 127);
 
     private ISharpLinkServer Materialize(ServerBuildPlan plan)
     {
