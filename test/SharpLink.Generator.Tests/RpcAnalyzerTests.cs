@@ -119,6 +119,7 @@ public interface IServerStubCodecService : SharpLink.Sdk.IService
 {
     ValueTask<string> EchoAsync(string value, CancellationToken cancellationToken);
     ValueTask<int> UploadAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken);
+    IAsyncEnumerable<int> DownloadAsync(int count, CancellationToken cancellationToken);
 }
 """);
 
@@ -139,8 +140,8 @@ public interface IServerStubCodecService : SharpLink.Sdk.IService
             "generated Stub constructor must declare request/response Codec fields");
         Ensure(CountOccurrences(constructor, "codecs.GetCodec<string>()") == 2,
             "generated Stub constructor must resolve both request and response string Codec fields");
-        Ensure(CountOccurrences(constructor, "codecs.GetCodec<int>()") == 2,
-            "generated Stub constructor must resolve the stream item and response int Codec fields");
+        Ensure(CountOccurrences(constructor, "codecs.GetCodec<int>()") == 3,
+            "generated Stub constructor must resolve inbound, outbound, and unary response int Codec fields");
         Ensure(!outsideConstructor.Contains("GetCodec<", StringComparison.Ordinal),
             "generated Stub dispatch must not perform per-call Codec lookup");
         return Task.CompletedTask;
