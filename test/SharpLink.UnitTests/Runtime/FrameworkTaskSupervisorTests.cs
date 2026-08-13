@@ -188,9 +188,19 @@ public sealed class FrameworkTaskSupervisorTests
             TaskObservationMode.FrameworkOwned,
             static _ => false);
         parent.TrySetResult();
-        await Task.Yield();
 
-        var active = supervisor.CaptureSnapshot();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        FrameworkTaskSupervisorSnapshot active;
+        while (true)
+        {
+            active = supervisor.CaptureSnapshot();
+            if (active.ActiveTasks == 1 && active.LateRegistrations == 1)
+                break;
+            if (DateTime.UtcNow >= deadline)
+                break;
+            await Task.Delay(10);
+        }
+
         Ensure(!drain.IsCompleted && active.ActiveTasks == 1 && active.LateRegistrations == 1,
             "a nested cleanup started by an active parent must extend drain and be diagnosed as late");
         child.TrySetResult();
