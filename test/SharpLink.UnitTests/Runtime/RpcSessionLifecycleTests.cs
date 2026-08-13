@@ -864,6 +864,7 @@ public class RpcSessionLifecycleTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task HealthySessionShouldPreserveOutboundProtocolViolation()
     {
         var input = new Pipe();
