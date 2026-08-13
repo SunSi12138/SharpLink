@@ -30,7 +30,7 @@ public partial class RpcGenerator
             sb.AppendLine();
         }
 
-        if (codecs.Any(CanPreReserveDto))
+        if (codecs.Any(CanPreReserveDto) || codecs.Any(CanLowerBoundPreReserveDto))
             AppendGeneratedUtf8Helper(sb);
 
         foreach (var codec in codecs)
@@ -134,7 +134,7 @@ public partial class RpcGenerator
 
     private static void AppendDtoCodec(StringBuilder sb, GeneratedCodecModel model)
     {
-        var canPreReserve = CanPreReserveDto(model);
+        var canPreReserve = CanPreReserveDto(model) || CanLowerBoundPreReserveDto(model);
         var complexMembers = model.Members
             .Where(static member => member.Kind == GeneratedMemberKind.Complex)
             .ToArray();
@@ -266,6 +266,7 @@ public partial class RpcGenerator
     {
         var value = member.Kind switch
         {
+            GeneratedMemberKind.Complex when cachedMemberIndex >= 0 => $"__complex_{cachedMemberIndex}",
             GeneratedMemberKind.Fixed when cachedMemberIndex >= 0 => $"__fixed_{cachedMemberIndex}",
             GeneratedMemberKind.String when cachedMemberIndex >= 0 => $"__string_{cachedMemberIndex}",
             GeneratedMemberKind.NullableFixed when cachedMemberIndex >= 0 => $"__nullable_{cachedMemberIndex}",
@@ -319,6 +320,11 @@ public partial class RpcGenerator
            model.Members.Any(static member => member.Kind == GeneratedMemberKind.String) &&
            model.Members.All(static member => member.Kind != GeneratedMemberKind.Complex);
 
+    private static bool CanLowerBoundPreReserveDto(GeneratedCodecModel model)
+        => model.Kind == GeneratedCodecKind.Dto &&
+           model.Members.Any(static member => member.Kind == GeneratedMemberKind.String) &&
+           model.Members.Any(static member => member.Kind == GeneratedMemberKind.Complex);
+
     private static void AppendDtoPreReservation(StringBuilder sb, GeneratedCodecModel model)
     {
         for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
@@ -338,6 +344,10 @@ public partial class RpcGenerator
             else if (member.Kind == GeneratedMemberKind.Fixed)
             {
                 sb.AppendLine($"        var __fixed_{memberIndex} = {value};");
+            }
+            else if (member.Kind == GeneratedMemberKind.Complex)
+            {
+                sb.AppendLine($"        var __complex_{memberIndex} = {value};");
             }
         }
 

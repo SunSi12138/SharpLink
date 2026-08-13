@@ -837,7 +837,7 @@ public interface IHelloService : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task DtosWithComplexMembersShouldKeepTheExistingStreamingWritePath()
+    public Task DtosWithComplexMembersShouldPartiallyPreReserveDirectStrings()
     {
         var source = BuildSource("""
 [SharpLink.Sdk.RpcSerializable]
@@ -855,11 +855,14 @@ public sealed class NestedPayload
 """);
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(!generated.Contains("internal static class __SharpLinkGeneratedUtf8", StringComparison.Ordinal) &&
-               !generated.Contains("var __encodedSize =", StringComparison.Ordinal),
-            "a nested DTO graph must not claim an exact top-level size");
-        Ensure(generated.Contains("RpcGeneratedCodecWire.WriteString(writer, value.Name);", StringComparison.Ordinal),
-            "ineligible DTOs must retain the existing string write path");
+        Ensure(generated.Contains("internal static class __SharpLinkGeneratedUtf8", StringComparison.Ordinal) &&
+               generated.Contains("var __encodedSize =", StringComparison.Ordinal),
+            "a nested DTO with direct strings must compute a partial lower-bound size");
+        Ensure(!generated.Contains("RpcGeneratedCodecWire.WriteString(writer, value.Name);", StringComparison.Ordinal),
+            "direct strings in a partially pre-reserved DTO must use cached byte counts");
+        Ensure(generated.Contains("RpcGeneratedCodecWire.BeginLength", StringComparison.Ordinal) &&
+               generated.Contains("RpcGeneratedCodecWire.EndLength", StringComparison.Ordinal),
+            "nested members must still use length backfill instead of claiming an exact top-level size");
         return Task.CompletedTask;
     }
 
