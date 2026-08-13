@@ -38,6 +38,7 @@ public sealed class Api3BinaryFixtureIntegrationTests
         var serverModulesBefore = GetSnapshotCount(harness.Server, "_dynamicModules");
         var serverServicesBefore = GetSnapshotCount(harness.Server, "_services");
         var serverCodecsBefore = GetGeneratedCodecCount(harness.Server);
+        var multiRegistrationsBefore = GetSnapshotCount(harness.MultiClient, "_dynamicRegistrations");
         var assemblyBytes = ReadFixtureAssembly();
         var loadContext = new FixtureLoadContext("api3-prebuilt-fixture");
         var weakContext = new WeakReference(loadContext, trackResurrection: false);
@@ -47,28 +48,30 @@ public sealed class Api3BinaryFixtureIntegrationTests
         var loaded = SharpLinkAssemblyManifestLoader.TryLoad(assembly, out var manifest);
         Ensure(!loaded.Succeeded && manifest is null,
             "the 2.0 Runtime must reject the published API 3 fixture");
-        Ensure(loaded.Error is
-        {
-            Code: SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest
-        },
-            $"API 3 should fail with an incompatible-manifest error: {loaded.Error}");
-        Ensure(loaded.Error!.Message.Contains(
-                   $"API 3/{SharpLinkGeneratedManifestVersions.Api}",
-                   StringComparison.Ordinal) &&
-               loaded.Error.Message.Contains("Protocol 2/2", StringComparison.Ordinal) &&
-               loaded.Error.Message.Contains("Generator", StringComparison.Ordinal) &&
-               loaded.Error.IncomingAssembly == assembly.FullName,
-            "rejection should identify incoming/required API and Protocol, Generator, and owner");
 
         var serverRegistration = harness.Server.RegisterAssembly(assembly);
         var clientRegistration = harness.Client.RegisterAssembly(assembly);
-        Ensure(!serverRegistration.Succeeded && !clientRegistration.Succeeded &&
-               serverRegistration.Error?.Code ==
-                   SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest &&
-               clientRegistration.Error?.Code ==
-                   SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
-            $"client and server must reject API 3 atomically: " +
-            $"server={serverRegistration.Error}, client={clientRegistration.Error}");
+        var multiRegistration = harness.MultiClient.RegisterAssembly("plugins", assembly);
+        var clientReplacement = await harness.Client.ReplaceAssemblyAsync(
+            typeof(Api3BinaryFixtureIntegrationTests).Assembly,
+            assembly,
+            TimeSpan.Zero);
+        var serverReplacement = await harness.Server.ReplaceAssemblyAsync(
+            typeof(Api3BinaryFixtureIntegrationTests).Assembly,
+            assembly,
+            TimeSpan.Zero);
+        var multiReplacement = await harness.MultiClient.ReplaceAssemblyAsync(
+            "plugins",
+            typeof(Api3BinaryFixtureIntegrationTests).Assembly,
+            assembly,
+            TimeSpan.Zero);
+        AssertApi3Rejection(loaded.Error, assembly, "direct loader");
+        AssertApi3Rejection(clientRegistration.Error, assembly, "Client registration");
+        AssertApi3Rejection(serverRegistration.Error, assembly, "Server registration");
+        AssertApi3Rejection(multiRegistration.Error, assembly, "multi-cluster registration");
+        AssertApi3Rejection(clientReplacement.Error, assembly, "Client replacement");
+        AssertApi3Rejection(serverReplacement.Error, assembly, "Server replacement");
+        AssertApi3Rejection(multiReplacement.Error, assembly, "multi-cluster replacement");
         Ensure(GetSnapshotCount(harness.Client, "_dynamicModules") == clientModulesBefore &&
                GetSnapshotCount(harness.Client, "_proxies") == clientProxiesBefore &&
                GetGeneratedCodecCount(harness.Client) == clientCodecsBefore,
@@ -77,6 +80,8 @@ public sealed class Api3BinaryFixtureIntegrationTests
                GetSnapshotCount(harness.Server, "_services") == serverServicesBefore &&
                GetGeneratedCodecCount(harness.Server) == serverCodecsBefore,
             "server rejection must publish no module, service, or Codec");
+        Ensure(GetSnapshotCount(harness.MultiClient, "_dynamicRegistrations") == multiRegistrationsBefore,
+            "multi-cluster rejection must publish no dynamic registration");
 
         manifest = null;
         assembly = null!;
@@ -140,6 +145,30 @@ public sealed class Api3BinaryFixtureIntegrationTests
             throw new MissingMemberException(snapshot.GetType().FullName, "Count"));
     }
 
+    private static void AssertApi3Rejection(
+        SharpLinkAssemblyRegistrationError? error,
+        Assembly assembly,
+        string entry)
+    {
+        Ensure(error?.Code == SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
+            $"{entry} should reject API 3 as incompatible: {error}");
+        Ensure(error!.Message.Contains(
+                   $"API 3/{SharpLinkGeneratedManifestVersions.Api}",
+                   StringComparison.Ordinal) &&
+               error.Message.Contains(
+                   $"Protocol 2/{SharpLinkGeneratedManifestVersions.Protocol}",
+                   StringComparison.Ordinal) &&
+               error.Message.Contains("Generator", StringComparison.Ordinal) &&
+               error.Message.Contains("delete stale generated outputs", StringComparison.Ordinal) &&
+               error.Message.Contains("regenerate and rebuild", StringComparison.Ordinal) &&
+               error.Message.Contains("SharpLink SDK", StringComparison.Ordinal),
+            $"{entry} should identify both version axes, Generator, and the migration action");
+        Ensure(error.IncomingAssembly == assembly.FullName,
+            $"{entry} should identify the incoming Assembly");
+        Ensure(error.IncomingLoadContext == SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(assembly),
+            $"{entry} should identify the incoming collectible ALC");
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
@@ -168,11 +197,13 @@ public sealed class Api3BinaryFixtureIntegrationTests
         private FixtureHarness(
             ISharpLinkServer server,
             ISharpLinkClient client,
+            ISharpLinkMultiClusterClient multiClient,
             CancellationTokenSource serverCancellation,
             Task serverTask)
         {
             Server = server;
             Client = client;
+            MultiClient = multiClient;
             _serverCancellation = serverCancellation;
             _serverTask = serverTask;
         }
@@ -180,6 +211,8 @@ public sealed class Api3BinaryFixtureIntegrationTests
         internal ISharpLinkServer Server { get; }
 
         internal ISharpLinkClient Client { get; }
+
+        internal ISharpLinkMultiClusterClient MultiClient { get; }
 
         internal static async Task<FixtureHarness> CreateAsync()
         {
@@ -193,11 +226,18 @@ public sealed class Api3BinaryFixtureIntegrationTests
                 .UseTcp(IPAddress.Loopback.ToString(), port)
                 .Build();
             await client.ConnectAsync();
-            return new FixtureHarness(server, client, cancellation, serverTask);
+            var multiClient = SharpLinkMultiClusterClientBuilder.Create()
+                .AddCluster(
+                    "plugins",
+                    child => child.UseTcp(IPAddress.Loopback.ToString(), port),
+                    slot => slot.AllowDynamicContracts = true)
+                .Build();
+            return new FixtureHarness(server, client, multiClient, cancellation, serverTask);
         }
 
         public async ValueTask DisposeAsync()
         {
+            await MultiClient.StopAsync();
             await Client.StopAsync();
             await Server.StopAsync(TimeSpan.FromSeconds(2));
             await _serverCancellation.CancelAsync();
