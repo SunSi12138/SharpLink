@@ -21,10 +21,20 @@ public sealed class FrameworkTaskSupervisorTests
         supervisor.Seal();
         var drain = supervisor.DrainAsync();
         first.TrySetResult();
-        await Task.Yield();
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        FrameworkTaskSupervisorSnapshot active;
+        while (true)
+        {
+            active = supervisor.CaptureSnapshot();
+            if (active.ActiveTasks == 1 && active.ExternallyObservedTasks == 1)
+                break;
+            if (DateTime.UtcNow >= deadline)
+                break;
+            await Task.Delay(10);
+        }
 
         Ensure(!drain.IsCompleted, "drain must retain ownership while any accepted task is active");
-        var active = supervisor.CaptureSnapshot();
         Ensure(active.IsSealed && !active.IsDrained, "snapshot must distinguish sealed from drained");
         Ensure(active.ActiveTasks == 1 && active.ExternallyObservedTasks == 1,
             "snapshot must retain the remaining task observation mode");
