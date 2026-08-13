@@ -850,11 +850,15 @@ public interface IHelloService : SharpLink.Sdk.IService
         Ensure(CountOccurrences(generated, "internal static class __SharpLinkGeneratedUtf8") == 1,
             "one assembly-private UTF-8 helper must be shared by all eligible generated Codecs");
         Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.GetByteCount(__string_") == 85,
-            "each direct string must be counted exactly once across the 1/4/16/64-field shapes");
+            "each direct string must be counted once in the direct reservation path");
         Ensure(CountOccurrences(generated, "StrictEncoding.GetByteCount(") == 1,
             "the known-size write helper must never traverse UTF-16 again");
         Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.WriteStringKnownSize(writer, __string_") == 85,
-            "each direct string must reuse its cached value and byte count");
+            "each direct string must reuse its cached value and byte count in the direct write path");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.GetByteCount(__snapshot.__string_") == 85,
+            "each direct string must be captured once for the snapshot sizing path");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.WriteStringKnownSize(buffer, __snapshot.__string_") == 85,
+            "each direct string must reuse its snapshot value and byte count in the sized write path");
         Ensure(CountOccurrences(generated, "if (writer is IRpcByteBufferWriter __rpcWriter)") == 4,
             "each eligible DTO must gate whole-payload reservation on the SharpLink packet writer");
         Ensure(CountOccurrences(generated, "__rpcWriter.GetSpan(checked(__encodedSize + 4));") == 4,
@@ -874,7 +878,7 @@ public interface IHelloService : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task DtosWithComplexMembersShouldPartiallyPreReserveDirectStrings()
+    public Task DtosWithNestedMembersShouldComputeRecursiveExactSize()
     {
         var source = BuildSource("""
 [SharpLink.Sdk.RpcSerializable]
@@ -893,8 +897,12 @@ public sealed class NestedPayload
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("internal static class __SharpLinkGeneratedUtf8", StringComparison.Ordinal) &&
-               generated.Contains("var __encodedSize =", StringComparison.Ordinal),
-            "a nested DTO with direct strings must compute a partial lower-bound size");
+               generated.Contains("out var __exactSize", StringComparison.Ordinal) &&
+               generated.Contains("IRpcSizedCodec", StringComparison.Ordinal) &&
+               generated.Contains("IRpcSizedCodecSnapshot", StringComparison.Ordinal) &&
+               generated.Contains("TryGetEncodedSize", StringComparison.Ordinal) &&
+               generated.Contains("SerializeSized", StringComparison.Ordinal),
+            "a nested DTO with direct strings must compute a recursive exact size");
         Ensure(!generated.Contains("RpcGeneratedCodecWire.WriteString(writer, value.Name);", StringComparison.Ordinal),
             "direct strings in a partially pre-reserved DTO must use cached byte counts");
         Ensure(generated.Contains("RpcGeneratedCodecWire.BeginLength", StringComparison.Ordinal) &&
