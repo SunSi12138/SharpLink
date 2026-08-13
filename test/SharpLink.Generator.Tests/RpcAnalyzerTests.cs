@@ -849,12 +849,12 @@ public interface IHelloService : SharpLink.Sdk.IService
 
         Ensure(CountOccurrences(generated, "internal static class __SharpLinkGeneratedUtf8") == 1,
             "one assembly-private UTF-8 helper must be shared by all eligible generated Codecs");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.GetByteCount(__string_") == 85,
-            "each direct string must be counted exactly once across the 1/4/16/64-field shapes");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.GetByteCount(__string_") == 170,
+            "each direct string must have one cached-size path and one suppressed nested-write path");
         Ensure(CountOccurrences(generated, "StrictEncoding.GetByteCount(") == 1,
             "the known-size write helper must never traverse UTF-16 again");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.WriteStringKnownSize(writer, __string_") == 85,
-            "each direct string must reuse its cached value and byte count");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.WriteStringKnownSize(writer, __string_") == 170,
+            "each direct string must reuse its cached value and byte count in both generated write paths");
         Ensure(CountOccurrences(generated, "if (writer is IRpcByteBufferWriter __rpcWriter)") == 4,
             "each eligible DTO must gate whole-payload reservation on the SharpLink packet writer");
         Ensure(CountOccurrences(generated, "__rpcWriter.GetSpan(checked(__encodedSize + 4));") == 4,
@@ -893,11 +893,11 @@ public sealed class NestedPayload
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("internal static class __SharpLinkGeneratedUtf8", StringComparison.Ordinal) &&
-               generated.Contains("var __encodedSize =", StringComparison.Ordinal) &&
-               generated.Contains("__ISharpLinkSizedCodec", StringComparison.Ordinal) &&
+               generated.Contains("out var __exactSize", StringComparison.Ordinal) &&
+               generated.Contains("IRpcSizedCodec", StringComparison.Ordinal) &&
                generated.Contains("TryGetEncodedSize", StringComparison.Ordinal) &&
-               generated.Contains("__canExact", StringComparison.Ordinal) &&
-               generated.Contains("__nestedSize_", StringComparison.Ordinal),
+               generated.Contains("RpcGeneratedCodecSizing.Enter", StringComparison.Ordinal) &&
+               generated.Contains("RpcGeneratedCodecSizing.Exit", StringComparison.Ordinal),
             "a nested DTO with direct strings must compute a recursive exact size");
         Ensure(!generated.Contains("RpcGeneratedCodecWire.WriteString(writer, value.Name);", StringComparison.Ordinal),
             "direct strings in a partially pre-reserved DTO must use cached byte counts");

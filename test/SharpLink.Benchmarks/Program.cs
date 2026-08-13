@@ -87,6 +87,12 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--generated-wrapper-growth-evidence", StringComparison.Ordinal))
+        {
+            GeneratedWrapperDtoGrowthEvidenceRunner.Run();
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--latency-recorder-evidence", StringComparison.Ordinal))
         {
             LatencyRecorderEvidenceRunner.Run(args[1..]);
