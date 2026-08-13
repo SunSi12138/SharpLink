@@ -199,7 +199,7 @@ public partial class RpcGenerator
             if (hasDirectString)
             {
                 AppendDtoDirectPreReservation(sb, model);
-                AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: true, useCachedMembers: false, indent: "        ");
+                AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: true, useCachedMembers: true, indent: "        ");
             }
             else
             {
@@ -540,6 +540,10 @@ public partial class RpcGenerator
             else if (member.Kind == GeneratedMemberKind.NullableFixed)
             {
                 sb.AppendLine($"        var __nullable_{memberIndex} = {value};");
+            }
+            else if (member.Kind == GeneratedMemberKind.Complex)
+            {
+                sb.AppendLine($"        var __complex_{memberIndex} = {value};");
             }
         }
 
