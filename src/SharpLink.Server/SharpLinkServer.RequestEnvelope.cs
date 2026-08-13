@@ -3,7 +3,7 @@ namespace SharpLink.Server;
 internal sealed partial class SharpLinkServer
 {
     private ServerRequestEnvelope ReadRequestEnvelope(
-        IRpcSession session,
+        RpcSession session,
         ReadOnlySequence<byte> payload,
         ProtocolV2FrameFlags flags)
     {

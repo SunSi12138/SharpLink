@@ -11,14 +11,15 @@ internal sealed partial class SharpLinkServer
     }
 
     private void ReservePreAdmissionRequestStreams(
-        IRpcSession session,
+        RpcSession session,
         long requestId,
         int clientStreamCount,
         ServerCallCancellationState callState)
     {
-        if (clientStreamCount == 0 || session.StreamManager is not StreamManager streamManager)
+        if (clientStreamCount == 0)
             return;
 
+        var streamManager = session.StreamManager;
         var admissionController = _admissionController ?? throw new InvalidOperationException(
             "Pre-admission streams require an admission controller.");
         streamManager.ReservePreAdmissionStreams(
@@ -31,7 +32,7 @@ internal sealed partial class SharpLinkServer
                 ServerCallCancellationReason.AdmissionResourceExhausted),
             compressedPayload =>
             {
-                var decodedPayload = ((RpcSession)session).DecodeInboundPayload(
+                var decodedPayload = session.DecodeInboundPayload(
                     ProtocolV2FrameType.StreamData,
                     ProtocolV2FrameFlags.Compressed,
                     compressedPayload,
@@ -46,12 +47,12 @@ internal sealed partial class SharpLinkServer
     }
 
     private static void DrainRejectedOneWayStreams(
-        IRpcSession session,
+        RpcSession session,
         long requestId,
         int clientStreamCount)
     {
-        if (clientStreamCount != 0 && session.StreamManager is StreamManager streamManager)
-            streamManager.DrainRejectedRequestStreams(requestId, clientStreamCount);
+        if (clientStreamCount != 0)
+            session.StreamManager.DrainRejectedRequestStreams(requestId, clientStreamCount);
     }
 
     private int ResolveRawRequestClientStreamCount(ReadOnlySequence<byte> payload)
@@ -69,23 +70,22 @@ internal sealed partial class SharpLinkServer
     }
 
     private static void CompleteFailedRequestStreams(
-        IRpcSession session,
+        RpcSession session,
         long requestId,
         Exception exception)
     {
-        if (session.StreamManager is StreamManager streamManager)
-            streamManager.CompleteRequestStreams(requestId, exception);
+        session.StreamManager.CompleteRequestStreams(requestId, exception);
     }
 
     private static void DrainFailedOneWayStreams(
-        IRpcSession session,
+        RpcSession session,
         long requestId,
         int clientStreamCount)
     {
-        if (clientStreamCount == 0 || session.StreamManager is not StreamManager streamManager)
+        if (clientStreamCount == 0)
             return;
 
-        streamManager.DrainRejectedRequestStreams(requestId, clientStreamCount);
+        session.StreamManager.DrainRejectedRequestStreams(requestId, clientStreamCount);
     }
 
 }

@@ -1,12 +1,11 @@
 namespace SharpLink.Runtime;
 
 /// <summary>Owns protocol state, buffering, flow control, and lifecycle for one RPC transport connection.</summary>
-public sealed partial class RpcSession : IRpcSession
+internal sealed partial class RpcSession
 {
-    /// <inheritdoc />
-    public string Id { get; }
+    internal string Id { get; }
     /// <summary>Gets the instance-owned runtime services used by this session.</summary>
-    public SharpLinkRuntimeContext RuntimeContext { get; }
+    internal SharpLinkRuntimeContext RuntimeContext { get; }
     internal RpcSessionRole Role { get; }
     private RpcSessionProtocolState _protocolState = RpcSessionProtocolState.Handshaking;
     private int _handshakeCompletionStarted;
@@ -21,11 +20,9 @@ public sealed partial class RpcSession : IRpcSession
         => Volatile.Read(ref _protocolState).Phase;
     internal bool HasStreamFlowControl
         => Volatile.Read(ref _protocolState).FlowController is not null;
-    IRpcRuntimeContext IRpcSession.RuntimeContext => RuntimeContext;
     private long _lastActiveTimestamp;
     private long _lastActiveUtcTicks;
-    /// <inheritdoc />
-    public DateTime LastActive
+    internal DateTime LastActive
     {
         get => new(Volatile.Read(ref _lastActiveUtcTicks), DateTimeKind.Utc);
         set
@@ -39,8 +36,7 @@ public sealed partial class RpcSession : IRpcSession
     }
     internal TimeSpan TimeSinceLastActivity
         => RuntimeContext.TimeProvider.GetElapsedTime(Volatile.Read(ref _lastActiveTimestamp));
-    /// <inheritdoc />
-    public PipeReader Input => _transport.Input;
+    internal PipeReader Input => _transport.Input;
     private PipeWriter Output => _transport.Output;
 
     private readonly CancellationTokenSource _cts = new();
@@ -57,10 +53,8 @@ public sealed partial class RpcSession : IRpcSession
     private readonly Lock _transportDisposeGate = new();
     private Task? _transportDisposeTask;
 
-    /// <inheritdoc />
-    public IStreamManager StreamManager { get; }
-    /// <inheritdoc />
-    public bool IsConnected => Volatile.Read(ref _terminal) is null;
+    internal StreamManager StreamManager { get; }
+    internal bool IsConnected => Volatile.Read(ref _terminal) is null;
     internal CancellationToken LifetimeToken => _lifetimeToken;
 
     private readonly Lock _pumpGate = new();
@@ -406,7 +400,7 @@ public sealed partial class RpcSession : IRpcSession
                 throw new InvalidOperationException(
                     "A stopping or terminal RPC session must publish its terminal reason before the stable lifecycle boundary.");
             }
-            if (StreamManager is StreamManager manager && !manager.IsTerminated)
+            if (!StreamManager.IsTerminated)
             {
                 throw new InvalidOperationException(
                     "A stopping or terminal RPC session must publish receive-stream termination before the stable lifecycle boundary.");
@@ -424,10 +418,8 @@ public sealed partial class RpcSession : IRpcSession
             RpcSessionProtocolPhase.Ready,
             RpcSessionProtocolPhase.Draining);
 
-    /// <inheritdoc />
-    public event Action? OnConnected;
-    /// <inheritdoc />
-    public void NotifyConnected()
+    internal event Action? OnConnected;
+    internal void NotifyConnected()
     {
         if (Volatile.Read(ref _terminal) is not null ||
             Interlocked.CompareExchange(
@@ -446,10 +438,8 @@ public sealed partial class RpcSession : IRpcSession
         }
         OnConnected?.Invoke();
     }
-    /// <inheritdoc />
-    public event Action<Exception?>? OnDisconnected;
-    /// <inheritdoc />
-    public void NotifyDisconnected(Exception? exception = null)
+    internal event Action<Exception?>? OnDisconnected;
+    internal void NotifyDisconnected(Exception? exception = null)
         => Fault(exception ?? new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Transport closed."));
 
     private void Fault(Exception exception)
@@ -476,8 +466,7 @@ public sealed partial class RpcSession : IRpcSession
         }
     }
 
-    /// <inheritdoc />
-    public async ValueTask DisposeAsync()
+    internal async ValueTask DisposeAsync()
     {
         BeginShutdown();
 

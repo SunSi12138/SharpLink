@@ -2,7 +2,7 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
-    private async Task<SharpLinkAuthenticationResult> ProcessHandshakeAsync(IRpcSession session, CancellationToken ct)
+    private async Task<SharpLinkAuthenticationResult> ProcessHandshakeAsync(RpcSession session, CancellationToken ct)
     {
         var compressionProviders = _runtimeContext.Compression.ProviderBindings;
         var negotiationPolicy = ProtocolV2Negotiator.CreateImplementedPolicy(
@@ -25,7 +25,7 @@ internal sealed partial class SharpLinkServer
                            ref buffer, _protocolOptions, out var header, out var message))
                 {
                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + message.Length);
-                    var runtimeSession = (RpcSession)session;
+                    var runtimeSession = session;
                     SharpLinkAuthenticationResult authResult;
                     ProtocolV2HandshakeRequest request = default;
                     ProtocolV2ServerNegotiation? negotiation = null;
@@ -110,7 +110,7 @@ internal sealed partial class SharpLinkServer
     }
 
     private async ValueTask<SharpLinkAuthenticationResult> AuthenticateAsync(
-        IRpcSession session,
+        RpcSession session,
         ReadOnlyMemory<byte> payload,
         CancellationToken cancellationToken)
     {
@@ -123,7 +123,7 @@ internal sealed partial class SharpLinkServer
 
         try
         {
-            var rpcSession = (RpcSession)session;
+            var rpcSession = session;
             var result = await _authenticator.AuthenticateAsync(
                 new SharpLinkAuthenticationRequest(
                     session.Id,

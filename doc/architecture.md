@@ -28,12 +28,12 @@ SharpLink.Serializer.SharpPack
 - `SharpLink.Abstractions`
   - 保持 `SharpLink.Sdk` 命名空间的契约标记（`IService` / `RpcContract` / `RpcService` / `Oneway` / `Timeout` / `SharpLinkCallOptions`）
   - Protocol v2 模型（`ProtocolV2FrameType` / `ProtocolV2FrameFlags` / `ProtocolV2Constants`）
-  - 核心抽象（`IRpcChannel`、`IRpcStub`、`IRpcGeneratedServerBridge`、`IClientTransportFactory`、`IServerTransportListener`、`ITransportConnection`、`IRpcSession`、`IRpcCodec`）
+  - 核心抽象（`IRpcChannel`、`IRpcStub`、`IRpcGeneratedServerBridge`、`IClientTransportFactory`、`IServerTransportListener`、`ITransportConnection`、`IRpcCodec`）
   - 结构化错误模型（`SharpLinkException` / `SharpLinkErrorCode`）
   - Assembly Manifest、弱 Catalog、结构化程序集注册结果与 Client/Server 公共接口
 
 - `SharpLink.Runtime`
-  - `RpcSession`、`StreamManager`、`Request/Stream` 调度基础设施
+  - 内部 `RpcSession`、`StreamManager`、`Request/Stream` 调度基础设施；不向业务代码公开 Session lifecycle、raw frame 或 dispatcher control
   - 无业务策略的 generated protocol bridge，以及 dispatcher、flow control、frame、SendPump 与 stream terminal 的唯一所有权
   - Context 所属的 `IRpcCodecProvider` 与内置不可变编解码器
   - 传输实现（Socket、NamedPipe、AnonymousPipe、SharedMemory 的 client factory / server listener / 独立 connection）

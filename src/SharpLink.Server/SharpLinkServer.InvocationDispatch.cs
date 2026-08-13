@@ -187,7 +187,7 @@ internal sealed partial class SharpLinkServer
         {
             if (_admissionController is not null)
             {
-                payload = ((RpcSession)session).DecodeInboundPayload(
+                payload = session.DecodeInboundPayload(
                     ProtocolV2FrameType.Request,
                     flags,
                     payload,
@@ -217,7 +217,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            ((RpcSession)session).ReturnDecodedPayload(decodedRequestOwner);
+            session.ReturnDecodedPayload(decodedRequestOwner);
             CompleteFailedRequestStreams(session, requestId, exception);
             ReleaseDispatchResources(
                 admittedCallState, requestId, requestCancellationMap, connection);
@@ -336,7 +336,7 @@ internal sealed partial class SharpLinkServer
             }
         }
 
-        var writer = ((RpcSession)session).RentFrameWriter();
+        var writer = session.RentFrameWriter();
         var ownsWriter = true;
         var token = writer.BeginPacket(
             ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((ulong)requestId));
@@ -374,7 +374,7 @@ internal sealed partial class SharpLinkServer
             }
             writer.EndPacket(token);
             ownsWriter = false;
-            var responseSend = ((RpcSession)session)
+            var responseSend = session
                 .SendPacketWithBackpressureAsync(writer, connection.ConnectionToken);
             return CompletePayloadResponseAndReleaseDispatchResourcesAsync(
                 responseSend,
@@ -451,7 +451,7 @@ internal sealed partial class SharpLinkServer
 
     private async ValueTask AwaitDispatchRpcNoReturnAsync(
         ValueTask invokeTask,
-        IRpcSession session,
+        RpcSession session,
         long requestId,
         ServerCallCancellationState callState,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
@@ -531,7 +531,7 @@ internal sealed partial class SharpLinkServer
 
     private async ValueTask AwaitDispatchRpcAsync(
         ValueTask invokeTask,
-        IRpcSession session,
+        RpcSession session,
         long requestId,
         IRpcByteBufferWriter writer,
         PacketToken token,
@@ -562,7 +562,7 @@ internal sealed partial class SharpLinkServer
             }
             writer.EndPacket(token);
             ownsWriter = false;
-            await ((RpcSession)session)
+            await session
                 .SendPacketWithBackpressureAsync(writer, connection.ConnectionToken)
                 .ConfigureAwait(false);
         }
@@ -679,7 +679,7 @@ internal sealed partial class SharpLinkServer
 
     private ValueTask CompletePayloadResponseAndReleaseDispatchResourcesAsync(
         ValueTask responseSend,
-        IRpcSession session,
+        RpcSession session,
         ServerCallCancellationState? callState,
         long requestId,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
@@ -697,7 +697,7 @@ internal sealed partial class SharpLinkServer
 
     private async ValueTask AwaitPayloadResponseAndReleaseDispatchResourcesAsync(
         ValueTask responseSend,
-        IRpcSession session,
+        RpcSession session,
         ServerCallCancellationState? callState,
         long requestId,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,

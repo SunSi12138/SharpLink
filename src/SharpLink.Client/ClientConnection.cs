@@ -244,12 +244,10 @@ internal sealed class ClientConnection :
                 ValueTask drain;
                 try
                 {
-                    drain = Session.StreamManager is StreamManager manager
-                        ? manager.CompleteStreamAfterDispatchesAsync(
-                            completion.RequestId,
-                            0,
-                            completion.Exception)
-                        : ValueTask.CompletedTask;
+                    drain = Session.StreamManager.CompleteStreamAfterDispatchesAsync(
+                        completion.RequestId,
+                        0,
+                        completion.Exception);
                 }
                 catch (Exception exception)
                 {

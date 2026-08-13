@@ -1,6 +1,6 @@
 namespace SharpLink.Runtime;
 
-public sealed partial class RpcSession
+internal sealed partial class RpcSession
 {
     internal string? CompressionProfile
         => Volatile.Read(ref _protocolState).Options?.CompressionBinding?.WireProfile;

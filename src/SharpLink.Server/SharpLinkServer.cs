@@ -623,7 +623,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     }
 
     private static SharpLinkServerInvocationContext CreateServerInvocationContext(
-        IRpcSession session,
+        RpcSession session,
         IRpcStub stub,
         long methodId,
         long requestId,
@@ -633,13 +633,12 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         CancellationToken cancellationToken)
     {
         var method = GetMethodDescriptor(stub, methodId);
-        var rpcSession = (RpcSession)session;
         return new SharpLinkServerInvocationContext(
             method,
             requestId,
             session.Id,
-            rpcSession.LocalEndPoint,
-            rpcSession.RemoteEndPoint,
+            session.LocalEndPoint,
+            session.RemoteEndPoint,
             authenticationContext,
             deadline,
             metadata,

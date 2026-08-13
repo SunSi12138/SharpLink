@@ -61,7 +61,7 @@ internal sealed partial class SharpLinkClient
         public int ActiveCallCount => CountConnections(static connection => connection.ActiveCallCount);
 
         public int ActiveStreamCount => CountConnections(static connection =>
-            ((StreamManager)connection.Session.StreamManager).ActiveStreamCount);
+            connection.Session.StreamManager.ActiveStreamCount);
 
         public void BeginStop()
         {

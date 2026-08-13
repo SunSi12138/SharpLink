@@ -3,7 +3,7 @@ namespace SharpLink.Runtime;
 /// <summary>Decodes a single-consumer RPC stream into a pooled asynchronous enumerator.</summary>
 /// <typeparam name="T">The decoded stream item type.</typeparam>
 /// <remarks>Dispose the enumerator to release buffered items and return the dispatcher to its pool.</remarks>
-public sealed class PooledAsyncStreamDispatcher<T> :
+internal sealed class PooledAsyncStreamDispatcher<T> :
     IStreamConsumptionAwareDispatcher,
     IStreamDispatchLease,
     IAsyncEnumerable<T>,

@@ -206,7 +206,7 @@ public class GeneratedServerBridgeTests
             failure = exception;
         }
 
-        ((IRpcSession)session).SendStreamErrorAsync(
+        session.SendStreamErrorAsync(
             73,
             0,
             new SharpLinkException(
