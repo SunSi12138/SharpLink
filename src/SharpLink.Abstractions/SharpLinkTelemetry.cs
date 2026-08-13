@@ -150,11 +150,14 @@ public static class SharpLinkTelemetry
         var activity = ClientActivitySource.StartActivity("sharplink.rpc.attempt", ActivityKind.Client);
         if (activity is null)
             return default;
-        activity.SetTag("rpc.system", "sharplink");
-        activity.SetTag("rpc.sharplink.contract_id", method.ContractId);
-        activity.SetTag("rpc.sharplink.method_id", method.MethodId);
-        activity.SetTag("rpc.sharplink.method_kind", method.Kind.ToString());
-        activity.SetTag("rpc.sharplink.attempt", attempt);
+        if (activity.IsAllDataRequested)
+        {
+            activity.SetTag("rpc.system", "sharplink");
+            activity.SetTag("rpc.sharplink.contract_id", method.ContractId);
+            activity.SetTag("rpc.sharplink.method_id", method.MethodId);
+            activity.SetTag("rpc.sharplink.method_kind", method.Kind.ToString());
+            activity.SetTag("rpc.sharplink.attempt", attempt);
+        }
         return new AttemptScope(activity);
     }
 
@@ -378,12 +381,15 @@ public static class SharpLinkTelemetry
             activity = source.StartActivity("sharplink.rpc", kind);
             if (activity is not null)
             {
-                activity.SetTag("rpc.system", "sharplink");
-                activity.SetTag("rpc.sharplink.contract_id", method.ContractId);
-                activity.SetTag("rpc.sharplink.method_id", method.MethodId);
-                activity.SetTag("rpc.sharplink.method_kind", method.Kind.ToString());
-                if (requestId != 0)
-                    activity.SetTag("rpc.sharplink.request_id", requestId);
+                if (activity.IsAllDataRequested)
+                {
+                    activity.SetTag("rpc.system", "sharplink");
+                    activity.SetTag("rpc.sharplink.contract_id", method.ContractId);
+                    activity.SetTag("rpc.sharplink.method_id", method.MethodId);
+                    activity.SetTag("rpc.sharplink.method_kind", method.Kind.ToString());
+                    if (requestId != 0)
+                        activity.SetTag("rpc.sharplink.request_id", requestId);
+                }
             }
         }
 
