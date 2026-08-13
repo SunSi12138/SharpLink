@@ -9,10 +9,20 @@ public static class TransportExtensions
     extension(SharpLinkServerBuilder builder)
     {
         /// <summary>Listens on a local or Windows named pipe.</summary>
-        public SharpLinkServerBuilder UseNamedPipe(string name)
+        /// <param name="name">The logical pipe name.</param>
+        /// <param name="configure">Optional named-pipe options, such as allowing cross-user access.</param>
+        public SharpLinkServerBuilder UseNamedPipe(
+            string name,
+            Action<NamedPipeTransportOptions>? configure = null)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(name);
-            return builder.UseTransport(new NamedPipeServerTransportListener(name));
+            var options = new NamedPipeTransportOptions();
+            configure?.Invoke(options);
+            return builder.UseTransport(new NamedPipeServerTransportListener(
+                name,
+                NamedPipeServerStream.MaxAllowedServerInstances,
+                PipeTransmissionMode.Byte,
+                options.ToPipeOptions()));
         }
 
         /// <summary>Listens on a TCP endpoint without TLS.</summary>
