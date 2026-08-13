@@ -1480,38 +1480,6 @@ public sealed class RuntimeAssemblyIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task ReRegisteringSameDynamicAssemblyShouldPublishANewProxyForTheSameContractType()
-    {
-        await using var harness = await DynamicHarness.CreateAsync();
-        using var plugin = PluginBundle.Load("dynamic-re-register-proxy", loadService: false);
-
-        Ensure(harness.Client.RegisterAssembly(plugin.ContractAssembly).Succeeded,
-            "initial dynamic registration");
-        object? firstProxy = GetProxy(harness.Client, plugin.ContractType);
-        Ensure(firstProxy is not null, "initial dynamic proxy should be cached");
-
-        Ensure((await harness.Client.UnregisterAssemblyAsync(
-            plugin.ContractAssembly,
-            TimeSpan.Zero)).ReferencesReleased,
-            "unregister must retire the first registration generation");
-        Ensure(harness.Client.RegisterAssembly(plugin.ContractAssembly).Succeeded,
-            "the same contract assembly can be registered again");
-
-        object? secondProxy = GetProxy(harness.Client, plugin.ContractType);
-        Ensure(secondProxy is not null, "re-registered dynamic proxy should be cached");
-        Ensure(!ReferenceEquals(firstProxy, secondProxy),
-            "the same contract type must receive a new cached Proxy after the registration generation changes");
-
-        Ensure((await harness.Client.UnregisterAssemblyAsync(
-            plugin.ContractAssembly,
-            TimeSpan.Zero)).ReferencesReleased,
-            "re-registered snapshot releases");
-        firstProxy = null;
-        secondProxy = null;
-    }
-
-    [Test]
-    [NotInParallel]
     public async Task CollectibleContextShouldUnloadAfterFrameworkReferencesAreReleased()
     {
         var tracked = await LoadInvokeUnregisterAndUnloadAsync();

@@ -16,7 +16,6 @@ namespace SharpLink.Benchmarks;
     RunStrategy.Throughput,
     launchCount: 1,
     warmupCount: 3,
-    invocationCount: 1000,
     iterationCount: 10)]
 public class ProxyCacheBenchmarks
 {
