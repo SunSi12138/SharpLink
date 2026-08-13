@@ -300,14 +300,15 @@ internal static class RpcSessionExtensions
             var codec = session.RuntimeContext.Codecs.GetCodec<T>();
             if (codec is IRpcSizedCodec<T> sizedCodec &&
                 sizedCodec.CanExactSize &&
-                sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes))
+                sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
             {
                 await session.SendStreamChunkKnownSizeAsync(
                     requestId,
                     streamId,
                     item,
-                    codec,
+                    sizedCodec,
                     Math.Max(1, knownEncodedBytes),
+                    sizedSnapshot,
                     cancellationToken).ConfigureAwait(false);
                 return;
             }

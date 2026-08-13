@@ -72,14 +72,15 @@ internal sealed partial class RpcSession
     {
         if (codec is IRpcSizedCodec<T> sizedCodec &&
             sizedCodec.CanExactSize &&
-            sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes))
+            sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
         {
             return SendStreamChunkKnownSizeAsync(
                 requestId,
                 streamId,
                 item,
-                codec,
+                sizedCodec,
                 Math.Max(1, knownEncodedBytes),
+                sizedSnapshot,
                 cancellationToken);
         }
 
@@ -141,8 +142,9 @@ internal sealed partial class RpcSession
         long requestId,
         ushort streamId,
         T item,
-        IRpcCodec<T> codec,
+        IRpcSizedCodec<T> sizedCodec,
         int encodedBytes,
+        IRpcSizedCodecSnapshot? sizedSnapshot,
         CancellationToken cancellationToken)
     {
         await AcquireStreamSendCreditAsync(
@@ -164,7 +166,12 @@ internal sealed partial class RpcSession
                 var idSpan = writer.GetSpan(sizeof(ushort));
                 BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
                 writer.Advance(sizeof(ushort));
-                codec.Serialize(item, writer);
+                sizedCodec.SerializeSized(item, writer, encodedBytes, sizedSnapshot);
+                if (sizedSnapshot is not null)
+                {
+                    sizedCodec.ReleaseSnapshot(sizedSnapshot);
+                    sizedSnapshot = null;
+                }
             }
 
             var actualEncodedBytes = Math.Max(
@@ -186,6 +193,8 @@ internal sealed partial class RpcSession
         }
         finally
         {
+            if (sizedSnapshot is not null)
+                sizedCodec.ReleaseSnapshot(sizedSnapshot);
             if (ownsWriter && writer is not null)
                 RuntimeContext.Buffers.Return(writer);
         }
