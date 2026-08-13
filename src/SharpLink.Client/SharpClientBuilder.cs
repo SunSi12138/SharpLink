@@ -48,6 +48,18 @@ public class SharpClientBuilder
         return this;
     }
 
+    /// <summary>Gets the configured fixed transport factory when one has been selected.</summary>
+    internal IClientTransportFactory? FixedTransportFactory
+    {
+        get
+        {
+            lock (_configurationGate)
+                return _topology is FixedTransportTopologyDraft fixedTransport
+                    ? fixedTransport.Transport
+                    : null;
+        }
+    }
+
     /// <summary>Configures an instance-scoped client authentication payload provider.</summary>
     public SharpClientBuilder UseAuthenticator(ISharpLinkClientAuthenticator authenticator)
     {
