@@ -159,7 +159,8 @@ internal enum GeneratedCodecKind
     Memory,
     ReadOnlyMemory,
     ImmutableArray,
-    Nullable
+    Nullable,
+    Custom
 }
 
 internal enum GeneratedMemberKind
@@ -198,6 +199,7 @@ internal sealed record GeneratedCodecModel(
     string? ElementType,
     string? KeyType,
     string? ValueType,
+    string? CustomCodecType,
     string? AdapterType,
     string? AdapterId,
     string WireFormatId,
@@ -218,7 +220,13 @@ internal enum DtoDiagnosticKind
     AdapterBindingInvalid,
     AdapterTargetInvalid,
     AdapterIdentityConflict,
-    BuiltinAdapterOverride
+    BuiltinAdapterOverride,
+    CustomCodecBindingInvalid,
+    CustomCodecTargetInvalid,
+    CustomCodecTypeInvalid,
+    CustomCodecIdentityInvalid,
+    CustomCodecSelectionConflict,
+    BuiltinCustomCodecOverride
 }
 
 internal readonly record struct DtoDiagnosticModel(
@@ -306,6 +314,7 @@ internal sealed class DtoGenerationResultComparer : IEqualityComparer<DtoGenerat
             !string.Equals(left.ElementType, right.ElementType, StringComparison.Ordinal) ||
             !string.Equals(left.KeyType, right.KeyType, StringComparison.Ordinal) ||
             !string.Equals(left.ValueType, right.ValueType, StringComparison.Ordinal) ||
+            !string.Equals(left.CustomCodecType, right.CustomCodecType, StringComparison.Ordinal) ||
             !string.Equals(left.AdapterType, right.AdapterType, StringComparison.Ordinal) ||
             !string.Equals(left.AdapterId, right.AdapterId, StringComparison.Ordinal) ||
             !string.Equals(left.WireFormatId, right.WireFormatId, StringComparison.Ordinal) ||
