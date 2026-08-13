@@ -4,7 +4,9 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
+using SharpLink.Abstractions;
 using SharpLink.Runtime;
 
 namespace SharpLink.Benchmarks;
@@ -255,6 +257,120 @@ internal sealed class ReceiveFlowStateLongLivedWorkload
         var expectedCredit = checked(_itemsPerInvocation * EncodedBytes);
         if (returnedCredit != expectedCredit)
             throw new InvalidOperationException("Long-lived receive state did not return every reserved byte exactly once.");
+        return returnedCredit;
+    }
+}
+
+/// <summary>
+/// Measures send-state lifecycle allocation after prewarming the dictionary and pool.
+/// Every measured batch creates and completes fresh short-lived send states.
+/// </summary>
+internal sealed class SendFlowStateShortWorkload
+{
+    private const int EncodedBytes = 32;
+    private const int PrewarmedStreamCount = 128;
+    private readonly StreamFlowController _controller;
+    private readonly long[] _requestIds = new long[PrewarmedStreamCount];
+    private readonly int _encodedBytesPerStream;
+    private readonly Exception _completionException;
+
+    internal SendFlowStateShortWorkload(int itemsPerStream)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(itemsPerStream);
+        _encodedBytesPerStream = checked(itemsPerStream * EncodedBytes);
+        _completionException = new SharpLinkException(
+            SharpLinkErrorCode.Cancelled,
+            "benchmark completion");
+        _controller = new StreamFlowController(
+            streamWindow: _encodedBytesPerStream,
+            connectionWindow: checked(_encodedBytesPerStream * PrewarmedStreamCount * 4),
+            maxFramePayloadBytes: 4 * 1024 * 1024,
+            maxConcurrentStreams: PrewarmedStreamCount);
+        for (var index = 0; index < _requestIds.Length; index++)
+            _requestIds[index] = index + 1;
+        PrewarmDictionaryCapacity();
+    }
+
+    internal int Run(int activeStreams)
+    {
+        if ((uint)(activeStreams - 1) >= _requestIds.Length)
+            throw new ArgumentOutOfRangeException(nameof(activeStreams));
+
+        for (var streamIndex = 0; streamIndex < activeStreams; streamIndex++)
+        {
+            var requestId = _requestIds[streamIndex];
+            _controller.AcquireSendCreditAsync(
+                requestId,
+                streamId: 1,
+                _encodedBytesPerStream,
+                CancellationToken.None).GetAwaiter().GetResult();
+        }
+
+        var returnedCredit = 0;
+            for (var streamIndex = 0; streamIndex < activeStreams; streamIndex++)
+            {
+                var requestId = _requestIds[streamIndex];
+                _controller.CompleteSendStream(requestId, 1, _completionException);
+                _controller.ApplyWindowUpdate(requestId, 1, _encodedBytesPerStream);
+                returnedCredit += _encodedBytesPerStream;
+        }
+
+        return returnedCredit;
+    }
+
+    private void PrewarmDictionaryCapacity()
+    {
+        for (var streamIndex = 0; streamIndex < _requestIds.Length; streamIndex++)
+        {
+            _controller.AcquireSendCreditAsync(
+                _requestIds[streamIndex],
+                streamId: 1,
+                _encodedBytesPerStream,
+                CancellationToken.None).GetAwaiter().GetResult();
+        }
+
+            for (var streamIndex = 0; streamIndex < _requestIds.Length; streamIndex++)
+            {
+                var requestId = _requestIds[streamIndex];
+                _controller.CompleteSendStream(requestId, 1, _completionException);
+                _controller.ApplyWindowUpdate(requestId, 1, _encodedBytesPerStream);
+            }
+    }
+}
+
+/// <summary>Control workload that repeatedly reuses one send state created during setup.</summary>
+internal sealed class SendFlowStateLongLivedWorkload
+{
+    private const int EncodedBytes = 32;
+    private readonly StreamFlowController _controller;
+    private readonly int _itemsPerInvocation;
+
+    internal SendFlowStateLongLivedWorkload(int itemsPerInvocation)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(itemsPerInvocation);
+        _itemsPerInvocation = itemsPerInvocation;
+        _controller = new StreamFlowController(
+            streamWindow: EncodedBytes,
+            connectionWindow: EncodedBytes * 4,
+            maxFramePayloadBytes: 4 * 1024 * 1024,
+            maxConcurrentStreams: 1);
+
+        _controller.AcquireSendCreditAsync(1, 1, EncodedBytes, CancellationToken.None)
+            .GetAwaiter().GetResult();
+        _controller.ApplyWindowUpdate(1, 1, EncodedBytes);
+    }
+
+    internal int Run()
+    {
+        var returnedCredit = 0;
+        for (var item = 0; item < _itemsPerInvocation; item++)
+        {
+            _controller.AcquireSendCreditAsync(1, 1, EncodedBytes, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            _controller.ApplyWindowUpdate(1, 1, EncodedBytes);
+            returnedCredit += EncodedBytes;
+        }
+
         return returnedCredit;
     }
 }
