@@ -170,6 +170,12 @@ public sealed class SharpLinkMultiClusterClientTests
 
         Ensure(ReferenceEquals(first, second),
             "repeated Get<T>() within the same static registration generation must return the cached Proxy reference");
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < 1000; index++)
+            _ = client.Get<IOrdersContract>();
+        var allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
+        Ensure(allocatedAfter == allocatedBefore,
+            "steady-state repeated multicluster Get<T>() must not allocate a new Proxy or channel wrapper");
     }
 
     [Test]
