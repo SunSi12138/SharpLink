@@ -99,6 +99,18 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--send-credit-buffer-hold-evidence", StringComparison.Ordinal))
+        {
+            SendCreditBufferHoldEvidenceRunner.Run();
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--send-credit-fast-path-evidence", StringComparison.Ordinal))
+        {
+            SendCreditFastPathEvidenceRunner.Run();
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--latency-recorder-evidence", StringComparison.Ordinal))
         {
             LatencyRecorderEvidenceRunner.Run(args[1..]);

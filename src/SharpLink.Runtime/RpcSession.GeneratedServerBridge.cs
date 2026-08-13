@@ -70,10 +70,25 @@ internal sealed partial class RpcSession
         IRpcCodec<T> codec,
         CancellationToken cancellationToken)
     {
-        var writer = RentFrameWriter();
+        if (codec is IRpcSizedCodec<T> sizedCodec &&
+            sizedCodec.CanExactSize &&
+            sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
+        {
+            return SendStreamChunkKnownSizeAsync(
+                requestId,
+                streamId,
+                item,
+                sizedCodec,
+                knownEncodedBytes,
+                sizedSnapshot,
+                cancellationToken);
+        }
+
+        IRpcByteBufferWriter? writer = null;
         var ownsWriter = true;
         try
         {
+            writer = RentFrameWriter();
             using (writer.BeginPacketScope(
                        ProtocolV2FrameType.StreamData,
                        ProtocolV2FrameFlags.None,
@@ -118,7 +133,73 @@ internal sealed partial class RpcSession
         }
         finally
         {
-            if (ownsWriter)
+            if (ownsWriter && writer is not null)
+                RuntimeContext.Buffers.Return(writer);
+        }
+    }
+
+    internal async ValueTask SendStreamChunkKnownSizeAsync<T>(
+        long requestId,
+        ushort streamId,
+        T item,
+        IRpcSizedCodec<T> sizedCodec,
+        int encodedBytes,
+        IRpcSizedCodecSnapshot? sizedSnapshot,
+        CancellationToken cancellationToken)
+    {
+        var creditBytes = Math.Max(1, encodedBytes);
+        var creditAcquired = false;
+        IRpcByteBufferWriter? writer = null;
+        var ownsWriter = true;
+        try
+        {
+            await AcquireStreamSendCreditAsync(
+                requestId,
+                streamId,
+                creditBytes,
+                cancellationToken).ConfigureAwait(false);
+            creditAcquired = true;
+
+            writer = RentFrameWriter();
+            using (writer.BeginPacketScope(
+                       ProtocolV2FrameType.StreamData,
+                       ProtocolV2FrameFlags.None,
+                       unchecked((ulong)requestId)))
+            {
+                writer.GetSpan(sizeof(ushort) + encodedBytes + 4);
+                writer.Advance(0);
+                var idSpan = writer.GetSpan(sizeof(ushort));
+                BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
+                writer.Advance(sizeof(ushort));
+                sizedCodec.SerializeSized(item, writer, encodedBytes, sizedSnapshot);
+                if (sizedSnapshot is not null)
+                {
+                    sizedCodec.ReleaseSnapshot(sizedSnapshot);
+                    sizedSnapshot = null;
+                }
+            }
+
+            var actualEncodedBytes = writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort);
+            if (actualEncodedBytes != encodedBytes)
+            {
+                throw new InvalidOperationException(
+                    "Generated stream item size differed after credit was acquired.");
+            }
+
+            ownsWriter = false;
+            SendPacket(writer);
+        }
+        catch
+        {
+            if (creditAcquired)
+                ReturnUnsentStreamCredit(requestId, streamId, creditBytes);
+            throw;
+        }
+        finally
+        {
+            if (sizedSnapshot is not null)
+                sizedCodec.ReleaseSnapshot(sizedSnapshot);
+            if (ownsWriter && writer is not null)
                 RuntimeContext.Buffers.Return(writer);
         }
     }

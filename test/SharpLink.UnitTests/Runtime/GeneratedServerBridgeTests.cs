@@ -149,6 +149,54 @@ public class GeneratedServerBridgeTests
         await input.Writer.CompleteAsync();
     }
 
+    [Test]
+    public async Task SizedOutboundPumpShouldNotSerializeBeforeCredit()
+    {
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "bridge-sized-outbound-backpressure",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ServerOptions(),
+            completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(
+            session,
+            ProtocolV2Capabilities.FlowControl,
+            streamReceiveWindowBytes: 4,
+            connectionReceiveWindowBytes: 4);
+        await session.AcquireStreamSendCreditAsync(72, 0, 4, CancellationToken.None);
+
+        var serialized = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pump = new RpcSessionGeneratedServerBridge(session).PumpOutboundStreamAsync(
+            73,
+            0,
+            Values(1),
+            new SizedSignalingIntCodec(serialized),
+            payloadNullable: false,
+            contractId: 101,
+            methodId: 202,
+            CancellationToken.None);
+
+        await Task.Yield();
+        Ensure(!serialized.Task.IsCompleted,
+            "sized stream items must not serialize while send credit is exhausted");
+
+        session.ApplyWindowUpdate(72, new ProtocolV2WindowUpdate(0, 4));
+        await pump.AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        await serialized.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var frames = await FlushAndReadFramesAsync(session, output, expectedRequestId: 73);
+        Ensure(frames.Count == 2, "one resumed sized item and one terminal frame must be emitted");
+        Ensure(frames[0] == (ProtocolV2FrameType.StreamData, ProtocolV2FrameFlags.None),
+            "the resumed sized item must be published exactly once before the terminal");
+        Ensure(frames[1] == (ProtocolV2FrameType.StreamComplete, ProtocolV2FrameFlags.None),
+            "the resumed stream must end with exactly one success terminal");
+
+        await output.Reader.CompleteAsync();
+        await input.Writer.CompleteAsync();
+    }
+
     private static async Task<List<(ProtocolV2FrameType Type, ProtocolV2FrameFlags Flags)>>
         PumpAndReadFramesAsync(IAsyncEnumerable<int> stream, IRpcCodec<int>? codec = null)
     {
@@ -307,6 +355,47 @@ public class GeneratedServerBridgeTests
 
         public int Deserialize(in ReadOnlySequence<byte> buffer)
             => BitConverter.ToInt32(buffer.FirstSpan);
+    }
+
+    private sealed class SizedSignalingIntCodec(TaskCompletionSource serialized)
+        : IRpcCodec<int>, IRpcSizedCodec<int>
+    {
+        public bool CanExactSize => true;
+
+        public void Serialize(in int value, IBufferWriter<byte> buffer)
+        {
+            var span = buffer.GetSpan(sizeof(int));
+            BitConverter.TryWriteBytes(span, value);
+            buffer.Advance(sizeof(int));
+            serialized.TrySetResult();
+        }
+
+        public int Deserialize(in ReadOnlySequence<byte> buffer)
+            => BitConverter.ToInt32(buffer.FirstSpan);
+
+        public bool TryGetEncodedSize(in int value, out int size)
+        {
+            size = sizeof(int);
+            return true;
+        }
+
+        public bool TryGetEncodedSize(in int value, out int size, out IRpcSizedCodecSnapshot? snapshot)
+        {
+            snapshot = null;
+            size = sizeof(int);
+            return true;
+        }
+
+        public void SerializeSized(
+            in int value,
+            IBufferWriter<byte> buffer,
+            int size,
+            IRpcSizedCodecSnapshot? snapshot)
+            => Serialize(value, buffer);
+
+        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
+        {
+        }
     }
 
     private sealed class TrackingDispatcher : IStreamDispatcher

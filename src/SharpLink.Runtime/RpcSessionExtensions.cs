@@ -238,10 +238,11 @@ internal static class RpcSessionExtensions
         /// <param name="status">The current server readiness state.</param>
         internal void SendHealthResponse(long requestId, SharpLinkHealthStatus status)
         {
-            var writer = session.RentFrameWriter();
+            IRpcByteBufferWriter? writer = null;
             var ownsWriter = true;
             try
             {
+                writer = session.RentFrameWriter();
                 using (writer.BeginPacketScope(
                            ProtocolV2FrameType.HealthResponse,
                            ProtocolV2FrameFlags.None,
@@ -254,7 +255,7 @@ internal static class RpcSessionExtensions
             }
             finally
             {
-                if (ownsWriter)
+                if (ownsWriter && writer is not null)
                     session.RuntimeContext.Buffers.Return(writer);
             }
         }
@@ -264,10 +265,11 @@ internal static class RpcSessionExtensions
             SharpLinkHealthStatus status,
             CancellationToken cancellationToken = default)
         {
-            var writer = session.RentFrameWriter();
+            IRpcByteBufferWriter? writer = null;
             var ownsWriter = true;
             try
             {
+                writer = session.RentFrameWriter();
                 using (writer.BeginPacketScope(
                            ProtocolV2FrameType.HealthResponse,
                            ProtocolV2FrameFlags.None,
@@ -282,7 +284,7 @@ internal static class RpcSessionExtensions
             }
             finally
             {
-                if (ownsWriter)
+                if (ownsWriter && writer is not null)
                     session.RuntimeContext.Buffers.Return(writer);
             }
         }
@@ -295,6 +297,22 @@ internal static class RpcSessionExtensions
             T item,
             CancellationToken cancellationToken = default)
         {
+            var codec = session.RuntimeContext.Codecs.GetCodec<T>();
+            if (codec is IRpcSizedCodec<T> sizedCodec &&
+                sizedCodec.CanExactSize &&
+                sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
+            {
+                await session.SendStreamChunkKnownSizeAsync(
+                    requestId,
+                    streamId,
+                    item,
+                    sizedCodec,
+                    knownEncodedBytes,
+                    sizedSnapshot,
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             var writer = session.RentFrameWriter();
             var ownsWriter = true;
             try
@@ -307,7 +325,7 @@ internal static class RpcSessionExtensions
                     var idSpan = writer.GetSpan(sizeof(ushort));
                     BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
                     writer.Advance(sizeof(ushort));
-                    session.RuntimeContext.Codecs.GetCodec<T>().Serialize(item, writer);
+                    codec.Serialize(item, writer);
                 }
                 var encodedBytes = Math.Max(
                     1,
