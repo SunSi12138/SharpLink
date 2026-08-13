@@ -35,35 +35,35 @@ internal sealed class DeferredRpcResponseWriter : IRpcByteBufferWriter
         _requestId = requestId;
     }
 
-    public int WrittenCount => EnsureMaterialized().WrittenCount;
+    public int WrittenCount { get { ThrowIfDisposed(); return EnsureMaterialized().WrittenCount; } }
 
-    public ReadOnlyMemory<byte> WrittenMemory => EnsureMaterialized().WrittenMemory;
+    public ReadOnlyMemory<byte> WrittenMemory { get { ThrowIfDisposed(); return EnsureMaterialized().WrittenMemory; } }
 
-    public Span<byte> WrittenSpan => EnsureMaterialized().WrittenSpan;
+    public Span<byte> WrittenSpan { get { ThrowIfDisposed(); return EnsureMaterialized().WrittenSpan; } }
 
-    public int Capacity => EnsureMaterialized().Capacity;
+    public int Capacity { get { ThrowIfDisposed(); return EnsureMaterialized().Capacity; } }
 
     public void Advance(int count)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ThrowIfDisposed();
         EnsureMaterialized().Advance(count);
     }
 
     public Memory<byte> GetMemory(int sizeHint = 0)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ThrowIfDisposed();
         return EnsureMaterialized().GetMemory(sizeHint);
     }
 
     public Span<byte> GetSpan(int sizeHint = 0)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ThrowIfDisposed();
         return EnsureMaterialized().GetSpan(sizeHint);
     }
 
     public void Clear()
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ThrowIfDisposed();
         _inner?.Clear();
     }
 
@@ -77,7 +77,7 @@ internal sealed class DeferredRpcResponseWriter : IRpcByteBufferWriter
     internal IRpcByteBufferWriter PrepareForSend(
         )
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ThrowIfDisposed();
         var writer = EnsureMaterialized();
         writer.EndPacket(_packetToken);
         _inner = null;
@@ -93,17 +93,32 @@ internal sealed class DeferredRpcResponseWriter : IRpcByteBufferWriter
 
     private IRpcByteBufferWriter EnsureMaterialized()
     {
-        var existing = Volatile.Read(ref _inner);
-        if (existing is not null)
-            return existing;
+        while (true)
+        {
+            ThrowIfDisposed();
+            var existing = Volatile.Read(ref _inner);
+            if (existing is not null)
+                return existing;
 
-        var rented = _session.RentFrameWriter();
-        rented.BeginPacket(_frameType, _frameFlags, _requestId);
-        _packetToken = new PacketToken(0);
-        var winner = Interlocked.CompareExchange(ref _inner, rented, null);
-        if (winner is null)
-            return rented;
-        _pool.Return(rented);
-        return winner;
+            var rented = _session.RentFrameWriter();
+            rented.BeginPacket(_frameType, _frameFlags, _requestId);
+            _packetToken = new PacketToken(0);
+            var winner = Interlocked.CompareExchange(ref _inner, rented, null);
+            if (winner is null)
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                {
+                    if (Interlocked.CompareExchange(ref _inner, null, rented) == rented)
+                        _pool.Return(rented);
+                    throw new ObjectDisposedException(nameof(DeferredRpcResponseWriter));
+                }
+                return rented;
+            }
+            _pool.Return(rented);
+            return winner;
+        }
     }
+
+    private void ThrowIfDisposed()
+        => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 }
