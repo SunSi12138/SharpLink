@@ -266,6 +266,7 @@ public partial class RpcGenerator
     {
         var value = member.Kind switch
         {
+            GeneratedMemberKind.Fixed when cachedMemberIndex >= 0 => $"__fixed_{cachedMemberIndex}",
             GeneratedMemberKind.String when cachedMemberIndex >= 0 => $"__string_{cachedMemberIndex}",
             GeneratedMemberKind.NullableFixed when cachedMemberIndex >= 0 => $"__nullable_{cachedMemberIndex}",
             _ => $"value.{EscapeIdentifier(member.Identifier)}"
@@ -334,6 +335,10 @@ public partial class RpcGenerator
             {
                 sb.AppendLine($"        var __nullable_{memberIndex} = {value};");
             }
+            else if (member.Kind == GeneratedMemberKind.Fixed)
+            {
+                sb.AppendLine($"        var __fixed_{memberIndex} = {value};");
+            }
         }
 
         var baseSize = model.IsReferenceType ? 2 : 1;
@@ -368,8 +373,14 @@ public partial class RpcGenerator
         sb.AppendLine("        }");
         // Existing varuint primitives request five bytes even when they advance only one. Reserving
         // four bytes beyond the exact wire size prevents the terminator from forcing another growth
-        // and preserves the bounded writer's established successful-capacity threshold.
-        sb.AppendLine("        _ = writer.GetSpan(checked(__encodedSize + 4));");
+        // and preserves the bounded writer's established successful-capacity threshold. Restrict the
+        // whole-payload reservation to the SharpLink packet writer, which supports a single large
+        // contiguous lease; segmented or generic writers retain the per-field streaming path.
+        sb.AppendLine("        if (writer is IRpcByteBufferWriter __rpcWriter)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            __rpcWriter.GetSpan(checked(__encodedSize + 4));");
+        sb.AppendLine("            __rpcWriter.Advance(0);");
+        sb.AppendLine("        }");
     }
 
     private static int GetFieldKeySize(uint fieldId, int wireType)

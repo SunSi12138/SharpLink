@@ -818,8 +818,12 @@ public interface IHelloService : SharpLink.Sdk.IService
             "the known-size write helper must never traverse UTF-16 again");
         Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.WriteStringKnownSize(writer, __string_") == 85,
             "each direct string must reuse its cached value and byte count");
-        Ensure(CountOccurrences(generated, "_ = writer.GetSpan(checked(__encodedSize + 4));") == 4,
+        Ensure(CountOccurrences(generated, "if (writer is IRpcByteBufferWriter __rpcWriter)") == 4,
+            "each eligible DTO must gate whole-payload reservation on the SharpLink packet writer");
+        Ensure(CountOccurrences(generated, "__rpcWriter.GetSpan(checked(__encodedSize + 4));") == 4,
             "each eligible DTO must make one capacity request including existing varuint request slack");
+        Ensure(CountOccurrences(generated, "__rpcWriter.Advance(0);") == 4,
+            "the discarded reservation must complete its buffer lease");
         Ensure(CountOccurrences(generated, "var __encodedSize =") == 4,
             "each eligible DTO must compute one checked encoded size");
         Ensure(!generated.Contains("RpcGeneratedCodecWire.WriteString(writer, value.Field", StringComparison.Ordinal),

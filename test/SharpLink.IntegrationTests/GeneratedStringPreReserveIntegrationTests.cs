@@ -241,7 +241,7 @@ public class GeneratedStringPreReserveIntegrationTests
             throw new Exception(message);
     }
 
-    private sealed class PreReserveTrackingWriter(PooledByteBufferWriter writer) : IBufferWriter<byte>
+    private sealed class PreReserveTrackingWriter(PooledByteBufferWriter writer) : IRpcByteBufferWriter
     {
         public int FirstSizeHint { get; private set; } = -1;
 
@@ -250,6 +250,18 @@ public class GeneratedStringPreReserveIntegrationTests
         public int FirstGrowthWrittenCount { get; private set; } = -1;
 
         public void Advance(int count) => writer.Advance(count);
+
+        public int WrittenCount => writer.WrittenCount;
+
+        public ReadOnlyMemory<byte> WrittenMemory => writer.WrittenMemory;
+
+        public Span<byte> WrittenSpan => writer.WrittenSpan;
+
+        public int Capacity => writer.Capacity;
+
+        public void Clear() => writer.Clear();
+
+        public void Dispose() => writer.Dispose();
 
         public Memory<byte> GetMemory(int sizeHint = 0)
         {
