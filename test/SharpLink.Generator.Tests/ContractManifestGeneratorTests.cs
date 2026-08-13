@@ -84,6 +84,65 @@ public sealed class HelloService : IHelloService
     }
 
     [Test]
+    public Task CustomCodecSchemaIdentityShouldBeRecordedInContractManifest()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcCodec(typeof(MoneyCodec))]
+public sealed record Money(decimal Value);
+
+[SharpLink.Sdk.RpcCodecImplementation("money-wire/v1", "money-schema/v1")]
+public sealed class MoneyCodec : SharpLink.Abstractions.IRpcCodec<Money>
+{
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IMoneyService : SharpLink.Sdk.IService
+{
+    ValueTask<Money> Convert(Money value, CancellationToken cancellationToken);
+}
+""");
+
+        var json = RunContractGenerator(source).Json;
+        var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+        var moneyCodec = root["codecs"]!.AsArray()
+            .Select(static item => item!.AsObject())
+            .Single(static item => item["type"]!.GetValue<string>() == "Money");
+
+        Ensure(moneyCodec["wireFormatId"]!.GetValue<string>() == "money-wire/v1",
+            "custom Codec wire format must be recorded in the Contract Manifest");
+        Ensure(!string.IsNullOrWhiteSpace(moneyCodec["schemaId"]?.GetValue<string>()),
+            "custom Codec schema identity must be recorded in the Contract Manifest");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task CustomCodecSchemaChangeShouldBeDetectedForDirectPayloads()
+    {
+        string ContractSource(string schemaId) => BuildSource($$"""
+[SharpLink.Sdk.RpcCodec(typeof(MoneyCodec))]
+public sealed record Money(decimal Value);
+
+[SharpLink.Sdk.RpcCodecImplementation("money-wire/v1", "{{schemaId}}")]
+public sealed class MoneyCodec : SharpLink.Abstractions.IRpcCodec<Money>
+{
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IMoneyService : SharpLink.Sdk.IService
+{
+    ValueTask<Money> Convert(Money value, CancellationToken cancellationToken);
+}
+""");
+
+        var baseline = RunContractGenerator(ContractSource("money-schema/v1")).Json;
+        var changed = RunContractGenerator(ContractSource("money-schema/v2"), baseline);
+
+        Ensure(changed.Diagnostics.Count(static diagnostic => diagnostic.Id == "SHARPLINK030") == 1,
+            "changing a custom Codec schema identity while keeping wire format must fail baseline compatibility");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task InvalidTimeoutConstantsShouldReportSharplink050()
     {
         var source = BuildSource("""
@@ -455,7 +514,7 @@ public interface INullableService : SharpLink.Sdk.IService
             "damaged baseline diagnostic");
 
         var baseline = RunContractGenerator(source).Json.Replace(
-            "\"version\": 1", "\"version\": 99", StringComparison.Ordinal);
+            "\"version\": 2", "\"version\": 99", StringComparison.Ordinal);
         var unsupported = RunContractGenerator(source, baseline);
         Ensure(unsupported.Diagnostics.Any(static diagnostic => diagnostic.Id == "SHARPLINK025"),
             "unsupported baseline version diagnostic");
