@@ -144,6 +144,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
     private readonly string? _ownedUnixSocketPath;
     private readonly UnixSocketPathIdentity? _ownedUnixSocketIdentity;
     private readonly int _backlog;
+    private readonly int _port;
     private int _disposed;
 
     /// <summary>Creates, binds, and starts a socket listener.</summary>
@@ -162,6 +163,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
         ArgumentNullException.ThrowIfNull(localEndPoint);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(backlog);
         _backlog = backlog;
+        _port = localEndPoint is IPEndPoint ipEndPoint ? ipEndPoint.Port : 0;
         _options = (options ?? new SocketTransportOptions()).CloneValidated();
         _tlsOptions = TlsAuthenticationOptionsSnapshot.Clone(tlsOptions);
         _tlsHandshakeTimeout = TlsAuthenticationOptionsSnapshot.ValidateTimeout(tlsHandshakeTimeout);
@@ -205,7 +207,9 @@ public sealed class SocketServerTransportListener : IServerTransportListener
     /// <inheritdoc />
     public EndPoint? LocalEndPoint { get; private set; }
 
-    internal bool UsesTls => _tlsOptions is not null;
+    internal bool UsesTls =>
+        _tlsOptions is not null &&
+        _tlsOptions.EncryptionPolicy == EncryptionPolicy.RequireEncryption;
 
     internal void ConfigureListenAddress(IPAddress address)
     {
@@ -214,23 +218,84 @@ public sealed class SocketServerTransportListener : IServerTransportListener
         if (LocalEndPoint is not IPEndPoint current)
             throw new InvalidOperationException("The listen address can only be changed for TCP listeners.");
 
-        var replacementEndPoint = new IPEndPoint(address, current.Port);
-        var replacement = SocketTransportSocketFactory.Create(replacementEndPoint);
+        var replacementEndPoint = new IPEndPoint(address, _port);
+
+        if (_port == 0)
+        {
+            var replacement = CreateBoundTcpListener(replacementEndPoint);
+            var previous = _listener;
+            _listener = replacement;
+            LocalEndPoint = replacement.LocalEndPoint;
+            previous.Dispose();
+            return;
+        }
+
+        var originalEndPoint = new IPEndPoint(current.Address, current.Port);
+        var original = _listener;
+        Socket replacementSocket;
         try
         {
-            replacement.Bind(replacementEndPoint);
-            replacement.Listen(_backlog);
+            replacementSocket = SocketTransportSocketFactory.Create(replacementEndPoint);
         }
         catch
         {
-            replacement.Dispose();
             throw;
         }
 
-        var previous = _listener;
-        _listener = replacement;
-        LocalEndPoint = replacement.LocalEndPoint;
-        previous.Dispose();
+        original.Dispose();
+        try
+        {
+            replacementSocket.Bind(replacementEndPoint);
+            replacementSocket.Listen(_backlog);
+        }
+        catch (Exception bindException)
+        {
+            replacementSocket.Dispose();
+            Exception? restoreException = null;
+            try
+            {
+                var restored = CreateBoundTcpListener(originalEndPoint);
+                _listener = restored;
+                LocalEndPoint = restored.LocalEndPoint;
+            }
+            catch (Exception exception)
+            {
+                restoreException = exception;
+                _listener = null!;
+                _disposed = 1;
+                _disposeCts.Cancel();
+            }
+
+            if (restoreException is not null)
+            {
+                throw new AggregateException(
+                    "Failed to bind the requested TCP listen address, and the previous listener could not be restored.",
+                    bindException,
+                    restoreException);
+            }
+
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(bindException).Throw();
+            throw new System.Diagnostics.UnreachableException();
+        }
+
+        _listener = replacementSocket;
+        LocalEndPoint = replacementSocket.LocalEndPoint;
+    }
+
+    private Socket CreateBoundTcpListener(IPEndPoint endPoint)
+    {
+        var listener = SocketTransportSocketFactory.Create(endPoint);
+        try
+        {
+            listener.Bind(endPoint);
+            listener.Listen(_backlog);
+            return listener;
+        }
+        catch
+        {
+            listener.Dispose();
+            throw;
+        }
     }
 
     internal void ConfigureTls(

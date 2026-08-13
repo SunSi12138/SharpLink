@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Security;
 using System.Reflection;
+using System.Security.Authentication;
 using System.Threading;
 using SharpLink.Client;
 using SharpLink.Server;
@@ -179,11 +180,12 @@ public sealed class BuildPlanBuilderTests
         var unencryptedBuilder = CreateServerBuilder()
             .UseTcp(0)
             .ListenOnAnyAddress()
-            .AllowUnencrypted();
+            .AllowUnencrypted()
+            .AllowUnauthenticated();
         await using var unencryptedServer = unencryptedBuilder.Build();
 
         Ensure(unencryptedServer is not null,
-            "AllowUnencrypted must be accepted for non-loopback plaintext TCP.");
+            "AllowUnencrypted plus AllowUnauthenticated must be accepted for non-loopback plaintext TCP.");
     }
 
     [Test]
@@ -197,10 +199,51 @@ public sealed class BuildPlanBuilderTests
         var builder = CreateServerBuilder()
             .UseTcp(0)
             .ListenOnAnyAddress()
-            .UseTls(tlsOptions);
+            .UseTls(tlsOptions)
+            .AllowUnauthenticated();
 
         await using var server = builder.Build();
-        Ensure(server is not null, "non-loopback TLS must not require plaintext opt-in.");
+        Ensure(server is not null, "non-loopback TLS must only require authentication opt-in.");
+    }
+
+    [Test]
+#pragma warning disable SYSLIB0040
+    public async Task NonLoopbackTlsWithNoEncryptionShouldRequireUnencryptedOptIn()
+    {
+        var tlsOptions = new SslServerAuthenticationOptions
+        {
+            ServerCertificateSelectionCallback = static (_, _) => null!,
+            EncryptionPolicy = EncryptionPolicy.NoEncryption
+        };
+
+        var failure = Capture(() => CreateServerBuilder()
+            .UseTcp(0)
+            .ListenOnAnyAddress()
+            .UseTls(tlsOptions)
+            .AllowUnauthenticated()
+            .Build());
+
+        Ensure(failure is InvalidOperationException &&
+               failure.Message.Contains("AllowUnencrypted()", StringComparison.Ordinal),
+            "NULL-cipher TLS must be treated as plaintext and require AllowUnencrypted.");
+    }
+#pragma warning restore SYSLIB0040
+
+    [Test]
+    public async Task EphemeralTcpShouldSupportChangingToAnyAddress()
+    {
+        var builder = CreateServerBuilder()
+            .UseTcp(0)
+            .ListenOnAnyAddress()
+            .AllowUnencrypted()
+            .AllowUnauthenticated();
+
+        var bound = builder.Transport!.LocalEndPoint as IPEndPoint;
+        Ensure(bound is not null && bound.Port != 0 && !bound.Address.Equals(IPAddress.Loopback),
+            "ephemeral TCP must rebind to Any without overlapping the original loopback listener.");
+
+        await using var server = builder.Build();
+        Ensure(server is not null, "ephemeral Any-address TCP must build after explicit opt-ins.");
     }
 
     [Test]

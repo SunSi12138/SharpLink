@@ -49,7 +49,7 @@ TLS handshake timeout 与 RPC handshake timeout 独立。前者保护证书/加�
 
 `UseTcp(port)` 默认只绑定 loopback。需要监听其他网卡时，先显式调用
 `ListenOnAnyAddress()` 或 `ListenOn(IPAddress)`；非 loopback 的明文 TCP 会被 `Build()` 拒绝，
-必须通过 `AllowUnencrypted()` opt-in。不要把这类扩大暴露范围、降低传输保护
+必须通过 `AllowUnencrypted()` 与 `AllowUnauthenticated()` 分别 opt-in。不要把这类扩大暴露范围、降低传输保护
 的配置隐藏在默认参数中。
 
 ## 日志与遥测安全

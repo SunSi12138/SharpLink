@@ -192,7 +192,8 @@ public static class Program
                         TimeSpan.FromSeconds(options.HeartbeatCheckIntervalSeconds),
                         TimeSpan.FromSeconds(options.HeartbeatTimeoutSeconds))
                     .UseTcp(0, IPAddress.Parse(options.BindIp))
-                    .AllowUnencrypted();
+                    .AllowUnencrypted()
+                    .AllowUnauthenticated();
                 var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
                 servers[index] = builder.Build();
                 endpoints[index] = new SharpLinkEndpoint

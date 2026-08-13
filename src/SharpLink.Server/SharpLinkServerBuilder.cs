@@ -76,11 +76,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     /// <summary>Explicitly allows a non-loopback TCP listener to use plaintext instead of TLS.</summary>
     public SharpLinkServerBuilder AllowUnencrypted()
     {
-        Configure(() =>
-        {
-            _allowUnencrypted = true;
-            _allowUnauthenticated = true;
-        });
+        Configure(() => _allowUnencrypted = true);
         return this;
     }
 
@@ -477,7 +473,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                     "A non-loopback TCP listener without TLS requires an explicit AllowUnencrypted() opt-in.");
             }
 
-            if (!socket.UsesTls && !_authenticationRequired && !_allowUnauthenticated)
+            if (!_authenticationRequired && !_allowUnauthenticated)
             {
                 throw new InvalidOperationException(
                     "A non-loopback TCP listener without required authentication requires an explicit AllowUnauthenticated() opt-in.");
