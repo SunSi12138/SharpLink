@@ -146,20 +146,19 @@ public partial class RpcGenerator
 
         sb.AppendLine($"internal sealed class {model.CodecName} : IRpcCodec<{model.TypeName}>, IRpcSizedCodec<{model.TypeName}>");
         sb.AppendLine("{");
-        sb.AppendLine("    [ThreadStatic] private static Stack<__SizedSnapshot>? __snapshotPool;");
+        sb.AppendLine("    private readonly global::System.Collections.Concurrent.ConcurrentBag<__SizedSnapshot> __snapshotPool = new();");
         sb.AppendLine();
-        sb.AppendLine("    private static __SizedSnapshot RentSnapshot()");
+        sb.AppendLine("    private __SizedSnapshot RentSnapshot()");
         sb.AppendLine("    {");
-        sb.AppendLine("        var pool = __snapshotPool;");
-        sb.AppendLine("        if (pool is not null && pool.Count != 0)");
-        sb.AppendLine("            return pool.Pop();");
+        sb.AppendLine("        if (__snapshotPool.TryTake(out var pooled))");
+        sb.AppendLine("            return pooled;");
         sb.AppendLine("        return new __SizedSnapshot();");
         sb.AppendLine("    }");
         sb.AppendLine();
-        sb.AppendLine("    private static void ReturnSnapshot(__SizedSnapshot snapshot)");
+        sb.AppendLine("    private void ReturnSnapshot(__SizedSnapshot snapshot)");
         sb.AppendLine("    {");
         sb.AppendLine("        snapshot.Clear();");
-        sb.AppendLine("        (__snapshotPool ??= new Stack<__SizedSnapshot>()).Push(snapshot);");
+        sb.AppendLine("        __snapshotPool.Add(snapshot);");
         sb.AppendLine("    }");
         sb.AppendLine();
         for (var index = 0; index < complexMembers.Length; index++)
