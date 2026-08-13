@@ -215,7 +215,7 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
         }
     }
 
-    internal void RemoveResolvedCodecs(RpcGeneratedManifestRegistration owner)
+    internal void RemoveResolvedCodecs(RpcContractCodecSet owner)
     {
         foreach (var pair in _resolvedCodecs)
         {
@@ -268,12 +268,12 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
     }
 }
 
-internal sealed class RpcGeneratedManifestRegistration : IDisposable
+internal sealed class RpcContractCodecSet : IDisposable
 {
     private readonly IRpcCodecAdapterScope[] _scopes;
     private int _disposed;
 
-    private RpcGeneratedManifestRegistration(
+    private RpcContractCodecSet(
         ISharpLinkGeneratedAssemblyManifest manifest,
         IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> codecs,
         IRpcCodecAdapterScope[] scopes)
@@ -287,7 +287,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
 
     internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> Codecs { get; }
 
-    internal static RpcGeneratedManifestRegistration Create(
+    internal static RpcContractCodecSet Create(
         ISharpLinkGeneratedAssemblyManifest manifest,
         IRpcCodecProvider provider)
     {
@@ -345,7 +345,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                     ownerBox, factory, preparedCodec));
             }
 
-            var registration = new RpcGeneratedManifestRegistration(manifest, codecs, [.. scopes]);
+            var registration = new RpcContractCodecSet(manifest, codecs, [.. scopes]);
             ownerBox.Value = registration;
             return registration;
         }
@@ -437,17 +437,17 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
 
     internal sealed class OwnerBox
     {
-        internal RpcGeneratedManifestRegistration Value { get; set; } = null!;
+        internal RpcContractCodecSet Value { get; set; } = null!;
     }
 }
 
 internal sealed class RpcGeneratedCodecRegistration
 {
-    private readonly RpcGeneratedManifestRegistration.OwnerBox _owner;
+    private readonly RpcContractCodecSet.OwnerBox _owner;
     private readonly IRpcCodec? _preparedCodec;
 
     internal RpcGeneratedCodecRegistration(
-        RpcGeneratedManifestRegistration.OwnerBox owner,
+        RpcContractCodecSet.OwnerBox owner,
         IRpcGeneratedCodecFactory factory,
         IRpcCodec? preparedCodec)
     {
@@ -456,7 +456,7 @@ internal sealed class RpcGeneratedCodecRegistration
         _preparedCodec = preparedCodec;
     }
 
-    internal RpcGeneratedManifestRegistration Owner => _owner.Value;
+    internal RpcContractCodecSet Owner => _owner.Value;
     internal IRpcGeneratedCodecFactory Factory { get; }
 
     internal IRpcCodec GetCodec(IRpcCodecProvider provider)

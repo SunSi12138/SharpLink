@@ -19,7 +19,7 @@ internal sealed partial class SharpLinkServer
                 assembly);
         }
 
-        RpcGeneratedManifestRegistration? codecRegistration = null;
+        RpcContractCodecSet? codecRegistration = null;
         IReadOnlyDictionary<long, ServiceRegistration>? candidateServices = null;
         IReadOnlyDictionary<long, ServiceRegistration>? retainedCandidateServices = null;
         SharpLinkAssemblyRegistrationError? rollbackError = null;
@@ -172,7 +172,7 @@ internal sealed partial class SharpLinkServer
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult>? drainCompletion = null;
         SharpLinkDynamicModule? oldModule = null;
         SharpLinkDynamicModule? newModule = null;
-        RpcGeneratedManifestRegistration? codecRegistration = null;
+        RpcContractCodecSet? codecRegistration = null;
         IReadOnlyDictionary<long, ServiceRegistration>? candidateServices = null;
         IReadOnlyDictionary<long, ServiceRegistration>? retainedCandidateServices = null;
         SharpLinkAssemblyRegistrationError? rollbackError = null;
@@ -511,7 +511,7 @@ internal sealed partial class SharpLinkServer
     private static void DisposeRegistrationCandidate(
         IReadOnlyDictionary<long, ServiceRegistration>? candidateServices,
         IReadOnlyDictionary<long, ServiceRegistration>? retainedServices,
-        RpcGeneratedManifestRegistration? codecRegistration)
+        RpcContractCodecSet? codecRegistration)
     {
         List<Exception>? failures = null;
         if (candidateServices is not null && retainedServices is not null)

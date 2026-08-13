@@ -100,7 +100,7 @@ internal sealed partial class SharpLinkClient
 
     private void ReleaseModule(Assembly assembly, SharpLinkDynamicModule module)
     {
-        RpcGeneratedManifestRegistration codecRegistration;
+        RpcContractCodecSet codecRegistration;
         lock (_registryGate)
         {
             if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))

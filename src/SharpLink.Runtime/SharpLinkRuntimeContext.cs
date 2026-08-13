@@ -5,7 +5,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
 {
     private readonly SharpLinkRuntimeOptions _options;
     private readonly Lock _registrationGate = new();
-    private readonly HashSet<RpcGeneratedManifestRegistration> _manifestRegistrations = [];
+    private readonly HashSet<RpcContractCodecSet> _manifestRegistrations = [];
     private int _disposed;
 
     internal SharpLinkRuntimeContext(
@@ -22,7 +22,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
         Concurrency = concurrency.CloneValidated();
         Codecs = new RpcCodecProvider(resolver, codecs);
         var generatedRegistrations = new Dictionary<Type, RpcGeneratedCodecRegistration>();
-        var prepared = new List<RpcGeneratedManifestRegistration>(generatedManifests.Count);
+        var prepared = new List<RpcContractCodecSet>(generatedManifests.Count);
         try
         {
             foreach (var manifest in generatedManifests)
@@ -58,7 +58,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void ThrowAfterConstructionRollback(
         Exception preparationException,
-        IReadOnlyList<RpcGeneratedManifestRegistration> prepared,
+        IReadOnlyList<RpcContractCodecSet> prepared,
         RpcCodecProvider codecProvider)
     {
         List<Exception>? cleanupFailures = null;
@@ -114,12 +114,12 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
 
     internal SharpLinkPerformanceProfile PerformanceProfile => _options.PerformanceProfile;
 
-    internal RpcGeneratedManifestRegistration PrepareGeneratedManifest(
+    internal RpcContractCodecSet PrepareGeneratedManifest(
         ISharpLinkGeneratedAssemblyManifest manifest)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         SharpLinkGeneratedManifestCompatibility.ThrowIfIncompatible(manifest);
-        return RpcGeneratedManifestRegistration.Create(manifest, Codecs);
+        return RpcContractCodecSet.Create(manifest, Codecs);
     }
 
     internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> CreateGeneratedCodecSnapshot()
@@ -131,7 +131,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
         ((RpcCodecProvider)Codecs).PublishGeneratedRegistrations(registrations);
     }
 
-    internal void AdoptGeneratedManifest(RpcGeneratedManifestRegistration registration)
+    internal void AdoptGeneratedManifest(RpcContractCodecSet registration)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         lock (_registrationGate)
@@ -159,7 +159,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
         return null;
     }
 
-    internal void ReleaseGeneratedManifest(RpcGeneratedManifestRegistration registration)
+    internal void ReleaseGeneratedManifest(RpcContractCodecSet registration)
     {
         ((RpcCodecProvider)Codecs).RemoveResolvedCodecs(registration);
         lock (_registrationGate)
@@ -172,7 +172,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
-        RpcGeneratedManifestRegistration[] registrations;
+        RpcContractCodecSet[] registrations;
         lock (_registrationGate)
         {
             registrations = [.. _manifestRegistrations];
