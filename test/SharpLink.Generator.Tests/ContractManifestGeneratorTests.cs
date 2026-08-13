@@ -84,6 +84,38 @@ public sealed class HelloService : IHelloService
     }
 
     [Test]
+    public Task CustomCodecSchemaIdentityShouldBeRecordedInContractManifest()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcCodec(typeof(MoneyCodec))]
+public sealed record Money(decimal Value);
+
+[SharpLink.Sdk.RpcCodecImplementation("money-wire/v1", "money-schema/v1")]
+public sealed class MoneyCodec : SharpLink.Abstractions.IRpcCodec<Money>
+{
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IMoneyService : SharpLink.Sdk.IService
+{
+    ValueTask<Money> Convert(Money value, CancellationToken cancellationToken);
+}
+""");
+
+        var json = RunContractGenerator(source).Json;
+        var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+        var moneyCodec = root["codecs"]!.AsArray()
+            .Select(static item => item!.AsObject())
+            .Single(static item => item["type"]!.GetValue<string>() == "Money");
+
+        Ensure(moneyCodec["wireFormatId"]!.GetValue<string>() == "money-wire/v1",
+            "custom Codec wire format must be recorded in the Contract Manifest");
+        Ensure(!string.IsNullOrWhiteSpace(moneyCodec["schemaId"]?.GetValue<string>()),
+            "custom Codec schema identity must be recorded in the Contract Manifest");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task InvalidTimeoutConstantsShouldReportSharplink050()
     {
         var source = BuildSource("""

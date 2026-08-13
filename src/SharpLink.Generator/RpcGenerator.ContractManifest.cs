@@ -314,6 +314,7 @@ public partial class RpcGenerator
             document.Codecs.Add(new ContractManifestCodec
             {
                 Type = RemoveGlobalPrefix(codec.TypeName),
+                SchemaId = codec.SchemaId,
                 WireFormatId = codec.WireFormatId,
                 SourceLocation = codec.Location
             });
@@ -672,7 +673,8 @@ public partial class RpcGenerator
         {
             if (directlyDescribedCodecTypes.Contains(oldCodec.Type) ||
                 !currentCodecs.TryGetValue(oldCodec.Type, out var newCodec) ||
-                string.Equals(oldCodec.WireFormatId, newCodec.WireFormatId, StringComparison.Ordinal))
+                (string.Equals(oldCodec.WireFormatId, newCodec.WireFormatId, StringComparison.Ordinal) &&
+                 string.Equals(oldCodec.SchemaId, newCodec.SchemaId, StringComparison.Ordinal)))
             {
                 continue;
             }
@@ -681,8 +683,8 @@ public partial class RpcGenerator
                 ContractCompatibilityKind.WireType,
                 newCodec.SourceLocation,
                 oldCodec.Type,
-                $"nested Codec wire format changed from {oldCodec.WireFormatId} to {newCodec.WireFormatId}",
-                "restore the previous nested wire format or add a new RPC payload type"));
+                $"nested Codec identity changed from wire/schema '{oldCodec.WireFormatId}/{oldCodec.SchemaId}' to '{newCodec.WireFormatId}/{newCodec.SchemaId}'",
+                "restore the previous nested wire/schema identity or add a new RPC payload type"));
         }
 
         var currentEnums = current.Enums.ToDictionary(static item => item.Name, StringComparer.Ordinal);
@@ -803,6 +805,7 @@ public partial class RpcGenerator
            manifest.Codecs.All(static codec =>
                codec is not null &&
                !string.IsNullOrWhiteSpace(codec.Type) &&
+               !string.IsNullOrWhiteSpace(codec.SchemaId) &&
                !string.IsNullOrWhiteSpace(codec.WireFormatId)) &&
            manifest.Enums.All(static item => item is not null) &&
            manifest.Unions.All(static union =>
@@ -1027,6 +1030,7 @@ internal static class __SharpLinkContractManifest
     private sealed class ContractManifestCodec
     {
         public string Type { get; set; } = string.Empty;
+        public string SchemaId { get; set; } = string.Empty;
         public string WireFormatId { get; set; } = string.Empty;
         [JsonIgnore] public Location? SourceLocation { get; set; }
     }
