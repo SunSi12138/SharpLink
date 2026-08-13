@@ -7,10 +7,15 @@ public static class TransportExtensions
     {
         /// <summary>Connects through a local or Windows named pipe.</summary>
         /// <param name="name">The logical pipe name.</param>
-        /// <param name="configure">Optional named-pipe options, such as allowing cross-user access.</param>
+        public SharpClientBuilder UseNamedPipe(string name)
+            => builder.UseNamedPipe(name, configure: null);
+
+        /// <summary>Connects through a local or Windows named pipe.</summary>
+        /// <param name="name">The logical pipe name.</param>
+        /// <param name="configure">Named-pipe options, such as allowing cross-user access.</param>
         public SharpClientBuilder UseNamedPipe(
             string name,
-            Action<NamedPipeTransportOptions>? configure = null)
+            Action<NamedPipeTransportOptions>? configure)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(name);
             var options = new NamedPipeTransportOptions();

@@ -45,10 +45,15 @@ public static class SharpLinkTransportFactories
     }
 
     /// <summary>Creates a factory for named-pipe endpoint addresses.</summary>
-    /// <param name="configure">Optional named-pipe options, such as allowing cross-user access.</param>
+    /// <returns>An endpoint factory that accepts <see cref="SharpLinkNamedPipeAddress"/>.</returns>
+    public static SharpLinkEndpointTransportFactory NamedPipes()
+        => NamedPipes(configure: null);
+
+    /// <summary>Creates a factory for named-pipe endpoint addresses.</summary>
+    /// <param name="configure">Named-pipe options, such as allowing cross-user access.</param>
     /// <returns>An endpoint factory that accepts <see cref="SharpLinkNamedPipeAddress"/>.</returns>
     public static SharpLinkEndpointTransportFactory NamedPipes(
-        Action<NamedPipeTransportOptions>? configure = null)
+        Action<NamedPipeTransportOptions>? configure)
     {
         var options = new NamedPipeTransportOptions();
         configure?.Invoke(options);
