@@ -353,59 +353,6 @@ internal static class RpcSessionExtensions
             }
         }
 
-        private async ValueTask SendStreamChunkKnownSizeAsync<T>(
-            long requestId,
-            ushort streamId,
-            T item,
-            IRpcCodec<T> codec,
-            int encodedBytes,
-            CancellationToken cancellationToken)
-        {
-            await session.AcquireStreamSendCreditAsync(
-                requestId,
-                streamId,
-                encodedBytes,
-                cancellationToken).ConfigureAwait(false);
-
-            var writer = session.RentFrameWriter();
-            var ownsWriter = true;
-            try
-            {
-                using (writer.BeginPacketScope(
-                           ProtocolV2FrameType.StreamData,
-                           ProtocolV2FrameFlags.None,
-                           unchecked((ulong)requestId)))
-                {
-                    var idSpan = writer.GetSpan(sizeof(ushort));
-                    BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
-                    writer.Advance(sizeof(ushort));
-                    codec.Serialize(item, writer);
-                }
-
-                var actualEncodedBytes = Math.Max(
-                    1,
-                    writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort));
-                if (actualEncodedBytes != encodedBytes)
-                {
-                    throw new InvalidOperationException(
-                        "Generated stream item size differed after credit was acquired.");
-                }
-
-                ownsWriter = false;
-                session.SendPacket(writer);
-            }
-            catch
-            {
-                session.ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
-                throw;
-            }
-            finally
-            {
-                if (ownsWriter)
-                    session.RuntimeContext.Buffers.Return(writer);
-            }
-        }
-
         /// <summary>Sends successful completion for one request stream.</summary>
         internal void SendStreamCompleteAsync(long requestId, ushort streamId)
         {

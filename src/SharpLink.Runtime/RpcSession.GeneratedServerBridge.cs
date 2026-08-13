@@ -74,7 +74,7 @@ internal sealed partial class RpcSession
             sizedCodec.CanExactSize &&
             sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes))
         {
-            return SendGeneratedStreamChunkKnownSizeAsync(
+            return SendStreamChunkKnownSizeAsync(
                 requestId,
                 streamId,
                 item,
@@ -137,7 +137,7 @@ internal sealed partial class RpcSession
         }
     }
 
-    private async ValueTask SendGeneratedStreamChunkKnownSizeAsync<T>(
+    internal async ValueTask SendStreamChunkKnownSizeAsync<T>(
         long requestId,
         ushort streamId,
         T item,
