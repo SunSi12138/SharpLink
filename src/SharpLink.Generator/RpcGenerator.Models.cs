@@ -204,7 +204,10 @@ internal sealed record GeneratedCodecModel(
     string? AdapterId,
     string WireFormatId,
     ImmutableArray<string> AssemblyDependencies,
-    Location? Location);
+    Location? Location)
+{
+    public bool ElementIsString { get; init; }
+}
 
 internal enum DtoDiagnosticKind
 {

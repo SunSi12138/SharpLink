@@ -563,6 +563,20 @@ public partial class RpcGenerator
         var countExpression = model.Kind == GeneratedCodecKind.Dictionary ? "value.Count" : "value.Length";
         if (model.Kind == GeneratedCodecKind.List)
             countExpression = "value.Count";
+        var itemExpression = model.Kind is GeneratedCodecKind.Memory or GeneratedCodecKind.ReadOnlyMemory
+            ? "value.Span[index]"
+            : "value[index]";
+        if (model.ElementIsString && model.Kind != GeneratedCodecKind.Dictionary)
+        {
+            sb.AppendLine("        var __encodedSize = 5;");
+            sb.AppendLine($"        for (var __index = 0; __index < {countExpression}; __index++)");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            var __item = {itemExpression.Replace("index", "__index")};");
+            sb.AppendLine("            __encodedSize = checked(__encodedSize + sizeof(uint) + sizeof(uint) + (__item is null ? 0 : __item.Length * 2));");
+            sb.AppendLine("        }");
+            sb.AppendLine("        rpcWriter.GetSpan(checked(__encodedSize + 4));");
+            sb.AppendLine("        rpcWriter.Advance(0);");
+        }
         sb.AppendLine($"        RpcGeneratedCodecWire.WriteCollectionCount(writer, {countExpression}, false);");
 
         if (model.Kind == GeneratedCodecKind.Dictionary)
@@ -577,9 +591,6 @@ public partial class RpcGenerator
 
         sb.AppendLine($"        for (var index = 0; index < {countExpression}; index++)");
         sb.AppendLine("        {");
-        var itemExpression = model.Kind is GeneratedCodecKind.Memory or GeneratedCodecKind.ReadOnlyMemory
-            ? "value.Span[index]"
-            : "value[index]";
         sb.AppendLine($"            var item = {itemExpression};");
         AppendLengthWrappedWrite(sb, "__elementCodec", "item", "item", 12);
         sb.AppendLine("        }");
