@@ -146,6 +146,22 @@ public partial class RpcGenerator
 
         sb.AppendLine($"internal sealed class {model.CodecName} : IRpcCodec<{model.TypeName}>, IRpcSizedCodec<{model.TypeName}>");
         sb.AppendLine("{");
+        sb.AppendLine("    [ThreadStatic] private static Stack<__SizedSnapshot>? __snapshotPool;");
+        sb.AppendLine();
+        sb.AppendLine("    private static __SizedSnapshot RentSnapshot()");
+        sb.AppendLine("    {");
+        sb.AppendLine("        var pool = __snapshotPool;");
+        sb.AppendLine("        if (pool is not null && pool.Count != 0)");
+        sb.AppendLine("            return pool.Pop();");
+        sb.AppendLine("        return new __SizedSnapshot();");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static void ReturnSnapshot(__SizedSnapshot snapshot)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        snapshot.Clear();");
+        sb.AppendLine("        (__snapshotPool ??= new Stack<__SizedSnapshot>()).Push(snapshot);");
+        sb.AppendLine("    }");
+        sb.AppendLine();
         for (var index = 0; index < complexMembers.Length; index++)
             sb.AppendLine($"    private readonly IRpcCodec<{complexMembers[index].TypeName}> __codec_{index};");
         sb.AppendLine("    private readonly bool __canExactSize;");
@@ -596,6 +612,21 @@ public partial class RpcGenerator
     {
         AppendDtoSnapshotType(sb, model, complexIndexes);
 
+        sb.AppendLine("    private void ReleaseCapturedChildren(__SizedSnapshot snapshot)");
+        sb.AppendLine("    {");
+        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
+        {
+            var member = model.Members[memberIndex];
+            if (member.Kind != GeneratedMemberKind.Complex)
+                continue;
+            var index = complexIndexes[member.Name];
+            sb.AppendLine(
+                $"        if (__codec_{index} is IRpcSizedCodec<{member.TypeName}> __sized_{index} && snapshot.__nestedSnapshot_{index} is not null)");
+            sb.AppendLine($"            __sized_{index}.ReleaseSnapshot(snapshot.__nestedSnapshot_{index});");
+        }
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
         AppendDtoSizeOnlyEncodedSizeMethod(sb, model, complexIndexes);
         sb.AppendLine();
         sb.AppendLine($"    public bool TryGetEncodedSize(in {model.TypeName} value, out int size, out IRpcSizedCodecSnapshot? snapshot)");
@@ -610,7 +641,7 @@ public partial class RpcGenerator
             sb.AppendLine("        }");
         }
 
-        sb.AppendLine("        var __snapshot = new __SizedSnapshot();");
+        sb.AppendLine("        var __snapshot = RentSnapshot();");
         var baseSize = model.IsReferenceType ? 2 : 1;
         foreach (var member in model.Members)
         {
@@ -649,6 +680,8 @@ public partial class RpcGenerator
                         sb.AppendLine("        {");
                         sb.AppendLine("            size = 0;");
                         sb.AppendLine("            snapshot = null;");
+                        sb.AppendLine("            ReleaseCapturedChildren(__snapshot);");
+                        sb.AppendLine("            ReturnSnapshot(__snapshot);");
                         sb.AppendLine("            return false;");
                         sb.AppendLine("        }");
                         break;
@@ -801,6 +834,32 @@ public partial class RpcGenerator
                     break;
             }
         }
+        sb.AppendLine();
+        sb.AppendLine("        public void Clear()");
+        sb.AppendLine("        {");
+        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
+        {
+            var member = model.Members[memberIndex];
+            switch (member.Kind)
+            {
+                case GeneratedMemberKind.String:
+                    sb.AppendLine($"            __string_{memberIndex} = null;");
+                    sb.AppendLine($"            __stringByteCount_{memberIndex} = 0;");
+                    break;
+                case GeneratedMemberKind.Fixed:
+                    sb.AppendLine($"            __fixed_{memberIndex} = default;");
+                    break;
+                case GeneratedMemberKind.NullableFixed:
+                    sb.AppendLine($"            __nullable_{memberIndex} = default;");
+                    break;
+                case GeneratedMemberKind.Complex:
+                    sb.AppendLine($"            __complex_{memberIndex} = default!;");
+                    sb.AppendLine($"            __nestedSize_{complexIndexes[member.Name]} = 0;");
+                    sb.AppendLine($"            __nestedSnapshot_{complexIndexes[member.Name]} = null;");
+                    break;
+            }
+        }
+        sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine();
     }
@@ -877,6 +936,13 @@ public partial class RpcGenerator
         }
 
         sb.AppendLine("        RpcGeneratedCodecWire.WriteObjectEnd(buffer);");
+        sb.AppendLine("        ReturnSnapshot(__snapshot);");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        if (snapshot is __SizedSnapshot __snapshot)");
+        sb.AppendLine("            ReturnSnapshot(__snapshot);");
         sb.AppendLine("    }");
     }
 

@@ -28,6 +28,9 @@ public interface IRpcSizedCodec<T>
     /// Writes the value using member values captured by the snapshot overload.
     /// </summary>
     void SerializeSized(in T value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot);
+
+    /// <summary>Returns a captured snapshot to its generated pool.</summary>
+    void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot);
 }
 
 /// <summary>Marker for a generated snapshot of member values captured during exact sizing.</summary>
