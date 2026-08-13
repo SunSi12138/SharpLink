@@ -849,8 +849,8 @@ public interface IHelloService : SharpLink.Sdk.IService
 
         Ensure(CountOccurrences(generated, "internal static class __SharpLinkGeneratedUtf8") == 1,
             "one assembly-private UTF-8 helper must be shared by all eligible generated Codecs");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.GetByteCount(__string_") == 170,
-            "each direct string must be counted once in the direct reservation path and once in the size-only path");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.GetByteCount(__string_") == 85,
+            "each direct string must be counted once in the direct reservation path");
         Ensure(CountOccurrences(generated, "StrictEncoding.GetByteCount(") == 1,
             "the known-size write helper must never traverse UTF-16 again");
         Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf8.WriteStringKnownSize(writer, __string_") == 85,

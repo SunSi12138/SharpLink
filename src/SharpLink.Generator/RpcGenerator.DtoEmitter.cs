@@ -759,14 +759,6 @@ public partial class RpcGenerator
         for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
         {
             var member = model.Members[memberIndex];
-            if (member.Kind != GeneratedMemberKind.String)
-                continue;
-            sb.AppendLine($"        var __string_{memberIndex} = value.{EscapeIdentifier(member.Identifier)};");
-        }
-
-        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
-        {
-            var member = model.Members[memberIndex];
             var value = $"value.{EscapeIdentifier(member.Identifier)}";
             switch (member.Kind)
             {
@@ -787,7 +779,7 @@ public partial class RpcGenerator
                     {
                         var nullSize = GetFieldKeySize(member.FieldId, 0);
                         var valueOverhead = GetFieldKeySize(member.FieldId, 6) + sizeof(uint);
-                        sb.AppendLine($"        size = checked(size + (__string_{memberIndex} is null ? {nullSize.ToString(InvariantCulture)} : {valueOverhead.ToString(InvariantCulture)} + __SharpLinkGeneratedUtf8.GetByteCount(__string_{memberIndex})));");
+                        sb.AppendLine($"        size = checked(size + ({value} is null ? {nullSize.ToString(InvariantCulture)} : {valueOverhead.ToString(InvariantCulture)} + __SharpLinkGeneratedUtf8.GetByteCount({value})));");
                         break;
                     }
                 case GeneratedMemberKind.Complex:
