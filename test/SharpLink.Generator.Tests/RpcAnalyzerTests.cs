@@ -874,7 +874,7 @@ public interface IHelloService : SharpLink.Sdk.IService
     }
 
     [Test]
-    public Task DtosWithComplexMembersShouldPartiallyPreReserveDirectStrings()
+    public Task DtosWithNestedMembersShouldComputeRecursiveExactSize()
     {
         var source = BuildSource("""
 [SharpLink.Sdk.RpcSerializable]
@@ -893,8 +893,12 @@ public sealed class NestedPayload
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("internal static class __SharpLinkGeneratedUtf8", StringComparison.Ordinal) &&
-               generated.Contains("var __encodedSize =", StringComparison.Ordinal),
-            "a nested DTO with direct strings must compute a partial lower-bound size");
+               generated.Contains("var __encodedSize =", StringComparison.Ordinal) &&
+               generated.Contains("__ISharpLinkSizedCodec", StringComparison.Ordinal) &&
+               generated.Contains("TryGetEncodedSize", StringComparison.Ordinal) &&
+               generated.Contains("__canExact", StringComparison.Ordinal) &&
+               generated.Contains("__nestedSize_", StringComparison.Ordinal),
+            "a nested DTO with direct strings must compute a recursive exact size");
         Ensure(!generated.Contains("RpcGeneratedCodecWire.WriteString(writer, value.Name);", StringComparison.Ordinal),
             "direct strings in a partially pre-reserved DTO must use cached byte counts");
         Ensure(generated.Contains("RpcGeneratedCodecWire.BeginLength", StringComparison.Ordinal) &&
