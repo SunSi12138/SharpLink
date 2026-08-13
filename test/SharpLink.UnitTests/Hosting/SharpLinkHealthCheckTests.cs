@@ -27,7 +27,8 @@ public class SharpLinkHealthCheckTests
     {
         var check = new SharpLinkServerHealthCheck(new FixedReadiness(SharpLinkHealthStatus.Ready));
         var context = new HealthCheckContext();
-        for (var index = 0; index < 1_000; index++)
+        _ = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < 100_000; index++)
             _ = check.CheckHealthAsync(context).GetAwaiter().GetResult();
 
         var before = GC.GetAllocatedBytesForCurrentThread();
@@ -38,6 +39,7 @@ public class SharpLinkHealthCheckTests
                 healthy++;
         }
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        GC.KeepAlive(healthy);
 
         if (healthy != 100_000)
             throw new Exception("every cached local health result must remain Healthy");

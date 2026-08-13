@@ -111,6 +111,43 @@ public interface IPrivateNestedService : SharpLink.Sdk.IService
     }
 
     [Test]
+    public Task GeneratedServerStubShouldResolveCodecsOnlyDuringConstruction()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IServerStubCodecService : SharpLink.Sdk.IService
+{
+    ValueTask<string> EchoAsync(string value, CancellationToken cancellationToken);
+    ValueTask<int> UploadAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken);
+    IAsyncEnumerable<int> DownloadAsync(int count, CancellationToken cancellationToken);
+}
+""");
+
+        var stub = RunGeneratorAndGetSources(source)
+            .Single(static text => text.Contains("private sealed class __Stub_", StringComparison.Ordinal));
+        var constructorStart = stub.IndexOf("internal __Stub_", StringComparison.Ordinal);
+        var constructorEnd = stub.IndexOf(
+            "public bool SupportsCancellation",
+            constructorStart,
+            StringComparison.Ordinal);
+        Ensure(constructorStart > 0 && constructorEnd > constructorStart,
+            "generated Stub must contain a bounded constructor");
+
+        var constructor = stub[constructorStart..constructorEnd];
+        var outsideConstructor = stub[constructorEnd..];
+        Ensure(constructor.Contains("__parameterCodec_", StringComparison.Ordinal) &&
+               constructor.Contains("__responseCodec_", StringComparison.Ordinal),
+            "generated Stub constructor must declare request/response Codec fields");
+        Ensure(CountOccurrences(constructor, "codecs.GetCodec<string>()") == 2,
+            "generated Stub constructor must resolve both request and response string Codec fields");
+        Ensure(CountOccurrences(constructor, "codecs.GetCodec<int>()") == 3,
+            "generated Stub constructor must resolve inbound, outbound, and unary response int Codec fields");
+        Ensure(!outsideConstructor.Contains("GetCodec<", StringComparison.Ordinal),
+            "generated Stub dispatch must not perform per-call Codec lookup");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task SemanticFixedRequestValuesShouldUseValidatedBuiltInCodecs()
     {
         var source = BuildSource("""
