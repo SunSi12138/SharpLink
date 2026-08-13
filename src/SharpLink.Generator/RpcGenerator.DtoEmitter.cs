@@ -568,13 +568,21 @@ public partial class RpcGenerator
             : "value[index]";
         if (model.ElementIsString && model.Kind != GeneratedCodecKind.Dictionary)
         {
-            sb.AppendLine("        var __encodedSize = 5;");
+            sb.AppendLine($"        if ((uint){countExpression} > RpcGeneratedCodecWire.MaximumCollectionItems)");
+            sb.AppendLine("            throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, $\"Generated collection contains more than {RpcGeneratedCodecWire.MaximumCollectionItems} items.\");");
+            sb.AppendLine($"        var __countMarker = checked((uint){countExpression} + 1U);");
+            sb.AppendLine("        var __encodedSize = 1;");
+            sb.AppendLine("        while (__countMarker >= 0x80)");
+            sb.AppendLine("        {");
+            sb.AppendLine("            __encodedSize++;");
+            sb.AppendLine("            __countMarker >>= 7;");
+            sb.AppendLine("        }");
             sb.AppendLine($"        for (var __index = 0; __index < {countExpression}; __index++)");
             sb.AppendLine("        {");
             sb.AppendLine($"            var __item = {itemExpression.Replace("index", "__index")};");
             sb.AppendLine("            __encodedSize = checked(__encodedSize + sizeof(uint) + sizeof(uint) + (__item is null ? 0 : __item.Length * 2));");
             sb.AppendLine("        }");
-            sb.AppendLine("        rpcWriter.GetSpan(checked(__encodedSize + 4));");
+            sb.AppendLine("        rpcWriter.GetSpan(checked(__encodedSize));");
             sb.AppendLine("        rpcWriter.Advance(0);");
         }
         sb.AppendLine($"        RpcGeneratedCodecWire.WriteCollectionCount(writer, {countExpression}, false);");
