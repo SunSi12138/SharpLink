@@ -204,9 +204,16 @@ public partial class RpcGenerator
             sb.AppendLine("        {");
             sb.AppendLine("            if (TryGetEncodedSize(in value, out var __exactSize, out var __sizedSnapshot) && __sizedSnapshot is not null)");
             sb.AppendLine("            {");
-            sb.AppendLine("                __exactWriter.GetSpan(checked(__exactSize + 4));");
-            sb.AppendLine("                __exactWriter.Advance(0);");
-            sb.AppendLine("                SerializeSized(in value, writer, __exactSize, __sizedSnapshot);");
+            sb.AppendLine("                try");
+            sb.AppendLine("                {");
+            sb.AppendLine("                    __exactWriter.GetSpan(checked(__exactSize + 4));");
+            sb.AppendLine("                    __exactWriter.Advance(0);");
+            sb.AppendLine("                    SerializeSized(in value, writer, __exactSize, __sizedSnapshot);");
+            sb.AppendLine("                }");
+            sb.AppendLine("                finally");
+            sb.AppendLine("                {");
+            sb.AppendLine("                    ReleaseSnapshot(__sizedSnapshot);");
+            sb.AppendLine("                }");
             sb.AppendLine("                return;");
             sb.AppendLine("            }");
             sb.AppendLine("        }");
@@ -935,13 +942,14 @@ public partial class RpcGenerator
         }
 
         sb.AppendLine("        RpcGeneratedCodecWire.WriteObjectEnd(buffer);");
-        sb.AppendLine("        ReturnSnapshot(__snapshot);");
         sb.AppendLine("    }");
         sb.AppendLine();
         sb.AppendLine("    public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)");
         sb.AppendLine("    {");
-        sb.AppendLine("        if (snapshot is __SizedSnapshot __snapshot)");
-        sb.AppendLine("            ReturnSnapshot(__snapshot);");
+        sb.AppendLine("        if (snapshot is not __SizedSnapshot __snapshot)");
+        sb.AppendLine("            return;");
+        sb.AppendLine("        ReleaseCapturedChildren(__snapshot);");
+        sb.AppendLine("        ReturnSnapshot(__snapshot);");
         sb.AppendLine("    }");
     }
 
