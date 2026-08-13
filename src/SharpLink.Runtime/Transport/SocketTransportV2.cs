@@ -561,6 +561,8 @@ internal readonly record struct UnixSocketPathIdentity(long Device, long Inode)
 
     internal static bool PathExists(string path) => LStat(path, out _) == 0;
 
+    [System.Runtime.InteropServices.DefaultDllImportSearchPaths(
+        System.Runtime.InteropServices.DllImportSearchPath.System32)]
     [System.Runtime.InteropServices.DllImport(
         "System.Native",
         EntryPoint = "SystemNative_LStat",
