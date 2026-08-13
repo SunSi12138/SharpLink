@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using SharpLink.Abstractions;
 using SharpLink.Runtime;
+using SharpLink.Sdk;
 
 namespace SharpLink.Benchmarks;
 
@@ -40,4 +41,10 @@ public static class GeneratedStringCollectionGrowthEvidenceRunner
                 $"capacityWasteRatio={capacityWasteRatio}");
         }
     }
+}
+
+[RpcSerializable]
+public sealed class GeneratedStringListDto
+{
+    [RpcMember(1)] public List<string> Values { get; set; } = new();
 }
