@@ -592,8 +592,7 @@ public partial class RpcGenerator
     {
         AppendDtoSnapshotType(sb, model, complexIndexes);
 
-        sb.AppendLine($"    public bool TryGetEncodedSize(in {model.TypeName} value, out int size)");
-        sb.AppendLine("        => TryGetEncodedSize(in value, out size, out _);");
+        AppendDtoSizeOnlyEncodedSizeMethod(sb, model, complexIndexes);
         sb.AppendLine();
         sb.AppendLine($"    public bool TryGetEncodedSize(in {model.TypeName} value, out int size, out IRpcSizedCodecSnapshot? snapshot)");
         sb.AppendLine("    {");
@@ -699,6 +698,80 @@ public partial class RpcGenerator
         sb.AppendLine();
 
         AppendDtoSizedSerializeMethod(sb, model, complexIndexes);
+    }
+
+    private static void AppendDtoSizeOnlyEncodedSizeMethod(
+        StringBuilder sb,
+        GeneratedCodecModel model,
+        Dictionary<string, int> complexIndexes)
+    {
+        sb.AppendLine($"    public bool TryGetEncodedSize(in {model.TypeName} value, out int size)");
+        sb.AppendLine("    {");
+        if (model.IsReferenceType)
+        {
+            sb.AppendLine("        if (value is null)");
+            sb.AppendLine("        {");
+            sb.AppendLine("            size = 1;");
+            sb.AppendLine("            return true;");
+            sb.AppendLine("        }");
+        }
+
+        var baseSize = model.IsReferenceType ? 2 : 1;
+        sb.AppendLine($"        size = {baseSize.ToString(InvariantCulture)};");
+
+        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
+        {
+            var member = model.Members[memberIndex];
+            if (member.Kind != GeneratedMemberKind.String)
+                continue;
+            sb.AppendLine($"        var __string_{memberIndex} = value.{EscapeIdentifier(member.Identifier)};");
+        }
+
+        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
+        {
+            var member = model.Members[memberIndex];
+            var value = $"value.{EscapeIdentifier(member.Identifier)}";
+            switch (member.Kind)
+            {
+                case GeneratedMemberKind.Fixed:
+                    {
+                        var keySize = GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize));
+                        sb.AppendLine($"        size = checked(size + {keySize.ToString(InvariantCulture)} + {member.FixedSize.ToString(InvariantCulture)});");
+                        break;
+                    }
+                case GeneratedMemberKind.NullableFixed:
+                    {
+                        var nullSize = GetFieldKeySize(member.FieldId, 0);
+                        var valueSize = GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize)) + member.FixedSize;
+                        sb.AppendLine($"        size = checked(size + ({value} is null ? {nullSize.ToString(InvariantCulture)} : {valueSize.ToString(InvariantCulture)}));");
+                        break;
+                    }
+                case GeneratedMemberKind.String:
+                    {
+                        var nullSize = GetFieldKeySize(member.FieldId, 0);
+                        var valueOverhead = GetFieldKeySize(member.FieldId, 6) + sizeof(uint);
+                        sb.AppendLine($"        size = checked(size + (__string_{memberIndex} is null ? {nullSize.ToString(InvariantCulture)} : {valueOverhead.ToString(InvariantCulture)} + __SharpLinkGeneratedUtf8.GetByteCount(__string_{memberIndex})));");
+                        break;
+                    }
+                case GeneratedMemberKind.Complex:
+                    {
+                        var index = complexIndexes[member.Name];
+                        var keySize = GetFieldKeySize(member.FieldId, 6);
+                        sb.AppendLine($"        if (__codec_{index} is not IRpcSizedCodec<{member.TypeName}> __sized_{index} ||");
+                        sb.AppendLine($"            !__sized_{index}.CanExactSize ||");
+                        sb.AppendLine($"            !__sized_{index}.TryGetEncodedSize({value}, out var __nestedSize_{index}))");
+                        sb.AppendLine("        {");
+                        sb.AppendLine("            size = 0;");
+                        sb.AppendLine("            return false;");
+                        sb.AppendLine("        }");
+                        sb.AppendLine($"        size = checked(size + {keySize.ToString(InvariantCulture)} + sizeof(uint) + __nestedSize_{index});");
+                        break;
+                    }
+            }
+        }
+
+        sb.AppendLine("        return true;");
+        sb.AppendLine("    }");
     }
 
     private static void AppendDtoSnapshotType(
