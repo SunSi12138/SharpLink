@@ -327,12 +327,20 @@ public class SharedMemoryControlChannelTests
         var wait = control.WaitForDataAsync(cancellation.Token).AsTask();
 
         cancellation.Cancel();
-        await Task.Delay(50);
-        var completedWithoutPulse = wait.IsCompleted;
+        try
+        {
+            await wait.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (OperationCanceledException)
+        {
+            // The cancellation token must complete the control wait without an
+            // external data pulse. Waiting for completion directly avoids the
+            // previous fixed 50 ms race under loaded Linux CI workers.
+        }
+
         control.PulseDataWaiter();
         var failure = await CaptureFailureAsync(wait);
 
-        await Assert.That(completedWithoutPulse).IsTrue();
         await Assert.That(failure).IsAssignableTo<OperationCanceledException>();
     }
 
