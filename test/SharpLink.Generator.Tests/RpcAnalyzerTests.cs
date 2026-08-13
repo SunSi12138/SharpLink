@@ -893,7 +893,7 @@ public sealed class NestedPayload
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains("internal static class __SharpLinkGeneratedUtf8", StringComparison.Ordinal) &&
-               generated.Contains("out var __exactSize", StringComparison.Ordinal) &&
+               generated.Contains("var __exactSize =", StringComparison.Ordinal) &&
                generated.Contains("IRpcSizedCodec", StringComparison.Ordinal) &&
                generated.Contains("TryGetEncodedSize", StringComparison.Ordinal) &&
                generated.Contains("RpcGeneratedCodecSizing.Enter", StringComparison.Ordinal) &&
