@@ -840,6 +840,50 @@ public class StreamFlowControllerTests
         }
     }
 
+    [Test]
+    public async Task CompletedSendStateShouldBeReusedAndResetForReplacement()
+    {
+        var controller = new StreamFlowController(4, 4, 1024, maxConcurrentStreams: 1);
+        await controller.AcquireSendCreditAsync(1, 0, 4, CancellationToken.None);
+        var retired = GetSendState(controller, 1, 0);
+        var retiredLease = GetPrivateField<long>(retired, "Lease");
+
+        controller.CompleteSendStream(1, 0);
+        controller.ApplyWindowUpdate(1, 0, 4);
+        Ensure(GetPrivateField<long>(retired, "Credit") == 4,
+            "a pooled send state must hold the full window before being rented again");
+        await controller.AcquireSendCreditAsync(2, 0, 4, CancellationToken.None);
+
+        var reused = GetSendState(controller, 2, 0);
+        Ensure(ReferenceEquals(retired, reused),
+            "the replacement stream must reuse the released send-state object");
+        Ensure(GetPrivateField<long>(reused, "Lease") > retiredLease,
+            "reuse must advance the send-state lease");
+        Ensure(!GetPrivateField<bool>(reused, "Completed"),
+            "a reused send state must not retain the previous completion marker");
+        Ensure(GetPrivateField<object?>(reused, "AbortException") is null,
+            "a reused send state must not retain the previous abort exception");
+        Ensure(GetPrivateField<object?>(reused, "Next") is null,
+            "an active reused send state must not retain a pool link");
+    }
+
+    [Test]
+    public async Task SendStatePoolShouldClearOnConnectionCompletion()
+    {
+        var controller = new StreamFlowController(4, 4, 1024, maxConcurrentStreams: 1);
+        await controller.AcquireSendCreditAsync(1, 0, 4, CancellationToken.None);
+        controller.CompleteSendStream(1, 0);
+        controller.ApplyWindowUpdate(1, 0, 4);
+        Ensure(GetPooledSendStateLinkCount(controller) == 1,
+            "a fully released send state should be pooled");
+
+        controller.Complete(new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "closed"));
+        Ensure(GetPrivateField<object?>(controller, "_pooledSendStates") is null,
+            "connection completion must clear the send-state pool");
+        Ensure(GetPrivateField<int>(controller, "_pooledSendStateOverflowCount") == 0,
+            "connection completion must clear the send-state pool counter");
+    }
+
     private static async Task ExpectCancellation(ValueTask pending)
     {
         try
@@ -879,6 +923,36 @@ public class StreamFlowControllerTests
         if (tryGetValue.Invoke(states, arguments) is not true || arguments[1] is null)
             throw new Exception($"receive state ({requestId}, {streamId}) was not found");
         return arguments[1]!;
+    }
+
+    private static object GetSendState(StreamFlowController controller, long requestId, ushort streamId)
+    {
+        var streamKeyType = typeof(StreamFlowController).GetNestedType(
+            "StreamKey",
+            System.Reflection.BindingFlags.NonPublic)
+            ?? throw new Exception("send stream key type was not found");
+        var key = Activator.CreateInstance(streamKeyType, new object[] { requestId, streamId })
+            ?? throw new Exception("send stream key could not be created");
+        var states = GetPrivateField<object>(controller, "_sendStates");
+        var tryGetValue = states.GetType().GetMethod("TryGetValue")
+            ?? throw new Exception("send state lookup was not found");
+        var arguments = new object?[] { key, null };
+        if (tryGetValue.Invoke(states, arguments) is not true || arguments[1] is null)
+            throw new Exception($"send state ({requestId}, {streamId}) was not found");
+        return arguments[1]!;
+    }
+
+    private static int GetPooledSendStateLinkCount(StreamFlowController controller)
+    {
+        var state = GetPrivateField<object?>(controller, "_pooledSendStates");
+        var count = 0;
+        while (state is not null)
+        {
+            if (++count > 128)
+                throw new Exception("send-state pool link chain exceeded its bounded capacity");
+            state = GetPrivateField<object?>(state, "Next");
+        }
+        return count;
     }
 
     private static int GetReceiveStateCount(StreamFlowController controller)
