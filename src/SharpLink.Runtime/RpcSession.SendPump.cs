@@ -26,6 +26,7 @@ internal sealed partial class RpcSession
         private readonly Task _pumpTask;
         private TaskCompletionSource<bool>? _capacityChanged;
         private Task<bool>? _pendingReadWait;
+        private CancellationTokenSource? _delayCancellation;
         private long _queuedBytes;
         private int _stopped;
         private int _faulted;
@@ -198,6 +199,7 @@ internal sealed partial class RpcSession
             }
             finally
             {
+                _delayCancellation?.Dispose();
                 ReleaseBatch(pending, terminalException);
                 DrainQueuedFrames(terminalException);
                 PulseCapacityWaiters();
@@ -241,12 +243,17 @@ internal sealed partial class RpcSession
                     return false;
 
                 var delay = remaining > MaximumTimerDelay ? MaximumTimerDelay : remaining;
-                using var delayCancellation = new CancellationTokenSource();
+                var delayCancellation = _delayCancellation;
+                if (delayCancellation is null || delayCancellation.IsCancellationRequested)
+                {
+                    delayCancellation = new CancellationTokenSource();
+                    _delayCancellation = delayCancellation;
+                }
                 var delayTask = Task.Delay(delay, _timeProvider, delayCancellation.Token);
                 if (await Task.WhenAny(pendingRead, delayTask).ConfigureAwait(false) == pendingRead)
                 {
                     _pendingReadWait = null;
-                    await delayCancellation.CancelAsync().ConfigureAwait(false);
+                    delayCancellation.Cancel();
                     return await pendingRead.ConfigureAwait(false);
                 }
 
