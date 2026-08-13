@@ -16,7 +16,7 @@ public partial class RpcGenerator
         sb.AppendLine();
         sb.AppendLine("namespace SharpLink.Generated;");
         sb.AppendLine();
-        sb.AppendLine("internal interface __ISharpLinkSizedCodec<in T>");
+        sb.AppendLine("internal interface __ISharpLinkSizedCodec<T>");
         sb.AppendLine("{");
         sb.AppendLine("    bool TryGetEncodedSize(in T value, out int size);");
         sb.AppendLine("}");
