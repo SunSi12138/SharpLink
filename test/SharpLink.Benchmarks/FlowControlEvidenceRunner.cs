@@ -307,12 +307,12 @@ internal sealed class SendFlowStateShortWorkload
         }
 
         var returnedCredit = 0;
-            for (var streamIndex = 0; streamIndex < activeStreams; streamIndex++)
-            {
-                var requestId = _requestIds[streamIndex];
-                _controller.CompleteSendStream(requestId, 1, _completionException);
-                _controller.ApplyWindowUpdate(requestId, 1, _encodedBytesPerStream);
-                returnedCredit += _encodedBytesPerStream;
+        for (var streamIndex = 0; streamIndex < activeStreams; streamIndex++)
+        {
+            var requestId = _requestIds[streamIndex];
+            _controller.CompleteSendStream(requestId, 1, _completionException);
+            _controller.ApplyWindowUpdate(requestId, 1, _encodedBytesPerStream);
+            returnedCredit += _encodedBytesPerStream;
         }
 
         return returnedCredit;
@@ -329,12 +329,12 @@ internal sealed class SendFlowStateShortWorkload
                 CancellationToken.None).GetAwaiter().GetResult();
         }
 
-            for (var streamIndex = 0; streamIndex < _requestIds.Length; streamIndex++)
-            {
-                var requestId = _requestIds[streamIndex];
-                _controller.CompleteSendStream(requestId, 1, _completionException);
-                _controller.ApplyWindowUpdate(requestId, 1, _encodedBytesPerStream);
-            }
+        for (var streamIndex = 0; streamIndex < _requestIds.Length; streamIndex++)
+        {
+            var requestId = _requestIds[streamIndex];
+            _controller.CompleteSendStream(requestId, 1, _completionException);
+            _controller.ApplyWindowUpdate(requestId, 1, _encodedBytesPerStream);
+        }
     }
 }
 
