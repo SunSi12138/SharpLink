@@ -167,13 +167,13 @@ internal sealed class SharpLinkDynamicModule
     private readonly CancellationToken _forcedCancellationToken;
     private Assembly? _assembly;
     private ISharpLinkGeneratedAssemblyManifest? _manifest;
-    private RpcGeneratedManifestRegistration? _codecRegistration;
+    private RpcContractCodecSet? _codecRegistration;
     private int _state;
 
     internal SharpLinkDynamicModule(
         Assembly assembly,
         ISharpLinkGeneratedAssemblyManifest manifest,
-        RpcGeneratedManifestRegistration codecRegistration)
+        RpcContractCodecSet codecRegistration)
     {
         _assembly = assembly;
         _manifest = manifest;
@@ -194,7 +194,7 @@ internal sealed class SharpLinkDynamicModule
     internal ISharpLinkGeneratedAssemblyManifest Manifest => Volatile.Read(ref _manifest) ??
         throw new ObjectDisposedException(nameof(SharpLinkDynamicModule));
 
-    internal RpcGeneratedManifestRegistration CodecRegistration
+    internal RpcContractCodecSet CodecRegistration
         => Volatile.Read(ref _codecRegistration) ??
            throw new ObjectDisposedException(nameof(SharpLinkDynamicModule));
 

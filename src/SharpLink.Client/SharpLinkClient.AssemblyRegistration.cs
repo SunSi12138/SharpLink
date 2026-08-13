@@ -15,7 +15,7 @@ internal sealed partial class SharpLinkClient
             return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                 $"Client state '{State}' does not accept runtime assembly registration.", assembly);
 
-        RpcGeneratedManifestRegistration? codecRegistration = null;
+        RpcContractCodecSet? codecRegistration = null;
         SharpLinkAssemblyRegistrationError? rollbackError = null;
         Exception? rollbackException = null;
         var published = false;
@@ -147,7 +147,7 @@ internal sealed partial class SharpLinkClient
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult>? drainCompletion = null;
         SharpLinkDynamicModule? oldModule = null;
         SharpLinkDynamicModule? newModule = null;
-        RpcGeneratedManifestRegistration? codecRegistration = null;
+        RpcContractCodecSet? codecRegistration = null;
         SharpLinkAssemblyRegistrationError? rollbackError = null;
         Exception? rollbackException = null;
         var published = false;

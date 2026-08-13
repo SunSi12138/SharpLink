@@ -114,7 +114,7 @@ internal sealed partial class SharpLinkServer
     private async Task ReleaseModuleAsync(Assembly assembly, SharpLinkDynamicModule module)
     {
         ServiceRegistration[] removedServices;
-        RpcGeneratedManifestRegistration codecRegistration;
+        RpcContractCodecSet codecRegistration;
         lock (_registryGate)
         {
             if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
