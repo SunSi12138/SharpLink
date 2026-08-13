@@ -183,44 +183,37 @@ public partial class RpcGenerator
             sb.AppendLine("        }");
         }
 
-        sb.AppendLine("        if (RpcGeneratedCodecSizing.IsSuppressed)");
-        sb.AppendLine("        {");
-        AppendDtoSuppressedSerializeBody(sb, model, complexIndexes, "            ");
-        sb.AppendLine("            return;");
-        sb.AppendLine("        }");
-
         if (hasComplex)
         {
-            AppendDtoExactSerializeBody(sb, model, complexIndexes);
+            sb.AppendLine("        if (__canExactSize && writer is IRpcByteBufferWriter __exactWriter)");
+            sb.AppendLine("        {");
+            sb.AppendLine("            if (TryGetEncodedSize(in value, out var __exactSize, out var __sizedSnapshot) && __sizedSnapshot is not null)");
+            sb.AppendLine("            {");
+            sb.AppendLine("                __exactWriter.GetSpan(checked(__exactSize + 4));");
+            sb.AppendLine("                __exactWriter.Advance(0);");
+            sb.AppendLine("                SerializeSized(in value, writer, __exactSize, __sizedSnapshot);");
+            sb.AppendLine("                return;");
+            sb.AppendLine("            }");
+            sb.AppendLine("        }");
 
             if (hasDirectString)
             {
-                sb.AppendLine("        else");
-                sb.AppendLine("        {");
                 AppendDtoDirectPreReservation(sb, model);
-                AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: true, useCachedMembers: false, indent: "            ");
-                sb.AppendLine("        }");
+                AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: true, useCachedMembers: false, indent: "        ");
             }
             else
             {
-                sb.AppendLine("        else");
-                sb.AppendLine("        {");
-                AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: false, useCachedMembers: false, indent: "            ");
-                sb.AppendLine("        }");
+                AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: false, useCachedMembers: false, indent: "        ");
             }
         }
         else if (hasDirectString)
         {
-            sb.AppendLine("        {");
             AppendDtoDirectPreReservation(sb, model);
-            AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: true, useCachedMembers: false, indent: "            ");
-            sb.AppendLine("        }");
+            AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: true, useCachedMembers: false, indent: "        ");
         }
         else
         {
-            sb.AppendLine("        {");
-            AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: false, useCachedMembers: false, indent: "            ");
-            sb.AppendLine("        }");
+            AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: false, useCachedMembers: false, indent: "        ");
         }
 
         sb.AppendLine("    }");
@@ -589,72 +582,219 @@ public partial class RpcGenerator
         GeneratedCodecModel model,
         Dictionary<string, int> complexIndexes)
     {
+        AppendDtoSnapshotType(sb, model, complexIndexes);
+
         sb.AppendLine($"    public bool TryGetEncodedSize(in {model.TypeName} value, out int size)");
+        sb.AppendLine("        => TryGetEncodedSize(in value, out size, out _);");
+        sb.AppendLine();
+        sb.AppendLine($"    public bool TryGetEncodedSize(in {model.TypeName} value, out int size, out IRpcSizedCodecSnapshot? snapshot)");
         sb.AppendLine("    {");
         if (model.IsReferenceType)
         {
             sb.AppendLine("        if (value is null)");
             sb.AppendLine("        {");
             sb.AppendLine("            size = 1;");
+            sb.AppendLine("            snapshot = null;");
             sb.AppendLine("            return true;");
             sb.AppendLine("        }");
         }
 
-        var baseSize = model.IsReferenceType ? 2 : 1;
-        sb.AppendLine($"        size = {baseSize.ToString(InvariantCulture)};");
-
-        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
-        {
-            var member = model.Members[memberIndex];
-            if (member.Kind != GeneratedMemberKind.String)
-                continue;
-            sb.AppendLine($"        var __string_{memberIndex} = value.{EscapeIdentifier(member.Identifier)};");
-        }
-
+        sb.AppendLine("        var __snapshot = new __SizedSnapshot();");
         for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
         {
             var member = model.Members[memberIndex];
             var value = $"value.{EscapeIdentifier(member.Identifier)}";
             switch (member.Kind)
             {
+                case GeneratedMemberKind.String:
+                    sb.AppendLine($"        __snapshot.__string_{memberIndex} = {value};");
+                    sb.AppendLine(
+                        $"        __snapshot.__stringByteCount_{memberIndex} = __snapshot.__string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf8.GetByteCount(__snapshot.__string_{memberIndex});");
+                    break;
                 case GeneratedMemberKind.Fixed:
+                    sb.AppendLine($"        __snapshot.__fixed_{memberIndex} = {value};");
+                    break;
+                case GeneratedMemberKind.NullableFixed:
+                    sb.AppendLine($"        __snapshot.__nullable_{memberIndex} = {value};");
+                    break;
+                case GeneratedMemberKind.Complex:
+                    sb.AppendLine($"        __snapshot.__complex_{memberIndex} = {value};");
+                    break;
+            }
+        }
+
+        var baseSize = model.IsReferenceType ? 2 : 1;
+        foreach (var member in model.Members)
+        {
+            if (member.Kind != GeneratedMemberKind.Fixed)
+                continue;
+            baseSize = checked(baseSize + GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize)) + member.FixedSize);
+        }
+
+        sb.AppendLine($"        size = {baseSize.ToString(InvariantCulture)};");
+        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
+        {
+            var member = model.Members[memberIndex];
+            if (member.Kind != GeneratedMemberKind.Complex)
+                continue;
+
+            var index = complexIndexes[member.Name];
+            sb.AppendLine(
+                $"        if (__codec_{index} is not IRpcSizedCodec<{member.TypeName}> __sized_{index} ||");
+            sb.AppendLine($"            !__sized_{index}.CanExactSize ||");
+            sb.AppendLine(
+                $"            !__sized_{index}.TryGetEncodedSize(__snapshot.__complex_{memberIndex}, out __snapshot.__nestedSize_{index}, out __snapshot.__nestedSnapshot_{index}))");
+            sb.AppendLine("        {");
+            sb.AppendLine("            size = 0;");
+            sb.AppendLine("            snapshot = null;");
+            sb.AppendLine("            return false;");
+            sb.AppendLine("        }");
+        }
+
+        sb.AppendLine("        checked");
+        sb.AppendLine("        {");
+        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
+        {
+            var member = model.Members[memberIndex];
+            switch (member.Kind)
+            {
+                case GeneratedMemberKind.String:
                     {
-                        var keySize = GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize));
-                        sb.AppendLine($"        size = checked(size + {keySize.ToString(InvariantCulture)} + {member.FixedSize.ToString(InvariantCulture)});");
+                        var nullSize = GetFieldKeySize(member.FieldId, 0);
+                        var valueOverhead = GetFieldKeySize(member.FieldId, 6) + sizeof(uint);
+                        sb.AppendLine(
+                            $"            size += __snapshot.__string_{memberIndex} is null ? {nullSize.ToString(InvariantCulture)} : {valueOverhead.ToString(InvariantCulture)} + __snapshot.__stringByteCount_{memberIndex};");
                         break;
                     }
                 case GeneratedMemberKind.NullableFixed:
                     {
                         var nullSize = GetFieldKeySize(member.FieldId, 0);
                         var valueSize = GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize)) + member.FixedSize;
-                        sb.AppendLine($"        size = checked(size + ({value} is null ? {nullSize.ToString(InvariantCulture)} : {valueSize.ToString(InvariantCulture)}));");
-                        break;
-                    }
-                case GeneratedMemberKind.String:
-                    {
-                        var nullSize = GetFieldKeySize(member.FieldId, 0);
-                        var valueOverhead = GetFieldKeySize(member.FieldId, 6) + sizeof(uint);
-                        sb.AppendLine($"        size = checked(size + (__string_{memberIndex} is null ? {nullSize.ToString(InvariantCulture)} : {valueOverhead.ToString(InvariantCulture)} + __SharpLinkGeneratedUtf8.GetByteCount(__string_{memberIndex})));");
+                        sb.AppendLine(
+                            $"            size += __snapshot.__nullable_{memberIndex}.HasValue ? {valueSize.ToString(InvariantCulture)} : {nullSize.ToString(InvariantCulture)};");
                         break;
                     }
                 case GeneratedMemberKind.Complex:
                     {
                         var index = complexIndexes[member.Name];
                         var keySize = GetFieldKeySize(member.FieldId, 6);
-                        sb.AppendLine($"        if (__codec_{index} is not IRpcSizedCodec<{member.TypeName}> __sized_{index} ||");
-                        sb.AppendLine($"            !__sized_{index}.CanExactSize ||");
-                        sb.AppendLine($"            !__sized_{index}.TryGetEncodedSize({value}, out var __nestedSize_{index}))");
-                        sb.AppendLine("        {");
-                        sb.AppendLine("            size = 0;");
-                        sb.AppendLine("            return false;");
-                        sb.AppendLine("        }");
-                        sb.AppendLine($"        size = checked(size + {keySize.ToString(InvariantCulture)} + sizeof(uint) + __nestedSize_{index});");
+                        sb.AppendLine(
+                            $"            size += {keySize.ToString(InvariantCulture)} + sizeof(uint) + __snapshot.__nestedSize_{index};");
                         break;
                     }
             }
         }
-
+        sb.AppendLine("        }");
+        sb.AppendLine("        snapshot = __snapshot;");
         sb.AppendLine("        return true;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
+        AppendDtoSizedSerializeMethod(sb, model, complexIndexes);
+    }
+
+    private static void AppendDtoSnapshotType(
+        StringBuilder sb,
+        GeneratedCodecModel model,
+        Dictionary<string, int> complexIndexes)
+    {
+        sb.AppendLine("    private sealed class __SizedSnapshot : IRpcSizedCodecSnapshot");
+        sb.AppendLine("    {");
+        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
+        {
+            var member = model.Members[memberIndex];
+            switch (member.Kind)
+            {
+                case GeneratedMemberKind.String:
+                    sb.AppendLine($"        public string? __string_{memberIndex};");
+                    sb.AppendLine($"        public int __stringByteCount_{memberIndex};");
+                    break;
+                case GeneratedMemberKind.Fixed:
+                    sb.AppendLine($"        public {member.TypeName} __fixed_{memberIndex};");
+                    break;
+                case GeneratedMemberKind.NullableFixed:
+                    sb.AppendLine($"        public {member.TypeName} __nullable_{memberIndex};");
+                    break;
+                case GeneratedMemberKind.Complex:
+                    sb.AppendLine($"        public {member.TypeName} __complex_{memberIndex} = default!;");
+                    sb.AppendLine($"        public int __nestedSize_{complexIndexes[member.Name]};");
+                    sb.AppendLine($"        public IRpcSizedCodecSnapshot? __nestedSnapshot_{complexIndexes[member.Name]};");
+                    break;
+            }
+        }
+        sb.AppendLine("    }");
+        sb.AppendLine();
+    }
+
+    private static void AppendDtoSizedSerializeMethod(
+        StringBuilder sb,
+        GeneratedCodecModel model,
+        Dictionary<string, int> complexIndexes)
+    {
+        var hasComplex = complexIndexes.Count != 0;
+        sb.AppendLine($"    public void SerializeSized(in {model.TypeName} value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        ArgumentNullException.ThrowIfNull(buffer);");
+        sb.AppendLine("        if (snapshot is not __SizedSnapshot __snapshot)");
+        sb.AppendLine("            throw new ArgumentException(\"Snapshot does not belong to this codec.\", nameof(snapshot));");
+        if (hasComplex)
+        {
+            sb.AppendLine("        var rpcWriter = buffer as IRpcByteBufferWriter ?? throw new InvalidOperationException(\"Generated DTO Codecs require the SharpLink packet writer.\");");
+        }
+        if (model.IsReferenceType)
+        {
+            sb.AppendLine("        if (value is null)");
+            sb.AppendLine("        {");
+            sb.AppendLine("            RpcGeneratedCodecWire.WritePresence(buffer, false);");
+            sb.AppendLine("            return;");
+            sb.AppendLine("        }");
+            sb.AppendLine("        RpcGeneratedCodecWire.WritePresence(buffer, true);");
+        }
+
+        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
+        {
+            var member = model.Members[memberIndex];
+            var fieldId = member.FieldId.ToString(InvariantCulture) + "U";
+            switch (member.Kind)
+            {
+                case GeneratedMemberKind.Fixed:
+                    sb.AppendLine($"        RpcGeneratedCodecWire.WriteFieldKey(buffer, {fieldId}, {GetWireType(member.FixedSize)});");
+                    sb.AppendLine(GetFixedWriteExpression(member.TypeName, $"__snapshot.__fixed_{memberIndex}", 8, "buffer"));
+                    break;
+                case GeneratedMemberKind.NullableFixed:
+                    sb.AppendLine($"        if (!__snapshot.__nullable_{memberIndex}.HasValue)");
+                    sb.AppendLine($"            RpcGeneratedCodecWire.WriteFieldKey(buffer, {fieldId}, RpcGeneratedWireType.Null);");
+                    sb.AppendLine("        else");
+                    sb.AppendLine("        {");
+                    sb.AppendLine($"            RpcGeneratedCodecWire.WriteFieldKey(buffer, {fieldId}, {GetWireType(member.FixedSize)});");
+                    sb.AppendLine(GetFixedWriteExpression(member.FixedTypeName!, $"__snapshot.__nullable_{memberIndex}.Value", 12, "buffer"));
+                    sb.AppendLine("        }");
+                    break;
+                case GeneratedMemberKind.String:
+                    sb.AppendLine($"        if (__snapshot.__string_{memberIndex} is null)");
+                    sb.AppendLine($"            RpcGeneratedCodecWire.WriteFieldKey(buffer, {fieldId}, RpcGeneratedWireType.Null);");
+                    sb.AppendLine("        else");
+                    sb.AppendLine("        {");
+                    sb.AppendLine($"            RpcGeneratedCodecWire.WriteFieldKey(buffer, {fieldId}, RpcGeneratedWireType.LengthDelimited);");
+                    sb.AppendLine(
+                        $"            __SharpLinkGeneratedUtf8.WriteStringKnownSize(buffer, __snapshot.__string_{memberIndex}, __snapshot.__stringByteCount_{memberIndex});");
+                    sb.AppendLine("        }");
+                    break;
+                case GeneratedMemberKind.Complex:
+                    var index = complexIndexes[member.Name];
+                    sb.AppendLine($"        RpcGeneratedCodecWire.WriteFieldKey(buffer, {fieldId}, RpcGeneratedWireType.LengthDelimited);");
+                    sb.AppendLine($"        var lengthToken_{index} = RpcGeneratedCodecWire.BeginLength(rpcWriter);");
+                    sb.AppendLine(
+                        $"        if (__codec_{index} is IRpcSizedCodec<{member.TypeName}> __sized_{index} && __snapshot.__nestedSnapshot_{index} is not null)");
+                    sb.AppendLine($"            __sized_{index}.SerializeSized(__snapshot.__complex_{memberIndex}, buffer, __snapshot.__nestedSize_{index}, __snapshot.__nestedSnapshot_{index});");
+                    sb.AppendLine("        else");
+                    sb.AppendLine($"            __codec_{index}.Serialize(__snapshot.__complex_{memberIndex}, buffer);");
+                    sb.AppendLine($"        RpcGeneratedCodecWire.EndLength(rpcWriter, lengthToken_{index});");
+                    break;
+            }
+        }
+
+        sb.AppendLine("        RpcGeneratedCodecWire.WriteObjectEnd(buffer);");
         sb.AppendLine("    }");
     }
 
@@ -718,15 +858,15 @@ public partial class RpcGenerator
         sb.AppendLine("                    break;");
     }
 
-    private static string GetFixedWriteExpression(string typeName, string value, int spaces)
+    private static string GetFixedWriteExpression(string typeName, string value, int spaces, string writerName = "writer")
     {
         var indent = new string(' ', spaces);
         if (IsBooleanType(typeName))
-            return $"{indent}RpcGeneratedCodecWire.WriteBoolean(writer, {value});";
+            return $"{indent}RpcGeneratedCodecWire.WriteBoolean({writerName}, {value});";
         var semanticMethod = GetSemanticFixedMethod(typeName);
         return semanticMethod is null
-            ? $"{indent}RpcGeneratedCodecWire.WriteUnmanaged<{typeName}>(writer, {value});"
-            : $"{indent}RpcGeneratedCodecWire.Write{semanticMethod}(writer, {value});";
+            ? $"{indent}RpcGeneratedCodecWire.WriteUnmanaged<{typeName}>({writerName}, {value});"
+            : $"{indent}RpcGeneratedCodecWire.Write{semanticMethod}({writerName}, {value});";
     }
 
     private static string GetFixedReadExpression(string typeName, string target, int spaces)
