@@ -1184,6 +1184,8 @@ public sealed class RuntimeAssemblyIntegrationTests
             TimeSpan.FromSeconds(5)).AsTask();
 
         object? newProxy = GetProxy(harness.Client, newPlugin.ContractType);
+        Ensure(!ReferenceEquals(oldProxy, newProxy),
+            "dynamic replacement must publish a new generated Proxy for the new registration generation");
         await InvokeValueTaskAsync(
             newProxy,
             newPlugin.ContractType,

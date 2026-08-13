@@ -12,6 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.DynamicPlugin;
+using SharpLink.Sdk;
 using SharpLink.Server;
 
 namespace SharpLink.Benchmarks;
@@ -70,6 +71,9 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
 
     public ValueTask InvokeOneWayAsync()
         => _environment.Rpc.PublishEventAsync(7, Environment.TickCount64, "jit-probe");
+
+    public TContract Get<TContract>() where TContract : class, IService
+        => _environment.Get<TContract>();
 
     public static async Task<FeatureBenchmarkCase> CreateAsync(ServerFeatureScenario scenario)
     {
