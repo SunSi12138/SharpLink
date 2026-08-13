@@ -7,25 +7,12 @@ public partial class RpcGenerator
         ImmutableArray<RpcServiceModel?> services,
         ImmutableArray<GeneratedCodecModel> codecs)
     {
-        var contracts = interfaces
-            .Where(static model => model is not null)
-            .Select(static model => model!)
-            .OrderBy(static model => model.Hash)
-            .ToArray();
-        var serviceModels = services
-            .Where(static model => model is not null)
-            .Select(static model => model!)
-            .OrderBy(static model => model.Interface.Hash)
-            .ThenBy(static model => model.ServiceFullName, StringComparer.Ordinal)
-            .ToArray();
+        var contracts = GetContractModels(interfaces);
+        var serviceModels = GetServiceModels(services);
         if (contracts.Length == 0 && serviceModels.Length == 0 && codecs.IsDefaultOrEmpty)
             return string.Empty;
 
-        var ownerType = contracts.Length != 0
-            ? contracts[0].FullName
-            : serviceModels.Length != 0 ? serviceModels[0].ServiceFullName : codecs[0].TypeName;
-        var manifestTypeName = "__SharpLinkGeneratedAssemblyManifest_" +
-            Hashing.GetSha256(ownerType).Substring(0, 16);
+        var manifestTypeName = GetManifestTypeName(contracts, serviceModels, codecs);
         var dependencies = serviceModels.SelectMany(static service => service.AssemblyDependencies)
             .Concat(contracts.SelectMany(static contract => contract.AssemblyDependencies))
             .Concat(codecs.SelectMany(static codec => codec.AssemblyDependencies))
@@ -49,7 +36,7 @@ public partial class RpcGenerator
         sb.AppendLine("namespace SharpLink.Generated;");
         sb.AppendLine();
         sb.AppendLine("[System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]");
-        sb.AppendLine($"public sealed class {manifestTypeName} : ISharpLinkGeneratedAssemblyManifest");
+        sb.AppendLine($"public sealed partial class {manifestTypeName} : ISharpLinkGeneratedAssemblyManifest");
         sb.AppendLine("{");
         sb.AppendLine($"    public const string CompileTimeDescriptor = \"{EscapeString(compileTimeDescriptor)}\";");
         sb.AppendLine($"    public static readonly {manifestTypeName} Instance = new();");
@@ -63,6 +50,7 @@ public partial class RpcGenerator
         sb.AppendLine($"    public Assembly OwnerAssembly => typeof({manifestTypeName}).Assembly;");
         sb.AppendLine("    string ISharpLinkGeneratedAssemblyManifest.CompileTimeDescriptor => CompileTimeDescriptor;");
         sb.AppendLine();
+        AppendContractArtifactFactories(sb, contracts);
         AppendContractManifestArray(sb, contracts);
         AppendServiceManifestArray(sb, serviceModels);
         AppendCodecManifestArray(sb, codecs);
@@ -90,6 +78,20 @@ public partial class RpcGenerator
         return sb.ToString();
     }
 
+    private static void AppendContractArtifactFactories(StringBuilder sb, RpcInterfaceModel[] contracts)
+    {
+        foreach (var contract in contracts)
+        {
+            var identity = GetContractArtifactIdentity(contract);
+            sb.AppendLine($"    private static object __CreateProxy_{identity}(IRpcChannel channel)");
+            sb.AppendLine($"        => new __Proxy_{identity}(channel);");
+            sb.AppendLine();
+            sb.AppendLine($"    private static IRpcStub __CreateStub_{identity}(IRpcCodecProvider codecs)");
+            sb.AppendLine($"        => new __Stub_{identity}(codecs);");
+            sb.AppendLine();
+        }
+    }
+
     private static void AppendContractManifestArray(StringBuilder sb, RpcInterfaceModel[] contracts)
     {
         sb.AppendLine("    private static readonly SharpLinkGeneratedContractDescriptor[] __contracts = new SharpLinkGeneratedContractDescriptor[]");
@@ -115,8 +117,8 @@ public partial class RpcGenerator
                 sb.AppendLine($"                    \"{method.Fingerprint}\"),");
             }
             sb.AppendLine("            }),");
-            sb.AppendLine($"            static channel => new {GetGeneratedContractTypeName(contract, "Proxy")}(channel),");
-            sb.AppendLine($"            static codecs => new {GetGeneratedContractTypeName(contract, "Stub")}(codecs)),");
+            sb.AppendLine($"            static channel => __CreateProxy_{GetContractArtifactIdentity(contract)}(channel),");
+            sb.AppendLine($"            static codecs => __CreateStub_{GetContractArtifactIdentity(contract)}(codecs)),");
         }
         sb.AppendLine("    };");
     }
@@ -171,10 +173,32 @@ public partial class RpcGenerator
         return sb.ToString();
     }
 
-    private static string GetGeneratedContractTypeName(RpcInterfaceModel contract, string suffix)
-        => string.IsNullOrEmpty(contract.Namespace)
-            ? $"global::{contract.Name}_{suffix}"
-            : $"global::{contract.Namespace}.{contract.Name}_{suffix}";
+    private static RpcInterfaceModel[] GetContractModels(ImmutableArray<RpcInterfaceModel?> interfaces)
+        => interfaces
+            .Where(static model => model is not null)
+            .Select(static model => model!)
+            .OrderBy(static model => model.Hash)
+            .ToArray();
+
+    private static RpcServiceModel[] GetServiceModels(ImmutableArray<RpcServiceModel?> services)
+        => services
+            .Where(static model => model is not null)
+            .Select(static model => model!)
+            .OrderBy(static model => model.Interface.Hash)
+            .ThenBy(static model => model.ServiceFullName, StringComparer.Ordinal)
+            .ToArray();
+
+    private static string GetManifestTypeName(
+        RpcInterfaceModel[] contracts,
+        RpcServiceModel[] services,
+        ImmutableArray<GeneratedCodecModel> codecs)
+    {
+        var ownerType = contracts.Length != 0
+            ? contracts[0].FullName
+            : services.Length != 0 ? services[0].ServiceFullName : codecs[0].TypeName;
+        return "__SharpLinkGeneratedAssemblyManifest_" +
+            Hashing.GetSha256(ownerType).Substring(0, 16);
+    }
 
     private static string RemoveGlobalPrefix(string value)
         => value.StartsWith("global::", StringComparison.Ordinal)

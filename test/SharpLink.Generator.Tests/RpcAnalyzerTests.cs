@@ -41,13 +41,13 @@ public interface IAbi4Service : SharpLink.Sdk.IService
 
         var generated = RunGeneratorAndGetSources(source);
         var stub = generated.Single(text => text.Contains(
-            "public sealed class IAbi4Service_Stub",
+            "private sealed class __Stub_",
             StringComparison.Ordinal));
         var proxy = generated.Single(text => text.Contains(
-            "public sealed class IAbi4Service_Proxy",
+            "private sealed class __Proxy_",
             StringComparison.Ordinal));
         var manifest = generated.Single(text =>
-            text.Contains("__SharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
+            text.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
         var allGenerated = string.Join("\n", generated);
 
         Ensure(manifest.Contains("public int ApiVersion => 4;", StringComparison.Ordinal) &&
@@ -62,7 +62,8 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             "API 4 stubs must depend on the whole-stream server bridge");
         Ensure(stub.Contains("IBufferWriter<byte> output", StringComparison.Ordinal),
             "response payload output must be narrowed to IBufferWriter<byte>");
-        Ensure(stub.Contains("IAbi4Service_Stub(IRpcCodecProvider codecs)", StringComparison.Ordinal),
+        Ensure(stub.Contains("internal __Stub_", StringComparison.Ordinal) &&
+               stub.Contains("IRpcCodecProvider codecs)", StringComparison.Ordinal),
             "server codecs must be resolved when the Stub is constructed");
         Ensure(stub.Contains("bridge.CreateInboundStream", StringComparison.Ordinal) &&
                stub.Contains("bridge.PumpOutboundStreamAsync", StringComparison.Ordinal),
@@ -80,6 +81,31 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             "API 4 Proxy must not acquire a Runtime AssemblyRef through an unused import");
         Ensure(!allGenerated.Contains("SharpLink.Runtime", StringComparison.Ordinal),
             "no generated API 4 source may reference SharpLink.Runtime");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task GeneratedProxyAndStubShouldBePrivateNestedImplementationTypes()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IPrivateNestedService : SharpLink.Sdk.IService
+{
+    ValueTask<int> Echo(int value, CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains("private sealed class __Proxy_", StringComparison.Ordinal),
+            "generated Proxy must be a private nested implementation type");
+        Ensure(generated.Contains("private sealed class __Stub_", StringComparison.Ordinal),
+            "generated Stub must be a private nested implementation type");
+        Ensure(CountOccurrences(generated, "public sealed class IPrivateNestedService_Proxy") == 0 &&
+               CountOccurrences(generated, "public sealed class IPrivateNestedService_Stub") == 0,
+            "generated Proxy/Stub must not be public top-level contract types");
+        Ensure(generated.Contains("static channel => __CreateProxy_", StringComparison.Ordinal) &&
+               generated.Contains("static codecs => __CreateStub_", StringComparison.Ordinal),
+            "the manifest must use private static factories to instantiate nested artifacts");
         return Task.CompletedTask;
     }
 
@@ -401,7 +427,7 @@ public interface ICanonicalContract : SharpLink.Sdk.IService, IFireAndForgetBase
 
         EnsureDoesNotHaveRule(source, "SHARPLINK057");
         Ensure(string.Join("\n", RunGeneratorAndGetSources(source)).Contains(
-                "ICanonicalContract_Proxy",
+                ": global::ICanonicalContract",
                 StringComparison.Ordinal),
             "an explicit derived declaration must remain the canonical generated route");
         return Task.CompletedTask;
@@ -708,7 +734,7 @@ public sealed class HelloService : IHelloService
 
         var generated = RunGeneratorAndGetSources(source);
         var allGenerated = string.Join("\n", generated);
-        var proxy = generated.FirstOrDefault(static text => text.Contains("IHelloService_Proxy"));
+        var proxy = generated.FirstOrDefault(static text => text.Contains("private sealed class __Proxy_"));
         if (proxy is null)
             throw new Exception("Expected generated proxy source.");
         Ensure(proxy.Contains("InvokeUnaryAsync"), "Unary invoker");
@@ -716,8 +742,8 @@ public sealed class HelloService : IHelloService
         Ensure(proxy.Contains("InvokeClientStreamingAsync"), "ClientStreaming invoker");
         Ensure(proxy.Contains("InvokeServerStreamingAsync"), "ServerStreaming invoker");
         Ensure(proxy.Contains("InvokeDuplexStreamingAsync"), "DuplexStreaming invoker");
-        Ensure(proxy.Contains("readonly struct __IHelloService_SharpLinkRequest_"), "Generated request struct");
-        Ensure(proxy.Contains("IRpcCodec<__IHelloService_SharpLinkRequest_"), "Generated request codec");
+        Ensure(allGenerated.Contains("readonly struct __IHelloService_SharpLinkRequest_"), "Generated request struct");
+        Ensure(proxy.Contains("IRpcCodec<global::__IHelloService_SharpLinkRequest_"), "Generated request codec");
         Ensure(allGenerated.Contains("Span<byte> tmp_"), "Segmented fixed-width arguments must use stack scratch");
         Ensure(!allGenerated.Contains("byte[] tmp_"), "Segmented fixed-width arguments must not allocate arrays");
         Ensure(!proxy.Contains("Action<IBufferWriter<byte>>"), "Captured payload delegate must not be generated");
@@ -1349,7 +1375,7 @@ namespace Nested
 """);
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(CountOccurrences(generated, "public sealed class IInner_Proxy") == 0,
+        Ensure(CountOccurrences(generated, "IInner_Proxy") == 0,
             "nested contracts with the same simple name must not emit colliding top-level Proxy types");
         Ensure(generated.Contains(" : global::Nested.First.IInner", StringComparison.Ordinal) &&
                generated.Contains(" : global::Nested.Second.IInner", StringComparison.Ordinal),
@@ -2575,7 +2601,7 @@ public sealed class RefPayloadAdapter : SharpLink.Abstractions.IRpcCodecAdapter
 
         EnsureRuleCount(source, "SHARPLINK009", 1);
         Ensure(!string.Join("\n", RunGeneratorAndGetSources(source)).Contains(
-                "IRefPayloadContract_Proxy",
+                "IRefPayloadContract",
                 StringComparison.Ordinal),
             "a ref-like payload must suppress contract artifacts that cannot use it as a generic argument");
         return Task.CompletedTask;
@@ -2595,7 +2621,7 @@ public interface IOperatorContract : SharpLink.Sdk.IService
 
         EnsureRuleCount(source, "SHARPLINK054", 1);
         Ensure(!string.Join("\n", RunGeneratorAndGetSources(source)).Contains(
-                "IOperatorContract_Proxy",
+                "IOperatorContract",
                 StringComparison.Ordinal),
             "a contract with an unimplementable static abstract operator must not emit a Proxy");
         return Task.CompletedTask;
@@ -2772,10 +2798,8 @@ public unsafe interface IPointerPayloadContract : SharpLink.Sdk.IService
 
         EnsureRuleCount(source, "SHARPLINK009", 2);
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(!generated.Contains("IPointerPayloadContract_Proxy", StringComparison.Ordinal),
-            "pointer payloads must suppress a Proxy that cannot represent them");
-        Ensure(!generated.Contains("IPointerPayloadContract_Stub", StringComparison.Ordinal),
-            "pointer payloads must suppress a Stub that cannot represent them");
+        Ensure(!generated.Contains("IPointerPayloadContract", StringComparison.Ordinal),
+            "pointer payloads must suppress all contract artifacts that cannot represent them");
         return Task.CompletedTask;
     }
 
@@ -3299,4 +3323,5 @@ namespace SharpLink.Sdk
         if (!condition)
             throw new Exception(message);
     }
+
 }

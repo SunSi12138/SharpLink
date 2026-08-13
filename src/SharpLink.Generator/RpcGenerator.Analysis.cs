@@ -1666,6 +1666,18 @@ public partial class RpcGenerator
         return name.ToString();
     }
 
+    private static string GetProxyArtifactHintName(RpcInterfaceModel model)
+    {
+        var fullName = model.FullName;
+        if (fullName.StartsWith("global::", StringComparison.Ordinal))
+            fullName = fullName.Substring("global::".Length);
+        var name = new StringBuilder(fullName.Length + 16);
+        foreach (var ch in fullName)
+            name.Append(char.IsLetterOrDigit(ch) ? ch : '_');
+        name.Append('_').Append(unchecked((ulong)model.Hash).ToString("X16", InvariantCulture)).Append("_ProxyImpl.g.cs");
+        return name.ToString();
+    }
+
     private static string GetGeneratedContractName(INamedTypeSymbol symbol)
     {
         if (symbol.ContainingType is null)
