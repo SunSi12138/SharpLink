@@ -2989,6 +2989,47 @@ public interface IThirdPartyMoneyService : SharpLink.Sdk.IService
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task ReferencedContractAssemblyCustomCodecBindingShouldBeDiscovered()
+    {
+        var sdk = CreateMetadataReference("SharpLink.Sdk", BuildSource(string.Empty));
+        var external = CreateMetadataReference(
+            "ExternalCustomCodec",
+            """
+using SharpLink.Abstractions;
+using SharpLink.Sdk;
+
+[assembly: RpcCodec(typeof(ExternalMoney), typeof(ExternalMoneyCodec))]
+
+public sealed record ExternalMoney(decimal Value);
+
+[RpcCodecImplementation("external-wire/v1", "external-schema/v1")]
+public sealed class ExternalMoneyCodec : IRpcCodec<ExternalMoney>
+{
+}
+""",
+            sdk);
+        var source = """
+using System.Threading;
+using System.Threading.Tasks;
+using ExternalCustomCodec;
+using SharpLink.Sdk;
+
+[RpcContract]
+public interface IExternalMoneyService : IService
+{
+    ValueTask<ExternalMoney> Convert(ExternalMoney value, CancellationToken cancellationToken);
+}
+""";
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source, sdk, external));
+        Ensure(generated.Contains("new global::ExternalMoneyCodec()", StringComparison.Ordinal),
+            "referenced Contract assembly custom Codec binding must be discovered from the compilation reference closure");
+        Ensure(generated.Contains("\"external-wire/v1\"", StringComparison.Ordinal),
+            "referenced custom Codec wire identity must be emitted into the manifest");
+        return Task.CompletedTask;
+    }
+
     private static string BuildSource(string contract)
     {
         return $$"""
