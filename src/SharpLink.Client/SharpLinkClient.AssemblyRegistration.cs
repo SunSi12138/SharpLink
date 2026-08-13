@@ -529,9 +529,22 @@ internal sealed partial class SharpLinkClient
             ExistingFingerprint: existingContract.Fingerprint,
             IncomingFingerprint: incomingContract.Fingerprint);
 
-    internal sealed record ClientProxyRegistration(
-        SharpLinkGeneratedContractDescriptor Descriptor,
-        SharpLinkDynamicModule? Module);
+    internal sealed class ClientProxyRegistration
+    {
+        internal ClientProxyRegistration(
+            SharpLinkGeneratedContractDescriptor descriptor,
+            SharpLinkDynamicModule? module)
+        {
+            Descriptor = descriptor;
+            Module = module;
+        }
+
+        internal SharpLinkGeneratedContractDescriptor Descriptor { get; }
+
+        internal SharpLinkDynamicModule? Module { get; }
+
+        internal object? Proxy;
+    }
 
     private readonly record struct RegistrationCandidate(
         FrozenDictionary<Type, ClientProxyRegistration> Proxies,

@@ -159,6 +159,20 @@ public sealed class SharpLinkMultiClusterClientTests
     }
 
     [Test]
+    public async Task RepeatedGetShouldReturnTheSameStaticProxy()
+    {
+        await using var client = CreateStaticBuilder()
+            .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
+            .Build();
+
+        var first = client.Get<IOrdersContract>();
+        var second = client.Get<IOrdersContract>();
+
+        Ensure(ReferenceEquals(first, second),
+            "repeated Get<T>() within the same static registration generation must return the cached Proxy reference");
+    }
+
+    [Test]
     public async Task BuildShouldIgnoreRoutesForUnconfiguredClusters()
     {
         var unrelatedRoute = new UnconfiguredRouteManifest();
