@@ -580,6 +580,8 @@ public partial class RpcGenerator
             sb.AppendLine($"        for (var __index = 0; __index < {countExpression}; __index++)");
             sb.AppendLine("        {");
             sb.AppendLine($"            var __item = {itemExpression.Replace("index", "__index")};");
+            sb.AppendLine("            if (__item is not null && __item.Length > (RpcGeneratedCodecWire.MaximumStringPayloadBytes / 2))");
+            sb.AppendLine("                throw new ArgumentOutOfRangeException(nameof(__item), \"Serialized payload exceeds the protocol maximum.\");");
             sb.AppendLine("            __encodedSize = checked(__encodedSize + sizeof(uint) + sizeof(uint) + (__item is null ? 0 : __item.Length * 2));");
             sb.AppendLine("        }");
             sb.AppendLine("        rpcWriter.GetSpan(checked(__encodedSize));");
