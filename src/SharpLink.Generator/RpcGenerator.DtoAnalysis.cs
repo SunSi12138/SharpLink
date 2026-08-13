@@ -492,7 +492,10 @@ public partial class RpcGenerator
                     null,
                     "sharplink-native/v1",
                     GetAssemblyDependencies([type]),
-                    type.Locations.FirstOrDefault());
+                    type.Locations.FirstOrDefault())
+                {
+                    ElementIsString = elementType?.SpecialType == SpecialType.System_String
+                };
                 return;
             }
 

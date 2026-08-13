@@ -71,7 +71,11 @@ public class SharedMemoryPipelineLifecycleTests
         writer.GetSpan(1)[0] = 42;
         writer.Advance(1);
         await writer.FlushAsync();
-        await Task.Delay(50);
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+        while (!first.IsCompleted && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+
         var activeReadObservedData = first.IsCompleted;
         reader.CancelPendingRead();
         var result = await first.WaitAsync(TimeSpan.FromSeconds(2));
