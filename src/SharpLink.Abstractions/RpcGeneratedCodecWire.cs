@@ -34,6 +34,9 @@ public static class RpcGeneratedCodecWire
     /// <summary>The hard maximum number of items allocated by one generated collection Codec.</summary>
     public const int MaximumCollectionItems = 1_048_576;
 
+    /// <summary>The largest UTF-16 payload, in bytes, accepted by the generated string Codec.</summary>
+    public const int MaximumStringPayloadBytes = 64 * 1024 * 1024 - sizeof(int);
+
     /// <summary>Writes one DTO field key.</summary>
     public static void WriteFieldKey(IBufferWriter<byte> writer, uint fieldId, RpcGeneratedWireType wireType)
     {
