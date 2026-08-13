@@ -278,32 +278,57 @@ public partial class RpcGenerator
 
         private void CollectAssemblyCustomCodecBindings()
         {
-            foreach (var attribute in _compilation.Assembly.GetAttributes()
-                         .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAttribute")))
+            var assemblies = new Dictionary<string, IAssemblySymbol>(StringComparer.Ordinal)
             {
-                var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
-                if (attribute.ConstructorArguments.Length != 2 ||
-                    attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
-                    attribute.ConstructorArguments[1].Value is not ITypeSymbol codec)
+                [_compilation.Assembly.Identity.ToString()] = _compilation.Assembly
+            };
+            var pending = new Queue<IAssemblySymbol>();
+            pending.Enqueue(_compilation.Assembly);
+            while (pending.Count != 0)
+            {
+                var assembly = pending.Dequeue();
+                foreach (var referenced in assembly.Modules.SelectMany(static module => module.ReferencedAssemblySymbols)
+                             .OrderBy(static item => item.Identity.ToString(), StringComparer.Ordinal))
                 {
-                    Report(DtoDiagnosticKind.CustomCodecBindingInvalid, _compilation.Assembly,
-                        "assembly-level RpcCodec requires targetType and codecType", location);
-                    continue;
+                    if (!assemblies.ContainsKey(referenced.Identity.ToString()) &&
+                        _allowedAssemblyNames.Contains(referenced.Identity.Name))
+                    {
+                        assemblies.Add(referenced.Identity.ToString(), referenced);
+                        pending.Enqueue(referenced);
+                    }
                 }
-                if (HasTypeParameter(target))
+            }
+
+            foreach (var assembly in assemblies.Values.OrderBy(static item => item.Identity.ToString(), StringComparer.Ordinal))
+            {
+                foreach (var attribute in assembly.GetAttributes()
+                             .Where(static attribute => IsAttribute(attribute, "SharpLink.Sdk", "RpcCodecAttribute"))
+                             .OrderBy(static attribute => attribute.ToString(), StringComparer.Ordinal))
                 {
-                    Report(DtoDiagnosticKind.CustomCodecTargetInvalid, target,
-                        "custom Codec target must be a closed type", location);
-                    continue;
+                    var location = attribute.ApplicationSyntaxReference?.GetSyntax(_cancellationToken).GetLocation() ?? Location.None;
+                    if (attribute.ConstructorArguments.Length != 2 ||
+                        attribute.ConstructorArguments[0].Value is not ITypeSymbol target ||
+                        attribute.ConstructorArguments[1].Value is not ITypeSymbol codec)
+                    {
+                        Report(DtoDiagnosticKind.CustomCodecBindingInvalid, assembly,
+                            "assembly-level RpcCodec requires targetType and codecType", location);
+                        continue;
+                    }
+                    if (HasTypeParameter(target))
+                    {
+                        Report(DtoDiagnosticKind.CustomCodecTargetInvalid, target,
+                            "custom Codec target must be a closed type", location);
+                        continue;
+                    }
+                    target = NormalizeAdapterTarget(target);
+                    if (IsNonOverridableBuiltin(target))
+                    {
+                        Report(DtoDiagnosticKind.BuiltinCustomCodecOverride, target,
+                            "built-in primitive Codecs cannot be rebound to a custom Codec", location);
+                        continue;
+                    }
+                    AddCustomCodecBinding(target, codec, location);
                 }
-                target = NormalizeAdapterTarget(target);
-                if (IsNonOverridableBuiltin(target))
-                {
-                    Report(DtoDiagnosticKind.BuiltinCustomCodecOverride, target,
-                        "built-in primitive Codecs cannot be rebound to a custom Codec", location);
-                    continue;
-                }
-                AddCustomCodecBinding(target, codec, location);
             }
         }
 
