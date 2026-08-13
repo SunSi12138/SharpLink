@@ -291,6 +291,24 @@ public partial class RpcGenerator
     private static readonly DiagnosticDescriptor BuiltinAdapterOverrideRule = AdapterRule(
         "SHARPLINK049", "Built-in Codec Cannot Be Rebound");
 
+    private static readonly DiagnosticDescriptor InvalidCustomCodecBindingRule = CustomCodecRule(
+        "SHARPLINK058", "Custom RPC Codec Binding Is Invalid");
+
+    private static readonly DiagnosticDescriptor InvalidCustomCodecTargetRule = CustomCodecRule(
+        "SHARPLINK059", "Custom RPC Codec Target Is Invalid");
+
+    private static readonly DiagnosticDescriptor InvalidCustomCodecTypeRule = CustomCodecRule(
+        "SHARPLINK060", "Custom RPC Codec Implementation Is Invalid");
+
+    private static readonly DiagnosticDescriptor InvalidCustomCodecIdentityRule = CustomCodecRule(
+        "SHARPLINK061", "Custom RPC Codec Identity Is Invalid");
+
+    private static readonly DiagnosticDescriptor CustomCodecSelectionConflictRule = CustomCodecRule(
+        "SHARPLINK062", "RPC Payload Selects Multiple Custom Codecs");
+
+    private static readonly DiagnosticDescriptor BuiltinCustomCodecOverrideRule = CustomCodecRule(
+        "SHARPLINK063", "Built-in Codec Cannot Be Rebound to a Custom Codec");
+
     private static readonly DiagnosticDescriptor InvalidTimeoutRule = new(
         id: "SHARPLINK050",
         title: "RPC Timeout Is Invalid",
@@ -360,6 +378,15 @@ public partial class RpcGenerator
             id: id,
             title: title,
             messageFormat: "Codec Adapter error for '{0}': {1}",
+            category: "SharpLink.Generator",
+            defaultSeverity: DiagnosticSeverity.Error,
+            isEnabledByDefault: true);
+
+    private static DiagnosticDescriptor CustomCodecRule(string id, string title)
+        => new(
+            id: id,
+            title: title,
+            messageFormat: "Custom RPC Codec error for '{0}': {1}",
             category: "SharpLink.Generator",
             defaultSeverity: DiagnosticSeverity.Error,
             isEnabledByDefault: true);

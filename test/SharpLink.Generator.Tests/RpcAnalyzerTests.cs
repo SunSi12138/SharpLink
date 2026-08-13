@@ -2853,6 +2853,82 @@ public interface INoResponseOnlyContract : SharpLink.Sdk.IService
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task CustomRpcCodecShouldEmitAStableGeneratedFactory()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcCodec(typeof(MoneyCodec))]
+public sealed record Money(decimal Value);
+
+[SharpLink.Sdk.RpcCodecImplementation("money-wire/v1", "money-schema/v1")]
+public sealed class MoneyCodec : SharpLink.Abstractions.IRpcCodec<Money>
+{
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IMoneyService : SharpLink.Sdk.IService
+{
+    ValueTask<Money> Convert(Money value, CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains("internal sealed class Factory : IRpcGeneratedCodecFactory", StringComparison.Ordinal),
+            "custom Codec binding must emit an IRpcGeneratedCodecFactory");
+        Ensure(generated.Contains("new global::MoneyCodec()", StringComparison.Ordinal),
+            "custom Codec factory must construct the bound implementation directly");
+        Ensure(generated.Contains("\"money-wire/v1\"", StringComparison.Ordinal) &&
+               generated.Contains("SchemaId => \"global::Money:", StringComparison.Ordinal),
+            "custom Codec wire/schema identity must be emitted into the manifest");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task CustomRpcCodecWithoutStableIdentityShouldReportSharplink061()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcCodec(typeof(MoneyCodec))]
+public sealed record Money(decimal Value);
+
+public sealed class MoneyCodec : SharpLink.Abstractions.IRpcCodec<Money>
+{
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IMoneyService : SharpLink.Sdk.IService
+{
+    ValueTask<Money> Convert(Money value, CancellationToken cancellationToken);
+}
+""");
+
+        EnsureRuleCount(source, "SHARPLINK061", 1);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task AssemblyLevelCustomRpcCodecShouldBindExternalType()
+    {
+        var source = AddAssemblyAttribute(BuildSource("""
+public sealed record ThirdPartyMoney(decimal Value);
+
+[SharpLink.Sdk.RpcCodecImplementation("third-party/v1", "third-party-schema/v1")]
+public sealed class ThirdPartyMoneyCodec : SharpLink.Abstractions.IRpcCodec<ThirdPartyMoney>
+{
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IThirdPartyMoneyService : SharpLink.Sdk.IService
+{
+    ValueTask<ThirdPartyMoney> Convert(ThirdPartyMoney value, CancellationToken cancellationToken);
+}
+"""), "[assembly: SharpLink.Sdk.RpcCodec(typeof(ThirdPartyMoney), typeof(ThirdPartyMoneyCodec))]");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains("new global::ThirdPartyMoneyCodec()", StringComparison.Ordinal),
+            "assembly-level custom Codec binding must be used for the external payload type");
+        return Task.CompletedTask;
+    }
+
     private static string BuildSource(string contract)
     {
         return $$"""
@@ -2947,6 +3023,19 @@ namespace SharpLink.Sdk
     {
         public RpcCodecAdapterAttribute(Type adapterType) { }
         public RpcCodecAdapterAttribute(Type targetType, Type adapterType) { }
+    }
+
+    [AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true)]
+    public sealed class RpcCodecAttribute : Attribute
+    {
+        public RpcCodecAttribute(Type codecType) { }
+        public RpcCodecAttribute(Type targetType, Type codecType) { }
+    }
+
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct)]
+    public sealed class RpcCodecImplementationAttribute : Attribute
+    {
+        public RpcCodecImplementationAttribute(string wireFormatId, string schemaId) { }
     }
 }
 

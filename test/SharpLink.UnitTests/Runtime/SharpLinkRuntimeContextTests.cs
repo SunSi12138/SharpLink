@@ -1060,6 +1060,22 @@ public class SharpLinkRuntimeContextTests
         }
     }
 
+    [Test]
+    public void AdapterFreeCustomWireCodecShouldBeAccepted()
+    {
+        using var context = CreateRuntimeBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var registration = context.PrepareGeneratedManifest(new TestManifest(
+            "custom-codec",
+            new CustomWireFactory<ThirdAdapterValue>(
+                new TaggedThirdAdapterValueCodec(7),
+                "custom-wire/v1")));
+        context.AdoptGeneratedManifest(registration);
+        context.PublishGeneratedCodecs(registration.Codecs);
+
+        Ensure(context.Codecs.GetCodec<ThirdAdapterValue>() is TaggedThirdAdapterValueCodec { Tag: 7 },
+            "an adapter-free Codec with a custom wire-format identity must resolve through the generated registration");
+    }
+
     private sealed class TaggedValue;
 
     private sealed class TaggedCodec(int tag) : IRpcCodec<TaggedValue>
@@ -1354,6 +1370,20 @@ public class SharpLinkRuntimeContextTests
             => adapterScope is null
                 ? codec
                 : throw new ArgumentException("Native factory does not accept an Adapter Scope.", nameof(adapterScope));
+        public bool IsCompatibleCodec(IRpcCodec candidate) => candidate is IRpcCodec<T>;
+    }
+
+    private sealed class CustomWireFactory<T>(IRpcCodec<T> codec, string wireFormatId) : IRpcGeneratedCodecFactory
+    {
+        public Type TargetType => typeof(T);
+        public string SchemaId => $"custom:{typeof(T).FullName}";
+        public string WireFormatId => wireFormatId;
+        public string? AdapterId => null;
+        public IRpcCodecAdapter? Adapter => null;
+        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
+            => adapterScope is null
+                ? codec
+                : throw new ArgumentException("Adapter-free custom Codec does not accept an Adapter Scope.", nameof(adapterScope));
         public bool IsCompatibleCodec(IRpcCodec candidate) => candidate is IRpcCodec<T>;
     }
 

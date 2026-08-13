@@ -12,15 +12,15 @@ public interface IRpcGeneratedCodecFactory
     /// <summary>Gets the stable binary wire-format identity.</summary>
     string WireFormatId { get; }
 
-    /// <summary>Gets the adapter lifecycle identity, or null for native Codecs.</summary>
+    /// <summary>Gets the adapter lifecycle identity, or null for adapter-free Codecs.</summary>
     string? AdapterId { get; }
 
-    /// <summary>Gets the adapter instance, or null for native Codecs.</summary>
+    /// <summary>Gets the adapter instance, or null for adapter-free Codecs.</summary>
     IRpcCodecAdapter? Adapter { get; }
 
     /// <summary>Creates a Codec whose dependencies are resolved from the target Context.</summary>
     /// <param name="provider">The target Context Codec provider.</param>
-    /// <param name="adapterScope">The context-owned adapter scope, or <see langword="null"/> for native codecs.</param>
+    /// <param name="adapterScope">The context-owned adapter scope, or <see langword="null"/> for adapter-free Codecs.</param>
     IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope);
 
     /// <summary>Checks the closed Codec interface without runtime type construction or scanning.</summary>

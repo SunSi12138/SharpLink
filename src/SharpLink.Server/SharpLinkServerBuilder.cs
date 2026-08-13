@@ -101,14 +101,14 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     }
 
     /// <summary>Sets a fallback codec resolver scoped to servers built by this builder.</summary>
-    public SharpLinkServerBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
+    internal SharpLinkServerBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
     {
         Configure(() => _runtimeContextBuilder.UseCodecResolver(codecResolver));
         return this;
     }
 
     /// <summary>Registers an explicit codec only for servers built by this builder.</summary>
-    public SharpLinkServerBuilder UseCodec<T>(IRpcCodec<T> codec)
+    internal SharpLinkServerBuilder UseCodec<T>(IRpcCodec<T> codec)
     {
         Configure(() =>
         {

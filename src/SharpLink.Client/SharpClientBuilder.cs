@@ -114,14 +114,14 @@ public class SharpClientBuilder
     }
 
     /// <summary>Sets a fallback codec resolver scoped to clients built by this builder.</summary>
-    public SharpClientBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
+    internal SharpClientBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
     {
         Configure(() => _runtimeContextBuilder.UseCodecResolver(codecResolver));
         return this;
     }
 
     /// <summary>Registers an explicit codec only for clients built by this builder.</summary>
-    public SharpClientBuilder UseCodec<T>(IRpcCodec<T> codec)
+    internal SharpClientBuilder UseCodec<T>(IRpcCodec<T> codec)
     {
         Configure(() =>
         {

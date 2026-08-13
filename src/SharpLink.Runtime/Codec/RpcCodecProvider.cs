@@ -378,11 +378,10 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(factory.WireFormatId);
         if (factory.AdapterId is null)
         {
-            if (factory.Adapter is not null ||
-                !string.Equals(factory.WireFormatId, "sharplink-native/v1", StringComparison.Ordinal))
+            if (factory.Adapter is not null)
             {
                 throw new InvalidOperationException(
-                    $"Native Codec factory for '{factory.TargetType.FullName}' has invalid adapter metadata.");
+                    $"Adapter-free Codec factory for '{factory.TargetType.FullName}' has unexpected adapter metadata.");
             }
             return;
         }

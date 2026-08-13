@@ -293,6 +293,12 @@ public partial class RpcGenerator : IIncrementalGenerator
                     DtoDiagnosticKind.AdapterTargetInvalid => InvalidAdapterTargetRule,
                     DtoDiagnosticKind.AdapterIdentityConflict => AdapterIdentityConflictRule,
                     DtoDiagnosticKind.BuiltinAdapterOverride => BuiltinAdapterOverrideRule,
+                    DtoDiagnosticKind.CustomCodecBindingInvalid => InvalidCustomCodecBindingRule,
+                    DtoDiagnosticKind.CustomCodecTargetInvalid => InvalidCustomCodecTargetRule,
+                    DtoDiagnosticKind.CustomCodecTypeInvalid => InvalidCustomCodecTypeRule,
+                    DtoDiagnosticKind.CustomCodecIdentityInvalid => InvalidCustomCodecIdentityRule,
+                    DtoDiagnosticKind.CustomCodecSelectionConflict => CustomCodecSelectionConflictRule,
+                    DtoDiagnosticKind.BuiltinCustomCodecOverride => BuiltinCustomCodecOverrideRule,
                     _ => UnsupportedGeneratedDtoRule
                 };
                 spc.ReportDiagnostic(Diagnostic.Create(
