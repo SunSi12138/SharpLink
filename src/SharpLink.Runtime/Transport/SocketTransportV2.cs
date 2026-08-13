@@ -215,7 +215,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
     {
         ArgumentNullException.ThrowIfNull(address);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (LocalEndPoint is not IPEndPoint current)
+        if (LocalEndPoint is not IPEndPoint)
             throw new InvalidOperationException("The listen address can only be changed for TCP listeners.");
 
         var replacementEndPoint = new IPEndPoint(address, _port);
@@ -230,56 +230,30 @@ public sealed class SocketServerTransportListener : IServerTransportListener
             return;
         }
 
-        var originalEndPoint = new IPEndPoint(current.Address, current.Port);
         var original = _listener;
-        Socket replacementSocket;
+        var replacementSocket = SocketTransportSocketFactory.Create(replacementEndPoint);
         try
         {
-            replacementSocket = SocketTransportSocketFactory.Create(replacementEndPoint);
-        }
-        catch
-        {
-            throw;
-        }
-
-        original.Dispose();
-        try
-        {
+            original.SetSocketOption(
+                SocketOptionLevel.Socket,
+                SocketOptionName.ReuseAddress,
+                true);
+            replacementSocket.SetSocketOption(
+                SocketOptionLevel.Socket,
+                SocketOptionName.ReuseAddress,
+                true);
             replacementSocket.Bind(replacementEndPoint);
             replacementSocket.Listen(_backlog);
         }
-        catch (Exception bindException)
+        catch
         {
             replacementSocket.Dispose();
-            Exception? restoreException = null;
-            try
-            {
-                var restored = CreateBoundTcpListener(originalEndPoint);
-                _listener = restored;
-                LocalEndPoint = restored.LocalEndPoint;
-            }
-            catch (Exception exception)
-            {
-                restoreException = exception;
-                _listener = null!;
-                _disposed = 1;
-                _disposeCts.Cancel();
-            }
-
-            if (restoreException is not null)
-            {
-                throw new AggregateException(
-                    "Failed to bind the requested TCP listen address, and the previous listener could not be restored.",
-                    bindException,
-                    restoreException);
-            }
-
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(bindException).Throw();
-            throw new System.Diagnostics.UnreachableException();
+            throw;
         }
 
         _listener = replacementSocket;
         LocalEndPoint = replacementSocket.LocalEndPoint;
+        original.Dispose();
     }
 
     private Socket CreateBoundTcpListener(IPEndPoint endPoint)
@@ -287,6 +261,10 @@ public sealed class SocketServerTransportListener : IServerTransportListener
         var listener = SocketTransportSocketFactory.Create(endPoint);
         try
         {
+            listener.SetSocketOption(
+                SocketOptionLevel.Socket,
+                SocketOptionName.ReuseAddress,
+                true);
             listener.Bind(endPoint);
             listener.Listen(_backlog);
             return listener;
