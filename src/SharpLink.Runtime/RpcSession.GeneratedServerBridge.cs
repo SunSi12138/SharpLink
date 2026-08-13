@@ -79,7 +79,7 @@ internal sealed partial class RpcSession
                 streamId,
                 item,
                 sizedCodec,
-                Math.Max(1, knownEncodedBytes),
+                knownEncodedBytes,
                 sizedSnapshot,
                 cancellationToken);
         }
@@ -147,22 +147,27 @@ internal sealed partial class RpcSession
         IRpcSizedCodecSnapshot? sizedSnapshot,
         CancellationToken cancellationToken)
     {
-        await AcquireStreamSendCreditAsync(
-            requestId,
-            streamId,
-            encodedBytes,
-            cancellationToken).ConfigureAwait(false);
-
+        var creditBytes = Math.Max(1, encodedBytes);
+        var creditAcquired = false;
         IRpcByteBufferWriter? writer = null;
         var ownsWriter = true;
         try
         {
+            await AcquireStreamSendCreditAsync(
+                requestId,
+                streamId,
+                creditBytes,
+                cancellationToken).ConfigureAwait(false);
+            creditAcquired = true;
+
             writer = RentFrameWriter();
             using (writer.BeginPacketScope(
                        ProtocolV2FrameType.StreamData,
                        ProtocolV2FrameFlags.None,
                        unchecked((ulong)requestId)))
             {
+                writer.GetSpan(sizeof(ushort) + encodedBytes);
+                writer.Advance(0);
                 var idSpan = writer.GetSpan(sizeof(ushort));
                 BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
                 writer.Advance(sizeof(ushort));
@@ -174,9 +179,7 @@ internal sealed partial class RpcSession
                 }
             }
 
-            var actualEncodedBytes = Math.Max(
-                1,
-                writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort));
+            var actualEncodedBytes = writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort);
             if (actualEncodedBytes != encodedBytes)
             {
                 throw new InvalidOperationException(
@@ -188,7 +191,8 @@ internal sealed partial class RpcSession
         }
         catch
         {
-            ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
+            if (creditAcquired)
+                ReturnUnsentStreamCredit(requestId, streamId, creditBytes);
             throw;
         }
         finally

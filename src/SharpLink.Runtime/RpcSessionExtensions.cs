@@ -307,7 +307,7 @@ internal static class RpcSessionExtensions
                     streamId,
                     item,
                     sizedCodec,
-                    Math.Max(1, knownEncodedBytes),
+                    knownEncodedBytes,
                     sizedSnapshot,
                     cancellationToken).ConfigureAwait(false);
                 return;
