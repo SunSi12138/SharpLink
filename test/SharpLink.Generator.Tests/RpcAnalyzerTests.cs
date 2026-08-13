@@ -111,6 +111,33 @@ public interface IPrivateNestedService : SharpLink.Sdk.IService
     }
 
     [Test]
+    public Task GeneratedServerStubShouldResolveCodecsOnlyDuringConstruction()
+    {
+        var source = BuildSource("""
+[SharpLink.Sdk.RpcContract]
+public interface IServerStubCodecService : SharpLink.Sdk.IService
+{
+    ValueTask<string> EchoAsync(string value, CancellationToken cancellationToken);
+}
+""");
+
+        var stub = RunGeneratorAndGetSources(source)
+            .Single(static text => text.Contains("private sealed class __Stub_", StringComparison.Ordinal));
+        var dispatchStart = stub.IndexOf(
+            "private ValueTask InvokeNoReturnCoreAsync",
+            StringComparison.Ordinal);
+        Ensure(dispatchStart > 0, "generated Stub must contain its dispatch method");
+
+        var construction = stub[..dispatchStart];
+        var dispatch = stub[dispatchStart..];
+        Ensure(construction.Contains("GetCodec<", StringComparison.Ordinal),
+            "generated Stub constructor must resolve Codec fields");
+        Ensure(!dispatch.Contains("GetCodec<", StringComparison.Ordinal),
+            "generated Stub dispatch must not perform per-call Codec lookup");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task SemanticFixedRequestValuesShouldUseValidatedBuiltInCodecs()
     {
         var source = BuildSource("""
