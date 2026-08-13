@@ -148,13 +148,24 @@ public partial class RpcGenerator
         sb.AppendLine("{");
         for (var index = 0; index < complexMembers.Length; index++)
             sb.AppendLine($"    private readonly IRpcCodec<{complexMembers[index].TypeName}> __codec_{index};");
+        sb.AppendLine("    private readonly bool __canExactSize;");
         sb.AppendLine();
         sb.AppendLine($"    internal {model.CodecName}(IRpcCodecProvider provider)");
         sb.AppendLine("    {");
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(provider);");
         for (var index = 0; index < complexMembers.Length; index++)
             sb.AppendLine($"        __codec_{index} = provider.GetCodec<{complexMembers[index].TypeName}>();");
+        sb.AppendLine("        __canExactSize = true;");
+        for (var index = 0; index < complexMembers.Length; index++)
+        {
+            sb.AppendLine(
+                $"        if (__codec_{index} is not IRpcSizedCodec<{complexMembers[index].TypeName}> __sizedCodec_{index} ||");
+            sb.AppendLine($"            !__sizedCodec_{index}.CanExactSize)");
+            sb.AppendLine("            __canExactSize = false;");
+        }
         sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    public bool CanExactSize => __canExactSize;");
         sb.AppendLine();
         sb.AppendLine($"    public void Serialize(in {model.TypeName} value, IBufferWriter<byte> writer)");
         sb.AppendLine("    {");
@@ -180,7 +191,7 @@ public partial class RpcGenerator
 
         if (hasComplex)
         {
-            sb.AppendLine("        if (TryGetEncodedSize(in value, out var __exactSize) && writer is IRpcByteBufferWriter __exactWriter)");
+            sb.AppendLine("        if (__canExactSize && TryGetEncodedSize(in value, out var __exactSize) && writer is IRpcByteBufferWriter __exactWriter)");
             sb.AppendLine("        {");
             sb.AppendLine("            __exactWriter.GetSpan(checked(__exactSize + 4));");
             sb.AppendLine("            __exactWriter.Advance(0);");
@@ -474,8 +485,17 @@ public partial class RpcGenerator
         var baseSize = model.IsReferenceType ? 2 : 1;
         sb.AppendLine($"        size = {baseSize.ToString(InvariantCulture)};");
 
-        foreach (var member in model.Members)
+        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
         {
+            var member = model.Members[memberIndex];
+            if (member.Kind != GeneratedMemberKind.String)
+                continue;
+            sb.AppendLine($"        var __string_{memberIndex} = value.{EscapeIdentifier(member.Identifier)};");
+        }
+
+        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
+        {
+            var member = model.Members[memberIndex];
             var value = $"value.{EscapeIdentifier(member.Identifier)}";
             switch (member.Kind)
             {
@@ -496,7 +516,7 @@ public partial class RpcGenerator
                     {
                         var nullSize = GetFieldKeySize(member.FieldId, 0);
                         var valueOverhead = GetFieldKeySize(member.FieldId, 6) + sizeof(uint);
-                        sb.AppendLine($"        size = checked(size + ({value} is null ? {nullSize.ToString(InvariantCulture)} : {valueOverhead.ToString(InvariantCulture)} + __SharpLinkGeneratedUtf8.GetByteCount({value})));");
+                        sb.AppendLine($"        size = checked(size + (__string_{memberIndex} is null ? {nullSize.ToString(InvariantCulture)} : {valueOverhead.ToString(InvariantCulture)} + __SharpLinkGeneratedUtf8.GetByteCount(__string_{memberIndex})));");
                         break;
                     }
                 case GeneratedMemberKind.Complex:
@@ -504,6 +524,7 @@ public partial class RpcGenerator
                         var index = complexIndexes[member.Name];
                         var keySize = GetFieldKeySize(member.FieldId, 6);
                         sb.AppendLine($"        if (__codec_{index} is not IRpcSizedCodec<{member.TypeName}> __sized_{index} ||");
+                        sb.AppendLine($"            !__sized_{index}.CanExactSize ||");
                         sb.AppendLine($"            !__sized_{index}.TryGetEncodedSize({value}, out var __nestedSize_{index}))");
                         sb.AppendLine("        {");
                         sb.AppendLine("            size = 0;");

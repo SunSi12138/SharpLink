@@ -10,6 +10,12 @@ namespace SharpLink.Abstractions;
 public interface IRpcSizedCodec<T>
 {
     /// <summary>
+    /// Gets whether this codec can always calculate an exact encoded size for its value,
+    /// including every nested generated codec, without traversing the value itself.
+    /// </summary>
+    bool CanExactSize { get; }
+
+    /// <summary>
     /// Calculates the exact encoded size, including the DTO presence marker and terminator.
     /// Returns <see langword="false"/> when a nested member does not support exact sizing.
     /// </summary>
