@@ -209,7 +209,7 @@ public partial class RpcGenerator
         else if (hasDirectString)
         {
             AppendDtoDirectPreReservation(sb, model);
-            AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: true, useCachedMembers: false, indent: "        ");
+            AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: true, useCachedMembers: true, indent: "        ");
         }
         else
         {
@@ -533,6 +533,14 @@ public partial class RpcGenerator
                 sb.AppendLine(
                     $"        var __stringByteCount_{memberIndex} = __string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf8.GetByteCount(__string_{memberIndex});");
             }
+            else if (member.Kind == GeneratedMemberKind.Fixed)
+            {
+                sb.AppendLine($"        var __fixed_{memberIndex} = {value};");
+            }
+            else if (member.Kind == GeneratedMemberKind.NullableFixed)
+            {
+                sb.AppendLine($"        var __nullable_{memberIndex} = {value};");
+            }
         }
 
         var baseSize = model.IsReferenceType ? 2 : 1;
@@ -561,7 +569,7 @@ public partial class RpcGenerator
                 var nullSize = GetFieldKeySize(member.FieldId, 0);
                 var valueSize = GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize)) + member.FixedSize;
                 sb.AppendLine(
-                    $"            __encodedSize += value.{EscapeIdentifier(member.Identifier)}.HasValue ? {valueSize.ToString(InvariantCulture)} : {nullSize.ToString(InvariantCulture)};");
+                    $"            __encodedSize += __nullable_{memberIndex}.HasValue ? {valueSize.ToString(InvariantCulture)} : {nullSize.ToString(InvariantCulture)};");
             }
         }
         sb.AppendLine("        }");
@@ -735,6 +743,14 @@ public partial class RpcGenerator
         sb.AppendLine($"    public void SerializeSized(in {model.TypeName} value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)");
         sb.AppendLine("    {");
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(buffer);");
+        if (model.IsReferenceType)
+        {
+            sb.AppendLine("        if (value is null)");
+            sb.AppendLine("        {");
+            sb.AppendLine("            RpcGeneratedCodecWire.WritePresence(buffer, false);");
+            sb.AppendLine("            return;");
+            sb.AppendLine("        }");
+        }
         sb.AppendLine("        if (snapshot is not __SizedSnapshot __snapshot)");
         sb.AppendLine("            throw new ArgumentException(\"Snapshot does not belong to this codec.\", nameof(snapshot));");
         if (hasComplex)
@@ -743,11 +759,6 @@ public partial class RpcGenerator
         }
         if (model.IsReferenceType)
         {
-            sb.AppendLine("        if (value is null)");
-            sb.AppendLine("        {");
-            sb.AppendLine("            RpcGeneratedCodecWire.WritePresence(buffer, false);");
-            sb.AppendLine("            return;");
-            sb.AppendLine("        }");
             sb.AppendLine("        RpcGeneratedCodecWire.WritePresence(buffer, true);");
         }
 
