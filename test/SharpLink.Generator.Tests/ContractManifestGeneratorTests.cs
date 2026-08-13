@@ -112,7 +112,7 @@ public interface ITimeoutContract : SharpLink.Sdk.IService
 
         EnsureRuleCount(source, "SHARPLINK050", 6);
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(!generated.Contains("ITimeoutContract_Proxy", StringComparison.Ordinal),
+        Ensure(!generated.Contains("ITimeoutContract", StringComparison.Ordinal),
             "a contract with an invalid timeout must not emit descriptors");
 
         var valid = BuildSource("""

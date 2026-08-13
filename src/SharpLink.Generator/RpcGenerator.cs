@@ -270,10 +270,9 @@ public partial class RpcGenerator : IIncrementalGenerator
 
         context.RegisterSourceOutput(interfaces, (spc, model) =>
         {
-            var proxy = GenerateProxy(model!);
-            spc.AddSource(GetProxyHintName(model!), SourceText.From(proxy, Encoding.UTF8));
-            var stub = GenerateStub(model!);
-            spc.AddSource(GetStubHintName(model!), SourceText.From(stub, Encoding.UTF8));
+            var proxyHelpers = GenerateProxyHelpers(model!);
+            if (!string.IsNullOrEmpty(proxyHelpers))
+                spc.AddSource(GetProxyHintName(model!), SourceText.From(proxyHelpers, Encoding.UTF8));
         });
 
         context.RegisterSourceOutput(generatedCodecs, static (spc, result) =>
@@ -314,12 +313,32 @@ public partial class RpcGenerator : IIncrementalGenerator
         var manifest = interfaces.Collect().Combine(services.Collect()).Combine(generatedCodecs);
         context.RegisterSourceOutput(manifest, static (spc, value) =>
         {
-            var code = GenerateAssemblyManifest(value.Left.Left, value.Left.Right, value.Right.Codecs);
+            var interfaces = value.Left.Left;
+            var services = value.Left.Right;
+            var codecs = value.Right.Codecs;
+            var contracts = GetContractModels(interfaces);
+            var serviceModels = GetServiceModels(services);
+
+            var code = GenerateAssemblyManifest(interfaces, services, codecs);
             if (!string.IsNullOrEmpty(code))
             {
+                var manifestTypeName = GetManifestTypeName(contracts, serviceModels, codecs);
                 spc.AddSource(
                     "SharpLink.GeneratedAssemblyManifest.g.cs",
                     SourceText.From(code, Encoding.UTF8));
+
+                foreach (var contract in contracts)
+                {
+                    var proxy = GenerateProxy(manifestTypeName, contract);
+                    spc.AddSource(
+                        GetProxyArtifactHintName(contract),
+                        SourceText.From(proxy, Encoding.UTF8));
+
+                    var stub = GenerateStub(manifestTypeName, contract);
+                    spc.AddSource(
+                        GetStubHintName(contract),
+                        SourceText.From(stub, Encoding.UTF8));
+                }
             }
         });
 
