@@ -140,6 +140,16 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
+    /// <summary>
+    /// Uses an isolated generated-manifest source for this Server build. The source is queried once
+    /// by Compile and is not retained by the resulting Server.
+    /// </summary>
+    internal SharpLinkServerBuilder UseGeneratedManifestSource(IGeneratedManifestSource source)
+    {
+        Configure(() => _runtimeContextBuilder.UseGeneratedManifestSource(source));
+        return this;
+    }
+
     /// <summary>Enables bounded active admission control for calls accepted by this server.</summary>
     public SharpLinkServerBuilder UseAdmissionControl(Action<SharpLinkAdmissionControlOptions> configure)
     {
@@ -344,8 +354,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         BeginBuild();
         try
         {
-            var manifestSource = SharpLinkGeneratedManifestSource.FromCatalog();
-            var plan = CompilePlan(manifestSource);
+            var plan = CompilePlan();
             lock (_configurationGate)
                 _pendingResources = plan.Resources;
             return plan;
@@ -364,14 +373,14 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         }
     }
 
-    private ServerBuildPlan CompilePlan(SharpLinkGeneratedManifestSource manifestSource)
+    private ServerBuildPlan CompilePlan()
     {
         var transport = _transport ?? throw new InvalidOperationException("Transport must be set before building the server.");
         if (_authenticationRequired && _authenticator is null)
             throw new InvalidOperationException("RequireAuthentication needs an ISharpLinkServerAuthenticator.");
 
-        var manifests = manifestSource.CreateMaterializationSnapshot();
-        var runtimeContext = _runtimeContextBuilder.Compile(manifestSource);
+        var runtimeContext = _runtimeContextBuilder.Compile();
+        var manifests = runtimeContext.GeneratedManifests;
         var services = CompileServicePlan(
             manifests,
             _automaticServiceRegistration,
@@ -382,7 +391,6 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return new ServerBuildPlan(
             new ServerRuntimeResources(transport),
             runtimeContext,
-            manifestSource,
             services,
             _heartbeatCheckInterval,
             _heartbeatTimeout,

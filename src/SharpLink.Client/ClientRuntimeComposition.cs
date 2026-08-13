@@ -160,7 +160,7 @@ internal sealed class DynamicClientRuntimeTopologyComposition(
 /// </summary>
 internal sealed class ClientRuntimeComposition
 {
-    private readonly ISharpLinkGeneratedAssemblyManifest[] _staticManifests;
+    private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests;
     private readonly ISharpLinkClientInterceptor[] _interceptors;
 
     internal ClientRuntimeComposition(
@@ -211,9 +211,9 @@ internal sealed class ClientRuntimeComposition
         ArgumentNullException.ThrowIfNull(connectionPoolOptions);
         ArgumentNullException.ThrowIfNull(interceptors);
 
-        _staticManifests = new ISharpLinkGeneratedAssemblyManifest[staticManifests.Count];
-        for (var index = 0; index < _staticManifests.Length; index++)
-            _staticManifests[index] = staticManifests[index] ?? throw new ArgumentException("Static manifests cannot contain null.", nameof(staticManifests));
+        for (var index = 0; index < staticManifests.Count; index++)
+            _ = staticManifests[index] ?? throw new ArgumentException("Static manifests cannot contain null.", nameof(staticManifests));
+        _staticManifests = staticManifests;
         _interceptors = [.. interceptors];
         StaticProxies = staticProxies;
         HeartbeatInterval = heartbeatInterval;

@@ -6,7 +6,6 @@ using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
 
-[NotInParallel]
 public class RpcSessionLifecycleTests
 {
     [Test]
@@ -148,6 +147,8 @@ public class RpcSessionLifecycleTests
     }
 
     [Test]
+    // MeterListener registration is process-wide and this test pauses inside its callback.
+    [NotInParallel]
     public async Task FaultPausedAfterPublishingTerminalShouldSurviveConcurrentRepeatedDispose()
     {
         var input = new Pipe();
@@ -413,34 +414,47 @@ public class RpcSessionLifecycleTests
         };
         var original = CreateResponsePacket(session, 2048);
         var send = StartSendAsync(session, original, sendPath);
-
-        await provider.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        if (terminalPath == "fault")
+        Exception? terminal = null;
+        try
         {
-            session.NotifyDisconnected(
-                new SharpLinkException(SharpLinkErrorCode.DataLoss, "terminal send race"));
+            try
+            {
+                await provider.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                if (terminalPath == "fault")
+                {
+                    session.NotifyDisconnected(
+                        new SharpLinkException(SharpLinkErrorCode.DataLoss, "terminal send race"));
+                }
+                else
+                {
+                    session.BeginShutdown();
+                }
+                terminal = await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+            finally
+            {
+                provider.Release();
+            }
+
+            var failure = await send.WaitAsync(TimeSpan.FromSeconds(2));
+            await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+            Ensure(terminal is SharpLinkException, "the terminal transition must publish a structured failure");
+            Ensure(ReferenceEquals(terminal, failure), "the in-flight send must observe the published terminal instance");
+            Ensure(failure is SharpLinkException { Code: not SharpLinkErrorCode.ProtocolViolation },
+                "a terminal transition must not be rewritten as a protocol validation failure");
+            Ensure(publishedCount == 1, "the terminal transition must be published exactly once");
+            Ensure(!session.IsConnected && session.QueuedSendBytes == 0,
+                "the terminal send must not remain connected or strand queued bytes");
+            Ensure(transport.DisposeCount == 1, "the terminal send must dispose its transport exactly once");
+            EnsureReturned(original, "compression must return the original packet owner");
+            Ensure(provider.Candidate is not null, "compression must expose its replacement packet owner");
+            EnsureReturned(provider.Candidate!, "terminal validation must return the replacement packet owner");
         }
-        else
+        finally
         {
-            session.BeginShutdown();
+            await CleanupSendRaceAsync(provider.Release, send, session);
         }
-        var terminal = await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        provider.Release();
-
-        var failure = await send.WaitAsync(TimeSpan.FromSeconds(2));
-        await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
-
-        Ensure(terminal is SharpLinkException, "the terminal transition must publish a structured failure");
-        Ensure(ReferenceEquals(terminal, failure), "the in-flight send must observe the published terminal instance");
-        Ensure(failure is SharpLinkException { Code: not SharpLinkErrorCode.ProtocolViolation },
-            "a terminal transition must not be rewritten as a protocol validation failure");
-        Ensure(publishedCount == 1, "the terminal transition must be published exactly once");
-        Ensure(!session.IsConnected && session.QueuedSendBytes == 0,
-            "the terminal send must not remain connected or strand queued bytes");
-        Ensure(transport.DisposeCount == 1, "the terminal send must dispose its transport exactly once");
-        EnsureReturned(original, "compression must return the original packet owner");
-        Ensure(provider.Candidate is not null, "compression must expose its replacement packet owner");
-        EnsureReturned(provider.Candidate!, "terminal validation must return the replacement packet owner");
     }
 
     [Test]
@@ -463,22 +477,35 @@ public class RpcSessionLifecycleTests
         packet.WritePacket(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, requestId: 1);
         packet.Arm();
         var send = StartSendAsync(session, packet, sendPath);
+        Exception? terminal = null;
+        try
+        {
+            try
+            {
+                await packet.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                session.BeginShutdown();
+                terminal = await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+            finally
+            {
+                packet.Release();
+            }
 
-        await packet.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        session.BeginShutdown();
-        var terminal = await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        packet.Release();
+            var failure = await send.WaitAsync(TimeSpan.FromSeconds(2));
+            await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            var returnCount = packet.DisposeCount;
+            if (returnCount == 0)
+                packet.Dispose();
 
-        var failure = await send.WaitAsync(TimeSpan.FromSeconds(2));
-        await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
-        var returnCount = packet.DisposeCount;
-        if (returnCount == 0)
-            packet.Dispose();
-
-        Ensure(ReferenceEquals(terminal, failure), "pump creation must preserve the published terminal instance");
-        Ensure(returnCount == 1, "a validated packet rejected before pump ownership must be returned exactly once");
-        Ensure(session.QueuedSendBytes == 0, "a rejected validated packet must not affect queue accounting");
-        Ensure(transport.DisposeCount == 1, "the pump race must dispose its transport exactly once");
+            Ensure(ReferenceEquals(terminal, failure), "pump creation must preserve the published terminal instance");
+            Ensure(returnCount == 1, "a validated packet rejected before pump ownership must be returned exactly once");
+            Ensure(session.QueuedSendBytes == 0, "a rejected validated packet must not affect queue accounting");
+            Ensure(transport.DisposeCount == 1, "the pump race must dispose its transport exactly once");
+        }
+        finally
+        {
+            await CleanupSendRaceAsync(packet.Release, send, session);
+        }
     }
 
     [Test]
@@ -508,27 +535,46 @@ public class RpcSessionLifecycleTests
         packet.WritePacket(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, requestId: 2);
         packet.Arm();
         var send = StartSendAsync(session, packet, sendPath);
+        Task? shutdown = null;
+        Exception? terminal = null;
+        Exception? failure = null;
+        try
+        {
+            await packet.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            shutdown = LongRunningTestWorker.Run(session.BeginShutdown);
+            terminal = await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            packet.Release();
+            failure = await send.WaitAsync(TimeSpan.FromSeconds(2));
+            releaseShutdown.Set();
+            await shutdown!.WaitAsync(TimeSpan.FromSeconds(2));
+            await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            var returnCount = packet.DisposeCount;
+            if (returnCount == 0)
+                packet.Dispose();
 
-        await packet.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        var shutdown = Task.Run(session.BeginShutdown);
-        var terminal = await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        packet.Release();
-        var failure = await send.WaitAsync(TimeSpan.FromSeconds(2));
-        releaseShutdown.Set();
-        await shutdown.WaitAsync(TimeSpan.FromSeconds(2));
-        await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
-        var returnCount = packet.DisposeCount;
-        if (returnCount == 0)
-            packet.Dispose();
-
-        Ensure(ReferenceEquals(terminal, failure),
-            "a published terminal must win before an existing pump accepts the validated packet");
-        Ensure(returnCount == 1, "an existing pump must return a terminally rejected packet exactly once");
-        Ensure(session.QueuedSendBytes == 0, "terminal rejection must leave existing-pump accounting balanced");
-        Ensure(transport.DisposeCount == 1, "existing-pump shutdown must dispose its transport exactly once");
+            Ensure(ReferenceEquals(terminal, failure),
+                "a published terminal must win before an existing pump accepts the validated packet");
+            Ensure(returnCount == 1, "an existing pump must return a terminally rejected packet exactly once");
+            Ensure(session.QueuedSendBytes == 0, "terminal rejection must leave existing-pump accounting balanced");
+            Ensure(transport.DisposeCount == 1, "existing-pump shutdown must dispose its transport exactly once");
+        }
+        finally
+        {
+            await CleanupSendRaceAsync(
+                () =>
+                {
+                    packet.Release();
+                    releaseShutdown.Set();
+                },
+                send,
+                session,
+                shutdown);
+        }
     }
 
     [Test]
+    // MeterListener registration is process-wide and this test pauses inside its callback.
+    [NotInParallel]
     public async Task InboundValidationShouldObserveTerminalPublishedBeforeStoppingPhase()
     {
         var connectionBalance = 0L;
@@ -611,6 +657,8 @@ public class RpcSessionLifecycleTests
     }
 
     [Test]
+    // MeterListener registration is process-wide and this test owns the connection-balance window.
+    [NotInParallel]
     [Arguments("dispose")]
     [Arguments("fault")]
     public async Task InboundValidationAfterConnectedCheckAndTerminalPublicationShouldReturnWinner(
@@ -840,6 +888,8 @@ public class RpcSessionLifecycleTests
     }
 
     [Test]
+    // MeterListener registration is process-wide and this test owns the connection-balance window.
+    [NotInParallel]
     public async Task NotifyConnectedAfterDisposeShouldNotReopenConnectionMetric()
     {
         const string side = "client";
@@ -1030,34 +1080,51 @@ public class RpcSessionLifecycleTests
         RpcSession session,
         IRpcByteBufferWriter packet,
         string sendPath)
-        => Task.Run(async () =>
-        {
-            try
+        => LongRunningTestWorker.RunAsync(
+            async () =>
             {
-                switch (sendPath)
+                try
                 {
-                    case "sync":
-                        session.SendPacket(packet);
-                        break;
-                    case "async":
-                        await session.SendPacketAsync(
-                            packet,
-                            waitForCapacity: true,
-                            forceFlush: false);
-                        break;
-                    case "backpressure":
-                        await session.SendPacketWithBackpressureAsync(packet);
-                        break;
-                    default:
-                        throw new ArgumentOutOfRangeException(nameof(sendPath), sendPath, "Unknown send path.");
+                    switch (sendPath)
+                    {
+                        case "sync":
+                            session.SendPacket(packet);
+                            break;
+                        case "async":
+                            await session.SendPacketAsync(
+                                packet,
+                                waitForCapacity: true,
+                                forceFlush: false);
+                            break;
+                        case "backpressure":
+                            await session.SendPacketWithBackpressureAsync(packet);
+                            break;
+                        default:
+                            throw new ArgumentOutOfRangeException(
+                                nameof(sendPath),
+                                sendPath,
+                                "Unknown send path.");
+                    }
+                    return null;
                 }
-                return null;
-            }
-            catch (Exception exception)
-            {
-                return exception;
-            }
-        });
+                catch (Exception exception)
+                {
+                    return exception;
+                }
+            });
+
+    private static async Task CleanupSendRaceAsync(
+        Action releaseGates,
+        Task send,
+        RpcSession session,
+        Task? shutdown = null)
+    {
+        releaseGates();
+        await send.WaitAsync(TimeSpan.FromSeconds(5));
+        if (shutdown is not null)
+            await shutdown.WaitAsync(TimeSpan.FromSeconds(5));
+        await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+    }
 
     private static void EnsureReturned(IRpcByteBufferWriter writer, string message)
     {

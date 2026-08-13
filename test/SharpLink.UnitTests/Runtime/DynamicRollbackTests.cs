@@ -9,7 +9,8 @@ using SharpLink.Server;
 
 namespace SharpLink.UnitTests.Runtime;
 
-[NotInParallel]
+// Every test in this fixture coordinates through RollbackState and SHARPLINK_ROLLBACK_* process state.
+[NotInParallel("rollback-plugin")]
 public class DynamicRollbackTests
 {
     [Test]
@@ -17,7 +18,7 @@ public class DynamicRollbackTests
     {
         await RollbackState.TestIsolation.WaitAsync();
         Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
-        var client = SharpClientBuilder.Create().UseTransport(new NoopClientTransport()).Build();
+        var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new NoopClientTransport()).Build();
         SharpLinkDynamicModuleLease lease = default;
         var leaseReleased = false;
         try
@@ -71,7 +72,7 @@ public class DynamicRollbackTests
         Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
         var ownerProvider = new ManualTimeProvider();
         var unrelatedProvider = new ManualTimeProvider();
-        var client = SharpClientBuilder.Create()
+        var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTimeProvider(ownerProvider)
             .UseTransport(new NoopClientTransport())
             .Build();
@@ -137,7 +138,7 @@ public class DynamicRollbackTests
         Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
         var ownerProvider = new ManualTimeProvider();
         var unrelatedProvider = new ManualTimeProvider();
-        var server = SharpLinkServerBuilder.Create()
+        var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTimeProvider(ownerProvider)
             .UseTransport(new NoopServerTransport())
             .Build();
@@ -202,7 +203,7 @@ public class DynamicRollbackTests
         await RollbackState.TestIsolation.WaitAsync();
         try
         {
-            var client = SharpClientBuilder.Create().UseTransport(new NoopClientTransport()).Build();
+            var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new NoopClientTransport()).Build();
             using var loaded = LoadPlugin("client-registration");
             try
             {
@@ -233,7 +234,7 @@ public class DynamicRollbackTests
         await RollbackState.TestIsolation.WaitAsync();
         try
         {
-            var server = SharpLinkServerBuilder.Create().UseTransport(new NoopServerTransport()).Build();
+            var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new NoopServerTransport()).Build();
             using var loaded = LoadPlugin("server-registration");
             try
             {
@@ -264,7 +265,7 @@ public class DynamicRollbackTests
         await RollbackState.TestIsolation.WaitAsync();
         try
         {
-            var client = SharpClientBuilder.Create().UseTransport(new NoopClientTransport()).Build();
+            var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new NoopClientTransport()).Build();
             using var oldPlugin = LoadPlugin("client-old");
             using var newPlugin = LoadPlugin("client-new");
             try
@@ -300,7 +301,7 @@ public class DynamicRollbackTests
         await RollbackState.TestIsolation.WaitAsync();
         try
         {
-            var server = SharpLinkServerBuilder.Create().UseTransport(new NoopServerTransport()).Build();
+            var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new NoopServerTransport()).Build();
             using var oldPlugin = LoadPlugin("server-old");
             using var newPlugin = LoadPlugin("server-new");
             try
@@ -339,10 +340,10 @@ public class DynamicRollbackTests
             Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "server-build-schema");
             RollbackState.ScopeDisposeCount = 0;
             var manifest = new RollbackManifest();
-            SharpLinkGeneratedAssemblyCatalog.Register(manifest);
             try
             {
                 var failure = Capture(() => SharpLinkServerBuilder.Create()
+                    .UseGeneratedManifestSource(new FixedGeneratedManifestSource([manifest]))
                     .UseTransport(new ThrowingProfileServerTransport())
                     .Build());
 
@@ -352,7 +353,6 @@ public class DynamicRollbackTests
             }
             finally
             {
-                RollbackTestIsolation.RemoveManifestFromCatalog(manifest);
                 ClearEnvironment();
                 GC.KeepAlive(manifest);
             }

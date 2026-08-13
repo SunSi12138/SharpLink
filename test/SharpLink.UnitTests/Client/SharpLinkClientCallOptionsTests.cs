@@ -265,25 +265,35 @@ public class SharpLinkClientCallOptionsTests
         await client.ConnectAsync();
         await WaitForReadyConnectionCountAsync(client, 2);
 
-        var invocation = Task.Run(async () => await ClientInvokerTestHelper.InvokeUnaryAsync(
-            client, new SharpLinkCallOptions { WaitForReady = true }));
-        await policy.SecondAdmissionEntered.WaitAsync(TimeSpan.FromSeconds(2));
-        await InjectGoAwayAsync(second.Connection);
-        await blockingSecond.ReconnectStarted.WaitAsync(TimeSpan.FromSeconds(2));
-        await WaitForReadyConnectionCountAsync(client, 1);
-        var freshRejectionDelay = TimeSpan.FromMilliseconds(120);
-        policy.RejectNextFirstAdmission(freshRejectionDelay);
-        var releasedAt = Stopwatch.GetTimestamp();
-        policy.ReleaseSecondAdmission();
+        var invocation = LongRunningTestWorker.RunAsync(() => ClientInvokerTestHelper.InvokeUnaryAsync(
+            client, new SharpLinkCallOptions { WaitForReady = true }).AsTask());
+        try
+        {
+            await policy.SecondAdmissionEntered.WaitAsync(TimeSpan.FromSeconds(2));
+            await InjectGoAwayAsync(second.Connection);
+            await blockingSecond.ReconnectStarted.WaitAsync(TimeSpan.FromSeconds(2));
+            await WaitForReadyConnectionCountAsync(client, 1);
+            var freshRejectionDelay = TimeSpan.FromMilliseconds(120);
+            policy.RejectNextFirstAdmission(freshRejectionDelay);
+            var releasedAt = Stopwatch.GetTimestamp();
+            policy.ReleaseSecondAdmission();
 
-        var request = await first.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
-            .WaitAsync(TimeSpan.FromSeconds(5));
-        await first.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
+            var request = await first.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            await first.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
 
-        Ensure(await invocation == 0, "a granted endpoint disconnect must not retain a previous rejection delay");
-        Ensure(Stopwatch.GetElapsedTime(releasedAt) >= freshRejectionDelay - TimeSpan.FromMilliseconds(25),
-            "a fresh all-rejected selection must honor its retry delay after the lost grant");
-        Ensure(policy.FreshFirstRejectionCount == 1, "fresh rejection should be sampled exactly once");
+            Ensure(await invocation == 0, "a granted endpoint disconnect must not retain a previous rejection delay");
+            Ensure(Stopwatch.GetElapsedTime(releasedAt) >= freshRejectionDelay - TimeSpan.FromMilliseconds(25),
+                "a fresh all-rejected selection must honor its retry delay after the lost grant");
+            Ensure(policy.FreshFirstRejectionCount == 1, "fresh rejection should be sampled exactly once");
+        }
+        finally
+        {
+            policy.ReleaseSecondAdmission();
+            if (!invocation.IsCompleted)
+                await client.StopAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            await LongRunningTestWorker.JoinAsync(invocation, TimeSpan.FromSeconds(5));
+        }
     }
 
     [Test]

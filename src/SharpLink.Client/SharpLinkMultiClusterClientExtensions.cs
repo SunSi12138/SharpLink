@@ -20,15 +20,51 @@ public static class SharpLinkMultiClusterClientExtensions
 {
     /// <summary>Builds and atomically adds a cluster slot while the coordinator is running.</summary>
     /// <remarks>Cancellation before publication rolls back the candidate and leaves the public snapshot unchanged.</remarks>
-    public static async ValueTask AddClusterAsync(
+    public static ValueTask AddClusterAsync(
         this ISharpLinkMultiClusterClient client,
         SharpLinkClusterKey cluster,
         Action<SharpClientBuilder> configure,
         Action<SharpLinkMultiClusterSlotOptions>? configureSlot = null,
         CancellationToken cancellationToken = default)
+        => AddClusterCoreAsync(
+            client,
+            cluster,
+            configure,
+            configureSlot,
+            cancellationToken,
+            GlobalCatalogManifestSource.Instance,
+            GlobalCatalogClusterRouteSource.Instance);
+
+    internal static ValueTask AddClusterAsync(
+        this ISharpLinkMultiClusterClient client,
+        SharpLinkClusterKey cluster,
+        Action<SharpClientBuilder> configure,
+        Action<SharpLinkMultiClusterSlotOptions>? configureSlot,
+        CancellationToken cancellationToken,
+        IGeneratedManifestSource manifestSource,
+        IGeneratedClusterRouteSource routeSource)
+        => AddClusterCoreAsync(
+            client,
+            cluster,
+            configure,
+            configureSlot,
+            cancellationToken,
+            manifestSource,
+            routeSource);
+
+    private static async ValueTask AddClusterCoreAsync(
+        ISharpLinkMultiClusterClient client,
+        SharpLinkClusterKey cluster,
+        Action<SharpClientBuilder> configure,
+        Action<SharpLinkMultiClusterSlotOptions>? configureSlot,
+        CancellationToken cancellationToken,
+        IGeneratedManifestSource manifestSource,
+        IGeneratedClusterRouteSource routeSource)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(configure);
+        ArgumentNullException.ThrowIfNull(manifestSource);
+        ArgumentNullException.ThrowIfNull(routeSource);
         var builder = SharpClientBuilder.Create();
         try
         {
@@ -40,7 +76,9 @@ public static class SharpLinkMultiClusterClientExtensions
                 cluster,
                 builder,
                 slotOptions.AllowDynamicContracts,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                manifestSource,
+                routeSource).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -131,7 +169,9 @@ internal interface ISharpLinkMultiClusterLifecycleControl
         SharpLinkClusterKey cluster,
         SharpClientBuilder builder,
         bool allowDynamicContracts,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        IGeneratedManifestSource manifestSource,
+        IGeneratedClusterRouteSource routeSource);
 
     ValueTask ReplaceClusterAsync(
         SharpLinkClusterKey cluster,

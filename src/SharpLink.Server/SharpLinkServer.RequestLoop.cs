@@ -156,17 +156,20 @@ internal sealed partial class SharpLinkServer
                                     ((RpcSession)session).AbortSendStreams(
                                         cancelRequestId,
                                         ServerCallTerminationMapper.CreateRemoteCancellationException(cancelReason));
-                                    if (requestCancellationMap.TryGetValue(cancelRequestId, out var callState) &&
-                                        callState.TryAcquire(cancelRequestId))
+                                    if (requestCancellationMap.TryCapture(
+                                            cancelRequestId,
+                                            static (requestId, state) => state.CaptureLease(requestId),
+                                            out var callLease) &&
+                                        callLease.TryAcquire())
                                     {
                                         try
                                         {
-                                            callState.TryCancel(
+                                            callLease.State.TryCancel(
                                                 ServerCallTerminationMapper.MapRemoteCancellationReason(cancelReason));
                                         }
                                         finally
                                         {
-                                            callState.ReleaseUse();
+                                            callLease.ReleaseUse();
                                         }
                                     }
                                     break;

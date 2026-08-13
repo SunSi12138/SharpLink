@@ -11,7 +11,6 @@ using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Builder;
 
-[NotInParallel]
 public class BuilderOwnershipRollbackTests
 {
     [Test]
@@ -21,7 +20,7 @@ public class BuilderOwnershipRollbackTests
             bindingFailure: "direct Client profile binding failed",
             cleanupFailure: "direct Client transport cleanup failed");
 
-        var failure = Capture(() => SharpClientBuilder.Create()
+        var failure = Capture(() => CreateClientBuilder()
             .UseTransport(transport)
             .Build());
 
@@ -40,7 +39,7 @@ public class BuilderOwnershipRollbackTests
             cleanupFailure: "direct Client construction transport cleanup failed");
         var logger = new ThrowingLoggerFactory("direct Client logger construction failed");
 
-        var failure = Capture(() => SharpClientBuilder.Create()
+        var failure = Capture(() => CreateClientBuilder()
             .UseTransport(transport)
             .UseLoggerFactory(logger)
             .Build());
@@ -60,7 +59,7 @@ public class BuilderOwnershipRollbackTests
             bindingFailure: null,
             cleanupFailure: "Client context construction transport cleanup failed");
 
-        var builder = SharpClientBuilder.Create().UseTransport(transport);
+        var builder = CreateClientBuilder().UseTransport(transport);
         var plan = builder.CompileForMultiCluster([new ThrowingRuntimeContextManifest()]);
 
         var failure = Capture(() => builder.MaterializeCompiledPlan(plan));
@@ -79,7 +78,7 @@ public class BuilderOwnershipRollbackTests
             bindingFailure: null,
             cleanupFailure: "first endpoint factory cleanup failed");
 
-        var failure = Capture(() => SharpClientBuilder.Create()
+        var failure = Capture(() => CreateClientBuilder()
             .UseEndpoints(
                 [CreateEndpoint("first", 6811), CreateEndpoint("second", 6812)],
                 endpoint => endpoint.Id == "first"
@@ -98,7 +97,7 @@ public class BuilderOwnershipRollbackTests
     public void StaticClientFactoryBindingFailureShouldRollbackFactoriesInReverseExactlyOnce()
     {
         var probe = new BuilderFaultInjectionProbe();
-        var failure = Capture(() => SharpClientBuilder.Create()
+        var failure = Capture(() => CreateClientBuilder()
             .UseEndpoints(
                 [CreateEndpoint("first", 6801), CreateEndpoint("second", 6802)],
                 endpoint =>
@@ -126,7 +125,7 @@ public class BuilderOwnershipRollbackTests
     {
         var resolver = new TrackingResolver("dynamic resolver cleanup failed");
 
-        var failure = Capture(() => SharpClientBuilder.Create()
+        var failure = Capture(() => CreateClientBuilder()
             .UseEndpointResolver(resolver, static _ => new NoopClientTransport())
             .UseConnectionPool(static _ => { })
             .Build());
@@ -145,7 +144,7 @@ public class BuilderOwnershipRollbackTests
         var codec = new TrackingCodec();
         var logger = new ThrowingLoggerFactory("Client codec ownership logger failure");
 
-        var failure = Capture(() => SharpClientBuilder.Create()
+        var failure = Capture(() => CreateClientBuilder()
             .UseTransport(transport)
             .UseCodec(codec)
             .UseLoggerFactory(logger)
@@ -165,7 +164,7 @@ public class BuilderOwnershipRollbackTests
             bindingFailure: null,
             cleanupFailure: "multi-cluster child transport cleanup failed");
         var logger = new MultiClusterThrowingLoggerFactory("multi-cluster logger construction failed");
-        var builder = SharpLinkMultiClusterClientBuilder.Create()
+        var builder = CreateMultiClusterBuilder()
             .AddCluster("dynamic", child => child.UseTransport(childTransport),
                 slot => slot.AllowDynamicContracts = true);
         builder.UseLoggerFactoryIfUnset(logger);
@@ -181,15 +180,17 @@ public class BuilderOwnershipRollbackTests
     }
 
     [Test]
+    // The rollback plugin exposes a process-wide environment switch and disposal counter.
+    [NotInParallel("rollback-plugin")]
     public void ServerCompileValidationFailureShouldNotMaterializeRuntimeContext()
     {
         RollbackState.TestIsolation.Wait();
         try
         {
-            WithRollbackManifest(() =>
+            WithRollbackManifest(manifest =>
             {
                 var transport = new TrackingServerTransport();
-                var failure = Capture(() => SharpLinkServerBuilder.Create()
+                var failure = Capture(() => CreateServerBuilder(manifest)
                     .UseTransport(transport)
                     .EnableService<IMissingService>()
                     .Build());
@@ -209,16 +210,18 @@ public class BuilderOwnershipRollbackTests
     }
 
     [Test]
+    // The rollback plugin exposes a process-wide environment switch and disposal counter.
+    [NotInParallel("rollback-plugin")]
     public void ServerFinalMaterializationFailureShouldDisposeRuntimeContextAndPreserveBothFailures()
     {
         RollbackState.TestIsolation.Wait();
         try
         {
-            WithRollbackManifest(() =>
+            WithRollbackManifest(manifest =>
             {
                 var transport = new TrackingServerTransport("Server transport cleanup failed");
                 var logger = new ThrowingLoggerFactory("Server logger construction failed");
-                var failure = Capture(() => SharpLinkServerBuilder.Create()
+                var failure = Capture(() => CreateServerBuilder(manifest)
                     .UseTransport(transport)
                     .UseLoggerFactory(logger)
                     .Build());
@@ -244,7 +247,7 @@ public class BuilderOwnershipRollbackTests
     public async Task ServerListenerShouldBeTransferredByOnlyOneBuild()
     {
         var transport = new TrackingServerTransport();
-        var builder = SharpLinkServerBuilder.Create().UseTransport(transport);
+        var builder = CreateServerBuilder().UseTransport(transport);
         var first = builder.Build();
 
         var failure = Capture(() => builder.Build());
@@ -257,28 +260,17 @@ public class BuilderOwnershipRollbackTests
     [Test]
     public void ServerRuntimeContextConstructionFailureShouldRollbackTheConsumedListener()
     {
-        RollbackState.TestIsolation.Wait();
         var manifest = new ThrowingRuntimeContextManifest();
-        SharpLinkGeneratedAssemblyCatalog.Register(manifest);
-        try
-        {
-            var transport = new TrackingServerTransport("Server context construction listener cleanup failed");
-            var failure = Capture(() => SharpLinkServerBuilder.Create()
-                .UseTransport(transport)
-                .Build());
+        var transport = new TrackingServerTransport("Server context construction listener cleanup failed");
+        var failure = Capture(() => CreateServerBuilder(manifest)
+            .UseTransport(transport)
+            .Build());
 
-            Ensure(Contains(failure, "controlled Runtime Context construction failure"),
-                "Server RuntimeContext construction failure must remain primary");
-            Ensure(Contains(failure, "Server context construction listener cleanup failed"),
-                "Server RuntimeContext construction failure must aggregate listener cleanup");
-            Ensure(transport.DisposeCount == 1, "Server RuntimeContext construction failure disposes listener once");
-        }
-        finally
-        {
-            RollbackTestIsolation.RemoveManifestFromCatalog(manifest);
-            RollbackState.TestIsolation.Release();
-            GC.KeepAlive(manifest);
-        }
+        Ensure(Contains(failure, "controlled Runtime Context construction failure"),
+            "Server RuntimeContext construction failure must remain primary");
+        Ensure(Contains(failure, "Server context construction listener cleanup failed"),
+            "Server RuntimeContext construction failure must aggregate listener cleanup");
+        Ensure(transport.DisposeCount == 1, "Server RuntimeContext construction failure disposes listener once");
     }
 
     [Test]
@@ -288,7 +280,7 @@ public class BuilderOwnershipRollbackTests
             cleanupFailure: "Server profile listener cleanup failed",
             bindingFailure: "Server listener profile bind failed");
 
-        var failure = Capture(() => SharpLinkServerBuilder.Create()
+        var failure = Capture(() => CreateServerBuilder()
             .UseTransport(transport)
             .Build());
 
@@ -305,7 +297,7 @@ public class BuilderOwnershipRollbackTests
         var transport = new TrackingServerTransport();
         var provider = new TrackingServiceProvider();
 
-        var failure = Capture(() => SharpLinkServerBuilder.Create()
+        var failure = Capture(() => CreateServerBuilder()
             .UseTransport(transport)
             .UseServiceProvider(provider)
             .UseAdmissionControl(options => options.AddContract<IMissingService>(
@@ -321,49 +313,38 @@ public class BuilderOwnershipRollbackTests
     [Test]
     public void ServerRegistrationBuildFailureShouldRollbackPriorMaterializationsInReverse()
     {
-        RollbackState.TestIsolation.Wait();
         var manifest = new RegistrationRollbackManifest();
-        SharpLinkGeneratedAssemblyCatalog.Register(manifest);
-        try
-        {
-            var cleanupEvents = new List<string>();
-            var first = new TrackingRegistrationServiceOne(cleanupEvents);
-            var second = new TrackingRegistrationServiceTwo(cleanupEvents);
-            var provider = new TrackingServiceProvider();
-            var transport = new TrackingServerTransport(
-                cleanupEvents: cleanupEvents,
-                cleanupResource: "listener");
-            var builder = SharpLinkServerBuilder.Create()
-                .UseTransport(transport)
-                .UseServiceProvider(provider)
-                .UseAdmissionControl(static options => options.Global.UseConcurrency(1))
-                .ReplaceService<IRegistrationServiceOne>(first)
-                .ReplaceService<IRegistrationServiceTwo>(second)
-                .ReplaceService<IRegistrationBuildFailure>(
-                    static _ => new RegistrationBuildFailureService(),
-                    SharpLinkServiceLifetime.Connection);
-            MarkReplacementFrameworkOwned(builder, typeof(IRegistrationServiceOne));
-            MarkReplacementFrameworkOwned(builder, typeof(IRegistrationServiceTwo));
+        var cleanupEvents = new List<string>();
+        var first = new TrackingRegistrationServiceOne(cleanupEvents);
+        var second = new TrackingRegistrationServiceTwo(cleanupEvents);
+        var provider = new TrackingServiceProvider();
+        var transport = new TrackingServerTransport(
+            cleanupEvents: cleanupEvents,
+            cleanupResource: "listener");
+        var builder = CreateServerBuilder(manifest)
+            .UseTransport(transport)
+            .UseServiceProvider(provider)
+            .UseAdmissionControl(static options => options.Global.UseConcurrency(1))
+            .ReplaceService<IRegistrationServiceOne>(first)
+            .ReplaceService<IRegistrationServiceTwo>(second)
+            .ReplaceService<IRegistrationBuildFailure>(
+                static _ => new RegistrationBuildFailureService(),
+                SharpLinkServiceLifetime.Connection);
+        MarkReplacementFrameworkOwned(builder, typeof(IRegistrationServiceOne));
+        MarkReplacementFrameworkOwned(builder, typeof(IRegistrationServiceTwo));
 
-            var failure = Capture(() => { _ = builder.Build(); });
+        var failure = Capture(() => { _ = builder.Build(); });
 
-            Ensure(Contains(failure, "Connection and Call SharpLink services require an IServiceScopeFactory"),
-                "the third ServiceRegistrationDefinition.Build failure must remain primary");
-            Ensure(provider.RequestedServices.Contains(typeof(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory)),
-                "the failing third registration must reach ServiceRegistrationDefinition.Build");
-            Ensure(first.DisposeCount == 1 && second.DisposeCount == 1,
-                "each framework-owned materialized ServiceRegistration must release its singleton once");
-            EnsureSequence(cleanupEvents, "registration:second", "registration:first", "listener");
-            Ensure(provider.DisposeCount == 0, "caller provider registration must remain non-disposing");
-            Ensure(transport.DisposeCount == 1,
-                "listener must release after prior registrations, admission, caller provider, and RuntimeContext rollback");
-        }
-        finally
-        {
-            RollbackTestIsolation.RemoveManifestFromCatalog(manifest);
-            RollbackState.TestIsolation.Release();
-            GC.KeepAlive(manifest);
-        }
+        Ensure(Contains(failure, "Connection and Call SharpLink services require an IServiceScopeFactory"),
+            "the third ServiceRegistrationDefinition.Build failure must remain primary");
+        Ensure(provider.RequestedServices.Contains(typeof(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory)),
+            "the failing third registration must reach ServiceRegistrationDefinition.Build");
+        Ensure(first.DisposeCount == 1 && second.DisposeCount == 1,
+            "each framework-owned materialized ServiceRegistration must release its singleton once");
+        EnsureSequence(cleanupEvents, "registration:second", "registration:first", "listener");
+        Ensure(provider.DisposeCount == 0, "caller provider registration must remain non-disposing");
+        Ensure(transport.DisposeCount == 1,
+            "listener must release after prior registrations, admission, caller provider, and RuntimeContext rollback");
     }
 
     [Test]
@@ -373,7 +354,7 @@ public class BuilderOwnershipRollbackTests
         var provider = new TrackingServiceProvider();
         var logger = new ThrowingLoggerFactory("Server caller provider logger construction failed");
 
-        var failure = Capture(() => SharpLinkServerBuilder.Create()
+        var failure = Capture(() => CreateServerBuilder()
             .UseTransport(transport)
             .UseServiceProvider(provider)
             .UseLoggerFactory(logger)
@@ -389,53 +370,57 @@ public class BuilderOwnershipRollbackTests
     [Test]
     public void ServerFinalConstructionFailureMustNotDisposeCallerOwnedService()
     {
-        RollbackState.TestIsolation.Wait();
         var manifest = new RegistrationRollbackManifest();
-        SharpLinkGeneratedAssemblyCatalog.Register(manifest);
-        try
-        {
-            var transport = new TrackingServerTransport();
-            var callerOwnedService = new TrackingRegistrationServiceOne([]);
-            var logger = new ThrowingLoggerFactory("Server caller service logger construction failed");
+        var transport = new TrackingServerTransport();
+        var callerOwnedService = new TrackingRegistrationServiceOne([]);
+        var logger = new ThrowingLoggerFactory("Server caller service logger construction failed");
 
-            var failure = Capture(() => SharpLinkServerBuilder.Create()
+        var failure = Capture(() => CreateServerBuilder(manifest)
                 .UseTransport(transport)
                 .ReplaceService<IRegistrationServiceOne>(callerOwnedService)
                 .UseLoggerFactory(logger)
                 .Build());
 
-            Ensure(Contains(failure, "Server caller service logger construction failed"),
-                "final Server construction failure must remain primary after a caller-owned registration materializes");
-            Ensure(callerOwnedService.DisposeCount == 0,
-                "rollback must dispose the registration but never the caller-owned service singleton");
-            Ensure(logger.DisposeCount == 0, "rollback must not dispose the caller logger factory");
-            Ensure(transport.DisposeCount == 1, "rollback must release the framework-owned listener");
-        }
-        finally
-        {
-            RollbackTestIsolation.RemoveManifestFromCatalog(manifest);
-            RollbackState.TestIsolation.Release();
-            GC.KeepAlive(manifest);
-        }
+        Ensure(Contains(failure, "Server caller service logger construction failed"),
+            "final Server construction failure must remain primary after a caller-owned registration materializes");
+        Ensure(callerOwnedService.DisposeCount == 0,
+            "rollback must dispose the registration but never the caller-owned service singleton");
+        Ensure(logger.DisposeCount == 0, "rollback must not dispose the caller logger factory");
+        Ensure(transport.DisposeCount == 1, "rollback must release the framework-owned listener");
     }
 
-    private static void WithRollbackManifest(Action action)
+    private static void WithRollbackManifest(Action<ISharpLinkGeneratedAssemblyManifest> action)
     {
         Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", "builder-rollback-schema");
         RollbackState.ScopeDisposeCount = 0;
         var manifest = new RollbackManifest();
-        SharpLinkGeneratedAssemblyCatalog.Register(manifest);
         try
         {
-            action();
+            action(manifest);
         }
         finally
         {
-            RollbackTestIsolation.RemoveManifestFromCatalog(manifest);
             Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_SCHEMA", null);
             GC.KeepAlive(manifest);
         }
     }
+
+    private static SharpClientBuilder CreateClientBuilder()
+        => SharpClientBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty);
+
+    private static SharpLinkServerBuilder CreateServerBuilder(
+        params ISharpLinkGeneratedAssemblyManifest[] manifests)
+        => SharpLinkServerBuilder.Create()
+            .UseGeneratedManifestSource(manifests.Length == 0
+                ? FixedGeneratedManifestSource.Empty
+                : new FixedGeneratedManifestSource(manifests));
+
+    private static SharpLinkMultiClusterClientBuilder CreateMultiClusterBuilder()
+        => SharpLinkMultiClusterClientBuilder.Create()
+            .UseGeneratedDiscoverySources(
+                FixedGeneratedManifestSource.Empty,
+                FixedGeneratedClusterRouteSource.Empty);
 
     private static Exception Capture(Action action)
     {

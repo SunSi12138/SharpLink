@@ -183,7 +183,8 @@ public class ServiceRegistrationTests
     }
 
     [Test]
-    [NotInParallel]
+    // The scenario owns both a generated-catalog identity and RollbackState process state.
+    [NotInParallel(new[] { "generated-catalog", "rollback-plugin" })]
     public async Task RegisteredServiceCleanupShouldPreserveDynamicAndFrameworkOwnedStaticFailures()
     {
         await RollbackState.TestIsolation.WaitAsync();

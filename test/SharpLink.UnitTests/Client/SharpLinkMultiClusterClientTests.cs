@@ -20,14 +20,115 @@ public sealed class SharpLinkMultiClusterClientTests
         typeof(SharpLinkMultiClusterClientTests).Assembly;
 
     [Test]
+    public async Task IsolatedDiscoverySourcesShouldBeCapturedOnceAndFrozenIntoChildren()
+    {
+        var order = new List<string>();
+        var manifests = new List<ISharpLinkGeneratedAssemblyManifest>
+        {
+            Manifest.Instance
+        };
+        var routes = new List<ISharpLinkGeneratedClusterRouteManifest>
+        {
+            RouteManifest.Instance
+        };
+        var routeSource = new CountingRouteSource(() =>
+        {
+            order.Add("route");
+            return routes;
+        });
+        var manifestSource = new CountingManifestSource(() =>
+        {
+            Ensure(routeSource.CreateSnapshotCount == 1,
+                "route discovery and selected module bootstrap must precede manifest capture");
+            order.Add("manifest");
+            return manifests;
+        });
+
+        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            .UseGeneratedDiscoverySources(manifestSource, routeSource)
+            .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
+            .AddCluster(
+                "payments",
+                child => child.UseTransport(new TestClientTransportFactory()),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+        manifests.Clear();
+        routes.Clear();
+
+        Ensure(order.SequenceEqual(["route", "manifest"]),
+            "multi-cluster Compile must capture route then assembly discovery once");
+        Ensure(routeSource.CreateSnapshotCount == 1 && manifestSource.CreateSnapshotCount == 1,
+            "coordinator Compile must query each discovery source exactly once");
+        var orders = client.Get<IOrdersContract>() as OrdersProxy ??
+            throw new Exception("orders child must materialize its routed proxy");
+        var payments = GetChildChannel(client, "payments");
+        Ensure(orders.Channel.RuntimeContext.Codecs.GetCodec<OrdersValue>() is TestCodec<OrdersValue>,
+            "the routed child Runtime must consume the codec from its own frozen manifest closure");
+        EnsureCodecIsMissing<OrdersValue>(payments);
+
+        await client.ReplaceClusterAsync(
+            "orders",
+            child => child.UseTransport(new TestClientTransportFactory()),
+            TimeSpan.FromSeconds(2));
+        var replacementOrders = client.Get<IOrdersContract>() as OrdersProxy ??
+            throw new Exception("replacement orders child must materialize its routed proxy");
+        Ensure(replacementOrders.Channel.RuntimeContext.Codecs.GetCodec<OrdersValue>() is TestCodec<OrdersValue>,
+            "replacement must compile from the slot's frozen plan snapshot after caller lists are cleared");
+        await client.StopAsync();
+        Ensure(routeSource.CreateSnapshotCount == 1 && manifestSource.CreateSnapshotCount == 1,
+            "coordinator runtime and Stop must not re-query initial bootstrap sources");
+    }
+
+    [Test]
+    public async Task RuntimeChildCompileShouldCaptureEachExplicitDiscoverySourceOnce()
+    {
+        var order = new List<string>();
+        var routeSource = new CountingRouteSource(() =>
+        {
+            order.Add("route");
+            return [RouteManifest.Instance];
+        });
+        var manifestSource = new CountingManifestSource(() =>
+        {
+            order.Add("manifest");
+            return [Manifest.Instance];
+        });
+
+        var prepared = SharpLinkMultiClusterClientBuilder.PrepareRuntimeCluster(
+            "orders",
+            SharpClientBuilder.Create().UseTransport(new TestClientTransportFactory()),
+            allowDynamicContracts: false,
+            manifestSource,
+            routeSource);
+        try
+        {
+            Ensure(order.SequenceEqual(["route", "manifest"]) &&
+                   routeSource.CreateSnapshotCount == 1 && manifestSource.CreateSnapshotCount == 1,
+                "a runtime child Compile must take one ordered point-in-time discovery snapshot");
+            Ensure(prepared.StaticRoutes.ContainsKey(typeof(IOrdersContract)) &&
+                   prepared.Slot.StaticManifests is { Count: 1 } staticManifests &&
+                   ReferenceEquals(staticManifests[0], Manifest.Instance),
+                "the prepared child must own only its routed frozen manifest closure");
+            var proxy = prepared.Slot.Client.Get<IOrdersContract>() as OrdersProxy ??
+                throw new Exception("runtime child must materialize its routed proxy");
+            Ensure(proxy.Channel.RuntimeContext.Codecs.GetCodec<OrdersValue>() is TestCodec<OrdersValue>,
+                "the runtime child must actually materialize its proxy and Runtime Codec from that closure");
+        }
+        finally
+        {
+            await prepared.Slot.Client.DisposeAsync();
+        }
+        Ensure(routeSource.CreateSnapshotCount == 1 && manifestSource.CreateSnapshotCount == 1,
+            "runtime child disposal must not retain or re-query either cold discovery source");
+    }
+
+    [Test]
     public async Task StaticRouteShouldCreateTheTargetChildProxyAndConnectEverySlot()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
         var ordersTransport = new TestClientTransportFactory();
         var paymentsTransport = new TestClientTransportFactory();
 
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(ordersTransport))
             .AddCluster("payments", child => child.UseTransport(paymentsTransport),
                 slot => slot.AllowDynamicContracts = true)
@@ -44,78 +145,80 @@ public sealed class SharpLinkMultiClusterClientTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task FilteredStaticRoutesShouldIgnoreUnrelatedGlobalManifests()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
-        ISharpLinkGeneratedAssemblyManifest? unrelatedManifest = new ThrowingCodecManifest();
-        SharpLinkGeneratedAssemblyCatalog.Register(unrelatedManifest);
-        try
-        {
-            await using var client = SharpLinkMultiClusterClientBuilder.Create()
-                .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
-                .Build();
+        var unrelatedManifest = new ThrowingCodecManifest();
+        await using var client = CreateBuilder(
+                [Manifest.Instance, unrelatedManifest],
+                [RouteManifest.Instance])
+            .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
+            .Build();
 
-            Ensure(client.Get<IOrdersContract>() is OrdersProxy,
-                "a filtered child should build without reading an unrelated global manifest");
-        }
-        finally
-        {
-            unrelatedManifest = null;
-            CollectWeakCatalogEntries();
-        }
+        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+            "a filtered child should build without reading an unrelated manifest snapshot entry");
     }
 
     [Test]
-    [NotInParallel]
     public async Task BuildShouldIgnoreRoutesForUnconfiguredClusters()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
-        ISharpLinkGeneratedClusterRouteManifest? unrelatedRoute = new UnconfiguredRouteManifest();
-        SharpLinkGeneratedClusterRouteCatalog.Register(unrelatedRoute);
-        try
-        {
-            await using var client = SharpLinkMultiClusterClientBuilder.Create()
-                .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
-                .Build();
+        var unrelatedRoute = new UnconfiguredRouteManifest();
+        await using var client = CreateBuilder(
+                [Manifest.Instance],
+                [RouteManifest.Instance, unrelatedRoute])
+            .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
+            .Build();
 
-            Ensure(client.Get<IOrdersContract>() is OrdersProxy,
-                "unconfigured route manifests must not block a coordinator's configured routes");
-        }
-        finally
-        {
-            unrelatedRoute = null;
-            CollectWeakCatalogEntries();
-        }
+        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+            "unconfigured route manifests must not block a coordinator's configured routes");
     }
 
     [Test]
-    [NotInParallel]
+    // This is the intentional weak global-catalog retention test; ordinary builders use fixed sources.
+    [NotInParallel("generated-catalog")]
     public async Task FilteredStaticRoutesShouldNotRetainUnconfiguredRouteManifests()
     {
+        var assemblyCountBefore = RollbackTestIsolation.AssemblyManifestCount;
+        var routeCountBefore = RollbackTestIsolation.RouteManifestCount;
+        var assemblyManifestWasRegistered = RollbackTestIsolation.ContainsManifest(Manifest.Instance);
+        var routeManifestWasRegistered = RollbackTestIsolation.ContainsManifest(RouteManifest.Instance);
         SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
         SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
-        var unrelatedRoute = RegisterUnconfiguredRouteManifest();
-
-        await using (var client = SharpLinkMultiClusterClientBuilder.Create()
-            .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
-            .Build())
+        WeakReference? unrelatedRoute = null;
+        try
         {
-            Ensure(client.Get<IOrdersContract>() is OrdersProxy,
-                "the configured route must build without retaining unrelated route manifests");
-        }
+            unrelatedRoute = RegisterUnconfiguredRouteManifest();
 
-        CollectWeakCatalogEntries();
-        Ensure(!unrelatedRoute.IsAlive,
-            "a coordinator must not retain a collectible route manifest that contributes no configured route");
+            await using (var client = SharpLinkMultiClusterClientBuilder.Create()
+                .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
+                .Build())
+            {
+                Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+                    "the configured route must build without retaining unrelated route manifests");
+            }
+
+            CollectWeakCatalogEntries();
+            Ensure(!unrelatedRoute.IsAlive,
+                "a coordinator must not retain a collectible route manifest that contributes no configured route");
+        }
+        finally
+        {
+            if (!assemblyManifestWasRegistered)
+                _ = RollbackTestIsolation.RemoveManifestFromCatalog(Manifest.Instance);
+            if (!routeManifestWasRegistered)
+                _ = RollbackTestIsolation.RemoveManifestFromCatalog(RouteManifest.Instance);
+            if (unrelatedRoute?.Target is ISharpLinkGeneratedClusterRouteManifest remainingRoute)
+                _ = RollbackTestIsolation.RemoveManifestFromCatalog(remainingRoute);
+            CollectWeakCatalogEntries();
+            Ensure(RollbackTestIsolation.AssemblyManifestCount <= assemblyCountBefore &&
+                   RollbackTestIsolation.RouteManifestCount <= routeCountBefore,
+                "the weak global-catalog test must restore its identities without growing either catalog");
+        }
     }
 
     [Test]
     public async Task DynamicRegistrationShouldPreserveStructuredNullAndMissingUnregisterResults()
     {
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
@@ -134,7 +237,7 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task DynamicRegistrationShouldReturnStructuredFailureAfterStop()
     {
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
@@ -149,7 +252,7 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task DynamicReplacementShouldReturnStructuredFailureAfterStop()
     {
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
@@ -165,7 +268,7 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task DynamicUnregisterShouldReturnFalseAfterStop()
     {
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
@@ -180,7 +283,7 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public Task EmptySlotShouldRequireExplicitDynamicOptIn()
     {
-        var builder = SharpLinkMultiClusterClientBuilder.Create()
+        var builder = CreateDynamicBuilder()
             .AddCluster("dynamic", child => child.UseTransport(new TestClientTransportFactory()));
 
         return EnsureThrows<InvalidOperationException>(() =>
@@ -193,9 +296,7 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task UnknownContractShouldFailWithoutSelectingAnotherCluster()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
             .Build();
 
@@ -211,15 +312,13 @@ public sealed class SharpLinkMultiClusterClientTests
     {
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpLinkMultiClusterClientBuilder.Create().Build();
+            _ = CreateDynamicBuilder().Build();
             return Task.CompletedTask;
         });
 
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpLinkMultiClusterClientBuilder.Create()
+            _ = CreateStaticBuilder()
                 .Configure(options => options.MaxTotalConfiguredConnections = 1)
                 .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
                 .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
@@ -232,9 +331,7 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task SingleEndpointSlotsShouldUseTheirFixedConnectionBudget()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateStaticBuilder()
             .Configure(options => options.MaxTotalConfiguredConnections = 2)
             .AddCluster("orders", child => child.UseEndpoint(
                 Endpoint("orders", 5001),
@@ -252,9 +349,7 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task SingleEndpointCollectionsShouldUseTheirFixedConnectionBudget()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateStaticBuilder()
             .Configure(options => options.MaxTotalConfiguredConnections = 2)
             .AddCluster("orders", child => child.UseEndpoints(
                 new OneShotEndpointEnumerable(Endpoint("orders", 5001)),
@@ -272,9 +367,7 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task StaticEndpointClustersShouldUseTheirEffectiveConnectionBudget()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateStaticBuilder()
             .Configure(options => options.MaxTotalConfiguredConnections = 2)
             .AddCluster("orders", child => child
                 .UseEndpoints(
@@ -294,10 +387,8 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task StopDuringInitialConnectShouldRemainStoppedAfterSharedConnectFaults()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
         var blocked = new BlockingTransportFactory();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(blocked))
             .Build();
 
@@ -393,37 +484,55 @@ public sealed class SharpLinkMultiClusterClientTests
     }
 
     [Test]
+    // This exercise intentionally keeps the public default-global cold path.
+    [NotInParallel("generated-catalog")]
     public async Task CreatedStateAddShouldPublishAnUnconnectedSlotAndRoute()
     {
+        // Other runtime-mutation tests inject fixed sources through the internal compile seam.
+        var assemblyCountBefore = RollbackTestIsolation.AssemblyManifestCount;
+        var routeCountBefore = RollbackTestIsolation.RouteManifestCount;
+        var assemblyManifestWasRegistered = RollbackTestIsolation.ContainsManifest(Manifest.Instance);
+        var routeManifestWasRegistered = RollbackTestIsolation.ContainsManifest(RouteManifest.Instance);
         SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
         SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
-        var candidate = new ControlledMutationTransportFactory();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
-            .Configure(options => options.MaxTotalConfiguredConnections = 2)
-            .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
-                slot => slot.AllowDynamicContracts = true)
-            .Build();
+        try
+        {
+            var candidate = new ControlledMutationTransportFactory();
+            await using var client = CreateDynamicBuilder()
+                .Configure(options => options.MaxTotalConfiguredConnections = 2)
+                .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
+                    slot => slot.AllowDynamicContracts = true)
+                .Build();
 
-        await client.AddClusterAsync("orders", child => child.UseTransport(candidate));
+            await client.AddClusterAsync("orders", child => child.UseTransport(candidate));
 
-        Ensure(candidate.ConnectCount == 0,
-            "Created-state add must publish a frozen child without connecting it early");
-        Ensure(client.GetClusterState("plugins") == SharpLinkConnectionState.Created,
-            "runtime add must accept a steady connection budget exactly at the configured limit");
-        Ensure(client.GetClusterState("orders") == SharpLinkConnectionState.Created,
-            "the newly published child must remain Created until the shared connect");
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
-            "the static contract route must become visible in the same add publication");
+            Ensure(candidate.ConnectCount == 0,
+                "Created-state add must publish a frozen child without connecting it early");
+            Ensure(client.GetClusterState("plugins") == SharpLinkConnectionState.Created,
+                "runtime add must accept a steady connection budget exactly at the configured limit");
+            Ensure(client.GetClusterState("orders") == SharpLinkConnectionState.Created,
+                "the newly published child must remain Created until the shared connect");
+            Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+                "the static contract route must become visible in the same add publication");
+        }
+        finally
+        {
+            if (!assemblyManifestWasRegistered)
+                _ = RollbackTestIsolation.RemoveManifestFromCatalog(Manifest.Instance);
+            if (!routeManifestWasRegistered)
+                _ = RollbackTestIsolation.RemoveManifestFromCatalog(RouteManifest.Instance);
+            Ensure(RollbackTestIsolation.AssemblyManifestCount <= assemblyCountBefore &&
+                   RollbackTestIsolation.RouteManifestCount <= routeCountBefore,
+                "the public default-global mutation test must not grow either live catalog");
+        }
     }
 
     [Test]
     public async Task CreatedStateReplaceShouldSwitchTheUnconnectedSlotAndRetireTheOldChild()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
         var oldTransport = new ControlledMutationTransportFactory();
         var replacementTransport = new ControlledMutationTransportFactory();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(oldTransport))
             .Build();
         var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
@@ -447,10 +556,8 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task CreatedStateRemoveShouldReturnReleasedResultAndUnpublishTheSlot()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
         var transport = new ControlledMutationTransportFactory();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(transport))
             .Build();
         _ = client.Get<IOrdersContract>();
@@ -475,11 +582,9 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task ReadyReplaceShouldConnectBeforePublishAndKeepExistingProxyBoundToOldChild()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
         var oldTransport = new ControlledMutationTransportFactory();
         var replacementTransport = new ControlledMutationTransportFactory(blockConnect: true);
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(oldTransport))
             .Build();
         await client.ConnectAsync();
@@ -516,12 +621,10 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task ReadyReplaceConnectFailureShouldRollbackAndKeepOldRouteUsable()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
         var oldTransport = new ControlledMutationTransportFactory();
         var failingCandidate = new ControlledMutationTransportFactory(
             connectFailure: new InvalidOperationException("controlled replacement connect failure"));
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(oldTransport))
             .Build();
         await client.ConnectAsync();
@@ -568,16 +671,14 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task RuntimeAddShouldEnforceMaxClustersAndDisposeUnbuiltResources()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
         var rejectedTransport = new ControlledMutationTransportFactory();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .Configure(options => options.MaxClusters = 1)
             .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
 
-        var failure = await CaptureExceptionAsync(client.AddClusterAsync(
+        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
             "orders", child => child.UseTransport(rejectedTransport)).AsTask());
 
         Ensure(failure is InvalidOperationException exception &&
@@ -592,10 +693,8 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task RuntimeAddShouldEnforceSteadyConnectionBudgetAndRollbackCandidate()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
         var rejectedTransport = new ControlledMutationTransportFactory();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .Configure(options =>
             {
                 options.MaxClusters = 2;
@@ -606,7 +705,7 @@ public sealed class SharpLinkMultiClusterClientTests
             .Build();
         await client.ConnectAsync();
 
-        var failure = await CaptureExceptionAsync(client.AddClusterAsync(
+        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
             "orders", child => child.UseTransport(rejectedTransport)).AsTask());
 
         Ensure(failure is InvalidOperationException exception &&
@@ -629,12 +728,12 @@ public sealed class SharpLinkMultiClusterClientTests
     public async Task RuntimeDynamicOnlyAddShouldRequireExplicitOptInAndDisposeItsBuilder()
     {
         var rejectedTransport = new ControlledMutationTransportFactory();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
 
-        var failure = await CaptureExceptionAsync(client.AddClusterAsync(
+        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
             "dynamic",
             child => child.UseTransport(rejectedTransport)).AsTask());
 
@@ -646,81 +745,65 @@ public sealed class SharpLinkMultiClusterClientTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task RuntimeManifestFailureShouldRollbackWithoutPublishingTheCandidate()
     {
-        ISharpLinkGeneratedClusterRouteManifest? invalidRoute = new InvalidRuntimeRouteManifest();
-        SharpLinkGeneratedClusterRouteCatalog.Register(invalidRoute);
+        var invalidRoute = new InvalidRuntimeRouteManifest();
         var rejectedTransport = new ControlledMutationTransportFactory();
-        try
-        {
-            await using var client = SharpLinkMultiClusterClientBuilder.Create()
-                .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
-                    slot => slot.AllowDynamicContracts = true)
-                .Build();
+        await using var client = CreateDynamicBuilder()
+            .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
 
-            var failure = await CaptureExceptionAsync(client.AddClusterAsync(
-                "invalid-runtime",
-                child => child.UseTransport(rejectedTransport)).AsTask());
+        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(
+            client,
+            "invalid-runtime",
+            child => child.UseTransport(rejectedTransport),
+            manifests: [],
+            routes: [invalidRoute]).AsTask());
 
-            Ensure(failure is InvalidOperationException exception &&
-                   exception.Message.Contains("compatible generated contract manifest", StringComparison.Ordinal),
-                "runtime manifest preparation must preserve a precise validation failure");
-            Ensure(rejectedTransport.DisposeCount == 1,
-                "manifest preparation failure must release the candidate builder transport");
-            await EnsureThrows<ArgumentException>(() =>
-            {
-                _ = client.GetClusterState("invalid-runtime");
-                return Task.CompletedTask;
-            });
-        }
-        finally
+        Ensure(failure is InvalidOperationException exception &&
+               exception.Message.Contains("compatible generated contract manifest", StringComparison.Ordinal),
+            "runtime manifest preparation must preserve a precise validation failure");
+        Ensure(rejectedTransport.DisposeCount == 1,
+            "manifest preparation failure must release the candidate builder transport");
+        await EnsureThrows<ArgumentException>(() =>
         {
-            invalidRoute = null;
-            CollectWeakCatalogEntries();
-        }
+            _ = client.GetClusterState("invalid-runtime");
+            return Task.CompletedTask;
+        });
     }
 
     [Test]
-    [NotInParallel]
     public async Task RuntimeRouteConflictShouldStopCandidateAndKeepThePublishedRoute()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
-        ISharpLinkGeneratedClusterRouteManifest? conflictingRoute = new ConflictingRuntimeRouteManifest();
-        SharpLinkGeneratedClusterRouteCatalog.Register(conflictingRoute);
+        var conflictingRoute = new ConflictingRuntimeRouteManifest();
         var oldTransport = new ControlledMutationTransportFactory();
         var rejectedTransport = new ControlledMutationTransportFactory();
-        try
-        {
-            await using var client = SharpLinkMultiClusterClientBuilder.Create()
-                .AddCluster("orders", child => child.UseTransport(oldTransport))
-                .Build();
-            var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
-            await client.ConnectAsync();
+        await using var client = CreateStaticBuilder()
+            .AddCluster("orders", child => child.UseTransport(oldTransport))
+            .Build();
+        var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        await client.ConnectAsync();
 
-            var failure = await CaptureExceptionAsync(client.AddClusterAsync(
-                "conflict",
-                child => child.UseTransport(rejectedTransport)).AsTask());
-            var retainedProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(
+            client,
+            "conflict",
+            child => child.UseTransport(rejectedTransport),
+            manifests: [Manifest.Instance],
+            routes: [conflictingRoute]).AsTask());
+        var retainedProxy = (OrdersProxy)client.Get<IOrdersContract>();
 
-            Ensure(failure is InvalidOperationException exception &&
-                   exception.Message.Contains("already routed", StringComparison.Ordinal),
-                "runtime route conflict must reject the candidate before publication");
-            Ensure(rejectedTransport.DisposeCount == 1,
-                "route-conflicting candidate must be stopped and disposed");
-            Ensure(rejectedTransport.ConnectCount == 0,
-                "an immutable route conflict must be rejected before the candidate connects");
-            Ensure(ReferenceEquals(oldProxy.Channel, retainedProxy.Channel),
-                "route conflict rollback must preserve the original route generation");
-            Ensure(oldTransport.DisposeCount == 0,
-                "route conflict rollback must not retire the published child");
-        }
-        finally
-        {
-            conflictingRoute = null;
-            CollectWeakCatalogEntries();
-        }
+        Ensure(failure is InvalidOperationException exception &&
+               exception.Message.Contains("already routed", StringComparison.Ordinal),
+            "runtime route conflict must reject the candidate before publication");
+        Ensure(rejectedTransport.DisposeCount == 1,
+            "route-conflicting candidate must be stopped and disposed");
+        Ensure(rejectedTransport.ConnectCount == 0,
+            "an immutable route conflict must be rejected before the candidate connects");
+        Ensure(ReferenceEquals(oldProxy.Channel, retainedProxy.Channel),
+            "route conflict rollback must preserve the original route generation");
+        Ensure(oldTransport.DisposeCount == 0,
+            "route conflict rollback must not retire the published child");
     }
 
     [Test]
@@ -753,7 +836,7 @@ public sealed class SharpLinkMultiClusterClientTests
         foreach (var child in retiredChildren)
             await child.StopStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        await client.AddClusterAsync(
+        await AddClusterWithFixedDiscoveryAsync(client,
             "heavy",
             child => child.UseEndpoints(
                 Enumerable.Range(0, 4).Select(index => Endpoint($"heavy-{index}", 6000 + index)),
@@ -787,18 +870,16 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task RuntimeAddDuplicateKeyShouldKeepOriginalRouteAndDisposeRejectedBuilder()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
         var originalTransport = new ControlledMutationTransportFactory();
         var duplicateTransport = new ControlledMutationTransportFactory();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .AddCluster("plugins", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
-        await client.AddClusterAsync("orders", child => child.UseTransport(originalTransport));
+        await AddClusterWithFixedDiscoveryAsync(client, "orders", child => child.UseTransport(originalTransport));
         var originalProxy = (OrdersProxy)client.Get<IOrdersContract>();
 
-        var failure = await CaptureExceptionAsync(client.AddClusterAsync(
+        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
             "orders", child => child.UseTransport(duplicateTransport)).AsTask());
         var proxyAfterFailure = (OrdersProxy)client.Get<IOrdersContract>();
 
@@ -816,17 +897,15 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task ConnectingCoordinatorShouldRejectRuntimeMutationWithoutPublishingCandidate()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
         var blocked = new BlockingTransportFactory();
         var rejectedTransport = new ControlledMutationTransportFactory();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(blocked))
             .Build();
 
         var connecting = client.ConnectAsync().AsTask();
         await blocked.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        var failure = await CaptureExceptionAsync(client.AddClusterAsync(
+        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
             "plugins",
             child => child.UseTransport(rejectedTransport),
             slot => slot.AllowDynamicContracts = true).AsTask());
@@ -847,18 +926,18 @@ public sealed class SharpLinkMultiClusterClientTests
     {
         var winnerTransport = new ControlledMutationTransportFactory(blockConnect: true);
         var loserTransport = new ControlledMutationTransportFactory();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
         await client.ConnectAsync();
 
-        var winner = client.AddClusterAsync(
+        var winner = AddClusterWithFixedDiscoveryAsync(client,
             "candidate",
             child => child.UseTransport(winnerTransport),
             slot => slot.AllowDynamicContracts = true).AsTask();
         await winnerTransport.ConnectStarted.Task.WaitAsync(RaceCoordinationTimeout);
-        var loser = client.AddClusterAsync(
+        var loser = AddClusterWithFixedDiscoveryAsync(client,
             "candidate",
             child => child.UseTransport(loserTransport),
             slot => slot.AllowDynamicContracts = true).AsTask();
@@ -882,17 +961,17 @@ public sealed class SharpLinkMultiClusterClientTests
     [Test]
     public async Task ThrowingMutationLoggerShouldNotFailOrStrandLaterMutations()
     {
-        var builder = SharpLinkMultiClusterClientBuilder.Create()
+        var builder = CreateDynamicBuilder()
             .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true);
         builder.UseLoggerFactoryIfUnset(new ThrowingWriteLoggerFactory());
         await using var client = builder.Build();
 
-        await client.AddClusterAsync(
+        await AddClusterWithFixedDiscoveryAsync(client,
             "first",
             child => child.UseTransport(new TestClientTransportFactory()),
             slot => slot.AllowDynamicContracts = true);
-        await client.AddClusterAsync(
+        await AddClusterWithFixedDiscoveryAsync(client,
             "second",
             child => child.UseTransport(new TestClientTransportFactory()),
             slot => slot.AllowDynamicContracts = true);
@@ -906,13 +985,13 @@ public sealed class SharpLinkMultiClusterClientTests
     public async Task StopRacingRuntimeAddShouldCancelAndDisposeThePendingCandidate()
     {
         var candidateTransport = new ControlledMutationTransportFactory(blockConnect: true);
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
         await client.ConnectAsync();
 
-        var add = client.AddClusterAsync(
+        var add = AddClusterWithFixedDiscoveryAsync(client,
             "candidate",
             child => child.UseTransport(candidateTransport),
             slot => slot.AllowDynamicContracts = true).AsTask();
@@ -933,18 +1012,17 @@ public sealed class SharpLinkMultiClusterClientTests
     }
 
     [Test]
-    [NotInParallel]
+    // The rollback plugin exposes a process-wide environment switch and disposal state.
+    [NotInParallel("rollback-plugin")]
     public async Task RuntimeReplaceShouldMigrateDynamicAssemblyBeforeSwitchingRoute()
     {
         await RollbackState.TestIsolation.WaitAsync();
         Environment.SetEnvironmentVariable("SHARPLINK_ROLLBACK_DISABLE_CODEC", "1");
         try
         {
-            SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-            SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
             var oldTransport = new ControlledMutationTransportFactory();
             var replacementTransport = new ControlledMutationTransportFactory();
-            await using var client = SharpLinkMultiClusterClientBuilder.Create()
+            await using var client = CreateStaticBuilder()
                 .AddCluster("orders", child => child.UseTransport(oldTransport),
                     slot => slot.AllowDynamicContracts = true)
                 .Build();
@@ -989,7 +1067,8 @@ public sealed class SharpLinkMultiClusterClientTests
     }
 
     [Test]
-    [NotInParallel]
+    // The rollback plugin exposes process-wide construction gates and environment switches.
+    [NotInParallel("rollback-plugin")]
     public async Task DynamicRegistrationShouldRejectASlotChangedWhileItsManifestLoads()
     {
         await RollbackState.TestIsolation.WaitAsync();
@@ -1043,14 +1122,11 @@ public sealed class SharpLinkMultiClusterClientTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task RuntimeReplaceDynamicMigrationFailureShouldKeepOldSlotAndRoute()
     {
-        SharpLinkGeneratedAssemblyCatalog.Register(Manifest.Instance);
-        SharpLinkGeneratedClusterRouteCatalog.Register(RouteManifest.Instance);
         var oldTransport = new ControlledMutationTransportFactory();
         var rejectedTransport = new ControlledMutationTransportFactory();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(oldTransport),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
@@ -1086,7 +1162,7 @@ public sealed class SharpLinkMultiClusterClientTests
     public async Task DegradedCoordinatorShouldConnectCandidateBeforeRuntimeAddPublication()
     {
         var candidateTransport = new ControlledMutationTransportFactory();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
@@ -1094,7 +1170,7 @@ public sealed class SharpLinkMultiClusterClientTests
             .GetField("_state", BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(client, (int)SharpLinkMultiClusterState.Degraded);
 
-        await client.AddClusterAsync(
+        await AddClusterWithFixedDiscoveryAsync(client,
             "candidate",
             child => child.UseTransport(candidateTransport),
             slot => slot.AllowDynamicContracts = true);
@@ -1113,7 +1189,7 @@ public sealed class SharpLinkMultiClusterClientTests
         SharpLinkMultiClusterState terminalState)
     {
         var rejectedTransport = new ControlledMutationTransportFactory();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
@@ -1121,7 +1197,7 @@ public sealed class SharpLinkMultiClusterClientTests
             .GetField("_state", BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(client, (int)terminalState);
 
-        var failure = await CaptureExceptionAsync(client.AddClusterAsync(
+        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
             "candidate",
             child => child.UseTransport(rejectedTransport),
             slot => slot.AllowDynamicContracts = true).AsTask());
@@ -1138,14 +1214,14 @@ public sealed class SharpLinkMultiClusterClientTests
     {
         var bootstrapTransport = new ControlledMutationTransportFactory();
         var candidateTransport = new ControlledMutationTransportFactory(blockConnect: true);
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .AddCluster("bootstrap", child => child.UseTransport(bootstrapTransport),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
         await client.ConnectAsync();
         using var cancellation = new CancellationTokenSource();
 
-        var add = client.AddClusterAsync(
+        var add = AddClusterWithFixedDiscoveryAsync(client,
             "candidate",
             child => child.UseTransport(candidateTransport),
             slot => slot.AllowDynamicContracts = true,
@@ -1170,12 +1246,12 @@ public sealed class SharpLinkMultiClusterClientTests
     {
         var candidateTransport = new ControlledMutationTransportFactory();
         using var cancellation = new CancellationTokenSource();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .AddCluster("bootstrap", child => child.UseTransport(new TestClientTransportFactory()),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
 
-        var failure = await CaptureExceptionAsync(client.AddClusterAsync(
+        var failure = await CaptureExceptionAsync(AddClusterWithFixedDiscoveryAsync(client,
             "candidate",
             child => child.UseEndpoints(
                 new CancellingEndpointEnumerable(
@@ -1202,7 +1278,7 @@ public sealed class SharpLinkMultiClusterClientTests
         var oldTransport = new ControlledMutationTransportFactory();
         var candidateTransport = new ControlledMutationTransportFactory();
         using var cancellation = new CancellationTokenSource();
-        await using var client = SharpLinkMultiClusterClientBuilder.Create()
+        await using var client = CreateDynamicBuilder()
             .AddCluster("dynamic", child => child.UseTransport(oldTransport),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
@@ -1482,10 +1558,66 @@ public sealed class SharpLinkMultiClusterClientTests
         Ensure(condition(), failureMessage);
     }
 
+    private static SharpLinkMultiClusterClientBuilder CreateBuilder(
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
+        IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest> routes)
+        => SharpLinkMultiClusterClientBuilder.Create()
+            .UseGeneratedDiscoverySources(
+                new FixedGeneratedManifestSource(manifests),
+                new FixedGeneratedClusterRouteSource(routes));
+
+    private static SharpLinkMultiClusterClientBuilder CreateStaticBuilder()
+        => CreateBuilder([Manifest.Instance], [RouteManifest.Instance]);
+
+    private static SharpLinkMultiClusterClientBuilder CreateDynamicBuilder()
+        => CreateBuilder([], []);
+
+    private static IRpcChannel GetChildChannel(
+        ISharpLinkMultiClusterClient client,
+        SharpLinkClusterKey cluster)
+    {
+        var coordinator = (SharpLinkMultiClusterClient)client;
+        var snapshot = (MultiClusterSnapshot)typeof(SharpLinkMultiClusterClient)
+            .GetField("_snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(coordinator)!;
+        return (IRpcChannel)snapshot.Clusters[cluster].Client;
+    }
+
+    private static ValueTask AddClusterWithFixedDiscoveryAsync(
+        ISharpLinkMultiClusterClient client,
+        SharpLinkClusterKey cluster,
+        Action<SharpClientBuilder> configure,
+        Action<SharpLinkMultiClusterSlotOptions>? configureSlot = null,
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>? manifests = null,
+        IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest>? routes = null)
+        => client.AddClusterAsync(
+            cluster,
+            configure,
+            configureSlot,
+            cancellationToken,
+            new FixedGeneratedManifestSource(manifests ?? [Manifest.Instance]),
+            new FixedGeneratedClusterRouteSource(routes ?? [RouteManifest.Instance]));
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private static void EnsureCodecIsMissing<T>(IRpcChannel channel)
+    {
+        Exception? failure = null;
+        try
+        {
+            _ = channel.RuntimeContext.Codecs.GetCodec<T>();
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+        Ensure(failure is NotSupportedException,
+            $"child Runtime must not resolve unrelated Codec '{typeof(T).Name}'");
     }
 
     private static void CollectWeakCatalogEntries()
@@ -1539,7 +1671,8 @@ public sealed class SharpLinkMultiClusterClientTests
                 static _ => throw new NotSupportedException())
         ];
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services { get; } = [];
-        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } = [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } =
+            [new TestCodecFactory<OrdersValue>("orders-value")];
         public IReadOnlyList<string> Dependencies { get; } = [];
     }
 
@@ -1554,6 +1687,57 @@ public sealed class SharpLinkMultiClusterClientTests
                 TestManifestAssembly,
                 TestManifestAssembly.FullName!)
         ];
+    }
+
+    private sealed class TestCodecFactory<T>(string schemaId) : IRpcGeneratedCodecFactory
+    {
+        public Type TargetType => typeof(T);
+        public string SchemaId { get; } = schemaId;
+        public string WireFormatId => "sharplink-native/v1";
+        public string? AdapterId => null;
+        public IRpcCodecAdapter? Adapter => null;
+        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
+            => adapterScope is null
+                ? new TestCodec<T>()
+                : throw new ArgumentException("Native Codec does not accept an adapter scope.", nameof(adapterScope));
+        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<T>;
+    }
+
+    private sealed class TestCodec<T> : IRpcCodec<T>
+    {
+        public void Serialize(in T value, IBufferWriter<byte> buffer)
+        {
+        }
+
+        public T? Deserialize(in ReadOnlySequence<byte> buffer) => default;
+    }
+
+    private sealed class OrdersValue;
+
+    private sealed class CountingManifestSource(
+        Func<IReadOnlyList<ISharpLinkGeneratedAssemblyManifest>> createSnapshot)
+        : IGeneratedManifestSource
+    {
+        private int _createSnapshotCount;
+        internal int CreateSnapshotCount => Volatile.Read(ref _createSnapshotCount);
+        public IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> CreateSnapshot()
+        {
+            Interlocked.Increment(ref _createSnapshotCount);
+            return createSnapshot();
+        }
+    }
+
+    private sealed class CountingRouteSource(
+        Func<IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest>> createSnapshot)
+        : IGeneratedClusterRouteSource
+    {
+        private int _createSnapshotCount;
+        internal int CreateSnapshotCount => Volatile.Read(ref _createSnapshotCount);
+        public IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest> CreateSnapshot()
+        {
+            Interlocked.Increment(ref _createSnapshotCount);
+            return createSnapshot();
+        }
     }
 
     private sealed class ThrowingCodecManifest : ISharpLinkGeneratedAssemblyManifest

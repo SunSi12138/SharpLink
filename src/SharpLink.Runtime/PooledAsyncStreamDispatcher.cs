@@ -35,7 +35,9 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     // 0 = 无信号，1 = 有信号（WaitForData 的快路径）
     private int _signalState;
 
-    // 0 = 没 waiter，1 = 有 waiter（Interlocked 管理，避免混用同步手段）
+    // 0 = no waiter, 1 = registered/un-signaled, 2 = signaled but GetResult not consumed.
+    // State 2 keeps the lease out of the pool while an asynchronously queued continuation still
+    // owns the current ManualResetValueTaskSourceCore token.
     private int _waiterState;
 
     // 重要状态：用 Volatile 读写对称（审核 #3）
@@ -48,6 +50,11 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     private DisposeCompletion? _disposeCompletion;
     private TaskCompletionSource? _remoteTerminalPublication;
     private Action? _beforeConcurrentDisposeCompletionInstallForTests;
+    private Action? _beforeProducerOperationAcquireForTests;
+    private Action? _beforeConsumerWaitOwnerAcquireForTests;
+    private Action? _afterConsumerWaitResultForTests;
+    private Action? _beforeReturnTransitionForTests;
+    private Action? _afterReturnTransitionForTests;
     private int _terminalDispatchStateClosed;
     // 0 = no remote terminal, 1 = terminal publication still owns dispatch-state close,
     // 2 = remote terminal publication is complete.
@@ -61,6 +68,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     // generation to Disposing, while excluding stale work from a later rental.
     private long _leaseState;
     private int _producerOperations;
+    private int _consumerOperations;
     private IStreamDispatchState? _dispatchState;
     private Exception? _error;
 
@@ -201,7 +209,6 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         // this dispatcher has been returned and rented again. The next disposal overwrites it.
 
         Volatile.Write(ref _enumeratorTaken, 0);
-        Volatile.Write(ref _producerOperations, 0);
         Volatile.Write(ref _dispatchState, null);
 
         _error = null;
@@ -216,6 +223,11 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         Volatile.Write(ref _terminalDispatchStateClosed, 0);
         Volatile.Write(ref _remoteTerminalPublication, null);
         Volatile.Write(ref _beforeConcurrentDisposeCompletionInstallForTests, null);
+        Volatile.Write(ref _beforeProducerOperationAcquireForTests, null);
+        Volatile.Write(ref _beforeConsumerWaitOwnerAcquireForTests, null);
+        Volatile.Write(ref _afterConsumerWaitResultForTests, null);
+        Volatile.Write(ref _beforeReturnTransitionForTests, null);
+        Volatile.Write(ref _afterReturnTransitionForTests, null);
         Volatile.Write(ref _remoteTerminalPublicationState, 0);
     }
 
@@ -309,21 +321,56 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         if (GetLeaseStatus(leaseState) != LeaseActive)
             return false;
 
+        Volatile.Read(ref _beforeProducerOperationAcquireForTests)?.Invoke();
         Interlocked.Increment(ref _producerOperations);
-        if (IsSameLeaseGeneration(Volatile.Read(ref _leaseState), leaseState))
+        var currentLeaseState = Volatile.Read(ref _leaseState);
+        if (IsSameLeaseGeneration(currentLeaseState, leaseState) &&
+            GetLeaseStatus(currentLeaseState) is LeaseActive or LeaseDisposing)
+        {
             return true;
+        }
 
-        Interlocked.Decrement(ref _producerOperations);
+        if (Interlocked.Decrement(ref _producerOperations) < 0)
+            throw new InvalidOperationException("Stream dispatcher producer lease underflowed.");
+        TryReturnToPool();
         return false;
     }
 
     private void ReleaseDispatch(long leaseState)
     {
-        if (!IsSameLeaseGeneration(Volatile.Read(ref _leaseState), leaseState))
-            return;
-        if (Interlocked.Decrement(ref _producerOperations) < 0)
-            throw new InvalidOperationException("Stream dispatcher producer lease underflowed.");
+        var currentLeaseState = Volatile.Read(ref _leaseState);
+        if (IsSameLeaseGeneration(currentLeaseState, leaseState))
+        {
+            if (Interlocked.Decrement(ref _producerOperations) < 0)
+                throw new InvalidOperationException("Stream dispatcher producer lease underflowed.");
+        }
+        else
+        {
+            // Return temporarily advances the encoded generation before its final owner check.
+            // An owner that acquired between the precheck and that CAS must still release once,
+            // but a release from any fully rented later generation must remain a no-op.
+            var transientReturnedState = unchecked(leaseState + 3);
+            if (currentLeaseState != transientReturnedState || !TryReleaseTransientProducerOperation())
+                return;
+        }
         TryReturnToPool();
+    }
+
+    private bool TryReleaseTransientProducerOperation()
+    {
+        while (true)
+        {
+            var operations = Volatile.Read(ref _producerOperations);
+            if (operations == 0)
+                return false;
+            if (Interlocked.CompareExchange(
+                    ref _producerOperations,
+                    operations - 1,
+                    operations) == operations)
+            {
+                return true;
+            }
+        }
     }
 
     // A generated server-stream call can be handed to its consumer before an asynchronous
@@ -345,6 +392,21 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     // tested deterministically without reflection; it is never read by a first disposal.
     internal void SetBeforeConcurrentDisposeCompletionInstallForTests(Action? callback)
         => Volatile.Write(ref _beforeConcurrentDisposeCompletionInstallForTests, callback);
+
+    internal void SetBeforeProducerOperationAcquireForTests(Action? callback)
+        => Volatile.Write(ref _beforeProducerOperationAcquireForTests, callback);
+
+    internal void SetBeforeConsumerWaitOwnerAcquireForTests(Action? callback)
+        => Volatile.Write(ref _beforeConsumerWaitOwnerAcquireForTests, callback);
+
+    internal void SetAfterConsumerWaitResultForTests(Action? callback)
+        => Volatile.Write(ref _afterConsumerWaitResultForTests, callback);
+
+    internal void SetBeforeReturnTransitionForTests(Action? callback)
+        => Volatile.Write(ref _beforeReturnTransitionForTests, callback);
+
+    internal void SetAfterReturnTransitionForTests(Action? callback)
+        => Volatile.Write(ref _afterReturnTransitionForTests, callback);
 
     private static ValueTask RejectedDispatch()
     {
@@ -464,42 +526,81 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     /// <inheritdoc />
     public async ValueTask<bool> MoveNextAsync()
     {
-        while (true)
+        var consumerLeaseState = Volatile.Read(ref _leaseState);
+        if (GetLeaseStatus(consumerLeaseState) != LeaseActive)
         {
-            ThrowIfEnumerationCanceled();
+            throw new ObjectDisposedException(
+                typeof(PooledAsyncStreamDispatcher<T>).FullName,
+                "The stream dispatcher lease is no longer active.");
+        }
 
-            if (TryDequeue(out var value, out var encodedByteCount))
+        var ownsConsumerOperation = false;
+        try
+        {
+            while (true)
             {
-                _current = value;
-                NotifyBytesConsumed(encodedByteCount);
+                ThrowIfEnumerationCanceled();
 
-                // 如果已经 complete 且队列空且已 Dispose，则回收
-                if (Volatile.Read(ref _completed) && IsEmpty() && Volatile.Read(ref _disposed))
-                    TryReturnToPool();
-
-                return true;
-            }
-
-            // 没取到：如果已完成则结束（并抛错误）
-            if (Volatile.Read(ref _completed))
-            {
-                if (Volatile.Read(ref _bufferedCount) != 0 ||
-                    Volatile.Read(ref _producerOperations) != 0 ||
-                    Volatile.Read(ref _dispatchState)?.HasActiveDispatches == true)
+                if (TryDequeue(out var value, out var encodedByteCount))
                 {
-                    await Task.Yield();
-                    continue;
+                    _current = value;
+                    NotifyBytesConsumed(encodedByteCount);
+
+                    // 如果已经 complete 且队列空且已 Dispose，则回收
+                    if (Volatile.Read(ref _completed) && IsEmpty() && Volatile.Read(ref _disposed))
+                        TryReturnToPool();
+
+                    return true;
                 }
 
-                var err = _error;
-                if (err is not null)
-                    throw err;
+                // 没取到：如果已完成则结束（并抛错误）
+                if (Volatile.Read(ref _completed))
+                {
+                    if (Volatile.Read(ref _bufferedCount) != 0 ||
+                        Volatile.Read(ref _producerOperations) != 0 ||
+                        Volatile.Read(ref _dispatchState)?.HasActiveDispatches == true)
+                    {
+                        await Task.Yield();
+                        continue;
+                    }
 
-                return false;
+                    var err = _error;
+                    if (err is not null)
+                        throw err;
+
+                    return false;
+                }
+
+                ThrowIfEnumerationCanceled();
+                if (!ownsConsumerOperation)
+                {
+                    Volatile.Read(ref _beforeConsumerWaitOwnerAcquireForTests)?.Invoke();
+                    Interlocked.Increment(ref _consumerOperations);
+                    var currentLeaseState = Volatile.Read(ref _leaseState);
+                    if (!IsSameLeaseGeneration(currentLeaseState, consumerLeaseState) ||
+                        GetLeaseStatus(currentLeaseState) is not LeaseActive and not LeaseDisposing)
+                    {
+                        if (Interlocked.Decrement(ref _consumerOperations) < 0)
+                            throw new InvalidOperationException("Stream dispatcher consumer lease underflowed.");
+                        TryReturnToPool();
+                        throw new ObjectDisposedException(
+                            typeof(PooledAsyncStreamDispatcher<T>).FullName,
+                            "The stream dispatcher was returned before its wait owner was acquired.");
+                    }
+                    ownsConsumerOperation = true;
+                }
+                await WaitForDataAsync().ConfigureAwait(false);
+                Volatile.Read(ref _afterConsumerWaitResultForTests)?.Invoke();
             }
-
-            ThrowIfEnumerationCanceled();
-            await WaitForDataAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            if (ownsConsumerOperation)
+            {
+                if (Interlocked.Decrement(ref _consumerOperations) < 0)
+                    throw new InvalidOperationException("Stream dispatcher consumer lease underflowed.");
+                TryReturnToPool();
+            }
         }
     }
 
@@ -777,8 +878,8 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     }
 
     /// <inheritdoc />
-    public bool GetResult(short token) => _waitSource.GetResult(token);
-    bool IValueTaskSource<bool>.GetResult(short token) => _waitSource.GetResult(token);
+    public bool GetResult(short token) => ConsumeWaitResult(token);
+    bool IValueTaskSource<bool>.GetResult(short token) => ConsumeWaitResult(token);
 
     /// <inheritdoc />
     public ValueTaskSourceStatus GetStatus(short token) => _waitSource.GetStatus(token);
@@ -790,6 +891,20 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
     void IValueTaskSource<bool>.OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags)
         => _waitSource.OnCompleted(continuation, state, token, flags);
+
+    private bool ConsumeWaitResult(short token)
+    {
+        var result = _waitSource.GetResult(token);
+        if (Interlocked.CompareExchange(ref _waiterState, 0, 2) == 2)
+        {
+            // A real MoveNext continuation keeps its operation count until it has consumed
+            // terminal/error/buffer state. Direct IValueTaskSource consumers have no such
+            // outer operation and can retry return immediately.
+            if (Volatile.Read(ref _consumerOperations) == 0)
+                TryReturnToPool();
+        }
+        return result;
+    }
 
     // --------------------------
     // SPSC segmented buffer primitives
@@ -909,7 +1024,7 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
         lock (_waitGate)
         {
-            if (Interlocked.Exchange(ref _waiterState, 0) == 1)
+            if (Interlocked.CompareExchange(ref _waiterState, 2, 1) == 1)
             {
                 Interlocked.Exchange(ref _signalState, 0);
                 _waitSource.SetResult(true);
@@ -938,21 +1053,25 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         // 关键：不保证消费者 Dispose 后生产者停止 => 必须等 completed 才能安全回收
         if (!Volatile.Read(ref _completed) || !Volatile.Read(ref _disposed) ||
             Volatile.Read(ref _disposeFinalizedLeaseState) != disposingLeaseState || !IsEmpty() ||
-            Volatile.Read(ref _producerOperations) != 0 ||
+            Volatile.Read(ref _producerOperations) != 0 || Volatile.Read(ref _consumerOperations) != 0 ||
+            Volatile.Read(ref _waiterState) != 0 ||
             Volatile.Read(ref _dispatchState) is { } state &&
             (state.HasActiveDispatches || !state.IsDetached))
             return;
 
         var returnedState = unchecked(disposingLeaseState + 2);
+        Volatile.Read(ref _beforeReturnTransitionForTests)?.Invoke();
         if (Interlocked.CompareExchange(
                 ref _leaseState,
                 returnedState,
                 disposingLeaseState) != disposingLeaseState)
             return;
+        Volatile.Read(ref _afterReturnTransitionForTests)?.Invoke();
 
         // Close the acquire-vs-return race before clearing lease state.
         var dispatchState = Volatile.Read(ref _dispatchState);
-        if (Volatile.Read(ref _producerOperations) != 0 || !IsEmpty() ||
+        if (Volatile.Read(ref _producerOperations) != 0 || Volatile.Read(ref _consumerOperations) != 0 ||
+            Volatile.Read(ref _waiterState) != 0 || !IsEmpty() ||
             dispatchState is { } && (dispatchState.HasActiveDispatches || !dispatchState.IsDetached))
         {
             if (Interlocked.CompareExchange(
@@ -960,6 +1079,9 @@ public sealed class PooledAsyncStreamDispatcher<T> :
                     disposingLeaseState,
                     returnedState) != returnedState)
                 throw new InvalidOperationException("The stream dispatcher return state changed unexpectedly.");
+            // An owner can release while the state is temporarily Returned and miss its retry.
+            // Re-check after restoring Disposing so the last release cannot strand this lease.
+            TryReturnToPool(disposingLeaseState);
             return;
         }
 
@@ -982,6 +1104,11 @@ public sealed class PooledAsyncStreamDispatcher<T> :
         Volatile.Write(ref _disposeCompletion, null);
         Volatile.Write(ref _remoteTerminalPublication, null);
         Volatile.Write(ref _beforeConcurrentDisposeCompletionInstallForTests, null);
+        Volatile.Write(ref _beforeProducerOperationAcquireForTests, null);
+        Volatile.Write(ref _beforeConsumerWaitOwnerAcquireForTests, null);
+        Volatile.Write(ref _afterConsumerWaitResultForTests, null);
+        Volatile.Write(ref _beforeReturnTransitionForTests, null);
+        Volatile.Write(ref _afterReturnTransitionForTests, null);
 
         // 复位枚举器占用标记
         Volatile.Write(ref _enumeratorTaken, 0);
@@ -1024,6 +1151,13 @@ public sealed class PooledAsyncStreamDispatcher<T> :
 
         Volatile.Write(ref _signalState, 0);
         Volatile.Write(ref _waiterState, 0);
+        // ManualResetValueTaskSourceCore retains its last continuation/state after completion.
+        // Replace it before this dispatcher becomes a static pool root so a completed consumer
+        // state machine (and a collectible ALC captured by it) is not retained until the next Rent.
+        _waitSource = new ManualResetValueTaskSourceCore<bool>
+        {
+            RunContinuationsAsynchronously = true
+        };
         // 注意：_completed/_disposed 会在下次 Reset 时统一清
         if (Interlocked.Increment(ref s_retainedCount) <= MaxRetainedDispatchers)
         {
@@ -1042,14 +1176,21 @@ public sealed class PooledAsyncStreamDispatcher<T> :
     {
         get
         {
-            if (_codec is not null || _bytesConsumed is not null || _consumerAbandoned is not null ||
+            if (_codec is not null || _error is not null || Volatile.Read(ref _dispatchState) is not null ||
+                _bytesConsumed is not null || _consumerAbandoned is not null ||
                 _consumerAbandonedAsync is not null ||
                 _current is not null || _enumerationToken.CanBeCanceled ||
                 _additionalEnumerationToken.CanBeCanceled ||
                 !_enumerationCancellationRegistration.Equals(default) ||
                 !_additionalEnumerationCancellationRegistration.Equals(default) ||
                 Volatile.Read(ref _disposeCompletion) is not null ||
-                Volatile.Read(ref _remoteTerminalPublication) is not null)
+                Volatile.Read(ref _remoteTerminalPublication) is not null ||
+                Volatile.Read(ref _beforeConcurrentDisposeCompletionInstallForTests) is not null ||
+                Volatile.Read(ref _beforeProducerOperationAcquireForTests) is not null ||
+                Volatile.Read(ref _beforeConsumerWaitOwnerAcquireForTests) is not null ||
+                Volatile.Read(ref _afterConsumerWaitResultForTests) is not null ||
+                Volatile.Read(ref _beforeReturnTransitionForTests) is not null ||
+                Volatile.Read(ref _afterReturnTransitionForTests) is not null)
             {
                 return true;
             }

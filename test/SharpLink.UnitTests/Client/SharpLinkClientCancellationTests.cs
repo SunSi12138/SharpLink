@@ -86,6 +86,8 @@ public class SharpLinkClientCancellationTests
     }
 
     [Test]
+    // ActivityListener registration is process-wide, so this assertion must own that listener window.
+    [NotInParallel]
     public async Task EarlyServerStreamDisposalShouldSendConsumerAbandonedReason()
     {
         using var telemetryListener = new ActivityListener

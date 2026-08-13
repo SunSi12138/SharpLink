@@ -92,6 +92,16 @@ public class SharpClientBuilder
         return this;
     }
 
+    /// <summary>
+    /// Uses an isolated generated-manifest source for this Client build. The source is queried once
+    /// by Compile and is not retained by the resulting Client.
+    /// </summary>
+    internal SharpClientBuilder UseGeneratedManifestSource(IGeneratedManifestSource source)
+    {
+        Configure(() => _runtimeContextBuilder.UseGeneratedManifestSource(source));
+        return this;
+    }
+
     /// <summary>Configures per-client protocol safety limits.</summary>
     public SharpClientBuilder UseProtocol(Action<SharpLinkProtocolOptions> configure)
     {
@@ -423,12 +433,12 @@ public class SharpClientBuilder
 
     /// <summary>Builds a normal client using one complete generated-manifest snapshot.</summary>
     public ISharpLinkClient Build()
-        => Materialize(CompileForBuild(SharpLinkGeneratedManifestSource.FromCatalog));
+        => Materialize(CompileForBuild());
 
     // Multi-cluster callers compile once, use this exact plan for budget validation, then materialize it.
     internal ClientBuildPlan CompileForMultiCluster(
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> staticManifests)
-        => CompileForBuild(() => SharpLinkGeneratedManifestSource.FromSnapshot(staticManifests));
+        => CompileForBuild(new FixedGeneratedManifestSource(staticManifests));
 
     internal ISharpLinkClient MaterializeCompiledPlan(ClientBuildPlan plan)
     {
@@ -460,13 +470,23 @@ public class SharpClientBuilder
         resources.DisposeUnmaterialized();
     }
 
-    private ClientBuildPlan CompileForBuild(Func<SharpLinkGeneratedManifestSource> createManifestSource)
+    private ClientBuildPlan CompileForBuild()
+        => CompileForBuildCore(_runtimeContextBuilder.Compile);
+
+    private ClientBuildPlan CompileForBuild(IGeneratedManifestSource manifestSource)
     {
+        ArgumentNullException.ThrowIfNull(manifestSource);
+        return CompileForBuildCore(() => _runtimeContextBuilder.Compile(manifestSource));
+    }
+
+    private ClientBuildPlan CompileForBuildCore(
+        Func<SharpLinkRuntimeContextBuildPlan> compileRuntimeContext)
+    {
+        ArgumentNullException.ThrowIfNull(compileRuntimeContext);
         BeginBuild();
         try
         {
-            var manifestSource = createManifestSource();
-            var plan = CompilePlan(manifestSource);
+            var plan = CompilePlan(compileRuntimeContext);
             lock (_configurationGate)
                 _pendingResources = plan.Resources;
             return plan;
@@ -485,11 +505,12 @@ public class SharpClientBuilder
         }
     }
 
-    private ClientBuildPlan CompilePlan(SharpLinkGeneratedManifestSource manifestSource)
+    private ClientBuildPlan CompilePlan(
+        Func<SharpLinkRuntimeContextBuildPlan> compileRuntimeContext)
     {
         var draft = _topology ?? throw new InvalidOperationException(
             "Transport, endpoint(s), or an endpoint resolver must be set before building the client.");
-        var runtimeContext = _runtimeContextBuilder.Compile(manifestSource);
+        var runtimeContext = compileRuntimeContext();
         var resources = CreateRuntimeResources(draft);
         var topology = CompileTopology(draft, runtimeContext, out var connectionPool, out var cluster);
         var retry = CreateRetryPlan();
@@ -499,7 +520,6 @@ public class SharpClientBuilder
             topology,
             resources,
             runtimeContext,
-            manifestSource,
             _heartbeatInterval,
             _heartbeatTimeout,
             _requestTimeout,

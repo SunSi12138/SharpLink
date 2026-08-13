@@ -742,23 +742,31 @@ public class StreamManagerTests
             manager.Register(requestId, dispatcher);
             var state = dispatcher.DispatchState;
             using var start = new ManualResetEventSlim();
-            var wait = Task.Run(async () =>
+            var wait = LongRunningTestWorker.RunAsync(async () =>
             {
                 start.Wait();
                 await state.WaitForDetachedAsync(CancellationToken.None);
             });
-            var detach = Task.Run(() =>
+            var detach = LongRunningTestWorker.Run(() =>
             {
                 start.Wait();
                 manager.Unregister(requestId);
             });
-
-            start.Set();
-            await Task.WhenAll(wait, detach).WaitAsync(RaceCoordinationTimeout);
-            Ensure(state.IsDetached,
-                "the detach/register race must publish a terminal completion to its waiter");
-            Ensure(dispatcher.DispatchesDrainedCount == 1,
-                "the detach/register race must retain one dispatcher-drained notification");
+            try
+            {
+                start.Set();
+                await Task.WhenAll(wait, detach).WaitAsync(RaceCoordinationTimeout);
+                Ensure(state.IsDetached,
+                    "the detach/register race must publish a terminal completion to its waiter");
+                Ensure(dispatcher.DispatchesDrainedCount == 1,
+                    "the detach/register race must retain one dispatcher-drained notification");
+            }
+            finally
+            {
+                start.Set();
+                await LongRunningTestWorker.JoinAsync(wait, RaceCoordinationTimeout);
+                await LongRunningTestWorker.JoinAsync(detach, RaceCoordinationTimeout);
+            }
         }
     }
 
@@ -850,17 +858,25 @@ public class StreamManagerTests
         manager.Register(63, dispatcher);
         var detached = dispatcher.DispatchState.WaitForDetachedAsync(CancellationToken.None).AsTask();
 
-        var unregister = Task.Run(() => manager.Unregister(63));
-        await creditEntered.Task.WaitAsync(RaceCoordinationTimeout);
-        Ensure(!detached.IsCompleted,
-            "detach must remain unpublished while the final receive-credit callback is active");
+        var unregister = LongRunningTestWorker.Run(() => manager.Unregister(63));
+        try
+        {
+            await creditEntered.Task.WaitAsync(RaceCoordinationTimeout);
+            Ensure(!detached.IsCompleted,
+                "detach must remain unpublished while the final receive-credit callback is active");
 
-        releaseCredit.TrySetResult();
-        await unregister.WaitAsync(RaceCoordinationTimeout);
-        await detached.WaitAsync(RaceCoordinationTimeout);
-        events.Add("detached");
-        Ensure(events.SequenceEqual(["credit-enqueued", "detached"]),
-            "the final receive-credit callback must complete before detach is observable");
+            releaseCredit.TrySetResult();
+            await unregister.WaitAsync(RaceCoordinationTimeout);
+            await detached.WaitAsync(RaceCoordinationTimeout);
+            events.Add("detached");
+            Ensure(events.SequenceEqual(["credit-enqueued", "detached"]),
+                "the final receive-credit callback must complete before detach is observable");
+        }
+        finally
+        {
+            releaseCredit.TrySetResult();
+            await LongRunningTestWorker.JoinAsync(unregister, RaceCoordinationTimeout);
+        }
     }
 
     [Test]

@@ -259,25 +259,28 @@ internal sealed class ServerConnectionState
 
     internal ServerConnectionDiagnosticSnapshot CaptureStopDiagnostics(int maximumCalls)
     {
-        var entries = new KeyValuePair<long, ServerCallCancellationState>[maximumCalls];
-        var count = CallCancellations.CopyEntries(entries);
+        var entries = new ServerCallCancellationLease[maximumCalls];
+        var count = CallCancellations.CopyEntries(
+            entries,
+            static (requestId, state) => state.CaptureLease(requestId));
         var calls = new List<ServerCallDiagnosticSnapshot>(count);
         for (var index = 0; index < count; index++)
         {
-            var entry = entries[index];
-            if (!entry.Value.TryAcquire(entry.Key))
+            var callLease = entries[index];
+            if (!callLease.TryAcquire())
                 continue;
             try
             {
+                var call = callLease.State;
                 calls.Add(new ServerCallDiagnosticSnapshot(
-                    entry.Key,
-                    entry.Value.Reason.ToString(),
-                    entry.Value.Deadline.UtcDeadline,
-                    entry.Value.Deadline.Timestamp));
+                    callLease.RequestId,
+                    call.Reason.ToString(),
+                    call.Deadline.UtcDeadline,
+                    call.Deadline.Timestamp));
             }
             finally
             {
-                entry.Value.ReleaseUse();
+                callLease.ReleaseUse();
             }
         }
 

@@ -20,7 +20,7 @@ public class SharpLinkServerInvocationTests
     public async Task ServerHeartbeatShouldKeepEqualityAndCloseOnlyTheStaleProviderSession()
     {
         var provider = new ManualTimeProvider();
-        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableAutomaticServiceRegistration()
             .UseTimeProvider(provider)
             .UseHeartbeat(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10))
@@ -127,7 +127,7 @@ public class SharpLinkServerInvocationTests
     public async Task DispatchObserverShouldSuppressOnlyExpectedConnectionClosure()
     {
         var loggerFactory = new CaptureLoggerFactory();
-        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableAutomaticServiceRegistration()
             .UseLoggerFactory(loggerFactory)
             .UseTransport(new IdleListener())
@@ -164,10 +164,9 @@ public class SharpLinkServerInvocationTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task CallAdmissionShouldNotCrossTheServerDrainBoundary()
     {
-        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableAutomaticServiceRegistration()
             .UseTransport(new IdleListener())
             .Build();
@@ -254,7 +253,7 @@ public class SharpLinkServerInvocationTests
     [Test]
     public async Task ConnectionAndServerCallCapacitiesShouldRejectIndependentlyAndRecover()
     {
-        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableAutomaticServiceRegistration()
             .UseRuntime(options =>
             {
@@ -394,7 +393,7 @@ public class SharpLinkServerInvocationTests
     public async Task StopAndTerminalReleaseShouldPublishDrainAfterTheConnectionSlotIsReleased()
     {
         var listener = new BlockingListener();
-        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableAutomaticServiceRegistration()
             .UseTransport(listener)
             .Build();
@@ -447,13 +446,12 @@ public class SharpLinkServerInvocationTests
 
 #if DEBUG
     [Test]
-    [NotInParallel]
     public async Task StopShouldWaitForPendingAdmissionBetweenConnectionAndGlobalSlots()
     {
         using var localSlotAcquired = new ManualResetEventSlim(initialState: false);
         using var allowGlobalAcquire = new ManualResetEventSlim(initialState: false);
         var listener = new BlockingListener();
-        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableAutomaticServiceRegistration()
             .UseTransport(listener)
             .Build();
@@ -481,7 +479,7 @@ public class SharpLinkServerInvocationTests
 
         var runTask = server.RunAsync().AsTask();
         await listener.AcceptStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        var admissionTask = Task.Run(() => server.TryAcquireCall(connection));
+        var admissionTask = LongRunningTestWorker.Run(() => server.TryAcquireCall(connection));
         try
         {
             Ensure(localSlotAcquired.Wait(TimeSpan.FromSeconds(2)),
@@ -523,7 +521,8 @@ public class SharpLinkServerInvocationTests
         finally
         {
             allowGlobalAcquire.Set();
-            var admission = await admissionTask.WaitAsync(TimeSpan.FromSeconds(2));
+            await LongRunningTestWorker.JoinAsync(admissionTask, TimeSpan.FromSeconds(2));
+            var admission = await admissionTask;
             if (admission == SharpLinkServer.ServerCallAdmissionResult.Acquired)
                 server.ReleaseCall(connection);
             await connection.CloseAsync();
@@ -547,9 +546,13 @@ public class SharpLinkServerInvocationTests
         await stub.FirstInvocationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Ensure(harness.GlobalActiveCalls == 1 && harness.Connection.ActiveCalls == 1,
             "an asynchronous invocation must hold both capacity slots");
-        Ensure(harness.Connection.CallCancellations.TryGetValue(cancelledRequestId, out var callState) &&
-               callState.TryAcquire(cancelledRequestId),
+        Ensure(harness.Connection.CallCancellations.TryCapture(
+                   cancelledRequestId,
+                   static (requestId, state) => state.CaptureLease(requestId),
+                   out var callLease) &&
+               callLease.TryAcquire(),
             "the live invocation must publish cancellable call state");
+        var callState = callLease.State;
         try
         {
             var reason = deadlineExceeded
@@ -562,7 +565,7 @@ public class SharpLinkServerInvocationTests
         }
         finally
         {
-            callState.ReleaseUse();
+            callLease.ReleaseUse();
         }
 
         await cancelledDispatch.AsTask().WaitAsync(TimeSpan.FromSeconds(2));
@@ -590,7 +593,7 @@ public class SharpLinkServerInvocationTests
     [Test]
     public async Task FailedInvocationShouldPreserveLeaseCleanupFailure()
     {
-        await using var server = SharpLinkServerBuilder.Create()
+        await using var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableAutomaticServiceRegistration()
             .UseTransport(new IdleListener())
             .Build();
@@ -642,7 +645,7 @@ public class SharpLinkServerInvocationTests
     [Test]
     public async Task SessionShutdownShouldNotHideAnUnexpectedSiblingCleanupFailure()
     {
-        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableAutomaticServiceRegistration()
             .UseTransport(new IdleListener())
             .Build();
@@ -803,7 +806,7 @@ public class SharpLinkServerInvocationTests
     [Test]
     public async Task BuilderShouldPublishImmutableFiveSecondShutdownCleanupPlan()
     {
-        var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+        var server = (SharpLinkServer)SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableAutomaticServiceRegistration()
             .UseTransport(new IdleListener())
             .Build();
@@ -820,7 +823,7 @@ public class SharpLinkServerInvocationTests
     public async Task BuilderShouldForwardTheApplicationOwnedTimeProvider()
     {
         var timeProvider = new ManualTimeProvider();
-        var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+        var server = (SharpLinkServer)SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableAutomaticServiceRegistration()
             .UseTimeProvider(timeProvider)
             .UseTransport(new IdleListener())
@@ -841,7 +844,7 @@ public class SharpLinkServerInvocationTests
     [Test]
     public async Task FrameworkSupervisorShouldNotHideAnUnexpectedSiblingFailure()
     {
-        var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+        var server = (SharpLinkServer)SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableAutomaticServiceRegistration()
             .UseTransport(new IdleListener())
             .Build();
@@ -1292,7 +1295,7 @@ public class SharpLinkServerInvocationTests
         {
             _stub = stub;
             _output = output;
-            Server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            Server = (SharpLinkServer)SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
                 .DisableAutomaticServiceRegistration()
                 .UseRuntime(options => options.FlowControl.MaxSendQueueBytes = maxSendQueueBytes)
                 .UseTransport(new IdleListener())

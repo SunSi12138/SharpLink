@@ -91,6 +91,7 @@ public class TransportCleanupTests
     }
 
     [Test]
+    // The assertion compares the process-wide active shared-memory mapping counter.
     [NotInParallel]
     public async Task SharedMemoryConnectionShouldReleaseMappingAfterControlCleanupFailure()
     {

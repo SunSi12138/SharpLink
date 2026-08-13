@@ -4,14 +4,33 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkMultiClusterClient
 {
-    async ValueTask ISharpLinkMultiClusterLifecycleControl.AddClusterAsync(
+    ValueTask ISharpLinkMultiClusterLifecycleControl.AddClusterAsync(
         SharpLinkClusterKey cluster,
         SharpClientBuilder builder,
         bool allowDynamicContracts,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IGeneratedManifestSource manifestSource,
+        IGeneratedClusterRouteSource routeSource)
+        => AddClusterCoreAsync(
+            cluster,
+            builder,
+            allowDynamicContracts,
+            cancellationToken,
+            manifestSource,
+            routeSource);
+
+    private async ValueTask AddClusterCoreAsync(
+        SharpLinkClusterKey cluster,
+        SharpClientBuilder builder,
+        bool allowDynamicContracts,
+        CancellationToken cancellationToken,
+        IGeneratedManifestSource manifestSource,
+        IGeneratedClusterRouteSource routeSource)
     {
         ValidateClusterKey(cluster);
         ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(manifestSource);
+        ArgumentNullException.ThrowIfNull(routeSource);
         var started = _timeProvider.GetTimestamp();
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         SharpLinkPreparedCluster? candidate = null;
@@ -35,7 +54,9 @@ internal sealed partial class SharpLinkMultiClusterClient
             candidate = SharpLinkMultiClusterClientBuilder.PrepareRuntimeCluster(
                 cluster,
                 builder,
-                allowDynamicContracts);
+                allowDynamicContracts,
+                manifestSource,
+                routeSource);
             failureStage = "budget_preflight";
             lock (_gate)
             {

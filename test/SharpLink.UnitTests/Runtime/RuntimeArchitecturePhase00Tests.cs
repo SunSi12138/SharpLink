@@ -7,7 +7,6 @@ using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Runtime;
 
-[NotInParallel]
 public sealed class RuntimeArchitecturePhase00Tests
 {
     private const int RaceSeed = 68002026;
@@ -49,7 +48,8 @@ public sealed class RuntimeArchitecturePhase00Tests
     public async Task SessionFaultShutdownAndDisposeRaceShouldDisposeItsTransportExactlyOnce()
     {
         var random = new Random(RaceSeed);
-        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Build(includeGeneratedAssemblyCatalog: false);
         for (var iteration = 0; iteration < RaceRepetitions; iteration++)
         {
             var transport = new CountingTransportConnection($"phase00-session-{iteration}");

@@ -74,21 +74,22 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
             return;
         }
 
-        var snapshot = ArrayPool<KeyValuePair<long, ServerCallCancellationState>>.Shared.Rent(_maxCalls);
+        var snapshot = ArrayPool<ServerCallCancellationLease>.Shared.Rent(_maxCalls);
         try
         {
             Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);
-            var count = _calls.CopyEntries(snapshot);
+            var count = _calls.CopyEntries(
+                snapshot,
+                static (requestId, state) => state.CaptureLease(requestId));
             var now = _timeProvider.GetTimestamp();
             for (var index = 0; index < count; index++)
             {
-                var entry = snapshot[index];
-                var requestId = entry.Key;
-                var call = entry.Value;
-                if (!call.TryAcquire(requestId))
+                var callLease = snapshot[index];
+                if (!callLease.TryAcquire())
                     continue;
                 try
                 {
+                    var call = callLease.State;
                     var deadline = call.Deadline;
                     if (!deadline.HasValue)
                         continue;
@@ -99,7 +100,7 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
                 }
                 finally
                 {
-                    call.ReleaseUse();
+                    callLease.ReleaseUse();
                 }
             }
         }
@@ -115,7 +116,7 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         }
         finally
         {
-            ArrayPool<KeyValuePair<long, ServerCallCancellationState>>.Shared.Return(
+            ArrayPool<ServerCallCancellationLease>.Shared.Return(
                 snapshot,
                 clearArray: true);
             Volatile.Write(ref _scanRunning, 0);

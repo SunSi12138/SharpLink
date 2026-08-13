@@ -288,7 +288,7 @@ public sealed class DynamicEndpointResolverTests
     public async Task DynamicBuilderShouldOwnResolverAndRejectFixedTransportConflict()
     {
         var resolver = new TrackingResolver();
-        await using (var client = SharpClientBuilder.Create()
+        await using (var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
                          .UseEndpointResolver(resolver, _ => new TrackingFactory())
                          .Build())
         {
@@ -297,7 +297,7 @@ public sealed class DynamicEndpointResolverTests
 
         await EnsureThrows<InvalidOperationException>(() =>
         {
-            _ = SharpClientBuilder.Create()
+            _ = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
                 .UseTransport(new TrackingFactory())
                 .UseEndpointResolver(new TrackingResolver(), _ => new TrackingFactory())
                 .Build();
@@ -309,7 +309,7 @@ public sealed class DynamicEndpointResolverTests
     public async Task DynamicBuilderShouldCapMinReadyByMaxEndpoints()
     {
         var resolver = new TrackingResolver();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseEndpointResolver(resolver, _ => new TrackingFactory())
             .UseCluster(options =>
             {
@@ -332,7 +332,7 @@ public sealed class DynamicEndpointResolverTests
                 Address = new SharpLinkAnonymousPipeAddress("in-handle", "out-handle")
             }
         ]));
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseEndpointResolver(resolver, _ => new AnonymousPipeClientTransportFactory("in-handle", "out-handle"))
             .Build();
 
@@ -355,7 +355,7 @@ public sealed class DynamicEndpointResolverTests
     public async Task RetriedResolverFailureShouldNotBeAnUnhandledBackgroundError()
     {
         var loggerFactory = new CaptureLoggerFactory();
-        await using var client = SharpClientBuilder.Create()
+        await using var client = SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseLoggerFactory(loggerFactory)
             .UseEndpointResolver(new FailingWatchResolver(), _ => new TrackingFactory())
             .Build();

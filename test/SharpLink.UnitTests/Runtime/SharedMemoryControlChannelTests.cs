@@ -5,7 +5,6 @@ using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
 
-[NotInParallel]
 public class SharedMemoryControlChannelTests
 {
     [Test]
@@ -80,6 +79,8 @@ public class SharedMemoryControlChannelTests
     }
 
     [Test]
+    // MeterListener registration is process-wide and observes shared-memory notification instruments.
+    [NotInParallel]
     public async Task RepeatedOutboundSignalsShouldShareOnePendingWake()
     {
         var requests = 0L;

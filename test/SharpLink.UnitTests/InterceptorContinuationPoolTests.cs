@@ -5,7 +5,6 @@ using SharpLink.Server;
 
 namespace SharpLink.UnitTests;
 
-[NotInParallel]
 public sealed class InterceptorContinuationPoolTests
 {
     [Test]

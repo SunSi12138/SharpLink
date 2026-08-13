@@ -206,6 +206,7 @@ public sealed class SharpLinkRuntimeContextBuilder
     private readonly RuntimeConcurrencyOptions _concurrency = new();
     private readonly BufferWriterPoolOptions _bufferPool = new();
     private readonly Dictionary<Type, IRpcCodec> _codecs = [];
+    private IGeneratedManifestSource _generatedManifestSource = GlobalCatalogManifestSource.Instance;
     private TimeProvider _timeProvider = TimeProvider.System;
     private Func<Type, IRpcCodec?>? _resolver;
 
@@ -250,6 +251,16 @@ public sealed class SharpLinkRuntimeContextBuilder
         return this;
     }
 
+    /// <summary>
+    /// Uses an instance-scoped bootstrap source for subsequent Compile operations. The source is
+    /// application-owned and queried exactly once by each Compile; materialized Contexts never retain it.
+    /// </summary>
+    internal SharpLinkRuntimeContextBuilder UseGeneratedManifestSource(IGeneratedManifestSource source)
+    {
+        _generatedManifestSource = source ?? throw new ArgumentNullException(nameof(source));
+        return this;
+    }
+
     /// <summary>Registers an explicit codec in this context.</summary>
     public SharpLinkRuntimeContextBuilder AddCodec<T>(IRpcCodec<T> codec)
     {
@@ -267,27 +278,30 @@ public sealed class SharpLinkRuntimeContextBuilder
 
     /// <summary>Validates and freezes a new context.</summary>
     public SharpLinkRuntimeContext Build()
-        => MaterializeStandalone(Compile(SharpLinkGeneratedManifestSource.FromCatalog()));
+        => MaterializeStandalone(Compile());
 
     internal SharpLinkRuntimeContext Build(bool includeGeneratedAssemblyCatalog)
         => MaterializeStandalone(Compile(includeGeneratedAssemblyCatalog
-            ? SharpLinkGeneratedManifestSource.FromCatalog()
-            : SharpLinkGeneratedManifestSource.Empty));
+            ? GlobalCatalogManifestSource.Instance
+            : FixedGeneratedManifestSource.Empty));
 
     internal SharpLinkRuntimeContext Build(IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> generatedManifests)
-        => MaterializeStandalone(Compile(SharpLinkGeneratedManifestSource.FromSnapshot(generatedManifests)));
+        => MaterializeStandalone(Compile(new FixedGeneratedManifestSource(generatedManifests)));
+
+    internal SharpLinkRuntimeContextBuildPlan Compile() => Compile(_generatedManifestSource);
 
     /// <summary>
     /// Validates and freezes the Context inputs without allocating Context-owned resources. Builders
     /// materialize the returned plan inside their synchronous construction transaction.
     /// </summary>
-    internal SharpLinkRuntimeContextBuildPlan Compile(SharpLinkGeneratedManifestSource manifestSource)
+    internal SharpLinkRuntimeContextBuildPlan Compile(IGeneratedManifestSource manifestSource)
     {
         ArgumentNullException.ThrowIfNull(manifestSource);
         var options = _options.CloneValidated();
         var concurrency = _concurrency.CloneValidated();
         var bufferPool = _bufferPool.CloneValidated();
-        manifestSource.ValidateForPlanCompilation();
+        var generatedManifests = GeneratedManifestSnapshot.Capture(manifestSource);
+        generatedManifests.ValidateForPlanCompilation();
         return new SharpLinkRuntimeContextBuildPlan(
             options,
             concurrency,
@@ -295,7 +309,7 @@ public sealed class SharpLinkRuntimeContextBuilder
             _timeProvider,
             _resolver,
             new Dictionary<Type, IRpcCodec>(_codecs),
-            manifestSource);
+            generatedManifests);
     }
 
     private static SharpLinkRuntimeContext MaterializeStandalone(SharpLinkRuntimeContextBuildPlan plan)

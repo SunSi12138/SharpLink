@@ -1,6 +1,9 @@
 using System.Collections.Concurrent;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Runtime.Loader;
 using System.Threading;
+using SharpLink.RollbackPlugin;
 
 namespace SharpLink.UnitTests.Runtime;
 
@@ -286,10 +289,12 @@ public sealed class FrameworkTaskSupervisorTests
     {
         const int failureCount = 65;
         var supervisor = new FrameworkTaskSupervisor();
+        var expected = new InvalidOperationException[failureCount];
         for (var index = 0; index < failureCount; index++)
         {
+            expected[index] = new InvalidOperationException($"failure-{index}");
             supervisor.Track(
-                Task.FromException(new InvalidOperationException($"failure-{index}")),
+                Task.FromException(expected[index]),
                 $"worker-{index}",
                 TaskObservationMode.FrameworkOwned,
                 static _ => false);
@@ -299,14 +304,83 @@ public sealed class FrameworkTaskSupervisorTests
         var failure = await CaptureFailureAsync(supervisor.DrainAsync());
         var snapshot = supervisor.CaptureSnapshot();
 
-        Ensure(snapshot.RetainedFailures == 64 && snapshot.DroppedFailures == 1,
-            "failure retention must be capped while preserving an explicit overflow count");
+        Ensure(snapshot.RetainedFailures == 0 && snapshot.DroppedFailures == 1,
+            "Drain must release retained EDI roots while preserving the cumulative overflow diagnostic");
         Ensure(failure is AggregateException aggregate && aggregate.InnerExceptions.Count == 65,
             "drain must expose every retained failure plus one bounded-overflow diagnostic");
+        for (var index = 0; index < 64; index++)
+        {
+            Ensure(CountReference(failure!, expected[index]) == 1,
+                $"retained failure identity {index} must be transferred exactly once");
+        }
+        Ensure(CountReference(failure!, expected[^1]) == 0,
+            "the failure beyond the bounded retention limit must not remain strongly retained");
         Ensure(ContainsException(failure!, static exception =>
                 exception is InvalidOperationException { Message: var message } &&
                 message.Contains("dropped 1 additional failures", StringComparison.Ordinal)),
             "the aggregate must explain failures omitted by the retention bound");
+        var replay = await CaptureFailureAsync(supervisor.DrainAsync());
+        Ensure(replay is null && supervisor.CaptureSnapshot().DroppedFailures == 1,
+            "the one-shot overflow diagnostic must not replay while its cumulative count remains observable");
+    }
+
+    [Test]
+    public async Task ConcurrentDrainShouldTransferEveryFailureToExactlyOneConsumer()
+    {
+        var supervisor = new FrameworkTaskSupervisor();
+        var firstWorker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondWorker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstExpected = new InvalidOperationException("one-shot concurrent drain failure one");
+        var secondExpected = new InvalidOperationException("one-shot concurrent drain failure two");
+        supervisor.Track(
+            firstWorker.Task,
+            "concurrent-failure-one",
+            TaskObservationMode.FrameworkOwned,
+            static _ => false);
+        supervisor.Track(
+            secondWorker.Task,
+            "concurrent-failure-two",
+            TaskObservationMode.FrameworkOwned,
+            static _ => false);
+        supervisor.Seal();
+        var firstDrain = CaptureFailureAsync(supervisor.DrainAsync());
+        var secondDrain = CaptureFailureAsync(supervisor.DrainAsync());
+        Ensure(!firstDrain.IsCompleted && !secondDrain.IsCompleted,
+            "both concurrent Drain callers must wait for the complete accepted failure batch");
+
+        firstWorker.TrySetException(firstExpected);
+        secondWorker.TrySetException(secondExpected);
+        var results = await Task.WhenAll(firstDrain, secondDrain);
+
+        Ensure(results.Count(static failure => failure is not null) == 1,
+            "concurrent Drain callers must have one winner for the atomic one-shot failure transfer");
+        var winner = results.Single(static failure => failure is not null)!;
+        Ensure(winner is AggregateException { InnerExceptions.Count: 2 } &&
+               CountReference(winner, firstExpected) == 1 &&
+               CountReference(winner, secondExpected) == 1,
+            "the transfer winner must receive the entire identity-preserving failure batch");
+        Ensure(supervisor.CaptureSnapshot().RetainedFailures == 0,
+            "the supervisor must not retain EDI after the transfer winner drains it");
+    }
+
+    [Test]
+    public async Task CompletedDrainShouldNotRetainExceptionOwnedState()
+    {
+        var references = await CreateDrainedFailureOwnerWeakReferenceAsync();
+
+        for (var attempt = 0;
+             attempt < 12 && (references.Owner.IsAlive || references.LoadContext.IsAlive);
+             attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            await Task.Yield();
+        }
+
+        Ensure(!references.Owner.IsAlive && !references.LoadContext.IsAlive,
+            "a live drained supervisor must not root collectible state captured by an already-delivered exception");
+        GC.KeepAlive(references.Supervisor);
     }
 
     [Test]
@@ -391,6 +465,53 @@ public sealed class FrameworkTaskSupervisorTests
         }
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<DrainedFailureReferences> CreateDrainedFailureOwnerWeakReferenceAsync()
+    {
+        var loadContext = new SupervisorPluginLoadContext($"phase15-supervisor-{Guid.NewGuid():N}");
+        var loadContextReference = new WeakReference(loadContext);
+        var assembly = loadContext.LoadFromAssemblyPath(typeof(RollbackMarker).Assembly.Location);
+        var owner = Activator.CreateInstance(
+            assembly.GetType(typeof(RollbackMarker).FullName!, throwOnError: true)!)!;
+        var ownerReference = new WeakReference(owner);
+        var failure = new InvalidOperationException("collectible owner marker");
+        failure.Data["phase15-owner"] = owner;
+        var supervisor = new FrameworkTaskSupervisor();
+        supervisor.Track(
+            Task.FromException(failure),
+            "collectible-owner-failure",
+            TaskObservationMode.FrameworkOwned,
+            static _ => false);
+        supervisor.Seal();
+
+        var delivered = await CaptureFailureAsync(supervisor.DrainAsync());
+        Ensure(ReferenceEquals(delivered, failure),
+            "the first Drain must deliver the original retained failure");
+        delivered = null;
+        failure = null!;
+        owner = null!;
+
+        var replay = await CaptureFailureAsync(supervisor.DrainAsync());
+        Ensure(replay is null && supervisor.CaptureSnapshot().RetainedFailures == 0,
+            "a transferred failure must not replay or remain retained");
+        assembly = null!;
+        loadContext.Unload();
+        loadContext = null!;
+        return new DrainedFailureReferences(supervisor, ownerReference, loadContextReference);
+    }
+
+    private sealed class SupervisorPluginLoadContext(string name)
+        : AssemblyLoadContext(name, isCollectible: true)
+    {
+        protected override System.Reflection.Assembly? Load(System.Reflection.AssemblyName assemblyName)
+            => null;
+    }
+
+    private readonly record struct DrainedFailureReferences(
+        FrameworkTaskSupervisor Supervisor,
+        WeakReference Owner,
+        WeakReference LoadContext);
+
     private static bool ContainsReference(Exception exception, Exception expected)
     {
         if (ReferenceEquals(exception, expected))
@@ -404,6 +525,20 @@ public sealed class FrameworkTaskSupervisorTests
             }
         }
         return exception.InnerException is { } inner && ContainsReference(inner, expected);
+    }
+
+    private static int CountReference(Exception exception, Exception expected)
+    {
+        var count = ReferenceEquals(exception, expected) ? 1 : 0;
+        if (exception is AggregateException aggregate)
+        {
+            for (var index = 0; index < aggregate.InnerExceptions.Count; index++)
+                count += CountReference(aggregate.InnerExceptions[index], expected);
+            return count;
+        }
+        return exception.InnerException is { } inner
+            ? count + CountReference(inner, expected)
+            : count;
     }
 
     private static bool ContainsException(Exception exception, Func<Exception, bool> predicate)

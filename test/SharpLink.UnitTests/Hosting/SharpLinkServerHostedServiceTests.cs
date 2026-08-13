@@ -17,7 +17,7 @@ public class SharpLinkServerHostedServiceTests
     public async Task StopAsyncShouldCancelRunLoopDisposeServerAndBeIdempotent()
     {
         var transport = new BlockingTransport();
-        var builder = SharpLinkServerBuilder.Create()
+        var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var readiness = new SharpLinkServerReadiness();
@@ -46,7 +46,7 @@ public class SharpLinkServerHostedServiceTests
     public async Task ConcurrentStopCallersShouldAwaitTheSameServerCleanup()
     {
         var transport = new DelayedDisposeTransport();
-        var builder = SharpLinkServerBuilder.Create().UseTransport(transport);
+        var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var hosted = new SharpLinkServerHostedService(
             builder,
@@ -104,7 +104,7 @@ public class SharpLinkServerHostedServiceTests
         var lifetime = new TestHostApplicationLifetime();
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var hosted = new SharpLinkServerHostedService(
-            SharpLinkServerBuilder.Create().UseTransport(new FailingDisposeTransport()),
+            SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new FailingDisposeTransport()),
             NullLoggerFactory.Instance,
             provider,
             new SharpLinkServerReadiness(),
@@ -125,7 +125,7 @@ public class SharpLinkServerHostedServiceTests
     {
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var duplicateHosted = new SharpLinkServerHostedService(
-            SharpLinkServerBuilder.Create().UseTransport(new BlockingTransport()),
+            SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new BlockingTransport()),
             NullLoggerFactory.Instance,
             provider,
             new SharpLinkServerReadiness(),
@@ -145,7 +145,7 @@ public class SharpLinkServerHostedServiceTests
 
         var readiness = new SharpLinkServerReadiness();
         var hosted = new SharpLinkServerHostedService(
-            SharpLinkServerBuilder.Create().UseTransport(new BlockingTransport()),
+            SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new BlockingTransport()),
             NullLoggerFactory.Instance,
             provider,
             readiness,
@@ -172,7 +172,7 @@ public class SharpLinkServerHostedServiceTests
     public async Task UnexpectedSuccessfulRunCompletionShouldStopTheHost()
     {
         var transport = new BlockingTransport();
-        var builder = SharpLinkServerBuilder.Create().UseTransport(transport);
+        var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var lifetime = new TestHostApplicationLifetime();
         var hosted = new SharpLinkServerHostedService(
@@ -200,7 +200,7 @@ public class SharpLinkServerHostedServiceTests
     public async Task SuccessfulStartupShouldNotRetainItsCancellationToken()
     {
         var transport = new BlockingTransport();
-        var builder = SharpLinkServerBuilder.Create().UseTransport(transport);
+        var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var readiness = new SharpLinkServerReadiness();
         var hosted = new SharpLinkServerHostedService(
@@ -233,7 +233,7 @@ public class SharpLinkServerHostedServiceTests
     [Test]
     public async Task ServerStopShouldSurfaceImmediateListenerCleanupFailure()
     {
-        var server = SharpLinkServerBuilder.Create()
+        var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTransport(new FailingDisposeTransport())
             .Build();
         var runTask = server.RunAsync().AsTask();
@@ -254,7 +254,7 @@ public class SharpLinkServerHostedServiceTests
     public async Task HostedStopShouldPreserveCancellationAndListenerCleanupFailure()
     {
         var transport = new DelayedFailingDisposeTransport();
-        var builder = SharpLinkServerBuilder.Create().UseTransport(transport);
+        var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var hosted = new SharpLinkServerHostedService(
             builder,
@@ -281,12 +281,11 @@ public class SharpLinkServerHostedServiceTests
     }
 
     [Test]
-    [NotInParallel]
     public async Task ServerStopShouldReturnFaultedWhenFrameworkCleanupExceedsBudget()
     {
         var provider = new ManualTimeProvider();
         var transport = new DelayedDisposeTransport();
-        var server = SharpLinkServerBuilder.Create()
+        var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTimeProvider(provider)
             .UseTransport(transport)
             .Build();
@@ -328,7 +327,7 @@ public class SharpLinkServerHostedServiceTests
     public async Task ServerGracefulActiveCallShouldForceAtProviderEqualityAndObserveDeferredCleanup()
     {
         var provider = new ManualTimeProvider();
-        var server = SharpLinkServerBuilder.Create()
+        var server = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .UseTimeProvider(provider)
             .UseTransport(new BlockingTransport())
             .Build();

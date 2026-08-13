@@ -7,6 +7,8 @@ namespace SharpLink.UnitTests.Abstractions;
 
 public class SharpLinkTelemetryTests
 {
+    // Tests marked NotInParallel install process-wide MeterListeners and can observe
+    // measurements emitted by otherwise unrelated tests.
     [Test]
     public void RemoteResourceExhaustionShouldRestoreKnownReasonFromWireMessage()
     {
@@ -41,6 +43,7 @@ public class SharpLinkTelemetryTests
     }
 
     [Test]
+    [NotInParallel]
     public void ResourceExhaustedMetricsShouldExposeStableReasons()
     {
         const string side = "resource-exhaustion-reason-test";
@@ -88,6 +91,7 @@ public class SharpLinkTelemetryTests
     }
 
     [Test]
+    [NotInParallel]
     public void AbandonedAndLateResponseMetricsShouldExposeStableTags()
     {
         const string side = "telemetry-unit-test";
@@ -135,6 +139,7 @@ public class SharpLinkTelemetryTests
     }
 
     [Test]
+    [NotInParallel]
     public void SharedMemoryEvidenceMetricsShouldExposeStableKindsAndReasons()
     {
         var directBytes = 0L;
@@ -217,6 +222,7 @@ public class SharpLinkTelemetryTests
     }
 
     [Test]
+    [NotInParallel]
     public void AdmissionMetricsShouldExposeStableNamesAndLowCardinalityReasons()
     {
         var permits = 0L;
@@ -284,6 +290,7 @@ public class SharpLinkTelemetryTests
     }
 
     [Test]
+    [NotInParallel]
     public void ClientTopologyMetricsShouldExposeStableLowCardinalityInstruments()
     {
         var resolverUpdates = 0L;
@@ -340,6 +347,7 @@ public class SharpLinkTelemetryTests
     }
 
     [Test]
+    [NotInParallel]
     public void MultiClusterMutationMetricsShouldExposeStableOperationAndResultTags()
     {
         var mutations = 0L;

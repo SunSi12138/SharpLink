@@ -143,7 +143,6 @@ internal sealed class ServerBuildPlan
     internal ServerBuildPlan(
         ServerRuntimeResources resources,
         SharpLinkRuntimeContextBuildPlan runtimeContext,
-        SharpLinkGeneratedManifestSource manifestSource,
         ServerServiceRegistrationPlanEntry[] services,
         TimeSpan heartbeatCheckInterval,
         TimeSpan heartbeatTimeout,
@@ -158,7 +157,6 @@ internal sealed class ServerBuildPlan
     {
         Resources = resources ?? throw new ArgumentNullException(nameof(resources));
         RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
-        ManifestSource = manifestSource ?? throw new ArgumentNullException(nameof(manifestSource));
         ArgumentNullException.ThrowIfNull(services);
         _services = [.. services];
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatCheckInterval, TimeSpan.Zero);
@@ -179,7 +177,6 @@ internal sealed class ServerBuildPlan
 
     internal ServerRuntimeResources Resources { get; }
     internal SharpLinkRuntimeContextBuildPlan RuntimeContext { get; }
-    internal SharpLinkGeneratedManifestSource ManifestSource { get; }
     internal int ServiceCount => _services.Length;
     internal ServerServiceRegistrationPlanEntry GetService(int index) => _services[index];
     internal TimeSpan HeartbeatCheckInterval { get; }
@@ -197,7 +194,7 @@ internal sealed class ServerBuildPlan
         => _interceptors.Length == 0 ? [] : [.. _interceptors];
 
     internal IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> CreateStaticManifestSnapshot()
-        => ManifestSource.CreateMaterializationSnapshot();
+        => RuntimeContext.GeneratedManifests;
 
     internal void BeginMaterialization()
     {

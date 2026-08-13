@@ -59,65 +59,96 @@ public class SharpLinkClientAccessorTests
     {
         const int attempts = 100_000;
         using var start = new Barrier(3);
+        using var workersCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var accessor = new SharpLinkClientAccessor();
         var client = new FakeSharpLinkClient();
         Exception? publicationFailure = null;
 
-        var publish = Task.Run(() =>
+        var publish = LongRunningTestWorker.Run(() =>
         {
-            for (var attempt = 0; attempt < attempts; attempt++)
-            {
-                start.SignalAndWait();
-                try
-                {
-                    accessor.SetClient(client);
-                }
-                catch (InvalidOperationException exception)
-                {
-                    publicationFailure = exception;
-                }
-                start.SignalAndWait();
-            }
-        });
-        var stop = Task.Run(() =>
-        {
-            for (var attempt = 0; attempt < attempts; attempt++)
-            {
-                start.SignalAndWait();
-                accessor.Stop();
-                start.SignalAndWait();
-            }
-        });
-
-        for (var attempt = 0; attempt < attempts; attempt++)
-        {
-            accessor = new SharpLinkClientAccessor();
-            publicationFailure = null;
-            start.SignalAndWait();
-            start.SignalAndWait();
-
             try
             {
-                await accessor.GetClientAsync();
-                throw new Exception($"attempt {attempt} returned a client after stop");
+                for (var attempt = 0; attempt < attempts; attempt++)
+                {
+                    start.SignalAndWait(workersCancellation.Token);
+                    try
+                    {
+                        accessor.SetClient(client);
+                    }
+                    catch (InvalidOperationException exception)
+                    {
+                        publicationFailure = exception;
+                    }
+                    start.SignalAndWait(workersCancellation.Token);
+                }
             }
-            catch (InvalidOperationException)
+            catch (OperationCanceledException) when (workersCancellation.IsCancellationRequested)
             {
             }
+            catch
+            {
+                workersCancellation.Cancel();
+                throw;
+            }
+        });
+        var stop = LongRunningTestWorker.Run(() =>
+        {
+            try
+            {
+                for (var attempt = 0; attempt < attempts; attempt++)
+                {
+                    start.SignalAndWait(workersCancellation.Token);
+                    accessor.Stop();
+                    start.SignalAndWait(workersCancellation.Token);
+                }
+            }
+            catch (OperationCanceledException) when (workersCancellation.IsCancellationRequested)
+            {
+            }
+            catch
+            {
+                workersCancellation.Cancel();
+                throw;
+            }
+        });
+        try
+        {
+            for (var attempt = 0; attempt < attempts; attempt++)
+            {
+                accessor = new SharpLinkClientAccessor();
+                publicationFailure = null;
+                start.SignalAndWait(workersCancellation.Token);
+                start.SignalAndWait(workersCancellation.Token);
 
-            Ensure(publicationFailure is null ||
-                publicationFailure.Message.Contains("host has already stopped", StringComparison.Ordinal),
-                "publication may only fail because stop won the race");
+                try
+                {
+                    await accessor.GetClientAsync();
+                    throw new Exception($"attempt {attempt} returned a client after stop");
+                }
+                catch (InvalidOperationException)
+                {
+                }
+
+                Ensure(publicationFailure is null ||
+                    publicationFailure.Message.Contains("host has already stopped", StringComparison.Ordinal),
+                    "publication may only fail because stop won the race");
+            }
+
+            await Task.WhenAll(publish, stop);
         }
-
-        await Task.WhenAll(publish, stop);
+        finally
+        {
+            workersCancellation.Cancel();
+            await LongRunningTestWorker.JoinAsync(publish, TimeSpan.FromSeconds(10));
+            await LongRunningTestWorker.JoinAsync(stop, TimeSpan.FromSeconds(10));
+        }
     }
 
     [Test]
     public async Task HostedStartShouldPreserveConnectAndCleanupFailures()
     {
         var service = new SharpLinkClientHostedService(
-            SharpClientBuilder.Create().UseTransport(new ThrowingLifecycleTransportFactory()),
+            SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new ThrowingLifecycleTransportFactory()),
             new SharpLinkClientAccessor(),
             NullLoggerFactory.Instance);
 
@@ -198,7 +229,7 @@ public class SharpLinkClientAccessorTests
     {
         var accessor = new SharpLinkClientAccessor();
         var service = new SharpLinkClientHostedService(
-            SharpClientBuilder.Create(),
+            SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty),
             accessor,
             NullLoggerFactory.Instance);
         var client = new DisposalTrackingClient();
@@ -224,7 +255,7 @@ public class SharpLinkClientAccessorTests
     public async Task ConcurrentHostedStopCallersShouldAwaitTheSameClientCleanup()
     {
         var service = new SharpLinkClientHostedService(
-            SharpClientBuilder.Create().UseTransport(new ThrowingLifecycleTransportFactory()),
+            SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new ThrowingLifecycleTransportFactory()),
             new SharpLinkClientAccessor(),
             NullLoggerFactory.Instance);
         var client = new BlockingStopClient();
@@ -247,7 +278,7 @@ public class SharpLinkClientAccessorTests
     public async Task CancelledHostedStopShouldStillDisposeTransferredClient()
     {
         var service = new SharpLinkClientHostedService(
-            SharpClientBuilder.Create().UseTransport(new ThrowingLifecycleTransportFactory()),
+            SharpClientBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new ThrowingLifecycleTransportFactory()),
             new SharpLinkClientAccessor(),
             NullLoggerFactory.Instance);
         var client = new CancellationSensitiveClient();

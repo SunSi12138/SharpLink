@@ -174,7 +174,6 @@ internal sealed class ClientBuildPlan
         ClientTopologyPlan topology,
         ClientRuntimeResources resources,
         SharpLinkRuntimeContextBuildPlan runtimeContext,
-        SharpLinkGeneratedManifestSource manifestSource,
         TimeSpan heartbeatInterval,
         TimeSpan heartbeatTimeout,
         TimeSpan? requestTimeout,
@@ -195,7 +194,6 @@ internal sealed class ClientBuildPlan
         Topology = topology ?? throw new ArgumentNullException(nameof(topology));
         Resources = resources ?? throw new ArgumentNullException(nameof(resources));
         RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
-        ManifestSource = manifestSource ?? throw new ArgumentNullException(nameof(manifestSource));
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatTimeout, TimeSpan.Zero);
         if (heartbeatTimeout <= heartbeatInterval)
@@ -224,7 +222,6 @@ internal sealed class ClientBuildPlan
     internal ClientTopologyPlan Topology { get; }
     internal ClientRuntimeResources Resources { get; }
     internal SharpLinkRuntimeContextBuildPlan RuntimeContext { get; }
-    internal SharpLinkGeneratedManifestSource ManifestSource { get; }
     internal TimeSpan HeartbeatInterval { get; }
     internal TimeSpan HeartbeatTimeout { get; }
     internal TimeSpan? RequestTimeout { get; }
@@ -256,7 +253,7 @@ internal sealed class ClientBuildPlan
         => _interceptors.Length == 0 ? [] : [.. _interceptors];
 
     internal IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> CreateStaticManifestSnapshot()
-        => ManifestSource.CreateMaterializationSnapshot();
+        => RuntimeContext.GeneratedManifests;
 
     internal void BeginMaterialization()
     {

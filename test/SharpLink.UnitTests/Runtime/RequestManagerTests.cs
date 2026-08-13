@@ -495,27 +495,38 @@ public class PendingRequestTableTests
             CancellationToken.None,
             observer);
 
-        var response = Task.Run(() =>
+        var response = LongRunningTestWorker.Run(() =>
         {
             var payload = ReadOnlySequence<byte>.Empty;
             return manager.Dispatch(requestId, ref payload);
         });
-        await observer.ResponseObservationEntered.WaitAsync(TimeSpan.FromSeconds(2));
+        Task<bool>? terminal = null;
+        try
+        {
+            await observer.ResponseObservationEntered.WaitAsync(TimeSpan.FromSeconds(2));
 
-        var terminal = Task.Run(() => manager.TryComplete(
-            requestId,
-            PendingCallCompletionReason.ConnectionClosed,
-            new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "test disconnect")));
-        await Task.Delay(50);
-        Ensure(!observer.TerminalCompletionObserved.IsCompleted,
-            "terminal completion must wait until the matched streaming response is observed");
+            terminal = LongRunningTestWorker.Run(() => manager.TryComplete(
+                requestId,
+                PendingCallCompletionReason.ConnectionClosed,
+                new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "test disconnect")));
+            await Task.Delay(50);
+            Ensure(!observer.TerminalCompletionObserved.IsCompleted,
+                "terminal completion must wait until the matched streaming response is observed");
 
-        observer.ReleaseResponseObservation();
-        Ensure(await response, "streaming response acknowledgement");
-        Ensure(await terminal, "terminal completion");
-        await observer.TerminalCompletionObserved.WaitAsync(TimeSpan.FromSeconds(2));
-        Ensure(observer.TerminalSawResponseObservation,
-            "terminal observer must see the prior response acknowledgement");
+            observer.ReleaseResponseObservation();
+            Ensure(await response, "streaming response acknowledgement");
+            Ensure(await terminal, "terminal completion");
+            await observer.TerminalCompletionObserved.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(observer.TerminalSawResponseObservation,
+                "terminal observer must see the prior response acknowledgement");
+        }
+        finally
+        {
+            observer.ReleaseResponseObservation();
+            await LongRunningTestWorker.JoinAsync(response, RaceCoordinationTimeout);
+            if (terminal is not null)
+                await LongRunningTestWorker.JoinAsync(terminal, RaceCoordinationTimeout);
+        }
     }
 
     [Test]
@@ -729,25 +740,34 @@ public class PendingRequestTableTests
         using var owner = new BlockingPendingCallOwner();
         using var manager = CreateTable(8, owner: owner);
         using var cancellation = new CancellationTokenSource();
-        var rentTask = Task.Run(() => manager.Rent(
+        var rentTask = LongRunningTestWorker.Run(() => manager.Rent(
             new Int32Codec(),
             PendingCallKind.Unary,
             deadline: default,
             cancellation.Token,
             out _));
+        Task cancelTask = Task.CompletedTask;
+        try
+        {
+            Ensure(owner.RegistrationEntered.Wait(RaceCoordinationTimeout),
+                "registration callback should reach the deterministic race gate");
+            cancelTask = LongRunningTestWorker.Run(cancellation.Cancel);
+            await Task.Delay(20);
+            owner.AllowRegistration.Set();
 
-        Ensure(owner.RegistrationEntered.Wait(RaceCoordinationTimeout),
-            "registration callback should reach the deterministic race gate");
-        var cancelTask = Task.Run(cancellation.Cancel);
-        await Task.Delay(20);
-        owner.AllowRegistration.Set();
-
-        var operation = await rentTask;
-        await cancelTask;
-        var exception = await CaptureExceptionAsync(operation.AsValueTask().AsTask());
-        Ensure(exception is OperationCanceledException, "the racing call should still observe cancellation");
-        Ensure(owner.MinimumActiveCount >= 0, "completion must not precede owner registration");
-        Ensure(owner.ActiveCount == 0, "registration and completion must balance exactly once");
+            var operation = await rentTask;
+            await cancelTask;
+            var exception = await CaptureExceptionAsync(operation.AsValueTask().AsTask());
+            Ensure(exception is OperationCanceledException, "the racing call should still observe cancellation");
+            Ensure(owner.MinimumActiveCount >= 0, "completion must not precede owner registration");
+            Ensure(owner.ActiveCount == 0, "registration and completion must balance exactly once");
+        }
+        finally
+        {
+            owner.AllowRegistration.Set();
+            await LongRunningTestWorker.JoinAsync(rentTask, RaceCoordinationTimeout);
+            await LongRunningTestWorker.JoinAsync(cancelTask, RaceCoordinationTimeout);
+        }
     }
 
     private static PendingRequestTable CreateTable(
