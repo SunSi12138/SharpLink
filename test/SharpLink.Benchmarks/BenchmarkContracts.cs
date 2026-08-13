@@ -42,9 +42,6 @@ public interface IBenchmarkRpc : IService
     IAsyncEnumerable<byte[]> DownloadPayloadsAsync(int count, int payloadSize);
     [NonCancellable]
     IAsyncEnumerable<byte[]> DuplexPayloadsAsync(IAsyncEnumerable<byte[]> payloads);
-
-    [NonCancellable]
-    ValueTask<int> SlowAsync(int value, int delayMs);
 }
 
 [SharpPackable]

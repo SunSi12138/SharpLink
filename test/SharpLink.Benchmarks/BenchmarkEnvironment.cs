@@ -96,10 +96,6 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
 
     public TContract Get<TContract>() where TContract : class, IService => _client.Get<TContract>();
 
-    internal int ServerActiveLeaseCount => ((SharpLinkServer)_server).Buffers.ActiveLeaseCount;
-
-    internal int ServerPeakActiveLeaseCount => ((SharpLinkServer)_server).Buffers.PeakActiveLeaseCount;
-
     public async ValueTask DisposeAsync()
     {
         _shutdown.Cancel();

@@ -117,12 +117,6 @@ public class BenchmarkRpcService : IBenchmarkRpc
         }
     }
 
-    public async ValueTask<int> SlowAsync(int value, int delayMs)
-    {
-        await Task.Delay(delayMs);
-        return value;
-    }
-
     internal static byte[] GetPayload(int payloadSize) => payloadSize switch
     {
         16 => SPayload16,
