@@ -277,9 +277,9 @@ internal sealed class StreamFlowController
             ready = AdmitWaiters();
         }
 
-        var completionException = exception ?? CreateStreamClosedException();
         if (rejected is not null)
         {
+            var completionException = exception ?? CreateStreamClosedException();
             for (var index = 0; index < rejected.Count; index++)
                 rejected[index].Completion.TrySetException(completionException);
         }
