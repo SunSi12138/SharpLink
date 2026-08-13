@@ -463,38 +463,38 @@ public partial class RpcGenerator
             switch (member.Kind)
             {
                 case GeneratedMemberKind.Fixed:
-                {
-                    var keySize = GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize));
-                    sb.AppendLine($"        size = checked(size + {keySize.ToString(InvariantCulture)} + {member.FixedSize.ToString(InvariantCulture)});");
-                    break;
-                }
+                    {
+                        var keySize = GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize));
+                        sb.AppendLine($"        size = checked(size + {keySize.ToString(InvariantCulture)} + {member.FixedSize.ToString(InvariantCulture)});");
+                        break;
+                    }
                 case GeneratedMemberKind.NullableFixed:
-                {
-                    var nullSize = GetFieldKeySize(member.FieldId, 0);
-                    var valueSize = GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize)) + member.FixedSize;
-                    sb.AppendLine($"        size = checked(size + ({value} is null ? {nullSize.ToString(InvariantCulture)} : {valueSize.ToString(InvariantCulture)}));");
-                    break;
-                }
+                    {
+                        var nullSize = GetFieldKeySize(member.FieldId, 0);
+                        var valueSize = GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize)) + member.FixedSize;
+                        sb.AppendLine($"        size = checked(size + ({value} is null ? {nullSize.ToString(InvariantCulture)} : {valueSize.ToString(InvariantCulture)}));");
+                        break;
+                    }
                 case GeneratedMemberKind.String:
-                {
-                    var nullSize = GetFieldKeySize(member.FieldId, 0);
-                    var valueOverhead = GetFieldKeySize(member.FieldId, 6) + sizeof(uint);
-                    sb.AppendLine($"        size = checked(size + ({value} is null ? {nullSize.ToString(InvariantCulture)} : {valueOverhead.ToString(InvariantCulture)} + __SharpLinkGeneratedUtf8.GetByteCount({value})));");
-                    break;
-                }
+                    {
+                        var nullSize = GetFieldKeySize(member.FieldId, 0);
+                        var valueOverhead = GetFieldKeySize(member.FieldId, 6) + sizeof(uint);
+                        sb.AppendLine($"        size = checked(size + ({value} is null ? {nullSize.ToString(InvariantCulture)} : {valueOverhead.ToString(InvariantCulture)} + __SharpLinkGeneratedUtf8.GetByteCount({value})));");
+                        break;
+                    }
                 case GeneratedMemberKind.Complex:
-                {
-                    var index = complexIndexes[member.Name];
-                    var keySize = GetFieldKeySize(member.FieldId, 6);
-                    sb.AppendLine($"        if (__codec_{index} is not __ISharpLinkSizedCodec<{member.TypeName}> __sized_{index} ||");
-                    sb.AppendLine($"            !__sized_{index}.TryGetEncodedSize({value}, out var __nestedSize_{index}))");
-                    sb.AppendLine("        {");
-                    sb.AppendLine("            size = 0;");
-                    sb.AppendLine("            return false;");
-                    sb.AppendLine("        }");
-                    sb.AppendLine($"        size = checked(size + {keySize.ToString(InvariantCulture)} + sizeof(uint) + __nestedSize_{index});");
-                    break;
-                }
+                    {
+                        var index = complexIndexes[member.Name];
+                        var keySize = GetFieldKeySize(member.FieldId, 6);
+                        sb.AppendLine($"        if (__codec_{index} is not __ISharpLinkSizedCodec<{member.TypeName}> __sized_{index} ||");
+                        sb.AppendLine($"            !__sized_{index}.TryGetEncodedSize({value}, out var __nestedSize_{index}))");
+                        sb.AppendLine("        {");
+                        sb.AppendLine("            size = 0;");
+                        sb.AppendLine("            return false;");
+                        sb.AppendLine("        }");
+                        sb.AppendLine($"        size = checked(size + {keySize.ToString(InvariantCulture)} + sizeof(uint) + __nestedSize_{index});");
+                        break;
+                    }
             }
         }
 
