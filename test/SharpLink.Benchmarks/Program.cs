@@ -93,6 +93,12 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--generated-recursive-allocation-evidence", StringComparison.Ordinal))
+        {
+            GeneratedRecursiveAllocationEvidenceRunner.Run();
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--latency-recorder-evidence", StringComparison.Ordinal))
         {
             LatencyRecorderEvidenceRunner.Run(args[1..]);
