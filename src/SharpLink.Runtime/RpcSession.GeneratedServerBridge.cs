@@ -160,7 +160,8 @@ internal sealed partial class RpcSession
                 cancellationToken).ConfigureAwait(false);
             creditAcquired = true;
 
-            writer = RentFrameWriter();
+            writer = RuntimeContext.Buffers.Rent(
+                checked(ProtocolV2Constants.HeaderBytes + NegotiatedMaxFramePayloadBytes + 4));
             using (writer.BeginPacketScope(
                        ProtocolV2FrameType.StreamData,
                        ProtocolV2FrameFlags.None,
