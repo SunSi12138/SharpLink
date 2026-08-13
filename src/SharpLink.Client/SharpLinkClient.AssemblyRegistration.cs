@@ -366,10 +366,12 @@ internal sealed partial class SharpLinkClient
         if (error is not null)
             return default;
 
-        var byId = currentProxies.Values.ToDictionary(
+        var nextProxies = new Dictionary<Type, ClientProxyRegistration>();
+        foreach (var pair in currentProxies)
+            nextProxies[pair.Key] = new ClientProxyRegistration(pair.Value.Descriptor, pair.Value.Module);
+        var byId = nextProxies.Values.ToDictionary(
             static registration => registration.Descriptor.ContractId,
             static registration => registration);
-        var nextProxies = currentProxies.ToDictionary(static pair => pair.Key, static pair => pair.Value);
         foreach (var contract in incoming.Contracts)
         {
             if (byId.TryGetValue(contract.ContractId, out var existing))
@@ -529,9 +531,22 @@ internal sealed partial class SharpLinkClient
             ExistingFingerprint: existingContract.Fingerprint,
             IncomingFingerprint: incomingContract.Fingerprint);
 
-    internal sealed record ClientProxyRegistration(
-        SharpLinkGeneratedContractDescriptor Descriptor,
-        SharpLinkDynamicModule? Module);
+    internal sealed class ClientProxyRegistration
+    {
+        internal ClientProxyRegistration(
+            SharpLinkGeneratedContractDescriptor descriptor,
+            SharpLinkDynamicModule? module)
+        {
+            Descriptor = descriptor;
+            Module = module;
+        }
+
+        internal SharpLinkGeneratedContractDescriptor Descriptor { get; }
+
+        internal SharpLinkDynamicModule? Module { get; }
+
+        internal object? Proxy;
+    }
 
     private readonly record struct RegistrationCandidate(
         FrozenDictionary<Type, ClientProxyRegistration> Proxies,

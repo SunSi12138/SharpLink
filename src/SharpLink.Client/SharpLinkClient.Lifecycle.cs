@@ -309,10 +309,16 @@ internal sealed partial class SharpLinkClient
     {
         if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
         {
-            IRpcChannel channel = registration.Module is null
-                ? this
+            var existing = Volatile.Read(ref registration.Proxy);
+            if (existing is not null)
+                return (T)existing;
+
+            var channel = registration.Module is null
+                ? (IRpcChannel)this
                 : new SharpLinkModuleRpcChannel(this, registration.Module);
-            return (T)registration.Descriptor.ProxyFactory(channel);
+            var created = registration.Descriptor.ProxyFactory(channel);
+            var published = Interlocked.CompareExchange(ref registration.Proxy, created, null);
+            return (T)(published ?? created);
         }
 
         throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
