@@ -225,10 +225,9 @@ internal sealed partial class SharpLinkClient
 
         private sealed class ClientContinuationState
         {
-            // A cross-thread linked freelist is ABA-prone because its next pointer is mutable.
-            // Keep exclusive ownership in a physical-thread slot instead.
-            [ThreadStatic]
-            private static ClientContinuationState? t_cached;
+            private const int MaxRetained = 4096;
+            private const int ShardCount = 32;
+            private static readonly Shard[] Shards = CreateShards();
 
             private ClientInterceptorState? _owner;
             private int _nextIndex;
@@ -237,11 +236,19 @@ internal sealed partial class SharpLinkClient
 
             public static ClientContinuationState Rent(ClientInterceptorState owner, int nextIndex)
             {
-                var state = t_cached;
-                if (state is null)
-                    state = new ClientContinuationState();
-                else
-                    t_cached = null;
+                var shard = Shards[Thread.CurrentThread.ManagedThreadId & (ShardCount - 1)];
+                ClientContinuationState state;
+                lock (shard.Gate)
+                {
+                    if (shard.Stack.TryPop(out state!))
+                    {
+                        shard.Retained--;
+                    }
+                    else
+                    {
+                        state = new ClientContinuationState();
+                    }
+                }
                 state._owner = owner;
                 state._nextIndex = nextIndex;
                 return state;
@@ -276,7 +283,33 @@ internal sealed partial class SharpLinkClient
                 _nextIndex = 0;
                 _completion = default;
                 Volatile.Write(ref _completionAvailable, 0);
-                t_cached ??= this;
+
+                var returnShard = Shards[Thread.CurrentThread.ManagedThreadId & (ShardCount - 1)];
+                lock (returnShard.Gate)
+                {
+                    if (returnShard.Retained < returnShard.Max)
+                    {
+                        returnShard.Retained++;
+                        returnShard.Stack.Push(this);
+                    }
+                }
+            }
+
+            private static Shard[] CreateShards()
+            {
+                var shards = new Shard[ShardCount];
+                var perShard = MaxRetained / ShardCount;
+                for (var index = 0; index < ShardCount; index++)
+                    shards[index] = new Shard(perShard);
+                return shards;
+            }
+
+            private sealed class Shard(int max)
+            {
+                public readonly int Max = max;
+                public readonly Lock Gate = new();
+                public readonly Stack<ClientContinuationState> Stack = new(4);
+                public int Retained;
             }
 
             private static async ValueTask AwaitCompletionAndReturnAsync(

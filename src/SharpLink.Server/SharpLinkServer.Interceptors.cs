@@ -422,7 +422,7 @@ internal sealed partial class SharpLinkServer
 
         if (length == 0)
         {
-            await new ServerInterceptorPipeline(
+            await new ServerPipelineFacts(
                 _serverInterceptors,
                 stub,
                 service,
@@ -442,7 +442,7 @@ internal sealed partial class SharpLinkServer
         {
             arguments.CopyTo(rented);
             var ownedArguments = new ReadOnlySequence<byte>(rented.AsMemory(0, length));
-            await new ServerInterceptorPipeline(
+            await new ServerPipelineFacts(
                 _serverInterceptors,
                 stub,
                 service,
@@ -569,7 +569,7 @@ internal sealed partial class SharpLinkServer
             exception);
     }
 
-    private sealed class ServerInterceptorPipeline
+    private struct ServerPipelineFacts
     {
         private readonly ISharpLinkServerInterceptor[] _interceptors;
         private readonly IRpcStub _stub;
@@ -584,7 +584,7 @@ internal sealed partial class SharpLinkServer
         private readonly CancellationToken _cancellationToken;
         private long _started;
 
-        public ServerInterceptorPipeline(
+        public ServerPipelineFacts(
             ISharpLinkServerInterceptor[] interceptors,
             IRpcStub stub,
             object service,
@@ -736,32 +736,42 @@ internal sealed partial class SharpLinkServer
 
         private sealed class ServerContinuationState
         {
-            // A cross-thread linked freelist is ABA-prone because its next pointer is mutable.
-            // Keep exclusive ownership in a physical-thread slot instead.
-            [ThreadStatic]
-            private static ServerContinuationState? t_cached;
+            private const int MaxRetained = 4096;
+            private const int ShardCount = 32;
+            private static readonly Shard[] Shards = CreateShards();
 
-            private ServerInterceptorPipeline? _owner;
+            private ServerPipelineFacts _owner;
+            private bool _hasOwner;
             private int _nextIndex;
             private ValueTask _completion;
             private int _completionAvailable;
 
-            public static ServerContinuationState Rent(ServerInterceptorPipeline owner, int nextIndex)
+            public static ServerContinuationState Rent(ServerPipelineFacts owner, int nextIndex)
             {
-                var state = t_cached;
-                if (state is null)
-                    state = new ServerContinuationState();
-                else
-                    t_cached = null;
+                var shard = Shards[Thread.CurrentThread.ManagedThreadId & (ShardCount - 1)];
+                ServerContinuationState state;
+                lock (shard.Gate)
+                {
+                    if (shard.Stack.TryPop(out state!))
+                    {
+                        shard.Retained--;
+                    }
+                    else
+                    {
+                        state = new ServerContinuationState();
+                    }
+                }
                 state._owner = owner;
+                state._hasOwner = true;
                 state._nextIndex = nextIndex;
                 return state;
             }
 
             public ValueTask InvokeAsync(SharpLinkServerInvocationContext context)
             {
-                var invocation = (_owner ?? throw new InvalidOperationException("The interceptor continuation has expired."))
-                    .InvokeNextAsync(_nextIndex, context);
+                var invocation = _hasOwner
+                    ? _owner.InvokeNextAsync(_nextIndex, context)
+                    : throw new InvalidOperationException("The interceptor continuation has expired.");
                 _completion = invocation;
                 Volatile.Write(ref _completionAvailable, 1);
                 return invocation;
@@ -782,11 +792,38 @@ internal sealed partial class SharpLinkServer
 
             public void Return()
             {
-                _owner = null;
+                _owner = default;
+                _hasOwner = false;
                 _nextIndex = 0;
                 _completion = default;
                 Volatile.Write(ref _completionAvailable, 0);
-                t_cached ??= this;
+
+                var returnShard = Shards[Thread.CurrentThread.ManagedThreadId & (ShardCount - 1)];
+                lock (returnShard.Gate)
+                {
+                    if (returnShard.Retained < returnShard.Max)
+                    {
+                        returnShard.Retained++;
+                        returnShard.Stack.Push(this);
+                    }
+                }
+            }
+
+            private static Shard[] CreateShards()
+            {
+                var shards = new Shard[ShardCount];
+                var perShard = MaxRetained / ShardCount;
+                for (var index = 0; index < ShardCount; index++)
+                    shards[index] = new Shard(perShard);
+                return shards;
+            }
+
+            private sealed class Shard(int max)
+            {
+                public readonly int Max = max;
+                public readonly Lock Gate = new();
+                public readonly Stack<ServerContinuationState> Stack = new(4);
+                public int Retained;
             }
 
             private static async ValueTask AwaitCompletionAndReturnAsync(

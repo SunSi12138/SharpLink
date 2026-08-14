@@ -21,6 +21,9 @@ public enum ServerFeatureScenario
     StaticDefault,
     AdmissionImmediate,
     ServerInterceptor,
+    ServerInterceptor2,
+    ServerInterceptor4,
+    ServerInterceptor8,
     MetricsClientAndServer,
     ServerTraceOnePercent,
     ServerTraceAll,
@@ -157,6 +160,18 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
                 break;
             case ServerFeatureScenario.ServerInterceptor:
                 builder.AddInterceptor(PassThroughServerInterceptor.Instance);
+                break;
+            case ServerFeatureScenario.ServerInterceptor2:
+                builder.AddInterceptor(PassThroughServerInterceptor.Instance);
+                builder.AddInterceptor(PassThroughServerInterceptor.Instance);
+                break;
+            case ServerFeatureScenario.ServerInterceptor4:
+                for (var index = 0; index < 4; index++)
+                    builder.AddInterceptor(PassThroughServerInterceptor.Instance);
+                break;
+            case ServerFeatureScenario.ServerInterceptor8:
+                for (var index = 0; index < 8; index++)
+                    builder.AddInterceptor(PassThroughServerInterceptor.Instance);
                 break;
         }
     }
