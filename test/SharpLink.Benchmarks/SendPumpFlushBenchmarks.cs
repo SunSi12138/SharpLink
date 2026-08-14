@@ -31,9 +31,6 @@ public class SendPumpFlushBenchmarks
         SharpLinkPerformanceProfile.Throughput)]
     public SharpLinkPerformanceProfile Profile { get; set; }
 
-    [Params(1, 4)]
-    public int Concurrency { get; set; }
-
     [Params(false, true)]
     public bool AsyncFlush { get; set; }
 
@@ -53,7 +50,7 @@ public class SendPumpFlushBenchmarks
         _output = new ControlledFlushPipeWriter(AsyncFlush);
         _session = new RpcSession(
             new BenchmarkTransportConnection(
-                $"issue156-send-pump-{Profile}-{Concurrency}-{AsyncFlush}",
+                $"issue156-send-pump-{Profile}-{AsyncFlush}",
                 _input.Reader,
                 _output),
             new RpcSessionCreationOptions(RpcSessionRole.Client, _context));
@@ -67,8 +64,7 @@ public class SendPumpFlushBenchmarks
             throw new InvalidOperationException("Issue 156 benchmark session handshake completion failed.");
         }
 
-        if (Concurrency > 1)
-            _workers = new Task[Concurrency];
+        _workers = new Task[4];
     }
 
     [GlobalCleanup]
@@ -82,29 +78,28 @@ public class SendPumpFlushBenchmarks
 
     [Benchmark]
     public async ValueTask SendPacketAndFlush()
-    {
-        if (Concurrency == 1)
-        {
-            await SendPacketAndFlushCoreAsync().ConfigureAwait(false);
-            return;
-        }
+        => await SendPacketAndFlushCoreAsync().ConfigureAwait(false);
 
-        for (var index = 0; index < _workers.Length; index++)
-            _workers[index] = SendPacketAndFlushCoreAsync().AsTask();
-        await Task.WhenAll(_workers).ConfigureAwait(false);
-    }
+    // One invocation performs four concurrent sends, so the reported time and
+    // allocation columns must be normalized to a single logical flush.
+    [Benchmark(OperationsPerInvoke = 4)]
+    public async ValueTask SendPacketAndFlushConcurrent4()
+        => await RunConcurrent4Async(SendPacketAndFlushCoreAsync).ConfigureAwait(false);
 
     [Benchmark]
     public async ValueTask FlushSendQueue()
-    {
-        if (Concurrency == 1)
-        {
-            await _session.FlushSendQueueAsync().ConfigureAwait(false);
-            return;
-        }
+        => await _session.FlushSendQueueAsync().ConfigureAwait(false);
 
+    // One invocation performs four concurrent flushes, so the reported time and
+    // allocation columns must be normalized to a single logical flush.
+    [Benchmark(OperationsPerInvoke = 4)]
+    public async ValueTask FlushSendQueueConcurrent4()
+        => await RunConcurrent4Async(() => _session.FlushSendQueueAsync()).ConfigureAwait(false);
+
+    private async Task RunConcurrent4Async(Func<ValueTask> work)
+    {
         for (var index = 0; index < _workers.Length; index++)
-            _workers[index] = _session.FlushSendQueueAsync().AsTask();
+            _workers[index] = work().AsTask();
         await Task.WhenAll(_workers).ConfigureAwait(false);
     }
 

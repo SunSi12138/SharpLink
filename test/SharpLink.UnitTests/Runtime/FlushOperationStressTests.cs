@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Threading;
 using System.Threading.Tasks.Sources;
@@ -7,11 +6,11 @@ using System.Threading.Tasks.Sources;
 namespace SharpLink.UnitTests.Runtime;
 
 /// <summary>
-/// Stress coverage for the pooled <c>FlushOperation</c> waiter that backs
-/// force-flush completion (issue 156). Each scenario races waiter completion
-/// against cancellation, transport fault, or session stop and asserts that
-/// every waiter terminates cleanly without hangs, double completion, stale
-/// reuse, or pool accounting corruption.
+/// Stress coverage for force-flush waiter completion (issue 156). Each scenario
+/// races waiter completion against cancellation, transport fault, or session
+/// stop and asserts that every waiter terminates cleanly without hangs, double
+/// completion, stale reuse, or pool accounting corruption, regardless of the
+/// waiter implementation (TaskCompletionSource or pooled IValueTaskSource).
 /// </summary>
 public class FlushOperationStressTests
 {
@@ -32,13 +31,20 @@ public class FlushOperationStressTests
         try
         {
             var random = new Random(156_156);
+            var totalCancelled = 0;
             for (var round = 0; round < 150; round++)
             {
-                var pending = new List<Task>(8);
+                var pending = new List<Task<bool>>(8);
+                var sources = new List<CancellationTokenSource>(8);
                 for (var index = 0; index < 8; index++)
                 {
-                    var cancelAfter = TimeSpan.FromTicks(random.Next(0, 40));
-                    using var cancellation = new CancellationTokenSource(cancelAfter);
+                    // Every fourth token is pre-cancelled so the cancellation path is
+                    // deterministically exercised regardless of scheduling.
+                    var cancelAfter = index % 4 == 0
+                        ? TimeSpan.Zero
+                        : TimeSpan.FromTicks(random.Next(0, 40));
+                    var cancellation = new CancellationTokenSource(cancelAfter);
+                    sources.Add(cancellation);
                     if ((round + index) % 3 == 0)
                     {
                         pending.Add(FlushSendQueueAsync(session, cancellation.Token));
@@ -50,18 +56,18 @@ public class FlushOperationStressTests
                     }
                 }
 
-                await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(10));
-                foreach (var task in pending)
-                {
-                    Ensure(task.Status == TaskStatus.RanToCompletion,
-                        "a healthy session must only produce success or OperationCanceledException");
-                }
+                var results = await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(10));
+                foreach (var source in sources)
+                    source.Dispose();
+                totalCancelled += CountCancelled(results);
             }
 
+            Ensure(totalCancelled > 0,
+                "the cancellation stress must actually exercise cancellation completions");
             var finalFrame = CreateFrame(session, 32, 1_000_000);
             await session.SendPacketAndFlushAsync(finalFrame).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             Ensure(session.IsConnected, "cancellation stress must not fault or close the session");
-            Ensure(session.QueuedSendBytes == 0, "the flush pool must return every rented operation");
+            Ensure(session.QueuedSendBytes == 0, "every in-flight waiter must be released");
         }
         finally
         {
@@ -88,22 +94,30 @@ public class FlushOperationStressTests
         try
         {
             var random = new Random(156_156 + 1);
-            var pending = new List<Task>(100);
+            var pending = new List<Task<bool>>(100);
+            var sources = new List<CancellationTokenSource>(100);
             for (var index = 0; index < 100; index++)
             {
-                using var cancellation = new CancellationTokenSource(TimeSpan.FromTicks(random.Next(0, 30)));
-                pending.Add(FlushSendQueueAsync(session, cancellation.Token));
+                var cancellation = new CancellationTokenSource(TimeSpan.FromTicks(random.Next(0, 30)));
+                sources.Add(cancellation);
+                // Real payload frames (not the empty flush marker) so the writer's
+                // pause threshold is crossed and the pump's flush genuinely stalls.
+                var frame = CreateFrame(session, 32, (ulong)(index + 1));
+                pending.Add(SendAndFlushAsync(session, frame, cancellation.Token));
             }
 
-            await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(10));
+            var results = await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(10));
+            foreach (var source in sources)
+                source.Dispose();
+            Ensure(CountCancelled(results) == pending.Count,
+                "every stalled flush waiter must be released by caller cancellation");
             Ensure(session.IsConnected,
                 "caller cancellation while the transport stalls must not fault the session");
         }
         finally
         {
-            // Stopping the session must drain the queued markers: their pooled
-            // operations are still pump-owned until the drain completes, so dispose
-            // must not hang and every pooled waiter must return.
+            // Stopping the session must drain the queued frames: their waiters are
+            // still pump-owned until the drain completes, so dispose must not hang.
             await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
             await output.Reader.CompleteAsync();
             await input.Writer.CompleteAsync();
@@ -130,7 +144,7 @@ public class FlushOperationStressTests
             for (var index = 0; index < 300; index++)
             {
                 var frame = CreateFrame(session, 32, (ulong)(index + 1));
-                pending.Add(SendAndFlushAsync(session, frame, CancellationToken.None));
+                pending.Add(SendAndFlushCoreAsync(session, frame, CancellationToken.None));
             }
 
             // The pump is now suspended in its first controlled flush. Fault it:
@@ -171,7 +185,7 @@ public class FlushOperationStressTests
             {
                 var frame = CreateFrame(session, 32, (ulong)(index + 1));
                 pending.Add(index % 3 == 0
-                    ? SendAndFlushAsync(session, frame, CancellationToken.None)
+                    ? SendAndFlushCoreAsync(session, frame, CancellationToken.None)
                     : TryEnqueueAndFlushAsync(session, frame));
             }
 
@@ -189,7 +203,7 @@ public class FlushOperationStressTests
         }
     }
 
-    private static async Task SendAndFlushAsync(
+    private static async Task<bool> SendAndFlushAsync(
         RpcSession session,
         IRpcByteBufferWriter frame,
         CancellationToken cancellationToken)
@@ -197,28 +211,51 @@ public class FlushOperationStressTests
         try
         {
             await session.SendPacketAndFlushAsync(frame, cancellationToken);
+            return false;
         }
         catch (OperationCanceledException)
         {
             // Expected: caller cancellation may win the race with the pump flush.
+            return true;
         }
     }
 
-    private static async Task FlushSendQueueAsync(RpcSession session, CancellationToken cancellationToken)
+    private static async Task<bool> FlushSendQueueAsync(RpcSession session, CancellationToken cancellationToken)
     {
         try
         {
             await session.FlushSendQueueAsync(cancellationToken);
+            return false;
         }
         catch (OperationCanceledException)
         {
             // Expected: caller cancellation may win the race with the pump flush.
+            return true;
         }
+    }
+
+    private static async Task SendAndFlushCoreAsync(
+        RpcSession session,
+        IRpcByteBufferWriter frame,
+        CancellationToken cancellationToken)
+    {
+        await session.SendPacketAndFlushAsync(frame, cancellationToken);
     }
 
     private static async Task TryEnqueueAndFlushAsync(RpcSession session, IRpcByteBufferWriter frame)
     {
         await session.SendPacketAsync(frame, waitForCapacity: false, forceFlush: true);
+    }
+
+    private static int CountCancelled(IEnumerable<bool> results)
+    {
+        var count = 0;
+        foreach (var cancelled in results)
+        {
+            if (cancelled)
+                count++;
+        }
+        return count;
     }
 
     private static async Task AssertEveryWaiterFailedAsync(
@@ -293,8 +330,8 @@ public class FlushOperationStressTests
 
     /// <summary>
     /// A pipe writer whose flush completion is test-controlled: FlushAsync stays
-    /// pending until <see cref="FailFlush"/> delivers either success or a transport
-    /// fault. This models an async transport whose I/O fault wakes the send pump.
+    /// pending until <see cref="FailFlush"/> delivers a transport fault. This
+    /// models an async transport whose I/O fault wakes the send pump.
     /// </summary>
     private sealed class ControlledOutputPipeWriter : PipeWriter, IValueTaskSource<FlushResult>
     {
@@ -303,6 +340,7 @@ public class FlushOperationStressTests
         // fields, which would silently discard every core state transition.
         private ManualResetValueTaskSourceCore<FlushResult> _core;
         private Exception? _flushFault;
+        private readonly Lock _gate = new();
 
         public ControlledOutputPipeWriter(PipeWriter inner)
         {
@@ -312,8 +350,15 @@ public class FlushOperationStressTests
 
         public void FailFlush(Exception exception)
         {
-            Volatile.Write(ref _flushFault, exception);
-            _core.SetException(exception);
+            // The gate serializes fault publication against the Reset in FlushAsync:
+            // either the fault is visible before the core is reset (FlushAsync takes
+            // the FromException path) or SetException completes the pending core;
+            // the completion can never be discarded by a racing Reset.
+            lock (_gate)
+            {
+                _flushFault = exception;
+                _core.SetException(exception);
+            }
         }
 
         public override void Advance(int bytes) => _inner.Advance(bytes);
@@ -331,11 +376,14 @@ public class FlushOperationStressTests
         public override ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (Volatile.Read(ref _flushFault) is { } fault)
-                return ValueTask.FromException<FlushResult>(fault);
+            lock (_gate)
+            {
+                if (_flushFault is { } fault)
+                    return ValueTask.FromException<FlushResult>(fault);
 
-            _core.Reset();
-            return new ValueTask<FlushResult>(this, _core.Version);
+                _core.Reset();
+                return new ValueTask<FlushResult>(this, _core.Version);
+            }
         }
 
         public FlushResult GetResult(short token) => _core.GetResult(token);
