@@ -45,6 +45,7 @@ public enum ClientFeatureScenario
     ClientInterceptor2,
     ClientInterceptor4,
     ClientInterceptor8,
+    ClientShortCircuit,
     MetricsClientAndServer,
     ClientTraceOnePercent,
     ClientTraceAll
@@ -236,6 +237,8 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
             for (var index = 0; index < 8; index++)
                 builder.AddInterceptor(PassThroughClientInterceptor.Instance);
         }
+        if (scenario == ClientFeatureScenario.ClientShortCircuit)
+            builder.AddInterceptor(ShortCircuitClientInterceptor.Instance);
         return builder;
     }
 
@@ -331,6 +334,16 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
             SharpLinkClientInvocationContext context,
             SharpLinkClientInvocationDelegate next)
             => next(context);
+    }
+
+    private sealed class ShortCircuitClientInterceptor : ISharpLinkClientInterceptor
+    {
+        internal static ShortCircuitClientInterceptor Instance { get; } = new();
+
+        public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+            => ValueTask.FromResult(new SharpLinkClientInvocationResult(30));
     }
 
     private sealed class PassThroughServerInterceptor : ISharpLinkServerInterceptor
