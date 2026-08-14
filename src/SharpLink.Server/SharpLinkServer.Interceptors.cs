@@ -422,7 +422,7 @@ internal sealed partial class SharpLinkServer
 
         if (length == 0)
         {
-            await new ServerInterceptorPipeline(
+            await new ServerPipelineFacts(
                 _serverInterceptors,
                 stub,
                 service,
@@ -442,7 +442,7 @@ internal sealed partial class SharpLinkServer
         {
             arguments.CopyTo(rented);
             var ownedArguments = new ReadOnlySequence<byte>(rented.AsMemory(0, length));
-            await new ServerInterceptorPipeline(
+            await new ServerPipelineFacts(
                 _serverInterceptors,
                 stub,
                 service,
@@ -569,7 +569,7 @@ internal sealed partial class SharpLinkServer
             exception);
     }
 
-    private sealed class ServerInterceptorPipeline
+    private struct ServerPipelineFacts
     {
         private readonly ISharpLinkServerInterceptor[] _interceptors;
         private readonly IRpcStub _stub;
@@ -584,7 +584,7 @@ internal sealed partial class SharpLinkServer
         private readonly CancellationToken _cancellationToken;
         private long _started;
 
-        public ServerInterceptorPipeline(
+        public ServerPipelineFacts(
             ISharpLinkServerInterceptor[] interceptors,
             IRpcStub stub,
             object service,
@@ -741,12 +741,13 @@ internal sealed partial class SharpLinkServer
             [ThreadStatic]
             private static ServerContinuationState? t_cached;
 
-            private ServerInterceptorPipeline? _owner;
+            private ServerPipelineFacts _owner;
+            private bool _hasOwner;
             private int _nextIndex;
             private ValueTask _completion;
             private int _completionAvailable;
 
-            public static ServerContinuationState Rent(ServerInterceptorPipeline owner, int nextIndex)
+            public static ServerContinuationState Rent(ServerPipelineFacts owner, int nextIndex)
             {
                 var state = t_cached;
                 if (state is null)
@@ -754,14 +755,16 @@ internal sealed partial class SharpLinkServer
                 else
                     t_cached = null;
                 state._owner = owner;
+                state._hasOwner = true;
                 state._nextIndex = nextIndex;
                 return state;
             }
 
             public ValueTask InvokeAsync(SharpLinkServerInvocationContext context)
             {
-                var invocation = (_owner ?? throw new InvalidOperationException("The interceptor continuation has expired."))
-                    .InvokeNextAsync(_nextIndex, context);
+                var invocation = _hasOwner
+                    ? _owner.InvokeNextAsync(_nextIndex, context)
+                    : throw new InvalidOperationException("The interceptor continuation has expired.");
                 _completion = invocation;
                 Volatile.Write(ref _completionAvailable, 1);
                 return invocation;
@@ -782,7 +785,7 @@ internal sealed partial class SharpLinkServer
 
             public void Return()
             {
-                _owner = null;
+                _hasOwner = false;
                 _nextIndex = 0;
                 _completion = default;
                 Volatile.Write(ref _completionAvailable, 0);

@@ -19,7 +19,7 @@ public sealed class InterceptorContinuationPoolTests
     public void ServerContinuationStateCacheShouldNotTransferOwnershipAcrossThreads()
         => AssertThreadLocalCache(
             typeof(SharpLinkServer),
-            "ServerInterceptorPipeline",
+            "ServerPipelineFacts",
             "ServerContinuationState",
             "Server");
 
@@ -37,6 +37,7 @@ public sealed class InterceptorContinuationPoolTests
             ?? throw new Exception($"cannot find {component} continuation Rent");
         var returnState = stateType.GetMethod("Return", BindingFlags.Instance | BindingFlags.Public)
             ?? throw new Exception($"cannot find {component} continuation Return");
+        var ownerValue = ownerType.IsValueType ? Activator.CreateInstance(ownerType) : null;
 
         object? first = null;
         object? sameThreadReuse = null;
@@ -46,10 +47,10 @@ public sealed class InterceptorContinuationPoolTests
         {
             try
             {
-                first = rent.Invoke(null, [null, 1])!;
+                first = rent.Invoke(null, [ownerValue, 1])!;
                 returnState.Invoke(first, null);
-                sameThreadReuse = rent.Invoke(null, [null, 2])!;
-                simultaneousSameThreadRent = rent.Invoke(null, [null, 3])!;
+                sameThreadReuse = rent.Invoke(null, [ownerValue, 2])!;
+                simultaneousSameThreadRent = rent.Invoke(null, [ownerValue, 3])!;
                 returnState.Invoke(simultaneousSameThreadRent, null);
                 returnState.Invoke(sameThreadReuse, null);
             }
@@ -71,7 +72,7 @@ public sealed class InterceptorContinuationPoolTests
         {
             try
             {
-                crossThreadRent = rent.Invoke(null, [null, 4])!;
+                crossThreadRent = rent.Invoke(null, [ownerValue, 4])!;
                 returnState.Invoke(crossThreadRent, null);
             }
             catch (Exception exception)
