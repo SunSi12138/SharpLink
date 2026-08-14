@@ -93,29 +93,17 @@ internal sealed partial class SharpLinkClient
             {
                 var result = await InvokeNextAsync(0, _context).ConfigureAwait(false);
                 ValidateResult(result);
-                if (_context.Status == SharpLinkInvocationStatus.Pending)
-                    _context.Status = SharpLinkInvocationStatus.Succeeded;
+                MarkChainSucceeded(_context);
                 return result;
-            }
-            catch (Exception exception) when (IsCancellationException(exception))
-            {
-                _context.Status = SharpLinkInvocationStatus.Cancelled;
-                _context.ErrorCode = SharpLinkErrorCode.Cancelled;
-                _context.Exception = exception;
-                throw;
             }
             catch (Exception exception)
             {
-                _context.Status = SharpLinkInvocationStatus.Failed;
-                _context.ErrorCode = exception is SharpLinkException sharpLinkException
-                    ? sharpLinkException.Code
-                    : SharpLinkErrorCode.Internal;
-                _context.Exception = exception;
+                MarkTerminalFailed(_context, exception);
                 throw;
             }
             finally
             {
-                _context.Elapsed = _client._runtimeContext.TimeProvider.GetElapsedTime(_started);
+                MarkTerminalElapsed(_context);
             }
         }
 
@@ -126,30 +114,24 @@ internal sealed partial class SharpLinkClient
             {
                 var result = await InvokeNextAsync(0, _context).ConfigureAwait(false);
                 ValidateResult(result);
-                if (_context.Status == SharpLinkInvocationStatus.Pending)
-                    _context.Status = SharpLinkInvocationStatus.Succeeded;
+                MarkChainSucceeded(_context);
                 return result.GetValue<TResult>();
-            }
-            catch (Exception exception) when (IsCancellationException(exception))
-            {
-                _context.Status = SharpLinkInvocationStatus.Cancelled;
-                _context.ErrorCode = SharpLinkErrorCode.Cancelled;
-                _context.Exception = exception;
-                throw;
             }
             catch (Exception exception)
             {
-                _context.Status = SharpLinkInvocationStatus.Failed;
-                _context.ErrorCode = exception is SharpLinkException sharpLinkException
-                    ? sharpLinkException.Code
-                    : SharpLinkErrorCode.Internal;
-                _context.Exception = exception;
+                MarkTerminalFailed(_context, exception);
                 throw;
             }
             finally
             {
-                _context.Elapsed = _client._runtimeContext.TimeProvider.GetElapsedTime(_started);
+                MarkTerminalElapsed(_context);
             }
+        }
+
+        protected void MarkChainSucceeded(SharpLinkClientInvocationContext context)
+        {
+            if (context.Status == SharpLinkInvocationStatus.Pending)
+                context.Status = SharpLinkInvocationStatus.Succeeded;
         }
 
         private ValueTask<SharpLinkClientInvocationResult> InvokeNextAsync(
