@@ -34,9 +34,8 @@ public static class InterceptorAttributionEvidenceRunner
         Measure("ClientContinuationState", iterations,
             () => FormatterServices.GetUninitializedObject(clientContinuationState));
 
-        var serverPipeline = FindNested(typeof(SharpLinkServer), "ServerInterceptorPipeline");
-        Measure("ServerInterceptorPipeline", iterations,
-            () => FormatterServices.GetUninitializedObject(serverPipeline));
+        // ServerPipelineFacts is now a value struct, so it contributes no per-call heap object.
+        var serverPipeline = FindNested(typeof(SharpLinkServer), "ServerPipelineFacts");
 
         var serverContinuation = FindNested(serverPipeline, "ServerInterceptorContinuation");
         Measure("ServerInterceptorContinuation", iterations,

@@ -11,6 +11,9 @@ max_ops=200000
 rounds=5
 
 export DOTNET_CLI_HOME="$root/.dotnet-cli"
+export SHARPLINK_BENCHMARK_SHA="$(git -C "$root" rev-parse HEAD 2>/dev/null || echo unknown)"
+
+failures=0
 
 run_one() {
   local component="$1"
@@ -30,6 +33,7 @@ print(f"OK {c}/{s} qps={d['throughputPerSecond']:.0f} cpuUsPerOp={d['cpuUsPerOpe
 PY
   else
     echo "FAIL $component/$scenario r$round"
+    failures=$((failures + 1))
   fi
 }
 
@@ -41,3 +45,7 @@ for round in $(seq 1 "$rounds"); do
 done
 
 echo "DONE"
+if [ "$failures" -ne 0 ]; then
+  echo "FAILED_RUNS=$failures"
+  exit 1
+fi
