@@ -42,6 +42,10 @@ public enum ClientFeatureScenario
     AlwaysAcceptAdmission,
     ClosedCircuitBreaker,
     ClientInterceptor,
+    ClientInterceptor2,
+    ClientInterceptor4,
+    ClientInterceptor8,
+    ClientShortCircuit,
     MetricsClientAndServer,
     ClientTraceOnePercent,
     ClientTraceAll
@@ -218,6 +222,23 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
 
         if (scenario == ClientFeatureScenario.ClientInterceptor)
             builder.AddInterceptor(PassThroughClientInterceptor.Instance);
+        if (scenario == ClientFeatureScenario.ClientInterceptor2)
+        {
+            builder.AddInterceptor(PassThroughClientInterceptor.Instance);
+            builder.AddInterceptor(PassThroughClientInterceptor.Instance);
+        }
+        if (scenario == ClientFeatureScenario.ClientInterceptor4)
+        {
+            for (var index = 0; index < 4; index++)
+                builder.AddInterceptor(PassThroughClientInterceptor.Instance);
+        }
+        if (scenario == ClientFeatureScenario.ClientInterceptor8)
+        {
+            for (var index = 0; index < 8; index++)
+                builder.AddInterceptor(PassThroughClientInterceptor.Instance);
+        }
+        if (scenario == ClientFeatureScenario.ClientShortCircuit)
+            builder.AddInterceptor(ShortCircuitClientInterceptor.Instance);
         return builder;
     }
 
@@ -313,6 +334,16 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
             SharpLinkClientInvocationContext context,
             SharpLinkClientInvocationDelegate next)
             => next(context);
+    }
+
+    private sealed class ShortCircuitClientInterceptor : ISharpLinkClientInterceptor
+    {
+        internal static ShortCircuitClientInterceptor Instance { get; } = new();
+
+        public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+            => ValueTask.FromResult(new SharpLinkClientInvocationResult(30));
     }
 
     private sealed class PassThroughServerInterceptor : ISharpLinkServerInterceptor
