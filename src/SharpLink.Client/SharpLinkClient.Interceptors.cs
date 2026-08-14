@@ -226,28 +226,27 @@ internal sealed partial class SharpLinkClient
         private sealed class ClientContinuationState
         {
             private const int MaxRetained = 4096;
-            private static readonly Stack<ClientContinuationState> Pool = new();
-            private static readonly Lock PoolGate = new();
+            [ThreadStatic]
+            private static ClientContinuationState? t_head;
             private static int s_retainedCount;
 
             private ClientInterceptorState? _owner;
             private int _nextIndex;
             private ValueTask<SharpLinkClientInvocationResult> _completion;
             private int _completionAvailable;
+            private ClientContinuationState? _next;
 
             public static ClientContinuationState Rent(ClientInterceptorState owner, int nextIndex)
             {
-                ClientContinuationState state;
-                lock (PoolGate)
+                var state = t_head;
+                if (state is not null)
                 {
-                    if (Pool.TryPop(out state!))
-                    {
-                        s_retainedCount--;
-                    }
-                    else
-                    {
-                        state = new ClientContinuationState();
-                    }
+                    t_head = state._next;
+                    Interlocked.Decrement(ref s_retainedCount);
+                }
+                else
+                {
+                    state = new ClientContinuationState();
                 }
                 state._owner = owner;
                 state._nextIndex = nextIndex;
@@ -284,14 +283,16 @@ internal sealed partial class SharpLinkClient
                 _completion = default;
                 Volatile.Write(ref _completionAvailable, 0);
 
-                lock (PoolGate)
+                while (true)
                 {
-                    if (s_retainedCount < MaxRetained)
-                    {
-                        s_retainedCount++;
-                        Pool.Push(this);
-                    }
+                    var retained = Volatile.Read(ref s_retainedCount);
+                    if (retained >= MaxRetained)
+                        return;
+                    if (Interlocked.CompareExchange(ref s_retainedCount, retained + 1, retained) == retained)
+                        break;
                 }
+                _next = t_head;
+                t_head = this;
             }
 
             private static async ValueTask AwaitCompletionAndReturnAsync(
