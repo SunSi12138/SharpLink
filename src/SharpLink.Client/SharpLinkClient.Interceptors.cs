@@ -226,27 +226,28 @@ internal sealed partial class SharpLinkClient
         private sealed class ClientContinuationState
         {
             private const int MaxRetained = 4096;
-            [ThreadStatic]
-            private static ClientContinuationState? t_head;
-            private static int s_retainedCount;
+            private const int ShardCount = 32;
+            private static readonly Shard[] Shards = CreateShards();
 
             private ClientInterceptorState? _owner;
             private int _nextIndex;
             private ValueTask<SharpLinkClientInvocationResult> _completion;
             private int _completionAvailable;
-            private ClientContinuationState? _next;
 
             public static ClientContinuationState Rent(ClientInterceptorState owner, int nextIndex)
             {
-                var state = t_head;
-                if (state is not null)
+                var shard = Shards[Thread.CurrentThread.ManagedThreadId & (ShardCount - 1)];
+                ClientContinuationState state;
+                lock (shard.Gate)
                 {
-                    t_head = state._next;
-                    Interlocked.Decrement(ref s_retainedCount);
-                }
-                else
-                {
-                    state = new ClientContinuationState();
+                    if (shard.Stack.TryPop(out state!))
+                    {
+                        shard.Retained--;
+                    }
+                    else
+                    {
+                        state = new ClientContinuationState();
+                    }
                 }
                 state._owner = owner;
                 state._nextIndex = nextIndex;
@@ -283,16 +284,32 @@ internal sealed partial class SharpLinkClient
                 _completion = default;
                 Volatile.Write(ref _completionAvailable, 0);
 
-                while (true)
+                var returnShard = Shards[Thread.CurrentThread.ManagedThreadId & (ShardCount - 1)];
+                lock (returnShard.Gate)
                 {
-                    var retained = Volatile.Read(ref s_retainedCount);
-                    if (retained >= MaxRetained)
-                        return;
-                    if (Interlocked.CompareExchange(ref s_retainedCount, retained + 1, retained) == retained)
-                        break;
+                    if (returnShard.Retained < returnShard.Max)
+                    {
+                        returnShard.Retained++;
+                        returnShard.Stack.Push(this);
+                    }
                 }
-                _next = t_head;
-                t_head = this;
+            }
+
+            private static Shard[] CreateShards()
+            {
+                var shards = new Shard[ShardCount];
+                var perShard = MaxRetained / ShardCount;
+                for (var index = 0; index < ShardCount; index++)
+                    shards[index] = new Shard(perShard);
+                return shards;
+            }
+
+            private sealed class Shard(int max)
+            {
+                public readonly int Max = max;
+                public readonly Lock Gate = new();
+                public readonly Stack<ClientContinuationState> Stack = new(4);
+                public int Retained;
             }
 
             private static async ValueTask AwaitCompletionAndReturnAsync(
