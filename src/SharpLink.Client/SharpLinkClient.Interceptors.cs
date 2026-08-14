@@ -83,7 +83,10 @@ internal sealed partial class SharpLinkClient
         protected SharpLinkClient Client => _client;
         protected SharpLinkClientInvocationContext Context => _context;
 
-        public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync()
+        public ValueTask<SharpLinkClientInvocationResult> InvokeAsync()
+            => RunChainAsync();
+
+        private async ValueTask<SharpLinkClientInvocationResult> RunChainAsync()
         {
             _started = _client._runtimeContext.TimeProvider.GetTimestamp();
             try
@@ -93,6 +96,39 @@ internal sealed partial class SharpLinkClient
                 if (_context.Status == SharpLinkInvocationStatus.Pending)
                     _context.Status = SharpLinkInvocationStatus.Succeeded;
                 return result;
+            }
+            catch (Exception exception) when (IsCancellationException(exception))
+            {
+                _context.Status = SharpLinkInvocationStatus.Cancelled;
+                _context.ErrorCode = SharpLinkErrorCode.Cancelled;
+                _context.Exception = exception;
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _context.Status = SharpLinkInvocationStatus.Failed;
+                _context.ErrorCode = exception is SharpLinkException sharpLinkException
+                    ? sharpLinkException.Code
+                    : SharpLinkErrorCode.Internal;
+                _context.Exception = exception;
+                throw;
+            }
+            finally
+            {
+                _context.Elapsed = _client._runtimeContext.TimeProvider.GetElapsedTime(_started);
+            }
+        }
+
+        protected async ValueTask<TResult> RunTypedChainAsync<TResult>()
+        {
+            _started = _client._runtimeContext.TimeProvider.GetTimestamp();
+            try
+            {
+                var result = await InvokeNextAsync(0, _context).ConfigureAwait(false);
+                ValidateResult(result);
+                if (_context.Status == SharpLinkInvocationStatus.Pending)
+                    _context.Status = SharpLinkInvocationStatus.Succeeded;
+                return result.GetValue<TResult>();
             }
             catch (Exception exception) when (IsCancellationException(exception))
             {
@@ -327,36 +363,32 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        private async ValueTask<SharpLinkClientInvocationResult> InvokeTerminalTrackedAsync(
+        private ValueTask<SharpLinkClientInvocationResult> InvokeTerminalTrackedAsync(
             SharpLinkClientInvocationContext context)
+            => InvokeTerminalAsync(context);
+
+        protected void MarkTerminalSucceeded(SharpLinkClientInvocationContext context)
+            => context.Status = SharpLinkInvocationStatus.Succeeded;
+
+        protected void MarkTerminalFailed(SharpLinkClientInvocationContext context, Exception exception)
         {
-            try
-            {
-                var result = await InvokeTerminalAsync(context).ConfigureAwait(false);
-                context.Status = SharpLinkInvocationStatus.Succeeded;
-                return result;
-            }
-            catch (Exception exception) when (IsCancellationException(exception))
+            if (IsCancellationException(exception))
             {
                 context.Status = SharpLinkInvocationStatus.Cancelled;
                 context.ErrorCode = SharpLinkErrorCode.Cancelled;
-                context.Exception = exception;
-                throw;
             }
-            catch (Exception exception)
+            else
             {
                 context.Status = SharpLinkInvocationStatus.Failed;
                 context.ErrorCode = exception is SharpLinkException sharpLinkException
                     ? sharpLinkException.Code
                     : SharpLinkErrorCode.Internal;
-                context.Exception = exception;
-                throw;
             }
-            finally
-            {
-                context.Elapsed = _client._runtimeContext.TimeProvider.GetElapsedTime(_started);
-            }
+            context.Exception = exception;
         }
+
+        protected void MarkTerminalElapsed(SharpLinkClientInvocationContext context)
+            => context.Elapsed = _client._runtimeContext.TimeProvider.GetElapsedTime(_started);
 
         protected abstract ValueTask<SharpLinkClientInvocationResult> InvokeTerminalAsync(
             SharpLinkClientInvocationContext context);
@@ -391,8 +423,8 @@ internal sealed partial class SharpLinkClient
             _responseCodec = responseCodec;
         }
 
-        public async ValueTask<TResponse> InvokeTypedAsync()
-            => (await InvokeAsync().ConfigureAwait(false)).GetValue<TResponse>();
+        public ValueTask<TResponse> InvokeTypedAsync()
+            => RunTypedChainAsync<TResponse>();
 
         protected override void ValidateResult(SharpLinkClientInvocationResult result)
         {
@@ -404,11 +436,24 @@ internal sealed partial class SharpLinkClient
         protected override async ValueTask<SharpLinkClientInvocationResult> InvokeTerminalAsync(
             SharpLinkClientInvocationContext context)
         {
-            var control = Client.ResolveCallControl(
-                context.Options, true, _method.HasMethodTimeout, _method.MethodTimeout);
-            var response = await Client.InvokeUnaryWithOptionalRetryAsync(
-                _method, _request, _requestCodec, _responseCodec, control, context.CancellationToken).ConfigureAwait(false);
-            return new SharpLinkClientInvocationResult(response);
+            try
+            {
+                var control = Client.ResolveCallControl(
+                    context.Options, true, _method.HasMethodTimeout, _method.MethodTimeout);
+                var response = await Client.InvokeUnaryWithOptionalRetryAsync(
+                    _method, _request, _requestCodec, _responseCodec, control, context.CancellationToken).ConfigureAwait(false);
+                MarkTerminalSucceeded(context);
+                return new SharpLinkClientInvocationResult(response);
+            }
+            catch (Exception exception)
+            {
+                MarkTerminalFailed(context, exception);
+                throw;
+            }
+            finally
+            {
+                MarkTerminalElapsed(context);
+            }
         }
     }
 
@@ -448,12 +493,25 @@ internal sealed partial class SharpLinkClient
         protected override async ValueTask<SharpLinkClientInvocationResult> InvokeTerminalAsync(
             SharpLinkClientInvocationContext context)
         {
-            var control = Client.ResolveCallControl(
-                context.Options, false, _method.HasMethodTimeout, _method.MethodTimeout);
-            await Client.InvokeOneWayCoreAsync(
-                _method,
-                _request, _requestCodec, _streams, control, context.CancellationToken).ConfigureAwait(false);
-            return default;
+            try
+            {
+                var control = Client.ResolveCallControl(
+                    context.Options, false, _method.HasMethodTimeout, _method.MethodTimeout);
+                await Client.InvokeOneWayCoreAsync(
+                    _method,
+                    _request, _requestCodec, _streams, control, context.CancellationToken).ConfigureAwait(false);
+                MarkTerminalSucceeded(context);
+                return default;
+            }
+            catch (Exception exception)
+            {
+                MarkTerminalFailed(context, exception);
+                throw;
+            }
+            finally
+            {
+                MarkTerminalElapsed(context);
+            }
         }
     }
 
@@ -484,8 +542,8 @@ internal sealed partial class SharpLinkClient
             _streams = streams;
         }
 
-        public async ValueTask<TResponse> InvokeTypedAsync()
-            => (await InvokeAsync().ConfigureAwait(false)).GetValue<TResponse>();
+        public ValueTask<TResponse> InvokeTypedAsync()
+            => RunTypedChainAsync<TResponse>();
 
         protected override void ValidateResult(SharpLinkClientInvocationResult result)
         {
@@ -497,13 +555,26 @@ internal sealed partial class SharpLinkClient
         protected override async ValueTask<SharpLinkClientInvocationResult> InvokeTerminalAsync(
             SharpLinkClientInvocationContext context)
         {
-            var control = Client.ResolveCallControl(
-                context.Options, false, _method.HasMethodTimeout, _method.MethodTimeout);
-            var response = await Client.InvokeClientStreamingCoreAsync(
-                _method,
-                _request, _requestCodec, _responseCodec, _streams, control,
-                context.CancellationToken).ConfigureAwait(false);
-            return new SharpLinkClientInvocationResult(response);
+            try
+            {
+                var control = Client.ResolveCallControl(
+                    context.Options, false, _method.HasMethodTimeout, _method.MethodTimeout);
+                var response = await Client.InvokeClientStreamingCoreAsync(
+                    _method,
+                    _request, _requestCodec, _responseCodec, _streams, control,
+                    context.CancellationToken).ConfigureAwait(false);
+                MarkTerminalSucceeded(context);
+                return new SharpLinkClientInvocationResult(response);
+            }
+            catch (Exception exception)
+            {
+                MarkTerminalFailed(context, exception);
+                throw;
+            }
+            finally
+            {
+                MarkTerminalElapsed(context);
+            }
         }
     }
 
@@ -533,9 +604,22 @@ internal sealed partial class SharpLinkClient
         protected override ValueTask<SharpLinkClientInvocationResult> InvokeTerminalAsync(
             SharpLinkClientInvocationContext context)
         {
-            var stream = Client.InvokeServerStreamingCore(
-                _method, _request, _requestCodec, _responseCodec, context.Options, context.CancellationToken);
-            return ValueTask.FromResult(new SharpLinkClientInvocationResult(stream));
+            try
+            {
+                var stream = Client.InvokeServerStreamingCore(
+                    _method, _request, _requestCodec, _responseCodec, context.Options, context.CancellationToken);
+                MarkTerminalSucceeded(context);
+                return ValueTask.FromResult(new SharpLinkClientInvocationResult(stream));
+            }
+            catch (Exception exception)
+            {
+                MarkTerminalFailed(context, exception);
+                throw;
+            }
+            finally
+            {
+                MarkTerminalElapsed(context);
+            }
         }
 
         protected override void ValidateResult(SharpLinkClientInvocationResult result)
@@ -575,10 +659,23 @@ internal sealed partial class SharpLinkClient
         protected override ValueTask<SharpLinkClientInvocationResult> InvokeTerminalAsync(
             SharpLinkClientInvocationContext context)
         {
-            var stream = Client.InvokeDuplexStreamingCore(
-                _method, _request, _requestCodec, _responseCodec, _streams,
-                context.Options, context.CancellationToken);
-            return ValueTask.FromResult(new SharpLinkClientInvocationResult(stream));
+            try
+            {
+                var stream = Client.InvokeDuplexStreamingCore(
+                    _method, _request, _requestCodec, _responseCodec, _streams,
+                    context.Options, context.CancellationToken);
+                MarkTerminalSucceeded(context);
+                return ValueTask.FromResult(new SharpLinkClientInvocationResult(stream));
+            }
+            catch (Exception exception)
+            {
+                MarkTerminalFailed(context, exception);
+                throw;
+            }
+            finally
+            {
+                MarkTerminalElapsed(context);
+            }
         }
 
         protected override void ValidateResult(SharpLinkClientInvocationResult result)
