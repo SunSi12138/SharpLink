@@ -269,7 +269,7 @@ internal sealed partial class RpcSession
         {
             var pendingRead = _pendingReadWait;
             if (pendingRead is null)
-                return _queue.Reader.WaitToReadAsync(_sessionCancellation);
+                return _queue.Reader.WaitToReadAsync(CancellationToken.None);
 
             _pendingReadWait = null;
             return new ValueTask<bool>(pendingRead);
