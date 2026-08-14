@@ -161,8 +161,11 @@ internal sealed partial class RpcSession
                                 _timeProvider.TimestampFrequency);
                         }
 
-                        WriteFrame(frame);
+                        // Take ownership of the frame before any write can fail: a fault during
+                        // WriteFrame/FlushAsync must still release the frame and complete its
+                        // flush waiter through the terminal ReleaseBatch in the finally block.
                         pending.Add(frame);
+                        WriteFrame(frame);
                         bytesAccumulated += frame.Length;
 
                         if (frame.ForceFlush ||
@@ -266,7 +269,7 @@ internal sealed partial class RpcSession
         {
             var pendingRead = _pendingReadWait;
             if (pendingRead is null)
-                return _queue.Reader.WaitToReadAsync(_sessionCancellation);
+                return _queue.Reader.WaitToReadAsync(CancellationToken.None);
 
             _pendingReadWait = null;
             return new ValueTask<bool>(pendingRead);
