@@ -134,6 +134,26 @@ internal sealed partial class SharpLinkClient
                 context.Status = SharpLinkInvocationStatus.Succeeded;
         }
 
+        protected async ValueTask RunVoidChainAsync()
+        {
+            _started = _client._runtimeContext.TimeProvider.GetTimestamp();
+            try
+            {
+                var result = await InvokeNextAsync(0, _context).ConfigureAwait(false);
+                ValidateResult(result);
+                MarkChainSucceeded(_context);
+            }
+            catch (Exception exception)
+            {
+                MarkTerminalFailed(_context, exception);
+                throw;
+            }
+            finally
+            {
+                MarkTerminalElapsed(_context);
+            }
+        }
+
         private ValueTask<SharpLinkClientInvocationResult> InvokeNextAsync(
             int index,
             SharpLinkClientInvocationContext context)
@@ -463,8 +483,8 @@ internal sealed partial class SharpLinkClient
             _streams = streams;
         }
 
-        public async ValueTask InvokeVoidAsync()
-            => _ = await InvokeAsync().ConfigureAwait(false);
+        public ValueTask InvokeVoidAsync()
+            => RunVoidChainAsync();
 
         protected override void ValidateResult(SharpLinkClientInvocationResult result)
         {
