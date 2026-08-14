@@ -225,10 +225,10 @@ internal sealed partial class SharpLinkClient
 
         private sealed class ClientContinuationState
         {
-            // A cross-thread linked freelist is ABA-prone because its next pointer is mutable.
-            // Keep exclusive ownership in a physical-thread slot instead.
-            [ThreadStatic]
-            private static ClientContinuationState? t_cached;
+            private const int MaxRetained = 4096;
+            private static readonly Stack<ClientContinuationState> Pool = new();
+            private static readonly Lock PoolGate = new();
+            private static int s_retainedCount;
 
             private ClientInterceptorState? _owner;
             private int _nextIndex;
@@ -237,11 +237,18 @@ internal sealed partial class SharpLinkClient
 
             public static ClientContinuationState Rent(ClientInterceptorState owner, int nextIndex)
             {
-                var state = t_cached;
-                if (state is null)
-                    state = new ClientContinuationState();
-                else
-                    t_cached = null;
+                ClientContinuationState state;
+                lock (PoolGate)
+                {
+                    if (Pool.TryPop(out state!))
+                    {
+                        s_retainedCount--;
+                    }
+                    else
+                    {
+                        state = new ClientContinuationState();
+                    }
+                }
                 state._owner = owner;
                 state._nextIndex = nextIndex;
                 return state;
@@ -276,7 +283,15 @@ internal sealed partial class SharpLinkClient
                 _nextIndex = 0;
                 _completion = default;
                 Volatile.Write(ref _completionAvailable, 0);
-                t_cached ??= this;
+
+                lock (PoolGate)
+                {
+                    if (s_retainedCount < MaxRetained)
+                    {
+                        s_retainedCount++;
+                        Pool.Push(this);
+                    }
+                }
             }
 
             private static async ValueTask AwaitCompletionAndReturnAsync(

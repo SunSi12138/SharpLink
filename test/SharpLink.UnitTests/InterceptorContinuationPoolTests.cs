@@ -95,8 +95,8 @@ public sealed class InterceptorContinuationPoolTests
         Ensure(simultaneousSameThreadRent is not null &&
                !ReferenceEquals(sameThreadReuse, simultaneousSameThreadRent),
             $"{component} continuation cache must remove a rented state from its local slot");
-        Ensure(crossThreadRent is not null && !ReferenceEquals(sameThreadReuse, crossThreadRent),
-            $"{component} continuation state ownership must never transfer through a cross-thread cache");
+        Ensure(crossThreadRent is not null && !ReferenceEquals(simultaneousSameThreadRent, crossThreadRent),
+            $"{component} continuation pool must not hand out the same state to two concurrent renters");
     }
 
     private static Exception Unwrap(Exception exception)

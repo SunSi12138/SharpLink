@@ -736,10 +736,10 @@ internal sealed partial class SharpLinkServer
 
         private sealed class ServerContinuationState
         {
-            // A cross-thread linked freelist is ABA-prone because its next pointer is mutable.
-            // Keep exclusive ownership in a physical-thread slot instead.
-            [ThreadStatic]
-            private static ServerContinuationState? t_cached;
+            private const int MaxRetained = 4096;
+            private static readonly Stack<ServerContinuationState> Pool = new();
+            private static readonly Lock PoolGate = new();
+            private static int s_retainedCount;
 
             private ServerPipelineFacts _owner;
             private bool _hasOwner;
@@ -749,11 +749,18 @@ internal sealed partial class SharpLinkServer
 
             public static ServerContinuationState Rent(ServerPipelineFacts owner, int nextIndex)
             {
-                var state = t_cached;
-                if (state is null)
-                    state = new ServerContinuationState();
-                else
-                    t_cached = null;
+                ServerContinuationState state;
+                lock (PoolGate)
+                {
+                    if (Pool.TryPop(out state!))
+                    {
+                        s_retainedCount--;
+                    }
+                    else
+                    {
+                        state = new ServerContinuationState();
+                    }
+                }
                 state._owner = owner;
                 state._hasOwner = true;
                 state._nextIndex = nextIndex;
@@ -785,11 +792,20 @@ internal sealed partial class SharpLinkServer
 
             public void Return()
             {
+                _owner = default;
                 _hasOwner = false;
                 _nextIndex = 0;
                 _completion = default;
                 Volatile.Write(ref _completionAvailable, 0);
-                t_cached ??= this;
+
+                lock (PoolGate)
+                {
+                    if (s_retainedCount < MaxRetained)
+                    {
+                        s_retainedCount++;
+                        Pool.Push(this);
+                    }
+                }
             }
 
             private static async ValueTask AwaitCompletionAndReturnAsync(
