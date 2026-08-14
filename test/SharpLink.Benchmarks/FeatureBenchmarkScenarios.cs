@@ -42,6 +42,9 @@ public enum ClientFeatureScenario
     AlwaysAcceptAdmission,
     ClosedCircuitBreaker,
     ClientInterceptor,
+    ClientInterceptor2,
+    ClientInterceptor4,
+    ClientInterceptor8,
     MetricsClientAndServer,
     ClientTraceOnePercent,
     ClientTraceAll
@@ -218,6 +221,21 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
 
         if (scenario == ClientFeatureScenario.ClientInterceptor)
             builder.AddInterceptor(PassThroughClientInterceptor.Instance);
+        if (scenario == ClientFeatureScenario.ClientInterceptor2)
+        {
+            builder.AddInterceptor(PassThroughClientInterceptor.Instance);
+            builder.AddInterceptor(PassThroughClientInterceptor.Instance);
+        }
+        if (scenario == ClientFeatureScenario.ClientInterceptor4)
+        {
+            for (var index = 0; index < 4; index++)
+                builder.AddInterceptor(PassThroughClientInterceptor.Instance);
+        }
+        if (scenario == ClientFeatureScenario.ClientInterceptor8)
+        {
+            for (var index = 0; index < 8; index++)
+                builder.AddInterceptor(PassThroughClientInterceptor.Instance);
+        }
         return builder;
     }
 
