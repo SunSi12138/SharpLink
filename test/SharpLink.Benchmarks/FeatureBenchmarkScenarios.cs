@@ -46,6 +46,9 @@ public enum ClientFeatureScenario
     ClientInterceptor4,
     ClientInterceptor8,
     ClientShortCircuit,
+    ClientInterceptorAsyncBeforeNext,
+    ClientInterceptorAsyncAfterNext,
+    ClientInterceptorAsyncBeforeAndAfter,
     MetricsClientAndServer,
     ClientTraceOnePercent,
     ClientTraceAll
@@ -239,6 +242,12 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
         }
         if (scenario == ClientFeatureScenario.ClientShortCircuit)
             builder.AddInterceptor(ShortCircuitClientInterceptor.Instance);
+        if (scenario == ClientFeatureScenario.ClientInterceptorAsyncBeforeNext)
+            builder.AddInterceptor(AsyncBeforeNextClientInterceptor.Instance);
+        if (scenario == ClientFeatureScenario.ClientInterceptorAsyncAfterNext)
+            builder.AddInterceptor(AsyncAfterNextClientInterceptor.Instance);
+        if (scenario == ClientFeatureScenario.ClientInterceptorAsyncBeforeAndAfter)
+            builder.AddInterceptor(AsyncBeforeAndAfterClientInterceptor.Instance);
         return builder;
     }
 
@@ -344,6 +353,48 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
             SharpLinkClientInvocationContext context,
             SharpLinkClientInvocationDelegate next)
             => ValueTask.FromResult(new SharpLinkClientInvocationResult(30));
+    }
+
+    private sealed class AsyncBeforeNextClientInterceptor : ISharpLinkClientInterceptor
+    {
+        internal static AsyncBeforeNextClientInterceptor Instance { get; } = new();
+
+        public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+        {
+            await Task.Yield();
+            return await next(context).ConfigureAwait(false);
+        }
+    }
+
+    private sealed class AsyncAfterNextClientInterceptor : ISharpLinkClientInterceptor
+    {
+        internal static AsyncAfterNextClientInterceptor Instance { get; } = new();
+
+        public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+        {
+            var result = await next(context).ConfigureAwait(false);
+            await Task.Yield();
+            return result;
+        }
+    }
+
+    private sealed class AsyncBeforeAndAfterClientInterceptor : ISharpLinkClientInterceptor
+    {
+        internal static AsyncBeforeAndAfterClientInterceptor Instance { get; } = new();
+
+        public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+        {
+            await Task.Yield();
+            var result = await next(context).ConfigureAwait(false);
+            await Task.Yield();
+            return result;
+        }
     }
 
     private sealed class PassThroughServerInterceptor : ISharpLinkServerInterceptor
