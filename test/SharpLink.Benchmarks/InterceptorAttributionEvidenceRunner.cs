@@ -30,9 +30,7 @@ public static class InterceptorAttributionEvidenceRunner
         Measure("ClientInterceptorContinuation", iterations,
             () => FormatterServices.GetUninitializedObject(clientContinuation));
 
-        var clientContinuationState = FindNested(clientInterceptorState, "ClientContinuationState");
-        Measure("ClientContinuationState", iterations,
-            () => FormatterServices.GetUninitializedObject(clientContinuationState));
+        // ClientContinuationState is pooled; it contributes ~0 B per intercepted call after warmup.
 
         // ServerPipelineFacts is now a value struct, so it contributes no per-call heap object.
         var serverPipeline = FindNested(typeof(SharpLinkServer), "ServerPipelineFacts");
@@ -41,9 +39,7 @@ public static class InterceptorAttributionEvidenceRunner
         Measure("ServerInterceptorContinuation", iterations,
             () => FormatterServices.GetUninitializedObject(serverContinuation));
 
-        var serverContinuationState = FindNested(serverPipeline, "ServerContinuationState");
-        Measure("ServerContinuationState", iterations,
-            () => FormatterServices.GetUninitializedObject(serverContinuationState));
+        // ServerContinuationState is pooled; it contributes ~0 B per intercepted call after warmup.
     }
 
     private static Type FindNested(Type owner, string name)

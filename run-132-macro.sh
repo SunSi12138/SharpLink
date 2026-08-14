@@ -31,6 +31,10 @@ p, c, s = sys.argv[1], sys.argv[2], sys.argv[3]
 d = json.load(open(p))
 print(f"OK {c}/{s} qps={d['throughputPerSecond']:.0f} cpuUsPerOp={d['cpuUsPerOperation']:.2f} allocBPerOp={d['allocatedBytesPerOperation']:.0f}")
 PY
+    if [ $? -ne 0 ]; then
+      echo "SUMMARY_FAIL $component/$scenario r$round"
+      failures=$((failures + 1))
+    fi
   else
     echo "FAIL $component/$scenario r$round"
     failures=$((failures + 1))
@@ -42,6 +46,9 @@ for round in $(seq 1 "$rounds"); do
   run_one client ClientInterceptor "$round"
   run_one server StaticDefault "$round"
   run_one server ServerInterceptor "$round"
+  run_one server ServerInterceptor2 "$round"
+  run_one server ServerInterceptor4 "$round"
+  run_one server ServerInterceptor8 "$round"
 done
 
 echo "DONE"
