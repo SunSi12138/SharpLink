@@ -289,6 +289,44 @@ public class InterceptorIntegrationTests
     }
 
     [Test]
+    public async Task AsyncBeforeNextClientInterceptorShouldSuspendBeforeNext()
+    {
+        var interceptor = new AsyncBeforeNextBoundaryClientInterceptor();
+        await using var harness = await InterceptorHarness.CreateAsync(clientInterceptor: interceptor);
+        var service = harness.Client.Get<IInterceptorTestService>();
+
+        Ensure(await service.DescribeNumberAsync(41) == 42, "async-before-next unary result");
+        Ensure(interceptor.Context?.Status == SharpLinkInvocationStatus.Succeeded,
+            "async-before-next context status");
+    }
+
+    [Test]
+    public async Task AsyncAfterNextClientInterceptorShouldSuspendAfterNext()
+    {
+        var interceptor = new AsyncAfterNextBoundaryClientInterceptor();
+        await using var harness = await InterceptorHarness.CreateAsync(clientInterceptor: interceptor);
+        var service = harness.Client.Get<IInterceptorTestService>();
+
+        Ensure(await service.DescribeNumberAsync(41) == 42, "async-after-next unary result");
+        Ensure(interceptor.Context?.Status == SharpLinkInvocationStatus.Succeeded,
+            "async-after-next context status");
+    }
+
+    [Test]
+    public async Task AsyncBeforeAndAfterClientInterceptorShouldCoverOneWaySlowPath()
+    {
+        var interceptor = new AsyncBeforeAndAfterBoundaryClientInterceptor();
+        await using var harness = await InterceptorHarness.CreateAsync(clientInterceptor: interceptor);
+        var service = harness.Client.Get<IInterceptorTestService>();
+
+        await service.NotifyAsync(17);
+
+        Ensure(interceptor.Context?.Status == SharpLinkInvocationStatus.Succeeded,
+            "async one-way context status");
+        Ensure(interceptor.Method.Kind == RpcMethodKind.OneWay, "async one-way descriptor shape");
+    }
+
+    [Test]
     public async Task NonNullableResponsesMustRejectNullAtEveryGeneratedBoundary()
     {
         await using var harness = await InterceptorHarness.CreateAsync();
@@ -672,6 +710,55 @@ public class InterceptorIntegrationTests
             };
             var result = await next(context);
             StatusAfterNext = context.Status;
+            return result;
+        }
+    }
+
+    private sealed class AsyncBeforeNextBoundaryClientInterceptor : ISharpLinkClientInterceptor
+    {
+        public SharpLinkClientInvocationContext? Context { get; private set; }
+        public RpcMethodDescriptor Method { get; private set; }
+
+        public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+        {
+            Context = context;
+            Method = context.Method;
+            await Task.Yield();
+            return await next(context).ConfigureAwait(false);
+        }
+    }
+
+    private sealed class AsyncAfterNextBoundaryClientInterceptor : ISharpLinkClientInterceptor
+    {
+        public SharpLinkClientInvocationContext? Context { get; private set; }
+
+        public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+        {
+            Context = context;
+            var result = await next(context).ConfigureAwait(false);
+            await Task.Yield();
+            return result;
+        }
+    }
+
+    private sealed class AsyncBeforeAndAfterBoundaryClientInterceptor : ISharpLinkClientInterceptor
+    {
+        public SharpLinkClientInvocationContext? Context { get; private set; }
+        public RpcMethodDescriptor Method { get; private set; }
+
+        public async ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
+            SharpLinkClientInvocationContext context,
+            SharpLinkClientInvocationDelegate next)
+        {
+            Context = context;
+            Method = context.Method;
+            await Task.Yield();
+            var result = await next(context).ConfigureAwait(false);
+            await Task.Yield();
             return result;
         }
     }
