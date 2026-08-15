@@ -23,10 +23,10 @@ internal sealed partial class RpcSession
         private readonly Action<Exception> _onTransportFaulted;
         private readonly Channel<OwnedFrame> _queue;
         private readonly Lock _admissionGate = new();
+        private readonly DeadlineReadRace _deadlineRace;
         private readonly Task _pumpTask;
         private TaskCompletionSource<bool>? _capacityChanged;
         private Task<bool>? _pendingReadWait;
-        private CancellationTokenSource? _delayCancellation;
         private long _queuedBytes;
         private int _stopped;
         private int _faulted;
@@ -86,6 +86,7 @@ internal sealed partial class RpcSession
                 SingleWriter = false,
                 AllowSynchronousContinuations = false
             });
+            _deadlineRace = new DeadlineReadRace(_timeProvider);
             _pumpTask = RunAsync();
         }
 
@@ -202,7 +203,7 @@ internal sealed partial class RpcSession
             }
             finally
             {
-                _delayCancellation?.Dispose();
+                _deadlineRace.Dispose();
                 ReleaseBatch(pending, terminalException);
                 DrainQueuedFrames(terminalException);
                 PulseCapacityWaiters();
@@ -230,7 +231,7 @@ internal sealed partial class RpcSession
 
         private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchDeadline)
         {
-            var waitToRead = _queue.Reader.WaitToReadAsync(_sessionCancellation);
+            var waitToRead = _queue.Reader.WaitToReadAsync(CancellationToken.None);
             if (waitToRead.IsCompletedSuccessfully)
                 return waitToRead.Result;
 
@@ -246,22 +247,25 @@ internal sealed partial class RpcSession
                     return false;
 
                 var delay = remaining > MaximumTimerDelay ? MaximumTimerDelay : remaining;
-                var delayCancellation = _delayCancellation;
-                if (delayCancellation is null || delayCancellation.IsCancellationRequested)
-                {
-                    delayCancellation = new CancellationTokenSource();
-                    _delayCancellation = delayCancellation;
-                }
-                var delayTask = Task.Delay(delay, _timeProvider, delayCancellation.Token);
-                if (await Task.WhenAny(pendingRead, delayTask).ConfigureAwait(false) == pendingRead)
+                if (await _deadlineRace.WaitForReadOrTimeout(pendingRead, delay).ConfigureAwait(false))
                 {
                     _pendingReadWait = null;
-                    delayCancellation.Cancel();
-                    return await pendingRead.ConfigureAwait(false);
+                    return true;
                 }
 
-                if (remaining <= MaximumTimerDelay)
-                    return false;
+                switch (_deadlineRace.Outcome)
+                {
+                    case DeadlineReadRace.RaceOutcome.ReadClosed:
+                        _pendingReadWait = null;
+                        return false;
+                    case DeadlineReadRace.RaceOutcome.TimedOut when remaining > MaximumTimerDelay:
+                        // A chunk of a very long deadline expired: re-arm the same retained read.
+                        continue;
+                    default:
+                        // The deadline expired and the pending read was not consumed: it stays
+                        // retained in _pendingReadWait for WaitToReadAsync to re-observe.
+                        return false;
+                }
             }
         }
 
