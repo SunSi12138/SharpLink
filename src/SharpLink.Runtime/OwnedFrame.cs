@@ -7,7 +7,8 @@ namespace SharpLink.Runtime;
 internal readonly struct OwnedFrame(
     IRpcByteBufferWriter owner,
     bool forceFlush,
-    TaskCompletionSource<bool>? flushCompletion)
+    TaskCompletionSource<bool>? flushCompletion,
+    bool isProtocolProgress)
 {
     public IRpcByteBufferWriter Owner { get; } = owner;
 
@@ -18,4 +19,12 @@ internal readonly struct OwnedFrame(
     public bool ForceFlush { get; } = forceFlush;
 
     public TaskCompletionSource<bool>? FlushCompletion { get; } = flushCompletion;
+
+    /// <summary>
+    /// True when the frame carries protocol progress (ping/pong, cancel,
+    /// window update, go-away) rather than RPC data. The send pump admits and
+    /// drains progress frames against a small reserved byte headroom and a
+    /// bounded priority burst so stream saturation cannot starve them.
+    /// </summary>
+    public bool IsProtocolProgress { get; } = isProtocolProgress;
 }
