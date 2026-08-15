@@ -18,33 +18,52 @@ public class SendPumpProgressIsolationTests
     [Test]
     public async Task ProgressFrameOvertakesEarlierQueuedBulkFrames()
     {
-        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var clock = new ManualTimeProvider();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(clock)
+            .Build(includeGeneratedAssemblyCatalog: false);
         var input = new Pipe();
         var output = new Pipe();
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "progress-overtakes-bulk",
             input.Reader,
             output.Writer,
-            RpcSessionTestFixture.ClientOptions(context));
+            RpcSessionTestFixture.ClientOptions(
+                context,
+                new RpcSessionFlushOptions(1024 * 1024, TimeSpan.FromSeconds(10))));
         try
         {
+            // Park the pump in the timed-batch deadline wait, then queue bulk
+            // frames followed by a progress frame while the pump is blocked.
+            session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response, 128, requestId: 1));
+            await WaitUntilAsync(() => clock.EarliestTimerTimestamp != long.MaxValue);
+
+            // Enqueue the progress frame first so the pump's wake-up race sees
+            // it regardless of which read claims first, then the bulk frames.
+            session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Ping, 8, requestId: 0));
             for (var index = 0; index < 32; index++)
             {
                 session.SendPacket(CreateFrame(
-                    session, ProtocolV2FrameType.Response, 256, checked((ulong)index + 1)));
+                    session, ProtocolV2FrameType.Response, 256, checked((ulong)index + 2)));
             }
-            session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Ping, 8, requestId: 0));
-
-            var types = await ReadFrameTypesAsync(output.Reader, context.Protocol, expectedFrames: 33);
-            Ensure(types.Count == 33, $"expected 33 frames, read {types.Count}");
-            Ensure(types[0] == ProtocolV2FrameType.Ping,
+            // The pump drains the burst and the bulk frames, then parks the
+            // remaining batch in a fresh deadline wait; the reader advances the
+            // manual clock whenever the pipe has no data so every parked batch
+            // flushes deterministically.
+            var types = await ReadFrameTypesWithClockAsync(
+                output.Reader, context.Protocol, clock, expectedFrames: 34);
+            Ensure(types.Count == 34, $"expected 34 frames, read {types.Count}");
+            Ensure(types[0] == ProtocolV2FrameType.Response,
+                "the frame already staged before the deadline wait keeps its position");
+            Ensure(types[1] == ProtocolV2FrameType.Ping,
                 "a progress frame must be flushed before bulk frames that were queued earlier");
-            Ensure(types.Skip(1).All(static type => type == ProtocolV2FrameType.Response),
+            Ensure(types.Skip(2).All(static type => type == ProtocolV2FrameType.Response),
                 "the bulk frames behind the progress frame must keep their class");
         }
         finally
         {
             await session.DisposeAsync();
+            await clock.WaitForTimersDrainedAsync();
             await input.Writer.CompleteAsync();
             await output.Reader.CompleteAsync();
         }
@@ -125,34 +144,53 @@ public class SendPumpProgressIsolationTests
     [Test]
     public async Task ProgressBurstDoesNotStarveNormalFrames()
     {
-        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var clock = new ManualTimeProvider();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(clock)
+            .Build(includeGeneratedAssemblyCatalog: false);
         var input = new Pipe();
         var output = new Pipe();
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "progress-burst-normal-interleave",
             input.Reader,
             output.Writer,
-            RpcSessionTestFixture.ClientOptions(context));
+            RpcSessionTestFixture.ClientOptions(
+                context,
+                new RpcSessionFlushOptions(1024 * 1024, TimeSpan.FromSeconds(10))));
         try
         {
-            for (var index = 0; index < 1000; index++)
+            // Park the pump in the timed-batch deadline wait, then queue a
+            // progress storm followed by normal frames while it is blocked.
+            session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response, 128, requestId: 99));
+            await WaitUntilAsync(() => clock.EarliestTimerTimestamp != long.MaxValue);
+
+            for (var index = 0; index < 24; index++)
                 session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Ping, 8, requestId: 0));
             for (var index = 1; index <= 10; index++)
                 session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response, 64, checked((ulong)index)));
-
-            var types = await ReadFrameTypesAsync(output.Reader, context.Protocol, expectedFrames: 1010);
-            Ensure(types.Count == 1010, $"expected 1010 frames, read {types.Count}");
-            // The first progress burst drains at most 8 frames, then the normal
-            // queue is drained completely: responses 1..10 must appear right
-            // after the first burst and before the second progress burst.
-            Ensure(types.Skip(8).Take(10).All(static type => type == ProtocolV2FrameType.Response),
-                "normal frames must be drained after the first progress burst");
-            Ensure(types.Take(8).All(static type => type == ProtocolV2FrameType.Ping),
-                "the first eight frames must be the initial progress burst");
+            // The pump drains the first progress burst and the whole normal
+            // queue, then parks the remaining responses in a fresh deadline
+            // wait; the reader advances the manual clock whenever the pipe has
+            // no data so every parked batch flushes deterministically.
+            var types = await ReadFrameTypesWithClockAsync(
+                output.Reader, context.Protocol, clock, expectedFrames: 35);
+            Ensure(types.Count == 35, $"expected 35 frames, read {types.Count}");
+            // Deterministic drain order after the pump wakes: the first
+            // progress burst (8 frames), then the complete normal queue (10
+            // responses), then the remaining progress storm. The normal class
+            // is drained between bursts even under a multi-burst progress
+            // backlog, so bulk traffic cannot starve.
+            Ensure(types.Skip(1).Take(8).All(static type => type == ProtocolV2FrameType.Ping),
+                "the first eight frames after wake-up must be the initial progress burst");
+            Ensure(types.Skip(9).Take(10).All(static type => type == ProtocolV2FrameType.Response),
+                "all ten normal frames must drain between progress bursts");
+            Ensure(types.Skip(19).All(static type => type == ProtocolV2FrameType.Ping),
+                "the remaining progress storm follows the drained normal queue");
         }
         finally
         {
             await session.DisposeAsync();
+            await clock.WaitForTimersDrainedAsync();
             await input.Writer.CompleteAsync();
             await output.Reader.CompleteAsync();
         }
@@ -382,7 +420,9 @@ public class SendPumpProgressIsolationTests
                 }
             }
 
-            var waiterFrame = CreateFrame(session, ProtocolV2FrameType.Response, 128, requestId: 99);
+            // A large waiter frame cannot squeeze into the headroom-limited
+            // normal budget, so the backpressure waiter must park.
+            var waiterFrame = CreateFrame(session, ProtocolV2FrameType.Response, 8 * 1024, requestId: 99);
             var waiter = Task.Run(async () => await session
                 .SendPacketWithBackpressureAsync(waiterFrame)
                 .ConfigureAwait(false));
@@ -572,6 +612,36 @@ public class SendPumpProgressIsolationTests
             reader.AdvanceTo(result.Buffer.End);
             if (result.IsCompleted && buffer.Length == 0)
                 break;
+        }
+        return types;
+    }
+
+    private static async Task<List<ProtocolV2FrameType>> ReadFrameTypesWithClockAsync(
+        PipeReader reader,
+        SharpLinkProtocolOptions limits,
+        ManualTimeProvider clock,
+        int expectedFrames)
+    {
+        var types = new List<ProtocolV2FrameType>();
+        for (var attempt = 0; attempt < 64 && types.Count < expectedFrames; attempt++)
+        {
+            try
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+                var result = await reader.ReadAsync(timeout.Token).AsTask();
+                var buffer = result.Buffer;
+                while (ProtocolV2FrameParser.TryReadFrame(ref buffer, limits, out var header, out _))
+                    types.Add(header.Type);
+                reader.AdvanceTo(result.Buffer.End);
+                if (result.IsCompleted && buffer.Length == 0)
+                    break;
+            }
+            catch (OperationCanceledException)
+            {
+                // No data yet: the pump is parked in a deadline wait — advance
+                // the manual clock so the parked batch flushes.
+                clock.Advance(TimeSpan.FromSeconds(10));
+            }
         }
         return types;
     }
