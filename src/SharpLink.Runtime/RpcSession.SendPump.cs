@@ -589,8 +589,6 @@ internal sealed partial class RpcSession
 
         private void ReportFaultOnce(Exception exception)
         {
-            if (Environment.GetEnvironmentVariable("SHARPLINK_DEBUG_FAULT") == "1")
-                Console.WriteLine($"[SendPumpFault] {exception}");
             if (Interlocked.Exchange(ref _faulted, 1) != 0)
                 return;
             Interlocked.Exchange(ref _stopped, 1);

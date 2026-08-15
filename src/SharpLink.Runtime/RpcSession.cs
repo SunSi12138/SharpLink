@@ -474,8 +474,6 @@ internal sealed partial class RpcSession
 
     private void Fault(Exception exception)
     {
-        if (Environment.GetEnvironmentVariable("SHARPLINK_DEBUG_FAULT") == "1")
-            Console.WriteLine($"[SessionFault] {exception}");
         var structured = exception as SharpLinkException ??
             new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Transport closed.", exception);
         var terminal = new SessionTerminal(SessionTerminalState.Faulted, structured);
