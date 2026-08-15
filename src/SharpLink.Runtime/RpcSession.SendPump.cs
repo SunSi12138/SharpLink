@@ -345,12 +345,25 @@ internal sealed partial class RpcSession
 
         private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchDeadline)
         {
-            var waitToRead = _normalQueue.Reader.WaitToReadAsync(CancellationToken.None);
-            if (waitToRead.IsCompletedSuccessfully)
-                return waitToRead.Result;
-
-            var pendingRead = waitToRead.AsTask();
-            _pendingReadWait = pendingRead;
+            // Reuse a retained normal read when one is still registered on the
+            // channel: the TryPeek fast path in WaitForFramesAsync can leave a
+            // retained read behind, and re-creating reads every deadline cycle
+            // would abandon one registered read per cycle.
+            Task<bool> pendingRead;
+            if (_pendingReadWait is { } retained)
+            {
+                pendingRead = retained;
+                if (pendingRead.IsCompletedSuccessfully)
+                    return pendingRead.Result;
+            }
+            else
+            {
+                var waitToRead = _normalQueue.Reader.WaitToReadAsync(CancellationToken.None);
+                if (waitToRead.IsCompletedSuccessfully)
+                    return waitToRead.Result;
+                pendingRead = waitToRead.AsTask();
+                _pendingReadWait = pendingRead;
+            }
             // The progress read ends the batching deadline immediately so protocol
             // progress is not delayed by the batch window; it is retained across
             // timer chunks like the normal read.
@@ -423,7 +436,11 @@ internal sealed partial class RpcSession
                     ? current <= limit - bytes
                     : current == 0;
                 if (!canReserve)
+                {
+                    if (Environment.GetEnvironmentVariable("SHARPLINK_DEBUG_RESERVE") == "1")
+                        Console.WriteLine($"[ReserveFull] bytes={bytes} progress={isProtocolProgress} limit={limit} current={current}");
                     return false;
+                }
                 if (Interlocked.CompareExchange(ref _queuedBytes, current + bytes, current) == current)
                 {
                     SharpLinkTelemetry.AddSendQueueBytes(bytes);
