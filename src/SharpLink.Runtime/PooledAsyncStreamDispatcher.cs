@@ -50,6 +50,9 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     private DisposeCompletion? _disposeCompletion;
     private TaskCompletionSource? _remoteTerminalPublication;
     private Action? _beforeConcurrentDisposeCompletionInstallForTests;
+    private Action? _beforeRemoteTerminalPublicationPublishForTests;
+    private Action? _beforeRemoteTerminalPublicationCompletionInstallForTests;
+    private Action? _afterRemoteTerminalPublicationCompletionInstallForTests;
     private Action? _beforeProducerOperationAcquireForTests;
     private Action? _beforeConsumerWaitOwnerAcquireForTests;
     private Action? _afterConsumerWaitResultForTests;
@@ -223,6 +226,9 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         Volatile.Write(ref _terminalDispatchStateClosed, 0);
         Volatile.Write(ref _remoteTerminalPublication, null);
         Volatile.Write(ref _beforeConcurrentDisposeCompletionInstallForTests, null);
+        Volatile.Write(ref _beforeRemoteTerminalPublicationPublishForTests, null);
+        Volatile.Write(ref _beforeRemoteTerminalPublicationCompletionInstallForTests, null);
+        Volatile.Write(ref _afterRemoteTerminalPublicationCompletionInstallForTests, null);
         Volatile.Write(ref _beforeProducerOperationAcquireForTests, null);
         Volatile.Write(ref _beforeConsumerWaitOwnerAcquireForTests, null);
         Volatile.Write(ref _afterConsumerWaitResultForTests, null);
@@ -393,6 +399,17 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     internal void SetBeforeConcurrentDisposeCompletionInstallForTests(Action? callback)
         => Volatile.Write(ref _beforeConcurrentDisposeCompletionInstallForTests, callback);
 
+    // Gates the remote-terminal publication in Complete's finally so a racing DisposeAsync can
+    // deterministically install its completion while the publication state is still 1 (issue #206).
+    internal void SetBeforeRemoteTerminalPublicationPublishForTests(Action? callback)
+        => Volatile.Write(ref _beforeRemoteTerminalPublicationPublishForTests, callback);
+
+    internal void SetBeforeRemoteTerminalPublicationCompletionInstallForTests(Action? callback)
+        => Volatile.Write(ref _beforeRemoteTerminalPublicationCompletionInstallForTests, callback);
+
+    internal void SetAfterRemoteTerminalPublicationCompletionInstallForTests(Action? callback)
+        => Volatile.Write(ref _afterRemoteTerminalPublicationCompletionInstallForTests, callback);
+
     internal void SetBeforeProducerOperationAcquireForTests(Action? callback)
         => Volatile.Write(ref _beforeProducerOperationAcquireForTests, callback);
 
@@ -488,10 +505,21 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         }
         finally
         {
+            Volatile.Read(ref _beforeRemoteTerminalPublicationPublishForTests)?.Invoke();
+
             // Publish only after the first remote Close and Signal are complete. A racing
             // consumer DisposeAsync then performs its own second Close in sequence.
             Volatile.Write(ref _remoteTerminalPublicationState, 2);
-            Volatile.Read(ref _remoteTerminalPublication)?.TrySetResult();
+
+            // Fenced re-read (issue #206): a Volatile.Read here can be performed before the
+            // release store above becomes globally visible (x86 store-buffer reordering against
+            // a cache line the consumer is concurrently reading), so a waiter that installs its
+            // completion between the two accesses would miss the signal while its own state
+            // re-check still observes 1 — the dispose then hangs forever and strands its
+            // NotInParallel constraint key in the test engine. Interlocked.CompareExchange
+            // with equal operands is a full-fence read that returns the latest value and
+            // writes nothing, so it cannot observe the field before the state store commits.
+            Interlocked.CompareExchange(ref _remoteTerminalPublication, null, null)?.TrySetResult();
         }
     }
 
@@ -721,6 +749,8 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         if (Volatile.Read(ref _remoteTerminalPublicationState) == 2)
             return ValueTask.CompletedTask;
 
+        Volatile.Read(ref _beforeRemoteTerminalPublicationCompletionInstallForTests)?.Invoke();
+
         var completion = Volatile.Read(ref _remoteTerminalPublication);
         if (completion is null)
         {
@@ -728,7 +758,12 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
             completion = Interlocked.CompareExchange(ref _remoteTerminalPublication, created, null) ?? created;
         }
 
-        if (Volatile.Read(ref _remoteTerminalPublicationState) == 2)
+        Volatile.Read(ref _afterRemoteTerminalPublicationCompletionInstallForTests)?.Invoke();
+
+        // Fenced re-read (issue #206): mirrors the publisher-side fence in Complete. The
+        // install CAS above is already a full barrier, but a fenced read keeps the two sides
+        // symmetric so neither half of the double-check can observe a stale publication state.
+        if (Interlocked.CompareExchange(ref _remoteTerminalPublicationState, 0, 0) == 2)
             completion.TrySetResult();
 
         return new ValueTask(completion.Task);
@@ -870,7 +905,11 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         // common first-dispose path needs neither a lock nor a completion allocation.
         Signal();
         Volatile.Write(ref _disposeFinalizedLeaseState, disposingLeaseState);
-        var completion = Volatile.Read(ref _disposeCompletion);
+        // Fenced re-read (issue #206): same store->load hazard as the remote-terminal
+        // publication pair — a plain Volatile.Read could observe a null completion before the
+        // finalization store above is globally visible and miss a waiter that installed itself
+        // between the two accesses.
+        var completion = Interlocked.CompareExchange(ref _disposeCompletion, null, null);
         if (completion?.LeaseState == disposingLeaseState)
             completion.Completion.TrySetResult();
 
@@ -1104,6 +1143,9 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         Volatile.Write(ref _disposeCompletion, null);
         Volatile.Write(ref _remoteTerminalPublication, null);
         Volatile.Write(ref _beforeConcurrentDisposeCompletionInstallForTests, null);
+        Volatile.Write(ref _beforeRemoteTerminalPublicationPublishForTests, null);
+        Volatile.Write(ref _beforeRemoteTerminalPublicationCompletionInstallForTests, null);
+        Volatile.Write(ref _afterRemoteTerminalPublicationCompletionInstallForTests, null);
         Volatile.Write(ref _beforeProducerOperationAcquireForTests, null);
         Volatile.Write(ref _beforeConsumerWaitOwnerAcquireForTests, null);
         Volatile.Write(ref _afterConsumerWaitResultForTests, null);
@@ -1186,6 +1228,9 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
                 Volatile.Read(ref _disposeCompletion) is not null ||
                 Volatile.Read(ref _remoteTerminalPublication) is not null ||
                 Volatile.Read(ref _beforeConcurrentDisposeCompletionInstallForTests) is not null ||
+                Volatile.Read(ref _beforeRemoteTerminalPublicationPublishForTests) is not null ||
+                Volatile.Read(ref _beforeRemoteTerminalPublicationCompletionInstallForTests) is not null ||
+                Volatile.Read(ref _afterRemoteTerminalPublicationCompletionInstallForTests) is not null ||
                 Volatile.Read(ref _beforeProducerOperationAcquireForTests) is not null ||
                 Volatile.Read(ref _beforeConsumerWaitOwnerAcquireForTests) is not null ||
                 Volatile.Read(ref _afterConsumerWaitResultForTests) is not null ||
