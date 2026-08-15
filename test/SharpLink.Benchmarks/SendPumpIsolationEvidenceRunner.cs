@@ -204,10 +204,22 @@ public static class SendPumpIsolationEvidenceRunner
             producers.Add(RunQuietly(() => QueueSamplerAsync(session, queueBytesSampler, stop.Token)));
 
             // Warmup, then measure over a clean window.
-            Console.WriteLine("[Probe] warmup complete, starting measurement window");
-            await Task.Delay(Warmup, stop.Token).ConfigureAwait(false);
-            recorder.BeginMeasurement();
-            output.BeginMeasurement();
+            // A stalled transport cannot drain, so the progress headroom
+            // admission happens while the queue fills for the first time:
+            // measure from the cold queue instead of discarding that fill in
+            // a warmup.
+            if (config.StallFlushes)
+            {
+                recorder.BeginMeasurement();
+                output.BeginMeasurement();
+            }
+            else
+            {
+                Console.WriteLine("[Probe] warmup complete, starting measurement window");
+                await Task.Delay(Warmup, stop.Token).ConfigureAwait(false);
+                recorder.BeginMeasurement();
+                output.BeginMeasurement();
+            }
             var measurementStarted = Stopwatch.GetTimestamp();
             await Task.Delay(TimeSpan.FromSeconds(config.DurationSeconds), stop.Token).ConfigureAwait(false);
             var measurementStopped = Stopwatch.GetTimestamp();

@@ -168,29 +168,81 @@ public class SendPumpProgressIsolationTests
                 session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Ping, 8, requestId: 0));
             for (var index = 1; index <= 10; index++)
                 session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response, 64, checked((ulong)index)));
-            // The pump drains the first progress burst and the whole normal
-            // queue, then parks the remaining responses in a fresh deadline
-            // wait; the reader advances the manual clock whenever the pipe has
-            // no data so every parked batch flushes deterministically.
+            // The pump drains the whole progress backlog first, then the
+            // complete normal queue; the reader advances the manual clock
+            // whenever the pipe has no data so every parked batch flushes
+            // deterministically.
             var types = await ReadFrameTypesWithClockAsync(
                 output.Reader, context.Protocol, clock, expectedFrames: 35);
             Ensure(types.Count == 35, $"expected 35 frames, read {types.Count}");
-            // Deterministic drain order after the pump wakes: the first
-            // progress burst (8 frames), then the complete normal queue (10
-            // responses), then the remaining progress storm. The normal class
-            // is drained between bursts even under a multi-burst progress
-            // backlog, so bulk traffic cannot starve.
-            Ensure(types.Skip(1).Take(8).All(static type => type == ProtocolV2FrameType.Ping),
-                "the first eight frames after wake-up must be the initial progress burst");
-            Ensure(types.Skip(9).Take(10).All(static type => type == ProtocolV2FrameType.Response),
-                "all ten normal frames must drain between progress bursts");
-            Ensure(types.Skip(19).All(static type => type == ProtocolV2FrameType.Ping),
-                "the remaining progress storm follows the drained normal queue");
+            // Deterministic drain order after the pump wakes: the full
+            // progress backlog, then all ten normal frames. Even with a
+            // multi-burst progress backlog queued ahead of them, the normal
+            // frames are all drained in one normal-queue pass, so bulk
+            // traffic cannot starve behind protocol progress.
+            Ensure(types.Skip(1).Take(24).All(static type => type == ProtocolV2FrameType.Ping),
+                "the full progress backlog must drain first");
+            Ensure(types.Skip(25).Take(10).All(static type => type == ProtocolV2FrameType.Response),
+                "all ten normal frames must drain in one pass after the progress backlog");
         }
         finally
         {
             await session.DisposeAsync();
             await clock.WaitForTimersDrainedAsync();
+            await input.Writer.CompleteAsync();
+            await output.Reader.CompleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task ProgressInterleaveServesProgressWhileNormalQueueNeverEmpties()
+    {
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var input = new Pipe();
+        var output = new Pipe();
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "progress-interleave-mid-while",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ClientOptions(context));
+        try
+        {
+            // With no reader the pump can write only two batches before its
+            // flush blocks on the unconsumed pipe, so the progress frames
+            // enqueued after the bulk frames always land while the pump is
+            // inside the normal-queue drain loop.
+            for (var index = 1; index <= 130; index++)
+            {
+                session.SendPacket(CreateFrame(
+                    session, ProtocolV2FrameType.Response, 8 * 1024, checked((ulong)index)));
+            }
+            for (var index = 0; index < 10; index++)
+                session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Ping, 8, requestId: 0));
+
+            var types = await ReadFrameTypesAsync(output.Reader, context.Protocol, expectedFrames: 140);
+            Ensure(types.Count == 140, $"expected 140 frames, read {types.Count}");
+            // The pump is parked inside the normal-queue drain (its flush is
+            // blocked on the unconsumed pipe), so the ten progress frames must
+            // be served at the interleave boundary or, when the pump wakes
+            // late, at the loop top: either way they drain as one contiguous
+            // batch and are never deferred behind the entire bulk backlog.
+            var pingIndices = new List<int>();
+            for (var index = 0; index < types.Count; index++)
+            {
+                if (types[index] == ProtocolV2FrameType.Ping)
+                    pingIndices.Add(index);
+            }
+            Ensure(pingIndices.Count == 10, $"expected 10 pings, read {pingIndices.Count}");
+            Ensure(pingIndices.SequenceEqual(Enumerable.Range(pingIndices[0], 10)),
+                $"the progress frames must drain as one contiguous batch (indices {string.Join(',', pingIndices)})");
+            Ensure(pingIndices[9] < types.Count - 1,
+                "the progress batch must flush before the final bulk frames");
+            Ensure(types.Where(static type => type == ProtocolV2FrameType.Response).Count() == 130,
+                "all bulk frames must be delivered around the progress batch");
+        }
+        finally
+        {
+            await session.DisposeAsync();
             await input.Writer.CompleteAsync();
             await output.Reader.CompleteAsync();
         }

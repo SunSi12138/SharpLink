@@ -8,10 +8,12 @@ internal sealed partial class RpcSession
 
         // Protocol-progress isolation constants (issue #163): the normal class
         // cannot occupy the final ProgressReserveBytes of the queue, and the
-        // drain interleaves at most ProgressBurstFrames progress frames between
-        // NormalFramesPerInterleave normal frames so neither class can starve
-        // the other.
-        private const int ProgressBurstFrames = 8;
+        // pump fully drains the progress queue at the loop top and between
+        // every NormalFramesPerInterleave normal frames. The interleave
+        // frequency (not a capped burst) is the fairness bound: a capped burst
+        // cannot keep up with realistic progress rates (window updates and
+        // cancels scale with throughput), which would let the progress queue
+        // backlog without limit.
         private const int NormalFramesPerInterleave = 64;
         private const int ProgressReserveMinimumBytes = 4 * 1024;
         private const int ProgressReserveMaximumBytes = 64 * 1024;
@@ -191,7 +193,7 @@ internal sealed partial class RpcSession
             {
                 while (await WaitForFramesAsync().ConfigureAwait(false))
                 {
-                    if (DrainProgressBurst(pending, ref bytesAccumulated))
+                    if (DrainProgressQueue(pending, ref bytesAccumulated))
                     {
                         // Progress frames must not wait for a full batch:
                         // flush whatever the batch holds right now.
@@ -217,7 +219,6 @@ internal sealed partial class RpcSession
                         pending.Add(frame);
                         WriteFrame(frame);
                         bytesAccumulated += frame.Length;
-                        normalFramesSinceInterleave++;
 
                         if (frame.ForceFlush ||
                             _flushMode == FlushMode.LowLatency ||
@@ -226,14 +227,18 @@ internal sealed partial class RpcSession
                             await FlushAndReleaseAsync(pending).ConfigureAwait(false);
                             bytesAccumulated = 0;
                             batchDeadline = 0;
-                            normalFramesSinceInterleave = 0;
                         }
-                        else if (normalFramesSinceInterleave >= NormalFramesPerInterleave)
+
+                        // Bounded progress interleave: the progress check is
+                        // independent of flush boundaries, otherwise frames at
+                        // or above the flush threshold would flush every time
+                        // and the interleave would never fire, starving the
+                        // progress queue while the normal queue never empties.
+                        normalFramesSinceInterleave++;
+                        if (normalFramesSinceInterleave >= NormalFramesPerInterleave)
                         {
-                            // Bounded progress interleave: check the progress
-                            // queue even while the normal queue never empties.
                             normalFramesSinceInterleave = 0;
-                            if (DrainProgressBurst(pending, ref bytesAccumulated))
+                            if (DrainProgressQueue(pending, ref bytesAccumulated))
                             {
                                 await FlushAndReleaseAsync(pending).ConfigureAwait(false);
                                 bytesAccumulated = 0;
@@ -246,8 +251,13 @@ internal sealed partial class RpcSession
                         continue;
 
                     if (_flushMode == FlushMode.TimedBatch &&
-                        await WaitForMoreUntilDeadlineAsync(batchDeadline).ConfigureAwait(false))
+                        await WaitForMoreUntilDeadlineAsync(batchDeadline).ConfigureAwait(false) &&
+                        (HasProgressFrames() || HasNormalFrames()))
                     {
+                        // More frames followed the deadline win: keep batching.
+                        // A stale retained read can win without new data, and
+                        // skipping the flush then would strand the batch until
+                        // more frames arrive.
                         continue;
                     }
 
@@ -273,12 +283,10 @@ internal sealed partial class RpcSession
             }
         }
 
-        private bool DrainProgressBurst(List<OwnedFrame> pending, ref int bytesAccumulated)
+        private bool DrainProgressQueue(List<OwnedFrame> pending, ref int bytesAccumulated)
         {
             var drained = false;
-            for (var count = 0;
-                 count < ProgressBurstFrames && _progressQueue.Reader.TryRead(out var frame);
-                 count++)
+            while (_progressQueue.Reader.TryRead(out var frame))
             {
                 pending.Add(frame);
                 WriteFrame(frame);
@@ -348,21 +356,35 @@ internal sealed partial class RpcSession
             // Reuse a retained normal read when one is still registered on the
             // channel: the TryPeek fast path in WaitForFramesAsync can leave a
             // retained read behind, and re-creating reads every deadline cycle
-            // would abandon one registered read per cycle.
+            // would abandon one registered read per cycle. A retained read
+            // that completed for data already drained is stale and must be
+            // replaced, otherwise the deadline wait would return immediately
+            // on every entry and the final batch would never flush.
             Task<bool> pendingRead;
             if (_pendingReadWait is { } retained)
             {
-                pendingRead = retained;
-                if (pendingRead.IsCompletedSuccessfully)
-                    return pendingRead.Result;
+                if (retained.IsCompletedSuccessfully && retained.Result)
+                {
+                    if (HasNormalFrames())
+                        return true;
+                    _pendingReadWait = null;
+                }
+                else if (retained.IsCompleted)
+                {
+                    return retained.Result;
+                }
             }
-            else
+            if (_pendingReadWait is null)
             {
                 var waitToRead = _normalQueue.Reader.WaitToReadAsync(CancellationToken.None);
                 if (waitToRead.IsCompletedSuccessfully)
                     return waitToRead.Result;
                 pendingRead = waitToRead.AsTask();
                 _pendingReadWait = pendingRead;
+            }
+            else
+            {
+                pendingRead = _pendingReadWait;
             }
             // The progress read ends the batching deadline immediately so protocol
             // progress is not delayed by the batch window; it is retained across
@@ -436,11 +458,7 @@ internal sealed partial class RpcSession
                     ? current <= limit - bytes
                     : current == 0;
                 if (!canReserve)
-                {
-                    if (Environment.GetEnvironmentVariable("SHARPLINK_DEBUG_RESERVE") == "1")
-                        Console.WriteLine($"[ReserveFull] bytes={bytes} progress={isProtocolProgress} limit={limit} current={current}");
                     return false;
-                }
                 if (Interlocked.CompareExchange(ref _queuedBytes, current + bytes, current) == current)
                 {
                     SharpLinkTelemetry.AddSendQueueBytes(bytes);
