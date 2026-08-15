@@ -52,7 +52,8 @@ public static class Program
         Console.WriteLine("  --transport tcp|uds|namedpipe|anonymous|sharedmemory");
         Console.WriteLine("  --host 127.0.0.1 --bind-ip 0.0.0.0 --port 19150");
         Console.WriteLine("  --duration 20 --warmup 5 --concurrency 1,2,4,8,16");
-        Console.WriteLine("  --operation all|unary|c2s|s2c|duplex|duplex-equivalent");
+        Console.WriteLine("  --operation all|unary|c2s|s2c|duplex|duplex-equivalent|mixed");
+        Console.WriteLine("  --unary-workers 3 --unary-pause-us 1000 (mixed: paced unary workers; the rest stream)");
         Console.WriteLine("  --stream-size 256");
         Console.WriteLine("  --message-bytes 4096 --messages-per-stream 8 (duplex-equivalent)");
         Console.WriteLine("  --consumer-delay-ms 0 --early-break-after 0 --pause-after 0 --pause-ms 0");
@@ -79,6 +80,8 @@ public static class Program
         Console.WriteLine($"[Config] mode={options.Mode} transport={options.Transport} op={options.Operation} duration={options.DurationSeconds}s warmup={options.WarmupSeconds}s streamSize={options.StreamSize}");
         if (options.Operation == "duplex-equivalent")
             Console.WriteLine($"[Config] equivalentDuplex={options.MessageBytes}B x {options.MessagesPerStream} messages/stream with full response validation");
+        if (options.Operation == "mixed")
+            Console.WriteLine($"[Config] mixed unaryWorkers={(options.UnaryWorkers == 0 ? "auto(c/3)" : options.UnaryWorkers)} unaryPause={options.UnaryPauseMicroseconds}us (stream workers = remainder)");
         Console.WriteLine(
             $"[Config] concurrency=[{string.Join(',', options.ConcurrencyConfig)}] " +
             $"pool={options.MinConnections}/{options.MaxConnections} profile={options.PerformanceProfile} " +
@@ -271,8 +274,11 @@ public static class Program
         bool isWarmup)
     {
         var recordingMode = isWarmup ? LatencyRecordingMode.Off : options.RecordingMode;
+        var isMixed = operation == "mixed";
+        var unaryWorkers = isMixed ? ResolveMixedUnaryWorkers(concurrency, options.UnaryWorkers) : 0;
+        var recorderConcurrency = isMixed ? unaryWorkers : concurrency;
         var formalRecorder = LatencyRecordingPolicy.CreatesFormalRecorder(recordingMode)
-            ? new StageLatencyRecorder(concurrency, options.MaximumRecordedOperations)
+            ? new StageLatencyRecorder(recorderConcurrency, options.MaximumRecordedOperations)
             : null;
         var diagnosticHistogram = LatencyRecordingPolicy.CreatesDiagnosticRecorder(recordingMode)
             ? new LatencyHistogram()
@@ -280,7 +286,7 @@ public static class Program
         var lifecycle = new MeasurementStageLifecycle(concurrency);
         var failures = new FailureRecorder();
         var payload = Enumerable.Range(1, options.StreamSize).ToArray();
-        var equivalentMessages = operation == "duplex-equivalent"
+        var equivalentMessages = operation is "duplex-equivalent" or "mixed"
             ? EquivalentDuplexWorkload.CreateMessages(options.MessageBytes, options.MessagesPerStream)
             : null;
 
@@ -289,7 +295,14 @@ public static class Program
         for (var i = 0; i < concurrency; i++)
         {
             var workerIndex = i;
-            var workerRecorder = formalRecorder?.GetWorker(workerIndex);
+            var isUnaryWorker = isMixed && workerIndex < unaryWorkers;
+            var effectiveOperation = isMixed
+                ? isUnaryWorker ? "unary" : "duplex-equivalent"
+                : operation;
+            WorkerLatencyRecorder? workerRecorder = null;
+            if (formalRecorder is not null && (!isMixed || isUnaryWorker))
+                workerRecorder = formalRecorder.GetWorker(workerIndex);
+            var recordHistogram = diagnosticHistogram is not null && (!isMixed || isUnaryWorker);
             workers[i] = Task.Run(async () =>
             {
                 long success = 0;
@@ -310,12 +323,12 @@ public static class Program
                         {
                             var operationId = ((long)workerIndex << 48) | ++workerOperationId;
                             pendingOperation = new PendingStreamOperation(
-                                workerRecorder is not null || diagnosticHistogram is not null
+                                workerRecorder is not null || recordHistogram
                                     ? Stopwatch.GetTimestamp()
                                     : 0,
                                 InvokeOperationAsync(
                                     rpc,
-                                    operation,
+                                    effectiveOperation,
                                     operationId,
                                     payload,
                                     equivalentMessages,
@@ -331,9 +344,9 @@ public static class Program
                             if (diagnosticHistogram is not null)
                                 diagnosticHistogram.Record(formalRecorder!.TicksToMicroseconds(elapsedTicks));
                         }
-                        else if (diagnosticHistogram is not null)
+                        else if (recordHistogram)
                         {
-                            diagnosticHistogram.Record(
+                            diagnosticHistogram!.Record(
                                 Stopwatch.GetElapsedTime(pendingOperation.StartedTimestamp).TotalMicroseconds);
                         }
                         validatedMessages += messages;
@@ -358,6 +371,12 @@ public static class Program
                     {
                         failures.Record(ex);
                         failure++;
+                    }
+
+                    if (isUnaryWorker && options.UnaryPauseMicroseconds > 0)
+                    {
+                        await Task.Delay(
+                            TimeSpan.FromMicroseconds(options.UnaryPauseMicroseconds)).ConfigureAwait(false);
                     }
                 }
 
@@ -405,8 +424,24 @@ public static class Program
         long cancelled = 0;
         long validatedMessages = 0;
         long operationsStarted = 0;
-        foreach (var outcome in await workersTask.ConfigureAwait(false))
+        long streamSuccess = 0;
+        long streamFailure = 0;
+        long streamValidationFailure = 0;
+        long streamCancelled = 0;
+        var outcomes = await workersTask.ConfigureAwait(false);
+        for (var index = 0; index < outcomes.Length; index++)
         {
+            var outcome = outcomes[index];
+            if (isMixed && index >= unaryWorkers)
+            {
+                streamSuccess = checked(streamSuccess + outcome.Success);
+                streamFailure = checked(streamFailure + outcome.Failure);
+                streamValidationFailure = checked(streamValidationFailure + outcome.ValidationFailure);
+                streamCancelled = checked(streamCancelled + outcome.Cancelled);
+                validatedMessages = checked(validatedMessages + outcome.ValidatedMessages);
+                operationsStarted = checked(operationsStarted + outcome.OperationsStarted);
+                continue;
+            }
             success = checked(success + outcome.Success);
             failure = checked(failure + outcome.Failure);
             validationFailure = checked(validationFailure + outcome.ValidationFailure);
@@ -421,8 +456,8 @@ public static class Program
         var total = success + failure;
         var errRate = total == 0 ? 0 : failure * 100.0 / total;
         var equivalentRates = EquivalentDuplexRates.Calculate(
-            success,
-            failure,
+            isMixed ? streamSuccess : success,
+            isMixed ? streamFailure : failure,
             validatedMessages,
             elapsed,
             options.MessageBytes);
@@ -430,6 +465,14 @@ public static class Program
             evidenceBefore,
             s_evidenceCollector.Capture());
         var formalStatistics = formalRecorder?.Complete();
+        if (isMixed)
+        {
+            Console.WriteLine(
+                $"[MixedStream] workers={concurrency - unaryWorkers} streams/s={equivalentRates.StreamsPerSecond:F2} " +
+                $"ok={streamSuccess} fail={streamFailure} validationFail={streamValidationFailure} " +
+                $"msgps={equivalentRates.MessagesPerSecond:F2} directionalMiBps={equivalentRates.DirectionalBusinessMiBPerSecond:F2} " +
+                $"err={equivalentRates.ErrorRatePercent:F2}%");
+        }
         if (recordingMode == LatencyRecordingMode.ValidationDual)
             LatencyRecorderValidation.ValidateAgainstLegacy(
                 formalStatistics!.Value,
@@ -476,6 +519,11 @@ public static class Program
 
     private static string FormatLatency(double? microseconds)
         => microseconds.HasValue ? $"{microseconds.Value:F2}us" : "n/a";
+
+    private static int ResolveMixedUnaryWorkers(int concurrency, int requestedUnaryWorkers)
+        => requestedUnaryWorkers > 0
+            ? Math.Min(requestedUnaryWorkers, Math.Max(1, concurrency - 1))
+            : Math.Max(1, concurrency / 3);
 
     private static async Task<int> InvokeOperationAsync(
         IStreamLoadService rpc,
@@ -583,6 +631,8 @@ public sealed class StreamLoadOptions
     public int PauseMilliseconds { get; private init; }
     public SharpLinkPerformanceProfile PerformanceProfile { get; private init; } = SharpLinkPerformanceProfile.Balanced;
     public int? MaxSendQueueBytes { get; private init; }
+    public int UnaryWorkers { get; private init; }
+    public double UnaryPauseMicroseconds { get; private init; } = 1000;
     public string? JsonOutputPath { get; private init; }
     public LatencyRecordingMode RecordingMode { get; private init; } = LatencyRecordingMode.Formal;
     public int MaximumRecordedOperations { get; private init; } = 30_000_000;
@@ -609,8 +659,8 @@ public sealed class StreamLoadOptions
             : TransportMode.Tcp;
 
         var operation = map.GetValueOrDefault("operation", "all").ToLowerInvariant();
-        if (operation is not ("all" or "unary" or "c2s" or "s2c" or "duplex" or "duplex-equivalent"))
-            throw new ArgumentException($"Unsupported operation: {operation}. Supported: all, unary, c2s, s2c, duplex, duplex-equivalent.");
+        if (operation is not ("all" or "unary" or "c2s" or "s2c" or "duplex" or "duplex-equivalent" or "mixed"))
+            throw new ArgumentException($"Unsupported operation: {operation}. Supported: all, unary, c2s, s2c, duplex, duplex-equivalent, mixed.");
 
         var concurrencyConfig = map.TryGetValue("concurrency", out var concurrencyStr)
             ? concurrencyStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -652,6 +702,14 @@ public sealed class StreamLoadOptions
         var maxSendQueueBytes = ParseOptionalInt(map, "max-send-queue-bytes");
         if (maxSendQueueBytes is <= 0)
             throw new ArgumentOutOfRangeException(nameof(maxSendQueueBytes));
+        var unaryWorkers = int.Parse(map.GetValueOrDefault("unary-workers", "0"));
+        if (unaryWorkers < 0)
+            throw new ArgumentOutOfRangeException(nameof(unaryWorkers));
+        var unaryPauseMicroseconds = double.Parse(map.GetValueOrDefault("unary-pause-us", "1000"));
+        if (unaryPauseMicroseconds < 0)
+            throw new ArgumentOutOfRangeException(nameof(unaryPauseMicroseconds));
+        if (operation == "mixed" && concurrencyConfig.Any(concurrency => concurrency < 2))
+            throw new ArgumentException("Mixed workload requires --concurrency 2 or higher (at least one stream worker).");
         var messageBytes = int.Parse(map.GetValueOrDefault("message-bytes", EquivalentDuplexWorkload.DefaultMessageBytes.ToString()));
         var messagesPerStream = int.Parse(map.GetValueOrDefault("messages-per-stream", EquivalentDuplexWorkload.DefaultMessagesPerStream.ToString()));
         EquivalentDuplexWorkload.ValidateDimensions(messageBytes, messagesPerStream);
@@ -708,6 +766,8 @@ public sealed class StreamLoadOptions
             PauseMilliseconds = ParseNonNegative(map, "pause-ms"),
             PerformanceProfile = profile,
             MaxSendQueueBytes = maxSendQueueBytes,
+            UnaryWorkers = unaryWorkers,
+            UnaryPauseMicroseconds = unaryPauseMicroseconds,
             JsonOutputPath = map.GetValueOrDefault("json-output"),
             RecordingMode = recordingMode,
             MaximumRecordedOperations = maximumRecordedOperations,

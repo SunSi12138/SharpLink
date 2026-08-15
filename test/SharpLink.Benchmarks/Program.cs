@@ -134,6 +134,12 @@ public static class Program
             PerformanceReportValidationRunner.Run(args[1..]);
             return;
         }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--send-pump-isolation-evidence", StringComparison.Ordinal))
+        {
+            await SendPumpIsolationEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
         BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
     }
 }
