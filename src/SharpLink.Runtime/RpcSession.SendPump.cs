@@ -193,12 +193,16 @@ internal sealed partial class RpcSession
             {
                 while (await WaitForFramesAsync().ConfigureAwait(false))
                 {
-                    if (DrainProgressQueue(pending, ref bytesAccumulated))
+                    if (await DrainProgressQueueAsync(pending).ConfigureAwait(false))
                     {
                         // Progress frames must not wait for a full batch:
-                        // flush whatever the batch holds right now.
-                        await FlushAndReleaseAsync(pending).ConfigureAwait(false);
-                        bytesAccumulated = 0;
+                        // flush whatever the batch still holds (LowLatency
+                        // already flushed per frame inside the drain).
+                        if (pending.Count > 0)
+                        {
+                            await FlushAndReleaseAsync(pending).ConfigureAwait(false);
+                            bytesAccumulated = 0;
+                        }
                         batchDeadline = 0;
                     }
 
@@ -238,10 +242,13 @@ internal sealed partial class RpcSession
                         if (normalFramesSinceInterleave >= NormalFramesPerInterleave)
                         {
                             normalFramesSinceInterleave = 0;
-                            if (DrainProgressQueue(pending, ref bytesAccumulated))
+                            if (await DrainProgressQueueAsync(pending).ConfigureAwait(false))
                             {
-                                await FlushAndReleaseAsync(pending).ConfigureAwait(false);
-                                bytesAccumulated = 0;
+                                if (pending.Count > 0)
+                                {
+                                    await FlushAndReleaseAsync(pending).ConfigureAwait(false);
+                                    bytesAccumulated = 0;
+                                }
                                 batchDeadline = 0;
                             }
                         }
@@ -283,20 +290,25 @@ internal sealed partial class RpcSession
             }
         }
 
-        private bool DrainProgressQueue(List<OwnedFrame> pending, ref int bytesAccumulated)
+        private async ValueTask<bool> DrainProgressQueueAsync(List<OwnedFrame> pending)
         {
+            // The drain runs until the progress queue is empty so the service
+            // rate always matches the arrival rate: any threshold break here
+            // would cap progress service per check point and let the backlog
+            // grow without bound (observed with LowLatency, where the
+            // threshold is one frame). LowLatency preserves its per-frame
+            // flush contract inside the loop; the other modes flush once in
+            // the caller after the full drain.
             var drained = false;
             while (_progressQueue.Reader.TryRead(out var frame))
             {
                 pending.Add(frame);
                 WriteFrame(frame);
-                bytesAccumulated += frame.Length;
                 drained = true;
-                if (frame.ForceFlush ||
-                    _flushMode == FlushMode.LowLatency ||
-                    bytesAccumulated >= _flushSizeThreshold)
+                if (_flushMode == FlushMode.LowLatency)
                 {
-                    break;
+                    // The caller resets the byte accumulator after its flush.
+                    await FlushAndReleaseAsync(pending).ConfigureAwait(false);
                 }
             }
             return drained;
