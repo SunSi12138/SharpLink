@@ -189,6 +189,64 @@ public class SendPumpTests
     }
 
     [Test]
+    public async Task TimedBatchShouldIgnoreStaleTimerCallbackFromPreviousArm()
+    {
+        var clock = new ManualTimeProvider();
+        var maxLatency = TimeSpan.FromMilliseconds(100);
+        var provider = new StaleCallbackTimeProvider(clock);
+        var input = new Pipe();
+        var output = new Pipe();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(provider)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "timed-batch-stale-timer-callback",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ClientOptions(
+                context,
+                new RpcSessionFlushOptions(1024 * 1024, maxLatency)));
+        var first = CreateFrame(session, 32, requestId: 1);
+        var second = CreateFrame(session, 32, requestId: 2);
+        try
+        {
+            session.SendPacket(first);
+            await WaitUntilAsync(() => clock.ActiveTimerCount > 0);
+            clock.Advance(TimeSpan.FromMilliseconds(50));
+
+            session.SendPacket(second);
+            // The arriving frame wins the first race; the pump re-arms for the remaining
+            // latency, which is the durable observation that the first arm is superseded.
+            await WaitUntilAsync(() => provider.WasArmed(TimeSpan.FromMilliseconds(50)));
+
+            // The first arm's timer callback fires out of band, as if it had been dequeued by
+            // the timer queue but not yet executed. It belongs to a superseded arm and must not
+            // disarm the current deadline timer or complete the current wait.
+            provider.InvokeArmedCallback(0);
+            await Task.Delay(50);
+            Ensure(clock.ActiveTimerCount == 1,
+                "a stale timer callback must not disarm the current deadline timer");
+
+            clock.Advance(TimeSpan.FromMilliseconds(50));
+            var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            var expectedBytes = 2 * (ProtocolV2Constants.HeaderBytes + 32);
+            Ensure(read.Buffer.Length >= expectedBytes,
+                "both frames must share one flush at the first frame's deadline");
+            output.Reader.AdvanceTo(read.Buffer.End);
+
+            await WaitUntilAsync(() => session.QueuedSendBytes == 0);
+            EnsureReturned(first, "the deadline flush must return the first frame owner");
+            EnsureReturned(second, "the deadline flush must return the second frame owner");
+        }
+        finally
+        {
+            await session.DisposeAsync();
+            await output.Reader.CompleteAsync();
+            await input.Writer.CompleteAsync();
+        }
+    }
+
+    [Test]
     public async Task TimedBatchShouldRearmAcrossMaximumTimerDelayChunks()
     {
         var clock = new ManualTimeProvider();
@@ -533,15 +591,70 @@ public class SendPumpTests
             TimeSpan dueTime,
             TimeSpan period)
         {
+            var timer = inner.CreateTimer(callback, state, dueTime, period);
+            // Publish only after the timer is actually installed: the test advances the manual
+            // clock once the arm is observed, and the due time must be relative to the clock
+            // position at arm time.
             lock (_gate)
                 _armedDueTimes.Add(dueTime);
-            return inner.CreateTimer(callback, state, dueTime, period);
+            return timer;
         }
 
         internal bool WasArmed(TimeSpan dueTime)
         {
             lock (_gate)
                 return _armedDueTimes.Contains(dueTime);
+        }
+    }
+
+    /// <summary>
+    /// Wraps <see cref="ManualTimeProvider"/> and keeps every armed timer callback invocable
+    /// out of band, simulating a fired timer whose callback is still queued after a later arm
+    /// replaced the race state (timer-queue disposal cannot cancel an already dequeued work
+    /// item).
+    /// </summary>
+    private sealed class StaleCallbackTimeProvider(ManualTimeProvider inner) : TimeProvider
+    {
+        private readonly Lock _gate = new();
+        private readonly List<(TimerCallback Callback, object? State)> _armedCallbacks = [];
+        private readonly List<TimeSpan> _armedDueTimes = [];
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
+
+        public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
+
+        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
+
+        public override long GetTimestamp() => inner.GetTimestamp();
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            var timer = inner.CreateTimer(callback, state, dueTime, period);
+            lock (_gate)
+            {
+                _armedCallbacks.Add((callback, state));
+                _armedDueTimes.Add(dueTime);
+            }
+            return timer;
+        }
+
+        internal bool WasArmed(TimeSpan dueTime)
+        {
+            lock (_gate)
+                return _armedDueTimes.Contains(dueTime);
+        }
+
+        internal void InvokeArmedCallback(int index)
+        {
+            TimerCallback callback;
+            object? state;
+            lock (_gate)
+                (callback, state) = _armedCallbacks[index];
+            callback(state);
         }
     }
 

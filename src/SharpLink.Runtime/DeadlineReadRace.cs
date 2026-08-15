@@ -26,7 +26,11 @@ namespace SharpLink.Runtime;
 /// <see cref="TaskAwaiter{TResult}.UnsafeOnCompleted(Action)"/> runs inline for completed
 /// tasks, which is why the timer is created before the continuation is registered, and why each
 /// arm captures its own read so a late continuation from a previous arm can never act on the
-/// current arm's state (the identity check makes stale completions no-ops).
+/// current arm's state (the identity check makes stale completions no-ops). For the same reason
+/// each arm stamps its timer callback with a monotonically increasing generation: disposing a
+/// fired timer does not guarantee that an already queued callback has finished running, so a
+/// stale callback must recognize that it no longer belongs to the current arm before it may
+/// touch the timer or the completion source.
 /// </para>
 /// </remarks>
 internal sealed class DeadlineReadRace : IValueTaskSource<bool>, IDisposable
@@ -39,15 +43,13 @@ internal sealed class DeadlineReadRace : IValueTaskSource<bool>, IDisposable
         TimedOut,
     }
 
-    private static readonly TimerCallback s_timerCallback =
-        static state => ((DeadlineReadRace)state!).OnTimerFired();
-
     private readonly TimeProvider _timeProvider;
     private ManualResetValueTaskSourceCore<bool> _core;
     private Task<bool>? _read;
     private ITimer? _timer;
     private RaceOutcome _outcome;
     private int _readAbandoned;
+    private long _armGeneration;
 
     internal DeadlineReadRace(TimeProvider timeProvider)
     {
@@ -93,7 +95,9 @@ internal sealed class DeadlineReadRace : IValueTaskSource<bool>, IDisposable
         // The timer must be armed before the read continuation is registered: a read that
         // completes in this window invokes the continuation inline, and the read-win path
         // disposes the timer it expects to exist.
-        _timer = _timeProvider.CreateTimer(s_timerCallback, this, timeout, Timeout.InfiniteTimeSpan);
+        var generation = Interlocked.Increment(ref _armGeneration);
+        _timer = _timeProvider.CreateTimer(
+            state => OnTimerFired(generation), this, timeout, Timeout.InfiniteTimeSpan);
 
         // Each arm registers a fresh closure capturing its own read. A closure from an earlier
         // arm that fires late must not be able to act on this arm's state: the identity check
@@ -125,8 +129,11 @@ internal sealed class DeadlineReadRace : IValueTaskSource<bool>, IDisposable
         }
     }
 
-    private void OnTimerFired()
+    private void OnTimerFired(long generation)
     {
+        if (generation != Volatile.Read(ref _armGeneration))
+            return; // A queued timer callback from an earlier arm: never touch the current arm.
+
         if (Interlocked.Exchange(ref _readAbandoned, 1) != 0)
             return; // The read completed first and disposed the timer.
 
