@@ -76,10 +76,17 @@ public class SendPumpIdleShutdownTests
             var flush = session.SendPacketAndFlushAsync(frame).AsTask();
             await WaitUntilAsync(() => session.QueuedSendBytes > 0);
 
-            await output.Writer.CompleteAsync(new IOException("output fault"));
+            // A real transport output fault is delivered twice: the transport completes its
+            // output pipe with the fault, and then notifies the session so the session
+            // cancellation tears the pump down. A faulted pipe alone never completes a pending
+            // FlushAsync (the pipe surfaces writer faults only to the reader), so the pump
+            // relies on the session cancellation to wake it from a paused flush.
+            var fault = new IOException("output fault");
+            await output.Writer.CompleteAsync(fault);
+            session.NotifyDisconnected(fault);
 
-            var fault = await CaptureCompletionExceptionAsync(flush, TimeSpan.FromSeconds(5));
-            Ensure(fault is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed } or
+            var completionException = await CaptureCompletionExceptionAsync(flush, TimeSpan.FromSeconds(5));
+            Ensure(completionException is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed } or
                    OperationCanceledException,
                 "a transport output fault must fault the pending flush completion");
             await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));

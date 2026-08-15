@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Threading;
@@ -84,6 +85,247 @@ public class SendPumpTests
         finally
         {
             await session.DisposeAsync();
+            await output.Reader.CompleteAsync();
+            await input.Writer.CompleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task TimedBatchShouldDeliverFrameSentAfterDeadlineFlushThroughRetainedRead()
+    {
+        var clock = new ManualTimeProvider();
+        var maxLatency = TimeSpan.FromMilliseconds(100);
+        var provider = new TimerArmRecordingTimeProvider(clock);
+        var input = new Pipe();
+        var output = new Pipe();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(provider)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "timed-batch-retained-read",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ClientOptions(
+                context,
+                new RpcSessionFlushOptions(1024 * 1024, maxLatency)));
+        try
+        {
+            var first = CreateFrame(session, 32, requestId: 1);
+            session.SendPacket(first);
+            await WaitUntilAsync(() => provider.WasArmed(maxLatency));
+            clock.Advance(maxLatency);
+
+            await ConsumeAvailableAsync(output.Reader);
+            await WaitUntilAsync(() => session.QueuedSendBytes == 0);
+            EnsureReturned(first, "the deadline flush must return the first frame owner");
+            Ensure(clock.ActiveTimerCount == 0,
+                "the deadline timer must be disposed after the timed-out flush");
+
+            // The pump must have kept the unconsumed pending read and re-observed it: the next
+            // frame wakes the pump through that retained registration. Dropping the read would
+            // leave the fresh registration waiting behind the stale one and time this out.
+            var second = CreateFrame(session, 32, requestId: 2);
+            await session.SendPacketAndFlushAsync(second).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            EnsureReturned(second,
+                "a frame after a deadline flush must be delivered through the retained pending read");
+            await ConsumeAvailableAsync(output.Reader);
+        }
+        finally
+        {
+            await session.DisposeAsync();
+            await output.Reader.CompleteAsync();
+            await input.Writer.CompleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task TimedBatchShouldExtendBatchForFrameArrivingBeforeDeadline()
+    {
+        var clock = new ManualTimeProvider();
+        var maxLatency = TimeSpan.FromMilliseconds(100);
+        var provider = new TimerArmRecordingTimeProvider(clock);
+        var input = new Pipe();
+        var output = new Pipe();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(provider)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "timed-batch-extension",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ClientOptions(
+                context,
+                new RpcSessionFlushOptions(1024 * 1024, maxLatency)));
+        var first = CreateFrame(session, 32, requestId: 1);
+        var second = CreateFrame(session, 32, requestId: 2);
+        try
+        {
+            session.SendPacket(first);
+            await WaitUntilAsync(() => provider.WasArmed(maxLatency));
+            clock.Advance(TimeSpan.FromMilliseconds(50));
+
+            session.SendPacket(second);
+            // The arriving frame wins the deadline race. The pump then re-arms one timer for
+            // the remaining latency, which is the durable observation point (the transient
+            // dispose-then-rearm handoff is too short to poll for).
+            await WaitUntilAsync(() => provider.WasArmed(TimeSpan.FromMilliseconds(50)));
+
+            clock.Advance(TimeSpan.FromMilliseconds(50));
+            var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            var expectedBytes = 2 * (ProtocolV2Constants.HeaderBytes + 32);
+            Ensure(read.Buffer.Length >= expectedBytes,
+                "both frames must share one flush at the first frame's deadline");
+            output.Reader.AdvanceTo(read.Buffer.End);
+
+            await WaitUntilAsync(() => session.QueuedSendBytes == 0);
+            EnsureReturned(first, "the extended batch must return the first frame owner");
+            EnsureReturned(second, "the extended batch must return the second frame owner");
+        }
+        finally
+        {
+            await session.DisposeAsync();
+            await output.Reader.CompleteAsync();
+            await input.Writer.CompleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task TimedBatchShouldIgnoreStaleTimerCallbackFromPreviousArm()
+    {
+        var clock = new ManualTimeProvider();
+        var maxLatency = TimeSpan.FromMilliseconds(100);
+        var provider = new StaleCallbackTimeProvider(clock);
+        var input = new Pipe();
+        var output = new Pipe();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(provider)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "timed-batch-stale-timer-callback",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ClientOptions(
+                context,
+                new RpcSessionFlushOptions(1024 * 1024, maxLatency)));
+        var first = CreateFrame(session, 32, requestId: 1);
+        var second = CreateFrame(session, 32, requestId: 2);
+        try
+        {
+            session.SendPacket(first);
+            await WaitUntilAsync(() => provider.WasArmed(maxLatency));
+            clock.Advance(TimeSpan.FromMilliseconds(50));
+
+            session.SendPacket(second);
+            // The arriving frame wins the first race; the pump re-arms for the remaining
+            // latency, which is the durable observation that the first arm is superseded.
+            await WaitUntilAsync(() => provider.WasArmed(TimeSpan.FromMilliseconds(50)));
+
+            // The first arm's timer callback fires out of band, as if it had been dequeued by
+            // the timer queue but not yet executed. It belongs to a superseded arm and must not
+            // disarm the current deadline timer or complete the current wait.
+            provider.InvokeArmedCallback(0);
+            await Task.Delay(50);
+            Ensure(clock.ActiveTimerCount == 1,
+                "a stale timer callback must not disarm the current deadline timer");
+
+            clock.Advance(TimeSpan.FromMilliseconds(50));
+            var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            var expectedBytes = 2 * (ProtocolV2Constants.HeaderBytes + 32);
+            Ensure(read.Buffer.Length >= expectedBytes,
+                "both frames must share one flush at the first frame's deadline");
+            output.Reader.AdvanceTo(read.Buffer.End);
+
+            await WaitUntilAsync(() => session.QueuedSendBytes == 0);
+            EnsureReturned(first, "the deadline flush must return the first frame owner");
+            EnsureReturned(second, "the deadline flush must return the second frame owner");
+        }
+        finally
+        {
+            await session.DisposeAsync();
+            await output.Reader.CompleteAsync();
+            await input.Writer.CompleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task TimedBatchShouldRearmAcrossMaximumTimerDelayChunks()
+    {
+        var clock = new ManualTimeProvider();
+        var chunk = TimeSpan.FromMilliseconds(int.MaxValue);
+        var maxLatency = chunk + TimeSpan.FromMilliseconds(1);
+        var provider = new TimerArmRecordingTimeProvider(clock);
+        var input = new Pipe();
+        var output = new Pipe();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(provider)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "timed-batch-chunk-rearm",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ClientOptions(
+                context,
+                new RpcSessionFlushOptions(1024 * 1024, maxLatency)));
+        var frame = CreateFrame(session, 32, requestId: 1);
+        try
+        {
+            session.SendPacket(frame);
+            await WaitUntilAsync(() => provider.WasArmed(chunk));
+            Ensure(clock.EarliestTimerTimestamp == clock.GetTimestamp() + chunk.Ticks,
+                "a deadline beyond the maximum timer delay must be armed as one full chunk");
+
+            clock.Advance(chunk);
+            Ensure(session.QueuedSendBytes > 0,
+                "an expiring timer-delay chunk must not flush a batch whose deadline is still ahead");
+            await WaitUntilAsync(() =>
+                clock.EarliestTimerTimestamp == clock.GetTimestamp() + TimeSpan.FromMilliseconds(1).Ticks);
+
+            clock.Advance(TimeSpan.FromMilliseconds(1));
+            await ConsumeAvailableAsync(output.Reader);
+            await WaitUntilAsync(() => session.QueuedSendBytes == 0);
+            EnsureReturned(frame, "the re-armed deadline flush must return the frame owner");
+            Ensure(clock.ActiveTimerCount == 0, "the final deadline timer must be disposed");
+        }
+        finally
+        {
+            await session.DisposeAsync();
+            await output.Reader.CompleteAsync();
+            await input.Writer.CompleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task TimedBatchDeadlineWaitShouldExitWhenSessionIsDisposed()
+    {
+        var clock = new ManualTimeProvider();
+        var maxLatency = TimeSpan.FromMilliseconds(100);
+        var provider = new TimerArmRecordingTimeProvider(clock);
+        var input = new Pipe();
+        var output = new Pipe();
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(provider)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "timed-batch-dispose-during-wait",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ClientOptions(
+                context,
+                new RpcSessionFlushOptions(1024 * 1024, maxLatency)));
+        var frame = CreateFrame(session, 32, requestId: 1);
+        try
+        {
+            session.SendPacket(frame);
+            await WaitUntilAsync(() => provider.WasArmed(maxLatency));
+
+            await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            EnsureReturned(frame, "dispose during the deadline wait must return the frame owner");
+            Ensure(session.QueuedSendBytes == 0, "dispose during the deadline wait must release queued bytes");
+            Ensure(clock.ActiveTimerCount == 0,
+                "the deadline timer must be disposed when the pump stops mid-wait");
+        }
+        finally
+        {
             await output.Reader.CompleteAsync();
             await input.Writer.CompleteAsync();
         }
@@ -327,10 +569,121 @@ public class SendPumpTests
             TimeSpan period)
         {
             var timer = inner.CreateTimer(callback, state, dueTime, period);
-            if (dueTime == expectedDueTime)
-                _expectedTimerArmed.TrySetResult();
-            return timer;
+            return new HookedTimer(timer, changedDueTime =>
+            {
+                if (changedDueTime == expectedDueTime)
+                    _expectedTimerArmed.TrySetResult();
+            });
         }
+    }
+
+    private sealed class TimerArmRecordingTimeProvider(ManualTimeProvider inner) : TimeProvider
+    {
+        private readonly Lock _gate = new();
+        private readonly List<TimeSpan> _armedDueTimes = [];
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
+
+        public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
+
+        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
+
+        public override long GetTimestamp() => inner.GetTimestamp();
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            var timer = inner.CreateTimer(callback, state, dueTime, period);
+            return new HookedTimer(timer, changedDueTime =>
+            {
+                // The deadline race creates its timers disabled and arms them via Change, so
+                // the arm is only observable on the Change hook, after the timer is installed
+                // relative to the current clock position.
+                lock (_gate)
+                    _armedDueTimes.Add(changedDueTime);
+            });
+        }
+
+        internal bool WasArmed(TimeSpan dueTime)
+        {
+            lock (_gate)
+                return _armedDueTimes.Contains(dueTime);
+        }
+    }
+
+    /// <summary>
+    /// Wraps <see cref="ManualTimeProvider"/> and keeps every armed timer callback invocable
+    /// out of band, simulating a fired timer whose callback is still queued after a later arm
+    /// replaced the race state (timer-queue disposal cannot cancel an already dequeued work
+    /// item).
+    /// </summary>
+    private sealed class StaleCallbackTimeProvider(ManualTimeProvider inner) : TimeProvider
+    {
+        private readonly Lock _gate = new();
+        private readonly List<(TimerCallback Callback, object? State)> _armedCallbacks = [];
+        private readonly List<TimeSpan> _armedDueTimes = [];
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
+
+        public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
+
+        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
+
+        public override long GetTimestamp() => inner.GetTimestamp();
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            lock (_gate)
+                _armedCallbacks.Add((callback, state));
+            var timer = inner.CreateTimer(callback, state, dueTime, period);
+            return new HookedTimer(timer, changedDueTime =>
+            {
+                lock (_gate)
+                    _armedDueTimes.Add(changedDueTime);
+            });
+        }
+
+        internal bool WasArmed(TimeSpan dueTime)
+        {
+            lock (_gate)
+                return _armedDueTimes.Contains(dueTime);
+        }
+
+        internal void InvokeArmedCallback(int index)
+        {
+            TimerCallback callback;
+            object? state;
+            lock (_gate)
+                (callback, state) = _armedCallbacks[index];
+            callback(state);
+        }
+    }
+
+    private sealed class HookedTimer(
+        ITimer inner,
+        Action<TimeSpan> onChangedDueTime) : ITimer
+    {
+        public bool Change(TimeSpan dueTime, TimeSpan period)
+        {
+            var changed = inner.Change(dueTime, period);
+            // Publish the observation only after the timer is actually armed: the tests
+            // advance the manual clock once the arm is observed, and the due time must be
+            // relative to the clock position at arm time.
+            if (changed)
+                onChangedDueTime(dueTime);
+            return changed;
+        }
+
+        public void Dispose() => inner.Dispose();
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
     }
 
     private static void Ensure(bool condition, string message)
