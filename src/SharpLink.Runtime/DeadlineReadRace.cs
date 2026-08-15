@@ -90,7 +90,7 @@ internal sealed class DeadlineReadRace : IValueTaskSource<bool>, IDisposable
     {
         ArgumentNullException.ThrowIfNull(read);
         ArgumentNullException.ThrowIfNull(progressRead);
-        if (read.IsCompleted)
+        if (read.IsCompleted && !read.IsCanceled)
         {
             // Data arrived (or the channel closed) between the caller's completedness check and
             // this arm: surface the already-available outcome without starting a race.
@@ -100,7 +100,7 @@ internal sealed class DeadlineReadRace : IValueTaskSource<bool>, IDisposable
                     : RaceOutcome.ReadClosed));
             return new ValueTask<bool>(read);
         }
-        if (progressRead.IsCompleted)
+        if (progressRead.IsCompleted && !progressRead.IsCanceled)
         {
             Volatile.Write(ref Unsafe.As<RaceOutcome, int>(ref _outcome),
                 (int)(progressRead.IsCompletedSuccessfully && progressRead.Result
@@ -120,8 +120,14 @@ internal sealed class DeadlineReadRace : IValueTaskSource<bool>, IDisposable
         _timer = _timeProvider.CreateTimer(
             _ => OnTimerFired(token), this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         _timer.Change(timeout, Timeout.InfiniteTimeSpan);
-        read.GetAwaiter().UnsafeOnCompleted(() => OnReadCompleted(read, token));
-        progressRead.GetAwaiter().UnsafeOnCompleted(() => OnProgressReadCompleted(progressRead, token));
+        // A cancelled channel read is an inert non-signal (an abandoned
+        // WaitToReadAsync-derived task may be cancelled by the channel): it is
+        // not registered, so the arm resolves through the other read or the
+        // timer instead of surfacing a cancellation as a fault.
+        if (!read.IsCanceled)
+            read.GetAwaiter().UnsafeOnCompleted(() => OnReadCompleted(read, token));
+        if (!progressRead.IsCanceled)
+            progressRead.GetAwaiter().UnsafeOnCompleted(() => OnProgressReadCompleted(progressRead, token));
         return new ValueTask<bool>(this, _core.Version);
     }
 
@@ -147,6 +153,8 @@ internal sealed class DeadlineReadRace : IValueTaskSource<bool>, IDisposable
 
     private void OnProgressReadCompleted(Task<bool> progressRead, long token)
     {
+        if (progressRead.IsCanceled)
+            return; // Cancelled channel reads are inert: the arm stays with the timer or normal read.
         if (Interlocked.CompareExchange(ref _armClaim, token | ProgressClaimBit, token) != token)
             return; // Superseded arm or already claimed by the timer or normal read.
 

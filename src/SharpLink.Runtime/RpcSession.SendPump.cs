@@ -360,6 +360,11 @@ internal sealed partial class RpcSession
         private static async Task<bool> AwaitFirstReadAsync(Task<bool> first, Task<bool> second)
         {
             var winner = await Task.WhenAny(first, second).ConfigureAwait(false);
+            // A cancelled channel read is an inert non-signal: fall through to
+            // the still-registered other read instead of surfacing the
+            // cancellation as a pump fault.
+            if (winner.IsCanceled)
+                return await (ReferenceEquals(winner, first) ? second : first).ConfigureAwait(false);
             return await winner.ConfigureAwait(false);
         }
 
@@ -381,9 +386,15 @@ internal sealed partial class RpcSession
                         return true;
                     _pendingReadWait = null;
                 }
-                else if (retained.IsCompleted)
+                else if (retained.IsCompleted && !retained.IsCanceled)
                 {
+                    // The channel reported closure: surface it.
                     return retained.Result;
+                }
+                else if (retained.IsCanceled)
+                {
+                    // A cancelled channel read is an inert non-signal: replace it.
+                    _pendingReadWait = null;
                 }
             }
             if (_pendingReadWait is null)
@@ -578,6 +589,8 @@ internal sealed partial class RpcSession
 
         private void ReportFaultOnce(Exception exception)
         {
+            if (Environment.GetEnvironmentVariable("SHARPLINK_DEBUG_FAULT") == "1")
+                Console.WriteLine($"[SendPumpFault] {exception}");
             if (Interlocked.Exchange(ref _faulted, 1) != 0)
                 return;
             Interlocked.Exchange(ref _stopped, 1);
