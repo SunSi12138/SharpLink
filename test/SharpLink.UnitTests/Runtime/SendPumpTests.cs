@@ -672,8 +672,13 @@ public class SendPumpTests
     {
         public bool Change(TimeSpan dueTime, TimeSpan period)
         {
-            onChangedDueTime(dueTime);
-            return inner.Change(dueTime, period);
+            var changed = inner.Change(dueTime, period);
+            // Publish the observation only after the timer is actually armed: the tests
+            // advance the manual clock once the arm is observed, and the due time must be
+            // relative to the clock position at arm time.
+            if (changed)
+                onChangedDueTime(dueTime);
+            return changed;
         }
 
         public void Dispose() => inner.Dispose();
