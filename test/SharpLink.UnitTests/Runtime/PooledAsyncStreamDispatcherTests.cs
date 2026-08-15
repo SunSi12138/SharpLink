@@ -1242,6 +1242,121 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
+    public async Task CompleteRacingDisposeAwaitingRemoteTerminalPublicationMustAlwaysFinishDispose()
+    {
+        // Regression for issue #206: the remote-terminal publication double-check used plain
+        // Volatile.Reads on both sides, which lost the completion signal under x86
+        // store-buffer reordering and left DisposeAsync hanging forever (the hang then
+        // stranded the NotInParallel "dispatcher-pool" key and stalled the whole test engine).
+        // This test deterministically parks Complete between the publication state write's
+        // predecessor and successor so DisposeAsync must install its completion while the
+        // publication is still in flight, then verifies the publisher-side fenced re-read
+        // observes the installed completion.
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var codec = new ReferenceItemCodec();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, codec);
+        var publishGateReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePublish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completionInstalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task? disposeTask = null;
+        try
+        {
+            dispatcher.SetBeforeRemoteTerminalPublicationPublishForTests(() =>
+            {
+                publishGateReached.TrySetResult();
+                releasePublish.Task.GetAwaiter().GetResult();
+            });
+            dispatcher.SetAfterRemoteTerminalPublicationCompletionInstallForTests(() =>
+                completionInstalled.TrySetResult());
+
+            var completeTask = Task.Run(() => dispatcher.Complete(exception: null));
+            await publishGateReached.Task.WaitAsync(RaceCoordinationTimeout);
+
+            disposeTask = dispatcher.DisposeAsync().AsTask();
+            await completionInstalled.Task.WaitAsync(RaceCoordinationTimeout);
+
+            Ensure(!disposeTask.IsCompleted,
+                "the dispose must stay pending until the remote terminal publication is released");
+
+            releasePublish.TrySetResult();
+            await completeTask.WaitAsync(RaceCoordinationTimeout);
+            await disposeTask.WaitAsync(RaceCoordinationTimeout);
+
+            Ensure(!dispatcher.HasRetainedReferencesForTests,
+                "the completed dispose must clear the remote-terminal publication holder before pooling");
+        }
+        finally
+        {
+            releasePublish.TrySetResult();
+            if (disposeTask is not null)
+                await CaptureFailureAsync(disposeTask);
+            PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        }
+    }
+
+    [Test]
+    public async Task CompleteFinishingBeforeDisposeInstallsItsCompletionMustStillReleaseTheDispose()
+    {
+        // Regression for issue #206, second half of the double-check: the publisher's fenced
+        // re-read observed a null completion and the waiter installed afterwards — the waiter's
+        // own fenced re-check must then observe the already-published state and complete itself.
+        // This test parks the waiter before it installs its completion, lets Complete finish
+        // entirely (its re-read must find nothing), and then releases the waiter.
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var codec = new ReferenceItemCodec();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, codec);
+        var publishGateReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePublish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var installGateReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseInstall = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task? disposeTask = null;
+        try
+        {
+            dispatcher.SetBeforeRemoteTerminalPublicationPublishForTests(() =>
+            {
+                publishGateReached.TrySetResult();
+                releasePublish.Task.GetAwaiter().GetResult();
+            });
+            dispatcher.SetBeforeRemoteTerminalPublicationCompletionInstallForTests(() =>
+            {
+                installGateReached.TrySetResult();
+                releaseInstall.Task.GetAwaiter().GetResult();
+            });
+
+            var completeTask = Task.Run(() => dispatcher.Complete(exception: null));
+            await publishGateReached.Task.WaitAsync(RaceCoordinationTimeout);
+
+            // The install gate blocks synchronously inside DisposeAsync's sync prefix, so the
+            // dispose must run on its own thread or the test thread would park itself.
+            disposeTask = Task.Run(async () => await dispatcher.DisposeAsync());
+            await installGateReached.Task.WaitAsync(RaceCoordinationTimeout);
+
+            Ensure(!disposeTask.IsCompleted,
+                "the dispose must stay pending while its completion install is parked");
+
+            releasePublish.TrySetResult();
+            await completeTask.WaitAsync(RaceCoordinationTimeout);
+
+            Ensure(!disposeTask.IsCompleted,
+                "the parked dispose must not complete before its own re-check runs");
+
+            releaseInstall.TrySetResult();
+            await disposeTask.WaitAsync(RaceCoordinationTimeout);
+
+            Ensure(!dispatcher.HasRetainedReferencesForTests,
+                "the completed dispose must clear the remote-terminal publication holder before pooling");
+        }
+        finally
+        {
+            releasePublish.TrySetResult();
+            releaseInstall.TrySetResult();
+            if (disposeTask is not null)
+                await CaptureFailureAsync(disposeTask);
+            PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        }
+    }
+
+    [Test]
     public async Task RegistrationRetentionShouldPreventUnregisteredDispatcherReuse()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
