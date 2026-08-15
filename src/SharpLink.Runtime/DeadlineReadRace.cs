@@ -9,8 +9,8 @@ namespace SharpLink.Runtime;
 /// <see cref="Task.Delay(TimeSpan, TimeProvider, CancellationToken)"/>, or a per-pump
 /// <see cref="CancellationTokenSource"/>. A single
 /// instance is reused for every deadline wait of one send pump, so only the arm itself
-/// allocates: one <see cref="ManualResetValueTaskSourceCore{TResult}"/> continuation closure
-/// per wait plus one <see cref="ITimer"/> from the owner's <see cref="TimeProvider"/>.
+/// allocates: two continuation closures per wait plus one <see cref="ITimer"/> from the
+/// owner's <see cref="TimeProvider"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,16 +21,18 @@ namespace SharpLink.Runtime;
 /// </para>
 /// <para>
 /// The instance is single-flight: an arm must be fully awaited before the next arm. The owner
-/// (a single-threaded send pump) satisfies this by construction. A read that completes while an
-/// arm is being set up is still handled correctly: the continuation registered by
+/// (a single-threaded send pump) satisfies this by construction. Callbacks that outlive their
+/// arm are neutralized by an atomic claim: each arm publishes a unique token, and the read
+/// callback and the timer callback race to claim that token with a single
+/// <see cref="Interlocked.CompareExchange(ref long, long, long)"/>. A stale callback's token no
+/// longer matches the published one, so it can never dispose a later arm's timer or complete a
+/// later arm's source, no matter how late it runs. The timer is additionally created in a
+/// disabled state and armed via <see cref="ITimer.Change(TimeSpan, TimeSpan)"/> only after the
+/// field that owns it has been published, so a deadline already in the past can never invoke a
+/// callback that observes an unpublished timer. A read that completes while an arm is being set
+/// up is still handled correctly: the continuation registered by
 /// <see cref="TaskAwaiter{TResult}.UnsafeOnCompleted(Action)"/> runs inline for completed
-/// tasks, which is why the timer is created before the continuation is registered, and why each
-/// arm captures its own read so a late continuation from a previous arm can never act on the
-/// current arm's state (the identity check makes stale completions no-ops). For the same reason
-/// each arm stamps its timer callback with a monotonically increasing generation: disposing a
-/// fired timer does not guarantee that an already queued callback has finished running, so a
-/// stale callback must recognize that it no longer belongs to the current arm before it may
-/// touch the timer or the completion source.
+/// tasks, and the timer field is already published at that point.
 /// </para>
 /// </remarks>
 internal sealed class DeadlineReadRace : IValueTaskSource<bool>, IDisposable
@@ -43,13 +45,15 @@ internal sealed class DeadlineReadRace : IValueTaskSource<bool>, IDisposable
         TimedOut,
     }
 
+    private const long ReadClaimBit = 1;
+    private const long TimerClaimBit = 2;
+
     private readonly TimeProvider _timeProvider;
     private ManualResetValueTaskSourceCore<bool> _core;
-    private Task<bool>? _read;
     private ITimer? _timer;
     private RaceOutcome _outcome;
-    private int _readAbandoned;
     private long _armGeneration;
+    private long _armClaim;
 
     internal DeadlineReadRace(TimeProvider timeProvider)
     {
@@ -87,32 +91,25 @@ internal sealed class DeadlineReadRace : IValueTaskSource<bool>, IDisposable
             return new ValueTask<bool>(read);
         }
 
-        _read = read;
+        var token = (++_armGeneration) << 2;
         Volatile.Write(ref Unsafe.As<RaceOutcome, int>(ref _outcome), (int)RaceOutcome.Pending);
-        Volatile.Write(ref _readAbandoned, 0);
         _core.Reset();
 
-        // The timer must be armed before the read continuation is registered: a read that
-        // completes in this window invokes the continuation inline, and the read-win path
-        // disposes the timer it expects to exist.
-        var generation = Interlocked.Increment(ref _armGeneration);
+        // Publish the arm token before either callback can run, then publish the timer before
+        // it can fire: create it disabled, arm it via Change, and only then register the read
+        // continuation (which runs inline for a read that completes during the setup).
+        Volatile.Write(ref _armClaim, token);
         _timer = _timeProvider.CreateTimer(
-            state => OnTimerFired(generation), this, timeout, Timeout.InfiniteTimeSpan);
-
-        // Each arm registers a fresh closure capturing its own read. A closure from an earlier
-        // arm that fires late must not be able to act on this arm's state: the identity check
-        // against the current read makes stale completions no-ops.
-        read.GetAwaiter().UnsafeOnCompleted(() => OnReadCompleted(read));
+            _ => OnTimerFired(token), this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _timer.Change(timeout, Timeout.InfiniteTimeSpan);
+        read.GetAwaiter().UnsafeOnCompleted(() => OnReadCompleted(read, token));
         return new ValueTask<bool>(this, _core.Version);
     }
 
-    private void OnReadCompleted(Task<bool> read)
+    private void OnReadCompleted(Task<bool> read, long token)
     {
-        if (!ReferenceEquals(read, _read))
-            return; // Stale completion from a previous arm: never touch the current cycle's state.
-
-        if (Interlocked.Exchange(ref _readAbandoned, 1) != 0)
-            return; // The timer won first: the read stays unconsumed for later reuse.
+        if (Interlocked.CompareExchange(ref _armClaim, token | ReadClaimBit, token) != token)
+            return; // Superseded arm or already claimed by the timer: the read stays unconsumed.
 
         _timer!.Dispose();
         if (read.IsCompletedSuccessfully)
@@ -129,13 +126,10 @@ internal sealed class DeadlineReadRace : IValueTaskSource<bool>, IDisposable
         }
     }
 
-    private void OnTimerFired(long generation)
+    private void OnTimerFired(long token)
     {
-        if (generation != Volatile.Read(ref _armGeneration))
-            return; // A queued timer callback from an earlier arm: never touch the current arm.
-
-        if (Interlocked.Exchange(ref _readAbandoned, 1) != 0)
-            return; // The read completed first and disposed the timer.
+        if (Interlocked.CompareExchange(ref _armClaim, token | TimerClaimBit, token) != token)
+            return; // Superseded arm or already claimed by the read.
 
         _timer!.Dispose();
         Volatile.Write(ref Unsafe.As<RaceOutcome, int>(ref _outcome), (int)RaceOutcome.TimedOut);

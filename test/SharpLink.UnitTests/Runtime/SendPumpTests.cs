@@ -95,10 +95,11 @@ public class SendPumpTests
     {
         var clock = new ManualTimeProvider();
         var maxLatency = TimeSpan.FromMilliseconds(100);
+        var provider = new TimerArmRecordingTimeProvider(clock);
         var input = new Pipe();
         var output = new Pipe();
         using var context = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(clock)
+            .UseTimeProvider(provider)
             .Build(includeGeneratedAssemblyCatalog: false);
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "timed-batch-retained-read",
@@ -111,7 +112,7 @@ public class SendPumpTests
         {
             var first = CreateFrame(session, 32, requestId: 1);
             session.SendPacket(first);
-            await WaitUntilAsync(() => clock.ActiveTimerCount > 0);
+            await WaitUntilAsync(() => provider.WasArmed(maxLatency));
             clock.Advance(maxLatency);
 
             await ConsumeAvailableAsync(output.Reader);
@@ -211,7 +212,7 @@ public class SendPumpTests
         try
         {
             session.SendPacket(first);
-            await WaitUntilAsync(() => clock.ActiveTimerCount > 0);
+            await WaitUntilAsync(() => provider.WasArmed(maxLatency));
             clock.Advance(TimeSpan.FromMilliseconds(50));
 
             session.SendPacket(second);
@@ -252,10 +253,11 @@ public class SendPumpTests
         var clock = new ManualTimeProvider();
         var chunk = TimeSpan.FromMilliseconds(int.MaxValue);
         var maxLatency = chunk + TimeSpan.FromMilliseconds(1);
+        var provider = new TimerArmRecordingTimeProvider(clock);
         var input = new Pipe();
         var output = new Pipe();
         using var context = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(clock)
+            .UseTimeProvider(provider)
             .Build(includeGeneratedAssemblyCatalog: false);
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "timed-batch-chunk-rearm",
@@ -268,7 +270,7 @@ public class SendPumpTests
         try
         {
             session.SendPacket(frame);
-            await WaitUntilAsync(() => clock.ActiveTimerCount > 0);
+            await WaitUntilAsync(() => provider.WasArmed(chunk));
             Ensure(clock.EarliestTimerTimestamp == clock.GetTimestamp() + chunk.Ticks,
                 "a deadline beyond the maximum timer delay must be armed as one full chunk");
 
@@ -297,10 +299,11 @@ public class SendPumpTests
     {
         var clock = new ManualTimeProvider();
         var maxLatency = TimeSpan.FromMilliseconds(100);
+        var provider = new TimerArmRecordingTimeProvider(clock);
         var input = new Pipe();
         var output = new Pipe();
         using var context = new SharpLinkRuntimeContextBuilder()
-            .UseTimeProvider(clock)
+            .UseTimeProvider(provider)
             .Build(includeGeneratedAssemblyCatalog: false);
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "timed-batch-dispose-during-wait",
@@ -313,7 +316,7 @@ public class SendPumpTests
         try
         {
             session.SendPacket(frame);
-            await WaitUntilAsync(() => clock.ActiveTimerCount > 0);
+            await WaitUntilAsync(() => provider.WasArmed(maxLatency));
 
             await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
             EnsureReturned(frame, "dispose during the deadline wait must return the frame owner");
@@ -566,9 +569,11 @@ public class SendPumpTests
             TimeSpan period)
         {
             var timer = inner.CreateTimer(callback, state, dueTime, period);
-            if (dueTime == expectedDueTime)
-                _expectedTimerArmed.TrySetResult();
-            return timer;
+            return new HookedTimer(timer, changedDueTime =>
+            {
+                if (changedDueTime == expectedDueTime)
+                    _expectedTimerArmed.TrySetResult();
+            });
         }
     }
 
@@ -592,12 +597,14 @@ public class SendPumpTests
             TimeSpan period)
         {
             var timer = inner.CreateTimer(callback, state, dueTime, period);
-            // Publish only after the timer is actually installed: the test advances the manual
-            // clock once the arm is observed, and the due time must be relative to the clock
-            // position at arm time.
-            lock (_gate)
-                _armedDueTimes.Add(dueTime);
-            return timer;
+            return new HookedTimer(timer, changedDueTime =>
+            {
+                // The deadline race creates its timers disabled and arms them via Change, so
+                // the arm is only observable on the Change hook, after the timer is installed
+                // relative to the current clock position.
+                lock (_gate)
+                    _armedDueTimes.Add(changedDueTime);
+            });
         }
 
         internal bool WasArmed(TimeSpan dueTime)
@@ -633,13 +640,14 @@ public class SendPumpTests
             TimeSpan dueTime,
             TimeSpan period)
         {
-            var timer = inner.CreateTimer(callback, state, dueTime, period);
             lock (_gate)
-            {
                 _armedCallbacks.Add((callback, state));
-                _armedDueTimes.Add(dueTime);
-            }
-            return timer;
+            var timer = inner.CreateTimer(callback, state, dueTime, period);
+            return new HookedTimer(timer, changedDueTime =>
+            {
+                lock (_gate)
+                    _armedDueTimes.Add(changedDueTime);
+            });
         }
 
         internal bool WasArmed(TimeSpan dueTime)
@@ -656,6 +664,21 @@ public class SendPumpTests
                 (callback, state) = _armedCallbacks[index];
             callback(state);
         }
+    }
+
+    private sealed class HookedTimer(
+        ITimer inner,
+        Action<TimeSpan> onChangedDueTime) : ITimer
+    {
+        public bool Change(TimeSpan dueTime, TimeSpan period)
+        {
+            onChangedDueTime(dueTime);
+            return inner.Change(dueTime, period);
+        }
+
+        public void Dispose() => inner.Dispose();
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
     }
 
     private static void Ensure(bool condition, string message)
