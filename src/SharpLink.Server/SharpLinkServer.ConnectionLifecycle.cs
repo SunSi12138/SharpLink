@@ -4,12 +4,22 @@ internal sealed partial class SharpLinkServer
 {
     private async Task HandleAcceptedConnectionAsync(
         ITransportConnection acceptedConnection,
+        ServerConnectionAdmission.ServerConnectionAdmissionLease connectionLease,
         CancellationToken cancellationToken)
     {
         ITransportConnection? connection = acceptedConnection;
         ServerConnectionState? connectionState = null;
         try
         {
+            // The handshake slot covers TLS, the Protocol v2 handshake, and application
+            // authentication. It is released exactly once: at the Ready transition, or by
+            // the terminal cleanup below when the connection fails before Ready.
+            if (!_connectionAdmission.TryAcquireHandshake(connectionLease))
+            {
+                RecordConnectionAdmissionRejection(ConnectionAdmissionRejectionReason.HandshakeLimit);
+                return;
+            }
+
             if (connection is ITransportSecurityHandshake securityHandshake)
             {
                 try
@@ -49,13 +59,17 @@ internal sealed partial class SharpLinkServer
             connectionState.MarkSessionLoopStarted();
             connection = null;
             await ReplaceConnectionAsync(connectionState).ConfigureAwait(false);
-            await HandleSessionLifecycleAsync(connectionState).ConfigureAwait(false);
+            await HandleSessionLifecycleAsync(connectionState, connectionLease).ConfigureAwait(false);
         }
         catch (Exception exception) when (IsExpectedCancellation(exception, cancellationToken))
         {
         }
         finally
         {
+            // Covers every pre-Ready termination path; a Ready connection released its
+            // handshake slot inside HandleSessionLifecycleAsync, so this is a no-op there.
+            connectionLease.ReleaseHandshake();
+            connectionLease.ReleaseConnection();
             if (connectionState is not null)
             {
                 connectionState.MarkSessionLoopCompleted();
@@ -77,7 +91,9 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private async Task HandleSessionLifecycleAsync(ServerConnectionState connection)
+    private async Task HandleSessionLifecycleAsync(
+        ServerConnectionState connection,
+        ServerConnectionAdmission.ServerConnectionAdmissionLease connectionLease)
     {
         var session = connection.Session;
         var ct = connection.ConnectionToken;
@@ -117,6 +133,10 @@ internal sealed partial class SharpLinkServer
 
             if (!connection.MarkReady(authResult.Context))
                 return;
+
+            // The handshake (TLS + Protocol v2 + authentication) is complete: release the
+            // handshake slot while the connection slot follows the full connection lifetime.
+            connectionLease.ReleaseHandshake();
 
             hasConnected = true;
             session.NotifyConnected();

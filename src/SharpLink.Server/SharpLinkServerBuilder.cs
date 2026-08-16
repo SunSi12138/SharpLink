@@ -28,6 +28,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
     private IRpcExceptionMapper? _exceptionMapper;
     private bool _includeExceptionDetails;
     private SharpLinkAdmissionControlOptions? _admissionControlOptions;
+    private SharpLinkConnectionAdmissionOptions? _connectionAdmissionOptions;
 
     /// <summary>Creates a server builder with safe runtime and heartbeat defaults.</summary>
     public static SharpLinkServerBuilder Create() => new();
@@ -214,6 +215,26 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             configure(options);
             options.Validate();
             _admissionControlOptions = options;
+        });
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the pre-call connection resource bounds for this server: the maximum
+    /// simultaneously live accepted connections and the maximum simultaneously handshaking
+    /// connections. Over-limit connections are rejected (closed) immediately.
+    /// </summary>
+    public SharpLinkServerBuilder UseConnectionAdmission(Action<SharpLinkConnectionAdmissionOptions> configure)
+    {
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(configure);
+            if (_connectionAdmissionOptions is not null)
+                throw new InvalidOperationException("Connection admission has already been configured for this builder.");
+            var options = new SharpLinkConnectionAdmissionOptions();
+            configure(options);
+            options.Validate();
+            _connectionAdmissionOptions = options;
         });
         return this;
     }
@@ -454,7 +475,9 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
             [.. _interceptors],
             _exceptionMapper ?? new DefaultRpcExceptionMapper(_includeExceptionDetails),
             _serviceProvider,
-            _admissionControlOptions?.CloneValidated());
+            _admissionControlOptions?.CloneValidated(),
+            _connectionAdmissionOptions?.CloneValidated() ??
+                new SharpLinkConnectionAdmissionOptions().CloneValidated());
     }
 
     private void ValidateTransportSecurity(IServerTransportListener transport)
@@ -557,6 +580,9 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
             var services = registrationsByContract.ToFrozenDictionary();
             var logger = plan.LoggerFactory.CreateLogger<SharpLinkServer>();
+            var connectionAdmission = new ServerConnectionAdmission(
+                plan.ConnectionAdmissionOptions.MaxConcurrentConnections,
+                plan.ConnectionAdmissionOptions.MaxConcurrentHandshakes);
             var composition = new ServerRuntimeComposition(
                 plan.Resources.Transport,
                 services,
@@ -574,6 +600,7 @@ public class SharpLinkServerBuilder : ISharpLinkServerBuilder
                 serviceProvider,
                 staticManifests,
                 admissionController,
+                connectionAdmission,
                 ServerShutdownPlan.Default,
                 SharpLinkServer.CreateFrameworkTaskSupervisor(logger));
             var server = new SharpLinkServer(composition);

@@ -57,6 +57,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     private readonly IRpcExceptionMapper _exceptionMapper;
     private readonly ServerServiceCleanup _serviceCleanup;
     private readonly SharpLinkAdmissionController? _admissionController;
+    private readonly ServerConnectionAdmission _connectionAdmission;
     private readonly ServerShutdownPlan _shutdownPlan;
     private Task? _deferredServiceCleanupTask;
     private Task? _shutdownCleanupObserver;
@@ -73,6 +74,8 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     private long _rejectedOneWayCalls;
     private long _oneWayAdmissionLogTimestamp;
     private int _oneWayAdmissionLogInitialized;
+    private long _connectionAdmissionLogTimestamp;
+    private int _connectionAdmissionLogInitialized;
 
     /// <summary>
     /// Initializes a Server from the explicit composition materialized by
@@ -97,6 +100,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _serviceProvider = composition.ServiceProvider;
         _staticManifests = composition.StaticManifests;
         _admissionController = composition.AdmissionController;
+        _connectionAdmission = composition.ConnectionAdmission;
         _shutdownPlan = composition.ShutdownPlan;
         _maxConcurrentCallsPerConnection = _runtimeContext.FlowControl.MaxConcurrentCallsPerConnection;
         _maxConcurrentCallsPerServer = _runtimeContext.FlowControl.MaxConcurrentCallsPerServer;
@@ -435,6 +439,46 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         string operation,
         TaskObservationMode observationMode = TaskObservationMode.FrameworkOwned)
         => _frameworkTasks.Track(task, operation, observationMode, IsExpectedSessionShutdownException);
+
+    /// <summary>Exposes the pre-call connection admission gate for diagnostics and tests.</summary>
+    internal ServerConnectionAdmission ConnectionAdmission => _connectionAdmission;
+
+    internal void RecordConnectionAdmissionRejection(string reason)
+    {
+        SharpLinkTelemetry.RecordConnectionRejected(reason);
+        if (ShouldLogConnectionAdmissionRejection())
+            LogConnectionAdmissionRejected(_logger, reason);
+    }
+
+    private bool ShouldLogConnectionAdmissionRejection()
+    {
+        var timeProvider = _runtimeContext.TimeProvider;
+        var now = timeProvider.GetTimestamp();
+        while (true)
+        {
+            var initialization = Volatile.Read(ref _connectionAdmissionLogInitialized);
+            if (initialization != 2)
+            {
+                if (initialization == 0 &&
+                    Interlocked.CompareExchange(
+                        ref _connectionAdmissionLogInitialized,
+                        1,
+                        0) == 0)
+                {
+                    Volatile.Write(ref _connectionAdmissionLogTimestamp, now);
+                    Volatile.Write(ref _connectionAdmissionLogInitialized, 2);
+                    return true;
+                }
+                return false;
+            }
+
+            var previous = Volatile.Read(ref _connectionAdmissionLogTimestamp);
+            if (timeProvider.GetElapsedTime(previous, now) < TimeSpan.FromSeconds(5))
+                return false;
+            if (Interlocked.CompareExchange(ref _connectionAdmissionLogTimestamp, now, previous) == previous)
+                return true;
+        }
+    }
 
     private async Task DisposeAllSessionsAsync()
     {

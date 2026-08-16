@@ -38,6 +38,9 @@ internal sealed partial class SharpLinkServer
     [LoggerMessage(EventId = LogEvents.Connection.AuthenticationProviderFailed, Level = LogLevel.Warning, Message = "Authentication provider failed without exposing payload data.")]
     private static partial void LogAuthenticationProviderFailed(ILogger logger, Exception exception);
 
+    [LoggerMessage(EventId = LogEvents.Connection.ConnectionAdmissionRejected, Level = LogLevel.Warning, Message = "Connection rejected because the {Reason} bound is exhausted.")]
+    private static partial void LogConnectionAdmissionRejected(ILogger logger, string reason);
+
     [LoggerMessage(EventId = LogEvents.Connection.HeartbeatTimeout, Level = LogLevel.Warning, Message = "Client disconnected due to heartbeat timeout.")]
     private static partial void LogClientHeartbeatTimeout(ILogger logger);
 
@@ -61,6 +64,12 @@ internal sealed partial class SharpLinkServer
         ILogger logger,
         int maxConcurrentCallsPerConnection,
         int maxConcurrentCallsPerServer);
+
+    [LoggerMessage(EventId = LogEvents.Server.ConnectionAdmissionConfigured, Level = LogLevel.Information, Message = "Server connection admission configured: max_connections={MaxConnections}, max_handshakes={MaxHandshakes}.")]
+    private static partial void LogServerConnectionAdmissionConfigured(
+        ILogger logger,
+        int maxConnections,
+        int maxHandshakes);
 
     [LoggerMessage(EventId = LogEvents.Server.ForcedCallsRemaining, Level = LogLevel.Warning, Message = "Server grace period expired with {ActiveCalls} user calls still running; their service graph will be released after they finish.")]
     private static partial void LogForcedCallsRemaining(ILogger logger, int activeCalls);

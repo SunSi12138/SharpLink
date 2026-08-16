@@ -32,6 +32,10 @@ internal sealed partial class SharpLinkServer
             _logger,
             _maxConcurrentCallsPerConnection,
             _maxConcurrentCallsPerServer);
+        LogServerConnectionAdmissionConfigured(
+            _logger,
+            _connectionAdmission.MaxConnections,
+            _connectionAdmission.MaxHandshakes);
         TrackFrameworkTask(
             RunHeartbeatCheckLoopAsync(_forceStopCts.Token),
             "HeartbeatCheckLoop");
@@ -44,8 +48,15 @@ internal sealed partial class SharpLinkServer
                 try
                 {
                     connection = await _transportListener.AcceptAsync(acceptToken).ConfigureAwait(false);
+                    if (!_connectionAdmission.TryAcquireConnection(out var connectionLease))
+                    {
+                        RecordConnectionAdmissionRejection(ConnectionAdmissionRejectionReason.ConnectionLimit);
+                        await connection.DisposeAsync().ConfigureAwait(false);
+                        continue;
+                    }
+
                     TrackFrameworkTask(
-                        HandleAcceptedConnectionAsync(connection, _forceStopCts.Token),
+                        HandleAcceptedConnectionAsync(connection, connectionLease, _forceStopCts.Token),
                         "AcceptedConnectionSession");
                     connection = null;
                 }
