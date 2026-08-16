@@ -87,12 +87,14 @@ public class FixedWindowLogThrottleTests
     {
         // long.MaxValue ticks per second puts the five-second window beyond Int64 range.
         // Only the final result saturates: the first event is admitted once, then the
-        // gate stays closed for every later timestamp.
+        // gate stays closed for every later timestamp — including the saturated boundary
+        // itself, which must not re-admit earlier than the configured interval.
         var throttle = new FixedWindowLogThrottle(TimeSpan.FromSeconds(5), long.MaxValue);
 
         await Assert.That(throttle.ShouldLog(0, out _)).IsTrue();
         await Assert.That(throttle.ShouldLog(1_000_000_000_000, out _)).IsFalse();
         await Assert.That(throttle.ShouldLog(long.MaxValue - 1, out _)).IsFalse();
+        await Assert.That(throttle.ShouldLog(long.MaxValue, out _)).IsFalse();
     }
 
     [Test]

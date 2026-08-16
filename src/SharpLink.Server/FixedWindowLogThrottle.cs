@@ -60,8 +60,12 @@ internal struct FixedWindowLogThrottle
         while (true)
         {
             var last = Volatile.Read(ref _lastAdmittedTimestamp);
+            // A truly unrepresentable window (saturated to long.MaxValue) stays closed
+            // after its first admission: re-admitting at the saturated boundary would
+            // open the throttle earlier than the configured interval.
+            var interval = _intervalTimestampTicks;
             if (Volatile.Read(ref _initialized) != 0 &&
-                unchecked(timestamp - last) < _intervalTimestampTicks)
+                (interval == long.MaxValue || unchecked(timestamp - last) < interval))
             {
                 Interlocked.Increment(ref _suppressedCount);
                 suppressedCount = 0;
