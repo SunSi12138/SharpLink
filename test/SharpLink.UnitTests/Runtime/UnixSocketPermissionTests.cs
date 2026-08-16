@@ -114,6 +114,28 @@ public class UnixSocketPermissionTests
     }
 
     [Test]
+    public async Task FileSystemUdsListenerShouldStillBindOnWindows()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var path = Path.Combine(Path.GetTempPath(), $"sl-perm-{Guid.NewGuid():N}.sock");
+        var listener = new SocketServerTransportListener(new UnixDomainSocketEndPoint(path));
+        try
+        {
+            await Assert.That(listener.LocalEndPoint).IsNotNull();
+            await Assert.That(File.Exists(path)).IsTrue();
+        }
+        finally
+        {
+            await listener.DisposeAsync();
+            File.Delete(path);
+        }
+
+        await Assert.That(File.Exists(path)).IsFalse();
+    }
+
+    [Test]
     public async Task AbstractUdsListenerShouldBypassFilesystemPermissionHardening()
     {
         if (!OperatingSystem.IsLinux())

@@ -197,7 +197,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
 
             _listener.Bind(localEndPoint);
             boundUnixPath = unixPath;
-            if (unixPath is not null)
+            if (unixPath is not null && !OperatingSystem.IsWindows())
             {
                 var identity = UnixSocketPathIdentity.Capture(unixPath);
                 if (!identity.HasValue)
