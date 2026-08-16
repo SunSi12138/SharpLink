@@ -39,6 +39,7 @@ public class ClientProxyBridgeBenchmarks
 {
     private readonly CompletedSource _completedSource = new();
     private readonly SuspendedSource _suspendedSource = new();
+    private readonly SuspendedByteSource _suspendedByteSource = new();
 
     // ---- Workload 1: ValueTask<int> synchronously completed ------------------------------
 
@@ -96,6 +97,23 @@ public class ClientProxyBridgeBenchmarks
     [Benchmark]
     public ValueTask NoResult_ValueTask() => CallSyncByte().AsVoid();
 
+    // ---- Workload 6b: suspended no-result acknowledgement (pooled IValueTaskSource<byte>) ---
+    // Real response-less RPCs return a pooled RpcRequestOperation<byte> that stays incomplete
+    // until the response arrives; only here does Variant A run the AsVoid state machine before
+    // AsTask, while Variant B awaits the byte source directly.
+
+    [Benchmark]
+    public Task NoResultSuspended_AsVoidAsTask() => CallSuspendedByte().AsVoid().AsTask();
+
+    [Benchmark]
+    public async Task NoResultSuspended_DirectAwait()
+    {
+        await CallSuspendedByte().ConfigureAwait(false);
+    }
+
+    [Benchmark]
+    public ValueTask NoResultSuspended_ValueTask() => CallSuspendedByte().AsVoid();
+
     // ---- channel call stand-ins (non-inlinable to model interface dispatch) ---------------
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -109,6 +127,9 @@ public class ClientProxyBridgeBenchmarks
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static ValueTask<byte> CallSyncByte() => new((byte)0);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private ValueTask<byte> CallSuspendedByte() => _suspendedByteSource.AsValueTask();
 
     /// <summary>
     /// A pooled <see cref="IValueTaskSource{TResult}"/> that is already completed when the
@@ -184,6 +205,42 @@ public class ClientProxyBridgeBenchmarks
             _core.OnCompleted(continuation, state, token, flags);
             // Complete on another thread, mirroring the IO-thread response path.
             ThreadPool.QueueUserWorkItem(static source => ((SuspendedSource)source!)._core.SetResult(42), this);
+        }
+    }
+
+    /// <summary>
+    /// A pooled <see cref="IValueTaskSource{TResult}"/> over the internal byte acknowledgement that
+    /// is incomplete at the bridge boundary and completes on a thread-pool thread. Backs the
+    /// suspended no-result workload, where only Variant A runs the <c>AsVoid</c> state machine
+    /// before <c>AsTask</c>, while Variant B awaits the byte source directly.
+    /// </summary>
+    private sealed class SuspendedByteSource : IValueTaskSource<byte>
+    {
+        private ManualResetValueTaskSourceCore<byte> _core;
+
+        public SuspendedByteSource() => _core.RunContinuationsAsynchronously = true;
+
+        public short Version => _core.Version;
+
+        public ValueTask<byte> AsValueTask() => new(this, _core.Version);
+
+        public byte GetResult(short token)
+        {
+            var result = _core.GetResult(token);
+            _core.Reset();
+            return result;
+        }
+
+        public ValueTaskSourceStatus GetStatus(short token) => _core.GetStatus(token);
+
+        public void OnCompleted(
+            Action<object?> continuation,
+            object? state,
+            short token,
+            ValueTaskSourceOnCompletedFlags flags)
+        {
+            _core.OnCompleted(continuation, state, token, flags);
+            ThreadPool.QueueUserWorkItem(static source => ((SuspendedByteSource)source!)._core.SetResult(0), this);
         }
     }
 }
