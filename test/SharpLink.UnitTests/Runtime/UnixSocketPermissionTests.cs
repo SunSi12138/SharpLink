@@ -143,7 +143,7 @@ public class UnixSocketPermissionTests
 
         var invocations = 0;
         var listener = new SocketServerTransportListener(
-            new UnixDomainSocketEndPoint("\0sharplink-abstract-perm"),
+            new UnixDomainSocketEndPoint($"\0sharplink-abstract-perm-{Guid.NewGuid():N}"),
             backlog: 512,
             options: null,
             tlsOptions: null,
