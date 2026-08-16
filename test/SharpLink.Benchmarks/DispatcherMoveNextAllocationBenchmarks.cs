@@ -52,6 +52,7 @@ public class DispatcherMoveNextAllocationBenchmarks
     private readonly AutoResetEvent _producerStopped = new(initialState: false);
     private readonly ControlSignal _controlSignal = new();
     private readonly ManualResetEventSlim _controlGate = new(initialState: false);
+    private Action? _controlGateSetCallback;
 
     private Thread? _producerThread;
     private PooledAsyncStreamDispatcher<byte>? _dispatcher;
@@ -63,6 +64,7 @@ public class DispatcherMoveNextAllocationBenchmarks
     [GlobalSetup]
     public void Setup()
     {
+        _controlGateSetCallback = _controlGate.Set;
         WarmDispatcherPool();
         _producerThread = new Thread(ProducerLoop)
         {
@@ -197,7 +199,7 @@ public class DispatcherMoveNextAllocationBenchmarks
             var signal = RequestControlSignal();
             var awaiter = signal.ConfigureAwait(false).GetAwaiter();
             _controlGate.Reset();
-            awaiter.OnCompleted(_controlGate.Set);
+            awaiter.UnsafeOnCompleted(_controlGateSetCallback ?? throw new InvalidOperationException("The control gate callback was not initialized."));
             _controlGate.Wait();
             if (!awaiter.GetResult())
                 throw new InvalidOperationException("The control producer returned an invalid hand-off signal.");
