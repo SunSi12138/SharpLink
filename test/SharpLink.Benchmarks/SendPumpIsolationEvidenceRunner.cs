@@ -232,6 +232,10 @@ public static class SendPumpIsolationEvidenceRunner
                 output.ReleaseStalledFlushes();
             await output.WaitForDrainAsync().ConfigureAwait(false);
             Console.WriteLine("[Probe] drain complete");
+            // Synchronize with the session pump: the transport watermarks do
+            // not prove the pump finished issuing and recording flushes (with
+            // --stall it can still be waking from the stall release).
+            await session.FlushSendQueueAsync().ConfigureAwait(false);
             var elapsed = Math.Max(0.001, Stopwatch.GetElapsedTime(measurementStarted, measurementStopped).TotalSeconds);
             Console.WriteLine("[Probe] building result");
             var built = BuildResult(name, config, recorder, output, queueBytesSampler, queue, elapsed);
@@ -578,6 +582,7 @@ public static class SendPumpIsolationEvidenceRunner
                 // flush; the full call latency is the producer-visible cost.
                 await session.SendPacketAndFlushAsync(writer, cancellationToken).ConfigureAwait(false);
                 recorder.RecordCapacityWait(ProbeFrameClass.Progress, started);
+                recorder.RecordAcceptance(ProbeFrameClass.Progress, seq, Stopwatch.GetTimestamp());
             }
             catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.ResourceExhausted)
             {
@@ -1182,12 +1187,17 @@ internal sealed class IsolationProbePipeWriter : PipeWriter
             return;
         var target = Stopwatch.GetTimestamp() + (long)(seconds * Stopwatch.Frequency);
         // Sleep for all but the final ~2ms, then spin to the exact target.
+        // Stopwatch ticks must be converted to TimeSpan ticks (100 ns) before
+        // Task.Delay: on Linux Stopwatch.Frequency is 1 GHz, so raw tick
+        // counts would oversleep ~100x.
         var spinThreshold = Stopwatch.Frequency / 500;
         var remaining = target - Stopwatch.GetTimestamp();
         if (remaining > spinThreshold)
-            await Task.Delay(
-                TimeSpan.FromTicks(remaining - spinThreshold),
-                cancellationToken).ConfigureAwait(false);
+        {
+            var sleepTicks = (long)((remaining - spinThreshold) *
+                (TimeSpan.TicksPerSecond / (double)Stopwatch.Frequency));
+            await Task.Delay(TimeSpan.FromTicks(sleepTicks), cancellationToken).ConfigureAwait(false);
+        }
         var spin = new SpinWait();
         while (Stopwatch.GetTimestamp() < target)
             spin.SpinOnce();

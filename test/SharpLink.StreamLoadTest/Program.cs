@@ -434,12 +434,15 @@ public static class Program
             var outcome = outcomes[index];
             if (isMixed && index >= unaryWorkers)
             {
+                // Stream workers are reported separately: the formal fields
+                // (success/failure/cancelled/started) must stay in the unary
+                // scope so PerformanceReportValidator's contract
+                // (started == completed == success == samples) holds.
                 streamSuccess = checked(streamSuccess + outcome.Success);
                 streamFailure = checked(streamFailure + outcome.Failure);
                 streamValidationFailure = checked(streamValidationFailure + outcome.ValidationFailure);
                 streamCancelled = checked(streamCancelled + outcome.Cancelled);
                 validatedMessages = checked(validatedMessages + outcome.ValidatedMessages);
-                operationsStarted = checked(operationsStarted + outcome.OperationsStarted);
                 continue;
             }
             success = checked(success + outcome.Success);
@@ -472,6 +475,16 @@ public static class Program
                 $"ok={streamSuccess} fail={streamFailure} validationFail={streamValidationFailure} " +
                 $"msgps={equivalentRates.MessagesPerSecond:F2} directionalMiBps={equivalentRates.DirectionalBusinessMiBPerSecond:F2} " +
                 $"err={equivalentRates.ErrorRatePercent:F2}%");
+            if (recordingMode == LatencyRecordingMode.Formal &&
+                (streamFailure > 0 || streamValidationFailure > 0))
+            {
+                // A formal mixed report is only meaningful when the saturation
+                // workload stayed healthy: failing stream workers must not be
+                // serialized as a valid report with zero visible failures.
+                throw new InvalidOperationException(
+                    $"The mixed stream workload failed ({streamFailure} failures, " +
+                    $"{streamValidationFailure} validation failures); the formal report is invalid.");
+            }
         }
         if (recordingMode == LatencyRecordingMode.ValidationDual)
             LatencyRecorderValidation.ValidateAgainstLegacy(

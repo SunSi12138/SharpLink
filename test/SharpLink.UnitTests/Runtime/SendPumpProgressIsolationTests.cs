@@ -70,6 +70,41 @@ public class SendPumpProgressIsolationTests
     }
 
     [Test]
+    public async Task CancelNeverOvertakesItsQueuedRequest()
+    {
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var input = new Pipe();
+        var output = new Pipe();
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "cancel-request-order",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ClientOptions(context));
+        try
+        {
+            // A cancel must stay in the normal class: the peer discards
+            // cancels for requests it has not dispatched yet, so a cancel
+            // overtaking its own request would let the request execute after
+            // the caller already cancelled it.
+            session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Request, 64, requestId: 7));
+            session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Cancel, 0, requestId: 7));
+
+            var types = await ReadFrameTypesAsync(output.Reader, context.Protocol, expectedFrames: 2);
+            Ensure(types.Count == 2, $"expected 2 frames, read {types.Count}");
+            Ensure(types[0] == ProtocolV2FrameType.Request,
+                "the request must reach the transport before its cancel");
+            Ensure(types[1] == ProtocolV2FrameType.Cancel,
+                "the cancel must follow the request it cancels");
+        }
+        finally
+        {
+            await session.DisposeAsync();
+            await input.Writer.CompleteAsync();
+            await output.Reader.CompleteAsync();
+        }
+    }
+
+    [Test]
     public async Task StreamCompleteNeverOvertakesQueuedStreamData()
     {
         using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);

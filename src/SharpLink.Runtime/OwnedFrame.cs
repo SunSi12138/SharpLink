@@ -21,8 +21,8 @@ internal readonly struct OwnedFrame(
     public TaskCompletionSource<bool>? FlushCompletion { get; } = flushCompletion;
 
     /// <summary>
-    /// True when the frame carries protocol progress (ping/pong, cancel,
-    /// window update, go-away) rather than RPC data. The send pump admits and
+    /// True when the frame carries protocol progress (ping/pong, window
+    /// update, go-away) rather than RPC data. The send pump admits and
     /// drains progress frames against a small reserved byte headroom and a
     /// bounded priority burst so stream saturation cannot starve them.
     /// </summary>

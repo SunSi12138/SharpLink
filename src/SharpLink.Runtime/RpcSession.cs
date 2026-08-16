@@ -329,11 +329,12 @@ internal sealed partial class RpcSession
 
     /// <summary>
     /// Classifies protocol progress frames by their header type. Progress
-    /// frames carry connection/stream control state (liveness, cancellation,
-    /// flow-control credit, drain) and must remain timely while bulk stream
-    /// data saturates the send queue. RPC data frames, responses, and
-    /// stream-complete frames stay in the normal class so per-stream ordering
-    /// (StreamData before StreamComplete) is never reordered.
+    /// frames carry connection liveness, flow-control credit, and drain state
+    /// and must remain timely while bulk stream data saturates the send
+    /// queue. RPC data frames, responses, stream-complete frames, and cancels
+    /// stay in the normal class: a cancel must never overtake the request it
+    /// cancels, because the peer discards cancels for requests it has not
+    /// dispatched yet (StreamData before StreamComplete is likewise preserved).
     /// </summary>
     private static bool IsProtocolProgressFrame(ReadOnlySpan<byte> frame)
     {
@@ -342,7 +343,6 @@ internal sealed partial class RpcSession
         return (ProtocolV2FrameType)frame[5] is
             ProtocolV2FrameType.Ping or
             ProtocolV2FrameType.Pong or
-            ProtocolV2FrameType.Cancel or
             ProtocolV2FrameType.WindowUpdate or
             ProtocolV2FrameType.GoAway;
     }

@@ -344,17 +344,43 @@ internal sealed partial class RpcSession
             if (HasProgressFrames() || HasNormalFrames())
                 return ValueTask.FromResult(true);
 
-            var progressWait = _progressQueue.Reader.WaitToReadAsync(CancellationToken.None);
-            if (progressWait.IsCompletedSuccessfully)
-                return progressWait;
-            var progressTask = progressWait.AsTask();
-
-            var normalWait = WaitToReadAsync();
-            if (normalWait.IsCompletedSuccessfully)
-                return normalWait;
-            var normalTask = normalWait.AsTask();
+            // Retain and reuse both reads: the loser of the dual wait stays
+            // registered on its channel for the next wake-up, so a long-lived
+            // session never accumulates abandoned channel waiters (an
+            // abandoned WaitToReadAsync-derived task can also be cancelled by
+            // the channel).
+            var progressTask = GetProgressRead();
+            if (progressTask.IsCompletedSuccessfully)
+            {
+                _pendingProgressReadWait = null;
+                return ValueTask.FromResult(progressTask.Result);
+            }
+            var normalTask = GetNormalRead();
+            if (normalTask.IsCompletedSuccessfully)
+            {
+                _pendingReadWait = null;
+                return ValueTask.FromResult(normalTask.Result);
+            }
 
             return new ValueTask<bool>(AwaitFirstReadAsync(progressTask, normalTask));
+        }
+
+        private Task<bool> GetProgressRead()
+        {
+            if (_pendingProgressReadWait is { IsCompleted: false } retained)
+                return retained;
+            _pendingProgressReadWait = null;
+            return _pendingProgressReadWait =
+                _progressQueue.Reader.WaitToReadAsync(CancellationToken.None).AsTask();
+        }
+
+        private Task<bool> GetNormalRead()
+        {
+            if (_pendingReadWait is { IsCompleted: false } retained)
+                return retained;
+            _pendingReadWait = null;
+            return _pendingReadWait =
+                _normalQueue.Reader.WaitToReadAsync(CancellationToken.None).AsTask();
         }
 
         private static async Task<bool> AwaitFirstReadAsync(Task<bool> first, Task<bool> second)
@@ -370,51 +396,19 @@ internal sealed partial class RpcSession
 
         private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchDeadline)
         {
-            // Reuse a retained normal read when one is still registered on the
-            // channel: the TryPeek fast path in WaitForFramesAsync can leave a
-            // retained read behind, and re-creating reads every deadline cycle
-            // would abandon one registered read per cycle. A retained read
-            // that completed for data already drained is stale and must be
-            // replaced, otherwise the deadline wait would return immediately
-            // on every entry and the final batch would never flush.
-            Task<bool> pendingRead;
-            if (_pendingReadWait is { } retained)
-            {
-                if (retained.IsCompletedSuccessfully && retained.Result)
-                {
-                    if (HasNormalFrames())
-                        return true;
-                    _pendingReadWait = null;
-                }
-                else if (retained.IsCompleted && !retained.IsCanceled)
-                {
-                    // The channel reported closure: surface it.
-                    return retained.Result;
-                }
-                else if (retained.IsCanceled)
-                {
-                    // A cancelled channel read is an inert non-signal: replace it.
-                    _pendingReadWait = null;
-                }
-            }
-            if (_pendingReadWait is null)
-            {
-                var waitToRead = _normalQueue.Reader.WaitToReadAsync(CancellationToken.None);
-                if (waitToRead.IsCompletedSuccessfully)
-                    return waitToRead.Result;
-                pendingRead = waitToRead.AsTask();
-                _pendingReadWait = pendingRead;
-            }
-            else
-            {
-                pendingRead = _pendingReadWait;
-            }
+            // Reuse the retained reads: a read registered for an earlier wait
+            // stays registered on its channel, and the TryPeek fast path in
+            // WaitForFramesAsync can leave one behind. Re-creating reads every
+            // deadline cycle would abandon one registered read per cycle; a
+            // stale completed read (data already drained) is replaced by the
+            // helpers and a closed channel surfaces its result here.
+            var pendingRead = GetNormalRead();
+            if (pendingRead.IsCompleted)
+                return pendingRead.Result;
             // The progress read ends the batching deadline immediately so protocol
             // progress is not delayed by the batch window; it is retained across
             // timer chunks like the normal read.
-            _pendingProgressReadWait ??=
-                _progressQueue.Reader.WaitToReadAsync(CancellationToken.None).AsTask();
-            var progressRead = _pendingProgressReadWait;
+            var progressRead = GetProgressRead();
             while (true)
             {
                 var remaining = SharpLinkTime.GetRemaining(
@@ -451,16 +445,6 @@ internal sealed partial class RpcSession
                         return false;
                 }
             }
-        }
-
-        private ValueTask<bool> WaitToReadAsync()
-        {
-            var pendingRead = _pendingReadWait;
-            if (pendingRead is null)
-                return _normalQueue.Reader.WaitToReadAsync(CancellationToken.None);
-
-            _pendingReadWait = null;
-            return new ValueTask<bool>(pendingRead);
         }
 
         private bool TryReserve(int bytes, bool isProtocolProgress)
