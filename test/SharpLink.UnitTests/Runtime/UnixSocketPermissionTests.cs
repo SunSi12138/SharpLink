@@ -101,7 +101,7 @@ public class UnixSocketPermissionTests
                 var failure = CaptureFailure(() =>
                     SocketServerTransportListener.HardenUnixSocketPermissions(path, identity!.Value));
 
-                await Assert.That(failure).IsTypeOf<IOException>();
+                await Assert.That(failure).IsTypeOf<UnauthorizedAccessException>();
                 await Assert.That(await File.ReadAllTextAsync(path))
                     .IsEqualTo("replacement-owned-by-caller");
                 await Assert.That(File.GetUnixFileMode(path)).IsEqualTo(replacementMode);

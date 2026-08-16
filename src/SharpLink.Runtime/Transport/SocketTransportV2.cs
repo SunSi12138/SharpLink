@@ -199,16 +199,17 @@ public sealed class SocketServerTransportListener : IServerTransportListener
             boundUnixPath = unixPath;
             if (unixPath is not null && !OperatingSystem.IsWindows())
             {
-                var identity = UnixSocketPathIdentity.Capture(unixPath);
-                if (!identity.HasValue)
-                {
-                    throw new IOException(
-                        $"Could not identify Unix-domain socket path '{unixPath}'.");
-                }
+                // UnixSocketPathIdentity.Capture returns null only on Windows, which
+                // is excluded above; on every other platform it either returns the
+                // identity or throws. The coalescing throw only satisfies nullable
+                // flow analysis and doubles as a fail-closed invariant.
+                var identity = UnixSocketPathIdentity.Capture(unixPath)
+                    ?? throw new UnauthorizedAccessException(
+                        "The Unix-domain socket path could not be identified to secure its permissions.");
                 boundUnixIdentity = identity;
                 HardenUnixSocketPermissions(
                     unixPath,
-                    identity.Value,
+                    identity,
                     permissionHardeningOverride);
             }
             _listener.Listen(_backlog);
@@ -427,7 +428,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
 
         if (!identity.Matches(path))
         {
-            throw new IOException(
+            throw new UnauthorizedAccessException(
                 "The Unix-domain socket path changed before its permissions could be secured.");
         }
 
@@ -435,7 +436,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
 
         if (!identity.Matches(path))
         {
-            throw new IOException(
+            throw new UnauthorizedAccessException(
                 "The Unix-domain socket path changed while its permissions were being secured.");
         }
 
@@ -443,7 +444,7 @@ public sealed class SocketServerTransportListener : IServerTransportListener
         if ((actual & DisallowedUnixSocketMode) != 0 ||
             (actual & DefaultUnixSocketMode) != DefaultUnixSocketMode)
         {
-            throw new IOException(
+            throw new UnauthorizedAccessException(
                 "The Unix-domain socket permissions could not be restricted to the current user.");
         }
     }
