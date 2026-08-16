@@ -552,16 +552,60 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     public T Current => _current!;
 
     /// <inheritdoc />
-    public async ValueTask<bool> MoveNextAsync()
+    public ValueTask<bool> MoveNextAsync()
     {
-        var consumerLeaseState = Volatile.Read(ref _leaseState);
-        if (GetLeaseStatus(consumerLeaseState) != LeaseActive)
+        try
         {
-            throw new ObjectDisposedException(
-                typeof(PooledAsyncStreamDispatcher<T>).FullName,
-                "The stream dispatcher lease is no longer active.");
-        }
+            var consumerLeaseState = Volatile.Read(ref _leaseState);
+            if (GetLeaseStatus(consumerLeaseState) != LeaseActive)
+            {
+                return ValueTask.FromException<bool>(new ObjectDisposedException(
+                    typeof(PooledAsyncStreamDispatcher<T>).FullName,
+                    "The stream dispatcher lease is no longer active."));
+            }
 
+            ThrowIfEnumerationCanceled();
+
+            // Synchronous fast path for pre-buffered reads. The outer async marker used to
+            // charge every completion of this path with its state-machine builder overhead
+            // even though the path completes synchronously and allocates nothing (issue #218).
+            if (TryDequeue(out var value, out var encodedByteCount))
+            {
+                _current = value;
+                NotifyBytesConsumed(encodedByteCount);
+
+                // 如果已经 complete 且队列空且已 Dispose，则回收
+                if (Volatile.Read(ref _completed) && IsEmpty() && Volatile.Read(ref _disposed))
+                    TryReturnToPool();
+
+                return ValueTask.FromResult(true);
+            }
+
+            // Terminal path: completed with nothing left to drain finishes synchronously too.
+            if (Volatile.Read(ref _completed) &&
+                Volatile.Read(ref _bufferedCount) == 0 &&
+                Volatile.Read(ref _producerOperations) == 0 &&
+                Volatile.Read(ref _dispatchState)?.HasActiveDispatches != true)
+            {
+                var err = _error;
+                return err is not null
+                    ? ValueTask.FromException<bool>(err)
+                    : ValueTask.FromResult(false);
+            }
+
+            return SlowMoveNextAsync(consumerLeaseState);
+        }
+        catch (Exception exception)
+        {
+            // The previous async signature captured any synchronous failure of this core into
+            // the returned ValueTask. Preserve that observable contract instead of throwing
+            // synchronously from a non-async method.
+            return ValueTask.FromException<bool>(exception);
+        }
+    }
+
+    private async ValueTask<bool> SlowMoveNextAsync(long consumerLeaseState)
+    {
         var ownsConsumerOperation = false;
         try
         {
