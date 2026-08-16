@@ -159,6 +159,17 @@ public sealed class SocketServerTransportListener : IServerTransportListener
         SocketTransportOptions? options = null,
         SslServerAuthenticationOptions? tlsOptions = null,
         TimeSpan? tlsHandshakeTimeout = null)
+        : this(localEndPoint, backlog, options, tlsOptions, tlsHandshakeTimeout, null)
+    {
+    }
+
+    internal SocketServerTransportListener(
+        EndPoint localEndPoint,
+        int backlog,
+        SocketTransportOptions? options,
+        SslServerAuthenticationOptions? tlsOptions,
+        TimeSpan? tlsHandshakeTimeout,
+        Action<string, UnixSocketPathIdentity>? permissionHardeningOverride)
     {
         ArgumentNullException.ThrowIfNull(localEndPoint);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(backlog);
@@ -187,7 +198,19 @@ public sealed class SocketServerTransportListener : IServerTransportListener
             _listener.Bind(localEndPoint);
             boundUnixPath = unixPath;
             if (unixPath is not null)
-                boundUnixIdentity = UnixSocketPathIdentity.Capture(unixPath);
+            {
+                var identity = UnixSocketPathIdentity.Capture(unixPath);
+                if (!identity.HasValue)
+                {
+                    throw new IOException(
+                        $"Could not identify Unix-domain socket path '{unixPath}'.");
+                }
+                boundUnixIdentity = identity;
+                HardenUnixSocketPermissions(
+                    unixPath,
+                    identity.Value,
+                    permissionHardeningOverride);
+            }
             _listener.Listen(_backlog);
             LocalEndPoint = _listener.LocalEndPoint;
             _ownedUnixSocketPath = unixPath;
@@ -368,6 +391,60 @@ public sealed class SocketServerTransportListener : IServerTransportListener
             {
                 Debug.WriteLine($"SharpLink could not remove Unix-domain socket path '{path}': {ex.Message}");
             }
+        }
+    }
+
+    private const UnixFileMode DefaultUnixSocketMode =
+        UnixFileMode.UserRead |
+        UnixFileMode.UserWrite;
+
+    private const UnixFileMode DisallowedUnixSocketMode =
+        UnixFileMode.GroupRead |
+        UnixFileMode.GroupWrite |
+        UnixFileMode.GroupExecute |
+        UnixFileMode.OtherRead |
+        UnixFileMode.OtherWrite |
+        UnixFileMode.OtherExecute;
+
+    /// <summary>
+    /// Restricts a SharpLink-created filesystem Unix-domain socket to the current user
+    /// before the listener accepts connections. Any failure throws so the constructor
+    /// fails closed and the existing cleanup path removes the owned socket node.
+    /// </summary>
+    internal static void HardenUnixSocketPermissions(
+        string path,
+        UnixSocketPathIdentity identity,
+        Action<string, UnixSocketPathIdentity>? overrideForTesting = null)
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        if (overrideForTesting is not null)
+        {
+            overrideForTesting(path, identity);
+            return;
+        }
+
+        if (!identity.Matches(path))
+        {
+            throw new IOException(
+                "The Unix-domain socket path changed before its permissions could be secured.");
+        }
+
+        File.SetUnixFileMode(path, DefaultUnixSocketMode);
+
+        if (!identity.Matches(path))
+        {
+            throw new IOException(
+                "The Unix-domain socket path changed while its permissions were being secured.");
+        }
+
+        var actual = File.GetUnixFileMode(path);
+        if ((actual & DisallowedUnixSocketMode) != 0 ||
+            (actual & DefaultUnixSocketMode) != DefaultUnixSocketMode)
+        {
+            throw new IOException(
+                "The Unix-domain socket permissions could not be restricted to the current user.");
         }
     }
 }
