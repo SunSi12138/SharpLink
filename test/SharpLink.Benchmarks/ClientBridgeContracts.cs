@@ -5,36 +5,22 @@ using SharpLink.Sdk;
 namespace SharpLink.Benchmarks;
 
 /// <summary>
-/// Contract dedicated to issue #159's client-proxy bridge comparison. Each logical call has both a
-/// <c>ValueTask</c> shape (proxy passthrough, Variant C) and a <c>Task</c> shape (proxy
-/// <c>.AsTask()</c>, Variant A); the benchmark wraps the <c>ValueTask</c> shape in an
-/// <c>async Task</c> direct-await to obtain Variant B. This keeps the generated proxy untouched
-/// and measures the three bridge shapes end-to-end.
+/// Contract dedicated to issue #159's client-proxy bridge comparison. Each method returns a
+/// <c>ValueTask&lt;T&gt;</c>, which the generated proxy passes through unchanged (Variant C). The
+/// benchmark then applies the two <c>Task</c>-producing bridges over that single operation:
+/// Variant A (<c>.AsTask()</c>) and Variant B (<c>async Task</c> direct-await). Routing all three
+/// variants through the same method keeps the method id, server dispatch branch, and service
+/// implementation identical, so any measured difference is attributable to the client bridge alone.
 /// </summary>
 [RpcContract]
 public interface IClientBridgeRpc : IService
 {
     [NonCancellable]
-    ValueTask<int> UnaryValueTaskAsync(int value);
+    ValueTask<int> UnaryAsync(int value);
 
     [NonCancellable]
-    Task<int> UnaryTaskAsync(int value);
+    ValueTask<int> ClientStreamAsync(IAsyncEnumerable<int> values);
 
     [NonCancellable]
-    ValueTask UnaryNoResultValueTaskAsync(int value);
-
-    [NonCancellable]
-    Task UnaryNoResultTaskAsync(int value);
-
-    [NonCancellable]
-    ValueTask<int> ClientStreamValueTaskAsync(IAsyncEnumerable<int> values);
-
-    [NonCancellable]
-    Task<int> ClientStreamTaskAsync(IAsyncEnumerable<int> values);
-
-    [NonCancellable]
-    ValueTask<int> LatencyValueTaskAsync(int value);
-
-    [NonCancellable]
-    Task<int> LatencyTaskAsync(int value);
+    ValueTask<int> LatencyAsync(int value);
 }

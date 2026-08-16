@@ -129,7 +129,15 @@ public class ClientProxyBridgeBenchmarks
 
         public ValueTask<int> AsValueTask() => new(this, _core.Version);
 
-        public int GetResult(short token) => _core.GetResult(token);
+        public int GetResult(short token)
+        {
+            var result = _core.GetResult(token);
+            // Return-to-pool then reuse: re-arm and re-complete so each invocation observes a
+            // freshly completed pooled operation, mirroring RpcRequestOperation<T>.GetResult.
+            _core.Reset();
+            _core.SetResult(42);
+            return result;
+        }
 
         public ValueTaskSourceStatus GetStatus(short token) => _core.GetStatus(token);
 

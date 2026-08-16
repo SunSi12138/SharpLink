@@ -230,7 +230,12 @@ public class ClientProxyBridgeSemanticsTests
         public int PostCount => _postCount;
 
         public override void Post(SendOrPostCallback d, object? state)
-            => Interlocked.Increment(ref _postCount);
+        {
+            Interlocked.Increment(ref _postCount);
+            // Still dispatch the callback so a captured continuation completes the task and the
+            // assertion fails deterministically (PostCount > 0) instead of hanging the run.
+            ThreadPool.QueueUserWorkItem(_ => d(state));
+        }
 
         public override void Send(SendOrPostCallback d, object? state) => d(state);
     }

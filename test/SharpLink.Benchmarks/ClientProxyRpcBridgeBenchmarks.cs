@@ -14,15 +14,19 @@ namespace SharpLink.Benchmarks;
 
 /// <summary>
 /// End-to-end confirmation of the issue #159 client-proxy bridge over a tiny loopback unary RPC,
-/// a no-result RPC, a client-streaming RPC, and an injected-latency unary. Each logical call is
-/// exercised in all three bridge shapes:
+/// a client-streaming RPC, and an injected-latency unary. All three bridge shapes are applied over
+/// the <b>same</b> generated-proxy operation (the contract method returns <c>ValueTask&lt;T&gt;</c>):
 /// <list type="bullet">
-///   <item><b>Variant A</b>: the generated proxy's <c>.AsTask()</c> (contract returns <c>Task</c>/<c>Task&lt;T&gt;</c>).</item>
-///   <item><b>Variant B</b>: an <c>async Task</c> direct-await over the <c>ValueTask</c> shape.</item>
-///   <item><b>Variant C</b>: the generated proxy's <c>ValueTask</c> passthrough.</item>
+///   <item><b>Variant A</b>: <c>_rpc.Method(...).AsTask()</c> — the exact shape the generator emits
+///     for a <c>Task&lt;T&gt;</c> contract method.</item>
+///   <item><b>Variant B</b>: <c>async Task&lt;T&gt;</c> direct-await with <c>ConfigureAwait(false)</c>.</item>
+///   <item><b>Variant C</b>: <c>ValueTask&lt;T&gt;</c> passthrough.</item>
 /// </list>
-/// <para>No generator code is modified: Variant A and C come straight from the generated proxy,
-/// Variant B is authored in the benchmark to mirror the candidate lowering shape.</para>
+/// <para>The no-result <c>ValueTask&lt;byte&gt;.AsVoid().AsTask()</c> bridge is covered at the micro
+/// level by <see cref="ClientProxyBridgeBenchmarks"/>; a full-RPC byte-ack method would change the
+/// wire shape (payload vs no-payload), so it is intentionally omitted here.</para>
+/// <para>No generator code is modified: Variant C comes straight from the generated proxy, and
+/// Variants A and B are authored in the benchmark to mirror the candidate lowering shapes.</para>
 /// </summary>
 [MemoryDiagnoser]
 [SimpleJob(
@@ -81,58 +85,44 @@ public class ClientProxyRpcBridgeBenchmarks
     // ---- tiny unary RPC ----------------------------------------------------------------
 
     [Benchmark(Baseline = true)]
-    public Task<int> Unary_AsTask() => _rpc.UnaryTaskAsync(1);
+    public Task<int> Unary_AsTask() => _rpc.UnaryAsync(1).AsTask();
 
     [Benchmark]
     public async Task<int> Unary_DirectAwait()
     {
-        return await _rpc.UnaryValueTaskAsync(1).ConfigureAwait(false);
+        return await _rpc.UnaryAsync(1).ConfigureAwait(false);
     }
 
     [Benchmark]
-    public ValueTask<int> Unary_ValueTask() => _rpc.UnaryValueTaskAsync(1);
-
-    // ---- no-result RPC -----------------------------------------------------------------
-
-    [Benchmark]
-    public Task NoResult_AsTask() => _rpc.UnaryNoResultTaskAsync(1);
-
-    [Benchmark]
-    public async Task NoResult_DirectAwait()
-    {
-        await _rpc.UnaryNoResultValueTaskAsync(1).ConfigureAwait(false);
-    }
-
-    [Benchmark]
-    public ValueTask NoResult_ValueTask() => _rpc.UnaryNoResultValueTaskAsync(1);
+    public ValueTask<int> Unary_ValueTask() => _rpc.UnaryAsync(1);
 
     // ---- client-streaming response -----------------------------------------------------
 
     [Benchmark]
-    public Task<int> ClientStream_AsTask() => _rpc.ClientStreamTaskAsync(_streamValues);
+    public Task<int> ClientStream_AsTask() => _rpc.ClientStreamAsync(_streamValues).AsTask();
 
     [Benchmark]
     public async Task<int> ClientStream_DirectAwait()
     {
-        return await _rpc.ClientStreamValueTaskAsync(_streamValues).ConfigureAwait(false);
+        return await _rpc.ClientStreamAsync(_streamValues).ConfigureAwait(false);
     }
 
     [Benchmark]
-    public ValueTask<int> ClientStream_ValueTask() => _rpc.ClientStreamValueTaskAsync(_streamValues);
+    public ValueTask<int> ClientStream_ValueTask() => _rpc.ClientStreamAsync(_streamValues);
 
     // ---- injected-latency unary --------------------------------------------------------
 
     [Benchmark]
-    public Task<int> Latency_AsTask() => _rpc.LatencyTaskAsync(1);
+    public Task<int> Latency_AsTask() => _rpc.LatencyAsync(1).AsTask();
 
     [Benchmark]
     public async Task<int> Latency_DirectAwait()
     {
-        return await _rpc.LatencyValueTaskAsync(1).ConfigureAwait(false);
+        return await _rpc.LatencyAsync(1).ConfigureAwait(false);
     }
 
     [Benchmark]
-    public ValueTask<int> Latency_ValueTask() => _rpc.LatencyValueTaskAsync(1);
+    public ValueTask<int> Latency_ValueTask() => _rpc.LatencyAsync(1);
 
     private static async IAsyncEnumerable<int> Values(int count)
     {
