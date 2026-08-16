@@ -46,15 +46,24 @@ internal struct FixedWindowLogThrottle
     /// <summary>
     /// Returns <see langword="true"/> when the event at <paramref name="timestamp"/> may be
     /// logged. Suppressed events are counted and reported by the next admitted event.
-    /// A saturated boundary keeps the gate permanently closed: timestamps cannot grow past
-    /// <see cref="long.MaxValue"/>, so reopening there would admit every subsequent event.
+    /// A saturated boundary keeps the gate closed while the counter stays at the top of its
+    /// range; a provider whose timestamp rolls over past <see cref="long.MaxValue"/> (into
+    /// the negative half of Int64) reopens the gate, mirroring the rollover-safe elapsed
+    /// arithmetic of <see cref="TimeProvider.GetElapsedTime(long, long)"/>.
     /// </summary>
     internal bool ShouldLog(long timestamp, out int suppressedCount)
     {
         while (true)
         {
             var next = Volatile.Read(ref _nextLogTimestamp);
-            if (timestamp < next || next == long.MaxValue)
+            // A saturated boundary is closed while the counter is still at the top of its
+            // range, but a wrapped (negative) timestamp means the provider counter rolled
+            // over past long.MaxValue: GetElapsedTime-style arithmetic keeps working, so
+            // the gate must reopen. Any other timestamp is judged against the boundary.
+            var suppress = next == long.MaxValue
+                ? timestamp >= 0
+                : timestamp < next;
+            if (suppress)
             {
                 Interlocked.Increment(ref _suppressedCount);
                 suppressedCount = 0;

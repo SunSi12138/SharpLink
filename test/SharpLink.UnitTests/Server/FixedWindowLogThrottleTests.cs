@@ -96,6 +96,23 @@ public class FixedWindowLogThrottleTests
     }
 
     [Test]
+    public async Task TimestampRolloverPastTheSaturatedBoundaryReopensTheGate()
+    {
+        // A provider counter that wraps from long.MaxValue into the negative half of
+        // Int64 must reopen the gate (GetElapsedTime-style rollover semantics) instead of
+        // suppressing warnings forever.
+        var throttle = new FixedWindowLogThrottle(TimeSpan.FromSeconds(5), Frequency);
+
+        await Assert.That(throttle.ShouldLog(long.MaxValue, out _)).IsTrue();
+        await Assert.That(throttle.ShouldLog(long.MaxValue, out _)).IsFalse();
+
+        await Assert.That(throttle.ShouldLog(long.MinValue + 1, out var reopenedSuppressed)).IsTrue();
+        await Assert.That(reopenedSuppressed).IsEqualTo(1);
+        await Assert.That(throttle.ShouldLog(long.MinValue + 1 + 2 * Frequency, out _)).IsFalse();
+        await Assert.That(throttle.ShouldLog(long.MinValue + 1 + 5 * Frequency, out _)).IsTrue();
+    }
+
+    [Test]
     public async Task MaximumTimestampStaysClosedAfterTheFirstAdmission()
     {
         // When the provider reports long.MaxValue, the boundary saturates to the same
