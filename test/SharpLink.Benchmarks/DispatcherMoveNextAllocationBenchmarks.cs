@@ -53,6 +53,8 @@ public class DispatcherMoveNextAllocationBenchmarks
     private readonly ControlSignal _controlSignal = new();
     private readonly ManualResetEventSlim _controlGate = new(initialState: false);
     private Action? _controlGateSetCallback;
+    private readonly ManualResetEventSlim _suspendGate = new(initialState: false);
+    private Action? _suspendGateSetCallback;
 
     private Thread? _producerThread;
     private PooledAsyncStreamDispatcher<byte>? _dispatcher;
@@ -65,6 +67,7 @@ public class DispatcherMoveNextAllocationBenchmarks
     public void Setup()
     {
         _controlGateSetCallback = _controlGate.Set;
+        _suspendGateSetCallback = _suspendGate.Set;
         WarmDispatcherPool();
         _producerThread = new Thread(ProducerLoop)
         {
@@ -182,7 +185,11 @@ public class DispatcherMoveNextAllocationBenchmarks
                 throw new InvalidOperationException("The MoveNext operation must suspend before its producer is requested.");
 
             RequestDispatcherItems(1);
-            if (!moveNext.GetAwaiter().GetResult())
+            var awaiter = moveNext.ConfigureAwait(false).GetAwaiter();
+            _suspendGate.Reset();
+            awaiter.UnsafeOnCompleted(_suspendGateSetCallback ?? throw new InvalidOperationException("The suspend gate callback was not initialized."));
+            _suspendGate.Wait();
+            if (!awaiter.GetResult())
                 throw new InvalidOperationException("The benchmark producer ended the stream before publishing its item.");
             sum += enumerator.Current;
         }
