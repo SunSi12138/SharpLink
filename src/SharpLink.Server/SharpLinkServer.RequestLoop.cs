@@ -190,8 +190,8 @@ internal sealed partial class SharpLinkServer
                                     if ((session.NegotiatedCapabilities &
                                          ProtocolV2Capabilities.HealthCheck) == 0)
                                     {
-                                        throw new SharpLinkException(
-                                            SharpLinkErrorCode.ProtocolViolation,
+                                        throw new SharpLinkProtocolViolationException(
+                                            ProtocolViolationReason.ProtocolState,
                                             "HealthCheck was not negotiated for this session.");
                                     }
                                     await session.SendHealthResponseWithBackpressureAsync(
@@ -206,6 +206,8 @@ internal sealed partial class SharpLinkServer
                                 default:
                                     {
                                         SharpLinkTelemetry.RecordProtocolFailure("server");
+                                        LogProtocolViolationRateLimited(
+                                            ProtocolViolationReason.ProtocolState);
                                         return;
                                     }
                             }
@@ -270,7 +272,7 @@ internal sealed partial class SharpLinkServer
     {
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out short streamIdBits))
-            throw new SharpLinkException(SharpLinkErrorCode.ProtocolViolation, "StreamData stream ID is truncated.");
+            throw new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame, "StreamData stream ID is truncated.");
         var streamId = unchecked((ushort)streamIdBits);
         var streamPayload = payload.Slice(sizeof(ushort));
         await session.StreamManager.DispatchChunkAsync(requestId, streamId, streamPayload);
@@ -298,7 +300,7 @@ internal sealed partial class SharpLinkServer
     {
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out short streamIdBits))
-            throw new SharpLinkException(SharpLinkErrorCode.ProtocolViolation, "StreamComplete stream ID is truncated.");
+            throw new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame, "StreamComplete stream ID is truncated.");
         var streamId = unchecked((ushort)streamIdBits);
         payload = payload.Slice(sizeof(ushort));
         return streamId;
@@ -308,7 +310,7 @@ internal sealed partial class SharpLinkServer
     {
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out long timestamp))
-            throw new SharpLinkException(SharpLinkErrorCode.ProtocolViolation, "Heartbeat timestamp is truncated.");
+            throw new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame, "Heartbeat timestamp is truncated.");
         return timestamp;
     }
 

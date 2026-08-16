@@ -29,9 +29,11 @@ internal sealed partial class SharpLinkServer
                     SharpLinkAuthenticationResult authResult;
                     ProtocolV2HandshakeRequest request = default;
                     ProtocolV2ServerNegotiation? negotiation = null;
+                    ProtocolViolationReason? violationReason = null;
                     if (!RpcSessionProtocolRules.IsFrameAllowed(runtimeSession.ProtocolPhase, header.Type) ||
                         header.Type != ProtocolV2FrameType.HandshakeRequest)
                     {
+                        violationReason = ProtocolViolationReason.ProtocolState;
                         authResult = SharpLinkAuthenticationResult.Reject(
                             SharpLinkErrorCode.ProtocolViolation,
                             "Expected HandshakeRequest frame.");
@@ -49,6 +51,7 @@ internal sealed partial class SharpLinkServer
                         }
                         catch (SharpLinkException exception)
                         {
+                            violationReason = SharpLinkProtocolViolationException.Classify(exception);
                             authResult = SharpLinkAuthenticationResult.Reject(
                                 exception.Code,
                                 exception.Message);
@@ -64,15 +67,34 @@ internal sealed partial class SharpLinkServer
                             ct).ConfigureAwait(false);
                         if (!runtimeSession.TryCompleteHandshake(acceptedNegotiation.Options))
                         {
-                            throw new SharpLinkException(
-                                SharpLinkErrorCode.ProtocolViolation,
-                                "The handshake result was already completed or the session terminated.");
+                            if (!runtimeSession.IsConnected)
+                            {
+                                // The session terminated concurrently (shutdown/teardown):
+                                // an expected connection-termination race, not a protocol bug.
+                                throw new SharpLinkException(
+                                    SharpLinkErrorCode.ConnectionClosed,
+                                    "The handshake session terminated during completion.");
+                            }
+                            // A connected session whose handshake phase is already gone is a
+                            // genuine server-side state bug; classify it as internal so the
+                            // connection loop keeps the full Error path for it.
+                            throw new SharpLinkProtocolViolationException(
+                                ProtocolViolationReason.InternalState,
+                                "The handshake result was already completed.");
                         }
                     }
                     else
                     {
                         if (authResult.ErrorCode == SharpLinkErrorCode.ProtocolViolation)
+                        {
                             SharpLinkTelemetry.RecordProtocolFailure("server");
+                            // Hostile-input rejection during the handshake gets the same
+                            // bounded, classified, exception-free Warning as a thrown
+                            // violation; the generic handshake-failed Warning is skipped
+                            // below so an attacker cannot grow the log per connection.
+                            LogProtocolViolationRateLimited(
+                                violationReason ?? ProtocolViolationReason.Other);
+                        }
                         else if (authResult.ErrorCode is SharpLinkErrorCode.AuthenticationRejected or
                                  SharpLinkErrorCode.AuthenticationExpired or
                                  SharpLinkErrorCode.AuthorizationDenied or
@@ -164,7 +186,24 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            LogAuthenticationProviderFailed(_logger, exception);
+            // Security: extension-provider exceptions may contain tokens, credentials, or
+            // provider SDK details. Only a stable CLR type identity and an internal,
+            // server-generated correlation ID may enter the production log; the full
+            // exception is retained in-process (debugger / DEBUG builds) but never
+            // persisted by the default logger. The warning is also rate-limited so a
+            // client that reliably makes the provider throw cannot grow the log per
+            // connection attempt.
+            var failureId = Interlocked.Increment(ref _authenticationFailureSequence);
+            if (_authenticationFailureLogThrottle.ShouldLog(
+                    _runtimeContext.TimeProvider.GetTimestamp(),
+                    out _))
+            {
+                LogAuthenticationProviderFailed(
+                    _logger,
+                    failureId,
+                    exception.GetType().FullName ?? exception.GetType().Name);
+            }
+            DebugTraceAuthenticationProviderException(exception);
             return SharpLinkAuthenticationResult.Reject(
                 SharpLinkErrorCode.AuthenticationRejected,
                 "Authentication failed.");

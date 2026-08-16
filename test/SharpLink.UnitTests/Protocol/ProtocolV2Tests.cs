@@ -83,6 +83,69 @@ public class ProtocolV2Tests
     }
 
     [Test]
+    public async Task InvalidMagicViolationMustNotEchoAttackerControlledPayloadBytes()
+    {
+        // An unauthenticated client can place arbitrary bytes behind an invalid magic byte.
+        // The terminal diagnostic must not retain any of them, not even hex/base64-encoded.
+        const string attackerBytes = "DE AD BE EF SECRET TOKEN";
+        var frame = new byte[ProtocolV2Constants.HeaderBytes + attackerBytes.Length];
+        frame[0] = 0x5A; // invalid magic
+        System.Text.Encoding.ASCII.GetBytes(
+            attackerBytes,
+            frame.AsSpan(ProtocolV2Constants.HeaderBytes));
+
+        var failure = CaptureException(() =>
+        {
+            var sequence = new ReadOnlySequence<byte>(frame);
+            _ = ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out _, out _);
+        });
+
+        await Assert.That(failure).IsAssignableTo<SharpLinkException>();
+        await Assert.That(((SharpLinkException)failure!).Code).IsEqualTo(SharpLinkErrorCode.ProtocolViolation);
+        await Assert.That(SharpLinkProtocolViolationException.Classify((SharpLinkException)failure!))
+            .IsEqualTo(ProtocolViolationReason.InvalidMagic);
+
+        var text = failure!.Message;
+        await Assert.That(text.Contains("0x5A", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(text.Contains($"remaining={frame.Length}", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(text.Contains("prefix=", StringComparison.OrdinalIgnoreCase)).IsFalse();
+        await Assert.That(text.Contains("DEADBEEF", StringComparison.OrdinalIgnoreCase)).IsFalse();
+        await Assert.That(text.Contains("SECRET", StringComparison.OrdinalIgnoreCase)).IsFalse();
+        await Assert.That(text.Contains("TOKEN", StringComparison.OrdinalIgnoreCase)).IsFalse();
+    }
+
+    [Test]
+    public async Task ParserViolationsShouldCarryFixedLowCardinalityClassification()
+    {
+        var malformed = CaptureException(() =>
+        {
+            var sequence = new ReadOnlySequence<byte>(MutateHeader(length: -1));
+            _ = ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out _, out _);
+        });
+        await Assert.That(malformed).IsAssignableTo<SharpLinkException>();
+        await Assert.That(SharpLinkProtocolViolationException.Classify((SharpLinkException)malformed!))
+            .IsEqualTo(ProtocolViolationReason.MalformedFrame);
+
+        var unknownType = CaptureException(() =>
+        {
+            var sequence = new ReadOnlySequence<byte>(MutateHeader(type: 0xFF));
+            _ = ProtocolV2FrameParser.TryReadFrame(ref sequence, Limits, out _, out _);
+        });
+        await Assert.That(SharpLinkProtocolViolationException.Classify((SharpLinkException)unknownType!))
+            .IsEqualTo(ProtocolViolationReason.MalformedFrame);
+    }
+
+    [Test]
+    public async Task ViolationReasonTokensAreFixedAndLowCardinality()
+    {
+        await Assert.That(ProtocolViolationReason.InvalidMagic.ToLogToken()).IsEqualTo("invalid_magic");
+        await Assert.That(ProtocolViolationReason.MalformedFrame.ToLogToken()).IsEqualTo("malformed_frame");
+        await Assert.That(ProtocolViolationReason.ProtocolState.ToLogToken()).IsEqualTo("protocol_state");
+        await Assert.That(ProtocolViolationReason.InternalState.ToLogToken()).IsEqualTo("internal_state");
+        await Assert.That(ProtocolViolationReason.Other.ToLogToken()).IsEqualTo("other");
+    }
+
+    [Test]
     public void CompleteHeaderWithPartialPayloadShouldRemainBuffered()
     {
         var frame = CreateFrame(

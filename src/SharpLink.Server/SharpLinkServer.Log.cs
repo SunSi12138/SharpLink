@@ -35,8 +35,26 @@ internal sealed partial class SharpLinkServer
     [LoggerMessage(EventId = LogEvents.Transport.TlsEstablished, Level = LogLevel.Information, Message = "TLS established using {Protocol} and {CipherSuite}.")]
     private static partial void LogTlsEstablished(ILogger logger, SslProtocols protocol, TlsCipherSuite cipherSuite);
 
-    [LoggerMessage(EventId = LogEvents.Connection.AuthenticationProviderFailed, Level = LogLevel.Warning, Message = "Authentication provider failed without exposing payload data.")]
-    private static partial void LogAuthenticationProviderFailed(ILogger logger, Exception exception);
+    [LoggerMessage(EventId = LogEvents.Connection.AuthenticationProviderFailed, Level = LogLevel.Warning, Message = "Authentication provider failed. FailureId={FailureId}, ExceptionType={ExceptionType}.")]
+    private static partial void LogAuthenticationProviderFailed(
+        ILogger logger,
+        long failureId,
+        string exceptionType);
+
+    /// <summary>
+    /// Debug-build-only sink for the full authentication provider exception. Production
+    /// builds never persist provider exception payloads; this exists solely for in-process
+    /// debugging when the DEBUG symbol is defined.
+    /// </summary>
+    [Conditional(CompileSymbols.Debug)]
+    private static void DebugTraceAuthenticationProviderException(Exception exception)
+        => Debug.WriteLine(exception);
+
+    [LoggerMessage(EventId = LogEvents.Connection.ProtocolViolation, Level = LogLevel.Warning, Message = "Client connection was closed because of a protocol violation ({Reason}).")]
+    private static partial void LogProtocolViolation(ILogger logger, string reason);
+
+    [LoggerMessage(EventId = LogEvents.Connection.ProtocolViolationSuppressed, Level = LogLevel.Warning, Message = "Client protocol violations are being rate-limited; {SuppressedCount} event(s) were suppressed.")]
+    private static partial void LogProtocolViolationSuppressed(ILogger logger, int suppressedCount);
 
     [LoggerMessage(EventId = LogEvents.Connection.ConnectionAdmissionRejected, Level = LogLevel.Warning, Message = "Connection rejected because the {Reason} bound is exhausted.")]
     private static partial void LogConnectionAdmissionRejected(ILogger logger, string reason);

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace SharpLink.Runtime;
 
 /// <summary>Parses bounded SharpLink Protocol v2 frames.</summary>
@@ -30,7 +32,7 @@ public static class ProtocolV2FrameParser
         if (!reader.TryRead(out var magic))
             return false;
         if (magic != ProtocolV2Constants.Magic)
-            throw Violation(CreateInvalidMagicMessage(buffer, magic));
+            throw Violation(ProtocolViolationReason.InvalidMagic, CreateInvalidMagicMessage(buffer, magic));
         if (!reader.TryReadLittleEndian(out int payloadLength))
             return false;
         if (payloadLength < 0)
@@ -256,18 +258,32 @@ public static class ProtocolV2FrameParser
     }
 
     internal static SharpLinkException Violation(string message)
-        => new(SharpLinkErrorCode.ProtocolViolation, message);
+        => new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame, message);
+
+    internal static SharpLinkException Violation(ProtocolViolationReason reason, string message)
+        => new SharpLinkProtocolViolationException(reason, message);
 
     private static string CreateInvalidMagicMessage(ReadOnlySequence<byte> buffer, byte actualMagic)
     {
-        // This path is terminal for the connection. Preserve a small bounded prefix so a
-        // long-running failure report can distinguish a bad writer from parser misalignment
-        // without adding allocations or validation to healthy frames.
+        // Security: hostile input must never be echoed into this terminal diagnostic. Only the
+        // fixed-cardinality magic byte and the buffer length are reported; no prefix, payload,
+        // hex, or hash of the network bytes is captured. Debug builds additionally trace a
+        // bounded hex prefix to the debugger output so a long-running failure report can still
+        // distinguish a bad writer from parser misalignment without touching the exception
+        // message or any production log.
+        var message = $"Invalid Protocol v2 frame magic 0x{actualMagic:X2}; remaining={buffer.Length}.";
+        DebugTraceInvalidMagicPrefix(buffer, actualMagic);
+        return message;
+    }
+
+    [Conditional(CompileSymbols.Debug)]
+    private static void DebugTraceInvalidMagicPrefix(ReadOnlySequence<byte> buffer, byte actualMagic)
+    {
         var prefixLength = (int)Math.Min(buffer.Length, 32);
         Span<byte> prefix = stackalloc byte[prefixLength];
         buffer.Slice(0, prefixLength).CopyTo(prefix);
-        return $"Invalid Protocol v2 frame magic 0x{actualMagic:X2}; " +
-               $"remaining={buffer.Length}, prefix={Convert.ToHexString(prefix)}.";
+        Debug.WriteLine(
+            $"Invalid Protocol v2 frame magic 0x{actualMagic:X2} prefix={Convert.ToHexString(prefix)}.");
     }
 }
 

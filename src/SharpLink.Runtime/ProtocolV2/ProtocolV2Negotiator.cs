@@ -423,5 +423,10 @@ internal static class ProtocolV2Negotiator
         SharpLinkErrorCode code,
         string message,
         Exception? innerException = null)
-        => new(code, message, innerException);
+        => code == SharpLinkErrorCode.ProtocolViolation
+            ? new SharpLinkProtocolViolationException(
+                ProtocolViolationReason.MalformedFrame,
+                message,
+                innerException)
+            : new SharpLinkException(code, message, innerException);
 }

@@ -129,7 +129,11 @@ internal sealed partial class SharpLinkServer
             }
             if (!authResult.IsAuthenticated)
             {
-                LogHandshakeFailed(_logger);
+                // Protocol-violation rejections already emitted their bounded classified
+                // Warning inside ProcessHandshakeAsync; logging the generic handshake
+                // failure here too would let hostile input grow the log per connection.
+                if (authResult.ErrorCode != SharpLinkErrorCode.ProtocolViolation)
+                    LogHandshakeFailed(_logger);
                 return;
             }
 
@@ -154,10 +158,30 @@ internal sealed partial class SharpLinkServer
         catch (Exception ex) when (IsExpectedConnectionTermination(ex, ct))
         {
         }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+            SharpLinkTelemetry.RecordProtocolFailure("server");
+            if (SharpLinkProtocolViolationException.Classify(exception) ==
+                ProtocolViolationReason.InternalState)
+            {
+                // A server-side invariant break is a real Server bug: keep the Error path
+                // with the full exception and stack trace instead of masking it as a
+                // bounded hostile-input Warning.
+                LogServerBackgroundLoopUnhandledException(
+                    _logger,
+                    nameof(ProcessRequestLoop),
+                    exception);
+                return;
+            }
+
+            // A ProtocolViolation is hostile or invalid wire input: count it, emit at most
+            // one bounded Warning per throttle window, and never attach the exception
+            // (payload, stack trace) to the log.
+            LogProtocolViolationRateLimited(
+                SharpLinkProtocolViolationException.Classify(exception));
+        }
         catch (Exception ex)
         {
-            if (ex is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation })
-                SharpLinkTelemetry.RecordProtocolFailure("server");
             LogServerBackgroundLoopUnhandledException(_logger, nameof(ProcessRequestLoop), ex);
         }
         finally
@@ -169,6 +193,25 @@ internal sealed partial class SharpLinkServer
                 LogClientDisconnected(_logger);
             await DisconnectConnectionAsync(connection).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Emits at most one ProtocolViolation Warning per fixed window, with an optional
+    /// suppressed-count line, while the violation itself is always telemetry-counted by
+    /// the caller. Suppressed events never touch the logger.
+    /// </summary>
+    private void LogProtocolViolationRateLimited(ProtocolViolationReason reason)
+    {
+        if (!_protocolViolationLogThrottle.ShouldLog(
+                _runtimeContext.TimeProvider.GetTimestamp(),
+                out var suppressedCount))
+        {
+            return;
+        }
+
+        if (suppressedCount > 0)
+            LogProtocolViolationSuppressed(_logger, suppressedCount);
+        LogProtocolViolation(_logger, reason.ToLogToken());
     }
 
     private async ValueTask ReplaceConnectionAsync(ServerConnectionState connection)

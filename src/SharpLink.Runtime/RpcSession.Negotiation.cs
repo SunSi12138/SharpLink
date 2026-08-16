@@ -56,8 +56,8 @@ internal sealed partial class RpcSession
             return;
         }
 
-        throw new SharpLinkException(
-            SharpLinkErrorCode.ProtocolViolation,
+        throw new SharpLinkProtocolViolationException(
+            ProtocolViolationReason.ProtocolState,
             $"Frame {frameType} is not allowed while the session is {phase}.");
     }
 
@@ -143,7 +143,10 @@ internal sealed partial class RpcSession
     private static SharpLinkException NegotiationViolation(
         string message,
         Exception? innerException = null)
-        => new(SharpLinkErrorCode.ProtocolViolation, message, innerException);
+        => new SharpLinkProtocolViolationException(
+            ProtocolViolationReason.MalformedFrame,
+            message,
+            innerException);
 
     private static void EnsureOutboundFrameAllowed(
         RpcSessionProtocolPhase phase,
