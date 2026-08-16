@@ -376,39 +376,39 @@ public static class SendPumpIsolationEvidenceRunner
             if (config.BulkMode == "wait")
             {
                 var waitStarted = Stopwatch.GetTimestamp();
+                recorder.RecordAcceptance(ProbeFrameClass.Bulk, seq, waitStarted);
                 try
                 {
                     await session.SendPacketWithBackpressureAsync(writer, cancellationToken)
                         .ConfigureAwait(false);
                     recorder.RecordCapacityWait(ProbeFrameClass.Bulk, waitStarted);
-                    recorder.RecordAcceptance(ProbeFrameClass.Bulk, seq, Stopwatch.GetTimestamp());
                 }
                 catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.ResourceExhausted)
                 {
+                    recorder.DiscardAcceptance(seq);
                     recorder.RecordFull(ProbeFrameClass.Bulk);
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
                 }
                 catch (Exception)
                 {
+                    recorder.DiscardAcceptance(seq);
                     return;
                 }
             }
             else
             {
+                recorder.RecordAcceptance(ProbeFrameClass.Bulk, seq, Stopwatch.GetTimestamp());
                 try
                 {
                     session.SendPacket(writer);
-                    recorder.RecordAcceptance(ProbeFrameClass.Bulk, seq, Stopwatch.GetTimestamp());
                 }
                 catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.ResourceExhausted)
                 {
+                    recorder.DiscardAcceptance(seq);
                     recorder.RecordFull(ProbeFrameClass.Bulk);
                 }
                 catch (Exception)
                 {
+                    recorder.DiscardAcceptance(seq);
                     return;
                 }
             }
@@ -453,27 +453,25 @@ public static class SendPumpIsolationEvidenceRunner
                 if (waitForCapacity)
                 {
                     var waitStarted = Stopwatch.GetTimestamp();
+                    recorder.RecordAcceptance(ProbeFrameClass.Unary, seq, waitStarted);
                     await session.SendPacketWithBackpressureAsync(writer, cancellationToken)
                         .ConfigureAwait(false);
                     recorder.RecordCapacityWait(ProbeFrameClass.Unary, waitStarted);
-                    recorder.RecordAcceptance(ProbeFrameClass.Unary, seq, Stopwatch.GetTimestamp());
                 }
                 else
                 {
-                    session.SendPacket(writer);
                     recorder.RecordAcceptance(ProbeFrameClass.Unary, seq, Stopwatch.GetTimestamp());
+                    session.SendPacket(writer);
                 }
             }
             catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.ResourceExhausted)
             {
+                recorder.DiscardAcceptance(seq);
                 recorder.RecordFull(ProbeFrameClass.Unary);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
             }
             catch (Exception)
             {
+                recorder.DiscardAcceptance(seq);
                 return;
             }
         }
@@ -549,17 +547,19 @@ public static class SendPumpIsolationEvidenceRunner
                     ? ProbeFrameClass.Cancel
                     : ProbeFrameClass.Progress;
                 recorder.RecordAttempt(frameClass);
+                recorder.RecordAcceptance(frameClass, seq, Stopwatch.GetTimestamp());
                 try
                 {
                     session.SendPacket(writer);
-                    recorder.RecordAcceptance(frameClass, seq, Stopwatch.GetTimestamp());
                 }
                 catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.ResourceExhausted)
                 {
+                    recorder.DiscardAcceptance(seq);
                     recorder.RecordFull(frameClass);
                 }
                 catch (Exception)
                 {
+                    recorder.DiscardAcceptance(seq);
                     return;
                 }
             }
@@ -619,6 +619,7 @@ public static class SendPumpIsolationEvidenceRunner
             }
             catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.ResourceExhausted)
             {
+                recorder.DiscardAcceptance(seq);
                 recorder.RecordFull(ProbeFrameClass.Progress);
             }
             catch (OperationCanceledException)
@@ -861,6 +862,16 @@ internal sealed class ProbeRecorder
         }
         acceptedAt = 0;
         return false;
+    }
+
+    /// <summary>
+    /// Removes a provisional acceptance whose frame never reached the queue
+    /// (admission Full or a send failure).
+    /// </summary>
+    internal void DiscardAcceptance(long seq)
+    {
+        lock (_gate)
+            _acceptances.Remove(seq);
     }
 
     internal void RecordSample(FrameSample sample)
