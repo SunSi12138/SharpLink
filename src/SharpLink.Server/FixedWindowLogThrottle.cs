@@ -18,21 +18,26 @@ internal struct FixedWindowLogThrottle
         ArgumentOutOfRangeException.ThrowIfLessThan(interval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(timestampFrequency);
         // Convert the interval into the time provider's timestamp unit. Ticks are already
-        // provider-independent; the frequency scales them into timestamp ticks.
+        // provider-independent; the frequency scales them into timestamp ticks. Only the
+        // FINAL result saturates: a high-but-valid frequency (e.g. 1e12 Hz) must keep its
+        // exact five-second window even when the intermediate frequency*ticks product
+        // overflows Int64. This ctor runs once per server instance, so decimal arithmetic
+        // is fine here; the per-event path below stays pure integer/Interlocked.
         var intervalTicks = interval.Ticks;
         if (intervalTicks == 0)
         {
             _intervalTimestampTicks = 0;
         }
-        else if (timestampFrequency > long.MaxValue / intervalTicks)
+        else if (timestampFrequency > decimal.MaxValue / intervalTicks)
         {
-            // Saturate the FINAL timestamp-unit result: saturating the intermediate
-            // product would shorten the window and let a hostile storm through.
             _intervalTimestampTicks = long.MaxValue;
         }
         else
         {
-            _intervalTimestampTicks = Math.Max(1, timestampFrequency * intervalTicks / TimeSpan.TicksPerSecond);
+            var scaled = (decimal)timestampFrequency * intervalTicks / TimeSpan.TicksPerSecond;
+            _intervalTimestampTicks = scaled >= long.MaxValue
+                ? long.MaxValue
+                : Math.Max(1, (long)scaled);
         }
         // The first event is always admitted.
         _nextLogTimestamp = long.MinValue;

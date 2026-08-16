@@ -68,17 +68,29 @@ public class FixedWindowLogThrottleTests
     }
 
     [Test]
-    public async Task OversizedFrequenciesSaturateTheWindowInsteadOfShorteningIt()
+    public async Task HighFrequencyIntervalsScaleExactlyWithoutClosingTheGate()
     {
-        // A frequency whose ticks-per-interval product would overflow must saturate the
-        // final timestamp-unit result. Saturating the intermediate product would shorten
-        // the window to well under five seconds and let a hostile storm through.
-        var frequency = long.MaxValue / TimeSpan.FromSeconds(5).Ticks + 1;
+        // At 1e12 Hz the five-second window is exactly 5e12 timestamp ticks, even though
+        // the intermediate frequency*ticks product overflows Int64. The gate must stay
+        // open and re-admit at the exact boundary instead of closing permanently.
+        const long frequency = 1_000_000_000_000;
         var throttle = new FixedWindowLogThrottle(TimeSpan.FromSeconds(5), frequency);
 
         await Assert.That(throttle.ShouldLog(0, out _)).IsTrue();
-        // This offset is what the buggy pre-division saturation produced (~0.92 s at
-        // 1e12 Hz); the fixed gate must still suppress it.
+        await Assert.That(throttle.ShouldLog(5_000_000_000_000 - 1, out _)).IsFalse();
+        await Assert.That(throttle.ShouldLog(5_000_000_000_000, out var suppressed)).IsTrue();
+        await Assert.That(suppressed).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task TrueOverflowSaturatesTheFinalIntervalAndStaysClosed()
+    {
+        // long.MaxValue ticks per second puts the five-second window beyond Int64 range.
+        // Only the final result saturates: the first event is admitted once, then the
+        // gate stays closed for every later timestamp.
+        var throttle = new FixedWindowLogThrottle(TimeSpan.FromSeconds(5), long.MaxValue);
+
+        await Assert.That(throttle.ShouldLog(0, out _)).IsTrue();
         await Assert.That(throttle.ShouldLog(1_000_000_000_000, out _)).IsFalse();
         await Assert.That(throttle.ShouldLog(long.MaxValue - 1, out _)).IsFalse();
     }
