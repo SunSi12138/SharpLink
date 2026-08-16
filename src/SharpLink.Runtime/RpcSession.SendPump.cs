@@ -379,6 +379,7 @@ internal sealed partial class RpcSession
         {
             if (_pendingProgressReadWait is { IsCompleted: false } retained)
                 return retained;
+            ObserveDroppedRead(_pendingProgressReadWait);
             _pendingProgressReadWait = null;
             return _pendingProgressReadWait =
                 _progressQueue.Reader.WaitToReadAsync(CancellationToken.None).AsTask();
@@ -388,9 +389,21 @@ internal sealed partial class RpcSession
         {
             if (_pendingReadWait is { IsCompleted: false } retained)
                 return retained;
+            ObserveDroppedRead(_pendingReadWait);
             _pendingReadWait = null;
             return _pendingReadWait =
                 _normalQueue.Reader.WaitToReadAsync(CancellationToken.None).AsTask();
+        }
+
+        /// <summary>
+        /// Marks a replaced retained read observed: a cancelled or faulted
+        /// task that completes unobserved fires the unobserved-task event and
+        /// can fail diagnostics that treat it as a leak (chaos smoke).
+        /// </summary>
+        private static void ObserveDroppedRead(Task<bool>? read)
+        {
+            if (read is not null && !read.IsCompletedSuccessfully)
+                _ = read.Exception;
         }
 
         private static async Task<bool> AwaitFirstReadAsync(Task<bool> first, Task<bool> second)
@@ -398,9 +411,13 @@ internal sealed partial class RpcSession
             var winner = await Task.WhenAny(first, second).ConfigureAwait(false);
             // A cancelled channel read is an inert non-signal: fall through to
             // the still-registered other read instead of surfacing the
-            // cancellation as a pump fault.
+            // cancellation as a pump fault. Observe the cancelled winner so it
+            // cannot fire the unobserved-task event.
             if (winner.IsCanceled)
+            {
+                _ = winner.Exception;
                 return await (ReferenceEquals(winner, first) ? second : first).ConfigureAwait(false);
+            }
             return await winner.ConfigureAwait(false);
         }
 
