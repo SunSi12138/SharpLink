@@ -81,12 +81,26 @@ public class ServerInterceptorChainLoweringBenchmarks
         cancellationToken: CancellationToken.None);
 
     // ---- chain cases ---------------------------------------------------------------
+    // The context is reused across operations, so its Status is reset to Pending before each
+    // invocation to mirror production, which receives a fresh Pending context per RPC. Without
+    // this, the first call leaves Status=Succeeded and every subsequent call would skip the
+    // `if (Status == Pending) Status = Succeeded` assignment in InvokeTerminalTrackedAsync,
+    // benchmarking a slightly different hot path. The reset is a single 0-allocation field write
+    // and does not affect the allocation attribution (the tracked metric).
 
     [Benchmark]
-    public ValueTask Chain_SyncCompleted() => _syncFacts.InvokeAsync(_syncContext);
+    public ValueTask Chain_SyncCompleted()
+    {
+        _syncContext.Status = SharpLinkInvocationStatus.Pending;
+        return _syncFacts.InvokeAsync(_syncContext);
+    }
 
     [Benchmark]
-    public ValueTask Chain_Suspended() => _suspendedFacts.InvokeAsync(_suspendedContext);
+    public ValueTask Chain_Suspended()
+    {
+        _suspendedContext.Status = SharpLinkInvocationStatus.Pending;
+        return _suspendedFacts.InvokeAsync(_suspendedContext);
+    }
 
     // ---- control cases (bare non-generic IValueTaskSource, no chain) ---------------
 
