@@ -133,6 +133,8 @@ internal sealed class DeadlineReadRace : IValueTaskSource<bool>, IDisposable
 
     private void OnReadCompleted(Task<bool> read, long token)
     {
+        if (read.IsCanceled)
+            return; // Cancelled channel reads are inert: the arm stays with the timer or progress read.
         if (Interlocked.CompareExchange(ref _armClaim, token | ReadClaimBit, token) != token)
             return; // Superseded arm or already claimed by the timer: the read stays unconsumed.
 
