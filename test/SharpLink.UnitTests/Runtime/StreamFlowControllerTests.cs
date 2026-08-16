@@ -30,14 +30,12 @@ public class StreamFlowControllerTests
         controller.ApplyWindowUpdate(10, 1, 6);
         await blocked;
 
-        try
-        {
-            controller.ApplyWindowUpdate(10, 1, 2);
-            throw new Exception("expected window overflow");
-        }
-        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
-        {
-        }
+        // A benign double return can overshoot the window (the peer may
+        // release credit at detach and return it again as it drains the
+        // frames that arrive afterwards): the excess is clamped.
+        controller.ApplyWindowUpdate(10, 1, 2);
+        Ensure(controller.SendConnectionCredit <= 16,
+            "the clamped excess must not push the connection credit past its window");
     }
 
     [Test]
