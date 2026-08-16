@@ -8,13 +8,14 @@ internal sealed partial class RpcSession
 
         // Protocol-progress isolation constants (issue #163): the normal class
         // cannot occupy the final ProgressReserveBytes of the queue, and the
-        // pump fully drains the progress queue at the loop top and between
-        // every NormalFramesPerInterleave normal frames. The interleave
-        // frequency (not a capped burst) is the fairness bound: a capped burst
-        // cannot keep up with realistic progress rates (window updates and
-        // cancels scale with throughput), which would let the progress queue
-        // backlog without limit.
+        // pump drains the progress queue at the loop top and between every
+        // NormalFramesPerInterleave normal frames. The interleave frequency
+        // bounds progress service, and ProgressFramesPerDrain bounds each
+        // drain so a concurrent progress producer cannot starve the normal
+        // queue forever (observable under LowLatency, where every flush
+        // releases capacity and the progress channel never observes empty).
         private const int NormalFramesPerInterleave = 64;
+        private const int ProgressFramesPerDrain = 256;
         private const int ProgressReserveMinimumBytes = 4 * 1024;
         private const int ProgressReserveMaximumBytes = 64 * 1024;
         private const int ProgressReserveDivisor = 512;
@@ -306,11 +307,14 @@ internal sealed partial class RpcSession
             // flush contract inside the loop; the other modes flush once in
             // the caller after the full drain.
             var drained = false;
-            while (_progressQueue.Reader.TryRead(out var frame))
+            var drainedCount = 0;
+            while (drainedCount < ProgressFramesPerDrain &&
+                   _progressQueue.Reader.TryRead(out var frame))
             {
                 pending.Add(frame);
                 WriteFrame(frame);
                 drained = true;
+                drainedCount++;
                 if (_flushMode == FlushMode.LowLatency)
                 {
                     // The caller resets the byte accumulator after its flush.

@@ -1123,8 +1123,6 @@ internal sealed class IsolationProbePipeWriter : PipeWriter
         _pipe.Writer.Advance(bytes);
         Interlocked.Add(ref _unflushedBytes, bytes);
 
-        if (Volatile.Read(ref _measuringWindow))
-            Interlocked.Add(ref _measuredBytes, bytes);
         if (Volatile.Read(ref _measuringSamples) &&
             seq > 0 && (classId != ProbeFrameClass.Bulk || (seq & ProbeFrameClass.BulkSampleMask) == 0))
         {
@@ -1175,10 +1173,14 @@ internal sealed class IsolationProbePipeWriter : PipeWriter
 
         // Record the flushed watermark AFTER the inner flush completes so the
         // drain can race ahead freely; the monotonic consumed watermark can
-        // never fall behind a lost update.
+        // never fall behind a lost update. Transport bytes are counted at the
+        // completed-flush boundary, not at copy time, so a stalled batch that
+        // finishes after the measurement window contributes nothing.
         Interlocked.Add(ref _flushedTotal, batchBytes);
         await WaitUntilConsumedAsync(cancellationToken).ConfigureAwait(false);
         var flushEnd = Stopwatch.GetTimestamp();
+        if (Volatile.Read(ref _measuringWindow))
+            Interlocked.Add(ref _measuredBytes, batchBytes);
 
         if (Volatile.Read(ref _measuringWindow))
         {
