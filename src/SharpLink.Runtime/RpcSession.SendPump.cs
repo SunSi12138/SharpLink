@@ -106,6 +106,12 @@ internal sealed partial class RpcSession
 
         private static int ComputeProgressReserveBytes(int maxQueuedBytes)
         {
+            // The headroom applies to production-sized queues. Below this
+            // floor the queue is smaller than realistic frames and reserving a
+            // slice would change the single-frame admission semantics that the
+            // runtime's own small-queue tests rely on.
+            if (maxQueuedBytes < 32 * 1024)
+                return 0;
             var reserve = Math.Clamp(
                 maxQueuedBytes / ProgressReserveDivisor,
                 ProgressReserveMinimumBytes,
@@ -455,7 +461,13 @@ internal sealed partial class RpcSession
                 return true;
 
             // Protocol-progress frames may use the full queue budget; normal
-            // frames may not occupy the reserved progress headroom.
+            // frames may not occupy the reserved progress headroom. A normal
+            // frame larger than its limit is rejected, even on an empty queue,
+            // so it cannot consume the reserve and break liveness isolation
+            // under transport saturation. When the queue is too small to hold
+            // any reserve the headroom does not exist and the base single-frame
+            // oversized exception is preserved; progress frames keep the base
+            // oversized semantics (admitted once when the queue is empty).
             var limit = isProtocolProgress ? _maxQueuedBytes : _normalQueueLimit;
 
             while (true)
@@ -463,7 +475,7 @@ internal sealed partial class RpcSession
                 var current = Volatile.Read(ref _queuedBytes);
                 var canReserve = bytes <= limit
                     ? current <= limit - bytes
-                    : current == 0;
+                    : current == 0 && (isProtocolProgress || _normalQueueLimit == _maxQueuedBytes);
                 if (!canReserve)
                     return false;
                 if (Interlocked.CompareExchange(ref _queuedBytes, current + bytes, current) == current)

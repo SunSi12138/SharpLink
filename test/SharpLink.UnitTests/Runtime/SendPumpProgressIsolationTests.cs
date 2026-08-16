@@ -400,7 +400,7 @@ public class SendPumpProgressIsolationTests
     }
 
     [Test]
-    public async Task OversizedNormalFrameRequiresAnEmptyQueue()
+    public async Task OversizedNormalFrameNeverOccupiesTheProgressReserve()
     {
         const int queueBytes = 64 * 1024;
         using var context = BuildContextWithQueue(queueBytes);
@@ -413,25 +413,27 @@ public class SendPumpProgressIsolationTests
             RpcSessionTestFixture.ClientOptions(context));
         try
         {
-            // Larger than the normal limit (queue minus the progress reserve)
-            // but smaller than the queue itself.
+            // Larger than the normal limit (queue minus the progress reserve):
+            // even on an empty queue it must not be admitted, otherwise it
+            // would consume the reserve and block liveness frames while the
+            // transport drains it.
             var payloadBytes = queueBytes - 2048;
-            session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response, payloadBytes, requestId: 1));
-
-            var secondWasFull = false;
+            var oversizedWasFull = false;
             try
             {
-                session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response, payloadBytes, requestId: 2));
+                session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response, payloadBytes, requestId: 1));
             }
             catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.ResourceExhausted)
             {
-                secondWasFull = true;
+                oversizedWasFull = true;
             }
-            Ensure(secondWasFull,
-                "a second oversized normal frame must fail admission while the queue is not empty");
+            Ensure(oversizedWasFull,
+                "an oversized normal frame must fail admission even on an empty queue");
 
-            // A progress frame still fits the full queue budget.
+            // A progress frame still fits the full queue budget, and a normal
+            // frame within the normal limit is still admitted.
             session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Ping, 8, requestId: 0));
+            session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response, 1024, requestId: 2));
         }
         finally
         {

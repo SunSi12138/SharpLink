@@ -187,7 +187,14 @@ internal sealed class StreamFlowController
             ThrowIfTerminated();
             var key = new StreamKey(requestId, streamId);
             if (!_sendStates.TryGetValue(key, out var state))
-                throw Violation("WindowUpdate references an unknown stream.");
+            {
+                // A late credit return for a stream whose send state has
+                // already been removed (completed and fully credited) is a
+                // benign wire race, not a protocol violation: the peer may
+                // return credit for frames it drained after the stream
+                // finished. The credit is obsolete and is discarded.
+                return;
+            }
 
             var updatedStreamCredit = checked(state.Credit + credit);
             var updatedConnectionCredit = checked(_sendConnectionCredit + credit);

@@ -112,9 +112,20 @@ public static class SendPumpIsolationEvidenceRunner
         Console.WriteLine($"SendPump isolation evidence: {fullPath}");
     }
 
-    private static List<string> ResolveScenarios(string scenario) => scenario == "all"
-        ? ["unary-baseline", "stream-baseline", "sat-unary", "sat-progress", "window-update", "cancel-burst", "goaway"]
-        : [scenario];
+    private static readonly string[] SupportedScenarios =
+        ["unary-baseline", "stream-baseline", "sat-unary", "sat-progress", "window-update", "cancel-burst", "goaway"];
+
+    private static List<string> ResolveScenarios(string scenario)
+    {
+        if (scenario == "all")
+            return [.. SupportedScenarios];
+        if (!SupportedScenarios.Contains(scenario, StringComparer.Ordinal))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(scenario), scenario, $"Unsupported scenario; supported: {string.Join(", ", SupportedScenarios)} or all.");
+        }
+        return [scenario];
+    }
 
     private static async Task<ScenarioResult> MeasureScenarioAsync(string name, ProbeConfig config)
     {
@@ -212,6 +223,7 @@ public static class SendPumpIsolationEvidenceRunner
             {
                 recorder.BeginMeasurement();
                 output.BeginMeasurement();
+                queueBytesSampler.Clear();
             }
             else
             {
@@ -219,10 +231,12 @@ public static class SendPumpIsolationEvidenceRunner
                 await Task.Delay(Warmup, stop.Token).ConfigureAwait(false);
                 recorder.BeginMeasurement();
                 output.BeginMeasurement();
+                queueBytesSampler.Clear();
             }
             var measurementStarted = Stopwatch.GetTimestamp();
             await Task.Delay(TimeSpan.FromSeconds(config.DurationSeconds), stop.Token).ConfigureAwait(false);
             var measurementStopped = Stopwatch.GetTimestamp();
+            output.EndMeasurement();
 
             await stop.CancelAsync().ConfigureAwait(false);
             Console.WriteLine("[Probe] measurement window done, awaiting producers");
@@ -496,13 +510,13 @@ public static class SendPumpIsolationEvidenceRunner
                         switch (kind)
                         {
                             case ProgressKind.Ping:
-                            {
-                                var span = writer.GetSpan(sizeof(long));
-                                BinaryPrimitives.WriteInt64LittleEndian(
-                                    span, session.RuntimeContext.TimeProvider.GetTimestamp());
-                                writer.Advance(sizeof(long));
-                                break;
-                            }
+                                {
+                                    var span = writer.GetSpan(sizeof(long));
+                                    BinaryPrimitives.WriteInt64LittleEndian(
+                                        span, session.RuntimeContext.TimeProvider.GetTimestamp());
+                                    writer.Advance(sizeof(long));
+                                    break;
+                                }
                             case ProgressKind.WindowUpdate:
                                 ProtocolV2PayloadCodec.WriteWindowUpdate(
                                     writer,
@@ -579,10 +593,14 @@ public static class SendPumpIsolationEvidenceRunner
             {
                 var started = Stopwatch.GetTimestamp();
                 // The production GoAway path is send-with-backpressure + force
-                // flush; the full call latency is the producer-visible cost.
+                // flush. Record acceptance before the call: the writer takes
+                // the acceptance during the flush, which completes before this
+                // call returns, so a post-await timestamp would always be
+                // dropped. The pre-call timestamp approximates the enqueue
+                // boundary; the full wait+flush cost stays in CapacityWait.
+                recorder.RecordAcceptance(ProbeFrameClass.Progress, seq, started);
                 await session.SendPacketAndFlushAsync(writer, cancellationToken).ConfigureAwait(false);
                 recorder.RecordCapacityWait(ProbeFrameClass.Progress, started);
-                recorder.RecordAcceptance(ProbeFrameClass.Progress, seq, Stopwatch.GetTimestamp());
             }
             catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.ResourceExhausted)
             {
@@ -756,13 +774,15 @@ public sealed record ScenarioSummary(
 
 internal sealed class ProbeRecorder
 {
-    
+
     private readonly object _gate = new();
     private readonly Dictionary<long, long> _acceptances = new();
     private readonly List<FrameSample> _samples = new();
     private readonly Dictionary<int, ClassAccumulator> _classes = new()
     {
-        [1] = new(), [2] = new(), [3] = new()
+        [1] = new(),
+        [2] = new(),
+        [3] = new()
     };
     private long _sequence;
     private bool _measuring;
@@ -936,6 +956,12 @@ internal sealed class Sampler
     {
         lock (_gate)
             _values.Add(value);
+    }
+
+    internal void Clear()
+    {
+        lock (_gate)
+            _values.Clear();
     }
 
     internal double Mean()
