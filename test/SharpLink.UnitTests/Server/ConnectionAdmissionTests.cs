@@ -334,7 +334,7 @@ public sealed class ConnectionAdmissionTests
             () => harness.Server.ConnectionAdmission.ActiveHandshakes == 1,
             "the stalled connection must hold a handshake slot");
         await YieldUntilAsync(
-            () => connection.DisposeCount == 1 && 
+            () => connection.DisposeCount == 1 &&
                    harness.Server.ConnectionAdmission.ActiveConnections == 0,
             "the handshake timeout must dispose the transport and release both slots",
             attempts: 4000);
@@ -527,6 +527,91 @@ public sealed class ConnectionAdmissionTests
     }
 
     [Test]
+    public async Task ConnectionSlotStaysHeldUntilTerminalCleanupCompletes()
+    {
+        var listener = new ScriptedListener();
+        await using var harness = await StartServerAsync(listener, options =>
+            options.MaxConcurrentConnections = 1);
+        var disposeGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var connection = new TestConnection("slow-dispose", disposeGate: disposeGate);
+        listener.Enqueue(connection);
+        await YieldUntilAsync(
+            () => harness.Server.ConnectionAdmission.ActiveConnections == 1,
+            "the first connection must hold the only admission slot");
+        WritePingFrame(connection.FeedInput);
+        await YieldUntilAsync(
+            () => connection.DisposeCount == 1,
+            "the protocol rejection must start terminal cleanup");
+
+        // The slot must not be released while the terminal disposal is still in flight.
+        await Task.Delay(50);
+        await Assert.That(harness.Server.ConnectionAdmission.ActiveConnections).IsEqualTo(1);
+
+        disposeGate.TrySetResult();
+        await YieldUntilAsync(
+            () => harness.Server.ConnectionAdmission.ActiveConnections == 0 &&
+                   harness.Server.ConnectionAdmission.ActiveHandshakes == 0,
+            "terminal cleanup completion must release the slots");
+    }
+
+    [Test]
+    public async Task DisposeFailureStillReleasesBothSlots()
+    {
+        var listener = new ScriptedListener();
+        await using var harness = await StartServerAsync(listener, options =>
+            options.MaxConcurrentConnections = 4);
+
+        var connection = new TestConnection(
+            "dispose-throw",
+            disposeException: new InvalidOperationException("forced dispose failure"));
+        listener.Enqueue(connection);
+        await YieldUntilAsync(
+            () => harness.Server.ConnectionAdmission.ActiveHandshakes == 1,
+            "the connection must hold a handshake slot before termination");
+        connection.CompleteFeedInput();
+        await YieldUntilAsync(
+            () => connection.DisposeCount == 1,
+            "the failing disposal must still run");
+        await YieldUntilAsync(
+            () => harness.Server.ConnectionAdmission.ActiveConnections == 0 &&
+                   harness.Server.ConnectionAdmission.ActiveHandshakes == 0,
+            "a disposal failure must not leak the admission slots");
+    }
+
+    [Test]
+    public async Task RejectedConnectionDisposeFailureDoesNotFaultTheServer()
+    {
+        var listener = new ScriptedListener();
+        await using var harness = await StartServerAsync(listener, options =>
+            options.MaxConcurrentConnections = 1);
+
+        var holder = new TestConnection("holder");
+        listener.Enqueue(holder);
+        await YieldUntilAsync(
+            () => harness.Server.ConnectionAdmission.ActiveConnections == 1,
+            "the holder must occupy the only slot");
+
+        var rejected = new TestConnection(
+            "rejected-dispose-throw",
+            disposeException: new InvalidOperationException("forced dispose failure"));
+        listener.Enqueue(rejected);
+        await YieldUntilAsync(
+            () => rejected.DisposeCount == 1,
+            "the rejected connection must still be disposed");
+
+        await Assert.That(harness.Server.HealthStatus).IsEqualTo(SharpLinkHealthStatus.Ready);
+        await Assert.That(harness.Server.ConnectionAdmission.ActiveConnections).IsEqualTo(1);
+
+        // The accept loop keeps working after the failed rejection cleanup.
+        var next = new TestConnection("next-rejected");
+        listener.Enqueue(next);
+        await YieldUntilAsync(
+            () => next.DisposeCount == 1,
+            "subsequent connections must still be rejected while the slot is held");
+    }
+
+    [Test]
     public async Task ProtocolRejectSendsAnErrorResponseAndReleasesBothSlots()
     {
         var listener = new ScriptedListener();
@@ -591,14 +676,22 @@ public sealed class ConnectionAdmissionTests
         private readonly Pipe _inputPipe = new();
         private readonly Pipe _outputPipe = new();
         private readonly Func<CancellationToken, ValueTask> _authenticateAsync;
+        private readonly TaskCompletionSource? _disposeGate;
+        private readonly Exception? _disposeException;
         private int _disposeCount;
         private int _authenticateCalls;
 
-        internal TestConnection(string id, Func<CancellationToken, ValueTask>? authenticateAsync = null)
+        internal TestConnection(
+            string id,
+            Func<CancellationToken, ValueTask>? authenticateAsync = null,
+            TaskCompletionSource? disposeGate = null,
+            Exception? disposeException = null)
         {
             Id = id;
             _authenticateAsync = authenticateAsync ??
                 ((Func<CancellationToken, ValueTask>)(static _ => ValueTask.CompletedTask));
+            _disposeGate = disposeGate;
+            _disposeException = disposeException;
         }
 
         public string Id { get; }
@@ -627,11 +720,14 @@ public sealed class ConnectionAdmissionTests
             return _authenticateAsync(cancellationToken);
         }
 
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
             Interlocked.Increment(ref _disposeCount);
             Disposed?.Invoke();
-            return ValueTask.CompletedTask;
+            if (_disposeGate is not null)
+                await _disposeGate.Task.ConfigureAwait(false);
+            if (_disposeException is not null)
+                throw _disposeException;
         }
 
         internal void CompleteFeedInput()

@@ -51,7 +51,16 @@ internal sealed partial class SharpLinkServer
                     if (!_connectionAdmission.TryAcquireConnection(out var connectionLease))
                     {
                         RecordConnectionAdmissionRejection(ConnectionAdmissionRejectionReason.ConnectionLimit);
-                        await connection.DisposeAsync().ConfigureAwait(false);
+                        try
+                        {
+                            await connection.DisposeAsync().ConfigureAwait(false);
+                        }
+                        catch (Exception exception)
+                        {
+                            // A rejected transport must never take down the accept loop;
+                            // the failure is observed without terminating the listener.
+                            LogDeferredCleanupFailed(_logger, "ConnectionAdmissionReject", exception);
+                        }
                         continue;
                     }
 

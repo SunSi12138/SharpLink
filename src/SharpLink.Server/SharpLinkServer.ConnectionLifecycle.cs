@@ -66,17 +66,25 @@ internal sealed partial class SharpLinkServer
         }
         finally
         {
-            // Covers every pre-Ready termination path; a Ready connection released its
-            // handshake slot inside HandleSessionLifecycleAsync, so this is a no-op there.
-            connectionLease.ReleaseHandshake();
-            connectionLease.ReleaseConnection();
-            if (connectionState is not null)
+            try
             {
-                connectionState.MarkSessionLoopCompleted();
-                await connectionState.CloseAsync().ConfigureAwait(false);
+                if (connectionState is not null)
+                {
+                    connectionState.MarkSessionLoopCompleted();
+                    await connectionState.CloseAsync().ConfigureAwait(false);
+                }
+                else if (connection is not null)
+                    await connection.DisposeAsync().ConfigureAwait(false);
             }
-            else if (connection is not null)
-                await connection.DisposeAsync().ConfigureAwait(false);
+            finally
+            {
+                // Released only after terminal cleanup: a slow disposal must not hand the
+                // slot to a new connection while the previous transport and framework
+                // task are still live. The Ready transition already released the
+                // handshake slot, so its release here is a no-op for Ready connections.
+                connectionLease.ReleaseHandshake();
+                connectionLease.ReleaseConnection();
+            }
         }
     }
 

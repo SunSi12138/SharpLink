@@ -35,10 +35,11 @@ public static class ConnectionAdmissionEvidenceRunner
 
     public static async Task RunAsync(string[] args)
     {
-        if (args.Length != 1)
-            throw new ArgumentException("Usage: --connection-admission-evidence <output-json>");
+        if (args.Length is < 1 or > 2)
+            throw new ArgumentException("Usage: --connection-admission-evidence <output-json> [<scenario-filter>]");
 
         var outputPath = Path.GetFullPath(args[0]);
+        var scenarioFilter = args.Length == 2 ? args[1] : null;
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
 
         using var gauge = new ServerReadyConnectionGauge();
@@ -46,16 +47,24 @@ public static class ConnectionAdmissionEvidenceRunner
         var results = new List<ConnectionAdmissionScenarioResult>();
 
         foreach (var count in new[] { 100, 1000, 5000 })
-            results.Add(await WithAdmissionGaugeAsync(() => RunTcpStallNoBytesAsync(count, gauge), admissionGauge));
+            AddIfMatched(await RunTcpStallNoBytesAsync(count, gauge, admissionGauge, scenarioFilter));
         foreach (var count in new[] { 100, 1000, 2000 })
-            results.Add(await WithAdmissionGaugeAsync(() => RunTlsStallHandshakeAsync(count, gauge), admissionGauge));
+            AddIfMatched(await RunTlsStallHandshakeAsync(count, gauge, admissionGauge, scenarioFilter));
         foreach (var count in new[] { 100, 1000, 2000 })
-            results.Add(await WithAdmissionGaugeAsync(() => RunTlsReadyStallProtocolAsync(count, gauge), admissionGauge));
+            AddIfMatched(await RunTlsReadyStallProtocolAsync(count, gauge, admissionGauge, scenarioFilter));
         foreach (var count in new[] { 100, 500 })
-            results.Add(await WithAdmissionGaugeAsync(() => RunAuthenticationStallAsync(count, gauge), admissionGauge));
+            AddIfMatched(await RunAuthenticationStallAsync(count, gauge, admissionGauge, scenarioFilter));
         foreach (var count in new[] { 16, 128 })
-            results.Add(await WithAdmissionGaugeAsync(() => RunReadyConnectionsAsync(count, gauge), admissionGauge));
-        results.Add(await WithAdmissionGaugeAsync(() => RunTlsHandshakeBurstAsync(gauge), admissionGauge));
+            AddIfMatched(await RunReadyConnectionsAsync(count, gauge, admissionGauge, scenarioFilter));
+        AddIfMatched(await RunTlsHandshakeBurstAsync(gauge, admissionGauge, scenarioFilter));
+        if (results.Count == 0)
+            throw new InvalidOperationException("The scenario filter matched no scenarios.");
+
+        void AddIfMatched(ConnectionAdmissionScenarioResult? result)
+        {
+            if (result is not null)
+                results.Add(result);
+        }
 
         var document = new ConnectionAdmissionEvidenceDocument
         {
@@ -66,7 +75,11 @@ public static class ConnectionAdmissionEvidenceRunner
             Note = "Server and clients run in one probe process. Socket-fd deltas therefore include " +
                    "one client-side socket per connection; the server-side accepted socket is one " +
                    "half of every 2-socket delta. 'sharplink.connections.active' only counts Ready " +
-                   "server connections (NotifyConnected), so pre-auth connections are invisible to it.",
+                   "server connections (NotifyConnected), so pre-auth connections are invisible to it. " +
+                   "On builds with pre-call connection admission (the issue #162 fix), servers run " +
+                   "with the default 1024-connection bound: over-limit attempts are recorded as " +
+                   "rejections and the fd/stop metrics demonstrate the bound; on pre-fix builds the " +
+                   "same scenarios measure the unbounded baseline growth.",
             Scenarios = results
         };
 
@@ -81,21 +94,18 @@ public static class ConnectionAdmissionEvidenceRunner
 
     // ------------------------------------------------------------------ scenarios
 
-    private static async Task<ConnectionAdmissionScenarioResult> WithAdmissionGaugeAsync(
-        Func<Task<ConnectionAdmissionScenarioResult>> run,
-        ConnectionAdmissionGauge admissionGauge)
-    {
-        var rejectedBefore = admissionGauge.RejectedTotal;
-        var result = await run().ConfigureAwait(false);
-        result.AdmittedConnectionsObserved = admissionGauge.Admitted;
-        result.RejectedConnectionsObserved = admissionGauge.RejectedTotal - rejectedBefore;
-        return result;
-    }
+    private static bool MatchesFilter(string? scenarioFilter, string scenario)
+        => scenarioFilter is null || scenario.Contains(scenarioFilter, StringComparison.Ordinal);
 
-    private static async Task<ConnectionAdmissionScenarioResult> RunTcpStallNoBytesAsync(
+    private static async Task<ConnectionAdmissionScenarioResult?> RunTcpStallNoBytesAsync(
         int count,
-        ServerReadyConnectionGauge gauge)
+        ServerReadyConnectionGauge gauge,
+        ConnectionAdmissionGauge admissionGauge,
+        string? scenarioFilter)
     {
+        if (!MatchesFilter(scenarioFilter, "tcp-stall-nobytes"))
+            return null;
+        var rejectedBefore = admissionGauge.RejectedTotal;
         await using var server = StartServer(tls: false, authenticator: null);
         var baseline = ProcessSample.Capture();
         var gaugeBaseline = gauge.ServerConnections;
@@ -117,6 +127,7 @@ public static class ConnectionAdmissionEvidenceRunner
                 }
             }).ConfigureAwait(false);
         var peak = await WaitForStableSampleAsync().ConfigureAwait(false);
+        var admittedAtPeak = admissionGauge.Admitted;
 
         var stopMs = await MeasureStopAsync(server).ConfigureAwait(false);
         foreach (var client in clients)
@@ -133,15 +144,22 @@ public static class ConnectionAdmissionEvidenceRunner
             Baseline = baseline,
             Peak = peak,
             ReadyConnectionsObserved = gauge.ServerConnections - gaugeBaseline,
+            AdmittedConnectionsObserved = admittedAtPeak,
+            RejectedConnectionsObserved = admissionGauge.RejectedTotal - rejectedBefore,
             StopMs = stopMs,
             SocketFdsReturnedToBaseline = after.FdCount <= baseline.FdCount + 2
         };
     }
 
-    private static async Task<ConnectionAdmissionScenarioResult> RunTlsStallHandshakeAsync(
+    private static async Task<ConnectionAdmissionScenarioResult?> RunTlsStallHandshakeAsync(
         int count,
-        ServerReadyConnectionGauge gauge)
+        ServerReadyConnectionGauge gauge,
+        ConnectionAdmissionGauge admissionGauge,
+        string? scenarioFilter)
     {
+        if (!MatchesFilter(scenarioFilter, "tls-stall-handshake"))
+            return null;
+        var rejectedBefore = admissionGauge.RejectedTotal;
         await using var server = StartServer(tls: true, authenticator: null);
         var baseline = ProcessSample.Capture();
         var gaugeBaseline = gauge.ServerConnections;
@@ -165,6 +183,7 @@ public static class ConnectionAdmissionEvidenceRunner
                 }
             }).ConfigureAwait(false);
         var peak = await WaitForStableSampleAsync().ConfigureAwait(false);
+        var admittedAtPeak = admissionGauge.Admitted;
 
         var stopMs = await MeasureStopAsync(server).ConfigureAwait(false);
         foreach (var client in clients)
@@ -181,15 +200,22 @@ public static class ConnectionAdmissionEvidenceRunner
             Baseline = baseline,
             Peak = peak,
             ReadyConnectionsObserved = gauge.ServerConnections - gaugeBaseline,
+            AdmittedConnectionsObserved = admittedAtPeak,
+            RejectedConnectionsObserved = admissionGauge.RejectedTotal - rejectedBefore,
             StopMs = stopMs,
             SocketFdsReturnedToBaseline = after.FdCount <= baseline.FdCount + 2
         };
     }
 
-    private static async Task<ConnectionAdmissionScenarioResult> RunTlsReadyStallProtocolAsync(
+    private static async Task<ConnectionAdmissionScenarioResult?> RunTlsReadyStallProtocolAsync(
         int count,
-        ServerReadyConnectionGauge gauge)
+        ServerReadyConnectionGauge gauge,
+        ConnectionAdmissionGauge admissionGauge,
+        string? scenarioFilter)
     {
+        if (!MatchesFilter(scenarioFilter, "tls-ready-stall-protocol"))
+            return null;
+        var rejectedBefore = admissionGauge.RejectedTotal;
         await using var server = StartServer(tls: true, authenticator: null);
         var baseline = ProcessSample.Capture();
         var gaugeBaseline = gauge.ServerConnections;
@@ -219,6 +245,7 @@ public static class ConnectionAdmissionEvidenceRunner
                 }
             }).ConfigureAwait(false);
         var peak = await WaitForStableSampleAsync().ConfigureAwait(false);
+        var admittedAtPeak = admissionGauge.Admitted;
 
         var stopMs = await MeasureStopAsync(server).ConfigureAwait(false);
         foreach (var client in clients)
@@ -235,16 +262,23 @@ public static class ConnectionAdmissionEvidenceRunner
             Baseline = baseline,
             Peak = peak,
             ReadyConnectionsObserved = gauge.ServerConnections - gaugeBaseline,
+            AdmittedConnectionsObserved = admittedAtPeak,
+            RejectedConnectionsObserved = admissionGauge.RejectedTotal - rejectedBefore,
             StopMs = stopMs,
             SocketFdsReturnedToBaseline = after.FdCount <= baseline.FdCount + 2
         };
     }
 
-    private static async Task<ConnectionAdmissionScenarioResult> RunAuthenticationStallAsync(
+    private static async Task<ConnectionAdmissionScenarioResult?> RunAuthenticationStallAsync(
         int count,
-        ServerReadyConnectionGauge gauge)
+        ServerReadyConnectionGauge gauge,
+        ConnectionAdmissionGauge admissionGauge,
+        string? scenarioFilter)
     {
+        if (!MatchesFilter(scenarioFilter, "auth-stall"))
+            return null;
         var authenticator = new DelayedServerAuthenticator();
+        var rejectedBefore = admissionGauge.RejectedTotal;
         await using var server = StartServer(tls: true, authenticator: authenticator);
         var baseline = ProcessSample.Capture();
         var gaugeBaseline = gauge.ServerConnections;
@@ -289,6 +323,7 @@ public static class ConnectionAdmissionEvidenceRunner
         var parkedCount = authenticator.Entered;
 
         var peak = await WaitForStableSampleAsync().ConfigureAwait(false);
+        var admittedAtPeak = admissionGauge.Admitted;
 
         var stopMs = await MeasureStopAsync(server).ConfigureAwait(false);
         authenticator.Release();
@@ -312,6 +347,8 @@ public static class ConnectionAdmissionEvidenceRunner
             Baseline = baseline,
             Peak = peak,
             ReadyConnectionsObserved = gauge.ServerConnections - gaugeBaseline,
+            AdmittedConnectionsObserved = admittedAtPeak,
+            RejectedConnectionsObserved = admissionGauge.RejectedTotal - rejectedBefore,
             StopMs = stopMs,
             SocketFdsReturnedToBaseline = after.FdCount <= baseline.FdCount + 2
         };
@@ -350,10 +387,15 @@ public static class ConnectionAdmissionEvidenceRunner
         }
     }
 
-    private static async Task<ConnectionAdmissionScenarioResult> RunReadyConnectionsAsync(
+    private static async Task<ConnectionAdmissionScenarioResult?> RunReadyConnectionsAsync(
         int count,
-        ServerReadyConnectionGauge gauge)
+        ServerReadyConnectionGauge gauge,
+        ConnectionAdmissionGauge admissionGauge,
+        string? scenarioFilter)
     {
+        if (!MatchesFilter(scenarioFilter, "ready-connections"))
+            return null;
+        var rejectedBefore = admissionGauge.RejectedTotal;
         await using var server = StartServer(tls: false, authenticator: null);
         var baseline = ProcessSample.Capture();
         var gaugeBaseline = gauge.ServerConnections;
@@ -376,6 +418,7 @@ public static class ConnectionAdmissionEvidenceRunner
         var peak = await WaitForStableSampleAsync().ConfigureAwait(false);
         await Task.Delay(200).ConfigureAwait(false);
         var observedReady = gauge.ServerConnections - gaugeBaseline;
+        var admittedAtPeak = admissionGauge.Admitted;
 
         var stopMs = await MeasureStopAsync(server).ConfigureAwait(false);
         foreach (var client in clients)
@@ -392,6 +435,8 @@ public static class ConnectionAdmissionEvidenceRunner
             Baseline = baseline,
             Peak = peak,
             ReadyConnectionsObserved = observedReady,
+            AdmittedConnectionsObserved = admittedAtPeak,
+            RejectedConnectionsObserved = admissionGauge.RejectedTotal - rejectedBefore,
             StopMs = stopMs,
             SocketFdsReturnedToBaseline = after.FdCount <= baseline.FdCount + 2
         };
@@ -419,12 +464,17 @@ public static class ConnectionAdmissionEvidenceRunner
         }
     }
 
-    private static async Task<ConnectionAdmissionScenarioResult> RunTlsHandshakeBurstAsync(
-        ServerReadyConnectionGauge gauge)
+    private static async Task<ConnectionAdmissionScenarioResult?> RunTlsHandshakeBurstAsync(
+        ServerReadyConnectionGauge gauge,
+        ConnectionAdmissionGauge admissionGauge,
+        string? scenarioFilter)
     {
+        if (!MatchesFilter(scenarioFilter, "tls-burst-handshake-cpu"))
+            return null;
         const int batchSize = 256;
         const int rounds = 3;
 
+        var rejectedBefore = admissionGauge.RejectedTotal;
         await using var server = StartServer(tls: true, authenticator: null);
         var baseline = ProcessSample.Capture();
         var gaugeBaseline = gauge.ServerConnections;
@@ -461,6 +511,8 @@ public static class ConnectionAdmissionEvidenceRunner
             Baseline = baseline,
             Peak = peak,
             ReadyConnectionsObserved = gauge.ServerConnections - gaugeBaseline,
+            AdmittedConnectionsObserved = 0,
+            RejectedConnectionsObserved = admissionGauge.RejectedTotal - rejectedBefore,
             StopMs = stopMs,
             SocketFdsReturnedToBaseline = true
         };
@@ -468,11 +520,11 @@ public static class ConnectionAdmissionEvidenceRunner
         static async Task<long> RunOneBurstAsync(int size)
         {
             var failures = 0L;
-            var pending = 0;
-            var tasks = new List<Task>();
+            using var throttle = new SemaphoreSlim(64);
+            var tasks = new List<Task>(Math.Min(size, 64));
             for (var index = 0; index < size; index++)
             {
-                pending++;
+                await throttle.WaitAsync().ConfigureAwait(false);
                 tasks.Add(Task.Run(async () =>
                 {
                     try
@@ -492,14 +544,10 @@ public static class ConnectionAdmissionEvidenceRunner
                     }
                     finally
                     {
-                        Interlocked.Decrement(ref pending);
+                        throttle.Release();
                     }
                 }));
-                if (pending >= 64)
-                {
-                    await Task.WhenAny(tasks).ConfigureAwait(false);
-                    tasks.RemoveAll(static completed => completed.IsCompleted);
-                }
+                tasks.RemoveAll(static completed => completed.IsCompleted);
             }
             await Task.WhenAll(tasks).ConfigureAwait(false);
             return failures;
@@ -554,12 +602,12 @@ public static class ConnectionAdmissionEvidenceRunner
         var clients = new List<IDisposable>(count);
         var failures = 0L;
         var watch = Stopwatch.StartNew();
-        var pending = 0;
-        var tasks = new List<Task>();
+        using var throttle = new SemaphoreSlim(128);
+        var tasks = new List<Task>(Math.Min(count, 128));
         for (var index = 0; index < count; index++)
         {
             var captured = index;
-            pending++;
+            await throttle.WaitAsync().ConfigureAwait(false);
             tasks.Add(Task.Run(async () =>
             {
                 try
@@ -574,14 +622,10 @@ public static class ConnectionAdmissionEvidenceRunner
                 }
                 finally
                 {
-                    Interlocked.Decrement(ref pending);
+                    throttle.Release();
                 }
             }));
-            if (pending >= 128)
-            {
-                await Task.WhenAny(tasks).ConfigureAwait(false);
-                tasks.RemoveAll(static completed => completed.IsCompleted);
-            }
+            tasks.RemoveAll(static completed => completed.IsCompleted);
         }
         await Task.WhenAll(tasks).ConfigureAwait(false);
         watch.Stop();
