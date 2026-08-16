@@ -53,7 +53,7 @@ internal sealed partial class SharpLinkServer
     [LoggerMessage(EventId = LogEvents.Connection.ProtocolViolation, Level = LogLevel.Warning, Message = "Client connection was closed because of a protocol violation ({Reason}).")]
     private static partial void LogProtocolViolation(ILogger logger, string reason);
 
-    [LoggerMessage(EventId = LogEvents.Connection.ProtocolViolationSuppressed, Level = LogLevel.Warning, Message = "Client protocol violations are being rate-limited; {SuppressedCount} events were suppressed.")]
+    [LoggerMessage(EventId = LogEvents.Connection.ProtocolViolationSuppressed, Level = LogLevel.Warning, Message = "Client protocol violations are being rate-limited; {SuppressedCount} event(s) were suppressed.")]
     private static partial void LogProtocolViolationSuppressed(ILogger logger, int suppressedCount);
 
     [LoggerMessage(EventId = LogEvents.Connection.ConnectionAdmissionRejected, Level = LogLevel.Warning, Message = "Connection rejected because the {Reason} bound is exhausted.")]

@@ -824,7 +824,7 @@ internal sealed class StreamFlowController
     }
 
     private static SharpLinkException Violation(string message)
-        => new(SharpLinkErrorCode.ProtocolViolation, message);
+        => new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame, message);
 
     private static SharpLinkException CreateStreamClosedException()
         => new(SharpLinkErrorCode.ConnectionClosed, "The stream is closed.");

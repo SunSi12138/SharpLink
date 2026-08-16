@@ -136,6 +136,16 @@ public class ProtocolV2Tests
     }
 
     [Test]
+    public async Task ViolationReasonTokensAreFixedAndLowCardinality()
+    {
+        await Assert.That(ProtocolViolationReason.InvalidMagic.ToLogToken()).IsEqualTo("invalid_magic");
+        await Assert.That(ProtocolViolationReason.MalformedFrame.ToLogToken()).IsEqualTo("malformed_frame");
+        await Assert.That(ProtocolViolationReason.ProtocolState.ToLogToken()).IsEqualTo("protocol_state");
+        await Assert.That(ProtocolViolationReason.InternalState.ToLogToken()).IsEqualTo("internal_state");
+        await Assert.That(ProtocolViolationReason.Other.ToLogToken()).IsEqualTo("other");
+    }
+
+    [Test]
     public void CompleteHeaderWithPartialPayloadShouldRemainBuffered()
     {
         var frame = CreateFrame(

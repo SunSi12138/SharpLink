@@ -75,6 +75,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     private FixedWindowLogThrottle _connectionAdmissionLogThrottle;
     private FixedWindowLogThrottle _oneWayAdmissionLogThrottle;
     private FixedWindowLogThrottle _protocolViolationLogThrottle;
+    private FixedWindowLogThrottle _authenticationFailureLogThrottle;
     private long _authenticationFailureSequence;
 
     /// <summary>
@@ -111,6 +112,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _connectionAdmissionLogThrottle = new FixedWindowLogThrottle(logWindow, timestampFrequency);
         _oneWayAdmissionLogThrottle = new FixedWindowLogThrottle(logWindow, timestampFrequency);
         _protocolViolationLogThrottle = new FixedWindowLogThrottle(logWindow, timestampFrequency);
+        _authenticationFailureLogThrottle = new FixedWindowLogThrottle(logWindow, timestampFrequency);
     }
 
     public SharpLinkHealthStatus HealthStatus => CurrentState switch

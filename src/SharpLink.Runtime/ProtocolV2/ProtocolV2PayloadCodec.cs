@@ -518,10 +518,7 @@ public static class ProtocolV2PayloadCodec
         }
         catch (DecoderFallbackException exception)
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ProtocolViolation,
-                $"{field} is not valid UTF-8.",
-                exception);
+            throw Violation($"{field} is not valid UTF-8.", exception);
         }
     }
 
@@ -556,10 +553,7 @@ public static class ProtocolV2PayloadCodec
         }
         catch (DecoderFallbackException exception)
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ProtocolViolation,
-                $"{field} is not valid UTF-8.",
-                exception);
+            throw Violation($"{field} is not valid UTF-8.", exception);
         }
     }
 
@@ -602,10 +596,7 @@ public static class ProtocolV2PayloadCodec
         }
         catch (DecoderFallbackException exception)
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ProtocolViolation,
-                $"Request metadata {field} is not valid UTF-8.",
-                exception);
+            throw Violation($"Request metadata {field} is not valid UTF-8.", exception);
         }
     }
 
@@ -678,6 +669,12 @@ public static class ProtocolV2PayloadCodec
             throw ProtocolV2FrameParser.Violation($"Unknown Cancel reason {(byte)reason}.");
         }
     }
+
+    private static SharpLinkException Violation(string message, Exception? innerException = null)
+        => new SharpLinkProtocolViolationException(
+            ProtocolViolationReason.MalformedFrame,
+            message,
+            innerException);
 
     internal static bool IsDefinedErrorCode(SharpLinkErrorCode code) => code switch
     {

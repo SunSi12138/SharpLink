@@ -140,8 +140,20 @@ public class SharpLinkServerSecurityLoggingTests
         await using var harness = await StartServerAsync(
             listener, loggerFactory, timeProvider, authenticator);
 
+        // The sanitized warning is rate-limited too: a client that reliably makes the
+        // provider throw gets at most one bounded Warning per window, while the internal
+        // FailureId sequence keeps advancing for suppressed events.
         await DriveHandshakeToAuthenticationAsync(listener, harness, "auth-secret-one");
         await DriveHandshakeToAuthenticationAsync(listener, harness, "auth-secret-two");
+
+        var firstWindow = loggerFactory.Entries
+            .Where(entry => entry.EventId.Id == LogEvents.Connection.AuthenticationProviderFailed)
+            .ToList();
+        await Assert.That(firstWindow.Count).IsEqualTo(1);
+        await Assert.That(firstWindow[0].Message).Contains("FailureId=1");
+
+        timeProvider.Advance(TimeSpan.FromSeconds(5));
+        await DriveHandshakeToAuthenticationAsync(listener, harness, "auth-secret-three");
 
         var authWarnings = loggerFactory.Entries
             .Where(entry => entry.EventId.Id == LogEvents.Connection.AuthenticationProviderFailed)
@@ -160,7 +172,9 @@ public class SharpLinkServerSecurityLoggingTests
             await Assert.That(warning.Message.Contains("at SharpLink", StringComparison.Ordinal)).IsFalse();
         }
         await Assert.That(authWarnings[0].Message).Contains("FailureId=1");
-        await Assert.That(authWarnings[1].Message).Contains("FailureId=2");
+        // The suppressed second failure (FailureId=2) never reached the logger; the next
+        // admitted warning continues the monotonic sequence.
+        await Assert.That(authWarnings[1].Message).Contains("FailureId=3");
 
         var errors = loggerFactory.Entries
             .Where(entry => entry.Level == LogLevel.Error)

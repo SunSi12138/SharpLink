@@ -67,9 +67,20 @@ internal sealed partial class SharpLinkServer
                             ct).ConfigureAwait(false);
                         if (!runtimeSession.TryCompleteHandshake(acceptedNegotiation.Options))
                         {
-                            throw new SharpLinkException(
-                                SharpLinkErrorCode.ProtocolViolation,
-                                "The handshake result was already completed or the session terminated.");
+                            if (!runtimeSession.IsConnected)
+                            {
+                                // The session terminated concurrently (shutdown/teardown):
+                                // an expected connection-termination race, not a protocol bug.
+                                throw new SharpLinkException(
+                                    SharpLinkErrorCode.ConnectionClosed,
+                                    "The handshake session terminated during completion.");
+                            }
+                            // A connected session whose handshake phase is already gone is a
+                            // genuine server-side state bug; classify it as internal so the
+                            // connection loop keeps the full Error path for it.
+                            throw new SharpLinkProtocolViolationException(
+                                ProtocolViolationReason.InternalState,
+                                "The handshake result was already completed.");
                         }
                     }
                     else
@@ -179,12 +190,19 @@ internal sealed partial class SharpLinkServer
             // provider SDK details. Only a stable CLR type identity and an internal,
             // server-generated correlation ID may enter the production log; the full
             // exception is retained in-process (debugger / DEBUG builds) but never
-            // persisted by the default logger.
+            // persisted by the default logger. The warning is also rate-limited so a
+            // client that reliably makes the provider throw cannot grow the log per
+            // connection attempt.
             var failureId = Interlocked.Increment(ref _authenticationFailureSequence);
-            LogAuthenticationProviderFailed(
-                _logger,
-                failureId,
-                exception.GetType().FullName ?? exception.GetType().Name);
+            if (_authenticationFailureLogThrottle.ShouldLog(
+                    _runtimeContext.TimeProvider.GetTimestamp(),
+                    out _))
+            {
+                LogAuthenticationProviderFailed(
+                    _logger,
+                    failureId,
+                    exception.GetType().FullName ?? exception.GetType().Name);
+            }
             DebugTraceAuthenticationProviderException(exception);
             return SharpLinkAuthenticationResult.Reject(
                 SharpLinkErrorCode.AuthenticationRejected,

@@ -15,6 +15,9 @@ internal enum ProtocolViolationReason
     /// <summary>The frame is well-formed but is not legal for the current session state.</summary>
     ProtocolState,
 
+    /// <summary>A server-side invariant was violated; this is not attributable to wire input.</summary>
+    InternalState,
+
     /// <summary>The violation does not fit a finer-grained category.</summary>
     Other
 }
@@ -28,6 +31,15 @@ internal sealed class SharpLinkProtocolViolationException : SharpLinkException
 {
     internal SharpLinkProtocolViolationException(ProtocolViolationReason reason, string message)
         : base(SharpLinkErrorCode.ProtocolViolation, message)
+    {
+        Reason = reason;
+    }
+
+    internal SharpLinkProtocolViolationException(
+        ProtocolViolationReason reason,
+        string message,
+        Exception? innerException)
+        : base(SharpLinkErrorCode.ProtocolViolation, message, innerException)
     {
         Reason = reason;
     }
@@ -48,6 +60,7 @@ internal static class ProtocolViolationLogTokens
         ProtocolViolationReason.InvalidMagic => "invalid_magic",
         ProtocolViolationReason.MalformedFrame => "malformed_frame",
         ProtocolViolationReason.ProtocolState => "protocol_state",
+        ProtocolViolationReason.InternalState => "internal_state",
         _ => "other"
     };
 }

@@ -139,12 +139,12 @@ public class FixedWindowLogThrottleTests
     [Test]
     public async Task InvalidIntervalsAreRejected()
     {
-        await Assert.ThrowsAsync(() =>
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
         {
             _ = new FixedWindowLogThrottle(TimeSpan.FromSeconds(-1), Frequency);
             return Task.CompletedTask;
         });
-        await Assert.ThrowsAsync(() =>
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
         {
             _ = new FixedWindowLogThrottle(TimeSpan.FromSeconds(5), 0);
             return Task.CompletedTask;

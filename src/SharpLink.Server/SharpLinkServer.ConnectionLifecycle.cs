@@ -160,10 +160,23 @@ internal sealed partial class SharpLinkServer
         }
         catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
         {
-            // A ProtocolViolation is hostile or invalid wire input, not a Server software
-            // fault: count it, emit at most one bounded Warning per throttle window, and
-            // never attach the exception (payload, stack trace) to the log.
             SharpLinkTelemetry.RecordProtocolFailure("server");
+            if (SharpLinkProtocolViolationException.Classify(exception) ==
+                ProtocolViolationReason.InternalState)
+            {
+                // A server-side invariant break is a real Server bug: keep the Error path
+                // with the full exception and stack trace instead of masking it as a
+                // bounded hostile-input Warning.
+                LogServerBackgroundLoopUnhandledException(
+                    _logger,
+                    nameof(ProcessRequestLoop),
+                    exception);
+                return;
+            }
+
+            // A ProtocolViolation is hostile or invalid wire input: count it, emit at most
+            // one bounded Warning per throttle window, and never attach the exception
+            // (payload, stack trace) to the log.
             LogProtocolViolationRateLimited(
                 SharpLinkProtocolViolationException.Classify(exception));
         }
