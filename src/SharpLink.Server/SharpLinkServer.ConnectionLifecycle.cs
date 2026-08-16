@@ -4,7 +4,7 @@ internal sealed partial class SharpLinkServer
 {
     private async Task HandleAcceptedConnectionAsync(
         ITransportConnection acceptedConnection,
-        ServerConnectionAdmission.ServerConnectionAdmissionLease connectionLease,
+        ServerConnectionAdmission.Lease connectionLease,
         CancellationToken cancellationToken)
     {
         ITransportConnection? connection = acceptedConnection;
@@ -93,7 +93,7 @@ internal sealed partial class SharpLinkServer
 
     private async Task HandleSessionLifecycleAsync(
         ServerConnectionState connection,
-        ServerConnectionAdmission.ServerConnectionAdmissionLease connectionLease)
+        ServerConnectionAdmission.Lease connectionLease)
     {
         var session = connection.Session;
         var ct = connection.ConnectionToken;

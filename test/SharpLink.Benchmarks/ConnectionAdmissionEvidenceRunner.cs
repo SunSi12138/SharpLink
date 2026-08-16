@@ -42,19 +42,20 @@ public static class ConnectionAdmissionEvidenceRunner
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
 
         using var gauge = new ServerReadyConnectionGauge();
+        using var admissionGauge = new ConnectionAdmissionGauge();
         var results = new List<ConnectionAdmissionScenarioResult>();
 
         foreach (var count in new[] { 100, 1000, 5000 })
-            results.Add(await RunTcpStallNoBytesAsync(count, gauge).ConfigureAwait(false));
+            results.Add(await WithAdmissionGaugeAsync(() => RunTcpStallNoBytesAsync(count, gauge), admissionGauge));
         foreach (var count in new[] { 100, 1000, 2000 })
-            results.Add(await RunTlsStallHandshakeAsync(count, gauge).ConfigureAwait(false));
+            results.Add(await WithAdmissionGaugeAsync(() => RunTlsStallHandshakeAsync(count, gauge), admissionGauge));
         foreach (var count in new[] { 100, 1000, 2000 })
-            results.Add(await RunTlsReadyStallProtocolAsync(count, gauge).ConfigureAwait(false));
+            results.Add(await WithAdmissionGaugeAsync(() => RunTlsReadyStallProtocolAsync(count, gauge), admissionGauge));
         foreach (var count in new[] { 100, 500 })
-            results.Add(await RunAuthenticationStallAsync(count, gauge).ConfigureAwait(false));
+            results.Add(await WithAdmissionGaugeAsync(() => RunAuthenticationStallAsync(count, gauge), admissionGauge));
         foreach (var count in new[] { 16, 128 })
-            results.Add(await RunReadyConnectionsAsync(count, gauge).ConfigureAwait(false));
-        results.Add(await RunTlsHandshakeBurstAsync(gauge).ConfigureAwait(false));
+            results.Add(await WithAdmissionGaugeAsync(() => RunReadyConnectionsAsync(count, gauge), admissionGauge));
+        results.Add(await WithAdmissionGaugeAsync(() => RunTlsHandshakeBurstAsync(gauge), admissionGauge));
 
         var document = new ConnectionAdmissionEvidenceDocument
         {
@@ -80,6 +81,17 @@ public static class ConnectionAdmissionEvidenceRunner
 
     // ------------------------------------------------------------------ scenarios
 
+    private static async Task<ConnectionAdmissionScenarioResult> WithAdmissionGaugeAsync(
+        Func<Task<ConnectionAdmissionScenarioResult>> run,
+        ConnectionAdmissionGauge admissionGauge)
+    {
+        var rejectedBefore = admissionGauge.RejectedTotal;
+        var result = await run().ConfigureAwait(false);
+        result.AdmittedConnectionsObserved = admissionGauge.Admitted;
+        result.RejectedConnectionsObserved = admissionGauge.RejectedTotal - rejectedBefore;
+        return result;
+    }
+
     private static async Task<ConnectionAdmissionScenarioResult> RunTcpStallNoBytesAsync(
         int count,
         ServerReadyConnectionGauge gauge)
@@ -93,8 +105,16 @@ public static class ConnectionAdmissionEvidenceRunner
             static async _ =>
             {
                 var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, TcpPort).ConfigureAwait(false);
-                return (IDisposable)client;
+                try
+                {
+                    await client.ConnectAsync(IPAddress.Loopback, TcpPort).ConfigureAwait(false);
+                    return (IDisposable)client;
+                }
+                catch
+                {
+                    client.Dispose();
+                    throw;
+                }
             }).ConfigureAwait(false);
         var peak = await WaitForStableSampleAsync().ConfigureAwait(false);
 
@@ -133,8 +153,16 @@ public static class ConnectionAdmissionEvidenceRunner
                 // Complete TCP connect, then never send the TLS ClientHello:
                 // the server parks in AuthenticateAsServerAsync until the TLS timeout.
                 var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, TcpPort).ConfigureAwait(false);
-                return (IDisposable)client;
+                try
+                {
+                    await client.ConnectAsync(IPAddress.Loopback, TcpPort).ConfigureAwait(false);
+                    return (IDisposable)client;
+                }
+                catch
+                {
+                    client.Dispose();
+                    throw;
+                }
             }).ConfigureAwait(false);
         var peak = await WaitForStableSampleAsync().ConfigureAwait(false);
 
@@ -171,16 +199,24 @@ public static class ConnectionAdmissionEvidenceRunner
             static async _ =>
             {
                 var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, TcpPort).ConfigureAwait(false);
-                var stream = new SslStream(
-                    client.GetStream(),
-                    leaveInnerStreamOpen: false,
-                    static (_, _, _, _) => true);
-                await stream.AuthenticateAsClientAsync(
-                    new SslClientAuthenticationOptions { TargetHost = "localhost" }).ConfigureAwait(false);
-                // TLS completed; never send the Protocol v2 HandshakeRequest.
-                // The server now holds a full RpcSession + ServerConnectionState in its live set.
-                return new StalledTlsConnection(client, stream);
+                try
+                {
+                    await client.ConnectAsync(IPAddress.Loopback, TcpPort).ConfigureAwait(false);
+                    var stream = new SslStream(
+                        client.GetStream(),
+                        leaveInnerStreamOpen: false,
+                        static (_, _, _, _) => true);
+                    await stream.AuthenticateAsClientAsync(
+                        new SslClientAuthenticationOptions { TargetHost = "localhost" }).ConfigureAwait(false);
+                    // TLS completed; never send the Protocol v2 HandshakeRequest.
+                    // The server now holds a full RpcSession + ServerConnectionState in its live set.
+                    return new StalledTlsConnection(client, stream);
+                }
+                catch
+                {
+                    client.Dispose();
+                    throw;
+                }
             }).ConfigureAwait(false);
         var peak = await WaitForStableSampleAsync().ConfigureAwait(false);
 
@@ -766,6 +802,60 @@ public static class ConnectionAdmissionEvidenceRunner
 
         public void Dispose() => _listener.Dispose();
     }
+
+    /// <summary>
+    /// Tracks the pre-call connection admission instruments added by the issue #162 fix.
+    /// On builds without the fix the instruments do not exist and both values stay zero.
+    /// </summary>
+    private sealed class ConnectionAdmissionGauge : IDisposable
+    {
+        private readonly MeterListener _listener = new();
+        private long _admitted;
+        private long _rejected;
+
+        internal ConnectionAdmissionGauge()
+        {
+            _listener.InstrumentPublished = static (instrument, listener) =>
+            {
+                if (instrument.Meter.Name != "SharpLink")
+                    return;
+                if (instrument.Name == "sharplink.connections.admitted" ||
+                    instrument.Name == "sharplink.connections.rejected")
+                {
+                    listener.EnableMeasurementEvents(instrument);
+                }
+            };
+            _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
+            {
+                if (instrument.Name.Equals("sharplink.connections.admitted", StringComparison.Ordinal) &&
+                    HasServerTag(tags))
+                {
+                    Interlocked.Add(ref _admitted, value);
+                }
+                else if (instrument.Name.Equals("sharplink.connections.rejected", StringComparison.Ordinal))
+                {
+                    Interlocked.Add(ref _rejected, value);
+                }
+            });
+            _listener.Start();
+        }
+
+        internal long Admitted => Volatile.Read(ref _admitted);
+
+        internal long RejectedTotal => Volatile.Read(ref _rejected);
+
+        public void Dispose() => _listener.Dispose();
+
+        private static bool HasServerTag(ReadOnlySpan<KeyValuePair<string, object?>> tags)
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "rpc.side" && tag.Value is "server")
+                    return true;
+            }
+            return false;
+        }
+    }
 }
 
 // ------------------------------------------------------------------ documents
@@ -791,6 +881,8 @@ public sealed class ConnectionAdmissionScenarioResult
     public ProcessSample Baseline { get; set; } = new();
     public ProcessSample Peak { get; set; } = new();
     public long ReadyConnectionsObserved { get; set; }
+    public long AdmittedConnectionsObserved { get; set; }
+    public long RejectedConnectionsObserved { get; set; }
     public double StopMs { get; set; }
     public bool SocketFdsReturnedToBaseline { get; set; }
     public IReadOnlyList<double> RoundWallMs { get; set; } = [];

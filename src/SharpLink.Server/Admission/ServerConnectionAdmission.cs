@@ -46,7 +46,7 @@ internal sealed class ServerConnectionAdmission
 
     internal int ActiveHandshakes => Volatile.Read(ref _activeHandshakes);
 
-    internal bool TryAcquireConnection(out ServerConnectionAdmissionLease lease)
+    internal bool TryAcquireConnection(out Lease lease)
     {
         if (Interlocked.Increment(ref _activeConnections) > _maxConnections)
         {
@@ -55,12 +55,12 @@ internal sealed class ServerConnectionAdmission
             return false;
         }
 
-        lease = new ServerConnectionAdmissionLease(this);
+        lease = new Lease(this);
         SharpLinkTelemetry.AddAdmittedConnections(1);
         return true;
     }
 
-    internal bool TryAcquireHandshake(ServerConnectionAdmissionLease lease)
+    internal bool TryAcquireHandshake(Lease lease)
     {
         ArgumentNullException.ThrowIfNull(lease);
         if (Interlocked.Increment(ref _activeHandshakes) > _maxHandshakes)
@@ -94,14 +94,14 @@ internal sealed class ServerConnectionAdmission
     /// slot. Both releases are idempotent, so the terminal cleanup path can release them
     /// unconditionally while the Ready transition releases the handshake slot early.
     /// </summary>
-    internal sealed class ServerConnectionAdmissionLease
+    internal sealed class Lease
     {
         private readonly ServerConnectionAdmission _owner;
         private int _connectionReleased;
         private int _handshakeHeld;
         private int _handshakeReleased;
 
-        internal ServerConnectionAdmissionLease(ServerConnectionAdmission owner)
+        internal Lease(ServerConnectionAdmission owner)
             => _owner = owner;
 
         internal void MarkHandshakeHeld()
