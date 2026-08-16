@@ -26,7 +26,9 @@ namespace SharpLink.Benchmarks;
 /// and the compiler boxes the outer async state machine onto the heap.
 /// </para>
 /// <para>
-/// Attribution strategy: <c>AlwaysSuspend_1</c> measures the full dispatcher suspension hand-off,
+/// Attribution strategy: every case is a synchronous method with no benchmark-side async state
+/// machine, so the reported allocation is the dispatcher/control work itself, not the harness.
+/// <c>AlwaysSuspend_1</c> drives one suspending <c>MoveNextAsync()</c> and blocks on its result;
 /// <c>AlwaysSuspendControl_1</c> replays the same producer/consumer hand-off through a bare
 /// <see cref="ManualResetValueTaskSourceCore{TResult}"/> with no dispatcher and no outer
 /// <c>MoveNextAsync</c> state machine. Their delta is the cost attributable to the outer
@@ -49,6 +51,7 @@ public class DispatcherMoveNextAllocationBenchmarks
     private readonly AutoResetEvent _producerRequest = new(initialState: false);
     private readonly AutoResetEvent _producerStopped = new(initialState: false);
     private readonly ControlSignal _controlSignal = new();
+    private readonly ManualResetEventSlim _controlGate = new(initialState: false);
 
     private Thread? _producerThread;
     private PooledAsyncStreamDispatcher<byte>? _dispatcher;
@@ -97,13 +100,13 @@ public class DispatcherMoveNextAllocationBenchmarks
     public void CleanupAlwaysSuspend1() => DisposeCurrentDispatcher();
 
     [Benchmark(OperationsPerInvoke = 1)]
-    public ValueTask<int> AlwaysSuspend_1() => ConsumeSuspendedAsync(1);
+    public int AlwaysSuspend_1() => ConsumeSuspendedSync(1);
 
     [IterationSetup(Target = nameof(AlwaysSuspendControl_1))]
     public void SetupAlwaysSuspendControl1() => ThrowIfProducerFailed();
 
     [Benchmark(OperationsPerInvoke = 1)]
-    public ValueTask<int> AlwaysSuspendControl_1() => ConsumeControlAsync(1);
+    public int AlwaysSuspendControl_1() => ConsumeControlSync(1);
 
     private static void WarmDispatcherPool()
     {
@@ -166,7 +169,7 @@ public class DispatcherMoveNextAllocationBenchmarks
         return sum;
     }
 
-    private async ValueTask<int> ConsumeSuspendedAsync(int itemCount)
+    private int ConsumeSuspendedSync(int itemCount)
     {
         var enumerator = _enumerator ?? throw new InvalidOperationException("Benchmark enumerator was not created.");
         var sum = 0;
@@ -177,7 +180,7 @@ public class DispatcherMoveNextAllocationBenchmarks
                 throw new InvalidOperationException("The MoveNext operation must suspend before its producer is requested.");
 
             RequestDispatcherItems(1);
-            if (!await moveNext.ConfigureAwait(false))
+            if (!moveNext.GetAwaiter().GetResult())
                 throw new InvalidOperationException("The benchmark producer ended the stream before publishing its item.");
             sum += enumerator.Current;
         }
@@ -186,16 +189,17 @@ public class DispatcherMoveNextAllocationBenchmarks
         return sum;
     }
 
-    private async ValueTask<int> ConsumeControlAsync(int itemCount)
+    private int ConsumeControlSync(int itemCount)
     {
         var sum = 0;
         for (var index = 0; index < itemCount; index++)
         {
             var signal = RequestControlSignal();
-            if (signal.IsCompleted)
-                throw new InvalidOperationException("The control hand-off unexpectedly completed before the producer request.");
-
-            if (!await signal.ConfigureAwait(false))
+            var awaiter = signal.ConfigureAwait(false).GetAwaiter();
+            _controlGate.Reset();
+            awaiter.OnCompleted(_controlGate.Set);
+            _controlGate.Wait();
+            if (!awaiter.GetResult())
                 throw new InvalidOperationException("The control producer returned an invalid hand-off signal.");
             sum++;
         }
@@ -216,6 +220,8 @@ public class DispatcherMoveNextAllocationBenchmarks
     {
         ThrowIfProducerFailed();
         var signal = _controlSignal.WaitAsync();
+        if (signal.IsCompleted)
+            throw new InvalidOperationException("The control hand-off unexpectedly completed before the producer request.");
         Volatile.Write(ref _producerMode, (int)ProducerMode.Control);
         _producerRequest.Set();
         return signal;
