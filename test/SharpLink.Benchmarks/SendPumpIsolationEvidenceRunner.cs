@@ -40,6 +40,14 @@ internal static class ProbeFrameClass
     internal const int Unary = 2;
     internal const int Progress = 3;
 
+    /// <summary>
+    /// Cancellation traffic: production keeps Cancel in the normal class to
+    /// preserve request-before-cancel ordering, so it receives neither the
+    /// progress headroom nor the priority drain. It is reported separately so
+    /// the evidence cannot misattribute it to the reserved progress path.
+    /// </summary>
+    internal const int Cancel = 4;
+
     internal const long BulkSampleMask = 63; // residence sampled every 64th bulk frame
 }
 
@@ -310,6 +318,7 @@ public static class SendPumpIsolationEvidenceRunner
         var bulk = recorder.BuildClassStats(ProbeFrameClass.Bulk);
         var unary = recorder.BuildClassStats(ProbeFrameClass.Unary);
         var progress = recorder.BuildClassStats(ProbeFrameClass.Progress);
+        var cancel = recorder.BuildClassStats(ProbeFrameClass.Cancel);
         var transportRate = output.MeasuredBytes / elapsedSeconds;
         return new ScenarioResult(
             name,
@@ -318,6 +327,7 @@ public static class SendPumpIsolationEvidenceRunner
             bulk,
             unary,
             progress,
+            cancel,
             new ScenarioSummary(
                 queueBytesSampler.Mean(),
                 queueBytesSampler.Max(),
@@ -506,7 +516,9 @@ public static class SendPumpIsolationEvidenceRunner
                                ProtocolV2FrameFlags.None,
                                kind == ProgressKind.Ping ? 0UL : requestId))
                     {
-                        WriteTag(writer, ProbeFrameClass.Progress, seq);
+                        WriteTag(writer, kind == ProgressKind.CancelBurst
+                            ? ProbeFrameClass.Cancel
+                            : ProbeFrameClass.Progress, seq);
                         switch (kind)
                         {
                             case ProgressKind.Ping:
@@ -533,15 +545,18 @@ public static class SendPumpIsolationEvidenceRunner
                     throw;
                 }
 
-                recorder.RecordAttempt(ProbeFrameClass.Progress);
+                var frameClass = kind == ProgressKind.CancelBurst
+                    ? ProbeFrameClass.Cancel
+                    : ProbeFrameClass.Progress;
+                recorder.RecordAttempt(frameClass);
                 try
                 {
                     session.SendPacket(writer);
-                    recorder.RecordAcceptance(ProbeFrameClass.Progress, seq, Stopwatch.GetTimestamp());
+                    recorder.RecordAcceptance(frameClass, seq, Stopwatch.GetTimestamp());
                 }
                 catch (SharpLinkException ex) when (ex.Code == SharpLinkErrorCode.ResourceExhausted)
                 {
-                    recorder.RecordFull(ProbeFrameClass.Progress);
+                    recorder.RecordFull(frameClass);
                 }
                 catch (Exception)
                 {
@@ -712,13 +727,14 @@ public sealed record ScenarioResult(
     ClassStats Bulk,
     ClassStats Unary,
     ClassStats Progress,
+    ClassStats Cancel,
     ScenarioSummary Summary)
 {
     internal string SummaryLine() => string.Format(
         CultureInfo.InvariantCulture,
         "[Result] {0}: bulk={1:F2} MiB/s fullBulk={2:F4} | unary full={3:F4} resP50={4} resP99={5} " +
         "capP99={6} | progress full={7:F4} resP50={8} resP99={9} | batchP99={10} txP99={11} " +
-        "queueMean={12} queueMax={13}",
+        "queueMean={12} queueMax={13} cancelFull={14:F4} cancelResP99={15}",
         Scenario,
         Summary.TransportMiBPerSecond,
         Bulk.FullRate,
@@ -732,7 +748,9 @@ public sealed record ScenarioResult(
         Unary.BatchWaitP99,
         Unary.TransportWriteP99,
         Summary.QueueBytesMean,
-        Summary.QueueBytesMax);
+        Summary.QueueBytesMax,
+        Cancel.FullRate,
+        Cancel.ResidenceP99);
 }
 
 public sealed record ClassStats(
@@ -782,7 +800,8 @@ internal sealed class ProbeRecorder
     {
         [1] = new(),
         [2] = new(),
-        [3] = new()
+        [3] = new(),
+        [4] = new()
     };
     private long _sequence;
     private bool _measuring;
