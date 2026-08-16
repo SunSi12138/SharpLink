@@ -129,7 +129,11 @@ internal sealed partial class SharpLinkServer
             }
             if (!authResult.IsAuthenticated)
             {
-                LogHandshakeFailed(_logger);
+                // Protocol-violation rejections already emitted their bounded classified
+                // Warning inside ProcessHandshakeAsync; logging the generic handshake
+                // failure here too would let hostile input grow the log per connection.
+                if (authResult.ErrorCode != SharpLinkErrorCode.ProtocolViolation)
+                    LogHandshakeFailed(_logger);
                 return;
             }
 
@@ -160,7 +164,8 @@ internal sealed partial class SharpLinkServer
             // fault: count it, emit at most one bounded Warning per throttle window, and
             // never attach the exception (payload, stack trace) to the log.
             SharpLinkTelemetry.RecordProtocolFailure("server");
-            LogProtocolViolationRateLimited(exception);
+            LogProtocolViolationRateLimited(
+                SharpLinkProtocolViolationException.Classify(exception));
         }
         catch (Exception ex)
         {
@@ -182,7 +187,7 @@ internal sealed partial class SharpLinkServer
     /// suppressed-count line, while the violation itself is always telemetry-counted by
     /// the caller. Suppressed events never touch the logger.
     /// </summary>
-    private void LogProtocolViolationRateLimited(SharpLinkException exception)
+    private void LogProtocolViolationRateLimited(ProtocolViolationReason reason)
     {
         if (!_protocolViolationLogThrottle.ShouldLog(
                 _runtimeContext.TimeProvider.GetTimestamp(),
@@ -193,9 +198,7 @@ internal sealed partial class SharpLinkServer
 
         if (suppressedCount > 0)
             LogProtocolViolationSuppressed(_logger, suppressedCount);
-        LogProtocolViolation(
-            _logger,
-            SharpLinkProtocolViolationException.Classify(exception).ToLogToken());
+        LogProtocolViolation(_logger, reason.ToLogToken());
     }
 
     private async ValueTask ReplaceConnectionAsync(ServerConnectionState connection)

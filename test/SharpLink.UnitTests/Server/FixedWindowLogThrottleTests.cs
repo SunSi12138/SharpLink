@@ -68,6 +68,35 @@ public class FixedWindowLogThrottleTests
     }
 
     [Test]
+    public async Task OversizedFrequenciesSaturateTheWindowInsteadOfShorteningIt()
+    {
+        // A frequency whose ticks-per-interval product would overflow must saturate the
+        // final timestamp-unit result. Saturating the intermediate product would shorten
+        // the window to well under five seconds and let a hostile storm through.
+        var frequency = long.MaxValue / TimeSpan.FromSeconds(5).Ticks + 1;
+        var throttle = new FixedWindowLogThrottle(TimeSpan.FromSeconds(5), frequency);
+
+        await Assert.That(throttle.ShouldLog(0, out _)).IsTrue();
+        // This offset is what the buggy pre-division saturation produced (~0.92 s at
+        // 1e12 Hz); the fixed gate must still suppress it.
+        await Assert.That(throttle.ShouldLog(1_000_000_000_000, out _)).IsFalse();
+        await Assert.That(throttle.ShouldLog(long.MaxValue - 1, out _)).IsFalse();
+    }
+
+    [Test]
+    public async Task MaximumTimestampStaysClosedAfterTheFirstAdmission()
+    {
+        // When the provider reports long.MaxValue, the boundary saturates to the same
+        // value. The gate must admit the first event once and then stay closed instead
+        // of re-admitting every call at the terminal timestamp.
+        var throttle = new FixedWindowLogThrottle(TimeSpan.FromSeconds(5), Frequency);
+
+        await Assert.That(throttle.ShouldLog(long.MaxValue, out _)).IsTrue();
+        await Assert.That(throttle.ShouldLog(long.MaxValue, out _)).IsFalse();
+        await Assert.That(throttle.ShouldLog(long.MaxValue - 1, out _)).IsFalse();
+    }
+
+    [Test]
     public async Task InvalidIntervalsAreRejected()
     {
         await Assert.ThrowsAsync(() =>

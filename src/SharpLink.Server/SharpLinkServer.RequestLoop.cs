@@ -206,6 +206,8 @@ internal sealed partial class SharpLinkServer
                                 default:
                                     {
                                         SharpLinkTelemetry.RecordProtocolFailure("server");
+                                        LogProtocolViolationRateLimited(
+                                            ProtocolViolationReason.ProtocolState);
                                         return;
                                     }
                             }

@@ -24,12 +24,15 @@ internal struct FixedWindowLogThrottle
         {
             _intervalTimestampTicks = 0;
         }
+        else if (timestampFrequency > long.MaxValue / intervalTicks)
+        {
+            // Saturate the FINAL timestamp-unit result: saturating the intermediate
+            // product would shorten the window and let a hostile storm through.
+            _intervalTimestampTicks = long.MaxValue;
+        }
         else
         {
-            var product = timestampFrequency > long.MaxValue / intervalTicks
-                ? long.MaxValue
-                : timestampFrequency * intervalTicks;
-            _intervalTimestampTicks = Math.Max(1, product / TimeSpan.TicksPerSecond);
+            _intervalTimestampTicks = Math.Max(1, timestampFrequency * intervalTicks / TimeSpan.TicksPerSecond);
         }
         // The first event is always admitted.
         _nextLogTimestamp = long.MinValue;
@@ -38,13 +41,15 @@ internal struct FixedWindowLogThrottle
     /// <summary>
     /// Returns <see langword="true"/> when the event at <paramref name="timestamp"/> may be
     /// logged. Suppressed events are counted and reported by the next admitted event.
+    /// A saturated boundary keeps the gate permanently closed: timestamps cannot grow past
+    /// <see cref="long.MaxValue"/>, so reopening there would admit every subsequent event.
     /// </summary>
     internal bool ShouldLog(long timestamp, out int suppressedCount)
     {
         while (true)
         {
             var next = Volatile.Read(ref _nextLogTimestamp);
-            if (timestamp < next)
+            if (timestamp < next || next == long.MaxValue)
             {
                 Interlocked.Increment(ref _suppressedCount);
                 suppressedCount = 0;

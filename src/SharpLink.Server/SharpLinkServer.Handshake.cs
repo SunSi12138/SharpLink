@@ -29,9 +29,11 @@ internal sealed partial class SharpLinkServer
                     SharpLinkAuthenticationResult authResult;
                     ProtocolV2HandshakeRequest request = default;
                     ProtocolV2ServerNegotiation? negotiation = null;
+                    ProtocolViolationReason? violationReason = null;
                     if (!RpcSessionProtocolRules.IsFrameAllowed(runtimeSession.ProtocolPhase, header.Type) ||
                         header.Type != ProtocolV2FrameType.HandshakeRequest)
                     {
+                        violationReason = ProtocolViolationReason.ProtocolState;
                         authResult = SharpLinkAuthenticationResult.Reject(
                             SharpLinkErrorCode.ProtocolViolation,
                             "Expected HandshakeRequest frame.");
@@ -49,6 +51,7 @@ internal sealed partial class SharpLinkServer
                         }
                         catch (SharpLinkException exception)
                         {
+                            violationReason = SharpLinkProtocolViolationException.Classify(exception);
                             authResult = SharpLinkAuthenticationResult.Reject(
                                 exception.Code,
                                 exception.Message);
@@ -72,7 +75,15 @@ internal sealed partial class SharpLinkServer
                     else
                     {
                         if (authResult.ErrorCode == SharpLinkErrorCode.ProtocolViolation)
+                        {
                             SharpLinkTelemetry.RecordProtocolFailure("server");
+                            // Hostile-input rejection during the handshake gets the same
+                            // bounded, classified, exception-free Warning as a thrown
+                            // violation; the generic handshake-failed Warning is skipped
+                            // below so an attacker cannot grow the log per connection.
+                            LogProtocolViolationRateLimited(
+                                violationReason ?? ProtocolViolationReason.Other);
+                        }
                         else if (authResult.ErrorCode is SharpLinkErrorCode.AuthenticationRejected or
                                  SharpLinkErrorCode.AuthenticationExpired or
                                  SharpLinkErrorCode.AuthorizationDenied or

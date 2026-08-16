@@ -201,6 +201,50 @@ public class SharpLinkServerSecurityLoggingTests
         await Assert.That(errors.Count).IsEqualTo(0);
     }
 
+    [Test]
+    public async Task ValidlyEncodedForeignFrameDuringHandshakeEmitsClassifiedWarningWithoutGenericHandshakeLog()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var loggerFactory = new CaptureLoggerFactory();
+        var listener = new ScriptedListener();
+        await using var harness = await StartServerAsync(listener, loggerFactory, timeProvider);
+
+        var connection = new TestConnection("wrong-first-frame");
+        listener.Enqueue(connection);
+        await YieldUntilAsync(
+            () => harness.Server.ConnectionAdmission.ActiveHandshakes == 1,
+            "the foreign-frame connection must hold the handshake slot");
+
+        // A validly encoded Ping is a protocol violation as the first handshake frame.
+        // It is rejected (not thrown): the rejection must still reach the bounded,
+        // classified Warning and must not fall back to the generic handshake Warning.
+        WritePingFrame(connection.FeedInput);
+
+        await YieldUntilAsync(
+            () => connection.DisposeCount >= 1 &&
+                   harness.Server.ConnectionAdmission.ActiveConnections == 0 &&
+                   harness.Server.ConnectionAdmission.ActiveHandshakes == 0,
+            "the foreign-frame connection must be closed and release both slots");
+
+        var violations = loggerFactory.Entries
+            .Where(entry => entry.EventId.Id == LogEvents.Connection.ProtocolViolation)
+            .ToList();
+        await Assert.That(violations.Count).IsEqualTo(1);
+        await Assert.That(violations[0].Level).IsEqualTo(LogLevel.Warning);
+        await Assert.That(violations[0].Exception).IsNull();
+        await Assert.That(violations[0].Message.Contains("protocol_state", StringComparison.Ordinal)).IsTrue();
+
+        var handshakeFailures = loggerFactory.Entries
+            .Where(entry => entry.EventId.Id == LogEvents.Connection.HandshakeFailed)
+            .ToList();
+        await Assert.That(handshakeFailures.Count).IsEqualTo(0);
+
+        var errors = loggerFactory.Entries
+            .Where(entry => entry.Level == LogLevel.Error)
+            .ToList();
+        await Assert.That(errors.Count).IsEqualTo(0);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task DriveHandshakeToAuthenticationAsync(
@@ -297,6 +341,19 @@ public class SharpLinkServerSecurityLoggingTests
         bytes[0] = 0x5A; // invalid Protocol v2 magic
         suffix.CopyTo(bytes.AsSpan(ProtocolV2Constants.HeaderBytes));
         output.Write(bytes);
+        output.FlushAsync().AsTask().GetAwaiter().GetResult();
+    }
+
+    private static void WritePingFrame(PipeWriter output)
+    {
+        var writer = new PooledByteBufferWriter();
+        var token = ProtocolV2FrameWriter.BeginFrame(
+            writer, ProtocolV2FrameType.Ping, ProtocolV2FrameFlags.None, 0);
+        var span = writer.GetSpan(sizeof(long));
+        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(span, 42);
+        writer.Advance(sizeof(long));
+        ProtocolV2FrameWriter.EndFrame(writer, token);
+        output.Write(writer.WrittenMemory.ToArray());
         output.FlushAsync().AsTask().GetAwaiter().GetResult();
     }
 
