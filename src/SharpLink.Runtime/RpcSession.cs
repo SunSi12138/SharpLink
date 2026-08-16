@@ -196,7 +196,7 @@ internal sealed partial class RpcSession
         ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
 
         var result = GetOrCreatePumpOrReturn(packet)
-            .TryEnqueue(new OwnedFrame(packet, forceFlush: false, flushCompletion: null));
+            .TryEnqueue(CreateFrame(packet, forceFlush: false, flushCompletion: null));
         if (result == SendEnqueueResult.Full)
         {
             throw SharpLinkResourceExhaustion.Create(
@@ -250,7 +250,7 @@ internal sealed partial class RpcSession
         var completion = forceFlush
             ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
             : null;
-        var frame = new OwnedFrame(packet, forceFlush, completion);
+        var frame = CreateFrame(packet, forceFlush, completion);
         var pump = GetOrCreatePumpOrReturn(packet);
         var result = waitForCapacity
             ? await pump.EnqueueAsync(frame, ct).ConfigureAwait(false)
@@ -292,7 +292,7 @@ internal sealed partial class RpcSession
             }
             ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
 
-            var frame = new OwnedFrame(packet, forceFlush: false, flushCompletion: null);
+            var frame = CreateFrame(packet, forceFlush: false, flushCompletion: null);
             var pump = GetOrCreatePumpOrReturn(packet);
             var result = pump.TryEnqueueForBackpressure(frame);
             if (result == SendEnqueueResult.Accepted)
@@ -315,6 +315,36 @@ internal sealed partial class RpcSession
         var result = await pump.EnqueueAsync(frame, cancellationToken).ConfigureAwait(false);
         if (result == SendEnqueueResult.Closed)
             throw GetTerminalException();
+    }
+
+    private static OwnedFrame CreateFrame(
+        IRpcByteBufferWriter packet,
+        bool forceFlush,
+        TaskCompletionSource<bool>? flushCompletion)
+        => new(
+            packet,
+            forceFlush,
+            flushCompletion,
+            IsProtocolProgressFrame(packet.WrittenSpan));
+
+    /// <summary>
+    /// Classifies protocol progress frames by their header type. Progress
+    /// frames carry connection liveness, flow-control credit, and drain state
+    /// and must remain timely while bulk stream data saturates the send
+    /// queue. RPC data frames, responses, stream-complete frames, and cancels
+    /// stay in the normal class: a cancel must never overtake the request it
+    /// cancels, because the peer discards cancels for requests it has not
+    /// dispatched yet (StreamData before StreamComplete is likewise preserved).
+    /// </summary>
+    private static bool IsProtocolProgressFrame(ReadOnlySpan<byte> frame)
+    {
+        if (frame.Length < ProtocolV2Constants.HeaderBytes)
+            return false;
+        return (ProtocolV2FrameType)frame[5] is
+            ProtocolV2FrameType.Ping or
+            ProtocolV2FrameType.Pong or
+            ProtocolV2FrameType.WindowUpdate or
+            ProtocolV2FrameType.GoAway;
     }
 
     private void ValidateOutboundPacketOrReturn(IRpcByteBufferWriter packet, bool allowEmpty)

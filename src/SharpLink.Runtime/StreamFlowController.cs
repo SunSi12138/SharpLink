@@ -187,14 +187,23 @@ internal sealed class StreamFlowController
             ThrowIfTerminated();
             var key = new StreamKey(requestId, streamId);
             if (!_sendStates.TryGetValue(key, out var state))
-                throw Violation("WindowUpdate references an unknown stream.");
+            {
+                // A late credit return for a stream whose send state has
+                // already been removed (completed and fully credited) is a
+                // benign wire race, not a protocol violation: the peer may
+                // return credit for frames it drained after the stream
+                // finished. The credit is obsolete and is discarded.
+                return;
+            }
 
-            var updatedStreamCredit = checked(state.Credit + credit);
-            var updatedConnectionCredit = checked(_sendConnectionCredit + credit);
-            if (updatedStreamCredit > _streamWindow)
-                throw Violation("WindowUpdate exceeds the negotiated stream receive window.");
-            if (updatedConnectionCredit > _connectionWindow)
-                throw Violation("WindowUpdate exceeds the negotiated connection receive window.");
+            // A benign double return can overshoot a window: the peer may
+            // release credit at stream detach and then return it again as it
+            // drains the frames that arrive afterwards. Clamp the excess
+            // instead of treating it as a violation; the credit beyond the
+            // negotiated window is obsolete.
+            var updatedStreamCredit = Math.Min(checked(state.Credit + credit), _streamWindow);
+            var updatedConnectionCredit = Math.Min(
+                checked(_sendConnectionCredit + credit), _connectionWindow);
 
             state.Credit = updatedStreamCredit;
             _sendConnectionCredit = updatedConnectionCredit;

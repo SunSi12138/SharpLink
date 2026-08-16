@@ -30,14 +30,12 @@ public class StreamFlowControllerTests
         controller.ApplyWindowUpdate(10, 1, 6);
         await blocked;
 
-        try
-        {
-            controller.ApplyWindowUpdate(10, 1, 2);
-            throw new Exception("expected window overflow");
-        }
-        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
-        {
-        }
+        // A benign double return can overshoot the window (the peer may
+        // release credit at detach and return it again as it drains the
+        // frames that arrive afterwards): the excess is clamped.
+        controller.ApplyWindowUpdate(10, 1, 2);
+        Ensure(controller.SendConnectionCredit <= 16,
+            "the clamped excess must not push the connection credit past its window");
     }
 
     [Test]
@@ -623,6 +621,24 @@ public class StreamFlowControllerTests
     }
 
     [Test]
+    public async Task LateWindowUpdateForRemovedStreamShouldBeDiscarded()
+    {
+        var sender = new StreamFlowController(4, 4, 1024, maxConcurrentStreams: 1);
+        await sender.AcquireSendCreditAsync(1, 0, 4, CancellationToken.None);
+        sender.CompleteSendStream(1, 0);
+        sender.ApplyWindowUpdate(1, 0, 4);
+        Ensure(sender.SendConnectionCredit == 4,
+            "the final credit return must reclaim the exact outstanding capacity");
+
+        // A second, obsolete credit return can race the stream removal (the
+        // peer may return credit for frames it drained after completion); it
+        // must be discarded without a protocol violation or double counting.
+        sender.ApplyWindowUpdate(1, 0, 1);
+        Ensure(sender.SendConnectionCredit == 4,
+            "the obsolete late credit must not corrupt the connection budget");
+    }
+
+    [Test]
     public async Task FailedSendStreamShouldAcceptInFlightCreditBeforeReusingCapacity()
     {
         var controller = new StreamFlowController(4, 4, 1024, maxConcurrentStreams: 1);
@@ -761,17 +777,17 @@ public class StreamFlowControllerTests
     }
 
     [Test]
-    public async Task UnknownWindowUpdateShouldRemainAProtocolViolation()
+    public async Task UnknownWindowUpdateShouldBeDiscarded()
     {
+        // A credit return for a stream that no longer exists (completed and
+        // fully credited, or never created) is a benign wire race: the peer
+        // may return credit for frames it drained after the stream finished.
+        // The obsolete credit must be discarded without a protocol violation
+        // or double counting.
         var controller = new StreamFlowController(4, 4, 1024);
-        try
-        {
-            controller.ApplyWindowUpdate(99, 1, 1);
-            throw new Exception("expected unknown stream violation");
-        }
-        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
-        {
-        }
+        controller.ApplyWindowUpdate(99, 1, 1);
+        Ensure(controller.SendConnectionCredit == 4,
+            "an unknown-stream credit return must not corrupt the connection budget");
         await Task.CompletedTask;
     }
 
