@@ -154,10 +154,16 @@ internal sealed partial class SharpLinkServer
         catch (Exception ex) when (IsExpectedConnectionTermination(ex, ct))
         {
         }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+            // A ProtocolViolation is hostile or invalid wire input, not a Server software
+            // fault: count it, emit at most one bounded Warning per throttle window, and
+            // never attach the exception (payload, stack trace) to the log.
+            SharpLinkTelemetry.RecordProtocolFailure("server");
+            LogProtocolViolationRateLimited(exception);
+        }
         catch (Exception ex)
         {
-            if (ex is SharpLinkException { Code: SharpLinkErrorCode.ProtocolViolation })
-                SharpLinkTelemetry.RecordProtocolFailure("server");
             LogServerBackgroundLoopUnhandledException(_logger, nameof(ProcessRequestLoop), ex);
         }
         finally
@@ -169,6 +175,27 @@ internal sealed partial class SharpLinkServer
                 LogClientDisconnected(_logger);
             await DisconnectConnectionAsync(connection).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Emits at most one ProtocolViolation Warning per fixed window, with an optional
+    /// suppressed-count line, while the violation itself is always telemetry-counted by
+    /// the caller. Suppressed events never touch the logger.
+    /// </summary>
+    private void LogProtocolViolationRateLimited(SharpLinkException exception)
+    {
+        if (!_protocolViolationLogThrottle.ShouldLog(
+                _runtimeContext.TimeProvider.GetTimestamp(),
+                out var suppressedCount))
+        {
+            return;
+        }
+
+        if (suppressedCount > 0)
+            LogProtocolViolationSuppressed(_logger, suppressedCount);
+        LogProtocolViolation(
+            _logger,
+            SharpLinkProtocolViolationException.Classify(exception).ToLogToken());
     }
 
     private async ValueTask ReplaceConnectionAsync(ServerConnectionState connection)

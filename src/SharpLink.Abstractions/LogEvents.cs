@@ -22,6 +22,10 @@ public static class LogEvents
         public const int AuthenticationProviderFailed = 1104;
         /// <summary>A connection was rejected because a pre-call admission bound was exhausted.</summary>
         public const int ConnectionAdmissionRejected = 1105;
+        /// <summary>A client connection was closed because it violated Protocol v2.</summary>
+        public const int ProtocolViolation = 1106;
+        /// <summary>Protocol violation warnings were suppressed by the rate limiter.</summary>
+        public const int ProtocolViolationSuppressed = 1107;
         //Error
         /// <summary>A client connection closed because of an unexpected error.</summary>
         public const int ClientDisConnectedWithError = 1201;

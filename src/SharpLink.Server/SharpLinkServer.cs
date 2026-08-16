@@ -72,10 +72,10 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     private int _lastCallDrainSignalPendingAdmissions;
     private int _lastCallDrainSignalLocalCalls;
     private long _rejectedOneWayCalls;
-    private long _oneWayAdmissionLogTimestamp;
-    private int _oneWayAdmissionLogInitialized;
-    private long _connectionAdmissionLogTimestamp;
-    private int _connectionAdmissionLogInitialized;
+    private FixedWindowLogThrottle _connectionAdmissionLogThrottle;
+    private FixedWindowLogThrottle _oneWayAdmissionLogThrottle;
+    private FixedWindowLogThrottle _protocolViolationLogThrottle;
+    private long _authenticationFailureSequence;
 
     /// <summary>
     /// Initializes a Server from the explicit composition materialized by
@@ -106,6 +106,11 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _maxConcurrentCallsPerServer = _runtimeContext.FlowControl.MaxConcurrentCallsPerServer;
         _serviceCleanup = composition.ServiceCleanup;
         _frameworkTasks = composition.FrameworkTasks;
+        var logWindow = TimeSpan.FromSeconds(5);
+        var timestampFrequency = _runtimeContext.TimeProvider.TimestampFrequency;
+        _connectionAdmissionLogThrottle = new FixedWindowLogThrottle(logWindow, timestampFrequency);
+        _oneWayAdmissionLogThrottle = new FixedWindowLogThrottle(logWindow, timestampFrequency);
+        _protocolViolationLogThrottle = new FixedWindowLogThrottle(logWindow, timestampFrequency);
     }
 
     public SharpLinkHealthStatus HealthStatus => CurrentState switch
@@ -451,34 +456,9 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     }
 
     private bool ShouldLogConnectionAdmissionRejection()
-    {
-        var timeProvider = _runtimeContext.TimeProvider;
-        var now = timeProvider.GetTimestamp();
-        while (true)
-        {
-            var initialization = Volatile.Read(ref _connectionAdmissionLogInitialized);
-            if (initialization != 2)
-            {
-                if (initialization == 0 &&
-                    Interlocked.CompareExchange(
-                        ref _connectionAdmissionLogInitialized,
-                        1,
-                        0) == 0)
-                {
-                    Volatile.Write(ref _connectionAdmissionLogTimestamp, now);
-                    Volatile.Write(ref _connectionAdmissionLogInitialized, 2);
-                    return true;
-                }
-                return false;
-            }
-
-            var previous = Volatile.Read(ref _connectionAdmissionLogTimestamp);
-            if (timeProvider.GetElapsedTime(previous, now) < TimeSpan.FromSeconds(5))
-                return false;
-            if (Interlocked.CompareExchange(ref _connectionAdmissionLogTimestamp, now, previous) == previous)
-                return true;
-        }
-    }
+        => _connectionAdmissionLogThrottle.ShouldLog(
+            _runtimeContext.TimeProvider.GetTimestamp(),
+            out _);
 
     private async Task DisposeAllSessionsAsync()
     {

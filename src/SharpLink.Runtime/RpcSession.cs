@@ -121,8 +121,8 @@ internal sealed partial class RpcSession
     internal void ApplyWindowUpdate(long requestId, in ProtocolV2WindowUpdate update)
     {
         var controller = Volatile.Read(ref _protocolState).FlowController ??
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ProtocolViolation,
+            throw new SharpLinkProtocolViolationException(
+                ProtocolViolationReason.ProtocolState,
                 "WindowUpdate was received without negotiated flow control.");
         controller.ApplyWindowUpdate(requestId, update.StreamId, checked((int)update.Credit));
     }

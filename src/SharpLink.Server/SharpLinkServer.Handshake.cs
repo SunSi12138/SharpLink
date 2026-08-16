@@ -164,7 +164,17 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            LogAuthenticationProviderFailed(_logger, exception);
+            // Security: extension-provider exceptions may contain tokens, credentials, or
+            // provider SDK details. Only a stable CLR type identity and an internal,
+            // server-generated correlation ID may enter the production log; the full
+            // exception is retained in-process (debugger / DEBUG builds) but never
+            // persisted by the default logger.
+            var failureId = Interlocked.Increment(ref _authenticationFailureSequence);
+            LogAuthenticationProviderFailed(
+                _logger,
+                failureId,
+                exception.GetType().FullName ?? exception.GetType().Name);
+            DebugTraceAuthenticationProviderException(exception);
             return SharpLinkAuthenticationResult.Reject(
                 SharpLinkErrorCode.AuthenticationRejected,
                 "Authentication failed.");

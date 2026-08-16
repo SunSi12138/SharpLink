@@ -14,8 +14,8 @@ internal static class ServerRequestEnvelopeReader
         if (!reader.TryReadLittleEndian(out long interfaceHash) ||
             !reader.TryReadLittleEndian(out long methodHash))
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.ProtocolViolation,
+            throw new SharpLinkProtocolViolationException(
+                ProtocolViolationReason.MalformedFrame,
                 "Request routing prefix is truncated.");
         }
 
@@ -23,7 +23,7 @@ internal static class ServerRequestEnvelopeReader
         if ((flags & ProtocolV2FrameFlags.HasDeadline) != 0)
         {
             if (!reader.TryReadLittleEndian(out long unixMilliseconds))
-                throw new SharpLinkException(SharpLinkErrorCode.ProtocolViolation, "Request deadline is truncated.");
+                throw new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame, "Request deadline is truncated.");
             try
             {
                 var utcDeadline = DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds);
@@ -47,16 +47,16 @@ internal static class ServerRequestEnvelopeReader
         {
             if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) == 0)
             {
-                throw new SharpLinkException(
-                    SharpLinkErrorCode.ProtocolViolation,
+                throw new SharpLinkProtocolViolationException(
+                    ProtocolViolationReason.ProtocolState,
                     "Request metadata was not negotiated during handshake.");
             }
             if (!ProtocolV2PayloadCodec.TryReadVarUInt32(ref reader, out var metadataLength) ||
                 metadataLength > maxMetadataBytes ||
                 reader.Remaining < metadataLength)
             {
-                throw new SharpLinkException(
-                    SharpLinkErrorCode.ProtocolViolation,
+                throw new SharpLinkProtocolViolationException(
+                    ProtocolViolationReason.MalformedFrame,
                     "Request metadata length is invalid.");
             }
             metadata = ProtocolV2PayloadCodec.ReadMetadata(
