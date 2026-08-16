@@ -262,6 +262,35 @@ public class TransportConnectionIntegrationTests
     }
 
     [Test]
+    public async Task UdsHarnessShouldPublishAnOwnerOnlySocketAndCleanItUp()
+    {
+        if (OperatingSystem.IsWindows() || !Socket.OSSupportsUnixDomainSockets)
+            return;
+
+        string path;
+        await using (var harness = await TransportHarness.CreateAsync(TransportKind.Uds))
+        {
+            path = harness.Endpoint.UdsPath;
+            Ensure(File.Exists(path), "filesystem UDS path should exist while the server runs");
+
+            var mode = File.GetUnixFileMode(path);
+            Ensure(
+                (mode & (UnixFileMode.UserRead | UnixFileMode.UserWrite)) ==
+                (UnixFileMode.UserRead | UnixFileMode.UserWrite),
+                "filesystem UDS must allow owner read/write");
+            Ensure(
+                (mode & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
+                         UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) == 0,
+                "filesystem UDS must deny group and other access");
+
+            var svc = harness.Client.Get<IConnectionBehaviorService>();
+            Ensure(await svc.PingAsync(13) == 14, "uds rpc with hardened socket permissions");
+        }
+
+        Ensure(!File.Exists(path), "dispose should remove the owned UDS path");
+    }
+
+    [Test]
     public async Task TcpServerUnexpectedDisconnectShouldFailFastPendingCall()
     {
         await using var harness = await TransportHarness.CreateAsync(TransportKind.Tcp);
