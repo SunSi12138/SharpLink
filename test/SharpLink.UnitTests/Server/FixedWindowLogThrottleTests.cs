@@ -96,20 +96,29 @@ public class FixedWindowLogThrottleTests
     }
 
     [Test]
-    public async Task TimestampRolloverPastTheSaturatedBoundaryReopensTheGate()
+    public async Task WindowSpanningRolloverPreservesTheRemainingInterval()
     {
-        // A provider counter that wraps from long.MaxValue into the negative half of
-        // Int64 must reopen the gate (GetElapsedTime-style rollover semantics) instead of
-        // suppressing warnings forever.
+        // A window opened one second before the counter wraps must stay closed for the
+        // remaining four seconds after the wrap instead of reopening immediately.
         var throttle = new FixedWindowLogThrottle(TimeSpan.FromSeconds(5), Frequency);
 
-        await Assert.That(throttle.ShouldLog(long.MaxValue, out _)).IsTrue();
-        await Assert.That(throttle.ShouldLog(long.MaxValue, out _)).IsFalse();
+        await Assert.That(throttle.ShouldLog(long.MaxValue - Frequency, out _)).IsTrue();
+        // Just wrapped: only ~1s has elapsed of the five-second window.
+        await Assert.That(throttle.ShouldLog(long.MinValue + 1, out _)).IsFalse();
+        // Exactly the remaining four seconds later the boundary is reached.
+        await Assert.That(throttle.ShouldLog(long.MinValue + 1 + 4 * Frequency, out var suppressed)).IsTrue();
+        await Assert.That(suppressed).IsEqualTo(1);
+    }
 
-        await Assert.That(throttle.ShouldLog(long.MinValue + 1, out var reopenedSuppressed)).IsTrue();
-        await Assert.That(reopenedSuppressed).IsEqualTo(1);
-        await Assert.That(throttle.ShouldLog(long.MinValue + 1 + 2 * Frequency, out _)).IsFalse();
-        await Assert.That(throttle.ShouldLog(long.MinValue + 1 + 5 * Frequency, out _)).IsTrue();
+    [Test]
+    public async Task GateReopensExactlyAtTheRolloverShiftedBoundary()
+    {
+        var throttle = new FixedWindowLogThrottle(TimeSpan.FromSeconds(5), Frequency);
+
+        await Assert.That(throttle.ShouldLog(long.MaxValue - 1, out _)).IsTrue();
+        await Assert.That(throttle.ShouldLog(long.MinValue + 1, out _)).IsFalse();
+        await Assert.That(throttle.ShouldLog(long.MinValue + 1 + 5 * Frequency, out var suppressed)).IsTrue();
+        await Assert.That(suppressed).IsEqualTo(1);
     }
 
     [Test]
