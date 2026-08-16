@@ -1019,7 +1019,8 @@ internal sealed class IsolationProbePipeWriter : PipeWriter
     private long _maxBatchBytes;
     private long _totalBatchBytes;
     private long _batchCount;
-    private bool _measuring;
+    private bool _measuringWindow;
+    private bool _measuringSamples;
     private long _copyStart;
     private Memory<byte> _lastMemory;
 
@@ -1047,8 +1048,19 @@ internal sealed class IsolationProbePipeWriter : PipeWriter
             _maxBatchBytes = 0;
             _totalBatchBytes = 0;
             _batchCount = 0;
-            _measuring = true;
+            _measuringWindow = true;
+            _measuringSamples = true;
         }
+    }
+
+    /// <summary>
+    /// Stops the window byte/batch accounting at the end boundary. Latency
+    /// sample recording continues through the drain so frames accepted during
+    /// the window are still attributed after the window closes.
+    /// </summary>
+    internal void EndMeasurement()
+    {
+        Volatile.Write(ref _measuringWindow, false);
     }
 
     internal void ReleaseStalledFlushes()
@@ -1092,14 +1104,13 @@ internal sealed class IsolationProbePipeWriter : PipeWriter
         _pipe.Writer.Advance(bytes);
         Interlocked.Add(ref _unflushedBytes, bytes);
 
-        if (Volatile.Read(ref _measuring))
-        {
+        if (Volatile.Read(ref _measuringWindow))
             Interlocked.Add(ref _measuredBytes, bytes);
-            if (seq > 0 && (classId != ProbeFrameClass.Bulk || (seq & ProbeFrameClass.BulkSampleMask) == 0))
-            {
-                lock (_gate)
-                    _pendingBatch.Add(new FrameSample(classId, seq, 0, _copyStart, copyEnd, 0, 0));
-            }
+        if (Volatile.Read(ref _measuringSamples) &&
+            seq > 0 && (classId != ProbeFrameClass.Bulk || (seq & ProbeFrameClass.BulkSampleMask) == 0))
+        {
+            lock (_gate)
+                _pendingBatch.Add(new FrameSample(classId, seq, 0, _copyStart, copyEnd, 0, 0));
         }
     }
 
@@ -1150,7 +1161,7 @@ internal sealed class IsolationProbePipeWriter : PipeWriter
         await WaitUntilConsumedAsync(cancellationToken).ConfigureAwait(false);
         var flushEnd = Stopwatch.GetTimestamp();
 
-        if (Volatile.Read(ref _measuring))
+        if (Volatile.Read(ref _measuringWindow))
         {
             Interlocked.Increment(ref _flushCount);
             Interlocked.Add(ref _totalBatchBytes, batchBytes);
