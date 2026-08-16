@@ -49,6 +49,10 @@ public class InterceptorChainLoweringBenchmarks
     private readonly CompletedSource _completedSource = new();
     private readonly SuspendedSource _suspendedSource = new();
     private readonly ManualResetEventSlim _controlGate = new(initialState: false);
+    private Action? _controlContinuation;
+
+    [GlobalSetup]
+    public void Setup() => _controlContinuation = _controlGate.Set;
 
     // ---- chain cases ---------------------------------------------------------------
 
@@ -74,15 +78,17 @@ public class InterceptorChainLoweringBenchmarks
     [MethodImpl(MethodImplOptions.NoInlining)]
     private ValueTask<int> CallSuspended() => _suspendedSource.AsValueTask();
 
-    // Raw IValueTaskSource GetResult() cannot block an incomplete source: register the completion
-    // as a continuation on a shared ManualResetEventSlim, then wait for the signal.
+    // Raw IValueTaskSource GetResult() cannot block an incomplete source: register a cached
+    // continuation (captured once in GlobalSetup, via UnsafeOnCompleted to avoid ExecutionContext
+    // capture) on a shared ManualResetEventSlim, then wait for the signal.
     private int DriveControlSuspend()
     {
         var awaiter = CallSuspended().ConfigureAwait(false).GetAwaiter();
         if (!awaiter.IsCompleted)
         {
             _controlGate.Reset();
-            awaiter.OnCompleted(_controlGate.Set);
+            awaiter.UnsafeOnCompleted(_controlContinuation ?? throw new InvalidOperationException(
+                "The control gate callback was not initialized."));
             _controlGate.Wait();
         }
 
