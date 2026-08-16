@@ -153,7 +153,8 @@ internal sealed class ServerBuildPlan
         ISharpLinkServerInterceptor[] interceptors,
         IRpcExceptionMapper exceptionMapper,
         IServiceProvider? callerServiceProvider,
-        SharpLinkAdmissionControlOptions? admissionControlOptions)
+        SharpLinkAdmissionControlOptions? admissionControlOptions,
+        SharpLinkConnectionAdmissionOptions connectionAdmissionOptions)
     {
         Resources = resources ?? throw new ArgumentNullException(nameof(resources));
         RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
@@ -173,6 +174,7 @@ internal sealed class ServerBuildPlan
         ExceptionMapper = exceptionMapper ?? throw new ArgumentNullException(nameof(exceptionMapper));
         CallerServiceProvider = callerServiceProvider;
         AdmissionControlOptions = admissionControlOptions;
+        ConnectionAdmissionOptions = connectionAdmissionOptions ?? throw new ArgumentNullException(nameof(connectionAdmissionOptions));
     }
 
     internal ServerRuntimeResources Resources { get; }
@@ -189,6 +191,8 @@ internal sealed class ServerBuildPlan
     /// <summary>Caller-owned; it is registered with no cleanup and never disposed by SharpLink.</summary>
     internal IServiceProvider? CallerServiceProvider { get; }
     internal SharpLinkAdmissionControlOptions? AdmissionControlOptions { get; }
+
+    internal SharpLinkConnectionAdmissionOptions ConnectionAdmissionOptions { get; }
 
     internal ISharpLinkServerInterceptor[] CreateInterceptorSnapshot()
         => _interceptors.Length == 0 ? [] : [.. _interceptors];

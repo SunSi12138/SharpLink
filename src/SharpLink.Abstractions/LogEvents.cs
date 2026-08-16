@@ -20,6 +20,8 @@ public static class LogEvents
         public const int TlsHandshakeFailed = 1103;
         /// <summary>An authentication provider threw while validating a handshake.</summary>
         public const int AuthenticationProviderFailed = 1104;
+        /// <summary>A connection was rejected because a pre-call admission bound was exhausted.</summary>
+        public const int ConnectionAdmissionRejected = 1105;
         //Error
         /// <summary>A client connection closed because of an unexpected error.</summary>
         public const int ClientDisConnectedWithError = 1201;
@@ -76,6 +78,8 @@ public static class LogEvents
         public const int HeartbeatLoopUnhandledException = 5002;
         /// <summary>The server published its effective active-call capacity limits.</summary>
         public const int CallCapacityConfigured = 5003;
+        /// <summary>The server published its effective pre-call connection admission bounds.</summary>
+        public const int ConnectionAdmissionConfigured = 5004;
         /// <summary>Calls remained active after the graceful-drain interval and were forced to stop.</summary>
         public const int ForcedCallsRemaining = 5101;
         /// <summary>A deferred cleanup operation failed.</summary>
