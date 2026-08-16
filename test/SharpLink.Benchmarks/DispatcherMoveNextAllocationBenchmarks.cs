@@ -27,24 +27,27 @@ namespace SharpLink.Benchmarks;
 /// </para>
 /// <para>
 /// Attribution strategy: every case is a synchronous method with no benchmark-side async state
-/// machine, so the reported allocation is the dispatcher/control work itself, not the harness.
-/// <c>AlwaysSuspend_1</c> drives one suspending <c>MoveNextAsync()</c> and blocks on its result;
-/// <c>AlwaysSuspendControl_1</c> replays the same producer/consumer hand-off through a bare
-/// <see cref="ManualResetValueTaskSourceCore{TResult}"/> with no dispatcher and no outer
-/// <c>MoveNextAsync</c> state machine. Their delta is the cost attributable to the outer
-/// <c>MoveNextAsync</c> async state machine plus the dispatcher's wait-owner bookkeeping.
-/// <c>PreBuffered_1</c> proves the synchronous fast path stays allocation-free.
+/// machine, a cached continuation callback registered via <c>UnsafeOnCompleted</c> before the
+/// producer is released, and a reusable gate for the wait — so the reported allocation is the
+/// dispatcher/control work itself, not the harness. <c>AlwaysSuspend_1024</c> drives 1,024
+/// suspending <c>MoveNextAsync()</c> calls; <c>AlwaysSuspendControl_1024</c> replays the same
+/// producer/consumer hand-off through a bare <see cref="ManualResetValueTaskSourceCore{TResult}"/>
+/// with no dispatcher and no outer <c>MoveNextAsync</c> state machine. Their delta is the cost
+/// attributable to the outer <c>MoveNextAsync</c> async state machine plus the dispatcher's
+/// wait-owner bookkeeping. <c>PreBuffered_1024</c> proves the synchronous fast path stays
+/// allocation-free.
 /// </para>
 /// <para>
-/// This complements <see cref="StreamDispatcherMoveNextBenchmarks"/> (the full matrix) by narrowing
-/// the screening allocation number down to the specific state machine the runtime-async lowering
-/// would have to elide.
+/// Each benchmark performs many hand-offs per invocation (normalized by <c>OperationsPerInvoke</c>)
+/// so a single timed iteration amortizes cross-thread wake-up and scheduling noise.
 /// </para>
 /// </remarks>
 [MemoryDiagnoser(displayGenColumns: false)]
 [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 5, iterationCount: 15)]
 public class DispatcherMoveNextAllocationBenchmarks
 {
+    private const int BatchSize = 1_024;
+
     private static readonly ReadOnlySequence<byte> SPayload = new(new byte[] { 1 });
     private static readonly ByteCodec SCodec = new();
 
@@ -89,29 +92,29 @@ public class DispatcherMoveNextAllocationBenchmarks
         _producerThread?.Join();
     }
 
-    [IterationSetup(Target = nameof(PreBuffered_1))]
-    public void SetupPreBuffered1() => PreparePreBuffered(1);
+    [IterationSetup(Target = nameof(PreBuffered_1024))]
+    public void SetupPreBuffered1024() => PreparePreBuffered(BatchSize);
 
-    [IterationCleanup(Target = nameof(PreBuffered_1))]
-    public void CleanupPreBuffered1() => DisposeCurrentDispatcher();
+    [IterationCleanup(Target = nameof(PreBuffered_1024))]
+    public void CleanupPreBuffered1024() => DisposeCurrentDispatcher();
 
-    [Benchmark(OperationsPerInvoke = 1)]
-    public int PreBuffered_1() => ConsumePreBuffered(1);
+    [Benchmark(OperationsPerInvoke = BatchSize)]
+    public int PreBuffered_1024() => ConsumePreBuffered(BatchSize);
 
-    [IterationSetup(Target = nameof(AlwaysSuspend_1))]
-    public void SetupAlwaysSuspend1() => PrepareSuspendedDispatcher();
+    [IterationSetup(Target = nameof(AlwaysSuspend_1024))]
+    public void SetupAlwaysSuspend1024() => PrepareSuspendedDispatcher();
 
-    [IterationCleanup(Target = nameof(AlwaysSuspend_1))]
-    public void CleanupAlwaysSuspend1() => DisposeCurrentDispatcher();
+    [IterationCleanup(Target = nameof(AlwaysSuspend_1024))]
+    public void CleanupAlwaysSuspend1024() => DisposeCurrentDispatcher();
 
-    [Benchmark(OperationsPerInvoke = 1)]
-    public int AlwaysSuspend_1() => ConsumeSuspendedSync(1);
+    [Benchmark(OperationsPerInvoke = BatchSize)]
+    public int AlwaysSuspend_1024() => ConsumeSuspendedSync(BatchSize);
 
-    [IterationSetup(Target = nameof(AlwaysSuspendControl_1))]
-    public void SetupAlwaysSuspendControl1() => ThrowIfProducerFailed();
+    [IterationSetup(Target = nameof(AlwaysSuspendControl_1024))]
+    public void SetupAlwaysSuspendControl1024() => ThrowIfProducerFailed();
 
-    [Benchmark(OperationsPerInvoke = 1)]
-    public int AlwaysSuspendControl_1() => ConsumeControlSync(1);
+    [Benchmark(OperationsPerInvoke = BatchSize)]
+    public int AlwaysSuspendControl_1024() => ConsumeControlSync(BatchSize);
 
     private static void WarmDispatcherPool()
     {
@@ -184,10 +187,14 @@ public class DispatcherMoveNextAllocationBenchmarks
             if (moveNext.IsCompleted)
                 throw new InvalidOperationException("The MoveNext operation must suspend before its producer is requested.");
 
-            RequestDispatcherItems(1);
+            // Register the continuation before releasing the producer so an already-completed
+            // source cannot race the registration (which would charge a queue-work-item allocation
+            // to this benchmark).
             var awaiter = moveNext.ConfigureAwait(false).GetAwaiter();
             _suspendGate.Reset();
             awaiter.UnsafeOnCompleted(_suspendGateSetCallback ?? throw new InvalidOperationException("The suspend gate callback was not initialized."));
+
+            RequestDispatcherItems(1);
             _suspendGate.Wait();
             if (!awaiter.GetResult())
                 throw new InvalidOperationException("The benchmark producer ended the stream before publishing its item.");
@@ -203,10 +210,12 @@ public class DispatcherMoveNextAllocationBenchmarks
         var sum = 0;
         for (var index = 0; index < itemCount; index++)
         {
-            var signal = RequestControlSignal();
+            var signal = AcquireControlSignal();
             var awaiter = signal.ConfigureAwait(false).GetAwaiter();
             _controlGate.Reset();
             awaiter.UnsafeOnCompleted(_controlGateSetCallback ?? throw new InvalidOperationException("The control gate callback was not initialized."));
+
+            ReleaseProducer(ProducerMode.Control);
             _controlGate.Wait();
             if (!awaiter.GetResult())
                 throw new InvalidOperationException("The control producer returned an invalid hand-off signal.");
@@ -217,23 +226,26 @@ public class DispatcherMoveNextAllocationBenchmarks
         return sum;
     }
 
-    private void RequestDispatcherItems(int itemCount)
-    {
-        ThrowIfProducerFailed();
-        Volatile.Write(ref _requestedItemCount, itemCount);
-        Volatile.Write(ref _producerMode, (int)ProducerMode.Dispatcher);
-        _producerRequest.Set();
-    }
-
-    private ValueTask<bool> RequestControlSignal()
+    private ValueTask<bool> AcquireControlSignal()
     {
         ThrowIfProducerFailed();
         var signal = _controlSignal.WaitAsync();
         if (signal.IsCompleted)
             throw new InvalidOperationException("The control hand-off unexpectedly completed before the producer request.");
-        Volatile.Write(ref _producerMode, (int)ProducerMode.Control);
-        _producerRequest.Set();
         return signal;
+    }
+
+    private void RequestDispatcherItems(int itemCount)
+    {
+        ThrowIfProducerFailed();
+        Volatile.Write(ref _requestedItemCount, itemCount);
+        ReleaseProducer(ProducerMode.Dispatcher);
+    }
+
+    private void ReleaseProducer(ProducerMode mode)
+    {
+        Volatile.Write(ref _producerMode, (int)mode);
+        _producerRequest.Set();
     }
 
     private void ProducerLoop()
