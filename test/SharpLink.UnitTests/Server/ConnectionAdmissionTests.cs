@@ -337,7 +337,7 @@ public sealed class ConnectionAdmissionTests
             () => connection.DisposeCount == 1 &&
                    harness.Server.ConnectionAdmission.ActiveConnections == 0,
             "the handshake timeout must dispose the transport and release both slots",
-            attempts: 4000);
+            fastPollAttempts: 4000);
     }
 
     [Test]
@@ -361,7 +361,7 @@ public sealed class ConnectionAdmissionTests
             () => Volatile.Read(ref disposed) == churn &&
                    harness.Server.ConnectionAdmission.ActiveConnections == 0,
             "every churned connection must reach terminal cleanup with the counter at zero",
-            attempts: 20000);
+            fastPollAttempts: 20000);
         await Assert.That(harness.Server.ConnectionAdmission.ActiveHandshakes).IsEqualTo(0);
     }
 
@@ -938,10 +938,10 @@ public sealed class ConnectionAdmissionTests
             throw new Exception(message);
     }
 
-    private static async Task YieldUntilAsync(Func<bool> condition, string failureMessage, int attempts = 2000)
+    private static async Task YieldUntilAsync(Func<bool> condition, string failureMessage, int fastPollAttempts = 2000)
     {
         var deadline = Environment.TickCount64 + 15000;
-        for (var attempt = 0; attempt < attempts && !condition(); attempt++)
+        for (var attempt = 0; attempt < fastPollAttempts && !condition(); attempt++)
         {
             if (Environment.TickCount64 >= deadline)
                 break;
@@ -950,6 +950,13 @@ public sealed class ConnectionAdmissionTests
             else
                 await Task.Yield();
         }
+        // The fast-polling budget can be exhausted long before the deadline on fast
+        // machines (4000 yields take ~190ms on a 32-core host, outrunning the 200ms
+        // handshake-timeout timer that ProtocolHandshakeTimeoutReleasesBothSlots waits
+        // for). Fall back to coarse polling so the deadline is the sole wait boundary
+        // for timer-driven conditions.
+        while (!condition() && Environment.TickCount64 < deadline)
+            await Task.Delay(5);
         Ensure(condition(), failureMessage);
     }
 }
