@@ -517,7 +517,12 @@ public sealed class ConnectionAdmissionTests
             await second.ConnectAsync(IPAddress.Loopback, port);
             var secondClosed = await ReadUntilClosedAsync(second);
             Ensure(secondClosed, "a connection over the TLS handshake bound must be closed immediately");
-            await Assert.That(server.ConnectionAdmission.ActiveConnections).IsEqualTo(1);
+            // Observing the close from the client side is not a sync point for the server
+            // accounting: the connection lease is released only after terminal cleanup
+            // completes, so ActiveConnections may transiently still be 2 here.
+            await YieldUntilAsync(
+                () => server.ConnectionAdmission.ActiveConnections == 1,
+                "rejected TLS connection must release its connection slot after terminal cleanup");
             await Assert.That(server.ConnectionAdmission.ActiveHandshakes).IsEqualTo(1);
         }
         finally
