@@ -42,7 +42,7 @@ SharpLink.Serializer.SharpPack
 - `SharpLink.Sdk`
   - 作为契约项目的单一包引用入口，只传递引入 Abstractions，不再引入 Runtime
   - 携带编译期 Analyzer 与 Source Generator
-  - 生成 API 4 Proxy、Stub、Codec 与 Manifest；生成程序集只引用 Abstractions 和契约类型
+  - 生成 API 5 Proxy、Stub、Codec 与 Manifest；生成程序集只引用 Abstractions 和契约类型
   - 不承载 Builder；Builder 位于 `SharpLink.Client` 和 `SharpLink.Server`
 
 - `SharpLink.Client`

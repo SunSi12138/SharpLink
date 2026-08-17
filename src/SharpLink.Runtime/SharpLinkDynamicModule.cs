@@ -82,7 +82,7 @@ internal static class SharpLinkAssemblyManifestLoader
             {
                 return Failure(
                     SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
-                    "The SharpLink manifest locator is not a valid self-describing API 4 locator.",
+                    "The SharpLink manifest locator is not a valid self-describing locator.",
                     assembly);
             }
             if (apiVersion != SharpLinkGeneratedManifestVersions.Api ||

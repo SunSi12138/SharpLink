@@ -51,8 +51,8 @@ public sealed class GeneratedManifestLocatorTests
     }
 
     [Test]
-    [Arguments(5, 2)]
-    [Arguments(4, 3)]
+    [Arguments(4, 2)]
+    [Arguments(5, 3)]
     public void UnsupportedLocatorVersionShouldRejectBeforeManifestConstruction(
         int locatorApiVersion,
         int locatorProtocolVersion)
@@ -77,7 +77,7 @@ public sealed class GeneratedManifestLocatorTests
     }
 
     [Test]
-    [Arguments(5, 2, CurrentGeneratorVersion)]
+    [Arguments(4, 2, CurrentGeneratorVersion)]
     [Arguments(4, 3, CurrentGeneratorVersion)]
     [Arguments(4, 2, "phase17-other-generator")]
     public void MaterializedMetadataMismatchShouldBeInvalidBeforeShapeValidation(
@@ -156,7 +156,7 @@ public sealed class GeneratedManifestLocatorTests
             "malformed locator should publish no manifest");
         Ensure(result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
             $"malformed locator should keep the invalid-manifest error code: {result.Error}");
-        Ensure(result.Error!.Message.Contains("not a valid self-describing API 4 locator", StringComparison.Ordinal),
+        Ensure(result.Error!.Message.Contains("not a valid self-describing locator", StringComparison.Ordinal),
             "malformed-locator diagnostic contract should remain stable");
         AssertOwnerFields(result.Error, fixture.Assembly);
         Ensure(fixture.State.ConstructorCalls == 0 && fixture.State.ShapeReads == 0,
