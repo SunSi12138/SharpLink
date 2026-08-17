@@ -28,6 +28,6 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.10" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.10" />
-    <PackageVersion Include="TUnit" Version="1.64.6" />
+    <PackageVersion Include="TUnit" Version="1.63.0" />
   </ItemGroup>
 </Project>
