@@ -265,7 +265,22 @@ internal sealed partial class RpcSession
             throw GetTerminalException();
 
         if (completion is not null)
-            await completion.Task.WaitAsync(ct).ConfigureAwait(false);
+        {
+            try
+            {
+                await completion.Task.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // The pump still owns the frame and completes this waiter during teardown.
+                // Task.WaitAsync does not observe a source fault that arrives after its own
+                // cancellation (an already-cancelled token cancels the wait without
+                // registering on the source), so observe the late fault here to keep it off
+                // the finalizer (issue #216).
+                ObserveAbandonedFlushCompletion(completion.Task);
+                throw;
+            }
+        }
     }
 
     internal ValueTask SendPacketWithBackpressureAsync(
@@ -326,6 +341,21 @@ internal sealed partial class RpcSession
             forceFlush,
             flushCompletion,
             IsProtocolProgressFrame(packet.WrittenSpan));
+
+    private static void ObserveAbandonedFlushCompletion(Task flushCompletion)
+        => _ = ObserveAbandonedFlushCompletionAsync(flushCompletion);
+
+    private static async Task ObserveAbandonedFlushCompletionAsync(Task flushCompletion)
+    {
+        try
+        {
+            await flushCompletion.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Observation only: the cancelled enqueuer already surfaced its own cancellation.
+        }
+    }
 
     /// <summary>
     /// Classifies protocol progress frames by their header type. Progress
@@ -550,7 +580,13 @@ internal sealed partial class RpcSession
         }
 
         if (cleanupException is not null)
+        {
+            // A single-owner dispose has no other observer for the faulted TCS task: the
+            // rethrow below surfaces only a copy to the caller, so observe the task here
+            // to keep the fault off the finalizer (issue #216).
+            _ = _stoppedTcs.Task.Exception;
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
+        }
     }
 
     internal void BeginShutdown()
