@@ -1,21 +1,34 @@
 # 迁移到 2.0
 
-SharpLink 2.0 将进程内 Generated Server ABI 从 API 3 原子升级为 API 4，同时保持网络 Protocol v2 不变。升级前让同一进程中的全部 SharpLink 包使用 2.0，并在独立环境完成 Client/Server 互操作、AOT、负载和故障测试。
+SharpLink 2.0 将进程内 Generated ABI 从 1.1.x 的 API 3 原子升级为最终基线 API 5，同时保持网络 Protocol v2 不变。API 4 是 2.0 开发期的中间生成面（codec 架构落地前的冻结点），从未随包发布；2.0 Runtime 同样在启动期拒绝它。升级前让同一进程中的全部 SharpLink 包使用 2.0，并在独立环境完成 Client/Server 互操作、AOT、负载和故障测试。
 
-## Generated API 4
+## Generated ABI（API 5）与重新生成
 
-2.0 Generator 只生成 API 4，2.0 Runtime 也只接受 `Generated API = 4`、`Protocol = 2`。1.1.x 生成程序集是 API 3；2.0 会在 materialize Manifest 或发布任何运行时资源前明确拒绝它，不提供隐藏开关、双路径或环境变量回退。
+2.0 Generator 只生成 API 5，2.0 Runtime 也只接受 `Generated API = 5`、`Protocol = 2`。1.1.x 生成程序集是 API 3，2.0 早期开发树生成的是 API 4；2.0 会在 materialize Manifest 或发布任何运行时资源前明确拒绝两者，不提供隐藏开关、双路径或环境变量回退。版本校验只发生在 assembly load / registration / startup 边界，不进入任何调用热路径。
 
 升级必须同时完成：
 
 1. 把 SDK、Abstractions、Runtime、Client、Server、Hosting 和 serializer adapter 统一为 2.0。
 2. 删除所有契约、服务和插件项目的旧 `bin`、`obj` 与缓存生成源码。
 3. 重新构建全部 contract assemblies 和 service assemblies。
-4. 重新构建并重新部署全部 plugin assemblies；不要把 1.1.x 与 2.0 生成程序集装入同一进程。
+4. 重新构建并重新部署全部 plugin assemblies；不要把 1.1.x、API 4 与 2.0 生成程序集装入同一进程。
 
-自动生成代码的用户不需要手写 Bridge。手写生成基础设施的高级用户需要同步采用 API 4：`IRpcStub` 接收 `IRpcGeneratedServerBridge`，响应写入 `IBufferWriter<byte>`，`SharpLinkGeneratedContractDescriptor.StubFactory` 接收 `IRpcCodecProvider`，程序集 locator 使用包含 Manifest 类型、Generated API、Protocol 和 Generator version 的自描述构造函数。
+旧 artifact 在注册/启动期收到稳定的 version mismatch，例如：
 
-Generated API 不参与网络握手。1.1.x Client 与 2.0 Server、2.0 Client 与 1.1.x Server 仍可通过 Protocol v2 互操作，但每个进程只能加载与本进程 Runtime 匹配的生成程序集，并且两端契约的 wire schema 必须兼容。
+```text
+IncompatibleManifest: Manifest compatibility mismatch: API 4/5, Protocol 2/2,
+Generator '2.0.0'. Action: delete stale generated outputs, then regenerate and
+rebuild this assembly with the SharpLink SDK version that matches the current
+Runtime.
+```
+
+`Assembly`、`LoadContext`（dynamic）、`Expected/Actual Generated ABI`、`Expected/Actual Protocol`
+与 `GeneratorVersion` 字段在所有入口一致。修复方式始终是重新生成：删除旧输出，用当前
+2.0 SDK 重新构建，而不是回退包版本或寻找兼容开关。
+
+自动生成代码的用户不需要手写 Bridge。手写生成基础设施的高级用户需要同步采用 API 5：程序集 locator 使用包含 Manifest 类型、`apiVersion: 5`、`protocolVersion: 2` 和 Generator version 的自描述构造函数；`IRpcStub` 接收 `IRpcGeneratedServerBridge`，响应写入 `IBufferWriter<byte>`；`SharpLinkGeneratedContractDescriptor.StubFactory` 接收 `IRpcCodecProvider`；生成的 DTO Codec 实现 `IRpcCodec<T>` 与 `IRpcSizedCodec<T>`；自定义 Codec 绑定使用 `RpcCodecAttribute`/`RpcCodecImplementationAttribute` 并带 schema identity。
+
+Generated ABI 不参与网络握手。1.1.x Client 与 2.0 Server、2.0 Client 与 1.1.x Server 仍可通过 Protocol v2 互操作，但每个进程只能加载与本进程 Runtime 匹配的生成程序集，并且两端契约的 wire schema 必须兼容。
 
 ## Runtime engine API boundary
 
@@ -23,7 +36,7 @@ Generated API 不参与网络握手。1.1.x Client 与 2.0 Server、2.0 Client �
 `RpcSession`、`StreamManager` 和 `RpcSessionExtensions` 不再是公开扩展面。不要构造或控制 Session、读取其 PipeReader、注册 raw
 dispatcher、设置 peer activity，或直接发送 protocol control frame。自定义传输应实现
 `ITransportConnection` 并经 `IClientTransportFactory` 或 `IServerTransportListener` 配置到 Builder；
-generated server code 继续使用 API 4 的 `IRpcGeneratedServerBridge`。完整的 public API diff、保留 SPI
+generated server code 继续使用 API 5 的 `IRpcGeneratedServerBridge`。完整的 public API diff、保留 SPI
 和 ownership 说明见 [`runtime-phase-16-engine-api.md`](runtime-phase-16-engine-api.md)。
 
 ## Builder 构建计划与单次使用
@@ -82,7 +95,7 @@ options 不会影响已经编译的 plan。多集群会用同一个 child plan �
 ## 升级清单
 
 1. 统一 SDK、Generator、Abstractions、Runtime、Client、Server、Hosting 和 serializer adapter 为 2.0；同一进程不混装 1.1.x。
-2. 清理所有契约、服务和插件项目的旧 `bin/obj`，重新生成 API 4，并把 Generator diagnostics 当错误处理。
+2. 清理所有契约、服务和插件项目的旧 `bin/obj`，重新生成 API 5，并把 Generator diagnostics 当错误处理。
 3. 为所有没有 token 的 RPC 显式确认 `[NonCancellable]` 是否合理。
 4. 验证 DTO field id、required/nullability 和 custom Codec wire identity。
 5. 验证 TLS、authentication、authorization、metadata 与错误消息不泄露敏感数据。
@@ -91,4 +104,4 @@ options 不会影响已经编译的 plan。多集群会用同一个 child plan �
 8. 若使用动态模块，验证替换期间旧调用排空与 ALC 最终回收。
 9. 对实际发布入口执行包含五种调用形态的 NativeAOT smoke（若适用）、PackageSmoke 和固定负载基线。
 
-Protocol v2 的当前 wire 定义见 [protocol-v2.md](protocol-v2.md)。Generated API 4 与 Protocol v2 是独立版本轴；迁移到 2.0 不改变 wire frame 或 capability negotiation。
+Protocol v2 的当前 wire 定义见 [protocol-v2.md](protocol-v2.md)。Generated ABI（API 5）与 Protocol v2 是独立版本轴；迁移到 2.0 不改变 wire frame 或 capability negotiation。

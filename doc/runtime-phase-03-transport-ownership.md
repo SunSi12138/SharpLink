@@ -32,5 +32,5 @@ and the Session remains terminal. Existing 100-round terminal races, transport c
 SendPump/StreamManager tests, transport integration, chaos, and NativeAOT retain broader coverage.
 
 The change removes one connection callback and one branch from `IsConnected`; it adds no per-RPC,
-per-frame, or per-item allocation or lock. Protocol v2, Generated API 4, identifiers, schema rules,
+per-frame, or per-item allocation or lock. Protocol v2, Generated API 5, identifiers, schema rules,
 and wire negotiation remain unchanged.
