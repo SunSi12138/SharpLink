@@ -115,8 +115,15 @@ public interface ISharpLinkGeneratedAssemblyManifest
 /// <summary>Defines generated manifest compatibility constants for the current SharpLink release line.</summary>
 public static class SharpLinkGeneratedManifestVersions
 {
-    /// <summary>The current generated manifest API version.</summary>
-    public const int Api = 4;
+    /// <summary>
+    /// The current generated manifest API version. API 5 is the vNext Generated ABI frozen after the
+    /// Phase 16 public-surface cut and the #167 contract-owned codec architecture: generated DTO codecs
+    /// implement <see cref="IRpcSizedCodec{T}"/>, codec factories are adapter-free with schema identity,
+    /// and custom codec bindings use <see cref="SharpLink.Sdk.RpcCodecAttribute"/>. API 3 (legacy
+    /// single-parameter locator) and API 4 (previous self-describing locator) artifacts are rejected
+    /// at registration/startup; regenerate them with the current SharpLink SDK.
+    /// </summary>
+    public const int Api = 5;
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;
