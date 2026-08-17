@@ -589,7 +589,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
             {
                 var err = _error;
                 return err is not null
-                    ? ValueTask.FromException<bool>(err)
+                    ? ReThrowAsync(err)
                     : ValueTask.FromResult(false);
             }
 
@@ -600,8 +600,19 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
             // The previous async signature captured any synchronous failure of this core into
             // the returned ValueTask. Preserve that observable contract instead of throwing
             // synchronously from a non-async method.
-            return ValueTask.FromException<bool>(exception);
+            return ReThrowAsync(exception);
         }
+    }
+
+    // Reproduces the completion semantics the previous async MoveNextAsync produced through
+    // its method builder: OperationCanceledException completes the returned ValueTask as
+    // canceled (IsCanceled/AsTask().IsCanceled), while any other exception faults it. The
+    // completed await keeps this helper fully synchronous, matching an async method that
+    // throws before its first suspension. Exceptional paths only — never the hot success path.
+    private static async ValueTask<bool> ReThrowAsync(Exception exception)
+    {
+        await Task.CompletedTask.ConfigureAwait(false);
+        throw exception;
     }
 
     private async ValueTask<bool> SlowMoveNextAsync(long consumerLeaseState)

@@ -100,6 +100,51 @@ public class PooledAsyncStreamDispatcherTests
     }
 
     [Test]
+    public async Task MoveNextAsync_PreCanceledEnumeration_CompletesAsCanceled()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        using var enumerationCancellation = new CancellationTokenSource();
+        enumerationCancellation.Cancel();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            enumerationCancellation.Token,
+            new ReferenceItemCodec());
+        var enumerator = dispatcher.GetAsyncEnumerator();
+
+        var move = enumerator.MoveNextAsync();
+        Ensure(move.IsCompleted && move.IsCanceled,
+            "a pre-canceled enumeration token must complete MoveNextAsync synchronously as canceled, not faulted");
+
+        var task = enumerator.MoveNextAsync().AsTask();
+        Ensure(task.IsCompleted && task.IsCanceled && !task.IsFaulted,
+            "MoveNextAsync().AsTask() must observe the canceled completion for a canceled enumeration token");
+
+        var failure = await CaptureFailureAsync(enumerator.MoveNextAsync().AsTask());
+        Ensure(failure is OperationCanceledException,
+            "awaiting the canceled MoveNextAsync must surface the original OperationCanceledException");
+
+        await enumerator.DisposeAsync();
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
+    public async Task MoveNextAsync_RemoteTerminalCancellation_CompletesAsCanceled()
+    {
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+            default,
+            new ReferenceItemCodec());
+        dispatcher.Complete(new OperationCanceledException("remote stream canceled"));
+        var enumerator = dispatcher.GetAsyncEnumerator();
+
+        var move = enumerator.MoveNextAsync();
+        Ensure(move.IsCompleted && move.IsCanceled,
+            "a remote terminal OperationCanceledException must complete the terminal fast path as canceled, not faulted");
+
+        await enumerator.DisposeAsync();
+        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+    }
+
+    [Test]
     public void PoolShouldRetainAtMost1024DispatchersAfterBurst()
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
