@@ -291,6 +291,16 @@ internal sealed partial class RpcSession
             finally
             {
                 _deadlineRace.Dispose();
+                // The retained reads stay registered on their channels until the channel
+                // completes them. A faulted teardown (ReportFaultOnce) completes both
+                // channels with terminalException while the reads are still pending, so
+                // abandon them with observation here: a faulted channel-read task that
+                // reaches the Task finalizer unobserved fires the unobserved-task event
+                // and trips the chaos harness's zero-tolerance gate (issue #216).
+                ObserveDroppedRead(_pendingReadWait);
+                ObserveDroppedRead(_pendingProgressReadWait);
+                _pendingReadWait = null;
+                _pendingProgressReadWait = null;
                 ReleaseBatch(pending, terminalException);
                 DrainQueuedFrames(terminalException);
                 PulseCapacityWaiters();
@@ -396,14 +406,37 @@ internal sealed partial class RpcSession
         }
 
         /// <summary>
-        /// Marks a replaced retained read observed: a cancelled or faulted
+        /// Marks a replaced or abandoned retained read observed: a cancelled or faulted
         /// task that completes unobserved fires the unobserved-task event and
         /// can fail diagnostics that treat it as a leak (chaos smoke).
         /// </summary>
         private static void ObserveDroppedRead(Task<bool>? read)
         {
-            if (read is not null && !read.IsCompletedSuccessfully)
+            if (read is null || read.IsCompletedSuccessfully)
+                return;
+            if (read.IsCompleted)
+            {
                 _ = read.Exception;
+                return;
+            }
+
+            // A read abandoned while still pending cannot be faulted by the pump anymore
+            // (queue faulting runs before the pump loop's finally block), but observe a
+            // late fault anyway so no future completion path can hand an exception to the
+            // finalizer unobserved.
+            _ = ObserveLateReadFaultAsync(read);
+        }
+
+        private static async Task ObserveLateReadFaultAsync(Task<bool> read)
+        {
+            try
+            {
+                await read.ConfigureAwait(false);
+            }
+            catch
+            {
+                // Observation only: the fault belongs to the pump that abandoned the read.
+            }
         }
 
         private static async Task<bool> AwaitFirstReadAsync(Task<bool> first, Task<bool> second)
