@@ -40,8 +40,12 @@ public sealed class ManifestSourceIsolationTests
     }
 
     [Test]
-    // The poison entry intentionally mutates the process-wide weak catalog; explicit sources must ignore it.
-    [NotInParallel("generated-catalog")]
+    // The poison entry mutates the process-wide weak catalog. Explicit sources must ignore it, but any
+    // default-source consumer (a Builder without UseGeneratedManifestSource) snapshots that same catalog
+    // during Build, so the poison window must be exclusive against the entire suite: keyless
+    // [NotInParallel] runs completely alone in TUnit. A keyed constraint would still race unconstrained
+    // tests — the issue #228 phase15-global-poison flake.
+    [NotInParallel]
     public async Task ClientAndServerBuildShouldShareTheirPlanSnapshotWithoutReadingTheGlobalCatalog()
     {
         var poison = new IncompatibleCatalogPoisonManifest();
