@@ -15,6 +15,7 @@ namespace SharpLink.Benchmarks;
 [BenchmarkCategory("PendingRequestTable", "Saturation")]
 public class PendingRequestSaturationBenchmarks
 {
+    private static int s_lifecycleState;
     private SharpLinkRuntimeContext _context = null!;
     private PendingRequestTable _empty = null!;
     private PendingRequestTable _halfFull = null!;
@@ -84,8 +85,9 @@ public class PendingRequestSaturationBenchmarks
     private PendingRequestTable CreateTable()
     {
         // Keep success-path lifecycle accounting equivalent to production on both revisions:
-        // dev counts pending calls in ClientConnection, while the optimized head reuses the
-        // table's ActiveCount. This setup-only reflection never enters a benchmark invocation.
+        // dev counts pending calls in ClientConnection and runs its zero-count idle check, while
+        // the optimized head reuses the table count and receives that same lifecycle notification.
+        // This setup-only reflection never enters a benchmark invocation.
         var tableOwnsLifecycleCount = typeof(PendingRequestTable).GetProperty(
             "ActiveCount",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic) is not null;
@@ -133,6 +135,12 @@ public class PendingRequestSaturationBenchmarks
         }
     }
 
+    private static void ObserveLifecycleIdle()
+    {
+        if (Volatile.Read(ref s_lifecycleState) != 0)
+            throw new InvalidOperationException("Unexpected benchmark lifecycle state.");
+    }
+
     private sealed class CountingLifecycleOwner : IPendingCallOwner
     {
         private int _activeCount;
@@ -145,11 +153,16 @@ public class PendingRequestSaturationBenchmarks
             var remaining = Interlocked.Decrement(ref _activeCount);
             if (remaining < 0)
                 throw new InvalidOperationException("Benchmark lifecycle accounting underflowed.");
+            if (remaining == 0)
+                ObserveLifecycleIdle();
         }
 
         public void OnProducerCancellationCallbackFailed(Exception exception)
         {
         }
+
+        public void OnPendingCallCapacityIdle()
+            => ObserveLifecycleIdle();
     }
 
     private sealed class NoopLifecycleOwner : IPendingCallOwner
@@ -167,5 +180,8 @@ public class PendingRequestSaturationBenchmarks
         public void OnProducerCancellationCallbackFailed(Exception exception)
         {
         }
+
+        public void OnPendingCallCapacityIdle()
+            => ObserveLifecycleIdle();
     }
 }
