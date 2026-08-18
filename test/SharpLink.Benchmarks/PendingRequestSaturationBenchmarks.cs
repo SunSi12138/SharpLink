@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.IO;
+using System.Threading;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Engines;
 using SharpLink.Abstractions;
@@ -81,11 +82,22 @@ public class PendingRequestSaturationBenchmarks
     }
 
     private PendingRequestTable CreateTable()
-        => new(
+    {
+        // Keep success-path lifecycle accounting equivalent to production on both revisions:
+        // dev counts pending calls in ClientConnection, while the optimized head reuses the
+        // table's ActiveCount. This setup-only reflection never enters a benchmark invocation.
+        var tableOwnsLifecycleCount = typeof(PendingRequestTable).GetProperty(
+            "ActiveCount",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic) is not null;
+        IPendingCallOwner owner = tableOwnsLifecycleCount
+            ? NoopLifecycleOwner.Instance
+            : new CountingLifecycleOwner();
+        return new PendingRequestTable(
             Capacity,
             _context.Codecs,
-            BenchmarkOwner.Instance,
+            owner,
             TimeProvider.System);
+    }
 
     private static RpcRequestOperation<int>[] Fill(PendingRequestTable table, int count)
     {
@@ -121,9 +133,28 @@ public class PendingRequestSaturationBenchmarks
         }
     }
 
-    private sealed class BenchmarkOwner : IPendingCallOwner
+    private sealed class CountingLifecycleOwner : IPendingCallOwner
     {
-        internal static BenchmarkOwner Instance { get; } = new();
+        private int _activeCount;
+
+        public void OnPendingCallRegistered()
+            => Interlocked.Increment(ref _activeCount);
+
+        public void OnPendingCallCompleted(in PendingCallCompletion completion)
+        {
+            var remaining = Interlocked.Decrement(ref _activeCount);
+            if (remaining < 0)
+                throw new InvalidOperationException("Benchmark lifecycle accounting underflowed.");
+        }
+
+        public void OnProducerCancellationCallbackFailed(Exception exception)
+        {
+        }
+    }
+
+    private sealed class NoopLifecycleOwner : IPendingCallOwner
+    {
+        internal static NoopLifecycleOwner Instance { get; } = new();
 
         public void OnPendingCallRegistered()
         {
