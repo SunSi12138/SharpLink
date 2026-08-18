@@ -69,6 +69,7 @@ internal sealed class PendingRequestTable : IDisposable
     private long _nextId;
     private long _approximateEarliestDeadline = long.MaxValue;
     private int _deadlineScanRunning;
+    private int _activeSlots;
     private int _waiterCount;
     private int _disposed;
 
@@ -428,32 +429,51 @@ internal sealed class PendingRequestTable : IDisposable
         bool hasResponsePayload,
         bool responseNullable)
     {
-        for (var attempt = 0; attempt < _slots.Length; attempt++)
+        if (!TryAcquireCapacity())
         {
-            id = NextRequestId();
-            operation.Initialize(id, responseCodec, hasResponsePayload, responseNullable);
-            var call = PendingCall.Rent(
-                this,
-                id,
-                kind,
-                operation,
-                dispatcher,
-                deadline,
-                cancellationToken,
-                completionObserver);
-            var index = (int)(id & _indexMask);
-            if (Interlocked.CompareExchange(ref _slots[index], call, null) is null)
-            {
-                OnRegistered(call);
-                CompleteRegistrationIfDisposed(call);
-                return true;
-            }
-
-            call.ReturnUnused();
+            id = 0;
+            return false;
         }
 
-        id = 0;
-        return false;
+        var published = false;
+        try
+        {
+            for (var attempt = 0; attempt < _slots.Length; attempt++)
+            {
+                id = NextRequestId();
+                var index = (int)(id & _indexMask);
+                if (Volatile.Read(ref _slots[index]) is not null)
+                    continue;
+
+                operation.Initialize(id, responseCodec, hasResponsePayload, responseNullable);
+                var call = PendingCall.Rent(
+                    this,
+                    id,
+                    kind,
+                    operation,
+                    dispatcher,
+                    deadline,
+                    cancellationToken,
+                    completionObserver);
+                if (Interlocked.CompareExchange(ref _slots[index], call, null) is null)
+                {
+                    published = true;
+                    OnRegistered(call);
+                    CompleteRegistrationIfDisposed(call);
+                    return true;
+                }
+
+                call.ReturnUnused();
+            }
+
+            id = 0;
+            return false;
+        }
+        finally
+        {
+            if (!published)
+                ReleaseCapacity();
+        }
     }
 
     private bool TryRegister(
@@ -465,31 +485,62 @@ internal sealed class PendingRequestTable : IDisposable
         out long id,
         IPendingCallCompletionObserver? completionObserver = null)
     {
-        for (var attempt = 0; attempt < _slots.Length; attempt++)
+        if (!TryAcquireCapacity())
         {
-            id = NextRequestId();
-            var call = PendingCall.Rent(
-                this,
-                id,
-                kind,
-                operation,
-                dispatcher,
-                deadline,
-                cancellationToken,
-                completionObserver);
-            var index = (int)(id & _indexMask);
-            if (Interlocked.CompareExchange(ref _slots[index], call, null) is null)
-            {
-                OnRegistered(call);
-                CompleteRegistrationIfDisposed(call);
-                return true;
-            }
-
-            call.ReturnUnused();
+            id = 0;
+            return false;
         }
 
-        id = 0;
-        return false;
+        var published = false;
+        try
+        {
+            for (var attempt = 0; attempt < _slots.Length; attempt++)
+            {
+                id = NextRequestId();
+                var index = (int)(id & _indexMask);
+                if (Volatile.Read(ref _slots[index]) is not null)
+                    continue;
+
+                var call = PendingCall.Rent(
+                    this,
+                    id,
+                    kind,
+                    operation,
+                    dispatcher,
+                    deadline,
+                    cancellationToken,
+                    completionObserver);
+                if (Interlocked.CompareExchange(ref _slots[index], call, null) is null)
+                {
+                    published = true;
+                    OnRegistered(call);
+                    CompleteRegistrationIfDisposed(call);
+                    return true;
+                }
+
+                call.ReturnUnused();
+            }
+
+            id = 0;
+            return false;
+        }
+        finally
+        {
+            if (!published)
+                ReleaseCapacity();
+        }
+    }
+
+    private bool TryAcquireCapacity()
+    {
+        while (true)
+        {
+            var active = Volatile.Read(ref _activeSlots);
+            if (active >= _slots.Length)
+                return false;
+            if (Interlocked.CompareExchange(ref _activeSlots, active + 1, active) == active)
+                return true;
+        }
     }
 
     private void OnRegistered(PendingCall call)
@@ -639,6 +690,12 @@ internal sealed class PendingRequestTable : IDisposable
     private void ReleaseSlot()
     {
         SharpLinkTelemetry.AddPendingRequests(-1);
+        ReleaseCapacity();
+    }
+
+    private void ReleaseCapacity()
+    {
+        Interlocked.Decrement(ref _activeSlots);
         if (Volatile.Read(ref _waiterCount) == 0)
             return;
 
