@@ -69,7 +69,7 @@ public class PendingRequestContentionBenchmarks
     public void Cleanup()
     {
         Volatile.Write(ref _stop, 1);
-        if (_workers is { Length: > 0 } && _phase is not null && Volatile.Read(ref _workerFailure) is null)
+        if (_workers is { Length: > 0 } && _phase is not null)
             _phase.SignalAndWait();
 
         foreach (var worker in _workers ?? Array.Empty<Thread>())
