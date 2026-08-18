@@ -38,6 +38,11 @@ internal interface IPendingCallOwner
     void OnProducerCancellationCallbackFailed(Exception exception);
 }
 
+internal interface IPendingCallCapacityObserver
+{
+    void OnPendingCallCapacityIdle();
+}
+
 /// <summary>
 /// Receives the single terminal outcome selected by the pending-call completion race.
 /// This stays attached to the existing pending entry, rather than creating a second
@@ -108,6 +113,8 @@ internal sealed class PendingRequestTable : IDisposable
     }
 
     public int Capacity => _slots.Length;
+
+    internal int ActiveCount => Volatile.Read(ref _activeSlots);
 
     public int Count
     {
@@ -560,14 +567,12 @@ internal sealed class PendingRequestTable : IDisposable
 
     private bool TryAcquireCapacity()
     {
-        while (true)
-        {
-            var active = Volatile.Read(ref _activeSlots);
-            if (active >= _slots.Length)
-                return false;
-            if (Interlocked.CompareExchange(ref _activeSlots, active + 1, active) == active)
-                return true;
-        }
+        var active = Interlocked.Increment(ref _activeSlots);
+        if (active <= _slots.Length)
+            return true;
+
+        Interlocked.Decrement(ref _activeSlots);
+        return false;
     }
 
     private void OnRegistered(PendingCall call)
@@ -610,7 +615,6 @@ internal sealed class PendingRequestTable : IDisposable
 
                 current.WaitUntilRegistered();
                 call = current;
-                ReleaseSlot();
                 return true;
             }
         }
@@ -637,7 +641,6 @@ internal sealed class PendingRequestTable : IDisposable
 
                 current.WaitUntilRegistered();
                 call = current;
-                ReleaseSlot();
                 return true;
             }
         }
@@ -649,50 +652,57 @@ internal sealed class PendingRequestTable : IDisposable
         Exception? exception,
         ref ReadOnlySequence<byte> payload)
     {
-        call.DisposeCancellationRegistration();
-        var producerCancellationFailure = call.CancelProducer(reason);
-        if (producerCancellationFailure is not null)
+        try
         {
-            try
+            call.DisposeCancellationRegistration();
+            var producerCancellationFailure = call.CancelProducer(reason);
+            if (producerCancellationFailure is not null)
             {
-                _owner.OnProducerCancellationCallbackFailed(producerCancellationFailure);
+                try
+                {
+                    _owner.OnProducerCancellationCallbackFailed(producerCancellationFailure);
+                }
+                catch
+                {
+                    // Diagnostics must never interrupt the terminal pending-call transition.
+                }
             }
-            catch
+            var isResponse = reason is PendingCallCompletionReason.Response or PendingCallCompletionReason.LocalStreamComplete;
+            if (isResponse && call.Operation is { } responseOperation)
             {
-                // Diagnostics must never interrupt the terminal pending-call transition.
+                exception = responseOperation.TryDeserializeResponse(ref payload);
+                if (exception is not null)
+                    reason = PendingCallCompletionReason.RemoteError;
             }
+            exception ??= CreateCompletionException(call, reason);
+
+            var completion = new PendingCallCompletion(
+                call.Id,
+                call.Kind,
+                reason,
+                call.Dispatcher,
+                exception);
+            // Decode response payloads before reporting the terminal admission outcome so malformed
+            // endpoint responses are not published as successful attempts.
+            call.CompletionObserver?.OnPendingCallCompleted(in completion);
+
+            if (call.Operation is { } operation)
+            {
+                if (isResponse)
+                    operation.CompleteResponse(exception);
+                else
+                    operation.SetError(exception ?? new SharpLinkException(
+                        SharpLinkErrorCode.Internal,
+                        "A pending request completed without a result."));
+            }
+
+            _owner.OnPendingCallCompleted(in completion);
+            call.ReturnCompleted();
         }
-        var isResponse = reason is PendingCallCompletionReason.Response or PendingCallCompletionReason.LocalStreamComplete;
-        if (isResponse && call.Operation is { } responseOperation)
+        finally
         {
-            exception = responseOperation.TryDeserializeResponse(ref payload);
-            if (exception is not null)
-                reason = PendingCallCompletionReason.RemoteError;
+            ReleaseSlot();
         }
-        exception ??= CreateCompletionException(call, reason);
-
-        var completion = new PendingCallCompletion(
-            call.Id,
-            call.Kind,
-            reason,
-            call.Dispatcher,
-            exception);
-        // Decode response payloads before reporting the terminal admission outcome so malformed
-        // endpoint responses are not published as successful attempts.
-        call.CompletionObserver?.OnPendingCallCompleted(in completion);
-
-        if (call.Operation is { } operation)
-        {
-            if (isResponse)
-                operation.CompleteResponse(exception);
-            else
-                operation.SetError(exception ?? new SharpLinkException(
-                    SharpLinkErrorCode.Internal,
-                    "A pending request completed without a result."));
-        }
-
-        _owner.OnPendingCallCompleted(in completion);
-        call.ReturnCompleted();
     }
 
     private static Exception? CreateCompletionException(
@@ -722,11 +732,15 @@ internal sealed class PendingRequestTable : IDisposable
 
     private void ReleaseCapacity()
     {
-        Interlocked.Decrement(ref _activeSlots);
-        if (Volatile.Read(ref _waiterCount) == 0)
-            return;
+        var remaining = Interlocked.Decrement(ref _activeSlots);
+        if (remaining < 0)
+            throw new InvalidOperationException("Pending request capacity accounting underflowed.");
 
-        SignalSlotAvailable();
+        if (Volatile.Read(ref _waiterCount) != 0)
+            SignalSlotAvailable();
+
+        if (remaining == 0 && _owner is IPendingCallCapacityObserver capacityObserver)
+            capacityObserver.OnPendingCallCapacityIdle();
     }
 
     private void SignalSlotAvailable()
