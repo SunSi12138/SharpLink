@@ -19,7 +19,7 @@ public class PendingRequestContentionBenchmarks
     private const int OperationsPerInvocation = 16_384;
     private SharpLinkRuntimeContext _context = null!;
     private PendingRequestTable _pending = null!;
-    private ProductionLifecycleOwner _owner = null!;
+    private IPendingCallOwner _owner = null!;
     private Barrier _phase = null!;
     private Thread[] _workers = null!;
     private byte[] _responsePayload = null!;
@@ -40,12 +40,14 @@ public class PendingRequestContentionBenchmarks
 
         // The dev baseline counts every pending call in ClientConnection._activeCallCount.
         // The optimized head reuses PendingRequestTable.ActiveCount instead. Detect that shape
-        // once during setup so the same benchmark source measures one production lifecycle
-        // accounting operation on both revisions without reflection in the timed region.
+        // once during setup and select the matching production owner; no revision branch runs
+        // inside the timed register/complete callbacks.
         var tableOwnsLifecycleCount = typeof(PendingRequestTable).GetProperty(
             "ActiveCount",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic) is not null;
-        _owner = new ProductionLifecycleOwner(countInOwner: !tableOwnsLifecycleCount);
+        _owner = tableOwnsLifecycleCount
+            ? NoopLifecycleOwner.Instance
+            : new CountingLifecycleOwner();
         _pending = new PendingRequestTable(
             65_536,
             _context.Codecs,
@@ -87,7 +89,7 @@ public class PendingRequestContentionBenchmarks
         foreach (var worker in _workers ?? Array.Empty<Thread>())
             worker.Join();
 
-        if (_owner is not null && _owner.ActiveCount != 0)
+        if (_owner is CountingLifecycleOwner countingOwner && countingOwner.ActiveCount != 0)
             throw new InvalidOperationException("Benchmark lifecycle accounting did not return to zero.");
 
         _phase?.Dispose();
@@ -151,30 +153,37 @@ public class PendingRequestContentionBenchmarks
             throw new InvalidOperationException("A contention benchmark worker failed.", failure);
     }
 
-    private sealed class ProductionLifecycleOwner : IPendingCallOwner
+    private sealed class CountingLifecycleOwner : IPendingCallOwner
     {
-        private readonly bool _countInOwner;
         private int _activeCount;
-
-        public ProductionLifecycleOwner(bool countInOwner)
-            => _countInOwner = countInOwner;
 
         public int ActiveCount => Volatile.Read(ref _activeCount);
 
         public void OnPendingCallRegistered()
+            => Interlocked.Increment(ref _activeCount);
+
+        public void OnPendingCallCompleted(in PendingCallCompletion completion)
         {
-            if (_countInOwner)
-                Interlocked.Increment(ref _activeCount);
+            var remaining = Interlocked.Decrement(ref _activeCount);
+            if (remaining < 0)
+                throw new InvalidOperationException("Benchmark lifecycle accounting underflowed.");
+        }
+
+        public void OnProducerCancellationCallbackFailed(Exception exception)
+        {
+        }
+    }
+
+    private sealed class NoopLifecycleOwner : IPendingCallOwner
+    {
+        internal static NoopLifecycleOwner Instance { get; } = new();
+
+        public void OnPendingCallRegistered()
+        {
         }
 
         public void OnPendingCallCompleted(in PendingCallCompletion completion)
         {
-            if (!_countInOwner)
-                return;
-
-            var remaining = Interlocked.Decrement(ref _activeCount);
-            if (remaining < 0)
-                throw new InvalidOperationException("Benchmark lifecycle accounting underflowed.");
         }
 
         public void OnProducerCancellationCallbackFailed(Exception exception)
