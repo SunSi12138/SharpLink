@@ -10,7 +10,6 @@ internal enum ClientConnectionState : byte
 /// <summary>Owns all mutable call state associated with one physical RPC session.</summary>
 internal sealed class ClientConnection :
     IPendingCallOwner,
-    IPendingCallCapacityObserver,
     IRpcClientStreamSink,
     IAsyncDisposable
 {
@@ -307,7 +306,7 @@ internal sealed class ClientConnection :
     void IPendingCallOwner.OnProducerCancellationCallbackFailed(Exception exception)
         => _client.ReportProducerCancellationCallbackFailure(exception);
 
-    void IPendingCallCapacityObserver.OnPendingCallCapacityIdle()
+    void IPendingCallOwner.OnPendingCallCapacityIdle()
         => _client.RetireDrainingConnectionIfIdle(this);
 
     private async Task FinishCancellationAfterDispatchesAsync(
