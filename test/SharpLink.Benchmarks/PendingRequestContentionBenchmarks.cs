@@ -69,12 +69,11 @@ public class PendingRequestContentionBenchmarks
     public void Cleanup()
     {
         Volatile.Write(ref _stop, 1);
-        if (_workers is { Length: > 0 } && _phase is not null)
-        {
+        if (_workers is { Length: > 0 } && _phase is not null && Volatile.Read(ref _workerFailure) is null)
             _phase.SignalAndWait();
-            foreach (var worker in _workers)
-                worker.Join();
-        }
+
+        foreach (var worker in _workers ?? Array.Empty<Thread>())
+            worker.Join();
 
         _phase?.Dispose();
         _pending?.Dispose();
@@ -83,6 +82,7 @@ public class PendingRequestContentionBenchmarks
 
     private void WorkerLoop()
     {
+        var participantRemoved = false;
         try
         {
             while (true)
@@ -106,14 +106,26 @@ public class PendingRequestContentionBenchmarks
         catch (Exception exception)
         {
             Interlocked.CompareExchange(ref _workerFailure, exception, null);
-            // Keep the barrier participant alive long enough to let the benchmark thread observe
-            // the failure rather than hanging forever at the end-of-iteration rendezvous.
             try
             {
-                _phase.SignalAndWait();
+                _phase.RemoveParticipant();
+                participantRemoved = true;
             }
             catch
             {
+            }
+        }
+        finally
+        {
+            if (!participantRemoved && Volatile.Read(ref _stop) != 0)
+            {
+                try
+                {
+                    _phase.RemoveParticipant();
+                }
+                catch
+                {
+                }
             }
         }
     }
