@@ -17,6 +17,7 @@ public class PendingRequestContentionBenchmarks
     // Keep the total operation count constant across producer counts so BenchmarkDotNet reports
     // comparable per-register/complete costs for the dev-vs-head contention gate.
     private const int OperationsPerInvocation = 16_384;
+    private static int s_lifecycleState;
     private SharpLinkRuntimeContext _context = null!;
     private PendingRequestTable _pending = null!;
     private IPendingCallOwner _owner = null!;
@@ -38,10 +39,10 @@ public class PendingRequestContentionBenchmarks
 
         _context = new SharpLinkRuntimeContextBuilder().Build();
 
-        // The dev baseline counts every pending call in ClientConnection._activeCallCount.
-        // The optimized head reuses PendingRequestTable.ActiveCount instead. Detect that shape
-        // once during setup and select the matching production owner; no revision branch runs
-        // inside the timed register/complete callbacks.
+        // The dev baseline counts pending calls in ClientConnection._activeCallCount and runs its
+        // draining-idle fast return when that count reaches zero. The optimized head reuses the
+        // table count and receives the same lifecycle notification from the table. Detect the
+        // revision once during setup; no revision branch runs inside a timed operation.
         var tableOwnsLifecycleCount = typeof(PendingRequestTable).GetProperty(
             "ActiveCount",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic) is not null;
@@ -153,6 +154,15 @@ public class PendingRequestContentionBenchmarks
             throw new InvalidOperationException("A contention benchmark worker failed.", failure);
     }
 
+    private static void ObserveLifecycleIdle()
+    {
+        // ClientConnection.RetireDrainingConnectionIfIdle returns immediately for a Ready
+        // connection after reading its lifecycle state. Keep that zero-count work equivalent
+        // across revisions without introducing locks, allocation, or revision-specific branches.
+        if (Volatile.Read(ref s_lifecycleState) != 0)
+            throw new InvalidOperationException("Unexpected benchmark lifecycle state.");
+    }
+
     private sealed class CountingLifecycleOwner : IPendingCallOwner
     {
         private int _activeCount;
@@ -167,11 +177,18 @@ public class PendingRequestContentionBenchmarks
             var remaining = Interlocked.Decrement(ref _activeCount);
             if (remaining < 0)
                 throw new InvalidOperationException("Benchmark lifecycle accounting underflowed.");
+            if (remaining == 0)
+                ObserveLifecycleIdle();
         }
 
         public void OnProducerCancellationCallbackFailed(Exception exception)
         {
         }
+
+        // On optimized heads the table owns the pending count and calls this hook. On dev this is
+        // simply an extra public method and is never invoked because the older interface lacks it.
+        public void OnPendingCallCapacityIdle()
+            => ObserveLifecycleIdle();
     }
 
     private sealed class NoopLifecycleOwner : IPendingCallOwner
@@ -189,5 +206,8 @@ public class PendingRequestContentionBenchmarks
         public void OnProducerCancellationCallbackFailed(Exception exception)
         {
         }
+
+        public void OnPendingCallCapacityIdle()
+            => ObserveLifecycleIdle();
     }
 }
