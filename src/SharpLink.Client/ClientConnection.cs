@@ -406,7 +406,7 @@ internal sealed partial class SharpLinkClient
         => _logger.LogError(exception, "SharpLink connection cancellation callback failed during teardown.");
 
     internal void ReportProducerCancellationCallbackFailure(Exception exception)
-        => _logger.LogError(exception, "SharpLink client-stream producer cancellation callback failed during teardown.");
+        => _logger.LogError(exception, "SharpLink client-stream producer cancellation callback failed.");
 }
 
 internal struct LateResponseLogLimiter
