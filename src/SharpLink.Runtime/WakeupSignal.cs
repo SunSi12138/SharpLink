@@ -5,21 +5,27 @@ using System.Threading.Tasks.Sources;
 namespace SharpLink.Runtime;
 
 /// <summary>
-/// Reusable zero-allocation wakeup for the send-pump loop. The single waiter (the pump)
-/// publishes an arm token before it sleeps; a writer claims the token with an interlocked
-/// exchange and completes the value-task source. The exchange is the single arbiter, so
-/// each arm completes exactly once: a writer racing the re-arm fails against the
-/// superseded token, and a signal that arrives while no arm is claimable is latched and
-/// consumed by the next WaitAsync, which is why the pump never has to abandon an armed
-/// wait. A successful arm claim never touches the latch, so a real wake cannot leave a
-/// stale latch behind that would spuriously complete the next arm.
+/// Reusable zero-allocation wakeup for the send-pump loop. The entire protocol lives in one
+/// atomic state word <see cref="_state"/>: <c>0</c> = idle, <c>1</c> = a signal latched before
+/// any arm was published, and any value ≥ 2 = an armed waiter (arm token + 1). The single
+/// waiter (the pump) publishes an arm with one atomic exchange that also consumes a pending
+/// latch, so a signal that arrived before the arm completes the arm synchronously. A writer
+/// either claims the live arm with one CAS, or latches; the latch write
+/// (<see cref="Interlocked.Or(ref long, long)"/>) keeps a concurrently published arm intact,
+/// and the re-check loop claims any arm the latch lands on, so a signal crossing the
+/// arm-publication boundary — the latch write landing just after the next
+/// <see cref="WaitAsync"/> has already consumed the latch — still completes that pending arm
+/// instead of being lost. Claiming always returns the state to idle, so a real wake never
+/// leaves a stale latch behind that would spuriously complete the next arm.
 /// </summary>
 internal sealed class WakeupSignal : IValueTaskSource<bool>
 {
+    private const long Idle = 0;
+    private const long Latched = 1;
+
     private ManualResetValueTaskSourceCore<bool> _core;
     private long _generation;
-    private long _armToken;
-    private int _signaled;
+    private long _state;
 
     internal WakeupSignal()
     {
@@ -29,38 +35,62 @@ internal sealed class WakeupSignal : IValueTaskSource<bool>
         };
     }
 
+    /// <summary>
+    /// Test-only seam invoked on the latch path before the latch bit is written. Lets
+    /// WakeupSignalTests deterministically park a writer in the crossing window where an arm
+    /// is published after the writer observed the idle state.
+    /// </summary>
+    internal Action? BeforeLatchWrite { get; set; }
+
     internal ValueTask<bool> WaitAsync()
     {
         _core.Reset();
         var token = ++_generation;
-        Volatile.Write(ref _armToken, token);
-        // Consume a latched signal that arrived before the arm was published so
-        // the returned value task completes synchronously instead of hanging.
-        if (Interlocked.Exchange(ref _signaled, 0) != 0 &&
-            Interlocked.CompareExchange(ref _armToken, 0, token) == token)
+        // Publish the arm and consume a pending latch in one atomic exchange.
+        var prev = Interlocked.Exchange(ref _state, token + 1);
+        if (prev == Latched)
         {
-            _core.SetResult(true);
+            // The arm was born latched: the pending signal belongs to this arm. Claim it
+            // ourselves with a CAS — a writer racing this CAS claims the same arm, so the
+            // arm completes exactly once.
+            if (Interlocked.CompareExchange(ref _state, Idle, token + 1) == token + 1)
+            {
+                _core.SetResult(true);
+            }
         }
         return new ValueTask<bool>(this, _core.Version);
     }
 
     internal void Signal()
     {
-        // Claim a live arm directly: this is the hot path and must not touch the
-        // latch, otherwise the next WaitAsync would consume the residue as a stale
-        // signal and complete one extra empty pump iteration per real wake.
-        var token = Volatile.Read(ref _armToken);
-        if (token != 0 &&
-            Interlocked.CompareExchange(ref _armToken, 0, token) == token)
+        // Fast path: claim the live arm without touching the latch, so a real wake leaves
+        // no residue for the next arm.
+        var s = Volatile.Read(ref _state);
+        if (s > Latched &&
+            Interlocked.CompareExchange(ref _state, Idle, s) == s)
         {
             _core.SetResult(true);
             return;
         }
 
-        // No arm was claimable (not yet published, superseded, or already claimed):
-        // latch the signal for the next WaitAsync. The frame is already queued, so
-        // consuming the latch there is a correct, not spurious, wake.
-        Volatile.Write(ref _signaled, 1);
+        // No claimable arm (idle, already latched, or lost the claim race): latch. The Or
+        // keeps a concurrently published arm intact, and the loop below claims any arm the
+        // latch lands on, so a signal crossing the arm-publication boundary (the latch write
+        // landing after the next WaitAsync already consumed the latch) still completes that
+        // arm instead of being lost.
+        BeforeLatchWrite?.Invoke();
+        Interlocked.Or(ref _state, Latched);
+        while (true)
+        {
+            var t = Volatile.Read(ref _state);
+            if (t <= Latched)
+                return; // Idle or latched: the next WaitAsync consumes the latch.
+            if (Interlocked.CompareExchange(ref _state, Idle, t) == t)
+            {
+                _core.SetResult(true);
+                return;
+            }
+        }
     }
 
     bool IValueTaskSource<bool>.GetResult(short token) => _core.GetResult(token);

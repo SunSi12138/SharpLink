@@ -1,3 +1,6 @@
+using System.Threading;
+using System.Threading.Tasks;
+
 namespace SharpLink.UnitTests.Runtime;
 
 public class WakeupSignalTests
@@ -49,6 +52,40 @@ public class WakeupSignalTests
 
         var next = signal.WaitAsync();
         Ensure(next.IsCompletedSuccessfully, "the losing writer's latch is a real queued wake for the next arm");
+    }
+
+    [Test]
+    public void LateLatchCrossingArmPublicationStillCompletesTheArm()
+    {
+        // The exact lost-wakeup interleaving from the review: the writer observes the idle
+        // state and pauses; WaitAsync publishes the arm and consumes the (still empty)
+        // latch; the writer then latches. The latch write lands after the arm publication
+        // was already latched-checked, so the pending arm must still be completed by the
+        // writer's re-check loop — otherwise the queued frame sleeps forever.
+        var signal = new WakeupSignal();
+        var observedIdle = new ManualResetEventSlim(initialState: false);
+        var releaseWriter = new ManualResetEventSlim(initialState: false);
+        signal.BeforeLatchWrite = () =>
+        {
+            observedIdle.Set();
+            releaseWriter.Wait();
+        };
+
+        var writer = Task.Run(signal.Signal);
+        Ensure(observedIdle.Wait(TimeSpan.FromSeconds(5)), "the writer must reach the latch path");
+
+        var wait = signal.WaitAsync();
+        Ensure(!wait.IsCompleted, "the arm must stay pending while the writer is parked");
+
+        releaseWriter.Set();
+        Ensure(writer.Wait(TimeSpan.FromSeconds(5)), "the writer must finish");
+
+        Ensure(wait.IsCompletedSuccessfully,
+            "a latch landing after arm publication must still complete the pending arm");
+
+        // The late-latch claim returned the state to idle: no residue for the next arm.
+        var next = signal.WaitAsync();
+        Ensure(!next.IsCompleted, "the late-latch claim must not leave a stale latch");
     }
 
     private static void Ensure(bool condition, string message)
