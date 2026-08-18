@@ -41,6 +41,7 @@ internal sealed partial class RpcSession
         private readonly Channel<OwnedFrame> _normalQueue;
         private readonly Lock _admissionGate = new();
         private readonly DeadlineReadRace _deadlineRace;
+        private readonly WakeupSignal _wakeup = new();
         private readonly Task _pumpTask;
         // When the caller configured an explicit MaxLatency through RpcSessionFlushOptions the
         // pump batches until that deadline even while frames keep arriving. The profile-default
@@ -173,7 +174,10 @@ internal sealed partial class RpcSession
             }
             var queue = frame.IsProtocolProgress ? _progressQueue : _normalQueue;
             if (queue.Writer.TryWrite(frame))
+            {
+                _wakeup.Signal();
                 return SendEnqueueResult.Accepted;
+            }
 
             CompleteReserved(frame, CreateTransportClosedException());
             return SendEnqueueResult.Closed;
@@ -196,6 +200,7 @@ internal sealed partial class RpcSession
             if (Volatile.Read(ref _stopped) == 0 &&
                 (frame.IsProtocolProgress ? _progressQueue : _normalQueue).Writer.TryWrite(frame))
             {
+                _wakeup.Signal();
                 return SendEnqueueResult.Accepted;
             }
 
@@ -212,8 +217,27 @@ internal sealed partial class RpcSession
 
             try
             {
-                while (await WaitForFramesAsync().ConfigureAwait(false))
+                while (true)
                 {
+                    if (!HasProgressFrames() && !HasNormalFrames())
+                    {
+                        if (Volatile.Read(ref _stopped) != 0)
+                            break;
+
+                        // Arm the reusable wakeup signal, then re-check the queues:
+                        // a writer that enqueues between the empty-queue check above
+                        // and the arm is caught by the post-arm re-check, and a writer
+                        // after the re-check claims the freshly published arm token.
+                        // This replaces the dual-read Task.WhenAny wake-up (two AsTask
+                        // wrappers, the WhenAny promise, and its continuations per wake)
+                        // with a claim-token value-task source that allocates nothing.
+                        var wakeup = _wakeup.WaitAsync();
+                        if (HasProgressFrames() || HasNormalFrames())
+                            continue;
+                        await wakeup.ConfigureAwait(false);
+                        continue;
+                    }
+
                     if (await DrainProgressQueueAsync(pending).ConfigureAwait(false))
                     {
                         // Progress frames must not wait for a full batch:
@@ -373,37 +397,10 @@ internal sealed partial class RpcSession
         }
 
         /// <summary>
-        /// Waits until either queue has data. The fast path peeks both queues
-        /// without allocating; the idle path awaits the first completed read.
-        /// A read that loses the race is intentionally abandoned: its data
-        /// stays queued and is observed by the next fast path.
+        /// Returns the retained progress-channel read used by the deadline race,
+        /// registering a fresh one when the retained read has completed. The pump
+        /// loop itself wakes through <see cref="WakeupSignal"/> instead.
         /// </summary>
-        private ValueTask<bool> WaitForFramesAsync()
-        {
-            if (HasProgressFrames() || HasNormalFrames())
-                return ValueTask.FromResult(true);
-
-            // Retain and reuse both reads: the loser of the dual wait stays
-            // registered on its channel for the next wake-up, so a long-lived
-            // session never accumulates abandoned channel waiters (an
-            // abandoned WaitToReadAsync-derived task can also be cancelled by
-            // the channel).
-            var progressTask = GetProgressRead();
-            if (progressTask.IsCompletedSuccessfully)
-            {
-                _pendingProgressReadWait = null;
-                return ValueTask.FromResult(progressTask.Result);
-            }
-            var normalTask = GetNormalRead();
-            if (normalTask.IsCompletedSuccessfully)
-            {
-                _pendingReadWait = null;
-                return ValueTask.FromResult(normalTask.Result);
-            }
-
-            return new ValueTask<bool>(AwaitFirstReadAsync(progressTask, normalTask));
-        }
-
         private Task<bool> GetProgressRead()
         {
             if (_pendingProgressReadWait is { IsCompleted: false } retained)
@@ -458,19 +455,57 @@ internal sealed partial class RpcSession
             }
         }
 
-        private static async Task<bool> AwaitFirstReadAsync(Task<bool> first, Task<bool> second)
+        /// <summary>
+        /// Reusable zero-allocation wakeup for the pump loop. The single waiter (the pump)
+        /// publishes an arm token before it sleeps; a writer claims the token with an
+        /// interlocked exchange and completes the value-task source, while a stale claim
+        /// fails against the superseded token. The pump re-checks both queues after arming,
+        /// so a frame written between the queue check and the arm can never be lost.
+        /// </summary>
+        private sealed class WakeupSignal : IValueTaskSource<bool>
         {
-            var winner = await Task.WhenAny(first, second).ConfigureAwait(false);
-            // A cancelled channel read is an inert non-signal: fall through to
-            // the still-registered other read instead of surfacing the
-            // cancellation as a pump fault. Observe the cancelled winner so it
-            // cannot fire the unobserved-task event.
-            if (winner.IsCanceled)
+            private const long SignaledBit = 1;
+
+            private ManualResetValueTaskSourceCore<bool> _core;
+            private long _generation;
+            private long _armClaim;
+
+            internal WakeupSignal()
             {
-                _ = winner.Exception;
-                return await (ReferenceEquals(winner, first) ? second : first).ConfigureAwait(false);
+                _core = new ManualResetValueTaskSourceCore<bool>
+                {
+                    RunContinuationsAsynchronously = true,
+                };
             }
-            return await winner.ConfigureAwait(false);
+
+            internal ValueTask<bool> WaitAsync()
+            {
+                _core.Reset();
+                var token = (++_generation) << 1;
+                Volatile.Write(ref _armClaim, token);
+                return new ValueTask<bool>(this, _core.Version);
+            }
+
+            internal void Signal()
+            {
+                var token = Volatile.Read(ref _armClaim);
+                if ((token & SignaledBit) != 0)
+                    return;
+                if (Interlocked.CompareExchange(ref _armClaim, token | SignaledBit, token) != token)
+                    return;
+                _core.SetResult(true);
+            }
+
+            bool IValueTaskSource<bool>.GetResult(short token) => _core.GetResult(token);
+
+            ValueTaskSourceStatus IValueTaskSource<bool>.GetStatus(short token) => _core.GetStatus(token);
+
+            void IValueTaskSource<bool>.OnCompleted(
+                Action<object?> continuation,
+                object? state,
+                short token,
+                ValueTaskSourceOnCompletedFlags flags) =>
+                _core.OnCompleted(continuation, state, token, flags);
         }
 
         private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchDeadline)
@@ -653,6 +688,7 @@ internal sealed partial class RpcSession
                 return;
             _progressQueue.Writer.TryComplete();
             _normalQueue.Writer.TryComplete();
+            _wakeup.Signal();
             PulseCapacityWaiters();
         }
 
@@ -663,6 +699,7 @@ internal sealed partial class RpcSession
             Interlocked.Exchange(ref _stopped, 1);
             _progressQueue.Writer.TryComplete(exception);
             _normalQueue.Writer.TryComplete(exception);
+            _wakeup.Signal();
             PulseCapacityWaiters();
             _onTransportFaulted(exception);
         }

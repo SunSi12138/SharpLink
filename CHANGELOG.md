@@ -6,6 +6,9 @@
 
 ### Changed
 
+- The send pump now wakes through one reusable zero-allocation signal (a claim-token `IValueTaskSource`) instead of racing two channel reads with `Task.WhenAny`. The dual-read wake-up created two `AsTask` wrappers, a `WhenAny` promise, and continuation closures on every pump wake; the signal-based wake allocates nothing per wake and keeps the dual-queue protocol-progress isolation intact.
+
+
 - The `Throughput` performance profile now flushes its TimedBatch as soon as the outbound queue drains instead of always waiting out the profile's 1 ms batching deadline. Under continuous RPC load the deadline wait made both peers' batch windows interlock into a low-throughput ping-pong (about a third of the `Balanced` QPS at c128); queue-drain flushing keeps the large 64 KiB coalescing threshold while frames of an active pipeline leave immediately. Callers that need deadline-bounded batching configure an explicit `RpcSessionFlushOptions.MaxLatency`, which still drives the deadline wait exactly as before.
 
 ### Added
