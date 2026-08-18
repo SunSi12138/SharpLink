@@ -96,6 +96,27 @@ public class PendingRequestTableSaturationTests
     }
 
     [Test]
+    public async Task ActiveCountShouldTrackReservationAndRefundFullFailure()
+    {
+        using var manager = PendingRequestTableTestFixture.Create(1);
+        await Assert.That(manager.ActiveCount).IsEqualTo(0);
+
+        var operation = manager.Rent<int>(out var requestId);
+        await Assert.That(manager.ActiveCount).IsEqualTo(1);
+
+        var fullFailure = CaptureException(() => manager.Rent<int>(out _));
+        await Assert.That(fullFailure).IsTypeOf<SharpLinkException>();
+        await Assert.That(((SharpLinkException)fullFailure!).Code)
+            .IsEqualTo(SharpLinkErrorCode.ResourceExhausted);
+        await Assert.That(manager.ActiveCount).IsEqualTo(1);
+
+        var payload = new ReadOnlySequence<byte>(new byte[sizeof(int)]);
+        await Assert.That(manager.Dispatch(requestId, ref payload)).IsTrue();
+        _ = await operation.AsValueTask();
+        await Assert.That(manager.ActiveCount).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task ConcurrentRegistrationsShouldGrantTheLastPermitExactlyOnce()
     {
         using var manager = PendingRequestTableTestFixture.Create(1);
