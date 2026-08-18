@@ -42,6 +42,13 @@ internal sealed partial class RpcSession
         private readonly Lock _admissionGate = new();
         private readonly DeadlineReadRace _deadlineRace;
         private readonly Task _pumpTask;
+        // When the caller configured an explicit MaxLatency through RpcSessionFlushOptions the
+        // pump batches until that deadline even while frames keep arriving. The profile-default
+        // TimedBatch deliberately skips the deadline wait instead: it flushes as soon as the
+        // queue drains (like Balanced, with a larger threshold), because waiting out a batching
+        // window on every drain pass interlocks the two peers' windows into a low-throughput
+        // ping-pong under continuous RPC load (measured: ~1/3 of the balanced QPS at c128).
+        private readonly bool _deadlineBatchingEnabled;
         private TaskCompletionSource<bool>? _capacityChanged;
         private Task<bool>? _pendingReadWait;
         private Task<bool>? _pendingProgressReadWait;
@@ -76,9 +83,11 @@ internal sealed partial class RpcSession
                 _flushMode = FlushMode.TimedBatch;
                 _flushSizeThreshold = custom.FlushSizeThreshold;
                 _maxLatency = custom.MaxLatency;
+                _deadlineBatchingEnabled = true;
             }
             else
             {
+                _deadlineBatchingEnabled = false;
                 switch (performanceProfile)
                 {
                     case SharpLinkPerformanceProfile.LowLatency:
@@ -87,6 +96,11 @@ internal sealed partial class RpcSession
                         _maxLatency = TimeSpan.Zero;
                         break;
                     case SharpLinkPerformanceProfile.Throughput:
+                        // Throughput keeps the large coalescing threshold but flushes the
+                        // moment the queue drains: frames of an active RPC pipeline leave
+                        // immediately, and only a genuinely idle queue would ever want the
+                        // MaxLatency deadline (which is therefore reserved for callers that
+                        // configure RpcSessionFlushOptions explicitly).
                         _flushMode = FlushMode.TimedBatch;
                         _flushSizeThreshold = 64 * 1024;
                         _maxLatency = TimeSpan.FromMilliseconds(1);
@@ -264,7 +278,12 @@ internal sealed partial class RpcSession
                     if (pending.Count == 0)
                         continue;
 
+                    // Profile-default TimedBatch treats the queue drain as the flush point
+                    // (see _deadlineBatchingEnabled): only an explicitly configured
+                    // MaxLatency enters the deadline wait, keeping the public
+                    // RpcSessionFlushOptions contract for latency-bounded batching.
                     if (_flushMode == FlushMode.TimedBatch &&
+                        _deadlineBatchingEnabled &&
                         await WaitForMoreUntilDeadlineAsync(batchDeadline).ConfigureAwait(false) &&
                         (HasProgressFrames() || HasNormalFrames()))
                     {

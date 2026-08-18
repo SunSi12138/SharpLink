@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The `Throughput` performance profile now flushes its TimedBatch as soon as the outbound queue drains instead of always waiting out the profile's 1 ms batching deadline. Under continuous RPC load the deadline wait made both peers' batch windows interlock into a low-throughput ping-pong (about a third of the `Balanced` QPS at c128); queue-drain flushing keeps the large 64 KiB coalescing threshold while frames of an active pipeline leave immediately. Callers that need deadline-bounded batching configure an explicit `RpcSessionFlushOptions.MaxLatency`, which still drives the deadline wait exactly as before.
+
 ### Added
 
 - Client readiness snapshots now expose lifecycle state, active/ready endpoint counts, ready connection count, and the current convergence target. Built-in fixed, static, and resolver topologies support caller-selected endpoint thresholds without raising configured convergence targets or changing `ConnectAsync` connectivity semantics.

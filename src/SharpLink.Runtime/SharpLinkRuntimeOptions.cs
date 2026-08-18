@@ -9,7 +9,10 @@ public enum SharpLinkPerformanceProfile
     /// <summary>Flushes eagerly and keeps queues small.</summary>
     LowLatency,
 
-    /// <summary>Uses larger bounded queues and batching targets.</summary>
+    /// <summary>Uses larger bounded queues and a larger batching threshold. The batch is
+    /// flushed as soon as the outbound queue drains, so frames of an active pipeline leave
+    /// immediately; callers that want deadline-bounded batching configure an explicit
+    /// <c>RpcSessionFlushOptions.MaxLatency</c> instead.</summary>
     Throughput
 }
 
