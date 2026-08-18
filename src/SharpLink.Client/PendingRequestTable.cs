@@ -36,11 +36,10 @@ internal interface IPendingCallOwner
     void OnPendingCallRegistered();
     void OnPendingCallCompleted(in PendingCallCompletion completion);
     void OnProducerCancellationCallbackFailed(Exception exception);
-}
 
-internal interface IPendingCallCapacityObserver
-{
-    void OnPendingCallCapacityIdle();
+    void OnPendingCallCapacityIdle()
+    {
+    }
 }
 
 /// <summary>
@@ -701,10 +700,13 @@ internal sealed class PendingRequestTable : IDisposable
             _owner.OnPendingCallCompleted(in completion);
             call.ReturnCompleted();
         }
-        finally
+        catch
         {
             ReleaseSlot();
+            throw;
         }
+
+        ReleaseSlot();
     }
 
     private static Exception? CreateCompletionException(
@@ -741,8 +743,8 @@ internal sealed class PendingRequestTable : IDisposable
         if (Volatile.Read(ref _waiterCount) != 0)
             SignalSlotAvailable();
 
-        if (remaining == 0 && _owner is IPendingCallCapacityObserver capacityObserver)
-            capacityObserver.OnPendingCallCapacityIdle();
+        if (remaining == 0)
+            _owner.OnPendingCallCapacityIdle();
     }
 
     private void SignalSlotAvailable()
