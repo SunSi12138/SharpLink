@@ -14,6 +14,8 @@ namespace SharpLink.Benchmarks;
 [BenchmarkCategory("PendingRequestTable", "Contention")]
 public class PendingRequestContentionBenchmarks
 {
+    // Keep the total operation count constant across producer counts so BenchmarkDotNet reports
+    // comparable per-register/complete costs for the dev-vs-head contention gate.
     private const int OperationsPerInvocation = 16_384;
     private SharpLinkRuntimeContext _context = null!;
     private PendingRequestTable _pending = null!;
