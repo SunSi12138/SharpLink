@@ -498,10 +498,11 @@ internal sealed class PendingRequestTable : IDisposable
                 Thread.Yield();
             }
         }
-        finally
+        catch
         {
             if (!published)
                 ReleaseCapacity();
+            throw;
         }
     }
 
@@ -558,10 +559,11 @@ internal sealed class PendingRequestTable : IDisposable
                 Thread.Yield();
             }
         }
-        finally
+        catch
         {
             if (!published)
                 ReleaseCapacity();
+            throw;
         }
     }
 
