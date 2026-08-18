@@ -41,6 +41,7 @@ internal sealed partial class RpcSession
         private readonly Channel<OwnedFrame> _normalQueue;
         private readonly Lock _admissionGate = new();
         private readonly DeadlineReadRace _deadlineRace;
+        private readonly WakeupSignal _wakeup = new();
         private readonly Task _pumpTask;
         // When the caller configured an explicit MaxLatency through RpcSessionFlushOptions the
         // pump batches until that deadline even while frames keep arriving. The profile-default
@@ -173,7 +174,10 @@ internal sealed partial class RpcSession
             }
             var queue = frame.IsProtocolProgress ? _progressQueue : _normalQueue;
             if (queue.Writer.TryWrite(frame))
+            {
+                _wakeup.Signal();
                 return SendEnqueueResult.Accepted;
+            }
 
             CompleteReserved(frame, CreateTransportClosedException());
             return SendEnqueueResult.Closed;
@@ -196,6 +200,7 @@ internal sealed partial class RpcSession
             if (Volatile.Read(ref _stopped) == 0 &&
                 (frame.IsProtocolProgress ? _progressQueue : _normalQueue).Writer.TryWrite(frame))
             {
+                _wakeup.Signal();
                 return SendEnqueueResult.Accepted;
             }
 
@@ -212,8 +217,27 @@ internal sealed partial class RpcSession
 
             try
             {
-                while (await WaitForFramesAsync().ConfigureAwait(false))
+                while (true)
                 {
+                    if (!HasProgressFrames() && !HasNormalFrames())
+                    {
+                        if (Volatile.Read(ref _stopped) != 0)
+                            break;
+
+                        // Arm the reusable wakeup signal and always await it. WaitAsync
+                        // consumes any signal that arrived before the arm was published,
+                        // so a frame written between the empty-queue check above and the
+                        // arm cannot leave the await hanging, and the arm never has to be
+                        // abandoned (abandoning an armed ManualResetValueTaskSourceCore
+                        // and re-arming it crashed the CI Load Smoke with a completion
+                        // sentinel InvalidOperationException). This replaces the dual-read
+                        // Task.WhenAny wake-up with a claim-token value-task source that
+                        // allocates nothing per wake.
+                        var wakeup = _wakeup.WaitAsync();
+                        await wakeup.ConfigureAwait(false);
+                        continue;
+                    }
+
                     if (await DrainProgressQueueAsync(pending).ConfigureAwait(false))
                     {
                         // Progress frames must not wait for a full batch:
@@ -373,37 +397,10 @@ internal sealed partial class RpcSession
         }
 
         /// <summary>
-        /// Waits until either queue has data. The fast path peeks both queues
-        /// without allocating; the idle path awaits the first completed read.
-        /// A read that loses the race is intentionally abandoned: its data
-        /// stays queued and is observed by the next fast path.
+        /// Returns the retained progress-channel read used by the deadline race,
+        /// registering a fresh one when the retained read has completed. The pump
+        /// loop itself wakes through <see cref="WakeupSignal"/> instead.
         /// </summary>
-        private ValueTask<bool> WaitForFramesAsync()
-        {
-            if (HasProgressFrames() || HasNormalFrames())
-                return ValueTask.FromResult(true);
-
-            // Retain and reuse both reads: the loser of the dual wait stays
-            // registered on its channel for the next wake-up, so a long-lived
-            // session never accumulates abandoned channel waiters (an
-            // abandoned WaitToReadAsync-derived task can also be cancelled by
-            // the channel).
-            var progressTask = GetProgressRead();
-            if (progressTask.IsCompletedSuccessfully)
-            {
-                _pendingProgressReadWait = null;
-                return ValueTask.FromResult(progressTask.Result);
-            }
-            var normalTask = GetNormalRead();
-            if (normalTask.IsCompletedSuccessfully)
-            {
-                _pendingReadWait = null;
-                return ValueTask.FromResult(normalTask.Result);
-            }
-
-            return new ValueTask<bool>(AwaitFirstReadAsync(progressTask, normalTask));
-        }
-
         private Task<bool> GetProgressRead()
         {
             if (_pendingProgressReadWait is { IsCompleted: false } retained)
@@ -456,21 +453,6 @@ internal sealed partial class RpcSession
             {
                 // Observation only: the fault belongs to the pump that abandoned the read.
             }
-        }
-
-        private static async Task<bool> AwaitFirstReadAsync(Task<bool> first, Task<bool> second)
-        {
-            var winner = await Task.WhenAny(first, second).ConfigureAwait(false);
-            // A cancelled channel read is an inert non-signal: fall through to
-            // the still-registered other read instead of surfacing the
-            // cancellation as a pump fault. Observe the cancelled winner so it
-            // cannot fire the unobserved-task event.
-            if (winner.IsCanceled)
-            {
-                _ = winner.Exception;
-                return await (ReferenceEquals(winner, first) ? second : first).ConfigureAwait(false);
-            }
-            return await winner.ConfigureAwait(false);
         }
 
         private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchDeadline)
@@ -653,6 +635,7 @@ internal sealed partial class RpcSession
                 return;
             _progressQueue.Writer.TryComplete();
             _normalQueue.Writer.TryComplete();
+            _wakeup.Signal();
             PulseCapacityWaiters();
         }
 
@@ -663,6 +646,7 @@ internal sealed partial class RpcSession
             Interlocked.Exchange(ref _stopped, 1);
             _progressQueue.Writer.TryComplete(exception);
             _normalQueue.Writer.TryComplete(exception);
+            _wakeup.Signal();
             PulseCapacityWaiters();
             _onTransportFaulted(exception);
         }
