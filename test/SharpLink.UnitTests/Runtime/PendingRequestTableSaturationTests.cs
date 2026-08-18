@@ -193,6 +193,42 @@ public class PendingRequestTableSaturationTests
         await Assert.That(manager.Count).IsEqualTo(0);
     }
 
+    [Test]
+    public async Task DisposeShouldWakeAllWaitersBeforeDisposingSlotSignal()
+    {
+        const int waiterCount = 32;
+        var manager = PendingRequestTableTestFixture.Create(1);
+        var occupied = manager.Rent<int>(out _);
+        var waiters = new Task<PendingRequestLease<int>>[waiterCount];
+        for (var index = 0; index < waiters.Length; index++)
+        {
+            waiters[index] = manager.RentAsync<int>(
+                waitForSlot: true,
+                deadline: default,
+                CancellationToken.None).AsTask();
+            await Assert.That(waiters[index].IsCompleted).IsFalse();
+        }
+
+        manager.Dispose();
+
+        var failures = new Task<Exception?>[waiters.Length];
+        for (var index = 0; index < failures.Length; index++)
+            failures[index] = CaptureExceptionAsync(waiters[index]);
+
+        var allFailures = Task.WhenAll(failures);
+        var completed = await Task.WhenAny(allFailures, Task.Delay(TimeSpan.FromSeconds(10)));
+        if (!ReferenceEquals(completed, allFailures))
+            throw new Exception("disposing a full table left one or more pending waiters blocked");
+
+        foreach (var failure in await allFailures)
+            await Assert.That(failure).IsTypeOf<ObjectDisposedException>();
+
+        var occupiedFailure = await CaptureExceptionAsync(occupied.AsValueTask().AsTask());
+        await Assert.That(occupiedFailure).IsTypeOf<SharpLinkException>();
+        await Assert.That(((SharpLinkException)occupiedFailure!).Code)
+            .IsEqualTo(SharpLinkErrorCode.ConnectionClosed);
+    }
+
     private static Exception? CaptureException(Action action)
     {
         try
