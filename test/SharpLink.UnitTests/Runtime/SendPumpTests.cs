@@ -472,6 +472,48 @@ public class SendPumpTests
         }
     }
 
+    [Test]
+    public async Task ProfileDefaultThroughputFlushesSmallFrameWithoutDeadlineTimer()
+    {
+        var clock = new ManualTimeProvider();
+        var input = new Pipe();
+        var output = new Pipe();
+        var context = new SharpLinkRuntimeContextBuilder()
+            .UseTimeProvider(clock)
+            .Configure(static options => options.PerformanceProfile = SharpLinkPerformanceProfile.Throughput)
+            .Build(includeGeneratedAssemblyCatalog: false);
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "profile-throughput-flush-on-drain",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ClientOptions(context));
+        var frame = CreateFrame(session, 32, requestId: 1);
+        try
+        {
+            session.SendPacket(frame);
+
+            // The profile-default Throughput batch flushes as soon as the outbound queue
+            // drains: with the clock untouched (no 1ms deadline advance) the small frame
+            // must already be visible to the transport.
+            var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(read.Buffer.Length > ProtocolV2Constants.HeaderBytes,
+                "a small frame under profile-default Throughput must flush without advancing the deadline clock");
+            output.Reader.AdvanceTo(read.Buffer.End);
+
+            Ensure(clock.ActiveTimerCount == 0,
+                "profile-default Throughput must not arm the MaxLatency deadline timer");
+
+            await session.FlushSendQueueAsync();
+            EnsureReturned(frame, "the drain flush must return the small-frame owner before its queue barrier completes");
+        }
+        finally
+        {
+            await session.DisposeAsync();
+            await output.Reader.CompleteAsync();
+            await input.Writer.CompleteAsync();
+        }
+    }
+
     private static RpcSession CreateSession(Pipe input, Pipe output, int maxSendQueueBytes)
     {
         var context = new SharpLinkRuntimeContextBuilder()
