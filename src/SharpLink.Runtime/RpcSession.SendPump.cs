@@ -455,68 +455,6 @@ internal sealed partial class RpcSession
             }
         }
 
-        /// <summary>
-        /// Reusable zero-allocation wakeup for the pump loop. The single waiter (the pump)
-        /// publishes an arm token before it sleeps; writers claim the token with an
-        /// interlocked exchange and complete the value-task source. The exchange is the
-        /// single arbiter, so each arm completes exactly once: a writer racing the
-        /// re-arm fails against the superseded token, and a signal that arrives before
-        /// the arm is published is latched and consumed by WaitAsync itself, which is
-        /// why the pump never has to abandon an armed wait.
-        /// </summary>
-        private sealed class WakeupSignal : IValueTaskSource<bool>
-        {
-            private ManualResetValueTaskSourceCore<bool> _core;
-            private long _generation;
-            private long _armToken;
-            private int _signaled;
-
-            internal WakeupSignal()
-            {
-                _core = new ManualResetValueTaskSourceCore<bool>
-                {
-                    RunContinuationsAsynchronously = true,
-                };
-            }
-
-            internal ValueTask<bool> WaitAsync()
-            {
-                _core.Reset();
-                var token = ++_generation;
-                Volatile.Write(ref _armToken, token);
-                // Consume any signal that arrived before the arm was published so
-                // the returned value task completes synchronously instead of hanging.
-                if (Interlocked.Exchange(ref _signaled, 0) != 0 &&
-                    Interlocked.CompareExchange(ref _armToken, 0, token) == token)
-                {
-                    _core.SetResult(true);
-                }
-                return new ValueTask<bool>(this, _core.Version);
-            }
-
-            internal void Signal()
-            {
-                Volatile.Write(ref _signaled, 1);
-                var token = Volatile.Read(ref _armToken);
-                if (token != 0 &&
-                    Interlocked.CompareExchange(ref _armToken, 0, token) == token)
-                {
-                    _core.SetResult(true);
-                }
-            }
-
-            bool IValueTaskSource<bool>.GetResult(short token) => _core.GetResult(token);
-
-            ValueTaskSourceStatus IValueTaskSource<bool>.GetStatus(short token) => _core.GetStatus(token);
-
-            void IValueTaskSource<bool>.OnCompleted(
-                Action<object?> continuation,
-                object? state,
-                short token,
-                ValueTaskSourceOnCompletedFlags flags) =>
-                _core.OnCompleted(continuation, state, token, flags);
-        }
-
         private async ValueTask<bool> WaitForMoreUntilDeadlineAsync(long batchDeadline)
         {
             // Reuse the retained reads: a read registered for an earlier wait
