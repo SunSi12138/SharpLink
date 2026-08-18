@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Runtime;
