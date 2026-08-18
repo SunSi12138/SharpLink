@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Runtime;
