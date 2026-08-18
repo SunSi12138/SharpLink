@@ -224,16 +224,16 @@ internal sealed partial class RpcSession
                         if (Volatile.Read(ref _stopped) != 0)
                             break;
 
-                        // Arm the reusable wakeup signal, then re-check the queues:
-                        // a writer that enqueues between the empty-queue check above
-                        // and the arm is caught by the post-arm re-check, and a writer
-                        // after the re-check claims the freshly published arm token.
-                        // This replaces the dual-read Task.WhenAny wake-up (two AsTask
-                        // wrappers, the WhenAny promise, and its continuations per wake)
-                        // with a claim-token value-task source that allocates nothing.
+                        // Arm the reusable wakeup signal and always await it. WaitAsync
+                        // consumes any signal that arrived before the arm was published,
+                        // so a frame written between the empty-queue check above and the
+                        // arm cannot leave the await hanging, and the arm never has to be
+                        // abandoned (abandoning an armed ManualResetValueTaskSourceCore
+                        // and re-arming it crashed the CI Load Smoke with a completion
+                        // sentinel InvalidOperationException). This replaces the dual-read
+                        // Task.WhenAny wake-up with a claim-token value-task source that
+                        // allocates nothing per wake.
                         var wakeup = _wakeup.WaitAsync();
-                        if (HasProgressFrames() || HasNormalFrames())
-                            continue;
                         await wakeup.ConfigureAwait(false);
                         continue;
                     }
@@ -457,18 +457,19 @@ internal sealed partial class RpcSession
 
         /// <summary>
         /// Reusable zero-allocation wakeup for the pump loop. The single waiter (the pump)
-        /// publishes an arm token before it sleeps; a writer claims the token with an
-        /// interlocked exchange and completes the value-task source, while a stale claim
-        /// fails against the superseded token. The pump re-checks both queues after arming,
-        /// so a frame written between the queue check and the arm can never be lost.
+        /// publishes an arm token before it sleeps; writers claim the token with an
+        /// interlocked exchange and complete the value-task source. The exchange is the
+        /// single arbiter, so each arm completes exactly once: a writer racing the
+        /// re-arm fails against the superseded token, and a signal that arrives before
+        /// the arm is published is latched and consumed by WaitAsync itself, which is
+        /// why the pump never has to abandon an armed wait.
         /// </summary>
         private sealed class WakeupSignal : IValueTaskSource<bool>
         {
-            private const long SignaledBit = 1;
-
             private ManualResetValueTaskSourceCore<bool> _core;
             private long _generation;
-            private long _armClaim;
+            private long _armToken;
+            private int _signaled;
 
             internal WakeupSignal()
             {
@@ -481,19 +482,27 @@ internal sealed partial class RpcSession
             internal ValueTask<bool> WaitAsync()
             {
                 _core.Reset();
-                var token = (++_generation) << 1;
-                Volatile.Write(ref _armClaim, token);
+                var token = ++_generation;
+                Volatile.Write(ref _armToken, token);
+                // Consume any signal that arrived before the arm was published so
+                // the returned value task completes synchronously instead of hanging.
+                if (Interlocked.Exchange(ref _signaled, 0) != 0 &&
+                    Interlocked.CompareExchange(ref _armToken, 0, token) == token)
+                {
+                    _core.SetResult(true);
+                }
                 return new ValueTask<bool>(this, _core.Version);
             }
 
             internal void Signal()
             {
-                var token = Volatile.Read(ref _armClaim);
-                if ((token & SignaledBit) != 0)
-                    return;
-                if (Interlocked.CompareExchange(ref _armClaim, token | SignaledBit, token) != token)
-                    return;
-                _core.SetResult(true);
+                Volatile.Write(ref _signaled, 1);
+                var token = Volatile.Read(ref _armToken);
+                if (token != 0 &&
+                    Interlocked.CompareExchange(ref _armToken, 0, token) == token)
+                {
+                    _core.SetResult(true);
+                }
             }
 
             bool IValueTaskSource<bool>.GetResult(short token) => _core.GetResult(token);
