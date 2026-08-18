@@ -438,36 +438,41 @@ internal sealed class PendingRequestTable : IDisposable
         var published = false;
         try
         {
-            for (var attempt = 0; attempt < _slots.Length; attempt++)
+            while (true)
             {
-                id = NextRequestId();
-                var index = (int)(id & _indexMask);
-                if (Volatile.Read(ref _slots[index]) is not null)
-                    continue;
-
-                operation.Initialize(id, responseCodec, hasResponsePayload, responseNullable);
-                var call = PendingCall.Rent(
-                    this,
-                    id,
-                    kind,
-                    operation,
-                    dispatcher,
-                    deadline,
-                    cancellationToken,
-                    completionObserver);
-                if (Interlocked.CompareExchange(ref _slots[index], call, null) is null)
+                for (var attempt = 0; attempt < _slots.Length; attempt++)
                 {
-                    published = true;
-                    OnRegistered(call);
-                    CompleteRegistrationIfDisposed(call);
-                    return true;
+                    id = NextRequestId();
+                    var index = (int)(id & _indexMask);
+                    if (Volatile.Read(ref _slots[index]) is not null)
+                        continue;
+
+                    operation.Initialize(id, responseCodec, hasResponsePayload, responseNullable);
+                    var call = PendingCall.Rent(
+                        this,
+                        id,
+                        kind,
+                        operation,
+                        dispatcher,
+                        deadline,
+                        cancellationToken,
+                        completionObserver);
+                    if (Interlocked.CompareExchange(ref _slots[index], call, null) is null)
+                    {
+                        published = true;
+                        OnRegistered(call);
+                        CompleteRegistrationIfDisposed(call);
+                        return true;
+                    }
+
+                    call.ReturnUnused();
                 }
 
-                call.ReturnUnused();
+                // A capacity reservation guarantees that some physical slot is free. Concurrent
+                // registrars can consume the request IDs that map to that slot, so retry another
+                // bounded round instead of reporting false resource exhaustion.
+                Thread.Yield();
             }
-
-            id = 0;
-            return false;
         }
         finally
         {
@@ -494,35 +499,40 @@ internal sealed class PendingRequestTable : IDisposable
         var published = false;
         try
         {
-            for (var attempt = 0; attempt < _slots.Length; attempt++)
+            while (true)
             {
-                id = NextRequestId();
-                var index = (int)(id & _indexMask);
-                if (Volatile.Read(ref _slots[index]) is not null)
-                    continue;
-
-                var call = PendingCall.Rent(
-                    this,
-                    id,
-                    kind,
-                    operation,
-                    dispatcher,
-                    deadline,
-                    cancellationToken,
-                    completionObserver);
-                if (Interlocked.CompareExchange(ref _slots[index], call, null) is null)
+                for (var attempt = 0; attempt < _slots.Length; attempt++)
                 {
-                    published = true;
-                    OnRegistered(call);
-                    CompleteRegistrationIfDisposed(call);
-                    return true;
+                    id = NextRequestId();
+                    var index = (int)(id & _indexMask);
+                    if (Volatile.Read(ref _slots[index]) is not null)
+                        continue;
+
+                    var call = PendingCall.Rent(
+                        this,
+                        id,
+                        kind,
+                        operation,
+                        dispatcher,
+                        deadline,
+                        cancellationToken,
+                        completionObserver);
+                    if (Interlocked.CompareExchange(ref _slots[index], call, null) is null)
+                    {
+                        published = true;
+                        OnRegistered(call);
+                        CompleteRegistrationIfDisposed(call);
+                        return true;
+                    }
+
+                    call.ReturnUnused();
                 }
 
-                call.ReturnUnused();
+                // A capacity reservation guarantees that some physical slot is free. Concurrent
+                // registrars can consume the request IDs that map to that slot, so retry another
+                // bounded round instead of reporting false resource exhaustion.
+                Thread.Yield();
             }
-
-            id = 0;
-            return false;
         }
         finally
         {
