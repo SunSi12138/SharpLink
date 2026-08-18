@@ -6,7 +6,7 @@ namespace SharpLink.UnitTests.Runtime;
 public class WakeupSignalTests
 {
     [Test]
-    public void ClaimedArmMustNotLatchAStaleSignalForTheNextWait()
+    public async Task ClaimedArmMustNotLatchAStaleSignalForTheNextWait()
     {
         var signal = new WakeupSignal();
 
@@ -14,6 +14,7 @@ public class WakeupSignalTests
         Ensure(!first.IsCompleted, "an armed wait without a signal must stay pending");
         signal.Signal();
         Ensure(first.IsCompletedSuccessfully, "a writer must complete the live arm");
+        await first;
 
         // The successful claim above must not leave a latched signal behind:
         // the next arm has to wait for a real signal instead of completing
@@ -22,10 +23,11 @@ public class WakeupSignalTests
         Ensure(!second.IsCompleted, "a claimed arm must not latch a stale signal");
         signal.Signal();
         Ensure(second.IsCompletedSuccessfully, "a fresh signal must complete the next arm");
+        await second;
     }
 
     [Test]
-    public void SignalArrivingBeforeTheArmIsLatchedAndConsumedSynchronously()
+    public async Task SignalArrivingBeforeTheArmIsLatchedAndConsumedSynchronously()
     {
         var signal = new WakeupSignal();
 
@@ -33,29 +35,32 @@ public class WakeupSignalTests
         var wait = signal.WaitAsync();
         Ensure(wait.IsCompletedSuccessfully,
             "a signal that arrived before the arm was published must complete the arm synchronously");
+        await wait;
 
         var next = signal.WaitAsync();
         Ensure(!next.IsCompleted, "the latched signal must not survive into the next arm");
     }
 
     [Test]
-    public void TwoWritersCannotDoubleCompleteOneArm()
+    public async Task TwoWritersCannotDoubleCompleteOneArm()
     {
         var signal = new WakeupSignal();
         var wait = signal.WaitAsync();
 
-        // The per-arm token is the single arbiter: one writer claims the arm, the
+        // The arm token is the single arbiter: one writer claims the arm, the
         // other loses the race. The loser's signal is latched — its frame is already
         // queued, so it is a real wake for the next arm, not a stale residue.
         Parallel.For(0, 2, _ => signal.Signal());
         Ensure(wait.IsCompletedSuccessfully, "the arm must complete exactly once under concurrent writers");
+        await wait;
 
         var next = signal.WaitAsync();
         Ensure(next.IsCompletedSuccessfully, "the losing writer's latch is a real queued wake for the next arm");
+        await next;
     }
 
     [Test]
-    public void LateLatchCrossingArmPublicationStillCompletesTheArm()
+    public async Task LateLatchCrossingArmPublicationStillCompletesTheArm()
     {
         // The exact lost-wakeup interleaving from the review: the writer observes the idle
         // state and pauses; WaitAsync publishes the arm and consumes the (still empty)
@@ -82,6 +87,7 @@ public class WakeupSignalTests
 
         Ensure(wait.IsCompletedSuccessfully,
             "a latch landing after arm publication must still complete the pending arm");
+        await wait;
 
         // The late-latch claim returned the state to idle: no residue for the next arm.
         var next = signal.WaitAsync();
