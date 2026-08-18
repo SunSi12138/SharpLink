@@ -71,6 +71,7 @@ internal sealed class PendingRequestTable : IDisposable
     private int _deadlineScanRunning;
     private int _activeSlots;
     private int _waiterCount;
+    private int _slotAvailableDisposed;
     private int _disposed;
 
     public PendingRequestTable(
@@ -201,6 +202,10 @@ internal sealed class PendingRequestTable : IDisposable
             Interlocked.Increment(ref _waiterCount);
             try
             {
+                // Close the race where disposal starts after the pre-increment check but before
+                // this waiter begins using the semaphore.
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
                 if (TryRent(
                         responseCodec, kind, deadline, cancellationToken, hasResponsePayload, responseNullable,
                         completionObserver, out id, out operation))
@@ -224,9 +229,17 @@ internal sealed class PendingRequestTable : IDisposable
             }
             finally
             {
-                Interlocked.Decrement(ref _waiterCount);
+                var remainingWaiters = Interlocked.Decrement(ref _waiterCount);
+                if (Volatile.Read(ref _disposed) != 0)
+                {
+                    if (remainingWaiters == 0)
+                        DisposeSlotAvailable();
+                    else
+                        SignalSlotAvailable();
+                }
             }
 
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             if (TryRent(
                     responseCodec, kind, deadline, cancellationToken, hasResponsePayload, responseNullable,
                     completionObserver, out id, out operation))
@@ -382,7 +395,11 @@ internal sealed class PendingRequestTable : IDisposable
             SharpLinkErrorCode.ConnectionClosed,
             "Pending request table is disposed."));
         _deadlineTimer.Dispose();
-        _slotAvailable.Dispose();
+
+        if (Volatile.Read(ref _waiterCount) == 0)
+            DisposeSlotAvailable();
+        else
+            SignalSlotAvailable();
     }
 
     private bool TryRent<T>(
@@ -709,6 +726,14 @@ internal sealed class PendingRequestTable : IDisposable
         if (Volatile.Read(ref _waiterCount) == 0)
             return;
 
+        SignalSlotAvailable();
+    }
+
+    private void SignalSlotAvailable()
+    {
+        if (Volatile.Read(ref _slotAvailableDisposed) != 0)
+            return;
+
         try
         {
             _slotAvailable.Release();
@@ -719,6 +744,14 @@ internal sealed class PendingRequestTable : IDisposable
         catch (ObjectDisposedException) when (Volatile.Read(ref _disposed) != 0)
         {
         }
+    }
+
+    private void DisposeSlotAvailable()
+    {
+        if (Interlocked.Exchange(ref _slotAvailableDisposed, 1) != 0)
+            return;
+
+        _slotAvailable.Dispose();
     }
 
     private long NextRequestId()
