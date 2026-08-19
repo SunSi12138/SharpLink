@@ -68,6 +68,46 @@ internal sealed class StreamFlowController
         _receiveConnectionCredit = connectionWindow;
     }
 
+    /// <summary>
+    /// Tries to reserve send credit without allocating or joining the waiter queue.
+    /// Returns false when the caller must enter the ordered asynchronous admission path.
+    /// </summary>
+    public bool TryAcquireSendCredit(long requestId, ushort streamId, int encodedBytes)
+    {
+        ValidateEncodedBytes(encodedBytes);
+        var key = new StreamKey(requestId, streamId);
+        SendState? state;
+        lock (_gate)
+        {
+            ThrowIfTerminated();
+            if (!_sendStates.TryGetValue(key, out state))
+            {
+                if (_sendStates.Count < _maxConcurrentStreams)
+                {
+                    state = AddSendState(key);
+                }
+                else if (_activeSendStreamCount >= _maxConcurrentStreams)
+                {
+                    throw CreateConcurrentStreamLimitException();
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            if (state.AbortException is { } abortException)
+                throw abortException;
+            if (state.Completed)
+                throw CreateStreamClosedException();
+            if (_waiters.Count != 0 || !CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
+                return false;
+
+            Reserve(state, encodedBytes);
+            return true;
+        }
+    }
+
     public ValueTask AcquireSendCreditAsync(
         long requestId,
         ushort streamId,
