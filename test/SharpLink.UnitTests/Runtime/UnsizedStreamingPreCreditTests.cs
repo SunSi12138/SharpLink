@@ -7,7 +7,7 @@ namespace SharpLink.UnitTests.Runtime;
 public class UnsizedStreamingPreCreditTests
 {
     [Test]
-    public async Task CreditStarvationShouldBoundUnsizedSerializedOwnersBySerializerPermits()
+    public async Task CreditStarvationShouldBoundLongLivedSerializedOwnersAndWaiters()
     {
         const int payloadBytes = 1024;
         const int blockedStreams = 8;
@@ -42,33 +42,50 @@ public class UnsizedStreamingPreCreditTests
                 requestId: index + 2,
                 streamId: 1,
                 new UnsizedPayload(payloadBytes)).AsTask();
-            Ensure(!blocked[index].IsCompleted,
-                "credit-starved unsized sends should remain blocked before publication");
         }
 
-        var activeSerializerLimit = Math.Min(
-            blockedStreams,
-            session.PreCreditSerializationPermitLimit);
-        Ensure(codec.SerializeCount == 1 + activeSerializerLimit,
-            "credit starvation may materialize only the bounded serializer-permit owners");
-        Ensure(session.PreCreditActiveSerializerCount == activeSerializerLimit,
-            "every materialized blocked writer must retain one serializer permit");
+        // Unknown-size codecs must serialize once to discover actual bytes. Once credit is known to
+        // be unavailable, however, only one oversized byte-budget owner and one bounded budget
+        // waiter may remain live with this 1-byte connection window.
+        Ensure(codec.SerializeCount == 1 + blockedStreams,
+            "each unsized item should serialize exactly once before actual-byte admission");
         Ensure(session.PreCreditSerializedByteLimit == 1,
-            "the actual-byte budget should still derive from the negotiated connection window");
+            "the actual-byte budget should derive from the negotiated connection window");
         Ensure(session.PreCreditSerializedBytes == payloadBytes,
             "only one oversized item may own the one-byte actual serialized-byte budget");
-        Ensure(session.PreCreditSerializedWaiterCount == blockedStreams - 1,
-            "all blocked producers except the byte-budget owner should be in a bounded admission queue");
+        Ensure(session.PreCreditSerializedWaiterCount == 1,
+            "a sub-frame connection window should retain at most one serialized budget waiter");
+        Ensure(session.PreCreditSerializationPermitLimit == 0 && session.PreCreditActiveSerializerCount == 0,
+            "the final design must not use a global pre-serialization permit gate");
+
+        var pendingCount = 0;
+        var rejectedCount = 0;
+        for (var index = 0; index < blocked.Length; index++)
+        {
+            if (!blocked[index].IsCompleted)
+            {
+                pendingCount++;
+                continue;
+            }
+
+            await ExpectResourceExhausted(blocked[index]);
+            rejectedCount++;
+        }
+        Ensure(pendingCount == 2,
+            "only the byte owner and one bounded serialized waiter should remain pending");
+        Ensure(rejectedCount == blockedStreams - pendingCount,
+            "excess serialized producers should fail instead of growing the retained-writer queue");
 
         var terminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "bounded cleanup");
         session.NotifyDisconnected(terminal);
         for (var index = 0; index < blocked.Length; index++)
-            await ExpectSameException(blocked[index], terminal);
+        {
+            if (!blocked[index].IsCompletedSuccessfully && blocked[index].Exception is null)
+                await ExpectSameException(blocked[index], terminal);
+        }
 
-        Ensure(session.PreCreditSerializedBytes == 0,
-            "terminal cleanup must release every pre-credit serialized byte reservation");
-        Ensure(session.PreCreditActiveSerializerCount == 0 && session.PreCreditSerializedWaiterCount == 0,
-            "terminal cleanup must release every serializer permit and admission waiter");
+        Ensure(session.PreCreditSerializedBytes == 0 && session.PreCreditSerializedWaiterCount == 0,
+            "terminal cleanup must release every pre-credit byte owner and waiter");
     }
 
     [Test]
@@ -109,11 +126,24 @@ public class UnsizedStreamingPreCreditTests
         Ensure(session.PreCreditSerializedByteLimit == 0,
             "exact-size streaming must not instantiate the unsized pre-credit byte budget");
         Ensure(session.PreCreditSerializationPermitLimit == 0,
-            "exact-size streaming must not instantiate the unsized serializer-permit gate");
+            "exact-size streaming must not instantiate a pre-serialization gate");
 
         var terminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "sized cleanup");
         session.NotifyDisconnected(terminal);
         await ExpectSameException(blocked, terminal);
+    }
+
+    private static async Task ExpectResourceExhausted(Task task)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ResourceExhausted)
+        {
+            return;
+        }
+        throw new InvalidOperationException("The excess pre-credit send did not fail with ResourceExhausted.");
     }
 
     private static async Task ExpectSameException(Task task, Exception expected)
