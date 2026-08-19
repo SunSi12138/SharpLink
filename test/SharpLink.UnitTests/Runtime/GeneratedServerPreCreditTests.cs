@@ -45,19 +45,27 @@ public class GeneratedServerPreCreditTests
             Ensure(!pumps[index].IsCompleted, "credit-starved generated pumps should remain blocked");
         }
 
-        Ensure(codec.SerializeCount == 1,
-            "only one generated-server item may serialize while the one-byte budget is oversize-borrowed");
+        var activeSerializerLimit = Math.Min(
+            pumpCount,
+            session.PreCreditSerializationPermitLimit);
+        Ensure(codec.SerializeCount == activeSerializerLimit,
+            "generated-server serialization must remain bounded by the shared serializer permits");
+        Ensure(session.PreCreditActiveSerializerCount == activeSerializerLimit,
+            "every materialized generated item must retain one shared serializer permit");
         Ensure(session.PreCreditSerializedBytes == payloadBytes,
-            "the generated server should own exactly one oversized serialized item");
+            "the generated server should own exactly one oversized actual-byte reservation");
         Ensure(session.PreCreditSerializedWaiterCount == pumpCount - 1,
-            "all remaining generated pumps should wait before serialization");
+            "all remaining generated pumps should wait in the bounded byte/permit admission queues");
 
         var terminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "generated cleanup");
         session.NotifyDisconnected(terminal);
         for (var index = 0; index < pumps.Length; index++)
             await ExpectSameException(pumps[index], terminal);
 
-        Ensure(session.PreCreditSerializedBytes == 0 && session.PreCreditSerializedWaiterCount == 0,
+        Ensure(
+            session.PreCreditSerializedBytes == 0 &&
+            session.PreCreditActiveSerializerCount == 0 &&
+            session.PreCreditSerializedWaiterCount == 0,
             "generated-server terminal cleanup must release all pre-credit ownership");
     }
 
