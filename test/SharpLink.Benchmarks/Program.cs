@@ -123,6 +123,12 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--pre-credit-concurrent-fast-evidence", StringComparison.Ordinal))
+        {
+            await PreCreditConcurrentFastConsumerEvidenceRunner.RunAsync();
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--latency-recorder-evidence", StringComparison.Ordinal))
         {
             LatencyRecorderEvidenceRunner.Run(args[1..]);
