@@ -77,9 +77,6 @@ internal sealed partial class RpcSession
         => Volatile.Read(ref _preCreditSerializedBudget)?
             .CompleteStream(requestId, streamId, exception);
 
-    internal void AbortPreCreditSendStreams(long requestId, Exception exception)
-        => Volatile.Read(ref _preCreditSerializedBudget)?.AbortRequest(requestId, exception);
-
     private ValueTask SerializeUnsizedStreamChunk<T>(
         long requestId,
         ushort streamId,
