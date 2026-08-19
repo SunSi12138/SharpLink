@@ -14,6 +14,7 @@ public class UnsizedStreamingPreCreditTests
         const int blockedStreams = 8;
         var codec = new UnsizedPayloadCodec();
         using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options => options.FlowControl.MaxPreCreditSerializedBytes = 1)
             .AddCodec(codec)
             .Build();
         var input = new Pipe();
@@ -46,16 +47,16 @@ public class UnsizedStreamingPreCreditTests
         }
 
         // Unknown-size codecs must serialize once to discover actual bytes. Once credit is known to
-        // be unavailable, however, only one oversized byte-budget owner and one bounded budget
-        // waiter may remain live with this 1-byte connection window.
+        // be unavailable, however, this deliberately tiny local budget permits only one oversized
+        // owner plus one bounded serialized waiter.
         Ensure(codec.SerializeCount == 1 + blockedStreams,
             "each unsized item should serialize exactly once before actual-byte admission");
         Ensure(session.PreCreditSerializedByteLimit == 1,
-            "the actual-byte budget should derive from the negotiated connection window");
+            "the explicit local pre-credit budget should be used exactly");
         Ensure(session.PreCreditSerializedBytes == payloadBytes,
             "only one oversized item may own the one-byte actual serialized-byte budget");
         Ensure(session.PreCreditSerializedWaiterCount == 1,
-            "a sub-frame connection window should retain at most one serialized budget waiter");
+            "a sub-frame local budget should retain at most one serialized budget waiter");
         Ensure(session.PreCreditSerializationPermitLimit == 0 && session.PreCreditActiveSerializerCount == 0,
             "the final design must not use a global pre-serialization permit gate");
 
@@ -92,6 +93,7 @@ public class UnsizedStreamingPreCreditTests
         const int payloadBytes = 1024;
         var codec = new SizedPayloadCodec();
         using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options => options.FlowControl.MaxPreCreditSerializedBytes = 1)
             .AddCodec(codec)
             .Build();
         var input = new Pipe();
