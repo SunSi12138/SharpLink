@@ -166,10 +166,13 @@ internal static class PreCreditStarvationEvidenceRunner
         var reservedBytes = ReadInternalNumber(session, "PreCreditSerializedBytes");
         var byteLimit = ReadInternalNumber(session, "PreCreditSerializedByteLimit");
         var waiterCount = ReadInternalNumber(session, "PreCreditSerializedWaiterCount");
+        var activeSerializers = ReadInternalNumber(session, "PreCreditActiveSerializerCount");
+        var serializerPermitLimit = ReadInternalNumber(session, "PreCreditSerializationPermitLimit");
         Console.WriteLine(
             $"[PreCreditStarvation] payloadBytes={payloadBytes} streams={streams} " +
             $"serializeCount={codec.SerializeCount} reservedBytes={reservedBytes} " +
-            $"byteLimit={byteLimit} waiterCount={waiterCount}");
+            $"byteLimit={byteLimit} waiterCount={waiterCount} " +
+            $"activeSerializers={activeSerializers} serializerPermitLimit={serializerPermitLimit}");
 
         var terminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "starvation evidence cleanup");
         session.NotifyDisconnected(terminal);
