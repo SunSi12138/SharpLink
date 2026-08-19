@@ -26,7 +26,6 @@ public class GeneratedServerPreCreditTests
             streamReceiveWindowBytes: 1,
             connectionReceiveWindowBytes: 1);
 
-        // Exhaust the one negotiated send-credit byte without using the test codec.
         await session.AcquireStreamSendCreditAsync(900, 1, 1, CancellationToken.None);
         var codec = new CountingUnsizedCodec();
         var bridge = new RpcSessionGeneratedServerBridge(session);
@@ -42,31 +41,55 @@ public class GeneratedServerPreCreditTests
                 contractId: 100,
                 methodId: 200,
                 CancellationToken.None).AsTask();
-            Ensure(!pumps[index].IsCompleted, "credit-starved generated pumps should remain blocked");
         }
 
-        var activeSerializerLimit = Math.Min(
-            pumpCount,
-            session.PreCreditSerializationPermitLimit);
-        Ensure(codec.SerializeCount == activeSerializerLimit,
-            "generated-server serialization must remain bounded by the shared serializer permits");
-        Ensure(session.PreCreditActiveSerializerCount == activeSerializerLimit,
-            "every materialized generated item must retain one shared serializer permit");
+        Ensure(codec.SerializeCount == pumpCount,
+            "generated unsized items should serialize exactly once before actual-byte admission");
         Ensure(session.PreCreditSerializedBytes == payloadBytes,
             "the generated server should own exactly one oversized actual-byte reservation");
-        Ensure(session.PreCreditSerializedWaiterCount == pumpCount - 1,
-            "all remaining generated pumps should wait in the bounded byte/permit admission queues");
+        Ensure(session.PreCreditSerializedWaiterCount == 1,
+            "a one-byte budget should retain only one additional serialized generated waiter");
+        Ensure(session.PreCreditSerializationPermitLimit == 0,
+            "generated streaming must not use a global serializer gate");
+
+        var pending = new List<Task>();
+        var rejected = 0;
+        for (var index = 0; index < pumps.Length; index++)
+        {
+            if (!pumps[index].IsCompleted)
+            {
+                pending.Add(pumps[index]);
+                continue;
+            }
+            await ExpectResourceExhausted(pumps[index]);
+            rejected++;
+        }
+        Ensure(pending.Count == 2, "only the byte owner and one serialized waiter should remain pending");
+        Ensure(rejected == pumpCount - pending.Count,
+            "excess generated pumps should fail instead of retaining unbounded writers");
 
         var terminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "generated cleanup");
         session.NotifyDisconnected(terminal);
-        for (var index = 0; index < pumps.Length; index++)
-            await ExpectSameException(pumps[index], terminal);
+        for (var index = 0; index < pending.Count; index++)
+            await ExpectSameException(pending[index], terminal);
 
         Ensure(
             session.PreCreditSerializedBytes == 0 &&
-            session.PreCreditActiveSerializerCount == 0 &&
             session.PreCreditSerializedWaiterCount == 0,
             "generated-server terminal cleanup must release all pre-credit ownership");
+    }
+
+    private static async Task ExpectResourceExhausted(Task task)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ResourceExhausted)
+        {
+            return;
+        }
+        throw new InvalidOperationException("Generated excess pump did not fail with ResourceExhausted.");
     }
 
     private static async Task ExpectSameException(Task task, Exception expected)
