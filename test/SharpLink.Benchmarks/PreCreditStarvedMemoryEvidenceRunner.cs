@@ -68,11 +68,10 @@ internal static class PreCreditStarvedMemoryEvidenceRunner
         await WaitForSerializationAsync(codec, sends).ConfigureAwait(false);
         var postLaunch = CaptureMemory();
 
-        // Allow returned backing arrays / idle writers to settle into their actual pool-retention
-        // state while the protocol remains starved. This is the observation the logical owner
-        // counters alone cannot provide.
+        // Observe the natural retained state while the protocol remains starved. Do not force a
+        // Gen2 collection here: ArrayPool.Shared may trim on Gen2, which would understate the
+        // backing memory retained after excess producers have returned their writers.
         await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
-        ForceFullCollection();
         var stable = CaptureMemory();
         var sampledPeakWorkingSetBytes = sampler.Stop();
 
