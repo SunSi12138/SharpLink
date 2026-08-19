@@ -115,6 +115,8 @@ internal sealed class PendingRequestTable : IDisposable
 
     internal int ActiveCount => Volatile.Read(ref _activeSlots);
 
+    internal Action? CapacityAcquireRejectedForTest { get; set; }
+
     public int Count
     {
         get
@@ -572,7 +574,15 @@ internal sealed class PendingRequestTable : IDisposable
         if (active <= _slots.Length)
             return true;
 
+        CapacityAcquireRejectedForTest?.Invoke();
+
         var remaining = Interlocked.Decrement(ref _activeSlots);
+        if (remaining < 0)
+            throw new InvalidOperationException("Pending request capacity accounting underflowed.");
+
+        if (remaining < _slots.Length && Volatile.Read(ref _waiterCount) != 0)
+            SignalSlotAvailable();
+
         if (remaining == 0)
             _owner.OnPendingCallCapacityIdle();
         return false;
