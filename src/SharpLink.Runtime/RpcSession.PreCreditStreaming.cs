@@ -217,18 +217,16 @@ internal sealed partial class RpcSession
             if (budget is not null)
                 return budget;
 
-            var negotiated = NegotiatedOptions;
-            var maxBytes = Math.Max(
-                1,
-                negotiated?.ConnectionReceiveWindowBytes ??
-                RuntimeContext.FlowControl.ConnectionReceiveWindowBytes);
+            // This is a local process-memory policy. It must not depend on either the configured
+            // or negotiated connection receive window, which controls peer-visible wire credit.
+            var maxBytes = RuntimeContext.FlowControl.MaxPreCreditSerializedBytes;
 
             // A queued budget waiter already owns a serialized writer, so waiter count is part of
-            // the hard memory envelope. Keep worst-case queued backing bounded to at most roughly
-            // one additional connection-window worth of max-size frames (or one frame when the
-            // negotiated window is smaller than a legal frame).
+            // the memory envelope. Bound queued backing to roughly one additional configured
+            // budget worth of max-size frames (or one frame when the local budget is smaller than
+            // a legal frame). Oversized sole-owner semantics remain enforced by the byte budget.
             var maxFrameBytes = Math.Max(1, NegotiatedMaxFramePayloadBytes);
-            var derivedWaiters = Math.Max(1L, maxBytes / maxFrameBytes);
+            var derivedWaiters = Math.Max(1L, (long)maxBytes / maxFrameBytes);
             var maxWaiters = checked((int)Math.Min(
                 RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection,
                 derivedWaiters));
