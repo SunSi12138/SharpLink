@@ -4,6 +4,7 @@ using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
 
+[Timeout(10_000)]
 public class PreCreditStreamingLifecycleTests
 {
     [Test]
