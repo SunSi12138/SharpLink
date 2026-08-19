@@ -42,8 +42,6 @@ internal static class PreCreditStarvedMemoryEvidenceRunner
         if (!session.TryCompleteHandshake(negotiated))
             throw new InvalidOperationException("Starved-memory evidence handshake failed.");
 
-        // Consume the only byte of protocol credit before measuring so every measured item takes
-        // the unsized zero-WindowUpdate starvation path.
         await session.AcquireStreamSendCreditAsync(
             900_000,
             1,
