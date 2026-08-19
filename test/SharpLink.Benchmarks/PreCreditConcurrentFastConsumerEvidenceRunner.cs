@@ -17,10 +17,104 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
     private const int MeasuredRounds = 5;
     private static readonly int[] ProducerCounts = [1, 8, 32, 128];
 
-    internal static async Task RunAsync()
+    internal static async Task RunAsync(string[]? args = null)
     {
+        if (args is { Length: 2 })
+        {
+            var caseName = args[0];
+            if (!int.TryParse(args[1], out var producers) ||
+                Array.IndexOf(ProducerCounts, producers) < 0)
+            {
+                throw new ArgumentException(
+                    "Single-case concurrent evidence requires producers to be one of 1, 8, 32, or 128.");
+            }
+
+            await RunSingleCaseAsync(caseName, producers).ConfigureAwait(false);
+            return;
+        }
+        if (args is { Length: > 0 })
+        {
+            throw new ArgumentException(
+                "Concurrent evidence accepts either no arguments or '<unsized|exact> <producers>'.");
+        }
+
         foreach (var producers in ProducerCounts)
             await RunPairedCaseAsync(producers).ConfigureAwait(false);
+    }
+
+    private static async Task RunSingleCaseAsync(string caseName, int producers)
+    {
+        var warmupOperationsPerProducer = Math.Max(
+            MinimumWarmupOperationsPerProducer,
+            TargetWarmupOperationsPerRound / producers);
+        var measuredOperationsPerProducer = Math.Max(
+            MinimumMeasuredOperationsPerProducer,
+            TargetMeasuredOperationsPerRound / producers);
+
+        ThreadPool.GetMinThreads(out var originalWorkerThreads, out var originalCompletionPortThreads);
+        var raisedMinimum = originalWorkerThreads < producers &&
+            ThreadPool.SetMinThreads(producers, originalCompletionPortThreads);
+        try
+        {
+            if (string.Equals(caseName, "unsized", StringComparison.Ordinal))
+            {
+                var codec = new UnsizedPayloadCodec();
+                using var context = CreateContext(codec);
+                using var transport = new BenchmarkTransport($"pre-credit-fast-single-unsized-{producers}");
+                await using var session = CreateReadySession(transport, context);
+                var item = new UnsizedPayload(PayloadBytes);
+                await WarmupAsync(session, producers, warmupOperationsPerProducer, item)
+                    .ConfigureAwait(false);
+                await WarmupAsync(session, producers, warmupOperationsPerProducer, item)
+                    .ConfigureAwait(false);
+                var metrics = await MeasureRoundAsync(
+                    session,
+                    producers,
+                    measuredOperationsPerProducer,
+                    item).ConfigureAwait(false);
+                PrintSingleCaseSummary(
+                    "unsized",
+                    producers,
+                    measuredOperationsPerProducer,
+                    metrics,
+                    codec.SerializeCount,
+                    session);
+                return;
+            }
+
+            if (string.Equals(caseName, "exact", StringComparison.Ordinal))
+            {
+                var codec = new ConcurrentSizedPayloadCodec();
+                using var context = CreateContext(codec);
+                using var transport = new BenchmarkTransport($"pre-credit-fast-single-exact-{producers}");
+                await using var session = CreateReadySession(transport, context);
+                var item = new ConcurrentSizedPayload(PayloadBytes);
+                await WarmupAsync(session, producers, warmupOperationsPerProducer, item)
+                    .ConfigureAwait(false);
+                await WarmupAsync(session, producers, warmupOperationsPerProducer, item)
+                    .ConfigureAwait(false);
+                var metrics = await MeasureRoundAsync(
+                    session,
+                    producers,
+                    measuredOperationsPerProducer,
+                    item).ConfigureAwait(false);
+                PrintSingleCaseSummary(
+                    "exact",
+                    producers,
+                    measuredOperationsPerProducer,
+                    metrics,
+                    serializeCount: null,
+                    session);
+                return;
+            }
+
+            throw new ArgumentException("Concurrent evidence case must be 'unsized' or 'exact'.");
+        }
+        finally
+        {
+            if (raisedMinimum)
+                ThreadPool.SetMinThreads(originalWorkerThreads, originalCompletionPortThreads);
+        }
     }
 
     private static async Task RunPairedCaseAsync(int producers)
@@ -281,6 +375,26 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
             options.FlowControl.ConnectionReceiveWindowBytes = 16 * 1024 * 1024;
         });
         return builder.Build(includeGeneratedAssemblyCatalog: false);
+    }
+
+    private static void PrintSingleCaseSummary(
+        string caseName,
+        int producers,
+        int operationsPerProducer,
+        RoundMetrics metrics,
+        int? serializeCount,
+        RpcSession session)
+    {
+        Console.WriteLine(
+            $"[PreCreditConcurrentFastSingle] case={caseName} producers={producers} " +
+            $"payloadBytes={PayloadBytes} operations={producers * operationsPerProducer} " +
+            $"throughputOpsPerSec={metrics.ThroughputOpsPerSec:F0} " +
+            $"p50Ns={metrics.P50Ns:F1} p95Ns={metrics.P95Ns:F1} " +
+            $"p99Ns={metrics.P99Ns:F1} maxNs={metrics.MaxNs:F1} " +
+            $"serializeCount={(serializeCount is null ? "n/a" : serializeCount.Value.ToString())} " +
+            $"serializerPermitLimit={ReadInternalNumber(session, "PreCreditSerializationPermitLimit")} " +
+            $"reservedBytes={ReadInternalNumber(session, "PreCreditSerializedBytes")} " +
+            $"waiterCount={ReadInternalNumber(session, "PreCreditSerializedWaiterCount")}");
     }
 
     private static void PrintCaseRound(
