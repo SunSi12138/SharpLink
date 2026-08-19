@@ -6,47 +6,37 @@ internal sealed partial class RpcSession
     private PreCreditSerializedBudget? _preCreditSerializedBudget;
 
     /// <summary>
-    /// Instance member intentionally owns stream-item dispatch so the exact-size path remains the
-    /// first branch while the universal unsized fallback can use session-scoped pre-credit admission.
+    /// Instance member owns stream-item dispatch so the exact-size path remains the first branch
+    /// while the universal unsized fallback can use session-scoped pre-credit admission.
     /// </summary>
-    internal ValueTask SendStreamChunkAsync<T>(
+    internal async ValueTask SendStreamChunkAsync<T>(
         long requestId,
         ushort streamId,
         T item,
         CancellationToken cancellationToken = default)
     {
-        try
+        var codec = RuntimeContext.Codecs.GetCodec<T>();
+        if (codec is IRpcSizedCodec<T> sizedCodec &&
+            sizedCodec.CanExactSize &&
+            sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
         {
-            var codec = RuntimeContext.Codecs.GetCodec<T>();
-            if (codec is IRpcSizedCodec<T> sizedCodec &&
-                sizedCodec.CanExactSize &&
-                sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
-            {
-                return SendStreamChunkKnownSizeAsync(
-                    requestId,
-                    streamId,
-                    item,
-                    sizedCodec,
-                    knownEncodedBytes,
-                    sizedSnapshot,
-                    cancellationToken);
-            }
-
-            return SendUnsizedStreamChunkAsync(
+            await SendStreamChunkKnownSizeAsync(
                 requestId,
                 streamId,
                 item,
-                codec,
-                cancellationToken);
+                sizedCodec,
+                knownEncodedBytes,
+                sizedSnapshot,
+                cancellationToken).ConfigureAwait(false);
+            return;
         }
-        catch (Exception exception)
-        {
-            // The previous extension implementation was async ValueTask, so synchronous codec,
-            // sizing, compression, and SendPacket failures were surfaced through the returned
-            // ValueTask rather than escaping the call site. Preserve that contract without adding
-            // an async state machine to the successful fast path.
-            return ValueTask.FromException(exception);
-        }
+
+        await SendUnsizedStreamChunkAsync(
+            requestId,
+            streamId,
+            item,
+            codec,
+            cancellationToken).ConfigureAwait(false);
     }
 
     internal ValueTask SendUnsizedStreamChunkAsync<T>(
