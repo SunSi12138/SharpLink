@@ -20,6 +20,7 @@ public enum SharpLinkPerformanceProfile
 public sealed class SharpLinkFlowControlOptions
 {
     private const int DefaultMaxSendQueueBytes = 8 * 1024 * 1024;
+    private const int DefaultMaxPreCreditSerializedBytes = 4 * 1024 * 1024;
     private int _maxSendQueueBytes = DefaultMaxSendQueueBytes;
     private bool _maxSendQueueBytesConfigured;
 
@@ -43,6 +44,19 @@ public sealed class SharpLinkFlowControlOptions
         }
     }
 
+    /// <summary>
+    /// Gets or sets the local byte budget for fully serialized unsized streaming items that are
+    /// waiting for flow-control credit. The default is 4 MiB.
+    /// </summary>
+    /// <remarks>
+    /// This is a local process-memory admission limit. It is independent from
+    /// <see cref="ConnectionReceiveWindowBytes"/>, is not sent during protocol negotiation, and
+    /// does not change peer-visible flow-control credit. A legal item larger than this value may
+    /// temporarily borrow the budget as the sole owner so a small budget does not make a legal
+    /// frame permanently unsendable.
+    /// </remarks>
+    public int MaxPreCreditSerializedBytes { get; set; } = DefaultMaxPreCreditSerializedBytes;
+
     /// <summary>Gets or sets the initial receive window for one stream.</summary>
     public int StreamReceiveWindowBytes { get; set; } = 1024 * 1024;
 
@@ -63,6 +77,7 @@ public sealed class SharpLinkFlowControlOptions
     public void Validate()
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxSendQueueBytes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxPreCreditSerializedBytes);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(StreamReceiveWindowBytes);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ConnectionReceiveWindowBytes);
         if (MaxConcurrentCallsPerConnection is < 1 or > MaximumConcurrentCallsPerConnection)
@@ -86,6 +101,7 @@ public sealed class SharpLinkFlowControlOptions
         Validate();
         var clone = new SharpLinkFlowControlOptions
         {
+            MaxPreCreditSerializedBytes = MaxPreCreditSerializedBytes,
             StreamReceiveWindowBytes = StreamReceiveWindowBytes,
             ConnectionReceiveWindowBytes = ConnectionReceiveWindowBytes,
             MaxConcurrentCallsPerConnection = MaxConcurrentCallsPerConnection,
@@ -102,6 +118,7 @@ public sealed class SharpLinkFlowControlOptions
     {
         destination._maxSendQueueBytes = _maxSendQueueBytes;
         destination._maxSendQueueBytesConfigured = _maxSendQueueBytesConfigured;
+        destination.MaxPreCreditSerializedBytes = MaxPreCreditSerializedBytes;
         destination.StreamReceiveWindowBytes = StreamReceiveWindowBytes;
         destination.ConnectionReceiveWindowBytes = ConnectionReceiveWindowBytes;
         destination.MaxConcurrentCallsPerConnection = MaxConcurrentCallsPerConnection;
