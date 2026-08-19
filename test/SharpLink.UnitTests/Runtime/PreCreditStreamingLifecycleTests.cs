@@ -112,7 +112,10 @@ public class PreCreditStreamingLifecycleTests
 
         var streamTerminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "stream 12 closed");
         session.SendStreamErrorAsync(12, 1, streamTerminal);
-        await ExpectSameException(matchingBudgetWaiter, streamTerminal);
+        await ExpectSameException(
+            matchingBudgetWaiter,
+            streamTerminal,
+            "matching byte-budget waiter");
         Ensure(!otherBudgetWaiter.IsCompleted,
             "terminating one stream must not reject a different pre-credit waiter");
         Ensure(session.PreCreditSerializedWaiterCount == 1,
@@ -124,7 +127,10 @@ public class PreCreditStreamingLifecycleTests
 
         var ownerTerminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "stream 11 closed");
         session.SendStreamErrorAsync(11, 1, ownerTerminal);
-        await ExpectSameException(serializedOwner, ownerTerminal);
+        await ExpectSameException(
+            serializedOwner,
+            ownerTerminal,
+            "current actual-byte owner");
 
         // Releasing the actual-byte owner admits the already-materialized surviving stream,
         // which keeps its serializer permit while it waits for flow credit.
@@ -138,7 +144,10 @@ public class PreCreditStreamingLifecycleTests
 
         var otherTerminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "stream 13 closed");
         session.SendStreamErrorAsync(13, 1, otherTerminal);
-        await ExpectSameException(otherBudgetWaiter, otherTerminal);
+        await ExpectSameException(
+            otherBudgetWaiter,
+            otherTerminal,
+            "surviving flow-credit waiter");
         Ensure(
             session.PreCreditSerializedBytes == 0 &&
             session.PreCreditActiveSerializerCount == 0 &&
@@ -161,7 +170,7 @@ public class PreCreditStreamingLifecycleTests
     {
         try
         {
-            await task;
+            await task.WaitAsync(TimeSpan.FromSeconds(2));
         }
         catch (OperationCanceledException)
         {
@@ -170,17 +179,23 @@ public class PreCreditStreamingLifecycleTests
         throw new InvalidOperationException("The send did not observe cancellation.");
     }
 
-    private static async Task ExpectSameException(Task task, Exception expected)
+    private static async Task ExpectSameException(Task task, Exception expected, string scenario)
     {
         try
         {
-            await task;
+            await task.WaitAsync(TimeSpan.FromSeconds(2));
         }
         catch (Exception exception) when (ReferenceEquals(exception, expected))
         {
             return;
         }
-        throw new InvalidOperationException("The send did not observe the expected stream terminal exception.");
+        catch (TimeoutException exception)
+        {
+            throw new InvalidOperationException(
+                $"The {scenario} did not complete after its terminal transition.",
+                exception);
+        }
+        throw new InvalidOperationException($"The {scenario} did not observe the expected stream terminal exception.");
     }
 
     private static void Ensure(bool condition, string scenario)
