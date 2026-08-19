@@ -9,8 +9,9 @@ namespace SharpLink.Benchmarks;
 internal static class PreCreditConcurrentFastConsumerEvidenceRunner
 {
     private const int PayloadBytes = 1024;
-    private const int WarmupOperationsPerProducer = 2_000;
-    private const int MeasuredOperationsPerProducer = 10_000;
+    private const int WarmupOperationsPerProducer = 1_000;
+    private const int MeasuredOperationsPerProducer = 5_000;
+    private const int MeasuredRounds = 5;
     private static readonly int[] ProducerCounts = [1, 8, 32, 128];
 
     internal static async Task RunAsync()
@@ -48,25 +49,43 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
                 WarmupOperationsPerProducer,
                 samples: null).ConfigureAwait(false);
 
-            var samples = new long[checked(producers * MeasuredOperationsPerProducer)];
-            var elapsed = Stopwatch.StartNew();
-            await RunPhaseAsync(
-                session,
-                producers,
-                MeasuredOperationsPerProducer,
-                samples).ConfigureAwait(false);
-            elapsed.Stop();
+            var throughputs = new double[MeasuredRounds];
+            var p50 = new double[MeasuredRounds];
+            var p95 = new double[MeasuredRounds];
+            var p99 = new double[MeasuredRounds];
+            var maxima = new double[MeasuredRounds];
+            for (var round = 0; round < MeasuredRounds; round++)
+            {
+                var samples = new long[checked(producers * MeasuredOperationsPerProducer)];
+                var elapsed = Stopwatch.StartNew();
+                await RunPhaseAsync(
+                    session,
+                    producers,
+                    MeasuredOperationsPerProducer,
+                    samples).ConfigureAwait(false);
+                elapsed.Stop();
 
-            Array.Sort(samples);
-            var throughput = samples.Length / elapsed.Elapsed.TotalSeconds;
+                Array.Sort(samples);
+                throughputs[round] = samples.Length / elapsed.Elapsed.TotalSeconds;
+                p50[round] = ToNanoseconds(Percentile(samples, 0.50));
+                p95[round] = ToNanoseconds(Percentile(samples, 0.95));
+                p99[round] = ToNanoseconds(Percentile(samples, 0.99));
+                maxima[round] = ToNanoseconds(samples[^1]);
+                Console.WriteLine(
+                    $"[PreCreditConcurrentFastRound] producers={producers} round={round + 1} " +
+                    $"throughputOpsPerSec={throughputs[round]:F0} " +
+                    $"p50Ns={p50[round]:F1} p95Ns={p95[round]:F1} " +
+                    $"p99Ns={p99[round]:F1} maxNs={maxima[round]:F1}");
+            }
+
             Console.WriteLine(
                 $"[PreCreditConcurrentFast] producers={producers} payloadBytes={PayloadBytes} " +
-                $"operations={samples.Length} throughputOpsPerSec={throughput:F0} " +
-                $"p50Ns={ToNanoseconds(Percentile(samples, 0.50)):F1} " +
-                $"p95Ns={ToNanoseconds(Percentile(samples, 0.95)):F1} " +
-                $"p99Ns={ToNanoseconds(Percentile(samples, 0.99)):F1} " +
-                $"maxNs={ToNanoseconds(samples[^1]):F1} " +
+                $"rounds={MeasuredRounds} operationsPerRound={producers * MeasuredOperationsPerProducer} " +
+                $"throughputOpsPerSec={Median(throughputs):F0} " +
+                $"p50Ns={Median(p50):F1} p95Ns={Median(p95):F1} " +
+                $"p99Ns={Median(p99):F1} maxNs={Median(maxima):F1} " +
                 $"serializeCount={codec.SerializeCount} " +
+                $"serializerPermitLimit={ReadInternalNumber(session, "PreCreditSerializationPermitLimit")} " +
                 $"reservedBytes={ReadInternalNumber(session, "PreCreditSerializedBytes")} " +
                 $"waiterCount={ReadInternalNumber(session, "PreCreditSerializedWaiterCount")}");
         }
@@ -136,6 +155,13 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
     {
         var index = (int)Math.Ceiling(sortedSamples.Length * percentile) - 1;
         return sortedSamples[Math.Clamp(index, 0, sortedSamples.Length - 1)];
+    }
+
+    private static double Median(double[] values)
+    {
+        var copy = (double[])values.Clone();
+        Array.Sort(copy);
+        return copy[copy.Length / 2];
     }
 
     private static double ToNanoseconds(long stopwatchTicks)
