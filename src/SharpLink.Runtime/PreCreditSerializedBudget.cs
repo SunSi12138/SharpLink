@@ -9,15 +9,19 @@ internal sealed class PreCreditSerializedBudget
 {
     private readonly Lock _gate = new();
     private readonly long _maxBytes;
+    private readonly int _maxWaiters;
     private long _reservedBytes;
+    private int _waiterCount;
     private Waiter? _head;
     private Waiter? _tail;
     private Exception? _terminal;
 
-    internal PreCreditSerializedBudget(long maxBytes)
+    internal PreCreditSerializedBudget(long maxBytes, int maxWaiters)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBytes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxWaiters);
         _maxBytes = maxBytes;
+        _maxWaiters = maxWaiters;
     }
 
     internal long MaxBytes => _maxBytes;
@@ -31,7 +35,20 @@ internal sealed class PreCreditSerializedBudget
         }
     }
 
-    internal ValueTask AcquireAsync(int bytes, CancellationToken cancellationToken)
+    internal int WaiterCount
+    {
+        get
+        {
+            lock (_gate)
+                return _waiterCount;
+        }
+    }
+
+    internal ValueTask AcquireAsync(
+        long requestId,
+        ushort streamId,
+        int bytes,
+        CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bytes);
         if (cancellationToken.IsCancellationRequested)
@@ -49,7 +66,14 @@ internal sealed class PreCreditSerializedBudget
                 return ValueTask.CompletedTask;
             }
 
-            waiter = new Waiter(bytes);
+            if (_waiterCount >= _maxWaiters)
+            {
+                return ValueTask.FromException(new SharpLinkException(
+                    SharpLinkErrorCode.ResourceExhausted,
+                    $"The session already has {_maxWaiters} pre-credit serialized-memory waiters."));
+            }
+
+            waiter = new Waiter(requestId, streamId, bytes);
             Enqueue(waiter);
         }
 
@@ -103,9 +127,62 @@ internal sealed class PreCreditSerializedBudget
         }
     }
 
+    internal void CompleteStream(
+        long requestId,
+        ushort streamId,
+        Exception? exception = null)
+    {
+        List<Waiter>? rejected = null;
+        lock (_gate)
+        {
+            var current = _head;
+            while (current is not null)
+            {
+                var next = current.Next;
+                if (current.RequestId == requestId && current.StreamId == streamId)
+                {
+                    Remove(current);
+                    current.State = WaiterState.Terminal;
+                    (rejected ??= []).Add(current);
+                }
+                current = next;
+            }
+            DrainWaiters();
+        }
+
+        CompleteRejectedWaiters(
+            rejected,
+            exception ?? new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "The stream is closed."));
+    }
+
+    internal void AbortRequest(long requestId, Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        List<Waiter>? rejected = null;
+        lock (_gate)
+        {
+            var current = _head;
+            while (current is not null)
+            {
+                var next = current.Next;
+                if (current.RequestId == requestId)
+                {
+                    Remove(current);
+                    current.State = WaiterState.Terminal;
+                    (rejected ??= []).Add(current);
+                }
+                current = next;
+            }
+            DrainWaiters();
+        }
+
+        CompleteRejectedWaiters(rejected, exception);
+    }
+
     internal void Complete(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
+        List<Waiter>? rejected = null;
         lock (_gate)
         {
             if (_terminal is not null)
@@ -116,9 +193,11 @@ internal sealed class PreCreditSerializedBudget
             {
                 Remove(waiter);
                 waiter.State = WaiterState.Terminal;
-                waiter.Completion.TrySetException(exception);
+                (rejected ??= []).Add(waiter);
             }
         }
+
+        CompleteRejectedWaiters(rejected, exception);
     }
 
     private bool CanReserve(int bytes)
@@ -165,8 +244,6 @@ internal sealed class PreCreditSerializedBudget
             Remove(waiter);
             _reservedBytes = checked(_reservedBytes + waiter.Bytes);
             waiter.State = WaiterState.Granted;
-            // Continuations are asynchronous, so completing while holding the admission lock cannot
-            // re-enter the budget or serialize another item under this lock.
             waiter.Completion.TrySetResult(true);
         }
     }
@@ -180,6 +257,7 @@ internal sealed class PreCreditSerializedBudget
         else
             _tail.Next = waiter;
         _tail = waiter;
+        _waiterCount++;
     }
 
     private void Remove(Waiter waiter)
@@ -194,10 +272,23 @@ internal sealed class PreCreditSerializedBudget
             waiter.Next.Previous = waiter.Previous;
         waiter.Previous = null;
         waiter.Next = null;
+        _waiterCount--;
+        if (_waiterCount < 0)
+            throw new InvalidOperationException("Pre-credit waiter accounting underflowed.");
     }
 
-    private sealed class Waiter(int bytes)
+    private static void CompleteRejectedWaiters(List<Waiter>? waiters, Exception exception)
     {
+        if (waiters is null)
+            return;
+        for (var index = 0; index < waiters.Count; index++)
+            waiters[index].Completion.TrySetException(exception);
+    }
+
+    private sealed class Waiter(long requestId, ushort streamId, int bytes)
+    {
+        internal long RequestId { get; } = requestId;
+        internal ushort StreamId { get; } = streamId;
         internal int Bytes { get; } = bytes;
         internal TaskCompletionSource<bool> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
