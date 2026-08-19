@@ -15,27 +15,38 @@ internal sealed partial class RpcSession
         T item,
         CancellationToken cancellationToken = default)
     {
-        var codec = RuntimeContext.Codecs.GetCodec<T>();
-        if (codec is IRpcSizedCodec<T> sizedCodec &&
-            sizedCodec.CanExactSize &&
-            sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
+        try
         {
-            return SendStreamChunkKnownSizeAsync(
+            var codec = RuntimeContext.Codecs.GetCodec<T>();
+            if (codec is IRpcSizedCodec<T> sizedCodec &&
+                sizedCodec.CanExactSize &&
+                sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
+            {
+                return SendStreamChunkKnownSizeAsync(
+                    requestId,
+                    streamId,
+                    item,
+                    sizedCodec,
+                    knownEncodedBytes,
+                    sizedSnapshot,
+                    cancellationToken);
+            }
+
+            return SendUnsizedStreamChunkAsync(
                 requestId,
                 streamId,
                 item,
-                sizedCodec,
-                knownEncodedBytes,
-                sizedSnapshot,
+                codec,
                 cancellationToken);
         }
-
-        return SendUnsizedStreamChunkAsync(
-            requestId,
-            streamId,
-            item,
-            codec,
-            cancellationToken);
+        catch (Exception exception)
+        {
+            // The previous extension implementation was async ValueTask, so synchronous codec,
+            // sizing, compression, and SendPacket failures were surfaced through the returned
+            // ValueTask rather than escaping the call site. Preserve that contract without adding
+            // an async state machine to the successful fast path.
+            return ValueTask.FromException(exception);
+        }
     }
 
     internal ValueTask SendUnsizedStreamChunkAsync<T>(
