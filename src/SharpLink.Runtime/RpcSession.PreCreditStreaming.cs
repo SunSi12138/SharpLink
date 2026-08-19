@@ -61,7 +61,11 @@ internal sealed partial class RpcSession
 
         var budget = GetOrCreatePreCreditSerializedBudget();
         var reservedBytes = GetPreCreditSerializationReservationBytes(budget);
-        var pendingReservation = budget.AcquireAsync(reservedBytes, cancellationToken);
+        var pendingReservation = budget.AcquireAsync(
+            requestId,
+            streamId,
+            reservedBytes,
+            cancellationToken);
         if (!pendingReservation.IsCompletedSuccessfully)
         {
             return AwaitPreCreditReservationAndSerializeAsync(
@@ -91,6 +95,19 @@ internal sealed partial class RpcSession
 
     internal long PreCreditSerializedByteLimit
         => Volatile.Read(ref _preCreditSerializedBudget)?.MaxBytes ?? 0;
+
+    internal int PreCreditSerializedWaiterCount
+        => Volatile.Read(ref _preCreditSerializedBudget)?.WaiterCount ?? 0;
+
+    internal void CompletePreCreditSendStream(
+        long requestId,
+        ushort streamId,
+        Exception? exception = null)
+        => Volatile.Read(ref _preCreditSerializedBudget)?
+            .CompleteStream(requestId, streamId, exception);
+
+    internal void AbortPreCreditSendStreams(long requestId, Exception exception)
+        => Volatile.Read(ref _preCreditSerializedBudget)?.AbortRequest(requestId, exception);
 
     private async ValueTask AwaitPreCreditReservationAndSerializeAsync<T>(
         ValueTask pendingReservation,
@@ -127,6 +144,10 @@ internal sealed partial class RpcSession
         var ownsReservation = budget is not null;
         try
         {
+            if (Volatile.Read(ref _terminal) is { } terminal)
+                throw terminal.Exception;
+            cancellationToken.ThrowIfCancellationRequested();
+
             writer = RentFrameWriter();
             using (writer.BeginPacketScope(
                        ProtocolV2FrameType.StreamData,
@@ -252,12 +273,11 @@ internal sealed partial class RpcSession
                 1,
                 negotiated?.ConnectionReceiveWindowBytes ??
                 RuntimeContext.FlowControl.ConnectionReceiveWindowBytes);
-            budget = new PreCreditSerializedBudget(maxBytes);
+            budget = new PreCreditSerializedBudget(
+                maxBytes,
+                RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection);
             Volatile.Write(ref _preCreditSerializedBudget, budget);
 
-            // Session cancellation is the authoritative terminal signal for this internal waiter
-            // set. The callback translates it to the same structured session exception used by
-            // flow-control and SendPump teardown rather than surfacing an unrelated OCE.
             _ = _lifetimeToken.UnsafeRegister(
                 static state =>
                 {
