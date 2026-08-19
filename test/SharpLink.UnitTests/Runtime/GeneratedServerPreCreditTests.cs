@@ -79,6 +79,67 @@ public class GeneratedServerPreCreditTests
             "generated-server terminal cleanup must release all pre-credit ownership");
     }
 
+    [Test]
+    public async Task SharedInvocationCancellationShouldReleaseGeneratedPreCreditOwnerAndWaiter()
+    {
+        const int payloadBytes = 1024;
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "generated-pre-credit-request-cancel",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ServerOptions(),
+            completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(
+            session,
+            ProtocolV2Capabilities.FlowControl,
+            streamReceiveWindowBytes: 1,
+            connectionReceiveWindowBytes: 1);
+
+        await session.AcquireStreamSendCreditAsync(900, 1, 1, CancellationToken.None);
+        var codec = new CountingUnsizedCodec();
+        var bridge = new RpcSessionGeneratedServerBridge(session);
+        using var invocationCancellation = new CancellationTokenSource();
+
+        var owner = bridge.PumpOutboundStreamAsync(
+            requestId: 50,
+            streamId: 1,
+            new SingleItemAsyncEnumerable<Payload>(new Payload(payloadBytes)),
+            codec,
+            payloadNullable: false,
+            contractId: 100,
+            methodId: 200,
+            invocationCancellation.Token).AsTask();
+        var waiter = bridge.PumpOutboundStreamAsync(
+            requestId: 50,
+            streamId: 2,
+            new SingleItemAsyncEnumerable<Payload>(new Payload(payloadBytes)),
+            codec,
+            payloadNullable: false,
+            contractId: 100,
+            methodId: 200,
+            invocationCancellation.Token).AsTask();
+
+        Ensure(codec.SerializeCount == 2,
+            "both generated outbound streams should serialize once before cancellation");
+        Ensure(!owner.IsCompleted && !waiter.IsCompleted,
+            "one generated send should wait for flow credit while the sibling waits for byte admission");
+        Ensure(session.PreCreditSerializedBytes == payloadBytes,
+            "the invocation should have one actual-byte owner before cancellation");
+        Ensure(session.PreCreditSerializedWaiterCount == 1,
+            "the invocation should have one bounded serialized waiter before cancellation");
+
+        invocationCancellation.Cancel();
+        await ExpectCancellation(owner);
+        await ExpectCancellation(waiter);
+
+        Ensure(session.PreCreditSerializedBytes == 0,
+            "invocation token cancellation must release the flow-credit owner's byte reservation");
+        Ensure(session.PreCreditSerializedWaiterCount == 0,
+            "invocation token cancellation must remove the sibling budget waiter");
+    }
+
     private static async Task ExpectResourceExhausted(Task task)
     {
         try
@@ -90,6 +151,19 @@ public class GeneratedServerPreCreditTests
             return;
         }
         throw new InvalidOperationException("Generated excess pump did not fail with ResourceExhausted.");
+    }
+
+    private static async Task ExpectCancellation(Task task)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        throw new InvalidOperationException("Generated server pump did not observe invocation cancellation.");
     }
 
     private static async Task ExpectSameException(Task task, Exception expected)
