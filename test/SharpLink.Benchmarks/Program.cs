@@ -125,7 +125,7 @@ public static class Program
         if (args.Length > 0 && string.Equals(
             args[0], "--pre-credit-concurrent-fast-evidence", StringComparison.Ordinal))
         {
-            await PreCreditConcurrentFastConsumerEvidenceRunner.RunAsync();
+            await PreCreditConcurrentFastConsumerEvidenceRunner.RunAsync(args[1..]);
             return;
         }
         if (args.Length > 0 && string.Equals(
