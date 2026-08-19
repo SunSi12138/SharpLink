@@ -572,7 +572,9 @@ internal sealed class PendingRequestTable : IDisposable
         if (active <= _slots.Length)
             return true;
 
-        Interlocked.Decrement(ref _activeSlots);
+        var remaining = Interlocked.Decrement(ref _activeSlots);
+        if (remaining == 0)
+            _owner.OnPendingCallCapacityIdle();
         return false;
     }
 
