@@ -91,7 +91,7 @@ public class PreCreditStreamingBenchmarks
             context.Protocol.MaxFramePayloadBytes,
             16 * 1024 * 1024,
             16 * 1024 * 1024,
-            CompressionBinding: null);
+            null);
         if (!session.TryCompleteHandshake(options))
             throw new InvalidOperationException("Benchmark session handshake failed.");
         return (session, transport);
@@ -141,9 +141,9 @@ internal static class PreCreditStarvationEvidenceRunner
             ProtocolV2Constants.MinorVersion,
             ProtocolV2Capabilities.FlowControl,
             context.Protocol.MaxFramePayloadBytes,
-            StreamReceiveWindowBytes: 1,
-            ConnectionReceiveWindowBytes: 1,
-            CompressionBinding: null);
+            1,
+            1,
+            null);
         if (!session.TryCompleteHandshake(negotiated))
             throw new InvalidOperationException("Starvation evidence handshake failed.");
 
