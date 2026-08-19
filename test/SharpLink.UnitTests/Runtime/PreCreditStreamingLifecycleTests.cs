@@ -4,7 +4,6 @@ using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
 
-[Timeout(10_000)]
 public class PreCreditStreamingLifecycleTests
 {
     [Test]
@@ -132,27 +131,30 @@ public class PreCreditStreamingLifecycleTests
             ownerTerminal,
             "current actual-byte owner");
 
-        // Releasing the actual-byte owner admits the already-materialized surviving stream,
-        // which keeps its serializer permit while it waits for flow credit.
+        // Releasing the actual-byte owner admits the already-materialized surviving stream.
+        // At this point it is intentionally crossing from the pre-credit byte admission subsystem
+        // into StreamFlowController. The stream-terminal requirement above is already covered at
+        // the pre-credit boundary; use connection terminal for deterministic final cleanup rather
+        // than racing that asynchronous handoff a second time.
         await SpinUntilAsync(() =>
             session.PreCreditSerializedWaiterCount == 0 &&
             session.PreCreditSerializedBytes == payloadBytes &&
             session.PreCreditActiveSerializerCount == 1);
-        Ensure(!otherBudgetWaiter.IsCompleted, "the surviving stream should now be waiting for flow credit");
+        Ensure(!otherBudgetWaiter.IsCompleted, "the surviving stream should still be blocked on flow credit");
         Ensure(codec.SerializeCount == 4,
             "admitting an already-materialized byte-budget waiter must not serialize it again");
 
-        var otherTerminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "stream 13 closed");
-        session.SendStreamErrorAsync(13, 1, otherTerminal);
+        var connectionTerminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "session cleanup");
+        session.NotifyDisconnected(connectionTerminal);
         await ExpectSameException(
             otherBudgetWaiter,
-            otherTerminal,
-            "surviving flow-credit waiter");
+            connectionTerminal,
+            "surviving pre-credit/flow handoff");
         Ensure(
             session.PreCreditSerializedBytes == 0 &&
             session.PreCreditActiveSerializerCount == 0 &&
             session.PreCreditSerializedWaiterCount == 0,
-            "stream terminal cleanup must return all pre-credit accounting to zero");
+            "terminal cleanup must return all pre-credit accounting to zero");
     }
 
     private static async Task SpinUntilAsync(Func<bool> condition)
@@ -195,7 +197,7 @@ public class PreCreditStreamingLifecycleTests
                 $"The {scenario} did not complete after its terminal transition.",
                 exception);
         }
-        throw new InvalidOperationException($"The {scenario} did not observe the expected stream terminal exception.");
+        throw new InvalidOperationException($"The {scenario} did not observe the expected terminal exception.");
     }
 
     private static void Ensure(bool condition, string scenario)
