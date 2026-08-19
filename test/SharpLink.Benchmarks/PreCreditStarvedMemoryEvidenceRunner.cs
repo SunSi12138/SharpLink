@@ -69,7 +69,8 @@ internal static class PreCreditStarvedMemoryEvidenceRunner
 
         // Observe the natural retained state while the protocol remains starved. Do not force a
         // Gen2 collection here: ArrayPool.Shared may trim on Gen2, which would understate the
-        // backing memory retained after excess producers have returned their writers.
+        // backing memory retained after excess producers have returned their writers. The 1-byte
+        // wire window is intentionally independent from the PR's local 4 MiB default budget.
         await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
         var stable = CaptureMemory();
         var sampledPeakWorkingSetBytes = sampler.Stop();
@@ -94,11 +95,13 @@ internal static class PreCreditStarvedMemoryEvidenceRunner
         }
 
         var reservedBytes = ReadInternalNumber(session, "PreCreditSerializedBytes");
+        var byteLimit = ReadInternalNumber(session, "PreCreditSerializedByteLimit");
         var waiterCount = ReadInternalNumber(session, "PreCreditSerializedWaiterCount");
         Console.WriteLine(
             $"[PreCreditStarvedMemory] payloadBytes={payloadBytes} streams={Streams} " +
             $"serializeCount={codec.SerializeCount} pendingCount={pendingCount} " +
-            $"rejectedCount={rejectedCount} reservedBytes={reservedBytes} waiterCount={waiterCount} " +
+            $"rejectedCount={rejectedCount} reservedBytes={reservedBytes} " +
+            $"byteLimit={byteLimit} waiterCount={waiterCount} " +
             $"baselineWorkingSetBytes={baseline.WorkingSetBytes} " +
             $"postLaunchWorkingSetBytes={postLaunch.WorkingSetBytes} " +
             $"stableWorkingSetBytes={stable.WorkingSetBytes} " +
