@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Generic;
 using System.IO.Pipelines;
 using System.Threading;
 
@@ -58,31 +59,28 @@ public class UnsizedStreamingPreCreditTests
         Ensure(session.PreCreditSerializationPermitLimit == 0 && session.PreCreditActiveSerializerCount == 0,
             "the final design must not use a global pre-serialization permit gate");
 
-        var pendingCount = 0;
+        var pending = new List<Task>();
         var rejectedCount = 0;
         for (var index = 0; index < blocked.Length; index++)
         {
             if (!blocked[index].IsCompleted)
             {
-                pendingCount++;
+                pending.Add(blocked[index]);
                 continue;
             }
 
             await ExpectResourceExhausted(blocked[index]);
             rejectedCount++;
         }
-        Ensure(pendingCount == 2,
+        Ensure(pending.Count == 2,
             "only the byte owner and one bounded serialized waiter should remain pending");
-        Ensure(rejectedCount == blockedStreams - pendingCount,
+        Ensure(rejectedCount == blockedStreams - pending.Count,
             "excess serialized producers should fail instead of growing the retained-writer queue");
 
         var terminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "bounded cleanup");
         session.NotifyDisconnected(terminal);
-        for (var index = 0; index < blocked.Length; index++)
-        {
-            if (!blocked[index].IsCompletedSuccessfully && blocked[index].Exception is null)
-                await ExpectSameException(blocked[index], terminal);
-        }
+        for (var index = 0; index < pending.Count; index++)
+            await ExpectSameException(pending[index], terminal);
 
         Ensure(session.PreCreditSerializedBytes == 0 && session.PreCreditSerializedWaiterCount == 0,
             "terminal cleanup must release every pre-credit byte owner and waiter");
