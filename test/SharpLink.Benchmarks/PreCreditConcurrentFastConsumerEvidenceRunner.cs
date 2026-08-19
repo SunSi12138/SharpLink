@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
@@ -19,14 +20,33 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
     internal static async Task RunAsync()
     {
         foreach (var producers in ProducerCounts)
-            await RunCaseAsync(producers).ConfigureAwait(false);
+        {
+            var unsizedCodec = new UnsizedPayloadCodec();
+            await RunCaseAsync(
+                producers,
+                caseName: "unsized",
+                new UnsizedPayload(PayloadBytes),
+                unsizedCodec,
+                () => unsizedCodec.SerializeCount).ConfigureAwait(false);
+
+            await RunCaseAsync(
+                producers,
+                caseName: "exact",
+                new ConcurrentSizedPayload(PayloadBytes),
+                new ConcurrentSizedPayloadCodec(),
+                serializeCount: null).ConfigureAwait(false);
+        }
     }
 
-    private static async Task RunCaseAsync(int producers)
+    private static async Task RunCaseAsync<T>(
+        int producers,
+        string caseName,
+        T item,
+        IRpcCodec<T> codec,
+        Func<int>? serializeCount)
     {
-        var codec = new UnsizedPayloadCodec();
         using var context = CreateContext(codec);
-        using var transport = new BenchmarkTransport($"pre-credit-fast-{producers}");
+        using var transport = new BenchmarkTransport($"pre-credit-fast-{caseName}-{producers}");
         await using var session = new RpcSession(
             transport,
             new RpcSessionCreationOptions(RpcSessionRole.Client, context));
@@ -56,6 +76,7 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
                 session,
                 producers,
                 warmupOperationsPerProducer,
+                item,
                 samples: null).ConfigureAwait(false);
             await DrainSendQueueAsync(session).ConfigureAwait(false);
 
@@ -72,6 +93,7 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
                     session,
                     producers,
                     measuredOperationsPerProducer,
+                    item,
                     samples).ConfigureAwait(false);
                 elapsed.Stop();
 
@@ -88,19 +110,19 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
                 p99[round] = ToNanoseconds(Percentile(samples, 0.99));
                 maxima[round] = ToNanoseconds(samples[^1]);
                 Console.WriteLine(
-                    $"[PreCreditConcurrentFastRound] producers={producers} round={round + 1} " +
+                    $"[PreCreditConcurrentFastRound] case={caseName} producers={producers} round={round + 1} " +
                     $"throughputOpsPerSec={throughputs[round]:F0} " +
                     $"p50Ns={p50[round]:F1} p95Ns={p95[round]:F1} " +
                     $"p99Ns={p99[round]:F1} maxNs={maxima[round]:F1}");
             }
 
             Console.WriteLine(
-                $"[PreCreditConcurrentFast] producers={producers} payloadBytes={PayloadBytes} " +
+                $"[PreCreditConcurrentFast] case={caseName} producers={producers} payloadBytes={PayloadBytes} " +
                 $"rounds={MeasuredRounds} operationsPerRound={producers * measuredOperationsPerProducer} " +
                 $"throughputOpsPerSec={Median(throughputs):F0} " +
                 $"p50Ns={Median(p50):F1} p95Ns={Median(p95):F1} " +
                 $"p99Ns={Median(p99):F1} maxNs={Median(maxima):F1} " +
-                $"serializeCount={codec.SerializeCount} " +
+                $"serializeCount={(serializeCount is null ? "n/a" : serializeCount().ToString())} " +
                 $"serializerPermitLimit={ReadInternalNumber(session, "PreCreditSerializationPermitLimit")} " +
                 $"reservedBytes={ReadInternalNumber(session, "PreCreditSerializedBytes")} " +
                 $"waiterCount={ReadInternalNumber(session, "PreCreditSerializedWaiterCount")}");
@@ -112,10 +134,11 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
         }
     }
 
-    private static async Task RunPhaseAsync(
+    private static async Task RunPhaseAsync<T>(
         RpcSession session,
         int producers,
         int operationsPerProducer,
+        T item,
         long[]? samples)
     {
         var start = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -126,7 +149,6 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
             var sampleOffset = producer * operationsPerProducer;
             workers[producer] = Task.Run(async () =>
             {
-                var item = new UnsizedPayload(PayloadBytes);
                 await start.Task.ConfigureAwait(false);
                 for (var operation = 0; operation < operationsPerProducer; operation++)
                 {
@@ -155,7 +177,7 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
     private static async Task DrainSendQueueAsync(RpcSession session)
         => await session.FlushSendQueueAsync(CancellationToken.None).ConfigureAwait(false);
 
-    private static SharpLinkRuntimeContext CreateContext(UnsizedPayloadCodec codec)
+    private static SharpLinkRuntimeContext CreateContext<T>(IRpcCodec<T> codec)
     {
         var builder = new SharpLinkRuntimeContextBuilder()
             .AddCodec(codec);
@@ -192,5 +214,60 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
             propertyName,
             BindingFlags.Instance | BindingFlags.NonPublic);
         return property?.GetValue(session)?.ToString() ?? "n/a";
+    }
+
+    private readonly record struct ConcurrentSizedPayload(int Bytes);
+
+    private sealed class ConcurrentSizedPayloadCodec :
+        IRpcCodec<ConcurrentSizedPayload>,
+        IRpcSizedCodec<ConcurrentSizedPayload>
+    {
+        public bool CanExactSize => true;
+
+        public void Serialize(in ConcurrentSizedPayload value, IBufferWriter<byte> buffer)
+            => Write(value.Bytes, buffer);
+
+        public ConcurrentSizedPayload Deserialize(in ReadOnlySequence<byte> buffer)
+            => new(checked((int)buffer.Length));
+
+        public bool TryGetEncodedSize(in ConcurrentSizedPayload value, out int size)
+        {
+            size = value.Bytes;
+            return true;
+        }
+
+        public bool TryGetEncodedSize(
+            in ConcurrentSizedPayload value,
+            out int size,
+            out IRpcSizedCodecSnapshot? snapshot)
+        {
+            size = value.Bytes;
+            snapshot = null;
+            return true;
+        }
+
+        public void SerializeSized(
+            in ConcurrentSizedPayload value,
+            IBufferWriter<byte> buffer,
+            int size,
+            IRpcSizedCodecSnapshot? snapshot)
+        {
+            if (size != value.Bytes || snapshot is not null)
+                throw new InvalidOperationException("Concurrent exact-size control received an invalid contract.");
+            Write(value.Bytes, buffer);
+        }
+
+        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
+        {
+            if (snapshot is not null)
+                throw new InvalidOperationException("Concurrent exact-size control does not own snapshots.");
+        }
+
+        private static void Write(int bytes, IBufferWriter<byte> buffer)
+        {
+            var span = buffer.GetSpan(bytes);
+            span[..bytes].Fill(0x44);
+            buffer.Advance(bytes);
+        }
     }
 }
