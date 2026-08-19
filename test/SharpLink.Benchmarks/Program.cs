@@ -123,6 +123,12 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--pre-credit-starved-memory-evidence", StringComparison.Ordinal))
+        {
+            await PreCreditStarvedMemoryEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--pre-credit-concurrent-fast-evidence", StringComparison.Ordinal))
         {
             await PreCreditConcurrentFastConsumerEvidenceRunner.RunAsync(args[1..]);
