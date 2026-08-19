@@ -9,8 +9,10 @@ namespace SharpLink.Benchmarks;
 internal static class PreCreditConcurrentFastConsumerEvidenceRunner
 {
     private const int PayloadBytes = 1024;
-    private const int WarmupOperationsPerProducer = 1_000;
-    private const int MeasuredOperationsPerProducer = 5_000;
+    private const int TargetWarmupOperationsPerRound = 8_000;
+    private const int MinimumWarmupOperationsPerProducer = 64;
+    private const int TargetMeasuredOperationsPerRound = 40_000;
+    private const int MinimumMeasuredOperationsPerProducer = 256;
     private const int MeasuredRounds = 5;
     private static readonly int[] ProducerCounts = [1, 8, 32, 128];
 
@@ -38,6 +40,13 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
         if (!session.TryCompleteHandshake(negotiated))
             throw new InvalidOperationException("Concurrent fast-consumer evidence handshake failed.");
 
+        var warmupOperationsPerProducer = Math.Max(
+            MinimumWarmupOperationsPerProducer,
+            TargetWarmupOperationsPerRound / producers);
+        var measuredOperationsPerProducer = Math.Max(
+            MinimumMeasuredOperationsPerProducer,
+            TargetMeasuredOperationsPerRound / producers);
+
         ThreadPool.GetMinThreads(out var originalWorkerThreads, out var originalCompletionPortThreads);
         var raisedMinimum = originalWorkerThreads < producers &&
             ThreadPool.SetMinThreads(producers, originalCompletionPortThreads);
@@ -46,8 +55,9 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
             await RunPhaseAsync(
                 session,
                 producers,
-                WarmupOperationsPerProducer,
+                warmupOperationsPerProducer,
                 samples: null).ConfigureAwait(false);
+            await DrainSendQueueAsync(session).ConfigureAwait(false);
 
             var throughputs = new double[MeasuredRounds];
             var p50 = new double[MeasuredRounds];
@@ -56,14 +66,20 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
             var maxima = new double[MeasuredRounds];
             for (var round = 0; round < MeasuredRounds; round++)
             {
-                var samples = new long[checked(producers * MeasuredOperationsPerProducer)];
+                var samples = new long[checked(producers * measuredOperationsPerProducer)];
                 var elapsed = Stopwatch.StartNew();
                 await RunPhaseAsync(
                     session,
                     producers,
-                    MeasuredOperationsPerProducer,
+                    measuredOperationsPerProducer,
                     samples).ConfigureAwait(false);
                 elapsed.Stop();
+
+                // The transport pump is deliberately outside the timed region, but every round
+                // starts with an empty downstream queue. Otherwise high producer counts can turn
+                // this pre-credit evidence into a send-queue saturation test and accumulate
+                // backlog across rounds.
+                await DrainSendQueueAsync(session).ConfigureAwait(false);
 
                 Array.Sort(samples);
                 throughputs[round] = samples.Length / elapsed.Elapsed.TotalSeconds;
@@ -80,7 +96,7 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
 
             Console.WriteLine(
                 $"[PreCreditConcurrentFast] producers={producers} payloadBytes={PayloadBytes} " +
-                $"rounds={MeasuredRounds} operationsPerRound={producers * MeasuredOperationsPerProducer} " +
+                $"rounds={MeasuredRounds} operationsPerRound={producers * measuredOperationsPerProducer} " +
                 $"throughputOpsPerSec={Median(throughputs):F0} " +
                 $"p50Ns={Median(p50):F1} p95Ns={Median(p95):F1} " +
                 $"p99Ns={Median(p99):F1} maxNs={Median(maxima):F1} " +
@@ -136,14 +152,17 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
         await Task.WhenAll(workers).ConfigureAwait(false);
     }
 
+    private static async Task DrainSendQueueAsync(RpcSession session)
+        => await session.FlushSendQueueAsync(CancellationToken.None).ConfigureAwait(false);
+
     private static SharpLinkRuntimeContext CreateContext(UnsizedPayloadCodec codec)
     {
         var builder = new SharpLinkRuntimeContextBuilder()
             .AddCodec(codec);
         builder.Configure(options =>
         {
-            // Keep transport/send-pump capacity comfortably above this evidence workload so the
-            // measured limiter is pre-credit admission rather than downstream queue capacity.
+            // This evidence is about pre-credit admission. Keep the downstream queue large enough
+            // for one bounded measurement round; DrainSendQueueAsync empties it between rounds.
             options.FlowControl.MaxSendQueueBytes = 256 * 1024 * 1024;
             options.FlowControl.StreamReceiveWindowBytes = 16 * 1024 * 1024;
             options.FlowControl.ConnectionReceiveWindowBytes = 16 * 1024 * 1024;
