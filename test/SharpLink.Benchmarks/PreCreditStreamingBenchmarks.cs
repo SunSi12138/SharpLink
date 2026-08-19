@@ -147,7 +147,6 @@ internal static class PreCreditStarvationEvidenceRunner
         if (!session.TryCompleteHandshake(negotiated))
             throw new InvalidOperationException("Starvation evidence handshake failed.");
 
-        // Consume the only protocol credit without materializing a stream-item writer.
         await session.AcquireStreamSendCreditAsync(900_000, 1, 1, CancellationToken.None)
             .ConfigureAwait(false);
 
@@ -163,16 +162,32 @@ internal static class PreCreditStarvationEvidenceRunner
 
         await WaitForStableSerializeCountAsync(codec, sends).ConfigureAwait(false);
 
+        var rejectedCount = 0;
+        var pendingCount = 0;
+        for (var index = 0; index < sends.Length; index++)
+        {
+            if (!sends[index].IsCompleted)
+            {
+                pendingCount++;
+                continue;
+            }
+            if (sends[index].Exception?.GetBaseException() is SharpLinkException
+                {
+                    Code: SharpLinkErrorCode.ResourceExhausted
+                })
+            {
+                rejectedCount++;
+            }
+        }
+
         var reservedBytes = ReadInternalNumber(session, "PreCreditSerializedBytes");
         var byteLimit = ReadInternalNumber(session, "PreCreditSerializedByteLimit");
         var waiterCount = ReadInternalNumber(session, "PreCreditSerializedWaiterCount");
-        var activeSerializers = ReadInternalNumber(session, "PreCreditActiveSerializerCount");
-        var serializerPermitLimit = ReadInternalNumber(session, "PreCreditSerializationPermitLimit");
         Console.WriteLine(
             $"[PreCreditStarvation] payloadBytes={payloadBytes} streams={streams} " +
             $"serializeCount={codec.SerializeCount} reservedBytes={reservedBytes} " +
             $"byteLimit={byteLimit} waiterCount={waiterCount} " +
-            $"activeSerializers={activeSerializers} serializerPermitLimit={serializerPermitLimit}");
+            $"pendingCount={pendingCount} rejectedCount={rejectedCount}");
 
         var terminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "starvation evidence cleanup");
         session.NotifyDisconnected(terminal);
@@ -182,7 +197,9 @@ internal static class PreCreditStarvationEvidenceRunner
             {
                 await sends[index].ConfigureAwait(false);
             }
-            catch (Exception exception) when (ReferenceEquals(exception, terminal))
+            catch (SharpLinkException exception) when (
+                ReferenceEquals(exception, terminal) ||
+                exception.Code == SharpLinkErrorCode.ResourceExhausted)
             {
             }
         }
