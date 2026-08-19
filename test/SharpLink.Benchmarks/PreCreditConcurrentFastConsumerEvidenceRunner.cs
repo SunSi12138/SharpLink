@@ -20,46 +20,27 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
     internal static async Task RunAsync()
     {
         foreach (var producers in ProducerCounts)
-        {
-            var unsizedCodec = new UnsizedPayloadCodec();
-            await RunCaseAsync(
-                producers,
-                caseName: "unsized",
-                new UnsizedPayload(PayloadBytes),
-                unsizedCodec,
-                () => unsizedCodec.SerializeCount).ConfigureAwait(false);
-
-            await RunCaseAsync(
-                producers,
-                caseName: "exact",
-                new ConcurrentSizedPayload(PayloadBytes),
-                new ConcurrentSizedPayloadCodec(),
-                serializeCount: null).ConfigureAwait(false);
-        }
+            await RunPairedCaseAsync(producers).ConfigureAwait(false);
     }
 
-    private static async Task RunCaseAsync<T>(
-        int producers,
-        string caseName,
-        T item,
-        IRpcCodec<T> codec,
-        Func<int>? serializeCount)
+    private static async Task RunPairedCaseAsync(int producers)
     {
-        using var context = CreateContext(codec);
-        using var transport = new BenchmarkTransport($"pre-credit-fast-{caseName}-{producers}");
-        await using var session = new RpcSession(
-            transport,
-            new RpcSessionCreationOptions(RpcSessionRole.Client, context));
-        var negotiated = new NegotiatedSessionOptions(
-            ProtocolV2Constants.MinorVersion,
-            ProtocolV2Capabilities.FlowControl,
-            context.Protocol.MaxFramePayloadBytes,
-            16 * 1024 * 1024,
-            16 * 1024 * 1024,
-            null);
-        if (!session.TryCompleteHandshake(negotiated))
-            throw new InvalidOperationException("Concurrent fast-consumer evidence handshake failed.");
+        var unsizedCodec = new UnsizedPayloadCodec();
+        using var unsizedContext = CreateContext(unsizedCodec);
+        using var unsizedTransport = new BenchmarkTransport($"pre-credit-fast-unsized-{producers}");
+        await using var unsizedSession = CreateReadySession(
+            unsizedTransport,
+            unsizedContext);
 
+        var exactCodec = new ConcurrentSizedPayloadCodec();
+        using var exactContext = CreateContext(exactCodec);
+        using var exactTransport = new BenchmarkTransport($"pre-credit-fast-exact-{producers}");
+        await using var exactSession = CreateReadySession(
+            exactTransport,
+            exactContext);
+
+        var unsizedItem = new UnsizedPayload(PayloadBytes);
+        var exactItem = new ConcurrentSizedPayload(PayloadBytes);
         var warmupOperationsPerProducer = Math.Max(
             MinimumWarmupOperationsPerProducer,
             TargetWarmupOperationsPerRound / producers);
@@ -72,66 +53,176 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
             ThreadPool.SetMinThreads(producers, originalCompletionPortThreads);
         try
         {
-            await RunPhaseAsync(
-                session,
+            // ABBA warmup gives both paths comparable JIT/pool/thread-pool preparation before
+            // measurement and avoids making the second case systematically warmer.
+            await WarmupAsync(
+                unsizedSession,
                 producers,
                 warmupOperationsPerProducer,
-                item,
-                samples: null).ConfigureAwait(false);
-            await DrainSendQueueAsync(session).ConfigureAwait(false);
+                unsizedItem).ConfigureAwait(false);
+            await WarmupAsync(
+                exactSession,
+                producers,
+                warmupOperationsPerProducer,
+                exactItem).ConfigureAwait(false);
+            await WarmupAsync(
+                exactSession,
+                producers,
+                warmupOperationsPerProducer,
+                exactItem).ConfigureAwait(false);
+            await WarmupAsync(
+                unsizedSession,
+                producers,
+                warmupOperationsPerProducer,
+                unsizedItem).ConfigureAwait(false);
 
-            var throughputs = new double[MeasuredRounds];
-            var p50 = new double[MeasuredRounds];
-            var p95 = new double[MeasuredRounds];
-            var p99 = new double[MeasuredRounds];
-            var maxima = new double[MeasuredRounds];
+            var unsizedRounds = new RoundMetrics[MeasuredRounds];
+            var exactRounds = new RoundMetrics[MeasuredRounds];
+            var throughputRatios = new double[MeasuredRounds];
+            var p50Ratios = new double[MeasuredRounds];
+            var p95Ratios = new double[MeasuredRounds];
+            var p99Ratios = new double[MeasuredRounds];
+
             for (var round = 0; round < MeasuredRounds; round++)
             {
-                var samples = new long[checked(producers * measuredOperationsPerProducer)];
-                var elapsed = Stopwatch.StartNew();
-                await RunPhaseAsync(
-                    session,
-                    producers,
-                    measuredOperationsPerProducer,
-                    item,
-                    samples).ConfigureAwait(false);
-                elapsed.Stop();
+                var unsizedFirst = (round & 1) == 0;
+                if (unsizedFirst)
+                {
+                    unsizedRounds[round] = await MeasureRoundAsync(
+                        unsizedSession,
+                        producers,
+                        measuredOperationsPerProducer,
+                        unsizedItem).ConfigureAwait(false);
+                    exactRounds[round] = await MeasureRoundAsync(
+                        exactSession,
+                        producers,
+                        measuredOperationsPerProducer,
+                        exactItem).ConfigureAwait(false);
+                }
+                else
+                {
+                    exactRounds[round] = await MeasureRoundAsync(
+                        exactSession,
+                        producers,
+                        measuredOperationsPerProducer,
+                        exactItem).ConfigureAwait(false);
+                    unsizedRounds[round] = await MeasureRoundAsync(
+                        unsizedSession,
+                        producers,
+                        measuredOperationsPerProducer,
+                        unsizedItem).ConfigureAwait(false);
+                }
 
-                // The transport pump is deliberately outside the timed region, but every round
-                // starts with an empty downstream queue. Otherwise high producer counts can turn
-                // this pre-credit evidence into a send-queue saturation test and accumulate
-                // backlog across rounds.
-                await DrainSendQueueAsync(session).ConfigureAwait(false);
+                throughputRatios[round] =
+                    unsizedRounds[round].ThroughputOpsPerSec / exactRounds[round].ThroughputOpsPerSec;
+                p50Ratios[round] = unsizedRounds[round].P50Ns / exactRounds[round].P50Ns;
+                p95Ratios[round] = unsizedRounds[round].P95Ns / exactRounds[round].P95Ns;
+                p99Ratios[round] = unsizedRounds[round].P99Ns / exactRounds[round].P99Ns;
 
-                Array.Sort(samples);
-                throughputs[round] = samples.Length / elapsed.Elapsed.TotalSeconds;
-                p50[round] = ToNanoseconds(Percentile(samples, 0.50));
-                p95[round] = ToNanoseconds(Percentile(samples, 0.95));
-                p99[round] = ToNanoseconds(Percentile(samples, 0.99));
-                maxima[round] = ToNanoseconds(samples[^1]);
+                PrintCaseRound("unsized", producers, round + 1, unsizedRounds[round]);
+                PrintCaseRound("exact", producers, round + 1, exactRounds[round]);
                 Console.WriteLine(
-                    $"[PreCreditConcurrentFastRound] case={caseName} producers={producers} round={round + 1} " +
-                    $"throughputOpsPerSec={throughputs[round]:F0} " +
-                    $"p50Ns={p50[round]:F1} p95Ns={p95[round]:F1} " +
-                    $"p99Ns={p99[round]:F1} maxNs={maxima[round]:F1}");
+                    $"[PreCreditConcurrentFastPairRound] producers={producers} pairRound={round + 1} " +
+                    $"order={(unsizedFirst ? "unsized-exact" : "exact-unsized")} " +
+                    $"throughputRatio={throughputRatios[round]:F6} " +
+                    $"p50Ratio={p50Ratios[round]:F6} p95Ratio={p95Ratios[round]:F6} " +
+                    $"p99Ratio={p99Ratios[round]:F6}");
             }
 
+            PrintCaseSummary(
+                "unsized",
+                producers,
+                measuredOperationsPerProducer,
+                unsizedRounds,
+                unsizedCodec.SerializeCount,
+                unsizedSession);
+            PrintCaseSummary(
+                "exact",
+                producers,
+                measuredOperationsPerProducer,
+                exactRounds,
+                serializeCount: null,
+                exactSession);
+
             Console.WriteLine(
-                $"[PreCreditConcurrentFast] case={caseName} producers={producers} payloadBytes={PayloadBytes} " +
+                $"[PreCreditConcurrentFastPaired] producers={producers} payloadBytes={PayloadBytes} " +
                 $"rounds={MeasuredRounds} operationsPerRound={producers * measuredOperationsPerProducer} " +
-                $"throughputOpsPerSec={Median(throughputs):F0} " +
-                $"p50Ns={Median(p50):F1} p95Ns={Median(p95):F1} " +
-                $"p99Ns={Median(p99):F1} maxNs={Median(maxima):F1} " +
-                $"serializeCount={(serializeCount is null ? "n/a" : serializeCount().ToString())} " +
-                $"serializerPermitLimit={ReadInternalNumber(session, "PreCreditSerializationPermitLimit")} " +
-                $"reservedBytes={ReadInternalNumber(session, "PreCreditSerializedBytes")} " +
-                $"waiterCount={ReadInternalNumber(session, "PreCreditSerializedWaiterCount")}");
+                $"medianThroughputRatio={Median(throughputRatios):F6} " +
+                $"medianP50Ratio={Median(p50Ratios):F6} " +
+                $"medianP95Ratio={Median(p95Ratios):F6} " +
+                $"medianP99Ratio={Median(p99Ratios):F6}");
         }
         finally
         {
             if (raisedMinimum)
                 ThreadPool.SetMinThreads(originalWorkerThreads, originalCompletionPortThreads);
         }
+    }
+
+    private static RpcSession CreateReadySession(
+        BenchmarkTransport transport,
+        SharpLinkRuntimeContext context)
+    {
+        var session = new RpcSession(
+            transport,
+            new RpcSessionCreationOptions(RpcSessionRole.Client, context));
+        var negotiated = new NegotiatedSessionOptions(
+            ProtocolV2Constants.MinorVersion,
+            ProtocolV2Capabilities.FlowControl,
+            context.Protocol.MaxFramePayloadBytes,
+            16 * 1024 * 1024,
+            16 * 1024 * 1024,
+            null);
+        if (!session.TryCompleteHandshake(negotiated))
+        {
+            session.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            throw new InvalidOperationException("Concurrent fast-consumer evidence handshake failed.");
+        }
+        return session;
+    }
+
+    private static async Task WarmupAsync<T>(
+        RpcSession session,
+        int producers,
+        int operationsPerProducer,
+        T item)
+    {
+        await RunPhaseAsync(
+            session,
+            producers,
+            operationsPerProducer,
+            item,
+            samples: null).ConfigureAwait(false);
+        await DrainSendQueueAsync(session).ConfigureAwait(false);
+    }
+
+    private static async Task<RoundMetrics> MeasureRoundAsync<T>(
+        RpcSession session,
+        int producers,
+        int operationsPerProducer,
+        T item)
+    {
+        var samples = new long[checked(producers * operationsPerProducer)];
+        var elapsed = Stopwatch.StartNew();
+        await RunPhaseAsync(
+            session,
+            producers,
+            operationsPerProducer,
+            item,
+            samples).ConfigureAwait(false);
+        elapsed.Stop();
+
+        // Keep downstream transport work out of the timed region while guaranteeing that the
+        // next adjacent control measurement starts with an empty SendPump queue.
+        await DrainSendQueueAsync(session).ConfigureAwait(false);
+
+        Array.Sort(samples);
+        return new RoundMetrics(
+            samples.Length / elapsed.Elapsed.TotalSeconds,
+            ToNanoseconds(Percentile(samples, 0.50)),
+            ToNanoseconds(Percentile(samples, 0.95)),
+            ToNanoseconds(Percentile(samples, 0.99)),
+            ToNanoseconds(samples[^1]));
     }
 
     private static async Task RunPhaseAsync<T>(
@@ -183,13 +274,60 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
             .AddCodec(codec);
         builder.Configure(options =>
         {
-            // This evidence is about pre-credit admission. Keep the downstream queue large enough
-            // for one bounded measurement round; DrainSendQueueAsync empties it between rounds.
+            // This evidence is about pre-credit admission. Keep one bounded measurement round
+            // below SendPump capacity and drain it before the adjacent paired control.
             options.FlowControl.MaxSendQueueBytes = 256 * 1024 * 1024;
             options.FlowControl.StreamReceiveWindowBytes = 16 * 1024 * 1024;
             options.FlowControl.ConnectionReceiveWindowBytes = 16 * 1024 * 1024;
         });
         return builder.Build(includeGeneratedAssemblyCatalog: false);
+    }
+
+    private static void PrintCaseRound(
+        string caseName,
+        int producers,
+        int round,
+        RoundMetrics metrics)
+    {
+        Console.WriteLine(
+            $"[PreCreditConcurrentFastRound] case={caseName} producers={producers} round={round} " +
+            $"throughputOpsPerSec={metrics.ThroughputOpsPerSec:F0} " +
+            $"p50Ns={metrics.P50Ns:F1} p95Ns={metrics.P95Ns:F1} " +
+            $"p99Ns={metrics.P99Ns:F1} maxNs={metrics.MaxNs:F1}");
+    }
+
+    private static void PrintCaseSummary(
+        string caseName,
+        int producers,
+        int operationsPerProducer,
+        RoundMetrics[] rounds,
+        int? serializeCount,
+        RpcSession session)
+    {
+        var throughputs = new double[rounds.Length];
+        var p50 = new double[rounds.Length];
+        var p95 = new double[rounds.Length];
+        var p99 = new double[rounds.Length];
+        var maxima = new double[rounds.Length];
+        for (var index = 0; index < rounds.Length; index++)
+        {
+            throughputs[index] = rounds[index].ThroughputOpsPerSec;
+            p50[index] = rounds[index].P50Ns;
+            p95[index] = rounds[index].P95Ns;
+            p99[index] = rounds[index].P99Ns;
+            maxima[index] = rounds[index].MaxNs;
+        }
+
+        Console.WriteLine(
+            $"[PreCreditConcurrentFast] case={caseName} producers={producers} payloadBytes={PayloadBytes} " +
+            $"rounds={rounds.Length} operationsPerRound={producers * operationsPerProducer} " +
+            $"throughputOpsPerSec={Median(throughputs):F0} " +
+            $"p50Ns={Median(p50):F1} p95Ns={Median(p95):F1} " +
+            $"p99Ns={Median(p99):F1} maxNs={Median(maxima):F1} " +
+            $"serializeCount={(serializeCount is null ? "n/a" : serializeCount.Value.ToString())} " +
+            $"serializerPermitLimit={ReadInternalNumber(session, "PreCreditSerializationPermitLimit")} " +
+            $"reservedBytes={ReadInternalNumber(session, "PreCreditSerializedBytes")} " +
+            $"waiterCount={ReadInternalNumber(session, "PreCreditSerializedWaiterCount")}");
     }
 
     private static long Percentile(long[] sortedSamples, double percentile)
@@ -215,6 +353,13 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
             BindingFlags.Instance | BindingFlags.NonPublic);
         return property?.GetValue(session)?.ToString() ?? "n/a";
     }
+
+    private readonly record struct RoundMetrics(
+        double ThroughputOpsPerSec,
+        double P50Ns,
+        double P95Ns,
+        double P99Ns,
+        double MaxNs);
 
     private readonly record struct ConcurrentSizedPayload(int Bytes);
 
