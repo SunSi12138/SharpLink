@@ -10,6 +10,7 @@ internal static class PreCreditStarvedMemoryEvidenceRunner
 {
     private const int Streams = 128;
     private const int StarvedWindowBytes = 1;
+    private const int WarmupWindowBytes = 16 * 1024 * 1024;
     private static readonly int[] SupportedPayloadBytes = [64 * 1024, 1024 * 1024];
 
     internal static async Task RunAsync(string[] args)
@@ -144,9 +145,14 @@ internal static class PreCreditStarvedMemoryEvidenceRunner
     private static async Task WarmupAsync()
     {
         var codec = new UnsizedPayloadCodec();
-        using var context = new SharpLinkRuntimeContextBuilder()
-            .AddCodec(codec)
-            .Build(includeGeneratedAssemblyCatalog: false);
+        var builder = new SharpLinkRuntimeContextBuilder()
+            .AddCodec(codec);
+        builder.Configure(options =>
+        {
+            options.FlowControl.StreamReceiveWindowBytes = WarmupWindowBytes;
+            options.FlowControl.ConnectionReceiveWindowBytes = WarmupWindowBytes;
+        });
+        using var context = builder.Build(includeGeneratedAssemblyCatalog: false);
         using var transport = new BenchmarkTransport("pre-credit-starved-memory-warmup");
         await using var session = new RpcSession(
             transport,
@@ -155,8 +161,8 @@ internal static class PreCreditStarvedMemoryEvidenceRunner
             ProtocolV2Constants.MinorVersion,
             ProtocolV2Capabilities.FlowControl,
             context.Protocol.MaxFramePayloadBytes,
-            16 * 1024 * 1024,
-            16 * 1024 * 1024,
+            WarmupWindowBytes,
+            WarmupWindowBytes,
             null);
         if (!session.TryCompleteHandshake(negotiated))
             throw new InvalidOperationException("Starved-memory warmup handshake failed.");
