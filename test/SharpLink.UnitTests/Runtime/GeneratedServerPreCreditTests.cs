@@ -12,13 +12,16 @@ public class GeneratedServerPreCreditTests
     {
         const int payloadBytes = 1024;
         const int pumpCount = 8;
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options => options.FlowControl.MaxPreCreditSerializedBytes = payloadBytes)
+            .Build(includeGeneratedAssemblyCatalog: false);
         var input = new Pipe();
         var output = new Pipe();
         await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "generated-pre-credit-bound",
             input.Reader,
             output.Writer,
-            RpcSessionTestFixture.ServerOptions(),
+            RpcSessionTestFixture.ServerOptions(context),
             completeHandshake: false);
         RpcSessionTestFixture.CompleteHandshake(
             session,
@@ -46,9 +49,9 @@ public class GeneratedServerPreCreditTests
         Ensure(codec.SerializeCount == pumpCount,
             "generated unsized items should serialize exactly once before actual-byte admission");
         Ensure(session.PreCreditSerializedBytes == payloadBytes,
-            "the generated server should own exactly one oversized actual-byte reservation");
+            "the generated server should own exactly one actual-byte reservation");
         Ensure(session.PreCreditSerializedWaiterCount == 1,
-            "a one-byte budget should retain only one additional serialized generated waiter");
+            "the configured one-item budget should retain only one additional serialized generated waiter");
         Ensure(session.PreCreditSerializationPermitLimit == 0,
             "generated streaming must not use a global serializer gate");
 
@@ -83,13 +86,16 @@ public class GeneratedServerPreCreditTests
     public async Task SharedInvocationCancellationShouldReleaseGeneratedPreCreditOwnerAndWaiter()
     {
         const int payloadBytes = 1024;
+        using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options => options.FlowControl.MaxPreCreditSerializedBytes = payloadBytes)
+            .Build(includeGeneratedAssemblyCatalog: false);
         var input = new Pipe();
         var output = new Pipe();
         await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "generated-pre-credit-request-cancel",
             input.Reader,
             output.Writer,
-            RpcSessionTestFixture.ServerOptions(),
+            RpcSessionTestFixture.ServerOptions(context),
             completeHandshake: false);
         RpcSessionTestFixture.CompleteHandshake(
             session,
