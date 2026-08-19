@@ -4,7 +4,6 @@ using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
 
-[Timeout(10_000)]
 public class UnsizedStreamingPreCreditTests
 {
     [Test]
@@ -121,7 +120,7 @@ public class UnsizedStreamingPreCreditTests
     {
         try
         {
-            await task;
+            await task.WaitAsync(TimeSpan.FromSeconds(2));
         }
         catch (Exception exception) when (ReferenceEquals(exception, expected))
         {
