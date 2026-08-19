@@ -19,7 +19,7 @@ internal sealed class ClientConnection :
     private readonly Func<long, IStreamDispatchState?, ValueTask> _consumerAbandonedCallback;
     private LateResponseLogLimiter _lateResponseLogLimiter;
     private int _state = (int)ClientConnectionState.Ready;
-    private int _activeCallCount;
+    private int _auxiliaryActiveCallCount;
     private int _disposed;
 
     public ClientConnection(
@@ -63,7 +63,8 @@ internal sealed class ClientConnection :
     public bool CanAcceptCalls
         => State == ClientConnectionState.Ready && Session.CanAcceptCalls;
 
-    public int ActiveCallCount => Volatile.Read(ref _activeCallCount);
+    public int ActiveCallCount
+        => PendingCalls.ActiveCount + Volatile.Read(ref _auxiliaryActiveCallCount);
 
     /// <summary>
     /// Validates a stable connection lifecycle snapshot at a transition or test boundary.
@@ -146,15 +147,15 @@ internal sealed class ClientConnection :
         if (!CanAcceptCalls)
             return false;
 
-        Interlocked.Increment(ref _activeCallCount);
+        Interlocked.Increment(ref _auxiliaryActiveCallCount);
         if (CanAcceptCalls)
             return true;
 
-        ReleaseActiveCall();
+        ReleaseAuxiliaryActiveCall();
         return false;
     }
 
-    public void EndUntrackedCall() => ReleaseActiveCall();
+    public void EndUntrackedCall() => ReleaseAuxiliaryActiveCall();
 
     public async Task SendClientStreamAsync<T>(
         long requestId,
@@ -223,7 +224,10 @@ internal sealed class ClientConnection :
     }
 
     void IPendingCallOwner.OnPendingCallRegistered()
-        => Interlocked.Increment(ref _activeCallCount);
+    {
+        // PendingRequestTable owns the capacity count, which also supplies the connection's
+        // pending-call contribution to ActiveCallCount. Avoid a second atomic increment here.
+    }
 
     void IPendingCallOwner.OnPendingCallCompleted(in PendingCallCompletion completion)
     {
@@ -257,25 +261,30 @@ internal sealed class ClientConnection :
                     }
                     finally
                     {
-                        try
-                        {
-                            _client.HandleConnectionFatalFailure(this, exception);
-                        }
-                        finally
-                        {
-                            ReleaseActiveCall();
-                        }
+                        _client.HandleConnectionFatalFailure(this, exception);
                     }
                     return;
                 }
                 if (!drain.IsCompletedSuccessfully)
                 {
-                    _client.TrackFrameworkTask(
-                        FinishCancellationAfterDispatchesAsync(
-                            drain,
-                            completion.RequestId,
-                            GetCancelReason(completion.Reason)),
-                        "CancellationDispatchCleanup");
+                    // PendingRequestTable releases its capacity only after this callback returns.
+                    // Transfer lifecycle ownership to an auxiliary count before that release so a
+                    // draining connection cannot retire while dispatch cleanup is still running.
+                    Interlocked.Increment(ref _auxiliaryActiveCallCount);
+                    try
+                    {
+                        _client.TrackFrameworkTask(
+                            FinishCancellationAfterDispatchesAsync(
+                                drain,
+                                completion.RequestId,
+                                GetCancelReason(completion.Reason)),
+                            "CancellationDispatchCleanup");
+                    }
+                    catch
+                    {
+                        ReleaseAuxiliaryActiveCall();
+                        throw;
+                    }
                     return;
                 }
             }
@@ -292,12 +301,13 @@ internal sealed class ClientConnection :
         // so the peer observes the final WindowUpdate before it reclaims the aborted stream.
         if (shouldSendCancel)
             TrySendCancel(completion.RequestId, GetCancelReason(completion.Reason));
-
-        ReleaseActiveCall();
     }
 
     void IPendingCallOwner.OnProducerCancellationCallbackFailed(Exception exception)
         => _client.ReportProducerCancellationCallbackFailure(exception);
+
+    void IPendingCallOwner.OnPendingCallCapacityIdle()
+        => _client.RetireDrainingConnectionIfIdle(this);
 
     private async Task FinishCancellationAfterDispatchesAsync(
         ValueTask drain,
@@ -322,7 +332,7 @@ internal sealed class ClientConnection :
         }
         finally
         {
-            ReleaseActiveCall();
+            ReleaseAuxiliaryActiveCall();
         }
     }
 
@@ -356,11 +366,11 @@ internal sealed class ClientConnection :
         return Session.DisposeAsync();
     }
 
-    private void ReleaseActiveCall()
+    private void ReleaseAuxiliaryActiveCall()
     {
-        var remaining = Interlocked.Decrement(ref _activeCallCount);
+        var remaining = Interlocked.Decrement(ref _auxiliaryActiveCallCount);
         if (remaining < 0)
-            throw new InvalidOperationException("Client connection active call count underflowed.");
+            throw new InvalidOperationException("Client connection auxiliary active call count underflowed.");
         if (remaining == 0)
             _client.RetireDrainingConnectionIfIdle(this);
     }
