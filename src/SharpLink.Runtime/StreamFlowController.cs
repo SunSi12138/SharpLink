@@ -82,6 +82,12 @@ internal sealed class StreamFlowController
             ThrowIfTerminated();
             if (!_sendStates.TryGetValue(key, out state))
             {
+                // Do not publish a send state for a probe that cannot reserve synchronously.
+                // The caller may subsequently be rejected by pre-credit byte admission; leaving
+                // an unused state here would consume concurrent-stream capacity without a send.
+                if (_waiters.Count != 0 || !HasConnectionCredit(_sendConnectionCredit, encodedBytes))
+                    return false;
+
                 if (_sendStates.Count < _maxConcurrentStreams)
                 {
                     state = AddSendState(key);
@@ -439,9 +445,7 @@ internal sealed class StreamFlowController
             if (state.PendingConsumed >= _streamUpdateThreshold)
                 return TakePendingCredit(state);
             if (_pendingConnectionConsumed < _connectionUpdateThreshold)
-            {
                 return 0;
-            }
 
             return FlushPendingConnectionCredit(key);
         }
