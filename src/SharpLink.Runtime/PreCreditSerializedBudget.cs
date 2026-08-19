@@ -12,6 +12,7 @@ internal sealed class PreCreditSerializedBudget
     private readonly int _maxWaiters;
     private long _reservedBytes;
     private int _waiterCount;
+    private int _contendedAcquires;
     private Waiter? _head;
     private Waiter? _tail;
     private Exception? _terminal;
@@ -26,23 +27,9 @@ internal sealed class PreCreditSerializedBudget
 
     internal long MaxBytes => _maxBytes;
 
-    internal long ReservedBytes
-    {
-        get
-        {
-            lock (_gate)
-                return _reservedBytes;
-        }
-    }
+    internal long ReservedBytes => Volatile.Read(ref _reservedBytes);
 
-    internal int WaiterCount
-    {
-        get
-        {
-            lock (_gate)
-                return _waiterCount;
-        }
-    }
+    internal int WaiterCount => Volatile.Read(ref _waiterCount);
 
     internal ValueTask AcquireAsync(
         long requestId,
@@ -53,21 +40,54 @@ internal sealed class PreCreditSerializedBudget
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bytes);
         if (cancellationToken.IsCancellationRequested)
             return ValueTask.FromCanceled(cancellationToken);
+        if (Volatile.Read(ref _terminal) is { } terminal)
+            return ValueTask.FromException(terminal);
 
+        if (Volatile.Read(ref _contendedAcquires) == 0 && TryReserveAtomic(bytes))
+        {
+            if (Volatile.Read(ref _contendedAcquires) == 0)
+                return ValueTask.CompletedTask;
+
+            // A contender published itself while the lock-free reservation raced with it.
+            // Give the bytes back and let the ordered path decide admission so a late fast-path
+            // producer cannot bypass a waiter that is already entering the FIFO.
+            ReleaseAtomic(bytes);
+            lock (_gate)
+                DrainWaiters();
+        }
+
+        return AcquireContendedAsync(
+            requestId,
+            streamId,
+            bytes,
+            cancellationToken);
+    }
+
+    private ValueTask AcquireContendedAsync(
+        long requestId,
+        ushort streamId,
+        int bytes,
+        CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _contendedAcquires);
         Waiter waiter;
         lock (_gate)
         {
-            if (_terminal is { } terminal)
-                return ValueTask.FromException(terminal);
-
-            if (_head is null && CanReserve(bytes))
+            if (Volatile.Read(ref _terminal) is { } terminal)
             {
-                _reservedBytes = checked(_reservedBytes + bytes);
+                ExitContendedAcquire();
+                return ValueTask.FromException(terminal);
+            }
+
+            if (_head is null && TryReserveAtomic(bytes))
+            {
+                ExitContendedAcquire();
                 return ValueTask.CompletedTask;
             }
 
             if (_waiterCount >= _maxWaiters)
             {
+                ExitContendedAcquire();
                 return ValueTask.FromException(new SharpLinkException(
                     SharpLinkErrorCode.ResourceExhausted,
                     $"The session already has {_maxWaiters} pre-credit serialized-memory waiters."));
@@ -90,9 +110,10 @@ internal sealed class PreCreditSerializedBudget
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(reservedBytes);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(actualBytes);
 
-        lock (_gate)
+        while (true)
         {
-            var withoutCurrent = _reservedBytes - reservedBytes;
+            var current = Volatile.Read(ref _reservedBytes);
+            var withoutCurrent = current - reservedBytes;
             if (withoutCurrent < 0)
                 throw new InvalidOperationException("Pre-credit serialized byte accounting underflowed.");
 
@@ -110,21 +131,19 @@ internal sealed class PreCreditSerializedBudget
                     "An oversized pre-credit stream item must be the sole serialized-byte owner.");
             }
 
-            _reservedBytes = checked(withoutCurrent + actualBytes);
-            DrainWaiters();
+            var updated = checked(withoutCurrent + actualBytes);
+            if (Interlocked.CompareExchange(ref _reservedBytes, updated, current) == current)
+                break;
         }
+
+        DrainWaitersIfContended();
     }
 
     internal void Release(int bytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bytes);
-        lock (_gate)
-        {
-            _reservedBytes -= bytes;
-            if (_reservedBytes < 0)
-                throw new InvalidOperationException("Pre-credit serialized byte accounting underflowed.");
-            DrainWaiters();
-        }
+        ReleaseAtomic(bytes);
+        DrainWaitersIfContended();
     }
 
     internal void CompleteStream(
@@ -185,10 +204,10 @@ internal sealed class PreCreditSerializedBudget
         List<Waiter>? rejected = null;
         lock (_gate)
         {
-            if (_terminal is not null)
+            if (Volatile.Read(ref _terminal) is not null)
                 return;
 
-            _terminal = exception;
+            Volatile.Write(ref _terminal, exception);
             while (_head is { } waiter)
             {
                 Remove(waiter);
@@ -200,10 +219,44 @@ internal sealed class PreCreditSerializedBudget
         CompleteRejectedWaiters(rejected, exception);
     }
 
-    private bool CanReserve(int bytes)
-        => bytes <= _maxBytes
-            ? _reservedBytes <= _maxBytes - bytes
-            : _reservedBytes == 0;
+    private bool TryReserveAtomic(int bytes)
+    {
+        while (true)
+        {
+            var current = Volatile.Read(ref _reservedBytes);
+            long updated;
+            if (bytes <= _maxBytes)
+            {
+                if (current > _maxBytes - bytes)
+                    return false;
+                updated = checked(current + bytes);
+            }
+            else
+            {
+                if (current != 0)
+                    return false;
+                updated = bytes;
+            }
+
+            if (Interlocked.CompareExchange(ref _reservedBytes, updated, current) == current)
+                return true;
+        }
+    }
+
+    private void ReleaseAtomic(int bytes)
+    {
+        var remaining = Interlocked.Add(ref _reservedBytes, -bytes);
+        if (remaining < 0)
+            throw new InvalidOperationException("Pre-credit serialized byte accounting underflowed.");
+    }
+
+    private void DrainWaitersIfContended()
+    {
+        if (Volatile.Read(ref _contendedAcquires) == 0)
+            return;
+        lock (_gate)
+            DrainWaiters();
+    }
 
     private async Task WaitForGrantAsync(Waiter waiter, CancellationToken cancellationToken)
     {
@@ -223,12 +276,7 @@ internal sealed class PreCreditSerializedBudget
                 }
                 else if (waiter.State == WaiterState.Granted)
                 {
-                    _reservedBytes -= waiter.Bytes;
-                    if (_reservedBytes < 0)
-                    {
-                        throw new InvalidOperationException(
-                            "Cancelled pre-credit waiter underflowed serialized byte accounting.");
-                    }
+                    ReleaseAtomic(waiter.Bytes);
                     waiter.State = WaiterState.Cancelled;
                     DrainWaiters();
                 }
@@ -239,10 +287,11 @@ internal sealed class PreCreditSerializedBudget
 
     private void DrainWaiters()
     {
-        while (_terminal is null && _head is { } waiter && CanReserve(waiter.Bytes))
+        while (Volatile.Read(ref _terminal) is null &&
+               _head is { } waiter &&
+               TryReserveAtomic(waiter.Bytes))
         {
             Remove(waiter);
-            _reservedBytes = checked(_reservedBytes + waiter.Bytes);
             waiter.State = WaiterState.Granted;
             waiter.Completion.TrySetResult(true);
         }
@@ -275,6 +324,14 @@ internal sealed class PreCreditSerializedBudget
         _waiterCount--;
         if (_waiterCount < 0)
             throw new InvalidOperationException("Pre-credit waiter accounting underflowed.");
+        ExitContendedAcquire();
+    }
+
+    private void ExitContendedAcquire()
+    {
+        var remaining = Interlocked.Decrement(ref _contendedAcquires);
+        if (remaining < 0)
+            throw new InvalidOperationException("Pre-credit contention accounting underflowed.");
     }
 
     private static void CompleteRejectedWaiters(List<Waiter>? waiters, Exception exception)
