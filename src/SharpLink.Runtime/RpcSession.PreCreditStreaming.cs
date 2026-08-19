@@ -164,12 +164,6 @@ internal sealed partial class RpcSession
             var encodedBytes = Math.Max(
                 1,
                 writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort));
-            if (budget is not null)
-            {
-                budget.ResizeReservation(reservedBytes, encodedBytes);
-                reservedBytes = encodedBytes;
-            }
-
             var pendingCredit = AcquireStreamSendCreditAsync(
                 requestId,
                 streamId,
@@ -177,6 +171,12 @@ internal sealed partial class RpcSession
                 cancellationToken);
             if (!pendingCredit.IsCompletedSuccessfully)
             {
+                if (budget is not null)
+                {
+                    budget.ResizeReservation(reservedBytes, encodedBytes);
+                    reservedBytes = encodedBytes;
+                }
+
                 ownsWriter = false;
                 ownsReservation = false;
                 return AwaitUnsizedStreamCreditAndSendAsync(
