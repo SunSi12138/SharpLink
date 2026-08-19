@@ -203,13 +203,20 @@ public class PreCreditBudgetConfigurationTests
             streamReceiveWindowBytes: wireWindowBytes,
             connectionReceiveWindowBytes: wireWindowBytes);
 
-        // Consume all peer-advertised send credit without serializing a benchmark payload. The
-        // next unsized item is therefore guaranteed to exercise local pre-credit admission.
-        await session.AcquireStreamSendCreditAsync(
-            requestId: 900_000,
-            streamId: 1,
-            encodedBytes: wireWindowBytes,
-            CancellationToken.None);
+        // Consume all peer-advertised send credit without serializing a benchmark payload. Keep
+        // each reservation comfortably below the frame payload limit so this helper only controls
+        // flow credit and never tests frame-size validation by accident.
+        var remainingCredit = wireWindowBytes;
+        while (remainingCredit != 0)
+        {
+            var chunkBytes = Math.Min(1024 * 1024, remainingCredit);
+            await session.AcquireStreamSendCreditAsync(
+                requestId: 900_000,
+                streamId: 1,
+                encodedBytes: chunkBytes,
+                CancellationToken.None);
+            remainingCredit -= chunkBytes;
+        }
         return (context, session);
     }
 
