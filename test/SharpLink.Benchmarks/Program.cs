@@ -117,6 +117,12 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--pre-credit-starvation-evidence", StringComparison.Ordinal))
+        {
+            await PreCreditStarvationEvidenceRunner.RunAsync();
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--latency-recorder-evidence", StringComparison.Ordinal))
         {
             LatencyRecorderEvidenceRunner.Run(args[1..]);
