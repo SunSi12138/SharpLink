@@ -127,58 +127,24 @@ public class PendingRequestTableSaturationTests
         Interlocked.Increment(ref ActiveSlots(manager));
         await Assert.That(manager.ActiveCount).IsEqualTo(2);
 
+        // The real call releases its physical slot 2 -> 1. With no waiter present yet, no
+        // semaphore signal remains. This is the same state reached after a waiter consumes the
+        // original release signal but still sees the speculative rejected-acquire count as full.
+        var payload = new ReadOnlySequence<byte>(new byte[sizeof(int)]);
+        await Assert.That(manager.Dispatch(occupiedId, ref payload)).IsTrue();
+        _ = await occupied.AsValueTask();
+        await Assert.That(manager.Count).IsEqualTo(0);
+        await Assert.That(manager.ActiveCount).IsEqualTo(1);
+
         var waiter = manager.RentAsync<int>(
             waitForSlot: true,
             deadline: default,
             CancellationToken.None).AsTask();
-        if (!SpinWait.SpinUntil(
-                () => GetWaiterCount(manager) == 1,
-                TimeSpan.FromSeconds(10)))
-        {
-            throw new Exception("waiter did not reach the initial full-table wait");
-        }
         await Assert.That(waiter.IsCompleted).IsFalse();
+        await Assert.That(GetWaiterCount(manager)).IsEqualTo(1);
 
-        using var observerReady = new ManualResetEventSlim(initialState: false);
-        var waiterCycle = Task.Factory.StartNew(
-            () =>
-            {
-                observerReady.Set();
-                if (!SpinWait.SpinUntil(
-                        () => GetWaiterCount(manager) == 0,
-                        TimeSpan.FromSeconds(10)))
-                {
-                    throw new Exception("waiter did not consume the first release signal");
-                }
-
-                if (!SpinWait.SpinUntil(
-                        () => GetWaiterCount(manager) == 1,
-                        TimeSpan.FromSeconds(10)))
-                {
-                    throw new Exception("waiter did not re-enter the full-table wait");
-                }
-            },
-            CancellationToken.None,
-            TaskCreationOptions.LongRunning,
-            TaskScheduler.Default);
-        if (!observerReady.Wait(TimeSpan.FromSeconds(10)))
-            throw new Exception("waiter-cycle observer did not start");
-
-        var payload = new ReadOnlySequence<byte>(new byte[sizeof(int)]);
-        await Assert.That(manager.Dispatch(occupiedId, ref payload)).IsTrue();
-        _ = await occupied.AsValueTask();
-
-        var observedCycle = await Task.WhenAny(waiterCycle, Task.Delay(TimeSpan.FromSeconds(10)));
-        if (!ReferenceEquals(observedCycle, waiterCycle))
-            throw new Exception("waiter did not consume the release signal and re-enter the wait");
-        await waiterCycle;
-
-        // Give the resumed waiter a scheduling turn to settle back on the empty semaphore.
-        await Task.Delay(TimeSpan.FromMilliseconds(20));
-        await Assert.That(manager.ActiveCount).IsEqualTo(1);
-        await Assert.That(waiter.IsCompleted).IsFalse();
-
-        // Complete the paused rejected acquire's refund: 1 -> 0 must re-signal the waiter.
+        // Complete the paused rejected acquire's refund: 1 -> 0 is now the only transition that
+        // makes the already-free slot visible to admission, so it must re-signal the waiter.
         RefundRejectedCapacity(manager);
 
         var completed = await Task.WhenAny(waiter, Task.Delay(TimeSpan.FromSeconds(10)));
