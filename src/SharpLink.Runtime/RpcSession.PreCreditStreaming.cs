@@ -3,9 +3,7 @@ namespace SharpLink.Runtime;
 internal sealed partial class RpcSession
 {
     private readonly Lock _preCreditSerializedBudgetGate = new();
-    private readonly Lock _preCreditSerializationPermitGate = new();
     private PreCreditSerializedBudget? _preCreditSerializedBudget;
-    private PreCreditSerializedBudget? _preCreditSerializationPermits;
 
     /// <summary>
     /// Instance member owns stream-item dispatch so the exact-size path remains the first branch
@@ -49,43 +47,11 @@ internal sealed partial class RpcSession
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(codec);
-
-        if (!HasStreamFlowControl)
-        {
-            return SerializeUnsizedStreamChunkAfterPermit(
-                requestId,
-                streamId,
-                item,
-                codec,
-                permits: null,
-                cancellationToken);
-        }
-
-        var permits = GetOrCreatePreCreditSerializationPermits();
-        var pendingPermit = permits.AcquireAsync(
-            requestId,
-            streamId,
-            bytes: 1,
-            cancellationToken);
-        if (!pendingPermit.IsCompletedSuccessfully)
-        {
-            return AwaitPreCreditSerializationPermitAndSendAsync(
-                pendingPermit,
-                requestId,
-                streamId,
-                item,
-                codec,
-                permits,
-                cancellationToken);
-        }
-
-        pendingPermit.GetAwaiter().GetResult();
-        return SerializeUnsizedStreamChunkAfterPermit(
+        return SerializeUnsizedStreamChunk(
             requestId,
             streamId,
             item,
             codec,
-            permits,
             cancellationToken);
     }
 
@@ -96,64 +62,34 @@ internal sealed partial class RpcSession
         => Volatile.Read(ref _preCreditSerializedBudget)?.MaxBytes ?? 0;
 
     internal int PreCreditSerializedWaiterCount
-        => (Volatile.Read(ref _preCreditSerializedBudget)?.WaiterCount ?? 0) +
-           (Volatile.Read(ref _preCreditSerializationPermits)?.WaiterCount ?? 0);
+        => Volatile.Read(ref _preCreditSerializedBudget)?.WaiterCount ?? 0;
 
-    internal int PreCreditSerializationPermitLimit
-        => checked((int)(Volatile.Read(ref _preCreditSerializationPermits)?.MaxBytes ?? 0));
+    // Kept as diagnostics for the benchmark harness while the previous two-layer prototype is
+    // compared with the final flow-credit-probe design. The final design has no serializer gate.
+    internal int PreCreditSerializationPermitLimit => 0;
 
-    internal int PreCreditActiveSerializerCount
-        => checked((int)(Volatile.Read(ref _preCreditSerializationPermits)?.ReservedBytes ?? 0));
+    internal int PreCreditActiveSerializerCount => 0;
 
     internal void CompletePreCreditSendStream(
         long requestId,
         ushort streamId,
         Exception? exception = null)
-    {
-        Volatile.Read(ref _preCreditSerializedBudget)?
+        => Volatile.Read(ref _preCreditSerializedBudget)?
             .CompleteStream(requestId, streamId, exception);
-        Volatile.Read(ref _preCreditSerializationPermits)?
-            .CompleteStream(requestId, streamId, exception);
-    }
 
     internal void AbortPreCreditSendStreams(long requestId, Exception exception)
-    {
-        Volatile.Read(ref _preCreditSerializedBudget)?.AbortRequest(requestId, exception);
-        Volatile.Read(ref _preCreditSerializationPermits)?.AbortRequest(requestId, exception);
-    }
+        => Volatile.Read(ref _preCreditSerializedBudget)?.AbortRequest(requestId, exception);
 
-    private async ValueTask AwaitPreCreditSerializationPermitAndSendAsync<T>(
-        ValueTask pendingPermit,
+    private ValueTask SerializeUnsizedStreamChunk<T>(
         long requestId,
         ushort streamId,
         T item,
         IRpcCodec<T> codec,
-        PreCreditSerializedBudget permits,
-        CancellationToken cancellationToken)
-    {
-        await pendingPermit.ConfigureAwait(false);
-        await SerializeUnsizedStreamChunkAfterPermit(
-            requestId,
-            streamId,
-            item,
-            codec,
-            permits,
-            cancellationToken).ConfigureAwait(false);
-    }
-
-    private ValueTask SerializeUnsizedStreamChunkAfterPermit<T>(
-        long requestId,
-        ushort streamId,
-        T item,
-        IRpcCodec<T> codec,
-        PreCreditSerializedBudget? permits,
         CancellationToken cancellationToken)
     {
         IRpcByteBufferWriter? writer = null;
-        PreCreditSerializedBudget? budget = null;
         var ownsWriter = true;
-        var ownsPermit = permits is not null;
-        var ownsBudget = false;
+        var creditAcquired = false;
         try
         {
             if (Volatile.Read(ref _terminal) is { } terminal)
@@ -176,102 +112,60 @@ internal sealed partial class RpcSession
                 1,
                 writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort));
 
-            if (permits is not null)
+            if (!HasStreamFlowControl ||
+                TryAcquireStreamSendCredit(requestId, streamId, encodedBytes))
             {
-                budget = GetOrCreatePreCreditSerializedBudget();
-                var pendingBudget = budget.AcquireAsync(
-                    requestId,
-                    streamId,
-                    encodedBytes,
-                    cancellationToken);
-                if (!pendingBudget.IsCompletedSuccessfully)
+                creditAcquired = HasStreamFlowControl;
+                try
                 {
                     ownsWriter = false;
-                    ownsPermit = false;
-                    return AwaitPreCreditByteBudgetAndSendAsync(
-                        pendingBudget,
-                        writer,
-                        requestId,
-                        streamId,
-                        encodedBytes,
-                        budget,
-                        permits,
-                        cancellationToken);
+                    SendPacket(writer);
                 }
-
-                pendingBudget.GetAwaiter().GetResult();
-                ownsBudget = true;
+                catch
+                {
+                    if (creditAcquired)
+                        ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
+                    throw;
+                }
+                return ValueTask.CompletedTask;
             }
 
-            var pendingCredit = AcquireStreamSendCreditAsync(
+            // Only writers that are known to require asynchronous flow-credit admission are
+            // charged to the pre-credit budget. Fast consumers therefore execute the same single
+            // flow-controller lock/reserve as dev and never touch the byte budget.
+            var budget = GetOrCreatePreCreditSerializedBudget();
+            var pendingBudget = budget.AcquireAsync(
                 requestId,
                 streamId,
                 encodedBytes,
                 cancellationToken);
-            if (!pendingCredit.IsCompletedSuccessfully)
-            {
-                ownsWriter = false;
-                ownsPermit = false;
-                ownsBudget = false;
-                return AwaitUnsizedStreamCreditAndSendAsync(
-                    pendingCredit,
-                    writer,
-                    requestId,
-                    streamId,
-                    encodedBytes,
-                    budget,
-                    permits);
-            }
-
-            pendingCredit.GetAwaiter().GetResult();
-            if (budget is not null)
-            {
-                budget.Release(encodedBytes);
-                ownsBudget = false;
-            }
-            if (permits is not null)
-            {
-                permits.Release(1);
-                ownsPermit = false;
-            }
-
-            try
-            {
-                ownsWriter = false;
-                SendPacket(writer);
-            }
-            catch
-            {
-                ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
-                throw;
-            }
-            return ValueTask.CompletedTask;
+            ownsWriter = false;
+            return AwaitPreCreditBudgetAndFlowCreditAsync(
+                pendingBudget,
+                writer,
+                requestId,
+                streamId,
+                encodedBytes,
+                budget,
+                cancellationToken);
         }
         finally
         {
-            if (ownsBudget)
-                budget!.Release(Math.Max(
-                    1,
-                    writer!.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort)));
-            if (ownsPermit)
-                permits!.Release(1);
             if (ownsWriter && writer is not null)
                 RuntimeContext.Buffers.Return(writer);
         }
     }
 
-    private async ValueTask AwaitPreCreditByteBudgetAndSendAsync(
+    private async ValueTask AwaitPreCreditBudgetAndFlowCreditAsync(
         ValueTask pendingBudget,
         IRpcByteBufferWriter writer,
         long requestId,
         ushort streamId,
         int encodedBytes,
         PreCreditSerializedBudget budget,
-        PreCreditSerializedBudget permits,
         CancellationToken cancellationToken)
     {
         var ownsWriter = true;
-        var ownsPermit = true;
         var ownsBudget = false;
         var creditAcquired = false;
         try
@@ -288,8 +182,6 @@ internal sealed partial class RpcSession
 
             budget.Release(encodedBytes);
             ownsBudget = false;
-            permits.Release(1);
-            ownsPermit = false;
 
             ownsWriter = false;
             SendPacket(writer);
@@ -304,59 +196,15 @@ internal sealed partial class RpcSession
         {
             if (ownsBudget)
                 budget.Release(encodedBytes);
-            if (ownsPermit)
-                permits.Release(1);
             if (ownsWriter)
                 RuntimeContext.Buffers.Return(writer);
         }
     }
 
-    private async ValueTask AwaitUnsizedStreamCreditAndSendAsync(
-        ValueTask pendingCredit,
-        IRpcByteBufferWriter writer,
-        long requestId,
-        ushort streamId,
-        int encodedBytes,
-        PreCreditSerializedBudget? budget,
-        PreCreditSerializedBudget? permits)
+    private bool TryAcquireStreamSendCredit(long requestId, ushort streamId, int encodedBytes)
     {
-        var ownsWriter = true;
-        var ownsPermit = permits is not null;
-        var ownsBudget = budget is not null;
-        var creditAcquired = false;
-        try
-        {
-            await pendingCredit.ConfigureAwait(false);
-            creditAcquired = true;
-            if (budget is not null)
-            {
-                budget.Release(encodedBytes);
-                ownsBudget = false;
-            }
-            if (permits is not null)
-            {
-                permits.Release(1);
-                ownsPermit = false;
-            }
-
-            ownsWriter = false;
-            SendPacket(writer);
-        }
-        catch
-        {
-            if (creditAcquired)
-                ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
-            throw;
-        }
-        finally
-        {
-            if (ownsBudget)
-                budget!.Release(encodedBytes);
-            if (ownsPermit)
-                permits!.Release(1);
-            if (ownsWriter)
-                RuntimeContext.Buffers.Return(writer);
-        }
+        var controller = Volatile.Read(ref _protocolState).FlowController;
+        return controller is null || controller.TryAcquireSendCredit(requestId, streamId, encodedBytes);
     }
 
     private PreCreditSerializedBudget GetOrCreatePreCreditSerializedBudget()
@@ -376,9 +224,18 @@ internal sealed partial class RpcSession
                 1,
                 negotiated?.ConnectionReceiveWindowBytes ??
                 RuntimeContext.FlowControl.ConnectionReceiveWindowBytes);
-            budget = new PreCreditSerializedBudget(
-                maxBytes,
-                RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection);
+
+            // A queued budget waiter already owns a serialized writer, so waiter count is part of
+            // the hard memory envelope. Keep worst-case queued backing bounded to at most roughly
+            // one additional connection-window worth of max-size frames (or one frame when the
+            // negotiated window is smaller than a legal frame).
+            var maxFrameBytes = Math.Max(1, NegotiatedMaxFramePayloadBytes);
+            var derivedWaiters = Math.Max(1L, maxBytes / maxFrameBytes);
+            var maxWaiters = checked((int)Math.Min(
+                RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection,
+                derivedWaiters));
+
+            budget = new PreCreditSerializedBudget(maxBytes, maxWaiters);
             Volatile.Write(ref _preCreditSerializedBudget, budget);
 
             _ = _lifetimeToken.UnsafeRegister(
@@ -390,39 +247,6 @@ internal sealed partial class RpcSession
                 },
                 this);
             return budget;
-        }
-    }
-
-    private PreCreditSerializedBudget GetOrCreatePreCreditSerializationPermits()
-    {
-        var permits = Volatile.Read(ref _preCreditSerializationPermits);
-        if (permits is not null)
-            return permits;
-
-        lock (_preCreditSerializationPermitGate)
-        {
-            permits = _preCreditSerializationPermits;
-            if (permits is not null)
-                return permits;
-
-            var processorParallelism = Math.Clamp(Environment.ProcessorCount, 4, 16);
-            var maxPermits = Math.Min(
-                RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection,
-                processorParallelism);
-            permits = new PreCreditSerializedBudget(
-                maxPermits,
-                RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection);
-            Volatile.Write(ref _preCreditSerializationPermits, permits);
-
-            _ = _lifetimeToken.UnsafeRegister(
-                static state =>
-                {
-                    var session = (RpcSession)state!;
-                    Volatile.Read(ref session._preCreditSerializationPermits)?
-                        .Complete(session.GetTerminalException());
-                },
-                this);
-            return permits;
         }
     }
 }
