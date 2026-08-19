@@ -12,6 +12,7 @@ public class PreCreditStreamingLifecycleTests
         const int payloadBytes = 1024;
         var codec = new CountingUnsizedCodec();
         using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options => options.FlowControl.MaxPreCreditSerializedBytes = payloadBytes)
             .AddCodec(codec)
             .Build();
         var input = new Pipe();
@@ -60,7 +61,7 @@ public class PreCreditStreamingLifecycleTests
         Ensure(session.PreCreditSerializedWaiterCount == 0,
             "cancelled budget wait must leave no waiter node behind");
         Ensure(session.PreCreditSerializedBytes == payloadBytes,
-            "cancelling a follower must not steal the active oversized owner's bytes");
+            "cancelling a follower must not steal the active byte owner");
 
         creditWaitCancellation.Cancel();
         await ExpectCancellation(creditWaiter);
@@ -74,6 +75,7 @@ public class PreCreditStreamingLifecycleTests
         const int payloadBytes = 1024;
         var codec = new CountingUnsizedCodec();
         using var context = new SharpLinkRuntimeContextBuilder()
+            .Configure(options => options.FlowControl.MaxPreCreditSerializedBytes = payloadBytes)
             .AddCodec(codec)
             .Build();
         var input = new Pipe();
@@ -96,7 +98,7 @@ public class PreCreditStreamingLifecycleTests
         Ensure(codec.SerializeCount == 3,
             "the owner and queued follower should each serialize exactly once");
         Ensure(session.PreCreditSerializedBytes == payloadBytes,
-            "one oversized actual-byte owner should remain while credit is exhausted");
+            "one actual-byte owner should remain while credit is exhausted");
         Ensure(session.PreCreditSerializedWaiterCount == 1,
             "one matching serialized waiter should remain queued");
 
