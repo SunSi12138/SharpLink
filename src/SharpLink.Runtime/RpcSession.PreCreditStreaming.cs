@@ -111,6 +111,7 @@ internal sealed partial class RpcSession
             var encodedBytes = Math.Max(
                 1,
                 writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort));
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (!HasStreamFlowControl ||
                 TryAcquireStreamSendCredit(requestId, streamId, encodedBytes))
