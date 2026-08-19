@@ -3,7 +3,9 @@ namespace SharpLink.Runtime;
 internal sealed partial class RpcSession
 {
     private readonly Lock _preCreditSerializedBudgetGate = new();
+    private readonly Lock _preCreditSerializationPermitGate = new();
     private PreCreditSerializedBudget? _preCreditSerializedBudget;
+    private PreCreditSerializedBudget? _preCreditSerializationPermits;
 
     /// <summary>
     /// Instance member owns stream-item dispatch so the exact-size path remains the first branch
@@ -50,44 +52,40 @@ internal sealed partial class RpcSession
 
         if (!HasStreamFlowControl)
         {
-            return SerializeUnsizedStreamChunkAfterReservation(
+            return SerializeUnsizedStreamChunkAfterPermit(
                 requestId,
                 streamId,
                 item,
                 codec,
-                budget: null,
-                reservedBytes: 0,
+                permits: null,
                 cancellationToken);
         }
 
-        var budget = GetOrCreatePreCreditSerializedBudget();
-        var reservedBytes = GetPreCreditSerializationReservationBytes(budget);
-        var pendingReservation = budget.AcquireAsync(
+        var permits = GetOrCreatePreCreditSerializationPermits();
+        var pendingPermit = permits.AcquireAsync(
             requestId,
             streamId,
-            reservedBytes,
+            bytes: 1,
             cancellationToken);
-        if (!pendingReservation.IsCompletedSuccessfully)
+        if (!pendingPermit.IsCompletedSuccessfully)
         {
-            return AwaitPreCreditReservationAndSerializeAsync(
-                pendingReservation,
+            return AwaitPreCreditSerializationPermitAndSendAsync(
+                pendingPermit,
                 requestId,
                 streamId,
                 item,
                 codec,
-                budget,
-                reservedBytes,
+                permits,
                 cancellationToken);
         }
 
-        pendingReservation.GetAwaiter().GetResult();
-        return SerializeUnsizedStreamChunkAfterReservation(
+        pendingPermit.GetAwaiter().GetResult();
+        return SerializeUnsizedStreamChunkAfterPermit(
             requestId,
             streamId,
             item,
             codec,
-            budget,
-            reservedBytes,
+            permits,
             cancellationToken);
     }
 
@@ -98,51 +96,64 @@ internal sealed partial class RpcSession
         => Volatile.Read(ref _preCreditSerializedBudget)?.MaxBytes ?? 0;
 
     internal int PreCreditSerializedWaiterCount
-        => Volatile.Read(ref _preCreditSerializedBudget)?.WaiterCount ?? 0;
+        => (Volatile.Read(ref _preCreditSerializedBudget)?.WaiterCount ?? 0) +
+           (Volatile.Read(ref _preCreditSerializationPermits)?.WaiterCount ?? 0);
+
+    internal int PreCreditSerializationPermitLimit
+        => checked((int)(Volatile.Read(ref _preCreditSerializationPermits)?.MaxBytes ?? 0));
+
+    internal int PreCreditActiveSerializerCount
+        => checked((int)(Volatile.Read(ref _preCreditSerializationPermits)?.ReservedBytes ?? 0));
 
     internal void CompletePreCreditSendStream(
         long requestId,
         ushort streamId,
         Exception? exception = null)
-        => Volatile.Read(ref _preCreditSerializedBudget)?
+    {
+        Volatile.Read(ref _preCreditSerializedBudget)?
             .CompleteStream(requestId, streamId, exception);
+        Volatile.Read(ref _preCreditSerializationPermits)?
+            .CompleteStream(requestId, streamId, exception);
+    }
 
     internal void AbortPreCreditSendStreams(long requestId, Exception exception)
-        => Volatile.Read(ref _preCreditSerializedBudget)?.AbortRequest(requestId, exception);
+    {
+        Volatile.Read(ref _preCreditSerializedBudget)?.AbortRequest(requestId, exception);
+        Volatile.Read(ref _preCreditSerializationPermits)?.AbortRequest(requestId, exception);
+    }
 
-    private async ValueTask AwaitPreCreditReservationAndSerializeAsync<T>(
-        ValueTask pendingReservation,
+    private async ValueTask AwaitPreCreditSerializationPermitAndSendAsync<T>(
+        ValueTask pendingPermit,
         long requestId,
         ushort streamId,
         T item,
         IRpcCodec<T> codec,
-        PreCreditSerializedBudget budget,
-        int reservedBytes,
+        PreCreditSerializedBudget permits,
         CancellationToken cancellationToken)
     {
-        await pendingReservation.ConfigureAwait(false);
-        await SerializeUnsizedStreamChunkAfterReservation(
+        await pendingPermit.ConfigureAwait(false);
+        await SerializeUnsizedStreamChunkAfterPermit(
             requestId,
             streamId,
             item,
             codec,
-            budget,
-            reservedBytes,
+            permits,
             cancellationToken).ConfigureAwait(false);
     }
 
-    private ValueTask SerializeUnsizedStreamChunkAfterReservation<T>(
+    private ValueTask SerializeUnsizedStreamChunkAfterPermit<T>(
         long requestId,
         ushort streamId,
         T item,
         IRpcCodec<T> codec,
-        PreCreditSerializedBudget? budget,
-        int reservedBytes,
+        PreCreditSerializedBudget? permits,
         CancellationToken cancellationToken)
     {
         IRpcByteBufferWriter? writer = null;
+        PreCreditSerializedBudget? budget = null;
         var ownsWriter = true;
-        var ownsReservation = budget is not null;
+        var ownsPermit = permits is not null;
+        var ownsBudget = false;
         try
         {
             if (Volatile.Read(ref _terminal) is { } terminal)
@@ -164,6 +175,34 @@ internal sealed partial class RpcSession
             var encodedBytes = Math.Max(
                 1,
                 writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort));
+
+            if (permits is not null)
+            {
+                budget = GetOrCreatePreCreditSerializedBudget();
+                var pendingBudget = budget.AcquireAsync(
+                    requestId,
+                    streamId,
+                    encodedBytes,
+                    cancellationToken);
+                if (!pendingBudget.IsCompletedSuccessfully)
+                {
+                    ownsWriter = false;
+                    ownsPermit = false;
+                    return AwaitPreCreditByteBudgetAndSendAsync(
+                        pendingBudget,
+                        writer,
+                        requestId,
+                        streamId,
+                        encodedBytes,
+                        budget,
+                        permits,
+                        cancellationToken);
+                }
+
+                pendingBudget.GetAwaiter().GetResult();
+                ownsBudget = true;
+            }
+
             var pendingCredit = AcquireStreamSendCreditAsync(
                 requestId,
                 streamId,
@@ -171,14 +210,9 @@ internal sealed partial class RpcSession
                 cancellationToken);
             if (!pendingCredit.IsCompletedSuccessfully)
             {
-                if (budget is not null)
-                {
-                    budget.ResizeReservation(reservedBytes, encodedBytes);
-                    reservedBytes = encodedBytes;
-                }
-
                 ownsWriter = false;
-                ownsReservation = false;
+                ownsPermit = false;
+                ownsBudget = false;
                 return AwaitUnsizedStreamCreditAndSendAsync(
                     pendingCredit,
                     writer,
@@ -186,14 +220,19 @@ internal sealed partial class RpcSession
                     streamId,
                     encodedBytes,
                     budget,
-                    reservedBytes);
+                    permits);
             }
 
             pendingCredit.GetAwaiter().GetResult();
             if (budget is not null)
             {
-                budget.Release(reservedBytes);
-                ownsReservation = false;
+                budget.Release(encodedBytes);
+                ownsBudget = false;
+            }
+            if (permits is not null)
+            {
+                permits.Release(1);
+                ownsPermit = false;
             }
 
             try
@@ -210,9 +249,64 @@ internal sealed partial class RpcSession
         }
         finally
         {
-            if (ownsReservation)
-                budget!.Release(reservedBytes);
+            if (ownsBudget)
+                budget!.Release(Math.Max(
+                    1,
+                    writer!.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort)));
+            if (ownsPermit)
+                permits!.Release(1);
             if (ownsWriter && writer is not null)
+                RuntimeContext.Buffers.Return(writer);
+        }
+    }
+
+    private async ValueTask AwaitPreCreditByteBudgetAndSendAsync(
+        ValueTask pendingBudget,
+        IRpcByteBufferWriter writer,
+        long requestId,
+        ushort streamId,
+        int encodedBytes,
+        PreCreditSerializedBudget budget,
+        PreCreditSerializedBudget permits,
+        CancellationToken cancellationToken)
+    {
+        var ownsWriter = true;
+        var ownsPermit = true;
+        var ownsBudget = false;
+        var creditAcquired = false;
+        try
+        {
+            await pendingBudget.ConfigureAwait(false);
+            ownsBudget = true;
+
+            await AcquireStreamSendCreditAsync(
+                requestId,
+                streamId,
+                encodedBytes,
+                cancellationToken).ConfigureAwait(false);
+            creditAcquired = true;
+
+            budget.Release(encodedBytes);
+            ownsBudget = false;
+            permits.Release(1);
+            ownsPermit = false;
+
+            ownsWriter = false;
+            SendPacket(writer);
+        }
+        catch
+        {
+            if (creditAcquired)
+                ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
+            throw;
+        }
+        finally
+        {
+            if (ownsBudget)
+                budget.Release(encodedBytes);
+            if (ownsPermit)
+                permits.Release(1);
+            if (ownsWriter)
                 RuntimeContext.Buffers.Return(writer);
         }
     }
@@ -224,10 +318,11 @@ internal sealed partial class RpcSession
         ushort streamId,
         int encodedBytes,
         PreCreditSerializedBudget? budget,
-        int reservedBytes)
+        PreCreditSerializedBudget? permits)
     {
         var ownsWriter = true;
-        var ownsReservation = budget is not null;
+        var ownsPermit = permits is not null;
+        var ownsBudget = budget is not null;
         var creditAcquired = false;
         try
         {
@@ -235,8 +330,13 @@ internal sealed partial class RpcSession
             creditAcquired = true;
             if (budget is not null)
             {
-                budget.Release(reservedBytes);
-                ownsReservation = false;
+                budget.Release(encodedBytes);
+                ownsBudget = false;
+            }
+            if (permits is not null)
+            {
+                permits.Release(1);
+                ownsPermit = false;
             }
 
             ownsWriter = false;
@@ -250,8 +350,10 @@ internal sealed partial class RpcSession
         }
         finally
         {
-            if (ownsReservation)
-                budget!.Release(reservedBytes);
+            if (ownsBudget)
+                budget!.Release(encodedBytes);
+            if (ownsPermit)
+                permits!.Release(1);
             if (ownsWriter)
                 RuntimeContext.Buffers.Return(writer);
         }
@@ -291,11 +393,36 @@ internal sealed partial class RpcSession
         }
     }
 
-    private int GetPreCreditSerializationReservationBytes(PreCreditSerializedBudget budget)
+    private PreCreditSerializedBudget GetOrCreatePreCreditSerializationPermits()
     {
-        var maxEncodedItemBytes = Math.Max(
-            1,
-            NegotiatedMaxFramePayloadBytes - sizeof(ushort));
-        return checked((int)Math.Min((long)maxEncodedItemBytes, budget.MaxBytes));
+        var permits = Volatile.Read(ref _preCreditSerializationPermits);
+        if (permits is not null)
+            return permits;
+
+        lock (_preCreditSerializationPermitGate)
+        {
+            permits = _preCreditSerializationPermits;
+            if (permits is not null)
+                return permits;
+
+            var processorParallelism = Math.Clamp(Environment.ProcessorCount, 4, 16);
+            var maxPermits = Math.Min(
+                RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection,
+                processorParallelism);
+            permits = new PreCreditSerializedBudget(
+                maxPermits,
+                RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection);
+            Volatile.Write(ref _preCreditSerializationPermits, permits);
+
+            _ = _lifetimeToken.UnsafeRegister(
+                static state =>
+                {
+                    var session = (RpcSession)state!;
+                    Volatile.Read(ref session._preCreditSerializationPermits)?
+                        .Complete(session.GetTerminalException());
+                },
+                this);
+            return permits;
+        }
     }
 }
