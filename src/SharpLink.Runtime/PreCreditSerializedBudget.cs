@@ -174,30 +174,6 @@ internal sealed class PreCreditSerializedBudget
             exception ?? new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "The stream is closed."));
     }
 
-    internal void AbortRequest(long requestId, Exception exception)
-    {
-        ArgumentNullException.ThrowIfNull(exception);
-        List<Waiter>? rejected = null;
-        lock (_gate)
-        {
-            var current = _head;
-            while (current is not null)
-            {
-                var next = current.Next;
-                if (current.RequestId == requestId)
-                {
-                    Remove(current);
-                    current.State = WaiterState.Terminal;
-                    (rejected ??= []).Add(current);
-                }
-                current = next;
-            }
-            DrainWaiters();
-        }
-
-        CompleteRejectedWaiters(rejected, exception);
-    }
-
     internal void Complete(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
