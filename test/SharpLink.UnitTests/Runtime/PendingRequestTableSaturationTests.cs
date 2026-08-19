@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using SharpLink.Client;
 
@@ -121,70 +122,74 @@ public class PendingRequestTableSaturationTests
     {
         using var manager = PendingRequestTableTestFixture.Create(1);
         var occupied = manager.Rent<int>(out var occupiedId);
-        using var rejectedAcquirePaused = new ManualResetEventSlim(initialState: false);
-        using var allowRejectedRefund = new ManualResetEventSlim(initialState: false);
-        var rejectedAcquireCount = 0;
-        manager.CapacityAcquireRejectedForTest = () =>
+
+        // Model a rejected full-table acquire paused after its speculative 1 -> 2 increment.
+        Interlocked.Increment(ref ActiveSlots(manager));
+        await Assert.That(manager.ActiveCount).IsEqualTo(2);
+
+        var waiter = manager.RentAsync<int>(
+            waitForSlot: true,
+            deadline: default,
+            CancellationToken.None).AsTask();
+        if (!SpinWait.SpinUntil(
+                () => GetWaiterCount(manager) == 1,
+                TimeSpan.FromSeconds(10)))
         {
-            if (Interlocked.Increment(ref rejectedAcquireCount) != 1)
-                return;
-
-            rejectedAcquirePaused.Set();
-            allowRejectedRefund.Wait();
-        };
-
-        try
-        {
-            var rejected = Task.Run(() => CaptureException(() => manager.Rent<int>(out _)));
-            if (!rejectedAcquirePaused.Wait(TimeSpan.FromSeconds(10)))
-                throw new Exception("failed capacity acquire did not pause before refund");
-            await Assert.That(manager.ActiveCount).IsEqualTo(2);
-
-            var waiter = manager.RentAsync<int>(
-                waitForSlot: true,
-                deadline: default,
-                CancellationToken.None).AsTask();
-            if (!SpinWait.SpinUntil(
-                    () => Volatile.Read(ref rejectedAcquireCount) >= 3,
-                    TimeSpan.FromSeconds(10)))
-            {
-                throw new Exception("waiter did not reach the initial full-table wait");
-            }
-
-            var payload = new ReadOnlySequence<byte>(new byte[sizeof(int)]);
-            await Assert.That(manager.Dispatch(occupiedId, ref payload)).IsTrue();
-            _ = await occupied.AsValueTask();
-
-            if (!SpinWait.SpinUntil(
-                    () => Volatile.Read(ref rejectedAcquireCount) >= 5 && manager.ActiveCount == 1,
-                    TimeSpan.FromSeconds(10)))
-            {
-                throw new Exception("waiter did not consume the release signal and re-enter the wait");
-            }
-            await Assert.That(waiter.IsCompleted).IsFalse();
-
-            allowRejectedRefund.Set();
-
-            var completed = await Task.WhenAny(waiter, Task.Delay(TimeSpan.FromSeconds(10)));
-            if (!ReferenceEquals(completed, waiter))
-                throw new Exception("refunded capacity did not wake the waiting registration");
-
-            var lease = await waiter;
-            var rejection = await rejected;
-            await Assert.That(rejection).IsTypeOf<SharpLinkException>();
-            await Assert.That(((SharpLinkException)rejection!).Code)
-                .IsEqualTo(SharpLinkErrorCode.ResourceExhausted);
-
-            payload = new ReadOnlySequence<byte>(new byte[sizeof(int)]);
-            await Assert.That(manager.Dispatch(lease.Id, ref payload)).IsTrue();
-            _ = await lease.Operation.AsValueTask();
-            await Assert.That(manager.ActiveCount).IsEqualTo(0);
+            throw new Exception("waiter did not reach the initial full-table wait");
         }
-        finally
-        {
-            manager.CapacityAcquireRejectedForTest = null;
-            allowRejectedRefund.Set();
-        }
+        await Assert.That(waiter.IsCompleted).IsFalse();
+
+        using var observerReady = new ManualResetEventSlim(initialState: false);
+        var waiterCycle = Task.Factory.StartNew(
+            () =>
+            {
+                observerReady.Set();
+                if (!SpinWait.SpinUntil(
+                        () => GetWaiterCount(manager) == 0,
+                        TimeSpan.FromSeconds(10)))
+                {
+                    throw new Exception("waiter did not consume the first release signal");
+                }
+
+                if (!SpinWait.SpinUntil(
+                        () => GetWaiterCount(manager) == 1,
+                        TimeSpan.FromSeconds(10)))
+                {
+                    throw new Exception("waiter did not re-enter the full-table wait");
+                }
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        if (!observerReady.Wait(TimeSpan.FromSeconds(10)))
+            throw new Exception("waiter-cycle observer did not start");
+
+        var payload = new ReadOnlySequence<byte>(new byte[sizeof(int)]);
+        await Assert.That(manager.Dispatch(occupiedId, ref payload)).IsTrue();
+        _ = await occupied.AsValueTask();
+
+        var observedCycle = await Task.WhenAny(waiterCycle, Task.Delay(TimeSpan.FromSeconds(10)));
+        if (!ReferenceEquals(observedCycle, waiterCycle))
+            throw new Exception("waiter did not consume the release signal and re-enter the wait");
+        await waiterCycle;
+
+        // Give the resumed waiter a scheduling turn to settle back on the empty semaphore.
+        await Task.Delay(TimeSpan.FromMilliseconds(20));
+        await Assert.That(manager.ActiveCount).IsEqualTo(1);
+        await Assert.That(waiter.IsCompleted).IsFalse();
+
+        // Complete the paused rejected acquire's refund: 1 -> 0 must re-signal the waiter.
+        RefundRejectedCapacity(manager);
+
+        var completed = await Task.WhenAny(waiter, Task.Delay(TimeSpan.FromSeconds(10)));
+        if (!ReferenceEquals(completed, waiter))
+            throw new Exception("refunded capacity did not wake the waiting registration");
+
+        var lease = await waiter;
+        payload = new ReadOnlySequence<byte>(new byte[sizeof(int)]);
+        await Assert.That(manager.Dispatch(lease.Id, ref payload)).IsTrue();
+        _ = await lease.Operation.AsValueTask();
+        await Assert.That(manager.ActiveCount).IsEqualTo(0);
     }
 
     [Test]
@@ -320,6 +325,18 @@ public class PendingRequestTableSaturationTests
         await Assert.That(((SharpLinkException)occupiedFailure!).Code)
             .IsEqualTo(SharpLinkErrorCode.ConnectionClosed);
     }
+
+    private static int GetWaiterCount(PendingRequestTable manager)
+        => Volatile.Read(ref WaiterCount(manager));
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_activeSlots")]
+    private static extern ref int ActiveSlots(PendingRequestTable manager);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_waiterCount")]
+    private static extern ref int WaiterCount(PendingRequestTable manager);
+
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "RefundRejectedCapacity")]
+    private static extern void RefundRejectedCapacity(PendingRequestTable manager);
 
     private static Exception? CaptureException(Action action)
     {
