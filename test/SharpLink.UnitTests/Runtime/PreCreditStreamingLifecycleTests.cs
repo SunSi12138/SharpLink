@@ -7,7 +7,7 @@ namespace SharpLink.UnitTests.Runtime;
 public class PreCreditStreamingLifecycleTests
 {
     [Test]
-    public async Task ByteBudgetWaitCancellationShouldReleasePermitAndCreditWaitCancellationShouldReleaseOwner()
+    public async Task BudgetWaitCancellationAndCreditWaitCancellationShouldReleaseOwnership()
     {
         const int payloadBytes = 1024;
         var codec = new CountingUnsizedCodec();
@@ -41,8 +41,6 @@ public class PreCreditStreamingLifecycleTests
         Ensure(codec.SerializeCount == 2, "the flow-credit waiter should own one serialized item");
         Ensure(session.PreCreditSerializedBytes == payloadBytes,
             "the credit waiter should own exactly one serialized payload");
-        Ensure(session.PreCreditActiveSerializerCount == 1,
-            "the flow-credit waiter should retain one serializer permit");
 
         using var budgetWaitCancellation = new CancellationTokenSource();
         var budgetWaiter = session.SendStreamChunkAsync(
@@ -52,32 +50,26 @@ public class PreCreditStreamingLifecycleTests
             budgetWaitCancellation.Token).AsTask();
         Ensure(!budgetWaiter.IsCompleted, "the third item should wait for actual-byte admission");
         Ensure(codec.SerializeCount == 3,
-            "a byte-budget waiter may serialize only while it owns a bounded serializer permit");
-        Ensure(session.PreCreditActiveSerializerCount == 2,
-            "both materialized blocked writers should retain serializer permits");
+            "the budget waiter should serialize exactly once before actual-byte admission");
         Ensure(session.PreCreditSerializedWaiterCount == 1,
             "the byte-budget waiter should be represented by one bounded queue node");
 
         budgetWaitCancellation.Cancel();
         await ExpectCancellation(budgetWaiter);
-        Ensure(codec.SerializeCount == 3, "cancelled byte-budget wait must not reserialize discarded data");
+        Ensure(codec.SerializeCount == 3, "cancelled budget wait must not reserialize discarded data");
         Ensure(session.PreCreditSerializedWaiterCount == 0,
-            "cancelled byte-budget wait must leave no waiter node behind");
+            "cancelled budget wait must leave no waiter node behind");
         Ensure(session.PreCreditSerializedBytes == payloadBytes,
             "cancelling a follower must not steal the active oversized owner's bytes");
-        Ensure(session.PreCreditActiveSerializerCount == 1,
-            "cancelling a byte-budget waiter must release its serializer permit exactly once");
 
         creditWaitCancellation.Cancel();
         await ExpectCancellation(creditWaiter);
-        Ensure(session.PreCreditSerializedBytes == 0,
+        Ensure(session.PreCreditSerializedBytes == 0 && session.PreCreditSerializedWaiterCount == 0,
             "credit-wait cancellation must release the serialized byte owner exactly once");
-        Ensure(session.PreCreditActiveSerializerCount == 0 && session.PreCreditSerializedWaiterCount == 0,
-            "all cancellation cleanup must leave serializer and byte admission empty");
     }
 
     [Test]
-    public async Task StreamTerminalShouldWakeMatchingByteBudgetWaiterWithoutDisturbingOtherStream()
+    public async Task StreamTerminalShouldWakeMatchingBudgetWaiterAndOwner()
     {
         const int payloadBytes = 1024;
         var codec = new CountingUnsizedCodec();
@@ -101,71 +93,26 @@ public class PreCreditStreamingLifecycleTests
         await session.SendStreamChunkAsync(10, 1, new Payload(payloadBytes));
         var serializedOwner = session.SendStreamChunkAsync(11, 1, new Payload(payloadBytes)).AsTask();
         var matchingBudgetWaiter = session.SendStreamChunkAsync(12, 1, new Payload(payloadBytes)).AsTask();
-        var otherBudgetWaiter = session.SendStreamChunkAsync(13, 1, new Payload(payloadBytes)).AsTask();
-        Ensure(codec.SerializeCount == 4,
-            "the bounded serializer gate should materialize these three blocked test items");
-        Ensure(session.PreCreditActiveSerializerCount == 3,
-            "all three blocked materialized writers should own serializer permits");
-        Ensure(session.PreCreditSerializedWaiterCount == 2,
-            "two later streams should wait for the actual-byte budget");
-
-        var streamTerminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "stream 12 closed");
-        session.SendStreamErrorAsync(12, 1, streamTerminal);
-        await ExpectSameException(
-            matchingBudgetWaiter,
-            streamTerminal,
-            "matching byte-budget waiter");
-        Ensure(!otherBudgetWaiter.IsCompleted,
-            "terminating one stream must not reject a different pre-credit waiter");
+        Ensure(codec.SerializeCount == 3,
+            "the owner and queued follower should each serialize exactly once");
+        Ensure(session.PreCreditSerializedBytes == payloadBytes,
+            "one oversized actual-byte owner should remain while credit is exhausted");
         Ensure(session.PreCreditSerializedWaiterCount == 1,
-            "only the matching stream waiter should leave the bounded queue");
-        Ensure(session.PreCreditActiveSerializerCount == 2,
-            "the rejected byte-budget waiter must release exactly one serializer permit");
-        Ensure(codec.SerializeCount == 4,
-            "stream-terminal rejection must not cause any item to be serialized twice");
+            "one matching serialized waiter should remain queued");
+
+        var waiterTerminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "stream 12 closed");
+        session.SendStreamErrorAsync(12, 1, waiterTerminal);
+        await ExpectSameException(matchingBudgetWaiter, waiterTerminal, "matching byte-budget waiter");
+        Ensure(session.PreCreditSerializedWaiterCount == 0,
+            "the matching stream terminal should remove its budget waiter");
+        Ensure(session.PreCreditSerializedBytes == payloadBytes,
+            "terminating the follower must not steal the current byte owner");
 
         var ownerTerminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "stream 11 closed");
         session.SendStreamErrorAsync(11, 1, ownerTerminal);
-        await ExpectSameException(
-            serializedOwner,
-            ownerTerminal,
-            "current actual-byte owner");
-
-        // Releasing the actual-byte owner admits the already-materialized surviving stream.
-        // At this point it is intentionally crossing from the pre-credit byte admission subsystem
-        // into StreamFlowController. The stream-terminal requirement above is already covered at
-        // the pre-credit boundary; use connection terminal for deterministic final cleanup rather
-        // than racing that asynchronous handoff a second time.
-        await SpinUntilAsync(() =>
-            session.PreCreditSerializedWaiterCount == 0 &&
-            session.PreCreditSerializedBytes == payloadBytes &&
-            session.PreCreditActiveSerializerCount == 1);
-        Ensure(!otherBudgetWaiter.IsCompleted, "the surviving stream should still be blocked on flow credit");
-        Ensure(codec.SerializeCount == 4,
-            "admitting an already-materialized byte-budget waiter must not serialize it again");
-
-        var connectionTerminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "session cleanup");
-        session.NotifyDisconnected(connectionTerminal);
-        await ExpectSameException(
-            otherBudgetWaiter,
-            connectionTerminal,
-            "surviving pre-credit/flow handoff");
-        Ensure(
-            session.PreCreditSerializedBytes == 0 &&
-            session.PreCreditActiveSerializerCount == 0 &&
-            session.PreCreditSerializedWaiterCount == 0,
-            "terminal cleanup must return all pre-credit accounting to zero");
-    }
-
-    private static async Task SpinUntilAsync(Func<bool> condition)
-    {
-        for (var attempt = 0; attempt < 10_000; attempt++)
-        {
-            if (condition())
-                return;
-            await Task.Yield();
-        }
-        throw new InvalidOperationException("The expected pre-credit transition did not occur.");
+        await ExpectSameException(serializedOwner, ownerTerminal, "current actual-byte owner");
+        Ensure(session.PreCreditSerializedBytes == 0 && session.PreCreditSerializedWaiterCount == 0,
+            "stream terminal cleanup must return all pre-credit accounting to zero");
     }
 
     private static async Task ExpectCancellation(Task task)
