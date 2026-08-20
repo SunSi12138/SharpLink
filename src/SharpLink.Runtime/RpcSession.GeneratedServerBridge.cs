@@ -60,9 +60,9 @@ internal sealed partial class RpcSession
         this.SendStreamCompleteAsync(requestId, streamId);
     }
 
-    // Keep the generated-server path concrete and codec-bound. The internal Runtime helper
-    // remains a separate client hot path so one stream item does not cross an extra generic
-    // async wrapper merely to select its codec.
+    // Keep the generated-server path concrete and codec-bound. Exact-size codecs retain the
+    // credit-before-serialize path; only the universal unsized fallback enters the session-owned
+    // pre-credit serialized-memory admission helper.
     private ValueTask SendGeneratedStreamChunkAsync<T>(
         long requestId,
         ushort streamId,
@@ -84,58 +84,12 @@ internal sealed partial class RpcSession
                 cancellationToken);
         }
 
-        IRpcByteBufferWriter? writer = null;
-        var ownsWriter = true;
-        try
-        {
-            writer = RentFrameWriter();
-            using (writer.BeginPacketScope(
-                       ProtocolV2FrameType.StreamData,
-                       ProtocolV2FrameFlags.None,
-                       unchecked((ulong)requestId)))
-            {
-                var idSpan = writer.GetSpan(sizeof(ushort));
-                BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
-                writer.Advance(sizeof(ushort));
-                codec.Serialize(item, writer);
-            }
-            var encodedBytes = Math.Max(
-                1,
-                writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort));
-            var pendingCredit = AcquireStreamSendCreditAsync(
-                requestId,
-                streamId,
-                encodedBytes,
-                cancellationToken);
-            if (!pendingCredit.IsCompletedSuccessfully)
-            {
-                ownsWriter = false;
-                return AwaitGeneratedStreamCreditAndSendAsync(
-                    pendingCredit,
-                    writer,
-                    requestId,
-                    streamId,
-                    encodedBytes);
-            }
-
-            pendingCredit.GetAwaiter().GetResult();
-            try
-            {
-                ownsWriter = false;
-                SendPacket(writer);
-            }
-            catch
-            {
-                ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
-                throw;
-            }
-            return ValueTask.CompletedTask;
-        }
-        finally
-        {
-            if (ownsWriter && writer is not null)
-                RuntimeContext.Buffers.Return(writer);
-        }
+        return SendUnsizedStreamChunkAsync(
+            requestId,
+            streamId,
+            item,
+            codec,
+            cancellationToken);
     }
 
     internal async ValueTask SendStreamChunkKnownSizeAsync<T>(
@@ -201,35 +155,6 @@ internal sealed partial class RpcSession
             if (sizedSnapshot is not null)
                 sizedCodec.ReleaseSnapshot(sizedSnapshot);
             if (ownsWriter && writer is not null)
-                RuntimeContext.Buffers.Return(writer);
-        }
-    }
-
-    private async ValueTask AwaitGeneratedStreamCreditAndSendAsync(
-        ValueTask pendingCredit,
-        IRpcByteBufferWriter writer,
-        long requestId,
-        ushort streamId,
-        int encodedBytes)
-    {
-        var ownsWriter = true;
-        var creditAcquired = false;
-        try
-        {
-            await pendingCredit.ConfigureAwait(false);
-            creditAcquired = true;
-            ownsWriter = false;
-            SendPacket(writer);
-        }
-        catch
-        {
-            if (creditAcquired)
-                ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
-            throw;
-        }
-        finally
-        {
-            if (ownsWriter)
                 RuntimeContext.Buffers.Return(writer);
         }
     }

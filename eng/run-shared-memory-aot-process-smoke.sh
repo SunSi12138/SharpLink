@@ -52,4 +52,22 @@ LOCAL_LOG="$OUTPUT/local-topologies.log"
 grep -q "STATIC_READINESS_PASS" "$LOCAL_LOG"
 grep -q "AOT_SMOKE_PASS transport=tcp" "$LOCAL_LOG"
 
-echo "Shared-memory process and local endpoint-topology NativeAOT smokes passed ($RID)."
+PRECREDIT_OUTPUT="$OUTPUT/precredit"
+mkdir -p "$PRECREDIT_OUTPUT"
+dotnet publish "$ROOT/test/SharpLink.PreCreditAotSmoke/SharpLink.PreCreditAotSmoke.csproj" \
+  -c Release -r "$RID" -p:PublishAot=true -o "$PRECREDIT_OUTPUT" -v minimal
+
+PRECREDIT_EXE="$PRECREDIT_OUTPUT/SharpLink.PreCreditAotSmoke"
+if [[ "$RID" == win-* ]]; then
+  PRECREDIT_EXE="$PRECREDIT_EXE.exe"
+fi
+
+PRECREDIT_TCP_LOG="$PRECREDIT_OUTPUT/tcp.log"
+"$PRECREDIT_EXE" tcp | tee "$PRECREDIT_TCP_LOG"
+grep -q "PRE_CREDIT_AOT_PASS transport=tcp" "$PRECREDIT_TCP_LOG"
+
+PRECREDIT_SHM_LOG="$PRECREDIT_OUTPUT/sharedmemory.log"
+"$PRECREDIT_EXE" sharedmemory | tee "$PRECREDIT_SHM_LOG"
+grep -q "PRE_CREDIT_AOT_PASS transport=sharedmemory" "$PRECREDIT_SHM_LOG"
+
+echo "Shared-memory process, local endpoint-topology, and pre-credit NativeAOT smokes passed ($RID)."
