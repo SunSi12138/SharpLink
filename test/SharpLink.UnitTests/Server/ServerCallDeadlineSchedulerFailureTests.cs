@@ -73,7 +73,8 @@ public class ServerCallDeadlineSchedulerFailureTests
     }
 
     [Test]
-    public void OneHundredThousandScansShouldNotLeakLeaseUseCounts()
+    [NotInParallel]
+    public void OneHundredThousandScansShouldReturnEveryStateToItsPool()
     {
         const int iterations = 100_000;
         var timeProvider = new ManualTimeProvider();
@@ -93,12 +94,17 @@ public class ServerCallDeadlineSchedulerFailureTests
                 "every repeated scan must still acquire and release its generation-bound lease");
             Ensure(calls.TryRemove(state.RequestId, state), "repeated scan cleanup");
             state.Dispose();
+
+            var reused = CreateState(1_000_000L + iteration, TimeSpan.FromSeconds(1), timeProvider);
+            Ensure(ReferenceEquals(state, reused),
+                "disposed scan state must be immediately reusable, proving no lease use count remains");
+            reused.Dispose();
         }
 
         Ensure(pool.RentCount == iterations,
             "each isolated exact-deadline scan should perform one bounded snapshot rent");
         Ensure(!pool.SawLiveLeaseOnReturn,
-            "100k repeated scans must not return any snapshot with an outstanding lease use count");
+            "100k repeated scans must not return any snapshot retaining a live lease reference");
     }
 
     private static ServerCallCancellationState CreateState(
