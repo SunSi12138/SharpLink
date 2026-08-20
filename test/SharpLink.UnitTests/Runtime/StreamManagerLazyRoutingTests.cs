@@ -115,34 +115,71 @@ public class StreamManagerLazyRoutingTests
     }
 
     [Test]
-    public async Task FirstRegisterRacingCompleteAllShouldNotLeaveAnOrphanedStream()
+    public void FirstRegisterRacingCompleteAllShouldNotLeaveAnOrphanedStream()
     {
-        for (var iteration = 0; iteration < 256; iteration++)
+        var manager = new StreamManager();
+        var dispatcher = new RecordingDispatcher();
+        var exception = new SharpLinkException(
+            SharpLinkErrorCode.ConnectionClosed,
+            "session closed");
+        using var reachedFirstMaterialization = new ManualResetEventSlim();
+        using var continueFirstMaterialization = new ManualResetEventSlim();
+        Exception? registerFailure = null;
+
+        var registerThread = new Thread(() =>
         {
-            var manager = new StreamManager();
-            var dispatcher = new RecordingDispatcher();
-            using var start = new ManualResetEventSlim();
-            var register = Task.Run(() =>
+            StripedLongMapTestHooks.BeforeInitialize = () =>
             {
-                start.Wait();
-                manager.Register(iteration + 10_000, dispatcher);
-            });
-            var complete = Task.Run(() =>
+                reachedFirstMaterialization.Set();
+                continueFirstMaterialization.Wait();
+            };
+            try
             {
-                start.Wait();
-                manager.CompleteAll(new SharpLinkException(
-                    SharpLinkErrorCode.ConnectionClosed,
-                    "session closed"));
-            });
+                manager.Register(10_000, dispatcher);
+            }
+            catch (Exception failure)
+            {
+                registerFailure = failure;
+            }
+            finally
+            {
+                StripedLongMapTestHooks.BeforeInitialize = null;
+            }
+        })
+        {
+            IsBackground = true
+        };
 
-            start.Set();
-            await Task.WhenAll(register, complete);
+        registerThread.Start();
+        try
+        {
+            Ensure(reachedFirstMaterialization.Wait(TimeSpan.FromSeconds(5)),
+                "registration should reach first materialization after observing a non-terminal manager");
 
-            Ensure(dispatcher.CompleteCount == 1,
-                "first-use registration racing termination should complete exactly once");
-            Ensure(manager.ActiveStreamCount == 0,
-                "first-use registration racing termination must not leave an active stream");
+            manager.CompleteAll(exception);
+
+            Ensure(manager.IsTerminated, "termination should publish while first materialization is paused");
+            Ensure(!manager.HasMaterializedRoutingState,
+                "CompleteAll must observe no published routing map before first materialization resumes");
         }
+        finally
+        {
+            continueFirstMaterialization.Set();
+        }
+
+        Ensure(registerThread.Join(TimeSpan.FromSeconds(5)),
+            "registration should finish after first materialization resumes");
+        if (registerFailure is not null)
+            throw new Exception("registration failed during deterministic first-use race", registerFailure);
+
+        Ensure(manager.HasMaterializedRoutingState,
+            "the stale pre-termination registration should still publish its first-use routing map");
+        Ensure(dispatcher.CompleteCount == 1,
+            "the post-registration termination check should complete the raced dispatcher exactly once");
+        Ensure(ReferenceEquals(exception, dispatcher.LastException),
+            "the raced dispatcher should observe the published terminal exception");
+        Ensure(manager.ActiveStreamCount == 0,
+            "the deterministic first-use race must not leave an active stream");
     }
 
     [Test]
