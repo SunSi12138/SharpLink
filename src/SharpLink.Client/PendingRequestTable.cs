@@ -122,7 +122,26 @@ internal sealed class PendingRequestTable : IDisposable
 
     internal int LastDeadlineScanInspectedSlots => Volatile.Read(ref _lastDeadlineScanInspectedSlots);
 
-    public int Count => ActiveCount;
+    public int Count
+    {
+        get
+        {
+            var count = 0;
+            for (var segmentIndex = 0; segmentIndex < _slots.SegmentCount; segmentIndex++)
+            {
+                var segment = _slots.GetMaterializedSegment(segmentIndex);
+                if (segment is null)
+                    continue;
+
+                for (var offset = 0; offset < segment.Length; offset++)
+                {
+                    if (Volatile.Read(ref segment[offset]) is not null)
+                        count++;
+                }
+            }
+            return count;
+        }
+    }
 
     public RpcRequestOperation<T> Rent<T>(out long id)
         => Rent(_codecProvider.GetCodec<T>(), out id);
