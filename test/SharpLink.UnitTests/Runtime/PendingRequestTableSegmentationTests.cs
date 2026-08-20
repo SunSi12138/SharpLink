@@ -37,7 +37,7 @@ public class PendingRequestTableSegmentationTests
         await CompleteForCleanup(manager, id, operation);
         Ensure(manager.Count == 0, "completion should return the authoritative active count to zero");
         Ensure(manager.MaterializedSegmentCount == 1,
-            "the first implementation intentionally retains materialized segments until table disposal");
+            "a small recently touched reuse window should remain materialized");
     }
 
     [Test]
@@ -98,7 +98,57 @@ public class PendingRequestTableSegmentationTests
 
         Ensure(manager.Count == 0, "boundary coverage cleanup must release all capacity");
         Ensure(manager.MaterializedSegmentCount == 2,
-            "segments should remain stable instead of being reclaimed during normal churn");
+            "small touched working sets should remain available for reuse");
+    }
+
+    [Test]
+    public void FullLogicalCycleShouldNotRetainEveryTouchedSegment()
+    {
+        const int capacity = 65_536;
+        var slots = new SegmentedSlotTable<object>(capacity);
+        var value = new object();
+
+        for (var index = 0; index < capacity; index++)
+        {
+            Ensure(slots.CompareExchange(index, value, null) is null,
+                "serial churn should publish into each free logical slot");
+            Ensure(ReferenceEquals(slots.Read(index), value),
+                "a published value must remain reachable while its segment is attached");
+            Ensure(ReferenceEquals(slots.CompareExchange(index, null, value), value),
+                "serial churn should remove the value exactly once");
+        }
+
+        Ensure(slots.MaterializedSegmentCount <= 8,
+            "a full request-ID cycle must retain only the bounded reuse window, not all 256 segments");
+    }
+
+    [Test]
+    public void ConcurrentTrimAndPublishShouldNotLoseReachableValues()
+    {
+        const int capacity = 65_536;
+        const int workerCount = 16;
+        const int iterationsPerWorker = 4096;
+        var slots = new SegmentedSlotTable<object>(capacity);
+
+        Parallel.For(0, workerCount, worker =>
+        {
+            var value = new object();
+            var rangeStart = worker * (capacity / workerCount);
+            var rangeLength = capacity / workerCount;
+            for (var iteration = 0; iteration < iterationsPerWorker; iteration++)
+            {
+                var index = rangeStart + (iteration % rangeLength);
+                Ensure(slots.CompareExchange(index, value, null) is null,
+                    "disjoint concurrent churn should publish without collision");
+                Ensure(ReferenceEquals(slots.Read(index), value),
+                    "trim must never detach a publication that has committed to the root");
+                Ensure(ReferenceEquals(slots.CompareExchange(index, null, value), value),
+                    "concurrent churn should remove each publication exactly once");
+            }
+        });
+
+        Ensure(slots.MaterializedSegmentCount <= 8,
+            "concurrent churn should converge back to the bounded retained-segment window");
     }
 
     [Test]
