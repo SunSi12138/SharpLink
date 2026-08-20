@@ -1,11 +1,21 @@
+using System;
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net;
+using System.Threading;
+using System.Threading.Tasks;
 using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
 using SharpLink.Server;
+
+[assembly: RpcCodecAdapterRegistration(
+    typeof(SharpLink.PreCreditAotSmoke.PreCreditPayloadCodecAdapter),
+    "sharplink.precredit-aot.unsized",
+    "sharplink.precredit-aot.unsized.v1")]
 
 namespace SharpLink.PreCreditAotSmoke;
 
@@ -147,6 +157,7 @@ public static class Program
 [RpcContract]
 public interface IPreCreditAotService : IService
 {
+    [NonCancellable]
     IAsyncEnumerable<PreCreditPayload> StreamAsync(int count);
 
     [NonCancellable]
