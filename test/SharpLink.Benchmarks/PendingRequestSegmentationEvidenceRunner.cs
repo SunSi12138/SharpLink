@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Diagnostics;
+using System.IO;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading;
@@ -371,7 +372,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
 
     private sealed class ManualEvidenceTimeProvider : TimeProvider
     {
-        private long _timestamp;
+        private long _timestamp = 0;
         private DateTimeOffset _utcNow = DateTimeOffset.UnixEpoch;
 
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
