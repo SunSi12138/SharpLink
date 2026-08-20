@@ -33,7 +33,10 @@ jobs:
       - name: Verify Formatting
         run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
 
-      - name: Build
+      - name: Build Debug
+        run: dotnet build Sharplink.slnx --no-restore -c Debug -v minimal
+
+      - name: Build Release
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
 
       - name: Verify Generated Assemblies Do Not Reference Runtime

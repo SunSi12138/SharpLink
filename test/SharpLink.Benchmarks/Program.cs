@@ -117,6 +117,30 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--pre-credit-starvation-evidence", StringComparison.Ordinal))
+        {
+            await PreCreditStarvationEvidenceRunner.RunAsync();
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--pre-credit-starved-memory-evidence", StringComparison.Ordinal))
+        {
+            await PreCreditStarvedMemoryEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--pre-credit-concurrent-fast-evidence", StringComparison.Ordinal))
+        {
+            await PreCreditConcurrentFastConsumerEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--pre-credit-8way-attribution-evidence", StringComparison.Ordinal))
+        {
+            await PreCredit8WayAttributionEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--latency-recorder-evidence", StringComparison.Ordinal))
         {
             LatencyRecorderEvidenceRunner.Run(args[1..]);
