@@ -14,6 +14,7 @@ namespace SharpLink.Benchmarks;
 /// <summary>
 /// Reproducible evidence runner for issue #252. Run separate processes for memory occupancies so
 /// pooled pending-operation state from one sample cannot contaminate the next retained-memory sample.
+/// Segment-size comparisons should use identical source/runtime inputs and change only the segment-size constant.
 /// </summary>
 internal static class PendingRequestSegmentationEvidenceRunner
 {
