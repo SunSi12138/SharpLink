@@ -170,6 +170,8 @@ public static class Program
             await ConnectionAdmissionEvidenceRunner.RunAsync(args[1..]);
             return;
         }
+        // Issue #252 evidence modes cover retained memory, construction cost, sparse deadline scan
+        // cost/lateness, while the existing RuntimeHotPath benchmark covers register/complete CPU.
         if (args.Length > 0 && string.Equals(
             args[0], "--pending-request-segmentation-evidence", StringComparison.Ordinal))
         {
