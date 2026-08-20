@@ -5,9 +5,6 @@ permissions:
 
 on:
   workflow_call:
-  pull_request:
-    branches:
-      - dev
   workflow_dispatch:
 
 jobs:
@@ -100,12 +97,14 @@ jobs:
           --input artifacts/codec-compat/producers
           --output artifacts/codec-compat/verification.json
 
-      - name: Upload verification report
+      - name: Upload verification diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: codec-verification-${{ matrix.id }}
-          path: artifacts/codec-compat/verification.json
+          path: |
+            artifacts/codec-compat/verification.json
+            artifacts/codec-compat/verification-progress.log
           if-no-files-found: error
           retention-days: 30
 
