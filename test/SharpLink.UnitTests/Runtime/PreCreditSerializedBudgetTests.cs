@@ -105,8 +105,7 @@ public class PreCreditSerializedBudgetTests
     public async Task OversizedReservationShouldBorrowOnlyWhenSoleOwner()
     {
         var budget = new PreCreditSerializedBudget(8, maxWaiters: 8);
-        await budget.AcquireAsync(1, 1, 8, CancellationToken.None);
-        budget.ResizeReservation(8, 32);
+        await budget.AcquireAsync(1, 1, 32, CancellationToken.None);
         Ensure(budget.ReservedBytes == 32, "one legal oversized item should be allowed to own the budget");
 
         var follower = budget.AcquireAsync(2, 1, 1, CancellationToken.None).AsTask();
