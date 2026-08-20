@@ -63,6 +63,8 @@ internal interface IPendingCallCompletionObserver
 /// </remarks>
 internal sealed class PendingRequestTable : IDisposable
 {
+    private const int HotSegmentSize = 256;
+
     private readonly int _indexMask;
     private readonly SegmentedSlotTable<PendingCall> _slots;
     private readonly IRpcCodecProvider _codecProvider;
@@ -224,8 +226,6 @@ internal sealed class PendingRequestTable : IDisposable
             Interlocked.Increment(ref _waiterCount);
             try
             {
-                // Close the race where disposal starts after the pre-increment check but before
-                // this waiter begins using the semaphore.
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
                 if (TryRent(
@@ -329,10 +329,6 @@ internal sealed class PendingRequestTable : IDisposable
         if (current is not null && current.Id == id &&
             current.Kind is PendingCallKind.ServerStreaming or PendingCallKind.DuplexStreaming)
         {
-            // A successful Response is only the server's acknowledgement; StreamComplete owns
-            // the terminal transition for server and duplex streams. The callback shares the
-            // per-call completion gate with terminal removal, so a matching acknowledgement is
-            // observed before cancellation, deadline, or disconnect can report the terminal result.
             lock (current.CompletionGate)
             {
                 if (!ReferenceEquals(_slots.Read(index), current) ||
@@ -489,22 +485,10 @@ internal sealed class PendingRequestTable : IDisposable
             {
                 for (var attempt = 0; attempt < _slots.Length; attempt++)
                 {
-                    id = NextRequestId();
-                    var index = (int)(id & _indexMask);
-                    if (_slots.Read(index, out var segmentMaterialized) is not null)
+                    id = NextRegistrationRequestId(out var index);
+                    if (_slots.Read(index) is not null)
                         continue;
 
-                    // Once already-materialized storage can hold every active reservation, keep
-                    // request IDs in that high-water working set instead of letting cumulative ID
-                    // coverage materialize new segments on long-lived low-concurrency connections.
-                    if (!segmentMaterialized && ShouldReuseMaterializedSegments())
-                    {
-                        TryRebaseRequestIds(id);
-                        continue;
-                    }
-
-                    // Materialize storage before operation/PendingCall ownership is acquired so an
-                    // allocation failure can refund the capacity reservation without leaking pooled state.
                     _slots.EnsureSegment(index);
                     if (_slots.Read(index) is not null)
                         continue;
@@ -530,9 +514,6 @@ internal sealed class PendingRequestTable : IDisposable
                     call.ReturnUnused();
                 }
 
-                // A capacity reservation guarantees that some physical slot is free. Concurrent
-                // registrars can consume the request IDs that map to that slot, so retry another
-                // bounded round instead of reporting false resource exhaustion.
                 Thread.Yield();
             }
         }
@@ -566,16 +547,9 @@ internal sealed class PendingRequestTable : IDisposable
             {
                 for (var attempt = 0; attempt < _slots.Length; attempt++)
                 {
-                    id = NextRequestId();
-                    var index = (int)(id & _indexMask);
-                    if (_slots.Read(index, out var segmentMaterialized) is not null)
+                    id = NextRegistrationRequestId(out var index);
+                    if (_slots.Read(index) is not null)
                         continue;
-
-                    if (!segmentMaterialized && ShouldReuseMaterializedSegments())
-                    {
-                        TryRebaseRequestIds(id);
-                        continue;
-                    }
 
                     _slots.EnsureSegment(index);
                     if (_slots.Read(index) is not null)
@@ -601,9 +575,6 @@ internal sealed class PendingRequestTable : IDisposable
                     call.ReturnUnused();
                 }
 
-                // A capacity reservation guarantees that some physical slot is free. Concurrent
-                // registrars can consume the request IDs that map to that slot, so retry another
-                // bounded round instead of reporting false resource exhaustion.
                 Thread.Yield();
             }
         }
@@ -728,7 +699,6 @@ internal sealed class PendingRequestTable : IDisposable
                 }
                 catch
                 {
-                    // Diagnostics must never interrupt the terminal pending-call transition.
                 }
             }
             var isResponse = reason is PendingCallCompletionReason.Response or PendingCallCompletionReason.LocalStreamComplete;
@@ -746,8 +716,6 @@ internal sealed class PendingRequestTable : IDisposable
                 reason,
                 call.Dispatcher,
                 exception);
-            // Decode response payloads before reporting the terminal admission outcome so malformed
-            // endpoint responses are not published as successful attempts.
             call.CompletionObserver?.OnPendingCallCompleted(in completion);
 
             if (call.Operation is { } operation)
@@ -842,20 +810,45 @@ internal sealed class PendingRequestTable : IDisposable
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool ShouldReuseMaterializedSegments()
+    private long NextRegistrationRequestId(out int index)
     {
-        var materializedSegments = _slots.MaterializedSegmentCount;
-        return materializedSegments != 0 &&
-               Volatile.Read(ref _activeSlots) <= materializedSegments * _slots.SegmentSize;
+        var id = NextRequestId();
+        index = (int)(id & _indexMask);
+        if ((uint)index < HotSegmentSize)
+            return id;
+
+        return NextRegistrationRequestIdSlow(id, ref index);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private long NextRegistrationRequestIdSlow(long id, ref int index)
+    {
+        while (true)
+        {
+            var materializedSegments = _slots.MaterializedSegmentCount;
+            var materializedSlots = materializedSegments * _slots.SegmentSize;
+
+            if (materializedSegments != 0)
+            {
+                if (index < materializedSlots)
+                    return id;
+
+                if (Volatile.Read(ref _activeSlots) > materializedSlots)
+                    return id;
+            }
+
+            TryRebaseRequestIds(id);
+            id = NextRequestId();
+            index = (int)(id & _indexMask);
+            if ((uint)index < HotSegmentSize)
+                return id;
+        }
     }
 
     private void TryRebaseRequestIds(long allocatedId)
     {
-        if (!_slots.TryGetFirstMaterializedIndex(out var firstMaterializedIndex))
-            return;
-
         var cycleBase = allocatedId & ~((long)_indexMask);
-        var target = unchecked(cycleBase + _slots.Length + firstMaterializedIndex);
+        var target = unchecked(cycleBase + _slots.Length);
         var predecessor = unchecked(target - 1);
         _ = Interlocked.CompareExchange(ref _nextId, predecessor, allocatedId);
     }
