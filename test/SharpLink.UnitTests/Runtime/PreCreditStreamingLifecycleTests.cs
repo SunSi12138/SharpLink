@@ -75,7 +75,7 @@ public class PreCreditStreamingLifecycleTests
     {
         const long requestId = 20;
         const ushort streamId = 3;
-        const int payloadBytes = 8;
+        const int payloadBytes = 30 * 1024;
         const int streamWindow = payloadBytes;
         const int connectionWindow = payloadBytes;
         var codec = new CountingUnsizedCodec();
@@ -83,7 +83,9 @@ public class PreCreditStreamingLifecycleTests
             .Configure(options =>
             {
                 options.FlowControl.MaxPreCreditSerializedBytes = payloadBytes;
-                options.FlowControl.MaxSendQueueBytes = 1;
+                // At 32 KiB the SendPump reserves 4 KiB for protocol progress, so this normal
+                // 30 KiB StreamData frame is deterministically rejected even on an empty queue.
+                options.FlowControl.MaxSendQueueBytes = 32 * 1024;
             })
             .AddCodec(codec)
             .Build();
