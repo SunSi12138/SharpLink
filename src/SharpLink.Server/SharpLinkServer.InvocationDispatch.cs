@@ -15,8 +15,13 @@ internal sealed partial class SharpLinkServer
         var session = connection.Session;
         var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
         var hasReturnPayload = (flags & ProtocolV2FrameFlags.HasReturn) != 0;
+        var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
+        var preservePreDecodeMetadata =
+            isCompressed && _admissionController is not null && !admissionGranted;
 
-        var request = ReadRequestEnvelope(session, payload, flags);
+        var request = isCompressed && !preservePreDecodeMetadata
+            ? ReadRequestRoutingEnvelope(session, payload, flags)
+            : ReadRequestEnvelope(session, payload, flags);
         if (IsDeadlineExceeded(request.RpcDeadline))
         {
             ValueTask responseSend;
@@ -182,7 +187,7 @@ internal sealed partial class SharpLinkServer
                 requestId, rejection, connection.ConnectionToken);
         }
 
-        if ((flags & ProtocolV2FrameFlags.Compressed) != 0 && admittedCallState is null)
+        if (isCompressed && admittedCallState is null)
         {
             admittedCallState = CreateAdmissionWaitState(
                 connection,
@@ -196,15 +201,18 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? decodedRequestOwner = null;
         try
         {
-            if ((flags & ProtocolV2FrameFlags.Compressed) != 0)
+            if (isCompressed)
             {
+                var preDecodeMetadata = request.Metadata;
                 payload = session.DecodeInboundPayload(
                     ProtocolV2FrameType.Request,
                     flags,
                     payload,
                     admittedCallState!.InvocationToken,
                     out decodedRequestOwner);
-                request = ReadRequestEnvelope(session, payload, flags);
+                request = preservePreDecodeMetadata
+                    ? ReadRequestRoutingEnvelope(session, payload, flags) with { Metadata = preDecodeMetadata }
+                    : ReadRequestEnvelope(session, payload, flags);
             }
         }
         catch (SharpLinkException exception) when (
@@ -233,6 +241,18 @@ internal sealed partial class SharpLinkServer
             ReleaseDispatchResources(
                 admittedCallState, requestId, requestCancellationMap, connection);
             throw;
+        }
+
+        if (admittedCallState is { IsAbandoned: true })
+        {
+            session.ReturnDecodedPayload(decodedRequestOwner);
+            decodedRequestOwner = null;
+            var exception = MapServerCancellationException(admittedCallState, request.RpcDeadline);
+            CompleteFailedRequestStreams(session, requestId, exception);
+            var responseSend = session.SendRpcErrorWithBackpressureAsync(
+                requestId, exception, connection.ConnectionToken);
+            return ReleaseDispatchResourcesAfterResponseAsync(
+                responseSend, admittedCallState, requestId, requestCancellationMap, connection);
         }
 
         if (IsDeadlineExceeded(request.RpcDeadline))
