@@ -1,4 +1,4 @@
-name: Issue 263 Agent
+name: Issue 263 Candidate Validation
 
 on:
   push:
@@ -12,35 +12,222 @@ permissions:
   issues: write
 
 jobs:
-  export-source:
+  validate-candidate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 40
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - name: Archive source
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore baseline
+        run: dotnet restore Sharplink.slnx
+
+      - name: Measure dev-equivalent baseline
         shell: bash
         run: |
-          tar --exclude=.git -czf /tmp/sharplink-source.tgz .
-          mkdir -p artifacts/issue-263
-          mv /tmp/sharplink-source.tgz artifacts/issue-263/
+          set -euo pipefail
+          mkdir -p artifacts/issue-263/perf/before
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+          for n in 1 2 3; do
+            dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+              --feature-evidence client FixedDefault 500 0.75 100000 \
+              artifacts/issue-263/perf/before/client-fixed-${n}.json
+            dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+              --feature-evidence server StaticDefault 500 0.75 100000 \
+              artifacts/issue-263/perf/before/server-static-${n}.json
+          done
 
-      - name: Upload source
-        id: upload
+      - name: Apply candidate patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d .github/issue-263.patch.gz.b64 | gzip -d > /tmp/issue263.patch
+          git apply --check /tmp/issue263.patch
+          git apply /tmp/issue263.patch
+          git diff --check
+
+      - name: Verify formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Generator Tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+
+      - name: Measure candidate hot paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/issue-263/perf/after
+          for n in 1 2 3; do
+            dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+              --feature-evidence client FixedDefault 500 0.75 100000 \
+              artifacts/issue-263/perf/after/client-fixed-${n}.json
+            dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+              --feature-evidence client ClientInterceptorDynamicDisabled 500 0.75 100000 \
+              artifacts/issue-263/perf/after/client-dynamic-disabled-${n}.json
+            dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+              --feature-evidence server StaticDefault 500 0.75 100000 \
+              artifacts/issue-263/perf/after/server-static-${n}.json
+            dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+              --feature-evidence server ServerInterceptorDynamicDisabled 500 0.75 100000 \
+              artifacts/issue-263/perf/after/server-dynamic-disabled-${n}.json
+          done
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+            --feature-evidence client ClientInterceptorDynamicEnabled 500 0.75 100000 \
+            artifacts/issue-263/perf/after/client-dynamic-enabled.json
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+            --feature-evidence client ClientAndServerInterceptorDynamicEnabled 500 0.75 100000 \
+            artifacts/issue-263/perf/after/client-server-dynamic-enabled.json
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+            --feature-evidence client ClientInterceptorAfterManyReplacements 500 0.75 100000 \
+            artifacts/issue-263/perf/after/client-after-replacements.json
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+            --feature-evidence server ServerInterceptorDynamicEnabled 500 0.75 100000 \
+            artifacts/issue-263/perf/after/server-dynamic-enabled.json
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+            --feature-evidence server ServerInterceptorAfterManyReplacements 500 0.75 100000 \
+            artifacts/issue-263/perf/after/server-after-replacements.json
+
+      - name: Enforce disabled-path performance gate
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, json, statistics
+
+          def values(pattern, key):
+              rows=[]
+              for path in glob.glob(pattern):
+                  with open(path, encoding='utf-8') as f:
+                      rows.append(json.load(f)[key])
+              if not rows:
+                  raise SystemExit(f'no evidence for {pattern}')
+              return rows
+
+          def median(pattern, key):
+              return statistics.median(values(pattern, key))
+
+          cases = [
+              ('client',
+               'artifacts/issue-263/perf/before/client-fixed-*.json',
+               'artifacts/issue-263/perf/after/client-fixed-*.json',
+               'artifacts/issue-263/perf/after/client-dynamic-disabled-*.json'),
+              ('server',
+               'artifacts/issue-263/perf/before/server-static-*.json',
+               'artifacts/issue-263/perf/after/server-static-*.json',
+               'artifacts/issue-263/perf/after/server-dynamic-disabled-*.json'),
+          ]
+          failed=False
+          lines=[]
+          for name, before, after, dynamic in cases:
+              bt=median(before, 'throughputPerSecond')
+              at=median(after, 'throughputPerSecond')
+              dt=median(dynamic, 'throughputPerSecond')
+              ba=median(before, 'allocatedBytesPerOperation')
+              aa=median(after, 'allocatedBytesPerOperation')
+              da=median(dynamic, 'allocatedBytesPerOperation')
+              regression=(bt-at)/bt*100.0
+              dynamic_delta=(at-dt)/at*100.0
+              lines.append(
+                  f'{name}: before={bt:.0f} op/s after={at:.0f} op/s '
+                  f'regression={regression:.2f}% dynamic-disabled={dt:.0f} op/s '
+                  f'delta-vs-after={dynamic_delta:.2f}% alloc={ba:.3f}->{aa:.3f}/{da:.3f} B/op')
+              if regression > 5.0:
+                  print(f'::error::{name} disabled hot path regressed {regression:.2f}% (>5%)')
+                  failed=True
+              if aa - ba > 2.0:
+                  print(f'::error::{name} baseline allocation increased by {aa-ba:.3f} B/op')
+                  failed=True
+              if da - aa > 2.0:
+                  print(f'::error::{name} runtime-disabled allocation exceeds patched baseline by {da-aa:.3f} B/op')
+                  failed=True
+          print('\n'.join(lines))
+          with open('artifacts/issue-263/perf/summary.txt','w',encoding='utf-8') as f:
+              f.write('\n'.join(lines)+'\n')
+          if failed:
+              raise SystemExit(1)
+          PY
+
+      - name: Upload validation evidence
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: issue-263-source-${{ github.sha }}
-          path: artifacts/issue-263/sharplink-source.tgz
-          retention-days: 1
+          name: issue-263-validation-${{ github.sha }}
+          path: artifacts/issue-263
+          if-no-files-found: warn
+          retention-days: 14
 
-      - name: Report source artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+      - name: Commit validated candidate
         shell: bash
         run: |
-          gh api repos/${{ github.repository }}/issues/263/comments \
-            -f body="<!-- issue-263-agent-source --> source_sha=${{ github.sha }} run_id=${{ github.run_id }} artifact_id=${ARTIFACT_ID}"
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- \
+            doc/index.md \
+            doc/runtime-interceptors.md \
+            src/SharpLink.Abstractions/ISharpLinkClient.cs \
+            src/SharpLink.Abstractions/ISharpLinkServer.cs \
+            src/SharpLink.Abstractions/SharpLinkInterceptors.cs \
+            src/SharpLink.Client/SharpClientBuilder.cs \
+            src/SharpLink.Client/SharpLinkClient.Interceptors.cs \
+            src/SharpLink.Client/SharpLinkClient.Invokers.cs \
+            src/SharpLink.Client/SharpLinkClient.RuntimeInterceptors.cs \
+            src/SharpLink.Client/SharpLinkClient.Telemetry.cs \
+            src/SharpLink.Client/SharpLinkClient.cs \
+            src/SharpLink.Server/SharpLinkServer.Interceptors.cs \
+            src/SharpLink.Server/SharpLinkServer.RuntimeInterceptors.cs \
+            src/SharpLink.Server/SharpLinkServer.cs \
+            src/SharpLink.Server/SharpLinkServerBuilder.cs \
+            test/SharpLink.Benchmarks/BenchmarkEnvironment.cs \
+            test/SharpLink.Benchmarks/FeatureBenchmarkScenarios.cs \
+            test/SharpLink.IntegrationTests/DynamicInterceptorIntegrationTests.cs
+          git rm -- .github/issue-263.patch.gz.b64
+          echo 'Validated staged files:'
+          git diff --cached --name-status
+          git commit -m 'feat: support runtime interceptor replacement'
+          git push origin HEAD:agent/issue-263-dynamic-interceptors
+
+      - name: Report validation result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          status='${{ job.status }}'
+          sha=$(git rev-parse HEAD)
+          summary=''
+          if [ -f artifacts/issue-263/perf/summary.txt ]; then
+            summary=$(cat artifacts/issue-263/perf/summary.txt)
+          fi
+          body="<!-- issue-263-agent-validation --> status=${status} run_id=${{ github.run_id }} head=${sha}"
+          if [ -n "$summary" ]; then
+            body="$body
+
+\`\`\`
+$summary
+\`\`\`"
+          fi
+          gh api repos/${{ github.repository }}/issues/263/comments -f body="$body"
