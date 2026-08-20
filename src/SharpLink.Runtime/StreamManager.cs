@@ -468,6 +468,7 @@ internal sealed class StreamManager
             if (dispatchersByRequestId is not null)
                 return dispatchersByRequestId;
 
+            StreamManagerTestHooks.BeforeRoutingMapInitialize?.Invoke();
             dispatchersByRequestId = new StripedLongMap<RequestDispatchers>(_concurrencyOptions);
             Volatile.Write(ref _dispatchersByRequestId, dispatchersByRequestId);
             return dispatchersByRequestId;
@@ -973,5 +974,17 @@ internal sealed class DiscardingStreamDispatcher : IStreamConsumptionAwareDispat
         _bytesConsumed = callback;
         _requestId = requestId;
         _streamId = streamId;
+    }
+}
+
+internal static class StreamManagerTestHooks
+{
+    [ThreadStatic]
+    private static Action? s_beforeRoutingMapInitialize;
+
+    internal static Action? BeforeRoutingMapInitialize
+    {
+        get => s_beforeRoutingMapInitialize;
+        set => s_beforeRoutingMapInitialize = value;
     }
 }

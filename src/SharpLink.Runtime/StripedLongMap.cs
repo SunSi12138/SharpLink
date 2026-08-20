@@ -14,8 +14,6 @@ internal sealed class StripedLongMap<TValue> where TValue : class
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        StripedLongMapTestHooks.BeforeInitialize?.Invoke();
-
         var stripeCount = options.StripeCount;
         var initialMapCapacityPerStripe = options.InitialMapCapacityPerStripe;
         RuntimeConcurrencyOptions.Validate(stripeCount, initialMapCapacityPerStripe);
@@ -168,17 +166,5 @@ internal sealed class StripedLongMap<TValue> where TValue : class
         var hash = unchecked((int)(key ^ (key >> 32)));
         hash &= int.MaxValue;
         return hash & _stripeMask;
-    }
-}
-
-internal static class StripedLongMapTestHooks
-{
-    [ThreadStatic]
-    private static Action? s_beforeInitialize;
-
-    internal static Action? BeforeInitialize
-    {
-        get => s_beforeInitialize;
-        set => s_beforeInitialize = value;
     }
 }

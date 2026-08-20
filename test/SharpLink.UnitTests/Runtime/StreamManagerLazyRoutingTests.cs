@@ -126,7 +126,7 @@ public class StreamManagerLazyRoutingTests
 
         var registerThread = new Thread(() =>
         {
-            StripedLongMapTestHooks.BeforeInitialize = () =>
+            StreamManagerTestHooks.BeforeRoutingMapInitialize = () =>
             {
                 reachedFirstMaterialization.Set();
                 continueFirstMaterialization.Wait();
@@ -141,7 +141,7 @@ public class StreamManagerLazyRoutingTests
             }
             finally
             {
-                StripedLongMapTestHooks.BeforeInitialize = null;
+                StreamManagerTestHooks.BeforeRoutingMapInitialize = null;
             }
         })
         {
@@ -205,7 +205,7 @@ public class StreamManagerLazyRoutingTests
 
         var registerThread = new Thread(() =>
         {
-            StripedLongMapTestHooks.BeforeInitialize = () =>
+            StreamManagerTestHooks.BeforeRoutingMapInitialize = () =>
             {
                 reachedFirstMaterialization.Set();
                 continueFirstMaterialization.Wait();
@@ -220,7 +220,7 @@ public class StreamManagerLazyRoutingTests
             }
             finally
             {
-                StripedLongMapTestHooks.BeforeInitialize = null;
+                StreamManagerTestHooks.BeforeRoutingMapInitialize = null;
             }
         })
         {

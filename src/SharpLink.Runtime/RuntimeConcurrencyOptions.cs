@@ -28,8 +28,9 @@ public sealed class RuntimeConcurrencyOptions
                 nameof(StripeCount),
                 $"StripeCount must be a positive power of two no larger than {MaximumStripeCount}.");
         }
-        if (initialMapCapacityPerStripe < 0)
-            throw new ArgumentOutOfRangeException(nameof(InitialMapCapacityPerStripe));
+        ArgumentOutOfRangeException.ThrowIfNegative(
+            initialMapCapacityPerStripe,
+            nameof(InitialMapCapacityPerStripe));
         if ((long)stripeCount * initialMapCapacityPerStripe > MaximumInitialMapEntries)
         {
             throw new ArgumentOutOfRangeException(
