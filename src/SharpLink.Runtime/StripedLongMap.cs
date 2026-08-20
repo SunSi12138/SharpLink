@@ -32,8 +32,23 @@ internal sealed class StripedLongMap<TValue> where TValue : class
     /// <summary>
     /// Enables a cheap occupancy hint for owners that need it. This must be called before the map
     /// is published for concurrent mutation; maps that never opt in pay no shared atomic writes.
+    /// Existing entries are included in the initial hint.
     /// </summary>
-    internal void EnableCountTracking() => _countTrackingEnabled = true;
+    internal void EnableCountTracking()
+    {
+        if (_countTrackingEnabled)
+            return;
+
+        var count = 0;
+        for (var index = 0; index < _maps.Length; index++)
+        {
+            lock (_locks[index])
+                count += _maps[index].Count;
+        }
+
+        Volatile.Write(ref _count, count);
+        _countTrackingEnabled = true;
+    }
 
     internal int Count => Volatile.Read(ref _count);
 
