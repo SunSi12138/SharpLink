@@ -162,8 +162,7 @@ public sealed class SharpLinkRuntimeOptions
         if (!Enum.IsDefined(PerformanceProfile))
             throw new ArgumentOutOfRangeException(nameof(PerformanceProfile));
 
-        var clone = new SharpLinkRuntimeOptions { PerformanceProfile = PerformanceProfile.Balanced };
-        clone.PerformanceProfile = PerformanceProfile;
+        var clone = new SharpLinkRuntimeOptions { PerformanceProfile = PerformanceProfile };
         CopyProtocol(Protocol.CloneValidated(), clone.Protocol);
         CopyFlowControl(ApplyProfileDefaults(FlowControl.CloneValidated(), PerformanceProfile), clone.FlowControl);
         CopyCompression(Compression.CloneValidated(), clone.Compression);
