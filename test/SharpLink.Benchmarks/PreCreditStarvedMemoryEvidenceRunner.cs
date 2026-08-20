@@ -54,6 +54,10 @@ internal static class PreCreditStarvedMemoryEvidenceRunner
         using var sampler = new WorkingSetSampler();
         sampler.Start();
 
+        // SendStreamChunkAsync performs unsized serialization synchronously before returning its
+        // ValueTask. This loop therefore measures the sampled peak for this sequential launch
+        // pattern; it is intentionally not evidence of the worst-case peak if many serializers
+        // materialize concurrently behind an external barrier.
         var sends = new Task[Streams];
         for (var index = 0; index < sends.Length; index++)
         {
@@ -105,6 +109,7 @@ internal static class PreCreditStarvedMemoryEvidenceRunner
             $"baselineWorkingSetBytes={baseline.WorkingSetBytes} " +
             $"postLaunchWorkingSetBytes={postLaunch.WorkingSetBytes} " +
             $"stableWorkingSetBytes={stable.WorkingSetBytes} " +
+            $"sampledPeakScope=sequential-send-launch " +
             $"sampledPeakWorkingSetBytes={sampledPeakWorkingSetBytes} " +
             $"sampledPeakDeltaBytes={Math.Max(0, sampledPeakWorkingSetBytes - baseline.WorkingSetBytes)} " +
             $"stableWorkingSetDeltaBytes={stable.WorkingSetBytes - baseline.WorkingSetBytes} " +
