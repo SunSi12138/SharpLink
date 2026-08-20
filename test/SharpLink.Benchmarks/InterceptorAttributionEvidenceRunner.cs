@@ -1,7 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Reflection;
-using System.Runtime.Serialization;
+using System.Runtime.CompilerServices;
 using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Server;
@@ -15,20 +15,20 @@ public static class InterceptorAttributionEvidenceRunner
         const int iterations = 100_000;
 
         Measure("ClientInvocationContext", iterations,
-            () => FormatterServices.GetUninitializedObject(typeof(SharpLinkClientInvocationContext)));
+            () => RuntimeHelpers.GetUninitializedObject(typeof(SharpLinkClientInvocationContext)));
         Measure("ServerInvocationContext", iterations,
-            () => FormatterServices.GetUninitializedObject(typeof(SharpLinkServerInvocationContext)));
+            () => RuntimeHelpers.GetUninitializedObject(typeof(SharpLinkServerInvocationContext)));
 
         var clientInterceptorState = FindNested(typeof(SharpLinkClient), "ClientInterceptorState");
 
         var unaryType = typeof(SharpLinkClient).GetNestedType(
             "UnaryInterceptorState`2", BindingFlags.NonPublic)!.MakeGenericType(typeof(int), typeof(int));
         Measure("UnaryInterceptorState", iterations,
-            () => FormatterServices.GetUninitializedObject(unaryType));
+            () => RuntimeHelpers.GetUninitializedObject(unaryType));
 
         var clientContinuation = FindNested(clientInterceptorState, "ClientInterceptorContinuation");
         Measure("ClientInterceptorContinuation", iterations,
-            () => FormatterServices.GetUninitializedObject(clientContinuation));
+            () => RuntimeHelpers.GetUninitializedObject(clientContinuation));
 
         // ClientContinuationState is pooled; it contributes ~0 B per intercepted call after warmup.
 
@@ -37,7 +37,7 @@ public static class InterceptorAttributionEvidenceRunner
 
         var serverContinuation = FindNested(serverPipeline, "ServerInterceptorContinuation");
         Measure("ServerInterceptorContinuation", iterations,
-            () => FormatterServices.GetUninitializedObject(serverContinuation));
+            () => RuntimeHelpers.GetUninitializedObject(serverContinuation));
 
         // ServerContinuationState is pooled; it contributes ~0 B per intercepted call after warmup.
     }
