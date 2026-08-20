@@ -1,0 +1,167 @@
+name: Codec Compatibility
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+  pull_request:
+    branches:
+      - dev
+  push:
+    branches:
+      - agent/issue-253-codec-compat
+  workflow_dispatch:
+
+jobs:
+  produce:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux
+            os: ubuntu-latest
+          - id: windows
+            os: windows-latest
+          - id: macos
+            os: macos-14
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Produce codec corpus
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
+          -- produce
+          --output artifacts/codec-compat/corpus
+
+      - name: Upload codec corpus
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-corpus-${{ matrix.id }}
+          path: artifacts/codec-compat/corpus
+          if-no-files-found: error
+          retention-days: 30
+
+  verify:
+    needs: produce
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux
+            os: ubuntu-latest
+          - id: windows
+            os: windows-latest
+          - id: macos
+            os: macos-14
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Download all producer corpora
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: codec-corpus-*
+          path: artifacts/codec-compat/producers
+          merge-multiple: false
+
+      - name: Cross-verify all producer corpora
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
+          -- verify
+          --input artifacts/codec-compat/producers
+          --output artifacts/codec-compat/verification.json
+
+      - name: Upload verification report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-verification-${{ matrix.id }}
+          path: artifacts/codec-compat/verification.json
+          if-no-files-found: error
+          retention-days: 30
+
+  summary:
+    needs: verify
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Record SDK version
+        shell: bash
+        run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
+
+      - name: Download verification reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: codec-verification-*
+          path: artifacts/codec-compat/verifications
+          merge-multiple: false
+
+      - name: Require every desktop consumer report
+        shell: bash
+        run: |
+          count="$(find artifacts/codec-compat/verifications -name verification.json -type f | wc -l | tr -d ' ')"
+          if [[ "$count" != "3" ]]; then
+            echo "::error::Expected 3 desktop consumer reports, found $count."
+            exit 1
+          fi
+
+      - name: Aggregate compatibility matrix
+        run: >-
+          dotnet run -c Release
+          --project test/SharpLink.CodecCompatibility/SharpLink.CodecCompatibility.csproj
+          -- summarize
+          --input artifacts/codec-compat/verifications
+          --output artifacts/codec-compat/summary
+
+      - name: Upload compatibility summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codec-compatibility-summary
+          path: artifacts/codec-compat/summary
+          if-no-files-found: warn
+          retention-days: 30
