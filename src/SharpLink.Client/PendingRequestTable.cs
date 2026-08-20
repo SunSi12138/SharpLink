@@ -491,8 +491,17 @@ internal sealed class PendingRequestTable : IDisposable
                 {
                     id = NextRequestId();
                     var index = (int)(id & _indexMask);
-                    if (_slots.Read(index) is not null)
+                    if (_slots.Read(index, out var segmentMaterialized) is not null)
                         continue;
+
+                    // Once already-materialized storage can hold every active reservation, keep
+                    // request IDs in that high-water working set instead of letting cumulative ID
+                    // coverage materialize new segments on long-lived low-concurrency connections.
+                    if (!segmentMaterialized && ShouldReuseMaterializedSegments())
+                    {
+                        TryRebaseRequestIds(id);
+                        continue;
+                    }
 
                     // Materialize storage before operation/PendingCall ownership is acquired so an
                     // allocation failure can refund the capacity reservation without leaking pooled state.
@@ -559,8 +568,14 @@ internal sealed class PendingRequestTable : IDisposable
                 {
                     id = NextRequestId();
                     var index = (int)(id & _indexMask);
-                    if (_slots.Read(index) is not null)
+                    if (_slots.Read(index, out var segmentMaterialized) is not null)
                         continue;
+
+                    if (!segmentMaterialized && ShouldReuseMaterializedSegments())
+                    {
+                        TryRebaseRequestIds(id);
+                        continue;
+                    }
 
                     _slots.EnsureSegment(index);
                     if (_slots.Read(index) is not null)
@@ -824,6 +839,25 @@ internal sealed class PendingRequestTable : IDisposable
     {
         var id = Interlocked.Increment(ref _nextId);
         return id != 0 ? id : Interlocked.Increment(ref _nextId);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool ShouldReuseMaterializedSegments()
+    {
+        var materializedSegments = _slots.MaterializedSegmentCount;
+        return materializedSegments != 0 &&
+               Volatile.Read(ref _activeSlots) <= materializedSegments * _slots.SegmentSize;
+    }
+
+    private void TryRebaseRequestIds(long allocatedId)
+    {
+        if (!_slots.TryGetFirstMaterializedIndex(out var firstMaterializedIndex))
+            return;
+
+        var cycleBase = allocatedId & ~((long)_indexMask);
+        var target = unchecked(cycleBase + _slots.Length + firstMaterializedIndex);
+        var predecessor = unchecked(target - 1);
+        _ = Interlocked.CompareExchange(ref _nextId, predecessor, allocatedId);
     }
 
     private void UpdateEarliestDeadline(long deadlineTimestamp)
