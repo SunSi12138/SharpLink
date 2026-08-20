@@ -3,7 +3,10 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
+using System.Threading;
+using SharpLink.Abstractions;
 using SharpLink.Client;
+using SharpLink.Runtime;
 
 namespace SharpLink.Benchmarks;
 
