@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
@@ -11,6 +12,16 @@ public class StreamManagerLazyRoutingTests
         var manager = new StreamManager();
 
         Ensure(!manager.HasMaterializedRoutingState, "new manager should not allocate stream routing state");
+
+        Ensure(!manager.TryDispatchPreAdmissionCompressed(
+                404,
+                7,
+                new ReadOnlySequence<byte>(new byte[] { 2 }),
+                originalByteCount: 1,
+                out _),
+            "compressed pre-admission miss should return false before routing materialization");
+        Ensure(!manager.HasMaterializedRoutingState,
+            "compressed pre-admission miss must not materialize routing state");
 
         await manager.DispatchChunkAsync(
             404,
@@ -79,6 +90,7 @@ public class StreamManagerLazyRoutingTests
         const int streamCount = 32;
         var manager = new StreamManager();
         var dispatchers = new ConcurrentDictionary<int, RecordingDispatcher>();
+        var initializationAttempts = 0;
         using var start = new ManualResetEventSlim();
         var registrations = new Task[streamCount];
 
@@ -89,14 +101,25 @@ public class StreamManagerLazyRoutingTests
             {
                 var dispatcher = new RecordingDispatcher();
                 dispatchers[requestId] = dispatcher;
-                start.Wait();
-                manager.Register(requestId, dispatcher);
+                StreamManagerTestHooks.BeforeRoutingMapInitialize =
+                    () => Interlocked.Increment(ref initializationAttempts);
+                try
+                {
+                    start.Wait();
+                    manager.Register(requestId, dispatcher);
+                }
+                finally
+                {
+                    StreamManagerTestHooks.BeforeRoutingMapInitialize = null;
+                }
             });
         }
 
         start.Set();
         await Task.WhenAll(registrations);
 
+        Ensure(Volatile.Read(ref initializationAttempts) == 1,
+            "32 concurrent first registrations must construct routing state exactly once");
         Ensure(manager.HasMaterializedRoutingState, "first-use race should publish routing state");
         Ensure(manager.ActiveStreamCount == streamCount,
             "every concurrently registered stream should remain addressable");
@@ -199,12 +222,43 @@ public class StreamManagerLazyRoutingTests
         var exception = new SharpLinkException(
             SharpLinkErrorCode.ConnectionClosed,
             "session closed");
+        var registerThreadId = 0;
+        long activeStreamMetricNet = 0;
+        long activeStreamMetricPositive = 0;
+        long activeStreamMetricNegative = 0;
+        var activeStreamMetricMeasurements = 0;
+        using var meterListener = new MeterListener();
+        meterListener.InstrumentPublished = static (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == "SharpLink" &&
+                instrument.Name == "sharplink.streams.active")
+            {
+                listener.EnableMeasurementEvents(instrument);
+            }
+        };
+        meterListener.SetMeasurementEventCallback<long>((instrument, measurement, tags, state) =>
+        {
+            _ = instrument;
+            _ = tags;
+            _ = state;
+            if (Environment.CurrentManagedThreadId != Volatile.Read(ref registerThreadId))
+                return;
+
+            Interlocked.Add(ref activeStreamMetricNet, measurement);
+            if (measurement > 0)
+                Interlocked.Add(ref activeStreamMetricPositive, measurement);
+            else if (measurement < 0)
+                Interlocked.Add(ref activeStreamMetricNegative, measurement);
+            Interlocked.Increment(ref activeStreamMetricMeasurements);
+        });
+        meterListener.Start();
         using var reachedFirstMaterialization = new ManualResetEventSlim();
         using var continueFirstMaterialization = new ManualResetEventSlim();
         Exception? registerFailure = null;
 
         var registerThread = new Thread(() =>
         {
+            Volatile.Write(ref registerThreadId, Environment.CurrentManagedThreadId);
             StreamManagerTestHooks.BeforeRoutingMapInitialize = () =>
             {
                 reachedFirstMaterialization.Set();
@@ -257,6 +311,14 @@ public class StreamManagerLazyRoutingTests
             "the raced dispatcher should observe the published terminal exception");
         Ensure(manager.ActiveStreamCount == 0,
             "the deterministic first-use race must not leave an active stream");
+        Ensure(Volatile.Read(ref activeStreamMetricMeasurements) == 2,
+            "the forced race should publish exactly one active-stream increment and decrement");
+        Ensure(Volatile.Read(ref activeStreamMetricPositive) == 1,
+            "the forced race should increment active-stream telemetry exactly once");
+        Ensure(Volatile.Read(ref activeStreamMetricNegative) == -1,
+            "the forced race should decrement active-stream telemetry exactly once");
+        Ensure(Volatile.Read(ref activeStreamMetricNet) == 0,
+            "the forced race must leave active-stream telemetry balanced at zero");
     }
 
     [Test]
