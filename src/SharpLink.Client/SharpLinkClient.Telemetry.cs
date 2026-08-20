@@ -7,6 +7,7 @@ internal sealed partial class SharpLinkClient
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
+        ISharpLinkClientInterceptor[] interceptors,
         SharpLinkCallOptions options,
         CancellationToken cancellationToken)
     {
@@ -14,10 +15,10 @@ internal sealed partial class SharpLinkClient
         try
         {
             ValueTask<TResponse> invocation;
-            if (_clientInterceptors.Length != 0)
+            if (interceptors.Length != 0)
             {
                 invocation = InvokeUnaryInterceptedAsync(
-                    method, request, requestCodec, responseCodec, options, cancellationToken);
+                    method, request, requestCodec, responseCodec, interceptors, options, cancellationToken);
             }
             else
             {
@@ -40,6 +41,7 @@ internal sealed partial class SharpLinkClient
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         TStreams streams,
+        ISharpLinkClientInterceptor[] interceptors,
         SharpLinkCallOptions options,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
@@ -48,10 +50,10 @@ internal sealed partial class SharpLinkClient
         try
         {
             ValueTask invocation;
-            if (_clientInterceptors.Length != 0)
+            if (interceptors.Length != 0)
             {
                 invocation = InvokeOneWayInterceptedAsync(
-                    method, request, requestCodec, streams, options, cancellationToken);
+                    method, request, requestCodec, streams, interceptors, options, cancellationToken);
             }
             else
             {
@@ -76,6 +78,7 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
+        ISharpLinkClientInterceptor[] interceptors,
         SharpLinkCallOptions options,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
@@ -84,10 +87,10 @@ internal sealed partial class SharpLinkClient
         try
         {
             ValueTask<TResponse> invocation;
-            if (_clientInterceptors.Length != 0)
+            if (interceptors.Length != 0)
             {
                 invocation = InvokeClientStreamingInterceptedAsync(
-                    method, request, requestCodec, responseCodec, streams, options, cancellationToken);
+                    method, request, requestCodec, responseCodec, streams, interceptors, options, cancellationToken);
             }
             else
             {
@@ -111,12 +114,13 @@ internal sealed partial class SharpLinkClient
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
+        ISharpLinkClientInterceptor[] interceptors,
         SharpLinkCallOptions options,
         CancellationToken cancellationToken)
     {
-        var stream = _clientInterceptors.Length != 0
+        var stream = interceptors.Length != 0
             ? InvokeServerStreamingIntercepted(
-                method, request, requestCodec, responseCodec, options, cancellationToken)
+                method, request, requestCodec, responseCodec, interceptors, options, cancellationToken)
             : InvokeServerStreamingCore(
                 method, request, requestCodec, responseCodec, options, cancellationToken);
         return ObserveStream(method, stream);
@@ -128,13 +132,14 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         TStreams streams,
+        ISharpLinkClientInterceptor[] interceptors,
         SharpLinkCallOptions options,
         CancellationToken cancellationToken)
         where TStreams : struct, IRpcClientStreamWriter
     {
-        var stream = _clientInterceptors.Length != 0
+        var stream = interceptors.Length != 0
             ? InvokeDuplexStreamingIntercepted(
-                method, request, requestCodec, responseCodec, streams, options, cancellationToken)
+                method, request, requestCodec, responseCodec, streams, interceptors, options, cancellationToken)
             : InvokeDuplexStreamingCore(
                 method, request, requestCodec, responseCodec, streams, options, cancellationToken);
         return ObserveStream(method, stream);

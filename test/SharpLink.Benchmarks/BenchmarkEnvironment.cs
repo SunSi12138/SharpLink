@@ -45,6 +45,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         Action<SharpLinkRuntimeOptions>? configureClientRuntime = null,
         Func<int, SharpClientBuilder>? createClientBuilder = null,
         Action<ISharpLinkServer>? configureBuiltServer = null,
+        Action<ISharpLinkClient>? configureBuiltClient = null,
         int expectedReadyConnections = 1)
     {
         var localService = new BenchmarkRpcService();
@@ -77,6 +78,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         if (configureClientRuntime is not null)
             client.UseRuntime(configureClientRuntime);
         var builtClient = client.Build();
+        configureBuiltClient?.Invoke(builtClient);
 
         await builtClient.ConnectAsync(shutdown.Token);
         await WaitForReadyConnectionsAsync(

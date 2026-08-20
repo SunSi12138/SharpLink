@@ -6,6 +6,22 @@ public interface ISharpLinkServer : IAsyncDisposable
     /// <summary>Gets the current process readiness state.</summary>
     SharpLinkHealthStatus HealthStatus { get; }
 
+    /// <summary>
+    /// Atomically replaces the server interceptor pipeline for service invocations that start after this call returns.
+    /// Calls already in progress retain the interceptor generation captured at their dispatch boundary.
+    /// </summary>
+    /// <param name="interceptors">The complete interceptor pipeline in execution order. The sequence is copied before publication.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="interceptors"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="interceptors"/> contains a null element.</exception>
+    /// <exception cref="InvalidOperationException">The server is draining, stopped, or faulted.</exception>
+    /// <exception cref="NotSupportedException">This implementation does not support runtime interceptor replacement.</exception>
+    void ReplaceInterceptors(IEnumerable<ISharpLinkServerInterceptor> interceptors)
+    {
+        ArgumentNullException.ThrowIfNull(interceptors);
+        throw new NotSupportedException(
+            "This ISharpLinkServer implementation does not support runtime interceptor replacement.");
+    }
+
     /// <summary>Atomically registers the source-generated artifacts owned by an already loaded assembly.</summary>
     /// <param name="assembly">The assembly containing a generated SharpLink manifest.</param>
     /// <returns>A non-throwing registration result with structured diagnostics after rejection.</returns>
