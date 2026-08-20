@@ -5,6 +5,8 @@ internal sealed class StripedLongMap<TValue> where TValue : class
     private readonly Lock[] _locks;
     private readonly Dictionary<long, TValue>[] _maps;
     private readonly int _stripeMask;
+    private int _count;
+    private bool _countTrackingEnabled;
 
     public StripedLongMap() : this(new RuntimeConcurrencyOptions())
     {
@@ -27,11 +29,29 @@ internal sealed class StripedLongMap<TValue> where TValue : class
         }
     }
 
+    /// <summary>
+    /// Enables a cheap occupancy hint for owners that need it. This must be called before the map
+    /// is published for concurrent mutation; maps that never opt in pay no shared atomic writes.
+    /// </summary>
+    internal void EnableCountTracking() => _countTrackingEnabled = true;
+
+    internal int Count => Volatile.Read(ref _count);
+
     public void Set(long key, TValue value)
     {
         var stripe = GetStripe(key);
         lock (_locks[stripe])
-            _maps[stripe][key] = value;
+        {
+            var map = _maps[stripe];
+            if (!map.TryAdd(key, value))
+            {
+                map[key] = value;
+                return;
+            }
+
+            if (_countTrackingEnabled)
+                Interlocked.Increment(ref _count);
+        }
     }
 
     public TValue GetOrAdd(long key, Func<long, TValue> valueFactory)
@@ -46,6 +66,8 @@ internal sealed class StripedLongMap<TValue> where TValue : class
 
             var created = valueFactory(key);
             _maps[stripe][key] = created;
+            if (_countTrackingEnabled)
+                Interlocked.Increment(ref _count);
             return created;
         }
     }
@@ -85,7 +107,13 @@ internal sealed class StripedLongMap<TValue> where TValue : class
     {
         var stripe = GetStripe(key);
         lock (_locks[stripe])
-            return _maps[stripe].TryGetValue(key, out value!) && _maps[stripe].Remove(key);
+        {
+            if (!_maps[stripe].TryGetValue(key, out value!) || !_maps[stripe].Remove(key))
+                return false;
+            if (_countTrackingEnabled)
+                Interlocked.Decrement(ref _count);
+            return true;
+        }
     }
 
     public bool TryRemove(long key, TValue expected)
@@ -94,9 +122,16 @@ internal sealed class StripedLongMap<TValue> where TValue : class
         var stripe = GetStripe(key);
         lock (_locks[stripe])
         {
-            return _maps[stripe].TryGetValue(key, out var existing) &&
-                   ReferenceEquals(existing, expected) &&
-                   _maps[stripe].Remove(key);
+            if (!_maps[stripe].TryGetValue(key, out var existing) ||
+                !ReferenceEquals(existing, expected) ||
+                !_maps[stripe].Remove(key))
+            {
+                return false;
+            }
+
+            if (_countTrackingEnabled)
+                Interlocked.Decrement(ref _count);
+            return true;
         }
     }
 
@@ -110,8 +145,11 @@ internal sealed class StripedLongMap<TValue> where TValue : class
                 if (_maps[i].Count == 0)
                     continue;
 
+                var removed = _maps[i].Count;
                 values.AddRange(_maps[i].Values);
                 _maps[i].Clear();
+                if (_countTrackingEnabled)
+                    Interlocked.Add(ref _count, -removed);
             }
         }
 
