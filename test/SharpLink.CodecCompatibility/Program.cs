@@ -89,6 +89,12 @@ internal static class Program
         if (!Directory.Exists(inputDirectory))
             throw new DirectoryNotFoundException(inputDirectory);
 
+        var outputDirectory = Path.GetDirectoryName(outputFile);
+        if (!string.IsNullOrEmpty(outputDirectory))
+            Directory.CreateDirectory(outputDirectory);
+        var progressFile = Path.Combine(outputDirectory ?? ".", "verification-progress.log");
+        File.WriteAllText(progressFile, string.Empty, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
         var manifestFiles = Directory.EnumerateFiles(inputDirectory, "manifest.json", SearchOption.AllDirectories)
             .OrderBy(static path => path, StringComparer.Ordinal)
             .ToArray();
@@ -137,7 +143,18 @@ internal static class Program
                 if (!string.Equals(observedHash, producerCase.WireSha256, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException($"Wire hash mismatch for {producer.PlatformTag}/{producerCase.Id}: manifest={producerCase.WireSha256}, observed={observedHash}.");
 
-                report.Results.Add(fixture.Verify(producerBytes, producerCase, producer, consumer));
+                var begin = $"VERIFY_BEGIN producer={producer.PlatformTag} consumer={consumer.PlatformTag} fixture={producerCase.Id} size={producerCase.Size}";
+                Console.WriteLine(begin);
+                Console.Out.Flush();
+                AppendProgress(progressFile, begin);
+
+                var result = fixture.Verify(producerBytes, producerCase, producer, consumer);
+                report.Results.Add(result);
+
+                var end = $"VERIFY_END producer={producer.PlatformTag} consumer={consumer.PlatformTag} fixture={producerCase.Id} classification={result.Classification} blocking={result.Blocking}";
+                Console.WriteLine(end);
+                Console.Out.Flush();
+                AppendProgress(progressFile, end);
             }
         }
 
@@ -280,6 +297,9 @@ internal static class Program
                 $"expected={result.ExpectedLogicalValue} actual={result.ActualLogicalValue}");
         }
     }
+
+    private static void AppendProgress(string path, string line)
+        => File.AppendAllText(path, line + Environment.NewLine, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
     private static T ReadJson<T>(string path)
     {
