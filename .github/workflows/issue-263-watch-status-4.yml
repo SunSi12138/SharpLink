@@ -1,4 +1,4 @@
-name: Issue 263 Watch Final
+name: Issue 263 Watch BDN
 
 on:
   push:
@@ -22,6 +22,7 @@ jobs:
         shell: bash
         run: |
           run_id=$(gh api 'repos/${{ github.repository }}/actions/runs?branch=agent/issue-263-dynamic-interceptors&per_page=1' --jq '.workflow_runs[0].id // 0')
+          name=$(gh api 'repos/${{ github.repository }}/actions/runs?branch=agent/issue-263-dynamic-interceptors&per_page=1' --jq '.workflow_runs[0].name // "none"')
           status=$(gh api 'repos/${{ github.repository }}/actions/runs?branch=agent/issue-263-dynamic-interceptors&per_page=1' --jq '.workflow_runs[0].status // "none"')
           conclusion=$(gh api 'repos/${{ github.repository }}/actions/runs?branch=agent/issue-263-dynamic-interceptors&per_page=1' --jq '.workflow_runs[0].conclusion // "pending"')
-          gh api repos/${{ github.repository }}/issues/263/comments -f body="<!-- issue-263-agent-watch-final --> run_id=${run_id} status=${status} conclusion=${conclusion}"
+          gh api repos/${{ github.repository }}/issues/263/comments -f body="<!-- issue-263-agent-watch-bdn --> run_id=${run_id} name=${name} status=${status} conclusion=${conclusion}"
