@@ -4,16 +4,19 @@ public class CompressionDispatchFailureTests
 {
     [Test]
     [NotInParallel]
-    public async Task CompressedUnaryProviderFailureShouldReleaseDispatchResources()
+    public async Task CompressedUnaryCorruptPayloadShouldReleaseDispatchResources()
     {
         var serverProvider = new FailOnceAfterWriteDecompressionProvider(
-            SharpLinkCompressionProviders.CreateBrotli());
+            SharpLinkCompressionProviders.CreateBrotli(),
+            static () => new InvalidDataException(
+                "Synthetic decompression failure after output allocation."));
         await using var harness = await DispatchFailureHarness.CreateAsync(serverProvider);
         var payload = Enumerable.Repeat((byte)0x45, 32 * 1024).ToArray();
 
-        await EnsureDataLossAsync(
+        await EnsureErrorAsync(
             harness.Client.Get<ICompressionService>().EchoBytesAsync(payload).AsTask(),
-            "compressed unary provider failure");
+            SharpLinkErrorCode.DataLoss,
+            "compressed unary corrupt payload");
         await WaitUntilAsync(() => harness.ActiveCalls == 0, "failed compressed call release");
 
         Ensure(serverProvider.CapturedOutputReturned,
@@ -28,7 +31,74 @@ public class CompressionDispatchFailureTests
         await WaitUntilAsync(() => harness.ActiveCalls == 0, "recovery call release");
     }
 
-    private static async Task EnsureDataLossAsync(Task task, string scenario)
+    [Test]
+    [NotInParallel]
+    public async Task CompressedUnaryGenericProviderFailureShouldMapInternalAndReleaseResources()
+    {
+        var serverProvider = new FailOnceAfterWriteDecompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli(),
+            static () => new InvalidOperationException(
+                "Synthetic generic provider failure after output allocation."));
+        await using var harness = await DispatchFailureHarness.CreateAsync(serverProvider);
+        var payload = Enumerable.Repeat((byte)0x48, 32 * 1024).ToArray();
+
+        await EnsureErrorAsync(
+            harness.Client.Get<ICompressionService>().EchoBytesAsync(payload).AsTask(),
+            SharpLinkErrorCode.Internal,
+            "compressed unary generic provider failure");
+        await WaitUntilAsync(() => harness.ActiveCalls == 0, "generic provider failure call release");
+
+        Ensure(serverProvider.CapturedOutputReturned,
+            "decoded request writer must be returned after generic provider failure");
+
+        var response = await harness.Client.Get<ICompressionService>()
+            .EchoBytesAsync(payload)
+            .AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(response.SequenceEqual(payload),
+            "connection should remain usable after generic provider failure");
+        await WaitUntilAsync(() => harness.ActiveCalls == 0, "generic failure recovery call release");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task CompressedOneWayGenericProviderFailureShouldReleaseDispatchResources()
+    {
+        CompressionService.ResetOneWay();
+        var serverProvider = new FailOnceAfterWriteDecompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli(),
+            static () => new InvalidOperationException(
+                "Synthetic one-way generic provider failure after output allocation."));
+        await using var harness = await DispatchFailureHarness.CreateAsync(serverProvider);
+        var payload = Enumerable.Repeat((byte)0x49, 32 * 1024).ToArray();
+
+        await harness.Client.Get<ICompressionService>()
+            .NotifyBytesAsync(payload)
+            .AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        await serverProvider.WaitForFailureAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(() => harness.ActiveCalls == 0, "one-way provider failure call release");
+
+        Ensure(serverProvider.CapturedOutputReturned,
+            "one-way decoded request writer must be returned after generic provider failure");
+        Ensure(!CompressionService.WaitForOneWayAsync().IsCompleted,
+            "failed compressed one-way decode must not execute the service");
+
+        CompressionService.ResetOneWay();
+        await harness.Client.Get<ICompressionService>()
+            .NotifyBytesAsync(payload)
+            .AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(await CompressionService.WaitForOneWayAsync().WaitAsync(TimeSpan.FromSeconds(2)) ==
+               payload.Length,
+            "connection should remain usable after one-way provider failure");
+        await WaitUntilAsync(() => harness.ActiveCalls == 0, "one-way recovery call release");
+    }
+
+    private static async Task EnsureErrorAsync(
+        Task task,
+        SharpLinkErrorCode expectedCode,
+        string scenario)
     {
         try
         {
@@ -37,8 +107,8 @@ public class CompressionDispatchFailureTests
         }
         catch (SharpLinkException exception)
         {
-            Ensure(exception.Code == SharpLinkErrorCode.DataLoss,
-                $"{scenario} should return DataLoss, actual {exception.Code}");
+            Ensure(exception.Code == expectedCode,
+                $"{scenario} should return {expectedCode}, actual {exception.Code}");
         }
         catch (TimeoutException)
         {
@@ -66,9 +136,13 @@ public class CompressionDispatchFailureTests
             throw new Exception($"assert failed: {scenario}");
     }
 
-    private sealed class FailOnceAfterWriteDecompressionProvider(ISharpLinkCompressionProvider inner)
+    private sealed class FailOnceAfterWriteDecompressionProvider(
+        ISharpLinkCompressionProvider inner,
+        Func<Exception> createFailure)
         : ISharpLinkCompressionProvider
     {
+        private readonly TaskCompletionSource _failureObserved =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private IBufferWriter<byte>? _capturedOutput;
         private int _failureInjected;
 
@@ -92,6 +166,8 @@ public class CompressionDispatchFailureTests
             }
         }
 
+        public Task WaitForFailureAsync() => _failureObserved.Task;
+
         public SharpLinkCompressionResult Compress(
             ReadOnlySequence<byte> input,
             IBufferWriter<byte> output,
@@ -111,7 +187,8 @@ public class CompressionDispatchFailureTests
                 var span = output.GetSpan(1);
                 span[0] = 0x7F;
                 output.Advance(1);
-                throw new InvalidDataException("Synthetic decompression failure after output allocation.");
+                _failureObserved.TrySetResult();
+                throw createFailure();
             }
 
             return inner.Decompress(input, output, maxOutputBytes, cancellationToken);
