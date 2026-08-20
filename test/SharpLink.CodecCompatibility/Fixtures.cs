@@ -28,12 +28,25 @@ internal sealed class Fixture<T> : IFixture where T : struct
 {
     private static readonly JsonSerializerOptions DescribeOptions = new() { IncludeFields = true };
     private readonly T _value;
+    private readonly Func<T, T, bool> _logicalEquals;
 
     internal Fixture(string id, string category, T value, bool nativeWidth = false, params string[] fieldNames)
+        : this(id, category, value, EqualityComparer<T>.Default.Equals, nativeWidth, fieldNames)
+    {
+    }
+
+    internal Fixture(
+        string id,
+        string category,
+        T value,
+        Func<T, T, bool> logicalEquals,
+        bool nativeWidth = false,
+        params string[] fieldNames)
     {
         Id = id;
         Category = category;
         _value = value;
+        _logicalEquals = logicalEquals;
         NativeWidth = nativeWidth;
         FieldOffsets = fieldNames.ToDictionary(static name => name, static name => Marshal.OffsetOf<T>(name).ToInt32(), StringComparer.Ordinal);
         ExpectedLogicalValue = Describe(value);
@@ -95,7 +108,7 @@ internal sealed class Fixture<T> : IFixture where T : struct
             var sequence = new ReadOnlySequence<byte>(new ReadOnlyMemory<byte>(producerBytes));
             var actual = UnsafeBlitCodec<T>.Instance.Deserialize(in sequence);
             entry.CrossDeserializeResult = true;
-            entry.LogicalEquality = EqualityComparer<T>.Default.Equals(_value, actual);
+            entry.LogicalEquality = _logicalEquals(_value, actual);
             entry.ActualLogicalValue = Describe(actual);
             entry.ByteForByteEquality = producerBytes.AsSpan().SequenceEqual(localBytes);
 
@@ -212,11 +225,11 @@ internal static class FixtureRegistry
             new Fixture<NestedPadded>("NestedPadded", "nested", new NestedPadded { Inner = new ByteInt32 { A = 0x33, B = 0x55667788 }, Tail = 0x44, Count = 0x0102030405060708 }, false, nameof(NestedPadded.Inner), nameof(NestedPadded.Tail), nameof(NestedPadded.Count)),
 
             new Fixture<SequentialControl>("SequentialDefault", "explicit-layout-control", new SequentialControl { A = 0x12, B = 0x34567890, C = 0x0102030405060708 }, false, nameof(SequentialControl.A), nameof(SequentialControl.B), nameof(SequentialControl.C)),
-            new Fixture<Packed1Control>("Pack1", "packed-control", new Packed1Control { A = 0x12, B = 0x34567890, C = 0x0102030405060708 }, false, nameof(Packed1Control.A), nameof(Packed1Control.B), nameof(Packed1Control.C)),
-            new Fixture<Packed2Control>("Pack2", "packed-control", new Packed2Control { A = 0x12, B = 0x34567890, C = 0x0102030405060708 }, false, nameof(Packed2Control.A), nameof(Packed2Control.B), nameof(Packed2Control.C)),
-            new Fixture<Packed4Control>("Pack4", "packed-control", new Packed4Control { A = 0x12, B = 0x34567890, C = 0x0102030405060708 }, false, nameof(Packed4Control.A), nameof(Packed4Control.B), nameof(Packed4Control.C)),
-            new Fixture<Packed8Control>("Pack8", "packed-control", new Packed8Control { A = 0x12, B = 0x34567890, C = 0x0102030405060708 }, false, nameof(Packed8Control.A), nameof(Packed8Control.B), nameof(Packed8Control.C)),
-            new Fixture<ExplicitControl>("ExplicitLayout", "explicit-layout-control", new ExplicitControl { A = 0x12345678, B = 0x0102030405060708 }, false, nameof(ExplicitControl.A), nameof(ExplicitControl.B)),
+            new Fixture<Packed1Control>("Pack1", "packed-control", new Packed1Control { A = 0x12, B = 0x34567890, C = 0x0102030405060708 }, static (left, right) => left.A == right.A && left.B == right.B && left.C == right.C, false, nameof(Packed1Control.A), nameof(Packed1Control.B), nameof(Packed1Control.C)),
+            new Fixture<Packed2Control>("Pack2", "packed-control", new Packed2Control { A = 0x12, B = 0x34567890, C = 0x0102030405060708 }, static (left, right) => left.A == right.A && left.B == right.B && left.C == right.C, false, nameof(Packed2Control.A), nameof(Packed2Control.B), nameof(Packed2Control.C)),
+            new Fixture<Packed4Control>("Pack4", "packed-control", new Packed4Control { A = 0x12, B = 0x34567890, C = 0x0102030405060708 }, static (left, right) => left.A == right.A && left.B == right.B && left.C == right.C, false, nameof(Packed4Control.A), nameof(Packed4Control.B), nameof(Packed4Control.C)),
+            new Fixture<Packed8Control>("Pack8", "packed-control", new Packed8Control { A = 0x12, B = 0x34567890, C = 0x0102030405060708 }, static (left, right) => left.A == right.A && left.B == right.B && left.C == right.C, false, nameof(Packed8Control.A), nameof(Packed8Control.B), nameof(Packed8Control.C)),
+            new Fixture<ExplicitControl>("ExplicitLayout", "explicit-layout-control", new ExplicitControl { A = 0x12345678, B = 0x0102030405060708 }, static (left, right) => left.A == right.A && left.B == right.B, false, nameof(ExplicitControl.A), nameof(ExplicitControl.B)),
 
             new Fixture<nint>("NativeInt", "native-width", (nint)0x12345678, true),
             new Fixture<nuint>("NativeUInt", "native-width", (nuint)0x87654321u, true),
