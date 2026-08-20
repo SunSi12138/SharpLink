@@ -377,7 +377,8 @@ internal sealed partial class SharpLinkServer
                 SharpLinkErrorCode.AuthenticationExpired,
                 "Authentication token has expired."));
         }
-        if (_serverInterceptors.Length == 0)
+        var interceptors = (context as SharpLinkServerInvocationContext)?.Interceptors;
+        if (interceptors is null || interceptors.Length == 0)
         {
             return output is null
                 ? stub.InvokeNoReturnCancellableAsync(
@@ -387,6 +388,7 @@ internal sealed partial class SharpLinkServer
         }
 
         return InvokeInterceptedWithOwnedArgumentsAsync(
+            interceptors,
             stub,
             service,
             session,
@@ -400,6 +402,7 @@ internal sealed partial class SharpLinkServer
     }
 
     private async ValueTask InvokeInterceptedWithOwnedArgumentsAsync(
+        ISharpLinkServerInterceptor[] interceptors,
         IRpcStub stub,
         object service,
         RpcSession session,
@@ -423,7 +426,7 @@ internal sealed partial class SharpLinkServer
         if (length == 0)
         {
             await new ServerPipelineFacts(
-                _serverInterceptors,
+                interceptors,
                 stub,
                 service,
                 session,
@@ -443,7 +446,7 @@ internal sealed partial class SharpLinkServer
             arguments.CopyTo(rented);
             var ownedArguments = new ReadOnlySequence<byte>(rented.AsMemory(0, length));
             await new ServerPipelineFacts(
-                _serverInterceptors,
+                interceptors,
                 stub,
                 service,
                 session,
