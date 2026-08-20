@@ -1,4 +1,6 @@
+using System;
 using System.Buffers;
+using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Engines;
 using SharpLink.Runtime;
