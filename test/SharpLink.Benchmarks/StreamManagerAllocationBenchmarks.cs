@@ -41,15 +41,18 @@ public class StreamManagerAllocationBenchmarks
     }
 
     [Benchmark(OperationsPerInvoke = 1000)]
-    public int CreateThousandIdleManagers()
+    public int CreateAndRetainThousandIdleManagers()
     {
+        var managers = new StreamManager[1000];
         var unmaterialized = 0;
-        for (var index = 0; index < 1000; index++)
+        for (var index = 0; index < managers.Length; index++)
         {
             var manager = new StreamManager();
+            managers[index] = manager;
             if (!manager.HasMaterializedRoutingState)
                 unmaterialized++;
         }
+        GC.KeepAlive(managers);
         return unmaterialized;
     }
 
