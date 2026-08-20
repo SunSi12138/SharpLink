@@ -1,0 +1,117 @@
+name: Issue 252 Segment Evidence
+
+on:
+  pull_request:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      EVIDENCE_ROOT: ${{ github.workspace }}/artifacts/issue252-segment-evidence
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Prepare baseline and segment-size worktrees
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
+          git worktree add --detach "$RUNNER_TEMP/issue252-base" "$BASE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/issue252-s64" "$HEAD_SHA"
+          git worktree add --detach "$RUNNER_TEMP/issue252-s128" "$HEAD_SHA"
+          git worktree add --detach "$RUNNER_TEMP/issue252-s256" "$HEAD_SHA"
+
+          cp "$RUNNER_TEMP/issue252-s256/test/SharpLink.Benchmarks/PendingRequestSegmentationEvidenceRunner.cs" \
+             "$RUNNER_TEMP/issue252-base/test/SharpLink.Benchmarks/PendingRequestSegmentationEvidenceRunner.cs"
+          cp "$RUNNER_TEMP/issue252-s256/test/SharpLink.Benchmarks/Program.cs" \
+             "$RUNNER_TEMP/issue252-base/test/SharpLink.Benchmarks/Program.cs"
+
+          sed -i 's/private const int MaximumSegmentSize = 256;/private const int MaximumSegmentSize = 64;/' \
+            "$RUNNER_TEMP/issue252-s64/src/SharpLink.Client/SegmentedSlotTable.cs"
+          sed -i 's/private const int MaximumSegmentSize = 256;/private const int MaximumSegmentSize = 128;/' \
+            "$RUNNER_TEMP/issue252-s128/src/SharpLink.Client/SegmentedSlotTable.cs"
+
+      - name: Collect fixed-environment evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_variant() {
+            local name="$1"
+            local root="$2"
+            local out="$EVIDENCE_ROOT/$name"
+            local project="$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
+            mkdir -p "$out"
+
+            echo "=== $name: build ==="
+            dotnet build "$project" -c Release -v minimal
+            dotnet --info > "$out/dotnet-info.txt"
+
+            echo "=== $name: construction ==="
+            dotnet run --project "$project" -c Release --no-build -- \
+              --pending-request-segmentation-evidence construction --connections 1000 \
+              | tee "$out/construction.jsonl"
+
+            for active in 0 1 8; do
+              echo "=== $name: retained memory active=$active ==="
+              dotnet run --project "$project" -c Release --no-build -- \
+                --pending-request-segmentation-evidence memory --active "$active" --connections 1000 \
+                | tee "$out/memory-active-$active.jsonl"
+            done
+
+            echo "=== $name: sparse scan active=8 deadlines=2 ==="
+            dotnet run --project "$project" -c Release --no-build -- \
+              --pending-request-segmentation-evidence scan --active 8 --deadlines 2 --iterations 20000 \
+              | tee "$out/scan-8-2.jsonl"
+
+            echo "=== $name: sparse scan active=1000 deadlines=100 ==="
+            dotnet run --project "$project" -c Release --no-build -- \
+              --pending-request-segmentation-evidence scan --active 1000 --deadlines 100 --iterations 5000 \
+              | tee "$out/scan-1000-100.jsonl"
+
+            echo "=== $name: timer lateness ==="
+            dotnet run --project "$project" -c Release --no-build -- \
+              --pending-request-segmentation-evidence lateness --iterations 40 --deadline-ms 20 \
+              | tee "$out/lateness.jsonl"
+
+            echo "=== $name: existing PendingRegisterAndComplete benchmark ==="
+            (
+              cd "$root"
+              dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+                --filter '*RuntimeHotPathBenchmarks.PendingRegisterAndComplete*' \
+                --artifacts "$out/bdn" \
+                --exporters json
+            ) | tee "$out/pending-register-and-complete.log"
+          }
+
+          run_variant baseline "$RUNNER_TEMP/issue252-base"
+          run_variant segment-64 "$RUNNER_TEMP/issue252-s64"
+          run_variant segment-128 "$RUNNER_TEMP/issue252-s128"
+          run_variant segment-256 "$RUNNER_TEMP/issue252-s256"
+
+      - name: Upload issue 252 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue252-segment-evidence-${{ github.event.pull_request.head.sha }}
+          path: artifacts/issue252-segment-evidence
+          if-no-files-found: error
+          retention-days: 30
