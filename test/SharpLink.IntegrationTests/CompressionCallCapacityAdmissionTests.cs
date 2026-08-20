@@ -181,12 +181,12 @@ public class CompressionCallCapacityAdmissionTests
         {
             get
             {
-                var field = _server.GetType().GetField(
+                var reflectionField = _server.GetType().GetField(
                     "_rejectedOneWayCalls",
                     System.Reflection.BindingFlags.Instance |
                     System.Reflection.BindingFlags.NonPublic)
                     ?? throw new Exception("cannot find rejected one-way call counter");
-                return (long)field.GetValue(_server)!;
+                return (long)reflectionField.GetValue(_server)!;
             }
         }
 
