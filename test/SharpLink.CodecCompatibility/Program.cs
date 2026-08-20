@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -7,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using SharpLink.Runtime;
 
 namespace SharpLink.CodecCompatibility;
 
@@ -147,6 +149,9 @@ internal static class Program
                 Console.WriteLine(begin);
                 Console.Out.Flush();
                 AppendProgress(progressFile, begin);
+
+                if (string.Equals(producerCase.Id, "Pack2", StringComparison.Ordinal))
+                    DiagnosePack2(producerBytes);
 
                 var result = fixture.Verify(producerBytes, producerCase, producer, consumer);
                 report.Results.Add(result);
@@ -296,6 +301,36 @@ internal static class Program
                 $"classification={result.Classification} exception={result.ExceptionType}: {result.ExceptionMessage} " +
                 $"expected={result.ExpectedLogicalValue} actual={result.ActualLogicalValue}");
         }
+    }
+
+    private static void DiagnosePack2(byte[] producerBytes)
+    {
+        Console.WriteLine("PACK2_DIAG deserialize-begin");
+        Console.Out.Flush();
+        var sequence = new ReadOnlySequence<byte>(new ReadOnlyMemory<byte>(producerBytes));
+        var actual = UnsafeBlitCodec<Packed2Control>.Instance.Deserialize(in sequence);
+        Console.WriteLine("PACK2_DIAG deserialize-end");
+        Console.Out.Flush();
+
+        Console.WriteLine("PACK2_DIAG reserialize-begin");
+        Console.Out.Flush();
+        var writer = new ArrayBufferWriter<byte>(producerBytes.Length);
+        UnsafeBlitCodec<Packed2Control>.Instance.Serialize(in actual, writer);
+        Console.WriteLine($"PACK2_DIAG reserialize-end bytesEqual={producerBytes.AsSpan().SequenceEqual(writer.WrittenSpan)}");
+        Console.Out.Flush();
+
+        Console.WriteLine("PACK2_DIAG equality-begin");
+        Console.Out.Flush();
+        var expected = new Packed2Control { A = 0x12, B = 0x34567890, C = 0x0102030405060708 };
+        var equal = EqualityComparer<Packed2Control>.Default.Equals(expected, actual);
+        Console.WriteLine($"PACK2_DIAG equality-end equal={equal}");
+        Console.Out.Flush();
+
+        Console.WriteLine("PACK2_DIAG describe-begin");
+        Console.Out.Flush();
+        _ = JsonSerializer.Serialize(actual, JsonOptions);
+        Console.WriteLine("PACK2_DIAG describe-end");
+        Console.Out.Flush();
     }
 
     private static void AppendProgress(string path, string line)
