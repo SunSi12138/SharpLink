@@ -1,4 +1,4 @@
-name: Issue 263 Candidate BenchmarkDotNet
+name: Issue 263 Paired Disabled BenchmarkDotNet
 
 on:
   push:
@@ -11,9 +11,9 @@ permissions:
   contents: read
 
 jobs:
-  client:
+  paired:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
     steps:
@@ -21,67 +21,67 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: 705f85c1714bcedf34126124cab34802c3dac556
-      - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
-      - name: Build benchmark project
-        run: |
-          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
-          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
-      - name: Run client candidate scenarios
-        run: >-
-          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks --
-          --filter
-          '*ClientFeatureMatrixBenchmarks*FixedDefault*'
-          '*ClientFeatureMatrixBenchmarks*ClientInterceptorDynamicDisabled*'
-          '*ClientFeatureMatrixBenchmarks*ClientInterceptorDynamicEnabled*'
-          '*ClientFeatureMatrixBenchmarks*ClientAndServerInterceptorDynamicEnabled*'
-          '*ClientFeatureMatrixBenchmarks*ClientInterceptorAfterManyReplacements*'
-          --job short
-          --artifacts artifacts/issue-263-bdn-client
-      - name: Upload client BDN
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: issue-263-bdn-client-705f85c
-          path: artifacts/issue-263-bdn-client
-          if-no-files-found: warn
-          retention-days: 14
+          fetch-depth: 0
 
-  server:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-    steps:
-      - name: Checkout tested candidate
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: 705f85c1714bcedf34126124cab34802c3dac556
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
-      - name: Build benchmark project
+
+      - name: Prepare latest dev worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach /tmp/sharplink-dev 5c6b8ae4f0bf2ad387099692436bcc03209ccbae
+          mkdir -p artifacts/issue-263-paired-bdn/dev artifacts/issue-263-paired-bdn/candidate
+
+      - name: Build latest dev benchmark project
+        working-directory: /tmp/sharplink-dev
         run: |
           dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
           dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
-      - name: Run server candidate scenarios
-        run: >-
-          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks --
-          --filter
-          '*ServerFeatureMatrixBenchmarks*StaticDefault*'
-          '*ServerFeatureMatrixBenchmarks*ServerInterceptorDynamicDisabled*'
-          '*ServerFeatureMatrixBenchmarks*ServerInterceptorDynamicEnabled*'
-          '*ServerFeatureMatrixBenchmarks*ServerInterceptorAfterManyReplacements*'
-          --job short
-          --artifacts artifacts/issue-263-bdn-server
-      - name: Upload server BDN
+
+      - name: Run latest dev baselines
+        working-directory: /tmp/sharplink-dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+            --filter '*ClientFeatureMatrixBenchmarks*FixedDefault*' \
+            --job medium \
+            --artifacts /home/runner/work/SharpLink/SharpLink/artifacts/issue-263-paired-bdn/dev/client
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+            --filter '*ServerFeatureMatrixBenchmarks*StaticDefault*' \
+            --job medium \
+            --artifacts /home/runner/work/SharpLink/SharpLink/artifacts/issue-263-paired-bdn/dev/server
+
+      - name: Build tested candidate benchmark project
+        run: |
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+
+      - name: Run candidate disabled comparisons
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+            --filter \
+            '*ClientFeatureMatrixBenchmarks*FixedDefault*' \
+            '*ClientFeatureMatrixBenchmarks*ClientInterceptorDynamicDisabled*' \
+            --job medium \
+            --artifacts artifacts/issue-263-paired-bdn/candidate/client
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+            --filter \
+            '*ServerFeatureMatrixBenchmarks*StaticDefault*' \
+            '*ServerFeatureMatrixBenchmarks*ServerInterceptorDynamicDisabled*' \
+            --job medium \
+            --artifacts artifacts/issue-263-paired-bdn/candidate/server
+
+      - name: Upload paired BDN evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: issue-263-bdn-server-705f85c
-          path: artifacts/issue-263-bdn-server
+          name: issue-263-paired-bdn-705f85c
+          path: artifacts/issue-263-paired-bdn
           if-no-files-found: warn
           retention-days: 14
