@@ -50,6 +50,54 @@ public class CompressionDecodeCancellationTests
             "deadline-cancelled compressed one-way request must not execute the service");
     }
 
+    [Test]
+    [NotInParallel]
+    public async Task CompressedUnaryShouldNotInvokeAfterConnectionClosesDuringDecode()
+    {
+        DeadlineCompressionProbeService.Reset();
+        var serverProvider = new ReturnAfterCancellationDecompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli());
+        await using var harness = await DecodeCancellationHarness.CreateAsync(serverProvider);
+        var payload = Enumerable.Repeat((byte)0x48, 32 * 1024).ToArray();
+        var call = harness.Client.Get<IDeadlineCompressionProbeService>()
+            .EchoAsync(payload)
+            .AsTask();
+
+        await serverProvider.WaitForDecompressionAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        var stopTask = harness.Client.StopAsync().AsTask();
+        await serverProvider.WaitForCancellationAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await stopTask.WaitAsync(TimeSpan.FromSeconds(2));
+        await ObserveTerminalCallAsync(call, "connection-close decode race");
+        await WaitUntilAsync(() => harness.ActiveCalls == 0, "connection-close unary call release");
+
+        Ensure(DeadlineCompressionProbeService.UnaryInvocations == 0,
+            "compressed unary request must not execute after its connection closes during decode");
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task CompressedOneWayShouldNotInvokeAfterServerStopsDuringDecode()
+    {
+        DeadlineCompressionProbeService.Reset();
+        var serverProvider = new ReturnAfterCancellationDecompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli());
+        await using var harness = await DecodeCancellationHarness.CreateAsync(serverProvider);
+        var payload = Enumerable.Repeat((byte)0x49, 32 * 1024).ToArray();
+
+        await harness.Client.Get<IDeadlineCompressionProbeService>()
+            .NotifyAsync(payload, new SharpLinkCallOptions())
+            .AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        await serverProvider.WaitForDecompressionAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        var stopTask = harness.StopServerAsync();
+        await serverProvider.WaitForCancellationAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await stopTask.WaitAsync(TimeSpan.FromSeconds(3));
+        await WaitUntilAsync(() => harness.ActiveCalls == 0, "server-stop one-way call release");
+
+        Ensure(DeadlineCompressionProbeService.OneWayInvocations == 0,
+            "compressed one-way request must not execute after server stop wins during decode");
+    }
+
     private static async Task EnsureDeadlineExceededAsync(Task task, string scenario)
     {
         try
@@ -65,6 +113,30 @@ public class CompressionDecodeCancellationTests
         catch (TimeoutException)
         {
             throw new Exception($"assert failed: {scenario} did not fail fast");
+        }
+    }
+
+    private static async Task ObserveTerminalCallAsync(Task task, string scenario)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (SharpLinkException)
+        {
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (IOException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (TimeoutException)
+        {
+            throw new Exception($"assert failed: {scenario} did not terminate");
         }
     }
 
@@ -120,6 +192,40 @@ public class CompressionDecodeCancellationTests
             _cancellationObserved.TrySetResult();
             cancellationToken.ThrowIfCancellationRequested();
             throw new Exception("assert failed: cancelled decompression should not continue");
+        }
+    }
+
+    private sealed class ReturnAfterCancellationDecompressionProvider(ISharpLinkCompressionProvider inner)
+        : ISharpLinkCompressionProvider
+    {
+        private readonly TaskCompletionSource _decompressionStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _cancellationObserved =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public string WireProfile => inner.WireProfile;
+
+        public Task WaitForDecompressionAsync() => _decompressionStarted.Task;
+
+        public Task WaitForCancellationAsync() => _cancellationObserved.Task;
+
+        public SharpLinkCompressionResult Compress(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+
+        public SharpLinkCompressionResult Decompress(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            _decompressionStarted.TrySetResult();
+            cancellationToken.WaitHandle.WaitOne();
+            _cancellationObserved.TrySetResult();
+            return inner.Decompress(input, output, maxOutputBytes, CancellationToken.None);
         }
     }
 
@@ -204,6 +310,9 @@ public class CompressionDecodeCancellationTests
 
             return new DecodeCancellationHarness(serverCts, serverTask, server, client);
         }
+
+        public Task StopServerAsync()
+            => _server.StopAsync(TimeSpan.Zero).AsTask();
 
         public async ValueTask DisposeAsync()
         {
