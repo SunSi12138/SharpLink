@@ -1,0 +1,243 @@
+namespace SharpLink.IntegrationTests;
+
+public class CompressionCallCapacityAdmissionTests
+{
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CompressedUnaryShouldDecompressOnlyAfterCallCapacityAdmission(
+        bool useAdvancedAdmission)
+    {
+        TestService.ResetBlockingAdd();
+        var serverProvider = new CountingCompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli());
+        await using var harness = await CapacityHarness.CreateAsync(
+            serverProvider,
+            useAdvancedAdmission);
+        var blocker = harness.Client.Get<ITestService>()
+            .BlockingAddAsync(1, 2, CancellationToken.None)
+            .AsTask();
+
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            var payload = Enumerable.Repeat((byte)0x41, 32 * 1024).ToArray();
+
+            await EnsureResourceExhaustedAsync(
+                harness.Client.Get<ICompressionService>().EchoBytesAsync(payload).AsTask(),
+                "compressed unary capacity rejection");
+
+            Ensure(serverProvider.DecompressCount == 0,
+                "capacity-rejected compressed unary request must not be decompressed");
+
+            TestService.ReleaseBlockingAdd();
+            Ensure(await blocker.WaitAsync(TimeSpan.FromSeconds(2)) == 3,
+                "capacity owner should complete after release");
+
+            var response = await harness.Client.Get<ICompressionService>()
+                .EchoBytesAsync(payload)
+                .AsTask()
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(response.SequenceEqual(payload), "accepted compressed unary response");
+            Ensure(serverProvider.DecompressCount == 1,
+                "accepted compressed unary request must be decompressed exactly once");
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+        }
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CompressedOneWayShouldDecompressOnlyAfterCallCapacityAdmission(
+        bool useAdvancedAdmission)
+    {
+        TestService.ResetBlockingAdd();
+        CompressionService.ResetOneWay();
+        var serverProvider = new CountingCompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli());
+        await using var harness = await CapacityHarness.CreateAsync(
+            serverProvider,
+            useAdvancedAdmission);
+        var blocker = harness.Client.Get<ITestService>()
+            .BlockingAddAsync(3, 4, CancellationToken.None)
+            .AsTask();
+
+        try
+        {
+            await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            var payload = Enumerable.Repeat((byte)0x42, 32 * 1024).ToArray();
+
+            await harness.Client.Get<ICompressionService>()
+                .NotifyBytesAsync(payload)
+                .AsTask()
+                .WaitAsync(TimeSpan.FromSeconds(2));
+
+            TestService.ReleaseBlockingAdd();
+            Ensure(await blocker.WaitAsync(TimeSpan.FromSeconds(2)) == 7,
+                "capacity owner should complete after release");
+            Ensure(await harness.Client.Get<ITestService>()
+                    .AddAsync(20, 22)
+                    .AsTask()
+                    .WaitAsync(TimeSpan.FromSeconds(2)) == 42,
+                "post-rejection processing barrier");
+
+            Ensure(serverProvider.DecompressCount == 0,
+                "capacity-rejected compressed one-way request must not be decompressed");
+            Ensure(!CompressionService.WaitForOneWayAsync().IsCompleted,
+                "capacity-rejected compressed one-way request must not execute the service");
+
+            CompressionService.ResetOneWay();
+            await harness.Client.Get<ICompressionService>()
+                .NotifyBytesAsync(payload)
+                .AsTask()
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(await CompressionService.WaitForOneWayAsync().WaitAsync(TimeSpan.FromSeconds(2)) ==
+                   payload.Length,
+                "accepted compressed one-way request should execute");
+            Ensure(serverProvider.DecompressCount == 1,
+                "accepted compressed one-way request must be decompressed exactly once");
+        }
+        finally
+        {
+            TestService.ReleaseBlockingAdd();
+        }
+    }
+
+    private static async Task EnsureResourceExhaustedAsync(Task task, string scenario)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(2));
+            throw new Exception($"assert failed: {scenario} should fail");
+        }
+        catch (SharpLinkException exception)
+        {
+            Ensure(exception.Code == SharpLinkErrorCode.ResourceExhausted,
+                $"{scenario} should return ResourceExhausted, actual {exception.Code}");
+        }
+        catch (TimeoutException)
+        {
+            throw new Exception($"assert failed: {scenario} did not fail fast");
+        }
+    }
+
+    private static void Ensure(bool condition, string scenario)
+    {
+        if (!condition)
+            throw new Exception($"assert failed: {scenario}");
+    }
+
+    private sealed class CountingCompressionProvider(ISharpLinkCompressionProvider inner)
+        : ISharpLinkCompressionProvider
+    {
+        private int _decompressCount;
+
+        public string WireProfile => inner.WireProfile;
+        public int DecompressCount => Volatile.Read(ref _decompressCount);
+
+        public SharpLinkCompressionResult Compress(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+
+        public SharpLinkCompressionResult Decompress(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _decompressCount);
+            return inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+        }
+    }
+
+    private sealed class CapacityHarness : IAsyncDisposable
+    {
+        private readonly CancellationTokenSource _serverCts;
+        private readonly Task _serverTask;
+        private readonly ISharpLinkServer _server;
+
+        public ISharpLinkClient Client { get; }
+
+        private CapacityHarness(
+            CancellationTokenSource serverCts,
+            Task serverTask,
+            ISharpLinkServer server,
+            ISharpLinkClient client)
+        {
+            _serverCts = serverCts;
+            _serverTask = serverTask;
+            _server = server;
+            Client = client;
+        }
+
+        public static async Task<CapacityHarness> CreateAsync(
+            ISharpLinkCompressionProvider serverProvider,
+            bool useAdvancedAdmission)
+        {
+            var serverCts = new CancellationTokenSource();
+            var serverBuilder = SharpLinkServerBuilder.Create()
+                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
+                .UseRuntime(options =>
+                {
+                    options.FlowControl.MaxConcurrentCallsPerConnection = 1;
+                    options.FlowControl.MaxConcurrentCallsPerServer = 1;
+                    options.Compression.Providers.Add(serverProvider);
+                });
+            if (useAdvancedAdmission)
+            {
+                serverBuilder.UseAdmissionControl(options =>
+                    options.Global.UseConcurrency(8));
+            }
+
+            serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+            var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+            var server = serverBuilder.Build();
+            var serverTask = Task.Run(async () =>
+            {
+                try
+                {
+                    await server.RunAsync(serverCts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+                catch (IOException)
+                {
+                }
+                catch (SocketException)
+                {
+                }
+            }, CancellationToken.None);
+
+            var client = SharpClientBuilder.Create()
+                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
+                .UseTcp(IPAddress.Loopback.ToString(), port)
+                .UseRuntime(options => options.Compression.Providers.Add(
+                    SharpLinkCompressionProviders.CreateBrotli()))
+                .Build();
+            await client.ConnectAsync();
+
+            return new CapacityHarness(serverCts, serverTask, server, client);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Client.StopAsync();
+            await _serverCts.CancelAsync();
+            await _server.StopAsync(TimeSpan.Zero);
+            await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
+            _serverCts.Dispose();
+        }
+    }
+}
