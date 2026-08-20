@@ -1,0 +1,35 @@
+name: Issue 263 Agent
+
+on:
+  push:
+    branches:
+      - agent/issue-263-dynamic-interceptors
+    paths:
+      - .github/workflows/issue-263-agent.yml
+
+permissions:
+  contents: write
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Archive source
+        shell: bash
+        run: |
+          tar --exclude=.git -czf /tmp/sharplink-source.tgz .
+          mkdir -p artifacts/issue-263
+          mv /tmp/sharplink-source.tgz artifacts/issue-263/
+
+      - name: Upload source
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-263-source-${{ github.sha }}
+          path: artifacts/issue-263/sharplink-source.tgz
+          retention-days: 1
