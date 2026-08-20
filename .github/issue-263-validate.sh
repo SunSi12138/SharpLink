@@ -19,7 +19,14 @@ for n in 1 2 3; do
 done
 
 echo '== apply candidate =='
-base64 -d .github/issue-263.patch.gz.b64 | gzip -d > /tmp/issue263.patch
+cat .github/issue-263.patch.00.b64 \
+    .github/issue-263.patch.01.b64 \
+    .github/issue-263.patch.02.b64 \
+    .github/issue-263.patch.03.b64 \
+    .github/issue-263.patch.04.b64 > /tmp/issue263.patch.gz.b64
+echo '08b87428a7e88659b12484b1c72e21f9aebce3c70b52d27ae44c10a0b4178753  /tmp/issue263.patch.gz.b64' | sha256sum -c -
+base64 -d /tmp/issue263.patch.gz.b64 | gzip -d > /tmp/issue263.patch
+echo 'd87656b11d3f8bb2c84ed386fd6eb5cedbd396a23fd56e198da3b53e5109a96f  /tmp/issue263.patch' | sha256sum -c -
 git apply --check /tmp/issue263.patch
 git apply /tmp/issue263.patch
 git diff --check
@@ -156,7 +163,13 @@ git add -- \
   test/SharpLink.Benchmarks/BenchmarkEnvironment.cs \
   test/SharpLink.Benchmarks/FeatureBenchmarkScenarios.cs \
   test/SharpLink.IntegrationTests/DynamicInterceptorIntegrationTests.cs
-git rm -- .github/issue-263.patch.gz.b64
+git rm -- \
+  .github/issue-263.patch.gz.b64 \
+  .github/issue-263.patch.00.b64 \
+  .github/issue-263.patch.01.b64 \
+  .github/issue-263.patch.02.b64 \
+  .github/issue-263.patch.03.b64 \
+  .github/issue-263.patch.04.b64
 
 git diff --cached --name-status
 git commit -m 'feat: support runtime interceptor replacement'
