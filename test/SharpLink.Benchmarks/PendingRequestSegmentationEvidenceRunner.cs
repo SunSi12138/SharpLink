@@ -11,6 +11,10 @@ using SharpLink.Runtime;
 
 namespace SharpLink.Benchmarks;
 
+/// <summary>
+/// Reproducible evidence runner for issue #252. Run separate processes for memory occupancies so
+/// pooled pending-operation state from one sample cannot contaminate the next retained-memory sample.
+/// </summary>
 internal static class PendingRequestSegmentationEvidenceRunner
 {
     private const int Capacity = 65_536;
