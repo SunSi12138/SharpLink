@@ -1,0 +1,167 @@
+name: Issue 252 Experiment A Driver
+
+on:
+  push:
+    branches:
+      - agent/issue-252-pending-segments
+
+permissions:
+  contents: write
+
+jobs:
+  experiment-a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      EVIDENCE_ROOT: ${{ runner.temp }}/issue252-experiment-a
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: agent/issue-252-pending-segments
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Apply Experiment A
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          echo apply > "$EVIDENCE_ROOT/stage.txt"
+          python3 eng/issue252-experiment-a.py
+          git diff --check
+          git diff --stat | tee "$EVIDENCE_ROOT/patch-stat.txt"
+
+      - name: Validate Experiment A correctness
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo unit-tests > "$EVIDENCE_ROOT/stage.txt"
+          dotnet test test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --nologo
+
+      - name: Prepare paired baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo prepare-baseline > "$EVIDENCE_ROOT/stage.txt"
+          git fetch --no-tags origin dev
+          git worktree add --detach "$RUNNER_TEMP/issue252-a-base" origin/dev
+          cp test/SharpLink.Benchmarks/PendingRequestCrossSegmentConcurrencyBenchmarks.cs \
+             "$RUNNER_TEMP/issue252-a-base/test/SharpLink.Benchmarks/PendingRequestCrossSegmentConcurrencyBenchmarks.cs"
+          git rev-parse origin/dev > "$EVIDENCE_ROOT/base-sha.txt"
+          git rev-parse HEAD > "$EVIDENCE_ROOT/source-head.txt"
+
+      - name: Run paired benchmarks
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo benchmarks > "$EVIDENCE_ROOT/stage.txt"
+
+          run_variant() {
+            local name="$1"
+            local root="$2"
+            local out="$EVIDENCE_ROOT/$name"
+            mkdir -p "$out"
+            dotnet build "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" -c Release -v minimal
+            (
+              cd "$root"
+              dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+                --filter '*RuntimeHotPathBenchmarks.PendingRegisterAndComplete*' \
+                --artifacts "$out/single" --exporters json
+            ) | tee "$out/single.log"
+            (
+              cd "$root"
+              dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+                --filter '*PendingRequestCrossSegmentConcurrencyBenchmarks.RegisterAndCompleteAcrossFourSegments*' \
+                --artifacts "$out/cross" --exporters json
+            ) | tee "$out/cross.log"
+          }
+
+          run_variant eager-dev "$RUNNER_TEMP/issue252-a-base"
+          run_variant experiment-a "$GITHUB_WORKSPACE"
+
+      - name: Evaluate 3 percent gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo evaluate > "$EVIDENCE_ROOT/stage.txt"
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, re, os
+
+          root = Path(os.environ['EVIDENCE_ROOT'])
+
+          def mean_ns(path: Path) -> float:
+              text = path.read_text()
+              matches = re.findall(r'^Mean = ([0-9.]+) (ns|us|ms)', text, re.M)
+              if not matches:
+                  raise SystemExit(f'no BDN mean in {path}')
+              value, unit = matches[-1]
+              scale = {'ns': 1.0, 'us': 1000.0, 'ms': 1_000_000.0}[unit]
+              return float(value) * scale
+
+          base_single = mean_ns(root/'eager-dev'/'single.log')
+          cand_single = mean_ns(root/'experiment-a'/'single.log')
+          base_cross = mean_ns(root/'eager-dev'/'cross.log')
+          cand_cross = mean_ns(root/'experiment-a'/'cross.log')
+          single_delta = (cand_single/base_single - 1.0) * 100.0
+          cross_delta = (cand_cross/base_cross - 1.0) * 100.0
+          passed = single_delta <= 3.0 and cross_delta <= 3.0
+          result = {
+              'experiment': 'A-operation-local-slot-hoisting',
+              'base_single_ns': base_single,
+              'candidate_single_ns': cand_single,
+              'single_delta_percent': single_delta,
+              'base_cross_ns': base_cross,
+              'candidate_cross_ns': cand_cross,
+              'cross_delta_percent': cross_delta,
+              'gate_percent': 3.0,
+              'passed': passed,
+          }
+          (root/'result.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result, indent=2))
+          PY
+
+      - name: Upload Experiment A evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue252-experiment-a-self-report
+          path: ${{ runner.temp }}/issue252-experiment-a
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Record result and remove experiment machinery
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          RESULT_PATH="$EVIDENCE_ROOT/result.json"
+          if [ ! -f "$RESULT_PATH" ]; then
+            STAGE="$(cat "$EVIDENCE_ROOT/stage.txt" 2>/dev/null || echo unknown)"
+            printf '{\n  "experiment": "A-operation-local-slot-hoisting",\n  "passed": false,\n  "infrastructure_error": true,\n  "failed_stage": "%s"\n}\n' "$STAGE" > "$RESULT_PATH"
+          fi
+
+          PASSED="$(python3 -c 'import json,sys; print(str(bool(json.load(open(sys.argv[1])).get("passed"))).lower())' "$RESULT_PATH")"
+          RESULT_SUMMARY="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("pass" if d.get("passed") else ("error-"+d.get("failed_stage","unknown") if d.get("infrastructure_error") else "no-go-single-{:+.2f}%-cross-{:+.2f}%".format(d["single_delta_percent"], d["cross_delta_percent"])))' "$RESULT_PATH")"
+
+          if [ "$PASSED" != true ]; then
+            git reset --hard HEAD
+          fi
+
+          mkdir -p test/SharpLink.Benchmarks/Evidence
+          cp "$RESULT_PATH" test/SharpLink.Benchmarks/Evidence/issue252-experiment-a-result.json
+          rm -f .github/workflows/issue252-experiment-a-driver.yml
+          rm -f eng/issue252-experiment-a.py
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m "perf: record issue252 experiment A ${RESULT_SUMMARY}"
+          git push origin HEAD:agent/issue-252-pending-segments
