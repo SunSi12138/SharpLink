@@ -28,12 +28,26 @@
 
 `ConnectionReceiveWindowBytes` 是 protocol/wire flow-control credit；`MaxPreCreditSerializedBytes` 是**独立的本地 process-memory admission**，只保护无法在序列化前得到 exact encoded size 的 streaming fallback。它不会写入 handshake、不会修改 peer-visible receive window，也不会随 configured/negotiated connection window 自动变化。
 
-`MaxPreCreditSerializedBytes` 默认固定为 4 MiB。这个值等于默认 `MaxFramePayloadBytes`：在默认 protocol 配置下，一个最大合法 unsized item 可以正常占用预算，而 starved receiver 又不能把本地长期 serialized ownership 放大到默认 16 MiB connection window。Phase 0 的 7950X starved-memory A/B 显示 128 × 1 MiB unsized streams 在有界 admission 下 retained working-set/private-memory 可大幅下降；同时 immediate-credit fast path 不进入该预算，因此没有必要用更大的 wire window 作为本地内存默认值。该默认值也不随 performance profile 隐式变化。
+`MaxPreCreditSerializedBytes` 的精确定义是 **byte-owner/admission budget**，不是所有长期存活 serialized writer 的 aggregate cap。一个已经进入有界 FIFO 的 budget waiter 本身已经持有完整 serialized writer，因此 waiter backing 需要单独计入总内存 envelope。令 `B = MaxPreCreditSerializedBytes`、`F = negotiated max-frame payload`、`S = max concurrent streams`，当前 waiter 上限为：
+
+```text
+W = min(S, max(1, floor(B / F)))
+```
+
+在合法 frame-size 约束下，owner payload 最多为 `max(B, F)`（`B < F` 时允许一个合法 oversized item 作为 sole owner），queued waiter payload 最多为 `W * F`。因此该 subsystem 的长期 serialized **payload** 硬上界是：
+
+```text
+aggregateSerializedPayload <= max(B, F) + W * F
+```
+
+这个公式不包含 frame/header、buffer-pool capacity rounding 等额外开销。默认 `B = F = 4 MiB` 且 `W = 1`，所以默认 aggregate serialized-payload envelope 最多约 **8 MiB**，而不是 4 MiB。相同大小的 64 KiB / 1 MiB starvation 表通常明显低于该最坏混合大小上界；混合大小回归测试覆盖了 owners 填满 4 MiB budget、同时保留一个接近 max-frame 的 serialized waiter 的情况。
+
+`MaxPreCreditSerializedBytes` 默认固定为 4 MiB。这个值等于默认 `MaxFramePayloadBytes`：在默认 protocol 配置下，一个最大合法 unsized item 可以正常占用 owner budget，而 starved receiver 又不能把 owner/admission bytes 放大到默认 16 MiB connection window。Phase 0 的 7950X starved-memory A/B 显示 128 × 1 MiB unsized streams 在有界 admission 下 retained working-set/private-memory 可大幅下降；同时 immediate-credit fast path 不进入该预算，因此没有必要用更大的 wire window 作为本地内存默认值。该默认值也不随 performance profile 隐式变化。
 
 显式调优时，把这两个资源分开考虑：
 
 - 要改变网络在途/peer-visible credit，调 `ConnectionReceiveWindowBytes`；
-- 要改变本地“已序列化但正在等 credit”的最大长期 ownership，调 `MaxPreCreditSerializedBytes`。
+- 要改变本地“已序列化、正在等 credit”的 byte-owner/admission budget，调 `MaxPreCreditSerializedBytes`，并按上面的 aggregate 公式同时评估 bounded waiter backing。
 
 本地 budget 可以小于或大于 connection window。小于合法 max-frame payload 时，单个合法 oversized item 仍允许作为 sole owner 临时借用预算，避免永久等待；同时 waiter 数由 configured budget、negotiated max-frame payload 和 concurrent-stream limit 内部推导并保持有界。不要为了放宽本地 pre-credit memory admission 去扩大 wire receive window，也不要为了收紧 wire flow control 被迫压低本地 budget。
 
