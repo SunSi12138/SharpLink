@@ -1,3 +1,4 @@
+using System.Buffers;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Engines;
 using SharpLink.Runtime;
@@ -10,8 +11,11 @@ namespace SharpLink.Benchmarks;
 public class StreamManagerAllocationBenchmarks
 {
     [Benchmark(Baseline = true)]
-    public StreamManager CreateIdleManager()
-        => new();
+    public int CreateIdleManager()
+    {
+        var manager = new StreamManager();
+        return manager.ActiveStreamCount;
+    }
 
     [Benchmark]
     public int CreateAndCompleteOneStream()
