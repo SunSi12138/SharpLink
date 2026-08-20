@@ -14,6 +14,7 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
     private readonly StripedLongMap<ServerCallCancellationState> _calls;
     private readonly int _maxCalls;
     private readonly TimeProvider _timeProvider;
+    private readonly Func<int>? _activeCountProvider;
     private readonly ArrayPool<ServerCallCancellationLease> _snapshotPool;
     private readonly ITimer _timer;
     private long _approximateEarliestDeadline = long.MaxValue;
@@ -28,6 +29,21 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
             calls,
             maxCalls,
             timeProvider,
+            activeCountProvider: null,
+            ArrayPool<ServerCallCancellationLease>.Shared)
+    {
+    }
+
+    internal ServerCallDeadlineScheduler(
+        StripedLongMap<ServerCallCancellationState> calls,
+        int maxCalls,
+        TimeProvider timeProvider,
+        Func<int> activeCountProvider)
+        : this(
+            calls,
+            maxCalls,
+            timeProvider,
+            activeCountProvider,
             ArrayPool<ServerCallCancellationLease>.Shared)
     {
     }
@@ -37,12 +53,28 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         int maxCalls,
         TimeProvider timeProvider,
         ArrayPool<ServerCallCancellationLease> snapshotPool)
+        : this(
+            calls,
+            maxCalls,
+            timeProvider,
+            activeCountProvider: null,
+            snapshotPool)
+    {
+    }
+
+    internal ServerCallDeadlineScheduler(
+        StripedLongMap<ServerCallCancellationState> calls,
+        int maxCalls,
+        TimeProvider timeProvider,
+        Func<int>? activeCountProvider,
+        ArrayPool<ServerCallCancellationLease> snapshotPool)
     {
         _calls = calls ?? throw new ArgumentNullException(nameof(calls));
         if (maxCalls is < 1 or > SharpLinkFlowControlOptions.MaximumConcurrentCallsPerConnection)
             throw new ArgumentOutOfRangeException(nameof(maxCalls));
         _maxCalls = maxCalls;
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+        _activeCountProvider = activeCountProvider;
         _snapshotPool = snapshotPool ?? throw new ArgumentNullException(nameof(snapshotPool));
         _timer = _timeProvider.CreateTimer(
             static state => ((ServerCallDeadlineScheduler)state!).ScanExpiredDeadlines(),
@@ -96,7 +128,7 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         try
         {
             Interlocked.Exchange(ref _approximateEarliestDeadline, long.MaxValue);
-            var activeHint = Math.Min(_maxCalls, _calls.Count);
+            var activeHint = GetActiveCountHint();
             if (activeHint == 0)
                 return;
 
@@ -130,7 +162,7 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
                 requestedCapacity = GetNextSnapshotCapacity(
                     requestedCapacity,
                     attempt,
-                    Math.Min(_maxCalls, _calls.Count));
+                    GetActiveCountHint());
             }
 
             // Reaching the configured upper bound without fitting means admission/map invariants
@@ -145,6 +177,14 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
             if (next != long.MaxValue)
                 ArmDeadlineTimer(next);
         }
+    }
+
+    private int GetActiveCountHint()
+    {
+        if (_activeCountProvider is null)
+            return _maxCalls;
+
+        return Math.Clamp(_activeCountProvider(), 0, _maxCalls);
     }
 
     private int GetInitialSnapshotCapacity(int activeHint)
