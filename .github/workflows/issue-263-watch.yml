@@ -16,21 +16,19 @@ jobs:
   report:
     runs-on: ubuntu-latest
     steps:
-      - name: Report candidate validation run
+      - name: Report candidate branch runs
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           data=$(gh api 'repos/${{ github.repository }}/actions/runs?branch=agent/issue-263-dynamic-interceptors&per_page=20')
-          row=$(printf '%s' "$data" | jq -c '[.workflow_runs[] | select(.name == "Issue 263 Candidate Validation")][0]')
-          if [ "$row" = "null" ]; then
-            body='<!-- issue-263-agent-watch --> no candidate validation run found'
-          else
-            run_id=$(printf '%s' "$row" | jq -r '.id')
-            status=$(printf '%s' "$row" | jq -r '.status')
-            conclusion=$(printf '%s' "$row" | jq -r '.conclusion // "pending"')
-            head=$(printf '%s' "$row" | jq -r '.head_sha')
-            body="<!-- issue-263-agent-watch --> run_id=${run_id} status=${status} conclusion=${conclusion} head=${head}"
+          rows=$(printf '%s' "$data" | jq -r '.workflow_runs[] | "id=\(.id) name=\(.name) event=\(.event) status=\(.status) conclusion=\(.conclusion // "pending") head=\(.head_sha)"')
+          if [ -z "$rows" ]; then
+            rows='no runs found for candidate branch'
           fi
+          body="<!-- issue-263-agent-watch-list -->
+\`\`\`
+$rows
+\`\`\`"
           gh api repos/${{ github.repository }}/issues/263/comments -f body="$body"
