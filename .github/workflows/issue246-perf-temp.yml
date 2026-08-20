@@ -1,0 +1,542 @@
+name: Issue 246 Perf Evidence (temporary)
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - agent/issue-246-deadline-snapshot-sizing
+
+concurrency:
+  group: issue246-perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      REPS: '5'
+      SCAN_ITERS: '500'
+      LATENCY_SAMPLES: '20'
+      HOTPATH_ITERS: '1000000'
+    steps:
+      - name: Checkout dev baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: dev
+          path: base
+          fetch-depth: 1
+
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: head
+          fetch-depth: 1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Capture environment and SHAs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/raw evidence/logs harness
+          BASE_SHA=$(git -C base rev-parse HEAD)
+          HEAD_SHA=$(git -C head rev-parse HEAD)
+          {
+            echo "base_sha=$BASE_SHA"
+            echo "head_sha=$HEAD_SHA"
+            echo "runner=${RUNNER_NAME:-unknown}"
+            echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}"
+            echo "kernel=$(uname -a)"
+            echo "dotnet=$(dotnet --version)"
+            echo "nproc=$(nproc)"
+            echo "cpu_model=$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)"
+            echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } | tee evidence/environment.txt
+          lscpu > evidence/lscpu.txt
+          dotnet --info > evidence/dotnet-info.txt
+          git -C head diff --stat "$BASE_SHA" "$HEAD_SHA" > evidence/base-head-stat.txt || true
+          git -C head diff "$BASE_SHA" "$HEAD_SHA" -- src/SharpLink.Server/ServerCallDeadlineScheduler.cs src/SharpLink.Runtime/StripedLongMap.cs > evidence/base-head-target.patch || true
+
+      - name: Create identical benchmark harness for base and head
+        shell: bash
+        run: |
+          cat > harness/Issue246Perf.csproj <<'EOF'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <OutputType>Exe</OutputType>
+              <TargetFramework>net10.0</TargetFramework>
+              <Nullable>enable</Nullable>
+              <ImplicitUsings>disable</ImplicitUsings>
+              <AssemblyName>SharpLink.Benchmarks</AssemblyName>
+              <Optimize>true</Optimize>
+              <DebugType>none</DebugType>
+            </PropertyGroup>
+            <ItemGroup>
+              <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+              <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+              <ProjectReference Include="../../src/SharpLink.Server/SharpLink.Server.csproj" />
+            </ItemGroup>
+          </Project>
+          EOF
+          cat > harness/Program.cs <<'EOF'
+          using System;
+          using System.Buffers;
+          using System.Collections.Generic;
+          using System.Diagnostics;
+          using System.Linq;
+          using System.Reflection;
+          using System.Runtime.CompilerServices;
+          using System.Text.Json;
+          using System.Threading;
+          using System.Threading.Tasks;
+          using SharpLink.Runtime;
+          using SharpLink.Server;
+
+          internal static class Program
+          {
+              private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
+              private static readonly JsonSerializerOptions JsonOptions = new()
+              {
+                  PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+              };
+
+              public static int Main(string[] args)
+              {
+                  var o = Options.Parse(args);
+                  object result = o.Mode switch
+                  {
+                      "scan" => Scan(o),
+                      "latency" => Latency(o),
+                      "hotpath" => HotPath(o),
+                      _ => throw new ArgumentException("unknown mode")
+                  };
+                  Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+                  return 0;
+              }
+
+              private static object Scan(Options o)
+              {
+                  using var setup = Setup.Create(o.MaxCalls, o.ActiveCalls);
+                  for (var i = 0; i < 20; i++) setup.Scan();
+                  GC.Collect(2, GCCollectionMode.Forced, true, true);
+                  var process = Process.GetCurrentProcess();
+                  process.Refresh();
+                  var wsBefore = process.WorkingSet64;
+                  var managedBefore = GC.GetTotalMemory(false);
+
+                  var coldStart = Stopwatch.GetTimestamp();
+                  setup.Scan();
+                  var coldTicks = Stopwatch.GetTimestamp() - coldStart;
+                  process.Refresh();
+                  var wsAfterCold = process.WorkingSet64;
+                  var managedAfterCold = GC.GetTotalMemory(false);
+
+                  var start = Stopwatch.GetTimestamp();
+                  for (var i = 0; i < o.Iterations; i++) setup.Scan();
+                  var elapsed = Stopwatch.GetTimestamp() - start;
+                  process.Refresh();
+
+                  var probe = ProbeRequestedAndRentedLength(o);
+                  return new
+                  {
+                      variant = o.Variant,
+                      mode = o.Mode,
+                      max_calls = o.MaxCalls,
+                      active_calls = o.ActiveCalls,
+                      shape = o.Shape,
+                      iterations = o.Iterations,
+                      copied_count = o.ActiveCalls,
+                      lease_struct_bytes = Unsafe.SizeOf<ServerCallCancellationLease>(),
+                      requested_min_length = probe.Requested,
+                      actual_rented_length = probe.Actual,
+                      requested_length_source = probe.Source,
+                      snapshot_rented_bytes = (long)probe.Actual * Unsafe.SizeOf<ServerCallCancellationLease>(),
+                      cold_scan_ns = ToNs(coldTicks),
+                      scan_ns_per_op = ToNs(elapsed) / o.Iterations,
+                      working_set_before_bytes = wsBefore,
+                      working_set_after_cold_bytes = wsAfterCold,
+                      working_set_cold_delta_bytes = wsAfterCold - wsBefore,
+                      working_set_after_steady_bytes = process.WorkingSet64,
+                      peak_working_set_bytes = process.PeakWorkingSet64,
+                      managed_before_bytes = managedBefore,
+                      managed_after_cold_bytes = managedAfterCold,
+                      managed_cold_delta_bytes = managedAfterCold - managedBefore
+                  };
+              }
+
+              private static object HotPath(Options o)
+              {
+                  var time = new NoopTimeProvider();
+                  var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
+                  using var scheduler = new ServerCallDeadlineScheduler(calls, 1024, time);
+                  var state = ServerCallCancellationState.Rent(
+                      1, default, time, CancellationToken.None, CancellationToken.None,
+                      supportsCooperativeCancellation: false);
+                  for (var i = 0; i < 20000; i++)
+                  {
+                      calls.Set(1, state);
+                      if (!calls.TryRemove(1, state)) throw new Exception("warmup remove");
+                  }
+                  GC.Collect(2, GCCollectionMode.Forced, true, true);
+                  var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+                  var start = Stopwatch.GetTimestamp();
+                  for (var i = 0; i < o.HotPathIterations; i++)
+                  {
+                      calls.Set(1, state);
+                      if (!calls.TryRemove(1, state)) throw new Exception("measured remove");
+                  }
+                  var elapsed = Stopwatch.GetTimestamp() - start;
+                  var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+                  state.Dispose();
+                  return new
+                  {
+                      variant = o.Variant,
+                      mode = o.Mode,
+                      iterations = o.HotPathIterations,
+                      set_remove_ns_per_op = ToNs(elapsed) / o.HotPathIterations,
+                      allocated_bytes_total = allocated,
+                      allocated_b_per_op = (double)allocated / o.HotPathIterations
+                  };
+              }
+
+              private static object Latency(Options o)
+              {
+                  _ = MeasureLateness(Math.Min(o.MaxCalls, 1024), Math.Min(o.ActiveCalls, 8), o.Shape);
+                  var values = new double[o.LatencySamples];
+                  for (var i = 0; i < values.Length; i++)
+                      values[i] = MeasureLateness(o.MaxCalls, o.ActiveCalls, o.Shape);
+                  Array.Sort(values);
+                  return new
+                  {
+                      variant = o.Variant,
+                      mode = o.Mode,
+                      max_calls = o.MaxCalls,
+                      active_calls = o.ActiveCalls,
+                      shape = o.Shape,
+                      samples = values.Length,
+                      batch_lateness_ns_p50 = Percentile(values, .50),
+                      batch_lateness_ns_p95 = Percentile(values, .95),
+                      batch_lateness_ns_p99 = Percentile(values, .99),
+                      batch_lateness_ns_max = values[^1]
+                  };
+              }
+
+              private static double MeasureLateness(int maxCalls, int activeCalls, string shape)
+              {
+                  if (activeCalls == 0) return 0;
+                  var time = TimeProvider.System;
+                  var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
+                  using var scheduler = new ServerCallDeadlineScheduler(calls, maxCalls, time);
+                  var states = new ServerCallCancellationState[activeCalls];
+                  var firstUtc = time.GetUtcNow().AddMilliseconds(80);
+                  long latest = 0;
+                  for (var i = 0; i < states.Length; i++)
+                  {
+                      var offsetMs = shape == "staggered" ? i % 8 : 0;
+                      var deadline = RpcDeadline.Create(firstUtc.AddMilliseconds(offsetMs), time);
+                      latest = Math.Max(latest, deadline.Timestamp);
+                      var state = ServerCallCancellationState.Rent(
+                          i + 1, deadline, time, CancellationToken.None, CancellationToken.None,
+                          supportsCooperativeCancellation: false);
+                      states[i] = state;
+                      calls.Set(state.RequestId, state);
+                      scheduler.Register(state);
+                  }
+                  var timeout = Stopwatch.GetTimestamp() + 5 * Stopwatch.Frequency;
+                  while (states.Any(s => s.Reason != ServerCallCancellationReason.DeadlineExceeded))
+                  {
+                      if (Stopwatch.GetTimestamp() >= timeout) throw new TimeoutException();
+                      Thread.Yield();
+                  }
+                  var observed = time.GetTimestamp();
+                  foreach (var state in states)
+                  {
+                      _ = calls.TryRemove(state.RequestId, state);
+                      state.Dispose();
+                  }
+                  return (double)Math.Max(0, observed - latest) * 1_000_000_000d / time.TimestampFrequency;
+              }
+
+              private static (int Requested, int Actual, string Source) ProbeRequestedAndRentedLength(Options o)
+              {
+                  if (o.Variant == "base")
+                  {
+                      var buffer = ArrayPool<ServerCallCancellationLease>.Shared.Rent(o.MaxCalls);
+                      var actual = buffer.Length;
+                      ArrayPool<ServerCallCancellationLease>.Shared.Return(buffer, true);
+                      return (o.MaxCalls, actual, "baseline source verified Rent(_maxCalls)");
+                  }
+
+                  var ctor = typeof(ServerCallDeadlineScheduler).GetConstructors(PrivateInstance)
+                      .FirstOrDefault(c =>
+                      {
+                          var p = c.GetParameters();
+                          return p.Length == 4 && p[3].ParameterType == typeof(ArrayPool<ServerCallCancellationLease>);
+                      });
+                  if (ctor is null) return (0, 0, "pool injection unavailable");
+
+                  var time = new NoopTimeProvider();
+                  var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
+                  var states = new List<ServerCallCancellationState>();
+                  for (var i = 0; i < o.ActiveCalls; i++)
+                  {
+                      var d = RpcDeadline.Create(time.GetUtcNow().AddMinutes(10), time);
+                      var s = ServerCallCancellationState.Rent(i + 10000, d, time,
+                          CancellationToken.None, CancellationToken.None, false);
+                      states.Add(s);
+                      calls.Set(s.RequestId, s);
+                  }
+                  var pool = new TrackingPool();
+                  using var scheduler = (ServerCallDeadlineScheduler)ctor.Invoke(new object[] { calls, o.MaxCalls, time, pool });
+                  foreach (var s in states) scheduler.Register(s);
+                  CreateScan(scheduler)();
+                  foreach (var s in states)
+                  {
+                      _ = calls.TryRemove(s.RequestId, s);
+                      s.Dispose();
+                  }
+                  return (pool.Requested, pool.Actual, "instrumented scheduler pool request");
+              }
+
+              private static Action CreateScan(ServerCallDeadlineScheduler scheduler)
+              {
+                  var method = typeof(ServerCallDeadlineScheduler).GetMethod("ScanExpiredDeadlines", PrivateInstance)
+                      ?? throw new MissingMethodException("ScanExpiredDeadlines");
+                  return method.CreateDelegate<Action>(scheduler);
+              }
+
+              private static double ToNs(long ticks) => (double)ticks * 1_000_000_000d / Stopwatch.Frequency;
+              private static double Percentile(double[] x, double p)
+              {
+                  var i = (x.Length - 1) * p;
+                  var lo = (int)Math.Floor(i);
+                  var hi = (int)Math.Ceiling(i);
+                  return lo == hi ? x[lo] : x[lo] + (x[hi] - x[lo]) * (i - lo);
+              }
+
+              private sealed class Setup : IDisposable
+              {
+                  private readonly StripedLongMap<ServerCallCancellationState> _calls;
+                  private readonly ServerCallCancellationState[] _states;
+                  private readonly ServerCallDeadlineScheduler _scheduler;
+                  private Setup(StripedLongMap<ServerCallCancellationState> calls,
+                      ServerCallCancellationState[] states, ServerCallDeadlineScheduler scheduler, Action scan)
+                  { _calls = calls; _states = states; _scheduler = scheduler; Scan = scan; }
+                  internal Action Scan { get; }
+                  internal static Setup Create(int maxCalls, int activeCalls)
+                  {
+                      var time = new NoopTimeProvider();
+                      var calls = new StripedLongMap<ServerCallCancellationState>(new RuntimeConcurrencyOptions());
+                      var states = new ServerCallCancellationState[activeCalls];
+                      for (var i = 0; i < activeCalls; i++)
+                      {
+                          var d = RpcDeadline.Create(time.GetUtcNow().AddMinutes(10), time);
+                          states[i] = ServerCallCancellationState.Rent(i + 1, d, time,
+                              CancellationToken.None, CancellationToken.None, false);
+                          calls.Set(states[i].RequestId, states[i]);
+                      }
+                      var scheduler = new ServerCallDeadlineScheduler(calls, maxCalls, time);
+                      foreach (var s in states) scheduler.Register(s);
+                      return new Setup(calls, states, scheduler, CreateScan(scheduler));
+                  }
+                  public void Dispose()
+                  {
+                      _scheduler.Dispose();
+                      foreach (var s in _states)
+                      {
+                          _ = _calls.TryRemove(s.RequestId, s);
+                          s.Dispose();
+                      }
+                  }
+              }
+
+              private sealed class TrackingPool : ArrayPool<ServerCallCancellationLease>
+              {
+                  internal int Requested { get; private set; }
+                  internal int Actual { get; private set; }
+                  public override ServerCallCancellationLease[] Rent(int minimumLength)
+                  {
+                      var a = ArrayPool<ServerCallCancellationLease>.Shared.Rent(minimumLength);
+                      if (Requested == 0) { Requested = minimumLength; Actual = a.Length; }
+                      return a;
+                  }
+                  public override void Return(ServerCallCancellationLease[] array, bool clearArray = false)
+                      => ArrayPool<ServerCallCancellationLease>.Shared.Return(array, clearArray);
+              }
+
+              private sealed class NoopTimeProvider : TimeProvider
+              {
+                  private readonly DateTimeOffset _utc = DateTimeOffset.UtcNow;
+                  public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+                  public override DateTimeOffset GetUtcNow() => _utc;
+                  public override long GetTimestamp() => 0;
+                  public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+                      => new NoopTimer();
+                  private sealed class NoopTimer : ITimer
+                  {
+                      public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+                      public void Dispose() { }
+                      public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+                  }
+              }
+
+              private sealed class Options
+              {
+                  internal string Variant = "unknown";
+                  internal string Mode = "scan";
+                  internal int MaxCalls = 1024;
+                  internal int ActiveCalls = 8;
+                  internal string Shape = "clustered";
+                  internal int Iterations = 500;
+                  internal int LatencySamples = 20;
+                  internal int HotPathIterations = 1000000;
+                  internal static Options Parse(string[] args)
+                  {
+                      var o = new Options();
+                      for (var i = 0; i < args.Length; i++)
+                      {
+                          string Next() => args[++i];
+                          switch (args[i])
+                          {
+                              case "--variant": o.Variant = Next(); break;
+                              case "--mode": o.Mode = Next(); break;
+                              case "--max": o.MaxCalls = int.Parse(Next()); break;
+                              case "--active": o.ActiveCalls = int.Parse(Next()); break;
+                              case "--shape": o.Shape = Next(); break;
+                              case "--iterations": o.Iterations = int.Parse(Next()); break;
+                              case "--latency-samples": o.LatencySamples = int.Parse(Next()); break;
+                              case "--hotpath-iterations": o.HotPathIterations = int.Parse(Next()); break;
+                          }
+                      }
+                      return o;
+                  }
+              }
+          }
+          EOF
+          for v in base head; do
+            mkdir -p "$v/artifacts/issue246-perf"
+            cp harness/Issue246Perf.csproj harness/Program.cs "$v/artifacts/issue246-perf/"
+          done
+
+      - name: Verify baseline still matches issue 246 over-rent shape
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Eq 'Rent[[:space:]]*\([[:space:]]*_maxCalls[[:space:]]*\)' base/src/SharpLink.Server/ServerCallDeadlineScheduler.cs
+
+      - name: Build harnesses
+        shell: bash
+        run: |
+          set -euo pipefail
+          for v in base head; do
+            dotnet restore "$v/artifacts/issue246-perf/Issue246Perf.csproj" > "evidence/logs/${v}-restore.log"
+            dotnet build "$v/artifacts/issue246-perf/Issue246Perf.csproj" -c Release --no-restore -v minimal > "evidence/logs/${v}-build.log"
+          done
+
+      - name: Run ABBA base/head measurements on one pinned vCPU
+        shell: bash
+        run: |
+          set -euo pipefail
+          NPROC=$(nproc)
+          if [ "$NPROC" -ge 3 ]; then CPU=2; else CPU=0; fi
+          echo "cpu=$CPU" | tee evidence/cpu-pin.txt
+          BASE_DLL="$PWD/base/artifacts/issue246-perf/bin/Release/net10.0/SharpLink.Benchmarks.dll"
+          HEAD_DLL="$PWD/head/artifacts/issue246-perf/bin/Release/net10.0/SharpLink.Benchmarks.dll"
+
+          run_one() {
+            variant="$1"; mode="$2"; name="$3"; max="$4"; active="$5"; shape="$6"; rep="$7"
+            if [ "$variant" = base ]; then dll="$BASE_DLL"; else dll="$HEAD_DLL"; fi
+            file="evidence/raw/${variant}-${name}-${mode}-rep$(printf '%02d' "$rep").json"
+            taskset -c "$CPU" dotnet "$dll" \
+              --variant "$variant" --mode "$mode" --max "$max" --active "$active" --shape "$shape" \
+              --iterations "$SCAN_ITERS" --latency-samples "$LATENCY_SAMPLES" --hotpath-iterations "$HOTPATH_ITERS" \
+              > "$file"
+            python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$file"
+          }
+
+          for rep in $(seq 1 "$REPS"); do
+            if [ $((rep % 2)) -eq 1 ]; then ORDER='base head'; else ORDER='head base'; fi
+            for variant in $ORDER; do run_one "$variant" hotpath hotpath 1024 1 clustered "$rep"; done
+            while IFS='|' read -r name max active shape latency; do
+              for variant in $ORDER; do
+                run_one "$variant" scan "$name" "$max" "$active" "$shape" "$rep"
+                if [ "$latency" = yes ]; then run_one "$variant" latency "$name" "$max" "$active" "$shape" "$rep"; fi
+              done
+            done <<'EOF'
+          default_1024_a8|1024|8|staggered|yes
+          high_65536_a8|65536|8|staggered|yes
+          high_65536_a1024|65536|1024|staggered|yes
+          high_65536_a128_clustered|65536|128|clustered|yes
+          high_65536_a0_clear|65536|0|clustered|no
+          EOF
+          done
+
+      - name: Summarize evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv, json, math, statistics
+          from collections import defaultdict
+          from pathlib import Path
+
+          root = Path('evidence')
+          data = [json.loads(p.read_text()) for p in sorted((root/'raw').glob('*.json'))]
+          groups = defaultdict(list)
+          for d in data:
+              scenario = 'hotpath' if d['mode'] == 'hotpath' else f"max={d['max_calls']} active={d['active_calls']} {d.get('shape','')}"
+              groups[(scenario, d['mode'], d['variant'])].append(d)
+
+          metrics = {
+              'scan': ['requested_min_length','actual_rented_length','snapshot_rented_bytes','cold_scan_ns','scan_ns_per_op','working_set_cold_delta_bytes','peak_working_set_bytes'],
+              'latency': ['batch_lateness_ns_p50','batch_lateness_ns_p95','batch_lateness_ns_p99','batch_lateness_ns_max'],
+              'hotpath': ['set_remove_ns_per_op','allocated_b_per_op'],
+          }
+          rows=[]
+          for scenario, mode in sorted({(k[0],k[1]) for k in groups}):
+              b=groups.get((scenario,mode,'base'),[]); h=groups.get((scenario,mode,'head'),[])
+              if not b or not h: continue
+              for metric in metrics[mode]:
+                  bm=statistics.median(float(x[metric]) for x in b)
+                  hm=statistics.median(float(x[metric]) for x in h)
+                  delta=(hm/bm-1)*100 if bm else float('nan')
+                  rows.append((scenario,mode,metric,bm,hm,delta,len(b)))
+
+          with (root/'summary.csv').open('w',newline='') as f:
+              w=csv.writer(f); w.writerow(['scenario','mode','metric','base_median','head_median','delta_percent','runs_each'])
+              w.writerows(rows)
+
+          lines=['# Issue #246 GitHub-hosted base/head evidence','',
+                 'Environment: same GitHub-hosted VM/job and same pinned logical CPU; repetitions alternate base/head order.','',
+                 '| Scenario | Mode | Metric | Base median | Head median | Delta |',
+                 '|---|---|---|---:|---:|---:|']
+          def fmt(v):
+              return f'{v:,.2f}' if abs(v)<1e9 else f'{v:,.0f}'
+          for s,m,k,b,h,d,n in rows:
+              ds='n/a' if not math.isfinite(d) else f'{d:+.2f}%'
+              lines.append(f'| {s} | {m} | {k} | {fmt(b)} | {fmt(h)} | {ds} |')
+          lines += ['', '## Interpretation notes',
+                    '', '- Hosted-runner latency/CPU numbers are comparative evidence, not bare-metal absolute latency guarantees.',
+                    '- Snapshot requested/rented length and managed B/op are deterministic/resource-oriented measurements.',
+                    '- `active=0` isolates the old large rent/clear/return path versus the head zero-active fast path.']
+          (root/'summary.md').write_text('\n'.join(lines)+'\n')
+          print((root/'summary.md').read_text())
+          PY
+          cat evidence/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload evidence artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: issue246-perf-evidence
+          path: evidence
+          if-no-files-found: error
+          retention-days: 14
