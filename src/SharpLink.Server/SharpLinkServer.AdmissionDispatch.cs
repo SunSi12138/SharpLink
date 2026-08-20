@@ -16,7 +16,12 @@ internal sealed partial class SharpLinkServer
         var session = connection.Session;
         using var requestScope = BeginRequestLogScope(_logger, requestId);
         var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
-        var request = ReadRequestEnvelope(session, payload, flags);
+        var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
+        var preservePreDecodeMetadata =
+            isCompressed && _admissionController is not null && !admissionGranted;
+        var request = isCompressed && !preservePreDecodeMetadata
+            ? ReadRequestRoutingEnvelope(session, payload, flags)
+            : ReadRequestEnvelope(session, payload, flags);
         if (IsDeadlineExceeded(request.RpcDeadline))
         {
             if (admittedCallState is not null)
@@ -131,7 +136,7 @@ internal sealed partial class SharpLinkServer
             return;
         }
 
-        if ((flags & ProtocolV2FrameFlags.Compressed) != 0 && admittedCallState is null)
+        if (isCompressed && admittedCallState is null)
         {
             admittedCallState = CreateAdmissionWaitState(
                 connection,
@@ -145,15 +150,18 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? decodedRequestOwner = null;
         try
         {
-            if ((flags & ProtocolV2FrameFlags.Compressed) != 0)
+            if (isCompressed)
             {
+                var preDecodeMetadata = request.Metadata;
                 payload = session.DecodeInboundPayload(
                     ProtocolV2FrameType.Request,
                     flags,
                     payload,
                     admittedCallState!.InvocationToken,
                     out decodedRequestOwner);
-                request = ReadRequestEnvelope(session, payload, flags);
+                request = preservePreDecodeMetadata
+                    ? ReadRequestRoutingEnvelope(session, payload, flags) with { Metadata = preDecodeMetadata }
+                    : ReadRequestEnvelope(session, payload, flags);
             }
         }
         catch (SharpLinkException exception) when (
@@ -180,6 +188,16 @@ internal sealed partial class SharpLinkServer
             ReleaseOneWayDispatchResources(
                 admittedCallState, requestId, requestCancellationMap, connection);
             throw;
+        }
+
+        if (admittedCallState is { IsAbandoned: true })
+        {
+            session.ReturnDecodedPayload(decodedRequestOwner);
+            decodedRequestOwner = null;
+            DrainFailedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
+            ReleaseOneWayDispatchResources(
+                admittedCallState, requestId, requestCancellationMap, connection);
+            return;
         }
 
         if (IsDeadlineExceeded(request.RpcDeadline))
