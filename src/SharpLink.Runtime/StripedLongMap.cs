@@ -174,5 +174,5 @@ internal sealed class StripedLongMap<TValue> where TValue : class
 internal static class StripedLongMapTestHooks
 {
     [ThreadStatic]
-    internal static Action? BeforeInitialize;
+    internal static Action? BeforeInitialize = null;
 }
