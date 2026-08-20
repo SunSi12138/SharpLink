@@ -11,6 +11,55 @@ internal static class ServerRequestEnvelopeReader
     {
         ArgumentNullException.ThrowIfNull(timeProvider);
         var reader = new SequenceReader<byte>(payload);
+        var (interfaceHash, methodHash, deadline) = ReadRoutingPrefix(ref reader, flags, timeProvider);
+
+        SharpLinkMetadata? metadata = null;
+        if ((flags & ProtocolV2FrameFlags.HasMetadata) != 0)
+        {
+            var metadataLength = ReadMetadataLength(session, ref reader, maxMetadataBytes);
+            metadata = ProtocolV2PayloadCodec.ReadMetadata(
+                reader.Sequence.Slice(reader.Position, metadataLength));
+            reader.Advance(metadataLength);
+        }
+
+        return new ServerRequestEnvelope(
+            interfaceHash,
+            methodHash,
+            reader.UnreadSequence,
+            deadline,
+            metadata);
+    }
+
+    internal static ServerRequestEnvelope ReadRouting(
+        RpcSession session,
+        ReadOnlySequence<byte> payload,
+        ProtocolV2FrameFlags flags,
+        int maxMetadataBytes,
+        TimeProvider timeProvider)
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        var reader = new SequenceReader<byte>(payload);
+        var (interfaceHash, methodHash, deadline) = ReadRoutingPrefix(ref reader, flags, timeProvider);
+
+        if ((flags & ProtocolV2FrameFlags.HasMetadata) != 0)
+        {
+            var metadataLength = ReadMetadataLength(session, ref reader, maxMetadataBytes);
+            reader.Advance(metadataLength);
+        }
+
+        return new ServerRequestEnvelope(
+            interfaceHash,
+            methodHash,
+            reader.UnreadSequence,
+            deadline,
+            Metadata: null);
+    }
+
+    private static (long InterfaceHash, long MethodHash, RpcDeadline Deadline) ReadRoutingPrefix(
+        ref SequenceReader<byte> reader,
+        ProtocolV2FrameFlags flags,
+        TimeProvider timeProvider)
+    {
         if (!reader.TryReadLittleEndian(out long interfaceHash) ||
             !reader.TryReadLittleEndian(out long methodHash))
         {
@@ -23,7 +72,11 @@ internal static class ServerRequestEnvelopeReader
         if ((flags & ProtocolV2FrameFlags.HasDeadline) != 0)
         {
             if (!reader.TryReadLittleEndian(out long unixMilliseconds))
-                throw new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame, "Request deadline is truncated.");
+            {
+                throw new SharpLinkProtocolViolationException(
+                    ProtocolViolationReason.MalformedFrame,
+                    "Request deadline is truncated.");
+            }
             try
             {
                 var utcDeadline = DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds);
@@ -42,34 +95,29 @@ internal static class ServerRequestEnvelopeReader
             }
         }
 
-        SharpLinkMetadata? metadata = null;
-        if ((flags & ProtocolV2FrameFlags.HasMetadata) != 0)
-        {
-            if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) == 0)
-            {
-                throw new SharpLinkProtocolViolationException(
-                    ProtocolViolationReason.ProtocolState,
-                    "Request metadata was not negotiated during handshake.");
-            }
-            if (!ProtocolV2PayloadCodec.TryReadVarUInt32(ref reader, out var metadataLength) ||
-                metadataLength > maxMetadataBytes ||
-                reader.Remaining < metadataLength)
-            {
-                throw new SharpLinkProtocolViolationException(
-                    ProtocolViolationReason.MalformedFrame,
-                    "Request metadata length is invalid.");
-            }
-            metadata = ProtocolV2PayloadCodec.ReadMetadata(
-                reader.Sequence.Slice(reader.Position, metadataLength));
-            reader.Advance(metadataLength);
-        }
+        return (interfaceHash, methodHash, deadline);
+    }
 
-        return new ServerRequestEnvelope(
-            interfaceHash,
-            methodHash,
-            reader.UnreadSequence,
-            deadline,
-            metadata);
+    private static uint ReadMetadataLength(
+        RpcSession session,
+        ref SequenceReader<byte> reader,
+        int maxMetadataBytes)
+    {
+        if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) == 0)
+        {
+            throw new SharpLinkProtocolViolationException(
+                ProtocolViolationReason.ProtocolState,
+                "Request metadata was not negotiated during handshake.");
+        }
+        if (!ProtocolV2PayloadCodec.TryReadVarUInt32(ref reader, out var metadataLength) ||
+            metadataLength > maxMetadataBytes ||
+            reader.Remaining < metadataLength)
+        {
+            throw new SharpLinkProtocolViolationException(
+                ProtocolViolationReason.MalformedFrame,
+                "Request metadata length is invalid.");
+        }
+        return metadataLength;
     }
 }
 
