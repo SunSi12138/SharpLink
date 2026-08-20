@@ -20,11 +20,15 @@ internal static class PendingRequestSegmentationEvidenceRunner
 {
     private const int Capacity = 65_536;
     private static readonly Exception CleanupException = new IOException("pending-segmentation evidence cleanup");
+    private static readonly ReadOnlySequence<byte> CompletionPayload = new(new byte[sizeof(int)]);
 
     public static async Task RunAsync(string[] args)
     {
         if (args.Length == 0)
-            throw new ArgumentException("Expected evidence mode: memory, construction, scan, or lateness.");
+        {
+            throw new ArgumentException(
+                "Expected evidence mode: memory, construction, scan, lateness, churn-memory, churn-scan, churn-lateness, or heap-hold.");
+        }
 
         switch (args[0])
         {
@@ -40,6 +44,18 @@ internal static class PendingRequestSegmentationEvidenceRunner
             case "lateness":
                 await RunLatenessAsync(args[1..]).ConfigureAwait(false);
                 return;
+            case "churn-memory":
+                RunChurnMemory(args[1..]);
+                return;
+            case "churn-scan":
+                RunChurnScan(args[1..]);
+                return;
+            case "churn-lateness":
+                await RunChurnLatenessAsync(args[1..]).ConfigureAwait(false);
+                return;
+            case "heap-hold":
+                RunHeapHold(args[1..]);
+                return;
             default:
                 throw new ArgumentOutOfRangeException(nameof(args), args[0], "Unknown pending-segmentation evidence mode.");
         }
@@ -49,8 +65,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
     {
         var active = GetInt32(args, "--active", required: true);
         var connections = GetInt32(args, "--connections", 1000);
-        if (active is not (0 or 1 or 8))
-            throw new ArgumentOutOfRangeException(nameof(args), "Memory evidence active count must be 0, 1, or 8.");
+        ValidateMemoryActive(active);
 
         WarmUp();
         var tables = new PendingRequestTable[connections];
@@ -58,32 +73,32 @@ internal static class PendingRequestSegmentationEvidenceRunner
         ForceFullGc();
         var before = GC.GetTotalMemory(forceFullCollection: true);
 
-        var operationIndex = 0;
-        for (var connection = 0; connection < connections; connection++)
-        {
-            var table = CreateTable(TimeProvider.System);
-            tables[connection] = table;
-            for (var index = 0; index < active; index++)
-                operations[operationIndex++] = table.Rent<int>(out _);
-        }
+        PopulateTables(tables, operations, active, churn: false);
 
         ForceFullGc();
         var after = GC.GetTotalMemory(forceFullCollection: true);
-        var retained = Math.Max(0, after - before);
-        var result = new
-        {
-            mode = "memory",
-            implementation = GetImplementation(tables[0]),
-            segmentSize = GetOptionalInt32(tables[0], "SegmentSize"),
-            capacity = Capacity,
-            active,
-            connections,
-            retainedBytes = retained,
-            retainedBytesPerConnection = retained / (double)connections,
-            materializedSegmentsPerConnection = GetOptionalInt32(tables[0], "MaterializedSegmentCount")
-        };
-        Console.WriteLine(JsonSerializer.Serialize(result));
+        WriteMemoryResult("memory", tables, active, connections, Math.Max(0, after - before), churn: false);
+        Cleanup(tables, operations);
+    }
 
+    private static void RunChurnMemory(string[] args)
+    {
+        var active = GetInt32(args, "--active", required: true);
+        var connections = GetInt32(args, "--connections", 100);
+        if (active is not (0 or 1))
+            throw new ArgumentOutOfRangeException(nameof(args), "Post-churn memory evidence active count must be 0 or 1.");
+
+        WarmUp();
+        var tables = new PendingRequestTable[connections];
+        var operations = new RpcRequestOperation<int>[checked(connections * active)];
+        ForceFullGc();
+        var before = GC.GetTotalMemory(forceFullCollection: true);
+
+        PopulateTables(tables, operations, active, churn: true);
+
+        ForceFullGc();
+        var after = GC.GetTotalMemory(forceFullCollection: true);
+        WriteMemoryResult("churn-memory", tables, active, connections, Math.Max(0, after - before), churn: true);
         Cleanup(tables, operations);
     }
 
@@ -117,15 +132,24 @@ internal static class PendingRequestSegmentationEvidenceRunner
     }
 
     private static void RunScan(string[] args)
+        => RunScanCore(args, churn: false);
+
+    private static void RunChurnScan(string[] args)
+        => RunScanCore(args, churn: true);
+
+    private static void RunScanCore(string[] args, bool churn)
     {
-        var active = GetInt32(args, "--active", required: true);
-        var deadlines = GetInt32(args, "--deadlines", required: true);
+        var active = GetInt32(args, "--active", churn ? 1 : 0, required: !churn);
+        var deadlines = GetInt32(args, "--deadlines", churn ? 1 : 0, required: !churn);
         var iterations = GetInt32(args, "--iterations", 10_000);
         if (active <= 0 || deadlines <= 0 || deadlines > active)
             throw new ArgumentOutOfRangeException(nameof(args), "Scan evidence requires 0 < deadlines <= active.");
 
         var timeProvider = new ManualEvidenceTimeProvider();
         using var table = CreateTable(timeProvider);
+        if (churn)
+            ChurnOneFullIdCycle(table);
+
         var operations = new RpcRequestOperation<int>[active];
         var deadline = RpcDeadline.Create(timeProvider.GetUtcNow().AddHours(1), timeProvider);
         for (var index = 0; index < active; index++)
@@ -140,11 +164,7 @@ internal static class PendingRequestSegmentationEvidenceRunner
                 : table.Rent<int>(out _);
         }
 
-        var method = typeof(PendingRequestTable).GetMethod(
-            "ScanExpiredDeadlines",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingMethodException(typeof(PendingRequestTable).FullName, "ScanExpiredDeadlines");
-        var scan = (Action<PendingRequestTable>)method.CreateDelegate(typeof(Action<PendingRequestTable>));
+        var scan = GetDeadlineScanDelegate();
         for (var index = 0; index < 100; index++)
             scan(table);
 
@@ -155,10 +175,11 @@ internal static class PendingRequestSegmentationEvidenceRunner
 
         var result = new
         {
-            mode = "scan",
+            mode = churn ? "churn-scan" : "scan",
             implementation = GetImplementation(table),
             segmentSize = GetOptionalInt32(table, "SegmentSize"),
             capacity = Capacity,
+            churn,
             active,
             deadlines,
             iterations,
@@ -173,6 +194,12 @@ internal static class PendingRequestSegmentationEvidenceRunner
     }
 
     private static async Task RunLatenessAsync(string[] args)
+        => await RunLatenessCoreAsync(args, churn: false).ConfigureAwait(false);
+
+    private static async Task RunChurnLatenessAsync(string[] args)
+        => await RunLatenessCoreAsync(args, churn: true).ConfigureAwait(false);
+
+    private static async Task RunLatenessCoreAsync(string[] args, bool churn)
     {
         var iterations = GetInt32(args, "--iterations", 40);
         var deadlineMilliseconds = GetInt32(args, "--deadline-ms", 20);
@@ -180,6 +207,9 @@ internal static class PendingRequestSegmentationEvidenceRunner
             throw new ArgumentOutOfRangeException(nameof(args));
 
         using var table = CreateTable(TimeProvider.System);
+        if (churn)
+            ChurnOneFullIdCycle(table);
+
         await ObserveOneDeadlineAsync(table, 5).ConfigureAwait(false);
         var lateness = new double[iterations];
         for (var index = 0; index < iterations; index++)
@@ -202,18 +232,118 @@ internal static class PendingRequestSegmentationEvidenceRunner
         Array.Sort(lateness);
         var result = new
         {
-            mode = "lateness",
+            mode = churn ? "churn-lateness" : "lateness",
             implementation = GetImplementation(table),
             segmentSize = GetOptionalInt32(table, "SegmentSize"),
             capacity = Capacity,
+            churn,
             iterations,
             deadlineMilliseconds,
             p50LatenessMilliseconds = Percentile(lateness, 0.50),
             p95LatenessMilliseconds = Percentile(lateness, 0.95),
             maxLatenessMilliseconds = lateness[^1],
-            inspectedSlots = GetOptionalInt32(table, "LastDeadlineScanInspectedSlots") ?? Capacity
+            inspectedSlots = GetOptionalInt32(table, "LastDeadlineScanInspectedSlots") ?? Capacity,
+            materializedSegments = GetOptionalInt32(table, "MaterializedSegmentCount")
         };
         Console.WriteLine(JsonSerializer.Serialize(result));
+    }
+
+    private static void RunHeapHold(string[] args)
+    {
+        var active = GetInt32(args, "--active", required: true);
+        var connections = GetInt32(args, "--connections", 100);
+        var churn = GetInt32(args, "--churn", 0) != 0;
+        var holdSeconds = GetInt32(args, "--hold-seconds", 90);
+        ValidateMemoryActive(active);
+        if (holdSeconds <= 0)
+            throw new ArgumentOutOfRangeException(nameof(args), "Heap-hold duration must be positive.");
+
+        WarmUp();
+        var tables = new PendingRequestTable[connections];
+        var operations = new RpcRequestOperation<int>[checked(connections * active)];
+        PopulateTables(tables, operations, active, churn);
+        ForceFullGc();
+
+        var result = new
+        {
+            mode = "heap-hold",
+            implementation = GetImplementation(tables[0]),
+            segmentSize = GetOptionalInt32(tables[0], "SegmentSize"),
+            capacity = Capacity,
+            active,
+            connections,
+            churn,
+            processId = Environment.ProcessId,
+            materializedSegmentsPerConnection = GetOptionalInt32(tables[0], "MaterializedSegmentCount")
+        };
+        Console.WriteLine(JsonSerializer.Serialize(result));
+        Console.Out.Flush();
+
+        Thread.Sleep(TimeSpan.FromSeconds(holdSeconds));
+        Cleanup(tables, operations);
+    }
+
+    private static void PopulateTables(
+        PendingRequestTable[] tables,
+        RpcRequestOperation<int>[] operations,
+        int active,
+        bool churn)
+    {
+        var operationIndex = 0;
+        for (var connection = 0; connection < tables.Length; connection++)
+        {
+            var table = CreateTable(TimeProvider.System);
+            tables[connection] = table;
+            if (churn)
+                ChurnOneFullIdCycle(table);
+            for (var index = 0; index < active; index++)
+                operations[operationIndex++] = table.Rent<int>(out _);
+        }
+    }
+
+    private static void WriteMemoryResult(
+        string mode,
+        PendingRequestTable[] tables,
+        int active,
+        int connections,
+        long retainedBytes,
+        bool churn)
+    {
+        var result = new
+        {
+            mode,
+            implementation = GetImplementation(tables[0]),
+            segmentSize = GetOptionalInt32(tables[0], "SegmentSize"),
+            capacity = Capacity,
+            churn,
+            active,
+            connections,
+            retainedBytes,
+            retainedBytesPerConnection = retainedBytes / (double)connections,
+            materializedSegmentsPerConnection = GetOptionalInt32(tables[0], "MaterializedSegmentCount")
+        };
+        Console.WriteLine(JsonSerializer.Serialize(result));
+    }
+
+    private static void ChurnOneFullIdCycle(PendingRequestTable table)
+    {
+        for (var index = 0; index < Capacity; index++)
+        {
+            var operation = table.Rent<int>(out var id);
+            var payload = CompletionPayload;
+            if (!table.Dispatch(id, ref payload))
+                throw new InvalidOperationException("Full-cycle churn could not dispatch its pending request.");
+            _ = operation.AsValueTask().GetAwaiter().GetResult();
+        }
+    }
+
+    private static Action<PendingRequestTable> GetDeadlineScanDelegate()
+    {
+        var method = typeof(PendingRequestTable).GetMethod(
+            "ScanExpiredDeadlines",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(typeof(PendingRequestTable).FullName, "ScanExpiredDeadlines");
+        return (Action<PendingRequestTable>)method.CreateDelegate(typeof(Action<PendingRequestTable>));
     }
 
     private static async Task ObserveOneDeadlineAsync(PendingRequestTable table, int milliseconds)
@@ -282,6 +412,12 @@ internal static class PendingRequestSegmentationEvidenceRunner
             {
             }
         }
+    }
+
+    private static void ValidateMemoryActive(int active)
+    {
+        if (active is not (0 or 1 or 8))
+            throw new ArgumentOutOfRangeException(nameof(active), "Memory evidence active count must be 0, 1, or 8.");
     }
 
     private static string GetImplementation(PendingRequestTable table)
