@@ -55,7 +55,11 @@ internal sealed class SegmentedSlotTable<T> where T : class
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void EnsureSegment(int index)
-        => _ = GetOrCreateSegment(index >> _segmentShift);
+    {
+        var segmentIndex = index >> _segmentShift;
+        if (Volatile.Read(ref _segments[segmentIndex]) is null)
+            _ = CreateSegmentSlow(segmentIndex);
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal T? CompareExchange(int index, T? value, T? comparand)
@@ -67,7 +71,7 @@ internal sealed class SegmentedSlotTable<T> where T : class
             if (value is null)
                 return null;
 
-            segment = GetOrCreateSegment(segmentIndex);
+            segment = CreateSegmentSlow(segmentIndex);
         }
 
         return Interlocked.CompareExchange(ref segment[index & _segmentMask], value, comparand);
@@ -78,7 +82,7 @@ internal sealed class SegmentedSlotTable<T> where T : class
         => Volatile.Read(ref _segments[segmentIndex]);
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private T?[] GetOrCreateSegment(int segmentIndex)
+    private T?[] CreateSegmentSlow(int segmentIndex)
     {
         var segment = Volatile.Read(ref _segments[segmentIndex]);
         if (segment is not null)
