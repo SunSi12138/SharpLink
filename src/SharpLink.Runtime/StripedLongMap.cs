@@ -5,7 +5,6 @@ internal sealed class StripedLongMap<TValue> where TValue : class
     private readonly Lock[] _locks;
     private readonly Dictionary<long, TValue>[] _maps;
     private readonly int _stripeMask;
-    private int _count;
 
     public StripedLongMap() : this(new RuntimeConcurrencyOptions())
     {
@@ -28,19 +27,11 @@ internal sealed class StripedLongMap<TValue> where TValue : class
         }
     }
 
-    internal int Count => Volatile.Read(ref _count);
-
     public void Set(long key, TValue value)
     {
         var stripe = GetStripe(key);
         lock (_locks[stripe])
-        {
-            var map = _maps[stripe];
-            if (map.TryAdd(key, value))
-                Interlocked.Increment(ref _count);
-            else
-                map[key] = value;
-        }
+            _maps[stripe][key] = value;
     }
 
     public TValue GetOrAdd(long key, Func<long, TValue> valueFactory)
@@ -55,7 +46,6 @@ internal sealed class StripedLongMap<TValue> where TValue : class
 
             var created = valueFactory(key);
             _maps[stripe][key] = created;
-            Interlocked.Increment(ref _count);
             return created;
         }
     }
@@ -95,12 +85,7 @@ internal sealed class StripedLongMap<TValue> where TValue : class
     {
         var stripe = GetStripe(key);
         lock (_locks[stripe])
-        {
-            if (!_maps[stripe].TryGetValue(key, out value!) || !_maps[stripe].Remove(key))
-                return false;
-            Interlocked.Decrement(ref _count);
-            return true;
-        }
+            return _maps[stripe].TryGetValue(key, out value!) && _maps[stripe].Remove(key);
     }
 
     public bool TryRemove(long key, TValue expected)
@@ -109,14 +94,9 @@ internal sealed class StripedLongMap<TValue> where TValue : class
         var stripe = GetStripe(key);
         lock (_locks[stripe])
         {
-            if (!_maps[stripe].TryGetValue(key, out var existing) ||
-                !ReferenceEquals(existing, expected) ||
-                !_maps[stripe].Remove(key))
-            {
-                return false;
-            }
-            Interlocked.Decrement(ref _count);
-            return true;
+            return _maps[stripe].TryGetValue(key, out var existing) &&
+                   ReferenceEquals(existing, expected) &&
+                   _maps[stripe].Remove(key);
         }
     }
 
@@ -130,10 +110,8 @@ internal sealed class StripedLongMap<TValue> where TValue : class
                 if (_maps[i].Count == 0)
                     continue;
 
-                var removed = _maps[i].Count;
                 values.AddRange(_maps[i].Values);
                 _maps[i].Clear();
-                Interlocked.Add(ref _count, -removed);
             }
         }
 
