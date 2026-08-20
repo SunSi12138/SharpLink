@@ -2,20 +2,16 @@ namespace SharpLink.Client;
 
 /// <summary>
 /// Provides bounded direct-index storage without eagerly allocating the full logical slot array.
-/// Segments are published once and retained for the table lifetime; request-ID allocation keeps
-/// low-concurrency churn inside the already-materialized high-water working set. The first segment
-/// remains lazy but is stored directly so the common low-concurrency path avoids a directory hop.
+/// Segments are published once and retained for the owning table lifetime, avoiding segment teardown ABA races.
 /// </summary>
 internal sealed class SegmentedSlotTable<T> where T : class
 {
     private const int MaximumSegmentSize = 256;
-    private const int MaximumSegmentShift = 8;
-    private const int MaximumSegmentMask = MaximumSegmentSize - 1;
 
-    private readonly T?[]?[] _secondarySegments;
+    private readonly T?[]?[] _segments;
+    private readonly int _segmentShift;
+    private readonly int _segmentMask;
     private readonly int _segmentSize;
-    private T?[]? _firstSegment;
-    private int _materializedSegmentCount;
 
     internal SegmentedSlotTable(int length)
     {
@@ -25,119 +21,51 @@ internal sealed class SegmentedSlotTable<T> where T : class
 
         Length = length;
         _segmentSize = Math.Min(length, MaximumSegmentSize);
-        _secondarySegments = new T?[]?[Math.Max(0, (length / _segmentSize) - 1)];
+        _segmentShift = System.Numerics.BitOperations.Log2((uint)_segmentSize);
+        _segmentMask = _segmentSize - 1;
+        _segments = new T?[]?[length / _segmentSize];
     }
 
     internal int Length { get; }
 
-    internal int SegmentCount => _secondarySegments.Length + 1;
+    internal int SegmentCount => _segments.Length;
 
     internal int SegmentSize => _segmentSize;
 
-    internal int MaterializedSegmentCount => Volatile.Read(ref _materializedSegmentCount);
+    internal int MaterializedSegmentCount
+    {
+        get
+        {
+            var count = 0;
+            for (var index = 0; index < _segments.Length; index++)
+            {
+                if (Volatile.Read(ref _segments[index]) is not null)
+                    count++;
+            }
+            return count;
+        }
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal T? Read(int index)
     {
-        if ((uint)index < MaximumSegmentSize)
-        {
-            var first = Volatile.Read(ref _firstSegment);
-            return first is null ? null : Volatile.Read(ref first[index]);
-        }
-
-        var segment = Volatile.Read(ref _secondarySegments[(index >> MaximumSegmentShift) - 1]);
-        return segment is null ? null : Volatile.Read(ref segment[index & MaximumSegmentMask]);
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal T? Read(int index, out bool segmentMaterialized)
-    {
-        if ((uint)index < MaximumSegmentSize)
-        {
-            var first = Volatile.Read(ref _firstSegment);
-            if (first is null)
-            {
-                segmentMaterialized = false;
-                return null;
-            }
-
-            segmentMaterialized = true;
-            return Volatile.Read(ref first[index]);
-        }
-
-        var segment = Volatile.Read(ref _secondarySegments[(index >> MaximumSegmentShift) - 1]);
-        if (segment is null)
-        {
-            segmentMaterialized = false;
-            return null;
-        }
-
-        segmentMaterialized = true;
-        return Volatile.Read(ref segment[index & MaximumSegmentMask]);
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal bool IsSegmentMaterialized(int index)
-    {
-        if ((uint)index < MaximumSegmentSize)
-            return Volatile.Read(ref _firstSegment) is not null;
-        return Volatile.Read(ref _secondarySegments[(index >> MaximumSegmentShift) - 1]) is not null;
-    }
-
-    internal bool TryGetFirstMaterializedIndex(out int index)
-    {
-        if (Volatile.Read(ref _firstSegment) is not null)
-        {
-            index = 0;
-            return true;
-        }
-
-        for (var secondaryIndex = 0; secondaryIndex < _secondarySegments.Length; secondaryIndex++)
-        {
-            if (Volatile.Read(ref _secondarySegments[secondaryIndex]) is null)
-                continue;
-
-            index = (secondaryIndex + 1) << MaximumSegmentShift;
-            return true;
-        }
-
-        index = 0;
-        return false;
+        var segment = Volatile.Read(ref _segments[index >> _segmentShift]);
+        return segment is null ? null : Volatile.Read(ref segment[index & _segmentMask]);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void EnsureSegment(int index)
     {
-        if ((uint)index < MaximumSegmentSize)
-        {
-            if (Volatile.Read(ref _firstSegment) is null)
-                _ = CreateSegmentSlow(segmentIndex: 0);
-            return;
-        }
-
-        var secondaryIndex = (index >> MaximumSegmentShift) - 1;
-        if (Volatile.Read(ref _secondarySegments[secondaryIndex]) is null)
-            _ = CreateSegmentSlow(secondaryIndex + 1);
+        var segmentIndex = index >> _segmentShift;
+        if (Volatile.Read(ref _segments[segmentIndex]) is null)
+            _ = CreateSegmentSlow(segmentIndex);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal T? CompareExchange(int index, T? value, T? comparand)
     {
-        if ((uint)index < MaximumSegmentSize)
-        {
-            var first = Volatile.Read(ref _firstSegment);
-            if (first is null)
-            {
-                if (value is null)
-                    return null;
-
-                first = CreateSegmentSlow(segmentIndex: 0);
-            }
-            return Interlocked.CompareExchange(ref first[index], value, comparand);
-        }
-
-        var segmentIndex = index >> MaximumSegmentShift;
-        var segment = Volatile.Read(ref _secondarySegments[segmentIndex - 1]);
+        var segmentIndex = index >> _segmentShift;
+        var segment = Volatile.Read(ref _segments[segmentIndex]);
         if (segment is null)
         {
             if (value is null)
@@ -145,29 +73,22 @@ internal sealed class SegmentedSlotTable<T> where T : class
 
             segment = CreateSegmentSlow(segmentIndex);
         }
-        return Interlocked.CompareExchange(ref segment[index & MaximumSegmentMask], value, comparand);
+
+        return Interlocked.CompareExchange(ref segment[index & _segmentMask], value, comparand);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal T?[]? GetMaterializedSegment(int segmentIndex)
-        => segmentIndex == 0
-            ? Volatile.Read(ref _firstSegment)
-            : Volatile.Read(ref _secondarySegments[segmentIndex - 1]);
+        => Volatile.Read(ref _segments[segmentIndex]);
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private T?[] CreateSegmentSlow(int segmentIndex)
     {
+        var segment = Volatile.Read(ref _segments[segmentIndex]);
+        if (segment is not null)
+            return segment;
+
         var created = new T?[_segmentSize];
-        T?[]? existing;
-        if (segmentIndex == 0)
-            existing = Interlocked.CompareExchange(ref _firstSegment, created, null);
-        else
-            existing = Interlocked.CompareExchange(ref _secondarySegments[segmentIndex - 1], created, null);
-
-        if (existing is not null)
-            return existing;
-
-        Interlocked.Increment(ref _materializedSegmentCount);
-        return created;
+        return Interlocked.CompareExchange(ref _segments[segmentIndex], created, null) ?? created;
     }
 }
