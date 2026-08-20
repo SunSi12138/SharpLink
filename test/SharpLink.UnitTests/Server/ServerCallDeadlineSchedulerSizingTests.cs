@@ -87,7 +87,7 @@ public class ServerCallDeadlineSchedulerSizingTests
                 return;
             for (var index = 0; index < racedCalls; index++)
             {
-                var state = CreateState(1_000 + index, TimeSpan.FromSeconds(2), timeProvider);
+                var state = CreateState(1_000 + index, TimeSpan.FromSeconds(1), timeProvider);
                 states.Add(state);
                 calls.Set(state.RequestId, state);
                 scheduler.Register(state);
@@ -187,7 +187,7 @@ public class ServerCallDeadlineSchedulerSizingTests
             var targetCount = rentCount == 1 ? 17 : 33;
             while (calls.Count < targetCount)
             {
-                var state = CreateState(nextRequestId++, TimeSpan.FromSeconds(2), timeProvider);
+                var state = CreateState(nextRequestId++, TimeSpan.FromSeconds(1), timeProvider);
                 states.Add(state);
                 calls.Set(state.RequestId, state);
                 scheduler.Register(state);
