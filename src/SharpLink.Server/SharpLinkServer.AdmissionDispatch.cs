@@ -131,6 +131,17 @@ internal sealed partial class SharpLinkServer
             return;
         }
 
+        if ((flags & ProtocolV2FrameFlags.Compressed) != 0 && admittedCallState is null)
+        {
+            admittedCallState = CreateAdmissionWaitState(
+                connection,
+                requestId,
+                request.RpcDeadline,
+                serverLoopToken,
+                serviceInfo.ModuleCancellation,
+                requestCancellationMap);
+        }
+
         IRpcByteBufferWriter? decodedRequestOwner = null;
         try
         {
@@ -140,7 +151,7 @@ internal sealed partial class SharpLinkServer
                     ProtocolV2FrameType.Request,
                     flags,
                     payload,
-                    admittedCallState?.InvocationToken ?? serverLoopToken,
+                    admittedCallState!.InvocationToken,
                     out decodedRequestOwner);
                 request = ReadRequestEnvelope(session, payload, flags);
             }
