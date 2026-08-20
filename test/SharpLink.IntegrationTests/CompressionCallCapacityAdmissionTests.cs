@@ -76,20 +76,18 @@ public class CompressionCallCapacityAdmissionTests
                 .NotifyBytesAsync(payload)
                 .AsTask()
                 .WaitAsync(TimeSpan.FromSeconds(2));
-
-            TestService.ReleaseBlockingAdd();
-            Ensure(await blocker.WaitAsync(TimeSpan.FromSeconds(2)) == 7,
-                "capacity owner should complete after release");
-            Ensure(await harness.Client.Get<ITestService>()
-                    .AddAsync(20, 22)
-                    .AsTask()
-                    .WaitAsync(TimeSpan.FromSeconds(2)) == 42,
-                "post-rejection processing barrier");
+            await WaitUntilAsync(
+                () => harness.RejectedOneWayCalls == 1,
+                "compressed one-way capacity rejection");
 
             Ensure(serverProvider.DecompressCount == 0,
                 "capacity-rejected compressed one-way request must not be decompressed");
             Ensure(!CompressionService.WaitForOneWayAsync().IsCompleted,
                 "capacity-rejected compressed one-way request must not execute the service");
+
+            TestService.ReleaseBlockingAdd();
+            Ensure(await blocker.WaitAsync(TimeSpan.FromSeconds(2)) == 7,
+                "capacity owner should complete after release");
 
             CompressionService.ResetOneWay();
             await harness.Client.Get<ICompressionService>()
@@ -123,6 +121,20 @@ public class CompressionCallCapacityAdmissionTests
         catch (TimeoutException)
         {
             throw new Exception($"assert failed: {scenario} did not fail fast");
+        }
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition, string scenario)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        try
+        {
+            while (!condition())
+                await Task.Delay(10, timeout.Token);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            throw new Exception($"assert failed: {scenario} was not observed");
         }
     }
 
@@ -165,6 +177,18 @@ public class CompressionCallCapacityAdmissionTests
         private readonly ISharpLinkServer _server;
 
         public ISharpLinkClient Client { get; }
+        public long RejectedOneWayCalls
+        {
+            get
+            {
+                var field = _server.GetType().GetField(
+                    "_rejectedOneWayCalls",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic)
+                    ?? throw new Exception("cannot find rejected one-way call counter");
+                return (long)field.GetValue(_server)!;
+            }
+        }
 
         private CapacityHarness(
             CancellationTokenSource serverCts,
