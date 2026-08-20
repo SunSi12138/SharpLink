@@ -1,4 +1,4 @@
-name: Issue 263 Candidate Validation
+name: Issue 263 Final Validation
 
 on:
   push:
@@ -9,19 +9,157 @@ on:
 
 permissions:
   contents: write
-  issues: write
 
 jobs:
-  validate-candidate:
+  prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    outputs:
+      candidate_sha: ${{ steps.merge.outputs.candidate_sha }}
+      dev_sha: ${{ steps.merge.outputs.dev_sha }}
     steps:
-      - name: Checkout
+      - name: Checkout candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
+
+      - name: Merge latest dev
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin dev
+          dev_sha=$(git rev-parse origin/dev)
+          if ! git merge-base --is-ancestor origin/dev HEAD; then
+            git merge --no-edit origin/dev
+            git push origin HEAD:agent/issue-263-dynamic-interceptors
+          fi
+          candidate_sha=$(git rev-parse HEAD)
+          echo "dev_sha=${dev_sha}" >> "$GITHUB_OUTPUT"
+          echo "candidate_sha=${candidate_sha}" >> "$GITHUB_OUTPUT"
+          echo "dev=${dev_sha} candidate=${candidate_sha}"
+
+  full-ci:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout prepared candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Verify Formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+
+      - name: Build Debug
+        run: dotnet build Sharplink.slnx --no-restore -c Debug -v minimal
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Verify Generated Assemblies Do Not Reference Runtime
+        run: ./eng/verify-generated-assembly-dependencies.sh
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Generator Tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+
+      - name: Load Test Tests
+        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+
+      - name: Run NativeAOT Transport and Topology Smoke
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
+
+      - name: Pack
+        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Verify SDK Contains Generator
+        run: unzip -l artifacts/nuget/SharpLink.Sdk.*.nupkg | grep -q 'analyzers/dotnet/cs/SharpLink.Generator.dll'
+
+      - name: Verify package metadata, XML documentation, and symbols
+        run: ./eng/verify-packages.sh artifacts/nuget
+
+      - name: Verify Hosting direct Runtime dependency
+        run: ./eng/verify-hosting-package-dependency.sh artifacts/nuget
+
+      - name: Verify Abstractions has no DI dependency
+        run: ./eng/verify-abstractions-package-dependency.sh artifacts/nuget
+
+      - name: Restore Package Smoke
+        run: dotnet restore test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj --force --no-cache --configfile test/SharpLink.PackageSmoke/NuGet.config
+        env:
+          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+
+      - name: Run Package Smoke
+        run: dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
+        env:
+          NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
+
+      - name: Demo Oneway
+        run: dotnet run -c Release --no-build --project demo/Oneway
+
+      - name: Load Smoke
+        run: dotnet run -c Release --no-build --project test/SharpLink.LoadTest -- --mode local --transport sharedmemory --operation add --concurrency 1,4 --warmup 2 --duration 5 --metrics-port 0
+
+      - name: Chaos Smoke
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.ChaosTests
+          --
+          --duration-seconds 120
+          --transport sharedmemory
+          --concurrency 16
+          --restart-interval-seconds 10
+          --json-output artifacts/chaos/issue-263-pr-smoke.json
+
+      - name: Upload Chaos Report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-263-chaos-${{ needs.prepare.outputs.candidate_sha }}
+          path: |
+            artifacts/chaos/issue-263-pr-smoke.json
+            artifacts/chaos/issue-263-pr-smoke.dmp
+            artifacts/chaos/issue-263-pr-smoke.dmp.crashreport.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  benchmarkdotnet-ab:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout prepared candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
           fetch-depth: 0
 
       - name: Setup .NET
@@ -29,31 +167,75 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Validate candidate iteration 4
+      - name: Prepare dev worktree
         shell: bash
         run: |
-          sed -i \
-            -e 's/08b87428a7e88659b12484b1c72e21f9aebce3c70b52d27ae44c10a0b4178753/968513ab1c4f186dde8e1ae520e5be679f7d76b8817669b82dbb486444025d24/' \
-            -e 's/d87656b11d3f8bb2c84ed386fd6eb5cedbd396a23fd56e198da3b53e5109a96f/aa5a34194cfc1bf9504e6408ae21cef2b924143e3cd5c75fc3e86289bcdc311a/' \
-            .github/issue-263-validate.sh
-          bash .github/issue-263-validate.sh
+          set -euo pipefail
+          git fetch origin dev
+          git worktree add --detach /tmp/sharplink-dev ${{ needs.prepare.outputs.dev_sha }}
+          mkdir -p artifacts/issue-263-bdn/dev artifacts/issue-263-bdn/candidate
 
-      - name: Upload validation evidence
+      - name: Build dev benchmark project
+        working-directory: /tmp/sharplink-dev
+        run: |
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+
+      - name: BenchmarkDotNet dev baseline
+        working-directory: /tmp/sharplink-dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+            --filter '*ClientFeatureMatrixBenchmarks*FixedDefault*' \
+            --job short \
+            --artifacts /home/runner/work/SharpLink/SharpLink/artifacts/issue-263-bdn/dev/client
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- \
+            --filter '*ServerFeatureMatrixBenchmarks*StaticDefault*' \
+            --job short \
+            --artifacts /home/runner/work/SharpLink/SharpLink/artifacts/issue-263-bdn/dev/server
+
+      - name: Build candidate benchmark project
+        run: |
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+
+      - name: List candidate feature benchmarks
+        shell: bash
+        run: |
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks -- --list flat \
+            | tee artifacts/issue-263-bdn/candidate/list.txt
+          grep -E 'FeatureMatrixBenchmarks.*(FixedDefault|StaticDefault|InterceptorDynamic|AfterManyReplacements)' \
+            artifacts/issue-263-bdn/candidate/list.txt
+
+      - name: BenchmarkDotNet candidate client paths
+        run: >-
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks --
+          --filter
+          '*ClientFeatureMatrixBenchmarks*FixedDefault*'
+          '*ClientFeatureMatrixBenchmarks*ClientInterceptorDynamicDisabled*'
+          '*ClientFeatureMatrixBenchmarks*ClientInterceptorDynamicEnabled*'
+          '*ClientFeatureMatrixBenchmarks*ClientAndServerInterceptorDynamicEnabled*'
+          '*ClientFeatureMatrixBenchmarks*ClientInterceptorAfterManyReplacements*'
+          --job short
+          --artifacts artifacts/issue-263-bdn/candidate/client
+
+      - name: BenchmarkDotNet candidate server paths
+        run: >-
+          dotnet run -c Release --no-build --project test/SharpLink.Benchmarks --
+          --filter
+          '*ServerFeatureMatrixBenchmarks*StaticDefault*'
+          '*ServerFeatureMatrixBenchmarks*ServerInterceptorDynamicDisabled*'
+          '*ServerFeatureMatrixBenchmarks*ServerInterceptorDynamicEnabled*'
+          '*ServerFeatureMatrixBenchmarks*ServerInterceptorAfterManyReplacements*'
+          --job short
+          --artifacts artifacts/issue-263-bdn/candidate/server
+
+      - name: Upload BenchmarkDotNet evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: issue-263-validation-${{ github.sha }}
-          path: artifacts/issue-263
+          name: issue-263-benchmarkdotnet-${{ needs.prepare.outputs.candidate_sha }}
+          path: artifacts/issue-263-bdn
           if-no-files-found: warn
           retention-days: 14
-
-      - name: Report validation result
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          status='${{ job.status }}'
-          head=$(cat artifacts/issue-263/validated-head.txt 2>/dev/null || git rev-parse HEAD)
-          gh api repos/${{ github.repository }}/issues/263/comments \
-            -f body="<!-- issue-263-agent-validation --> status=${status} run_id=${{ github.run_id }} head=${head}"
