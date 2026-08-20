@@ -8,9 +8,6 @@ on:
   pull_request:
     branches:
       - dev
-  push:
-    branches:
-      - agent/issue-253-codec-compat
   workflow_dispatch:
 
 jobs:
