@@ -64,10 +64,10 @@ public class CompressionDecodeCancellationTests
             .AsTask();
 
         await serverProvider.WaitForDecompressionAsync().WaitAsync(TimeSpan.FromSeconds(2));
-        var stopTask = harness.Client.StopAsync().AsTask();
+        var closeTask = harness.CloseServerConnectionAsync();
         await serverProvider.WaitForCancellationAsync().WaitAsync(TimeSpan.FromSeconds(2));
-        await stopTask.WaitAsync(TimeSpan.FromSeconds(2));
         await ObserveTerminalCallAsync(call, "connection-close decode race");
+        await closeTask.WaitAsync(TimeSpan.FromSeconds(3));
         await WaitUntilAsync(() => harness.ActiveCalls == 0, "connection-close unary call release");
 
         Ensure(DeadlineCompressionProbeService.UnaryInvocations == 0,
@@ -309,6 +309,42 @@ public class CompressionDecodeCancellationTests
             await client.ConnectAsync();
 
             return new DecodeCancellationHarness(serverCts, serverTask, server, client);
+        }
+
+        public Task CloseServerConnectionAsync()
+        {
+            var connectionsField = _server.GetType().GetField(
+                "_connections",
+                System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.NonPublic)
+                ?? throw new Exception("cannot find server connection table");
+            var connections = connectionsField.GetValue(_server)
+                ?? throw new Exception("server connection table is null");
+            var valuesProperty = connections.GetType().GetProperty("Values")
+                ?? throw new Exception("cannot find server connection values");
+            var values = (System.Collections.IEnumerable)(valuesProperty.GetValue(connections)
+                ?? throw new Exception("server connection values are null"));
+            var enumerator = values.GetEnumerator();
+            try
+            {
+                if (!enumerator.MoveNext())
+                    throw new Exception("no server connection is available to close");
+                var connection = enumerator.Current
+                    ?? throw new Exception("server connection entry is null");
+                if (enumerator.MoveNext())
+                    throw new Exception("expected exactly one server connection");
+                var closeMethod = connection.GetType().GetMethod(
+                    "CloseAsync",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic)
+                    ?? throw new Exception("cannot find server connection close method");
+                return ((ValueTask)(closeMethod.Invoke(connection, null)
+                    ?? throw new Exception("server connection close returned null"))).AsTask();
+            }
+            finally
+            {
+                (enumerator as IDisposable)?.Dispose();
+            }
         }
 
         public Task StopServerAsync()
