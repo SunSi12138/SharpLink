@@ -17,16 +17,20 @@ public sealed class RuntimeConcurrencyOptions
 
     /// <summary>Validates the stripe and capacity settings.</summary>
     public void Validate()
+        => Validate(StripeCount, InitialMapCapacityPerStripe);
+
+    internal static void Validate(int stripeCount, int initialMapCapacityPerStripe)
     {
-        if (StripeCount <= 0 || StripeCount > MaximumStripeCount ||
-            (StripeCount & (StripeCount - 1)) != 0)
+        if (stripeCount <= 0 || stripeCount > MaximumStripeCount ||
+            (stripeCount & (stripeCount - 1)) != 0)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(StripeCount),
                 $"StripeCount must be a positive power of two no larger than {MaximumStripeCount}.");
         }
-        ArgumentOutOfRangeException.ThrowIfNegative(InitialMapCapacityPerStripe);
-        if ((long)StripeCount * InitialMapCapacityPerStripe > MaximumInitialMapEntries)
+        if (initialMapCapacityPerStripe < 0)
+            throw new ArgumentOutOfRangeException(nameof(InitialMapCapacityPerStripe));
+        if ((long)stripeCount * initialMapCapacityPerStripe > MaximumInitialMapEntries)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(InitialMapCapacityPerStripe),
