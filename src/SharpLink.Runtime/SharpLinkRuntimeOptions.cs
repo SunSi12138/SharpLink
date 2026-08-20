@@ -45,15 +45,22 @@ public sealed class SharpLinkFlowControlOptions
     }
 
     /// <summary>
-    /// Gets or sets the local byte budget for fully serialized unsized streaming items that are
-    /// waiting for flow-control credit. The default is 4 MiB.
+    /// Gets or sets the local owner/admission byte budget for fully serialized unsized streaming
+    /// items that have been admitted while waiting for flow-control credit. The default is 4 MiB.
     /// </summary>
     /// <remarks>
     /// This is a local process-memory admission limit. It is independent from
     /// <see cref="ConnectionReceiveWindowBytes"/>, is not sent during protocol negotiation, and
-    /// does not change peer-visible flow-control credit. A legal item larger than this value may
-    /// temporarily borrow the budget as the sole owner so a small budget does not make a legal
-    /// frame permanently unsendable.
+    /// does not change peer-visible flow-control credit. This value bounds admitted byte owners;
+    /// it is not an aggregate cap over serialized writers already queued as bounded budget waiters.
+    /// A legal item larger than this value may temporarily borrow the budget as the sole owner so
+    /// a small budget does not make a legal frame permanently unsendable.
+    ///
+    /// If B is this budget, F is the negotiated maximum frame payload, and S is the concurrent
+    /// stream limit, the waiter cap is W = min(S, max(1, floor(B / F))). The long-lived serialized
+    /// payload held by this subsystem is therefore bounded by max(B, F) + W * F before frame/header
+    /// overhead and buffer-pool capacity rounding. With the default B = F = 4 MiB, W = 1 and the
+    /// aggregate serialized-payload envelope is at most 8 MiB before that overhead.
     /// </remarks>
     public int MaxPreCreditSerializedBytes { get; set; } = DefaultMaxPreCreditSerializedBytes;
 
@@ -155,7 +162,8 @@ public sealed class SharpLinkRuntimeOptions
         if (!Enum.IsDefined(PerformanceProfile))
             throw new ArgumentOutOfRangeException(nameof(PerformanceProfile));
 
-        var clone = new SharpLinkRuntimeOptions { PerformanceProfile = PerformanceProfile };
+        var clone = new SharpLinkRuntimeOptions { PerformanceProfile = PerformanceProfile.Balanced };
+        clone.PerformanceProfile = PerformanceProfile;
         CopyProtocol(Protocol.CloneValidated(), clone.Protocol);
         CopyFlowControl(ApplyProfileDefaults(FlowControl.CloneValidated(), PerformanceProfile), clone.FlowControl);
         CopyCompression(Compression.CloneValidated(), clone.Compression);
