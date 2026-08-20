@@ -113,7 +113,7 @@ public class PendingRequestTableSegmentationTests
             new Int32Codec(),
             PendingCallKind.Unary,
             deadline,
-            CancellationToken.None,
+            System.Threading.CancellationToken.None,
             out _);
 
         Ensure(manager.MaterializedSegmentCount == 1,
