@@ -15,6 +15,19 @@ internal sealed partial class SharpLinkServer
             _runtimeContext.TimeProvider);
     }
 
+    private ServerRequestEnvelope ReadRequestRoutingEnvelope(
+        RpcSession session,
+        ReadOnlySequence<byte> payload,
+        ProtocolV2FrameFlags flags)
+    {
+        return ServerRequestEnvelopeReader.ReadRouting(
+            session,
+            payload,
+            flags,
+            _protocolOptions.MaxMetadataBytes,
+            _runtimeContext.TimeProvider);
+    }
+
     private bool IsDeadlineExceeded(RpcDeadline deadline)
         => deadline.IsExpired(_runtimeContext.TimeProvider);
 
