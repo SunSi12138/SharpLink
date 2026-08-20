@@ -115,6 +115,83 @@ public class StreamManagerLazyRoutingTests
     }
 
     [Test]
+    public async Task FirstRegisterRacingUnregisterShouldLinearizeUnregisterBeforePublication()
+    {
+        const long requestId = 9_999;
+        var manager = new StreamManager();
+        var dispatcher = new RecordingDispatcher();
+        using var reachedFirstMaterialization = new ManualResetEventSlim();
+        using var continueFirstMaterialization = new ManualResetEventSlim();
+        Exception? registerFailure = null;
+
+        var registerThread = new Thread(() =>
+        {
+            StripedLongMapTestHooks.BeforeInitialize = () =>
+            {
+                reachedFirstMaterialization.Set();
+                continueFirstMaterialization.Wait();
+            };
+            try
+            {
+                manager.Register(requestId, dispatcher);
+            }
+            catch (Exception failure)
+            {
+                registerFailure = failure;
+            }
+            finally
+            {
+                StripedLongMapTestHooks.BeforeInitialize = null;
+            }
+        })
+        {
+            IsBackground = true
+        };
+
+        registerThread.Start();
+        try
+        {
+            Ensure(reachedFirstMaterialization.Wait(TimeSpan.FromSeconds(5)),
+                "registration should pause before publishing its first routing map");
+            Ensure(!manager.HasMaterializedRoutingState,
+                "first routing state must still be unpublished at the deterministic race point");
+
+            manager.Unregister(requestId);
+
+            Ensure(!manager.HasMaterializedRoutingState,
+                "an unregister that linearizes before first publication must remain a null-map no-op");
+            Ensure(manager.ActiveStreamCount == 0,
+                "the paused registration must not become active before routing publication");
+        }
+        finally
+        {
+            continueFirstMaterialization.Set();
+        }
+
+        Ensure(registerThread.Join(TimeSpan.FromSeconds(5)),
+            "registration should finish after first materialization resumes");
+        if (registerFailure is not null)
+            throw new Exception("registration failed during deterministic unregister race", registerFailure);
+
+        Ensure(manager.HasMaterializedRoutingState,
+            "the registration should publish routing state after the earlier unregister returns");
+        Ensure(manager.ActiveStreamCount == 1,
+            "an unregister that linearized before publication must not remove the later registration");
+        Ensure(dispatcher.CompleteCount == 0,
+            "the earlier unregister must not complete the dispatcher that was not yet registered");
+
+        await manager.DispatchChunkAsync(
+            requestId,
+            new ReadOnlySequence<byte>(new byte[] { 1 }));
+        Ensure(dispatcher.DispatchCount == 1,
+            "the registration must remain addressable after the earlier null-map unregister");
+
+        manager.Unregister(requestId);
+        Ensure(manager.ActiveStreamCount == 0,
+            "a later unregister should remove the now-published registration normally");
+    }
+
+    [Test]
     public void FirstRegisterRacingCompleteAllShouldNotLeaveAnOrphanedStream()
     {
         var manager = new StreamManager();
