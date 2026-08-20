@@ -1,0 +1,199 @@
+name: Issue 252 Cross Segment Evidence
+
+on:
+  pull_request:
+    branches:
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      EVIDENCE_ROOT: ${{ github.workspace }}/artifacts/issue252-cross-segment-evidence
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Prepare eager, cached, and no-cache worktrees
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          git fetch --no-tags origin dev
+          BASE_SHA="$(git rev-parse origin/dev)"
+          CANDIDATE_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+          printf '%s\n' "$BASE_SHA" > "$EVIDENCE_ROOT/base-sha.txt"
+          printf '%s\n' "$CANDIDATE_SHA" > "$EVIDENCE_ROOT/candidate-sha.txt"
+
+          git worktree add --detach "$RUNNER_TEMP/issue252-base" "$BASE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/issue252-cache" "$CANDIDATE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/issue252-no-cache" "$CANDIDATE_SHA"
+
+          cp "$RUNNER_TEMP/issue252-cache/test/SharpLink.Benchmarks/PendingRequestCrossSegmentConcurrencyBenchmarks.cs" \
+             "$RUNNER_TEMP/issue252-base/test/SharpLink.Benchmarks/PendingRequestCrossSegmentConcurrencyBenchmarks.cs"
+
+          cat > "$RUNNER_TEMP/issue252-no-cache/src/SharpLink.Client/SegmentedSlotTable.cs" <<'EOF'
+          namespace SharpLink.Client;
+
+          /// <summary>
+          /// Evidence-only variant of the production segmented table with the shared descriptor cache removed.
+          /// Segment objects and publication semantics remain otherwise identical to isolate cache behavior.
+          /// </summary>
+          internal sealed class SegmentedSlotTable<T> where T : class
+          {
+              private const int MaximumSegmentSize = 256;
+
+              private readonly Segment?[] _segments;
+              private readonly int _segmentShift;
+              private readonly int _segmentMask;
+              private readonly int _segmentSize;
+
+              internal SegmentedSlotTable(int length)
+              {
+                  ArgumentOutOfRangeException.ThrowIfNegativeOrZero(length);
+                  if (!System.Numerics.BitOperations.IsPow2(length))
+                      throw new ArgumentException("Segmented slot-table length must be a power of two.", nameof(length));
+
+                  Length = length;
+                  _segmentSize = Math.Min(length, MaximumSegmentSize);
+                  _segmentShift = System.Numerics.BitOperations.Log2((uint)_segmentSize);
+                  _segmentMask = _segmentSize - 1;
+                  _segments = new Segment?[length / _segmentSize];
+              }
+
+              internal int Length { get; }
+              internal int SegmentCount => _segments.Length;
+              internal int SegmentSize => _segmentSize;
+
+              internal int MaterializedSegmentCount
+              {
+                  get
+                  {
+                      var count = 0;
+                      for (var index = 0; index < _segments.Length; index++)
+                      {
+                          if (Volatile.Read(ref _segments[index]) is not null)
+                              count++;
+                      }
+                      return count;
+                  }
+              }
+
+              [MethodImpl(MethodImplOptions.AggressiveInlining)]
+              internal T? Read(int index)
+              {
+                  var segment = Volatile.Read(ref _segments[index >> _segmentShift]);
+                  return segment is null ? null : Volatile.Read(ref segment.Slots[index & _segmentMask]);
+              }
+
+              [MethodImpl(MethodImplOptions.AggressiveInlining)]
+              internal void EnsureSegment(int index)
+              {
+                  var segmentIndex = index >> _segmentShift;
+                  if (Volatile.Read(ref _segments[segmentIndex]) is null)
+                      _ = CreateSegmentSlow(segmentIndex);
+              }
+
+              [MethodImpl(MethodImplOptions.AggressiveInlining)]
+              internal T? CompareExchange(int index, T? value, T? comparand)
+              {
+                  var segmentIndex = index >> _segmentShift;
+                  var segment = Volatile.Read(ref _segments[segmentIndex]);
+                  if (segment is null)
+                  {
+                      if (value is null)
+                          return null;
+                      segment = CreateSegmentSlow(segmentIndex);
+                  }
+
+                  return Interlocked.CompareExchange(ref segment.Slots[index & _segmentMask], value, comparand);
+              }
+
+              [MethodImpl(MethodImplOptions.AggressiveInlining)]
+              internal T?[]? GetMaterializedSegment(int segmentIndex)
+                  => Volatile.Read(ref _segments[segmentIndex])?.Slots;
+
+              [MethodImpl(MethodImplOptions.NoInlining)]
+              private Segment CreateSegmentSlow(int segmentIndex)
+              {
+                  var segment = Volatile.Read(ref _segments[segmentIndex]);
+                  if (segment is not null)
+                      return segment;
+
+                  var created = new Segment(segmentIndex, _segmentSize);
+                  return Interlocked.CompareExchange(ref _segments[segmentIndex], created, null) ?? created;
+              }
+
+              private sealed class Segment
+              {
+                  internal Segment(int index, int size)
+                  {
+                      Index = index;
+                      Slots = new T?[size];
+                  }
+
+                  internal int Index { get; }
+                  internal T?[] Slots { get; }
+              }
+          }
+          EOF
+
+      - name: Collect paired benchmark evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_variant() {
+            local name="$1"
+            local root="$2"
+            local out="$EVIDENCE_ROOT/$name"
+            local project="$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
+            mkdir -p "$out"
+
+            echo "=== $name: build ==="
+            dotnet build "$project" -c Release -v minimal
+
+            echo "=== $name: single-thread pending hot path ==="
+            (
+              cd "$root"
+              dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+                --filter '*RuntimeHotPathBenchmarks.PendingRegisterAndComplete*' \
+                --artifacts "$out/single-thread" \
+                --exporters json
+            ) | tee "$out/single-thread.log"
+
+            echo "=== $name: 1024-in-flight cross-segment concurrency ==="
+            (
+              cd "$root"
+              dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- \
+                --filter '*PendingRequestCrossSegmentConcurrencyBenchmarks.RegisterAndCompleteAcrossFourSegments*' \
+                --artifacts "$out/cross-segment" \
+                --exporters json
+            ) | tee "$out/cross-segment.log"
+          }
+
+          run_variant eager-dev "$RUNNER_TEMP/issue252-base"
+          run_variant segmented-no-cache "$RUNNER_TEMP/issue252-no-cache"
+          run_variant segmented-shared-cache "$RUNNER_TEMP/issue252-cache"
+
+      - name: Upload cross-segment evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue252-cross-segment-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/issue252-cross-segment-evidence
+          if-no-files-found: error
+          retention-days: 30
