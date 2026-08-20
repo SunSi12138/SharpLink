@@ -224,6 +224,20 @@ internal sealed partial class SharpLinkServer
             throw;
         }
 
+        if (IsDeadlineExceeded(request.RpcDeadline))
+        {
+            session.ReturnDecodedPayload(decodedRequestOwner);
+            decodedRequestOwner = null;
+            var exception = new SharpLinkException(
+                SharpLinkErrorCode.DeadlineExceeded,
+                "Request deadline exceeded before dispatch.");
+            CompleteFailedRequestStreams(session, requestId, exception);
+            var responseSend = session.SendRpcErrorWithBackpressureAsync(
+                requestId, exception, connection.ConnectionToken);
+            return ReleaseDispatchResourcesAfterResponseAsync(
+                responseSend, admittedCallState, requestId, requestCancellationMap, connection);
+        }
+
         var supportsCooperativeCancellation =
             (isCancellable || serviceInfo.Module is not null) &&
             serviceInfo.Stub.SupportsCancellation(request.MethodHash);
