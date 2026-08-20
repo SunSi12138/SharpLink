@@ -100,45 +100,6 @@ internal sealed class PreCreditSerializedBudget
         return new ValueTask(WaitForGrantAsync(waiter, cancellationToken));
     }
 
-    /// <summary>
-    /// Replaces a conservative pre-serialization reservation with the exact serialized size.
-    /// The caller already owns <paramref name="reservedBytes"/>, so growing above the budget is
-    /// legal only when that caller is the sole owner (oversized-item borrow-once semantics).
-    /// </summary>
-    internal void ResizeReservation(int reservedBytes, int actualBytes)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(reservedBytes);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(actualBytes);
-
-        while (true)
-        {
-            var current = Volatile.Read(ref _reservedBytes);
-            var withoutCurrent = current - reservedBytes;
-            if (withoutCurrent < 0)
-                throw new InvalidOperationException("Pre-credit serialized byte accounting underflowed.");
-
-            if (actualBytes <= _maxBytes)
-            {
-                if (withoutCurrent > _maxBytes - actualBytes)
-                {
-                    throw new InvalidOperationException(
-                        "Pre-credit serialized reservation grew beyond the available byte budget.");
-                }
-            }
-            else if (withoutCurrent != 0)
-            {
-                throw new InvalidOperationException(
-                    "An oversized pre-credit stream item must be the sole serialized-byte owner.");
-            }
-
-            var updated = checked(withoutCurrent + actualBytes);
-            if (Interlocked.CompareExchange(ref _reservedBytes, updated, current) == current)
-                break;
-        }
-
-        DrainWaitersIfContended();
-    }
-
     internal void Release(int bytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bytes);
