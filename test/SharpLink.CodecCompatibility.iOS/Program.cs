@@ -64,7 +64,7 @@ public static class Application
                 throw new InvalidOperationException($"Unknown iOS probe mode: {mode}.");
             }
 
-            File.WriteAllText(resultPath, result, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            WriteResultAtomically(resultPath, result);
             Console.WriteLine($"SharpLink codec probe completed from Main; persisted {Encoding.UTF8.GetByteCount(result)} result bytes.");
         }
         catch (Exception exception)
@@ -79,13 +79,20 @@ public static class Application
                 {
                     portableProbeError = exception.ToString()
                 });
-                File.WriteAllText(resultPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                WriteResultAtomically(resultPath, json);
             }
             catch (Exception reportingException)
             {
                 Console.Error.WriteLine($"Failed to persist iOS probe error: {reportingException}");
             }
         }
+    }
+
+    private static void WriteResultAtomically(string resultPath, string contents)
+    {
+        var temporaryPath = resultPath + ".tmp";
+        File.WriteAllText(temporaryPath, contents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        File.Move(temporaryPath, resultPath, overwrite: true);
     }
 
     private static string GetDocumentsDirectory()
