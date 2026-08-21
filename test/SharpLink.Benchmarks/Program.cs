@@ -51,6 +51,18 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--compression-accepted-path-evidence", StringComparison.Ordinal))
+        {
+            await CompressionAcceptedPathEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--summarize-compression-accepted-path-evidence", StringComparison.Ordinal))
+        {
+            await CompressionAcceptedPathEvidenceRunner.SummarizeAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--buffer-writer-growth-evidence", StringComparison.Ordinal))
         {
             BufferWriterGrowthEvidenceRunner.Run();
