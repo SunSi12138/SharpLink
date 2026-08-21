@@ -120,6 +120,60 @@ public class CompressionRemoteCancelDuringDecodeTests
             "advanced-admission remote cancel must prevent service invocation");
     }
 
+    [Test]
+    [NotInParallel]
+    public async Task CapacityRejectedCancellableCompressedRequestShouldNotRetainOrDecode()
+    {
+        CompressionMergeGateProbeService.Reset();
+        var serverProvider = new CountingDecompressionProvider(
+            SharpLinkCompressionProviders.CreateBrotli());
+        await using var harness = await RemoteCancelHarness.CreateAsync(serverProvider);
+        var service = harness.Client.Get<ICompressionMergeGateProbeService>();
+        var blocker = service.BlockAsync().AsTask();
+        var payload = Enumerable.Repeat((byte)0x65, 32 * 1024).ToArray();
+
+        try
+        {
+            await CompressionMergeGateProbeService.WaitForBlockStartedAsync()
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            await WaitUntilAsync(
+                () => harness.ActiveCalls == 1,
+                "capacity blocker should own the only call slot");
+            var copiesBefore = harness.RetainedPayloadCopies;
+            using var callCts = new CancellationTokenSource();
+
+            try
+            {
+                _ = await service.CancellableEchoAsync(payload, callCts.Token)
+                    .AsTask()
+                    .WaitAsync(TimeSpan.FromSeconds(2));
+                throw new Exception("assert failed: capacity-full cancellable request should be rejected");
+            }
+            catch (SharpLinkException exception)
+            {
+                Ensure(exception.Code == SharpLinkErrorCode.ResourceExhausted,
+                    "capacity-full cancellable request should return ResourceExhausted");
+            }
+
+            Ensure(serverProvider.DecompressCount == 0,
+                "capacity-rejected cancellable compressed request must not decompress");
+            Ensure(harness.RetainedPayloadCopies == copiesBefore,
+                "capacity-rejected cancellable compressed request must not retain/copy the compressed frame");
+            Ensure(CompressionMergeGateProbeService.CancellableEchoInvocations == 0,
+                "capacity-rejected cancellable request must not invoke the service");
+        }
+        finally
+        {
+            CompressionMergeGateProbeService.ReleaseBlock();
+        }
+
+        Ensure(await blocker.WaitAsync(TimeSpan.FromSeconds(2)) == 1,
+            "capacity blocker should complete after release");
+        await WaitUntilAsync(
+            () => harness.ActiveCalls == 0,
+            "capacity blocker should release the call slot");
+    }
+
     private static async Task AssertRemoteCancellationDuringDecodeAsync(
         RemoteCancelHarness harness,
         WaitForRemoteCancellationProvider serverProvider,
@@ -189,6 +243,32 @@ public class CompressionRemoteCancelDuringDecodeTests
             throw new Exception($"assert failed: {scenario}");
     }
 
+    private sealed class CountingDecompressionProvider(ISharpLinkCompressionProvider inner)
+        : ISharpLinkCompressionProvider
+    {
+        private int _decompressCount;
+
+        public string WireProfile => inner.WireProfile;
+        public int DecompressCount => Volatile.Read(ref _decompressCount);
+
+        public SharpLinkCompressionResult Compress(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+            => inner.Compress(input, output, maxOutputBytes, cancellationToken);
+
+        public SharpLinkCompressionResult Decompress(
+            ReadOnlySequence<byte> input,
+            IBufferWriter<byte> output,
+            int maxOutputBytes,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _decompressCount);
+            return inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+        }
+    }
+
     private sealed class WaitForRemoteCancellationProvider(ISharpLinkCompressionProvider inner)
         : ISharpLinkCompressionProvider
     {
@@ -243,6 +323,9 @@ public class CompressionRemoteCancelDuringDecodeTests
         public int ActiveCalls
             => (int)(GetRequiredField(_server, "_globalActiveCalls").GetValue(_server)
                 ?? throw new Exception("server active call count is null"));
+        public long RetainedPayloadCopies
+            => (long)(GetRequiredField(_server, "_retainedRequestPayloadCopies").GetValue(_server)
+                ?? throw new Exception("server retained payload copy count is null"));
 
         public int ActiveStreams
         {
@@ -365,6 +448,7 @@ public class CompressionRemoteCancelDuringDecodeTests
 
         public async ValueTask DisposeAsync()
         {
+            CompressionMergeGateProbeService.ReleaseBlock();
             await Client.StopAsync();
             await _serverCts.CancelAsync();
             await _server.StopAsync(TimeSpan.Zero);
