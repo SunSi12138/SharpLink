@@ -112,19 +112,28 @@ jobs:
           "$EMULATOR" -accel-check || true
           "$EMULATOR" -list-avds | grep -Fx "$ANDROID_AVD"
           nohup "$EMULATOR" -avd "$ANDROID_AVD" \
-            -no-window -noaudio -no-boot-anim -no-snapshot \
-            -gpu swiftshader_indirect \
+            -no-window -noaudio -no-boot-anim -no-snapshot -no-metrics \
+            -gpu swiftshader_indirect -accel off \
             > artifacts-android-arm64-emulator.log 2>&1 &
-          for attempt in $(seq 1 180); do
+          emulator_pid=$!
+          for attempt in $(seq 1 300); do
             if adb get-state >/dev/null 2>&1; then
               break
+            fi
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              cat artifacts-android-arm64-emulator.log
+              exit 1
             fi
             sleep 2
           done
           adb get-state
-          for attempt in $(seq 1 180); do
+          for attempt in $(seq 1 300); do
             if [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
               break
+            fi
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              cat artifacts-android-arm64-emulator.log
+              exit 1
             fi
             sleep 2
           done
