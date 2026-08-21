@@ -30,6 +30,15 @@ internal sealed partial class SharpLinkServer
             : ReadRequestEnvelope(session, payload, flags);
         if (reusePreDecodeMetadata)
             request = request with { Metadata = preDecodeMetadata };
+        if (isCompressed && !callCapacityGranted && !preservePreDecodeMetadata)
+        {
+            ServerRequestEnvelopeReader.ValidateMetadataSyntax(
+                session,
+                payload,
+                flags,
+                _protocolOptions.MaxMetadataBytes,
+                _runtimeContext.TimeProvider);
+        }
         if (IsDeadlineExceeded(request.RpcDeadline))
         {
             var exception = new SharpLinkException(
@@ -130,15 +139,19 @@ internal sealed partial class SharpLinkServer
             return responseSend;
         }
 
-        var descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);
+        RpcMethodDescriptor descriptor = default;
+        var descriptorResolved = false;
         if (_admissionController is not null && !admissionGranted)
         {
+            descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);
+            descriptorResolved = true;
             admittedCallState = CreateAdmissionWaitState(
                 connection,
                 requestId,
                 request.RpcDeadline,
                 serverLoopToken,
                 serviceInfo.ModuleCancellation,
+                isCancellable,
                 requestCancellationMap);
             ValueTask<AdmissionDecision> admissionTask;
             try
@@ -240,7 +253,9 @@ internal sealed partial class SharpLinkServer
             }
         }
 
-        if (isCompressed && admittedCallState is null)
+        if (isCompressed &&
+            admittedCallState is null &&
+            (isCancellable || request.RpcDeadline.HasValue || serviceInfo.ModuleCancellation.CanBeCanceled))
         {
             admittedCallState = CreateAdmissionWaitState(
                 connection,
@@ -248,11 +263,14 @@ internal sealed partial class SharpLinkServer
                 request.RpcDeadline,
                 serverLoopToken,
                 serviceInfo.ModuleCancellation,
+                isCancellable,
                 requestCancellationMap);
         }
 
         if (allowCompressedCancellationHandoff && isCompressed && isCancellable)
         {
+            if (!descriptorResolved)
+                descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);
             return HandoffCompressedCancellableRpc(
                 connection,
                 requestId,
@@ -267,9 +285,12 @@ internal sealed partial class SharpLinkServer
                 request.Metadata);
         }
 
-        if (admittedCallState is { IsAbandoned: true })
+        if (admittedCallState is { IsAbandoned: true } ||
+            (admittedCallState is null && serverLoopToken.IsCancellationRequested))
         {
-            var exception = MapServerCancellationException(admittedCallState, request.RpcDeadline);
+            var exception = admittedCallState is null
+                ? new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Connection closed.")
+                : MapServerCancellationException(admittedCallState, request.RpcDeadline);
             CompleteFailedRequestStreams(session, requestId, exception);
             var responseSend = session.SendRpcErrorWithBackpressureAsync(
                 requestId, exception, connection.ConnectionToken);
@@ -287,7 +308,7 @@ internal sealed partial class SharpLinkServer
                     ProtocolV2FrameType.Request,
                     flags,
                     payload,
-                    admittedCallState!.InvocationToken,
+                    admittedCallState?.InvocationToken ?? serverLoopToken,
                     out decodedRequestOwner);
                 request = preservePreDecodeMetadata
                     ? ReadRequestRoutingEnvelope(session, payload, flags) with { Metadata = metadata }
@@ -306,9 +327,12 @@ internal sealed partial class SharpLinkServer
         catch (OperationCanceledException exception)
         {
             CompleteFailedRequestStreams(session, requestId, exception);
+            var cancellation = admittedCallState is null && serverLoopToken.IsCancellationRequested
+                ? new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Connection closed.")
+                : MapServerCancellationException(admittedCallState, request.RpcDeadline);
             var responseSend = session.SendRpcErrorWithBackpressureAsync(
                 requestId,
-                MapServerCancellationException(admittedCallState, request.RpcDeadline),
+                cancellation,
                 connection.ConnectionToken);
             return ReleaseDispatchResourcesAfterResponseAsync(
                 responseSend, admittedCallState, requestId, requestCancellationMap, connection);
@@ -322,11 +346,14 @@ internal sealed partial class SharpLinkServer
             throw;
         }
 
-        if (admittedCallState is { IsAbandoned: true })
+        if (admittedCallState is { IsAbandoned: true } ||
+            (admittedCallState is null && serverLoopToken.IsCancellationRequested))
         {
             session.ReturnDecodedPayload(decodedRequestOwner);
             decodedRequestOwner = null;
-            var exception = MapServerCancellationException(admittedCallState, request.RpcDeadline);
+            var exception = admittedCallState is null
+                ? new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Connection closed.")
+                : MapServerCancellationException(admittedCallState, request.RpcDeadline);
             CompleteFailedRequestStreams(session, requestId, exception);
             var responseSend = session.SendRpcErrorWithBackpressureAsync(
                 requestId, exception, connection.ConnectionToken);
@@ -358,12 +385,13 @@ internal sealed partial class SharpLinkServer
             serverLoopToken,
             serviceInfo.ModuleCancellation,
             supportsCooperativeCancellation,
+            isCancellable,
             requestCancellationMap);
         if (decodedRequestOwner is not null)
         {
             callState = EnsureTrackedCallState(
                 connection, callState, requestId, request.RpcDeadline,
-                serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);
+                serverLoopToken, serviceInfo.ModuleCancellation, isCancellable, requestCancellationMap);
             callState.AttachPayloadOwner(_runtimeContext.Buffers, decodedRequestOwner);
             decodedRequestOwner = null;
         }
@@ -386,7 +414,7 @@ internal sealed partial class SharpLinkServer
                 {
                     callState = EnsureTrackedCallState(
                         connection, callState, requestId, request.RpcDeadline,
-                        serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);
+                        serverLoopToken, serviceInfo.ModuleCancellation, isCancellable, requestCancellationMap);
                     return AwaitDispatchRpcNoReturnAsync(
                         invokeTask, session, requestId, callState, requestCancellationMap, connection,
                         callContext, serviceInfo.Stub, request.MethodHash, invokeToken);
@@ -477,7 +505,7 @@ internal sealed partial class SharpLinkServer
             {
                 callState = EnsureTrackedCallState(
                     connection, callState, requestId, request.RpcDeadline,
-                    serverLoopToken, serviceInfo.ModuleCancellation, requestCancellationMap);
+                    serverLoopToken, serviceInfo.ModuleCancellation, isCancellable, requestCancellationMap);
                 return AwaitDispatchRpcAsync(invokeTask, session, requestId, writer, token, callState,
                     requestCancellationMap, connection, responseCallContext,
                     serviceInfo.Stub, request.MethodHash, invokeToken);

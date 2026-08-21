@@ -61,6 +61,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     private int _reason;
     private int _abandonedRecorded;
     private int _moduleDrainResponseClaimed;
+    private bool _acceptsRemoteCancellation;
     private bool _disposeRequested;
     private int _externalUsers;
     private long _leaseGeneration;
@@ -85,13 +86,16 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     public bool IsAbandoned => Reason is not (ServerCallCancellationReason.None or ServerCallCancellationReason.Completed);
 
+    internal bool AcceptsRemoteCancellation => _acceptsRemoteCancellation;
+
     public static ServerCallCancellationState Rent(
         long requestId,
         RpcDeadline deadline,
         TimeProvider timeProvider,
         CancellationToken connectionClosedToken,
         CancellationToken serverStoppingToken,
-        bool supportsCooperativeCancellation)
+        bool supportsCooperativeCancellation,
+        bool acceptsRemoteCancellation = true)
         => Rent(
             requestId,
             deadline,
@@ -99,7 +103,8 @@ internal sealed class ServerCallCancellationState : IDisposable
             connectionClosedToken,
             serverStoppingToken,
             CancellationToken.None,
-            supportsCooperativeCancellation);
+            supportsCooperativeCancellation,
+            acceptsRemoteCancellation);
 
     public static ServerCallCancellationState Rent(
         long requestId,
@@ -108,7 +113,8 @@ internal sealed class ServerCallCancellationState : IDisposable
         CancellationToken connectionClosedToken,
         CancellationToken serverStoppingToken,
         CancellationToken moduleDrainingToken,
-        bool supportsCooperativeCancellation)
+        bool supportsCooperativeCancellation,
+        bool acceptsRemoteCancellation = true)
     {
         if (!Pool.TryPop(out var state))
             state = new ServerCallCancellationState();
@@ -122,6 +128,7 @@ internal sealed class ServerCallCancellationState : IDisposable
         state._reason = (int)ServerCallCancellationReason.None;
         state._abandonedRecorded = 0;
         state._moduleDrainResponseClaimed = 0;
+        state._acceptsRemoteCancellation = acceptsRemoteCancellation;
         state._admissionLease = null;
         state._payloadPool = null;
         state._payloadOwner = null;
@@ -313,6 +320,7 @@ internal sealed class ServerCallCancellationState : IDisposable
         _reason = (int)ServerCallCancellationReason.None;
         _abandonedRecorded = 0;
         _moduleDrainResponseClaimed = 0;
+        _acceptsRemoteCancellation = false;
 
         while (true)
         {

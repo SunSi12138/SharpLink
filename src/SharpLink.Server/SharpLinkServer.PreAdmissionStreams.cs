@@ -2,6 +2,9 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<RpcSession, PreDecodeStreamBufferBudget>
+        _preDecodeStreamBufferBudgets = new();
+
     private IRpcByteBufferWriter CopyAdmissionPayload(ReadOnlySequence<byte> payload)
     {
         var owner = _runtimeContext.Buffers.Rent(checked((int)payload.Length));
@@ -43,8 +46,12 @@ internal sealed partial class SharpLinkServer
         // reader loop free to consume Cancel/StreamData while synchronous request decompression
         // runs elsewhere, but cap retained stream bytes to the negotiated connection receive
         // window so a slow provider cannot create an unbounded handoff queue.
-        var budget = new PreDecodeStreamBufferBudget(
-            _runtimeContext.FlowControl.ConnectionReceiveWindowBytes);
+        if (!_preDecodeStreamBufferBudgets.TryGetValue(session, out var budget))
+        {
+            budget = new PreDecodeStreamBufferBudget(
+                _runtimeContext.FlowControl.ConnectionReceiveWindowBytes);
+            _preDecodeStreamBufferBudgets.Add(session, budget);
+        }
         ReserveBufferedRequestStreams(
             session,
             requestId,

@@ -9,6 +9,7 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken,
         CancellationToken moduleDrainingToken,
         bool supportsCooperativeCancellation,
+        bool acceptsRemoteCancellation,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         AdmissionLease? admissionLease = null)
     {
@@ -22,7 +23,8 @@ internal sealed partial class SharpLinkServer
             serverLoopToken,
             _forceStopCts.Token,
             moduleDrainingToken,
-            supportsCooperativeCancellation);
+            supportsCooperativeCancellation,
+            acceptsRemoteCancellation);
         if (admissionLease is not null)
             callState.AttachAdmissionLease(admissionLease);
         requestCancellationMap.Set(requestId, callState);
@@ -37,6 +39,7 @@ internal sealed partial class SharpLinkServer
         RpcDeadline deadline,
         CancellationToken serverLoopToken,
         CancellationToken moduleDrainingToken,
+        bool acceptsRemoteCancellation,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap)
     {
         if (callState is not null)
@@ -49,7 +52,8 @@ internal sealed partial class SharpLinkServer
             serverLoopToken,
             _forceStopCts.Token,
             moduleDrainingToken,
-            supportsCooperativeCancellation: false);
+            supportsCooperativeCancellation: false,
+            acceptsRemoteCancellation);
         requestCancellationMap.Set(requestId, callState);
         connection.DeadlineScheduler.Register(callState);
         return callState;

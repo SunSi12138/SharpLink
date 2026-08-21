@@ -163,8 +163,11 @@ internal sealed partial class SharpLinkServer
                                     {
                                         try
                                         {
-                                            callLease.State.TryCancel(
-                                                ServerCallTerminationMapper.MapRemoteCancellationReason(cancelReason));
+                                            if (callLease.State.AcceptsRemoteCancellation)
+                                            {
+                                                callLease.State.TryCancel(
+                                                    ServerCallTerminationMapper.MapRemoteCancellationReason(cancelReason));
+                                            }
                                         }
                                         finally
                                         {
