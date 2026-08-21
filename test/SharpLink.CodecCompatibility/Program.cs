@@ -14,6 +14,11 @@ internal static class Program
 {
     private const string BuiltinRawCategory = "builtin-semantic-raw";
     private const string DesktopLinuxX64PlatformTag = "linux-x64-hosted-desktop-coreclr-net10";
+    private const string AndroidArm64DeviceMonoPlatformTag = "android-arm64-physical-device-mono-net10";
+    private const string AndroidArm64DeviceCoreClrPlatformTag = "android-arm64-physical-device-coreclr-net10";
+    private const string SummaryProfileDesktop = "desktop";
+    private const string SummaryProfileMobile = "mobile";
+    private const string SummaryProfileAndroidArm64Device = "android-arm64-device";
 
     private static readonly string[] GuaranteedDesktopPlatformTags =
     [
@@ -23,6 +28,19 @@ internal static class Program
         "windows-arm64-hosted-desktop-coreclr-net10",
         "macos-arm64-hosted-desktop-coreclr-net10",
         "macos-x64-hosted-desktop-coreclr-net10"
+    ];
+
+    private static readonly string[] AllowedAndroidArm64DeviceDesktopReferenceTags =
+    [
+        "linux-arm64-hosted-desktop-coreclr-net10",
+        "windows-arm64-hosted-desktop-coreclr-net10",
+        "macos-arm64-hosted-desktop-coreclr-net10"
+    ];
+
+    private static readonly string[] AndroidArm64DevicePlatformTags =
+    [
+        AndroidArm64DeviceMonoPlatformTag,
+        AndroidArm64DeviceCoreClrPlatformTag
     ];
 
     private static readonly IReadOnlyDictionary<string, string[]> DocumentedMobileProducerTags =
@@ -79,7 +97,10 @@ internal static class Program
                 "produce" => Produce(GetRequiredOption(args, "--output")),
                 "verify" => Verify(GetRequiredOption(args, "--input"), GetRequiredOption(args, "--output")),
                 "self" => Self(GetRequiredOption(args, "--output")),
-                "summarize" => Summarize(GetRequiredOption(args, "--input"), GetRequiredOption(args, "--output")),
+                "summarize" => Summarize(
+                    GetRequiredOption(args, "--input"),
+                    GetRequiredOption(args, "--output"),
+                    GetRequiredOption(args, "--profile")),
                 _ => UnknownCommand(args[0])
             };
         }
@@ -227,7 +248,7 @@ internal static class Program
         return produceExitCode == 0 ? Verify(corpusDirectory, reportFile) : produceExitCode;
     }
 
-    private static int Summarize(string inputDirectory, string outputDirectory)
+    private static int Summarize(string inputDirectory, string outputDirectory, string profile)
     {
         if (!Directory.Exists(inputDirectory))
             throw new DirectoryNotFoundException(inputDirectory);
@@ -245,12 +266,29 @@ internal static class Program
             var report = ReadJson<VerificationReport>(reportFile);
             if (report.SchemaVersion != 1)
                 throw new InvalidOperationException($"Unsupported verification schemaVersion {report.SchemaVersion} in {reportFile}.");
+            if (report.Consumer.SchemaVersion != 1)
+                throw new InvalidOperationException($"Unsupported consumer schemaVersion {report.Consumer.SchemaVersion} in {reportFile}.");
+
             reports.Add(report);
             results.AddRange(report.Results);
         }
 
-        ValidateGuaranteedDesktopIdentitySet(reports);
-        ValidateDocumentedMobileEdgeGraph(reports);
+        var sharpLinkCommit = ValidateSingleReportCommit(reports);
+        switch (profile)
+        {
+            case SummaryProfileDesktop:
+                ValidateGuaranteedDesktopIdentitySet(reports);
+                break;
+            case SummaryProfileMobile:
+                ValidateDocumentedMobileEdgeGraph(reports);
+                break;
+            case SummaryProfileAndroidArm64Device:
+                ValidateAndroidArm64DeviceEdgeGraph(reports);
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown summary profile '{profile}'. Expected {SummaryProfileDesktop}, {SummaryProfileMobile}, or {SummaryProfileAndroidArm64Device}.");
+        }
 
         results = results
             .OrderBy(static result => result.Producer, StringComparer.Ordinal)
@@ -261,6 +299,8 @@ internal static class Program
         var summary = new CompatibilitySummary
         {
             SchemaVersion = 1,
+            SummaryProfile = profile,
+            SharpLinkCommit = sharpLinkCommit,
             GeneratedAtUtc = DateTimeOffset.UtcNow,
             BlockingFailures = results.Count(static result => result.Blocking),
             Results = results
@@ -270,7 +310,7 @@ internal static class Program
         WriteJson(Path.Combine(outputDirectory, "compatibility-summary.json"), summary);
         File.WriteAllText(Path.Combine(outputDirectory, "compatibility-summary.md"), CreateMarkdownSummary(summary), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         PrintVerificationFailures(results);
-        Console.WriteLine($"Summarized {results.Count} matrix entries from {reportFiles.Length} consumers; blocking failures: {summary.BlockingFailures}.");
+        Console.WriteLine($"Summarized {results.Count} {profile} evidence entries from {reportFiles.Length} consumers at commit {sharpLinkCommit}; blocking failures: {summary.BlockingFailures}.");
         return summary.BlockingFailures == 0 ? 0 : 1;
     }
 
@@ -325,17 +365,28 @@ internal static class Program
         }
     }
 
-    private static void ValidateGuaranteedDesktopIdentitySet(IReadOnlyList<VerificationReport> reports)
+    private static string ValidateSingleReportCommit(IReadOnlyList<VerificationReport> reports)
     {
-        if (reports.Count == 0
-            || reports.Any(static report => !string.Equals(
-                report.Consumer.ExecutionEnvironment,
-                "hosted-desktop",
-                StringComparison.Ordinal)))
+        var commits = reports
+            .Select(static report => report.Consumer.SharpLinkCommit)
+            .ToArray();
+        if (commits.Any(static commit => string.IsNullOrWhiteSpace(commit) || string.Equals(commit, "unknown", StringComparison.OrdinalIgnoreCase)))
         {
-            return;
+            throw new InvalidOperationException("Evidence summary requires every consumer report to contain a known SharpLink commit.");
         }
 
+        var distinct = commits.Distinct(StringComparer.Ordinal).OrderBy(static commit => commit, StringComparer.Ordinal).ToArray();
+        if (distinct.Length != 1)
+        {
+            throw new InvalidOperationException(
+                $"Evidence summary cannot mix SharpLink commits: [{string.Join(", ", distinct)}].");
+        }
+
+        return distinct[0];
+    }
+
+    private static void ValidateGuaranteedDesktopIdentitySet(IReadOnlyList<VerificationReport> reports)
+    {
         if (reports.Count != GuaranteedDesktopPlatformTags.Length)
         {
             throw new InvalidOperationException(
@@ -347,13 +398,16 @@ internal static class Program
             GuaranteedDesktopPlatformTags,
             "desktop consumer identities");
 
-        var expectedFixtureIds = FixtureRegistry.All
-            .Select(static fixture => fixture.Id)
-            .OrderBy(static id => id, StringComparer.Ordinal)
-            .ToArray();
-
+        var expectedFixtureIds = GetExpectedFixtureIds();
         foreach (var report in reports)
         {
+            ValidateConsumerPlatformTagConsistency(report.Consumer, $"desktop consumer {report.Consumer.PlatformTag}");
+            if (!string.Equals(report.Consumer.ExecutionEnvironment, "hosted-desktop", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Desktop consumer {report.Consumer.PlatformTag} must report executionEnvironment=hosted-desktop, observed {report.Consumer.ExecutionEnvironment}.");
+            }
+
             AssertExactIdentitySet(
                 report.Results.Select(static result => result.Consumer),
                 [report.Consumer.PlatformTag],
@@ -369,25 +423,14 @@ internal static class Program
                 $"desktop result keys for {report.Consumer.PlatformTag}");
         }
 
-        var expectedTotal = GuaranteedDesktopPlatformTags.Length
-            * GuaranteedDesktopPlatformTags.Length
-            * expectedFixtureIds.Length;
-        var actualTotal = reports.Sum(static report => report.Results.Count);
-        if (actualTotal != expectedTotal)
-        {
-            throw new InvalidOperationException(
-                $"Guaranteed desktop result count mismatch: expected={expectedTotal}, actual={actualTotal}.");
-        }
+        AssertAggregateResultCount(
+            reports,
+            GuaranteedDesktopPlatformTags.Length * GuaranteedDesktopPlatformTags.Length * expectedFixtureIds.Length,
+            "Guaranteed desktop");
     }
 
     private static void ValidateDocumentedMobileEdgeGraph(IReadOnlyList<VerificationReport> reports)
     {
-        if (reports.Count == 0
-            || reports.Any(static report => !IsDocumentedMobileEnvironment(report.Consumer.ExecutionEnvironment)))
-        {
-            return;
-        }
-
         if (reports.Count != DocumentedMobileProducerTags.Count)
         {
             throw new InvalidOperationException(
@@ -399,18 +442,24 @@ internal static class Program
             DocumentedMobileProducerTags.Keys,
             "documented mobile consumer identities");
 
-        var expectedFixtureIds = FixtureRegistry.All
-            .Select(static fixture => fixture.Id)
-            .OrderBy(static id => id, StringComparer.Ordinal)
-            .ToArray();
-
+        var expectedFixtureIds = GetExpectedFixtureIds();
         var expectedTotal = 0;
         foreach (var report in reports)
         {
+            ValidateConsumerPlatformTagConsistency(report.Consumer, $"mobile consumer {report.Consumer.PlatformTag}");
             if (!DocumentedMobileProducerTags.TryGetValue(report.Consumer.PlatformTag, out var expectedProducers))
             {
                 throw new InvalidOperationException(
                     $"Unexpected documented mobile consumer identity: {report.Consumer.PlatformTag}.");
+            }
+
+            var expectedEnvironment = report.Consumer.PlatformTag.StartsWith("android-", StringComparison.Ordinal)
+                ? "emulator"
+                : "simulator";
+            if (!string.Equals(report.Consumer.ExecutionEnvironment, expectedEnvironment, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Mobile consumer {report.Consumer.PlatformTag} must report executionEnvironment={expectedEnvironment}, observed {report.Consumer.ExecutionEnvironment}.");
             }
 
             AssertExactIdentitySet(
@@ -430,17 +479,106 @@ internal static class Program
             expectedTotal += expectedProducers.Length * expectedFixtureIds.Length;
         }
 
+        AssertAggregateResultCount(reports, expectedTotal, "Documented mobile");
+    }
+
+    private static void ValidateAndroidArm64DeviceEdgeGraph(IReadOnlyList<VerificationReport> reports)
+    {
+        if (reports.Count != AndroidArm64DevicePlatformTags.Length)
+        {
+            throw new InvalidOperationException(
+                $"Android ARM64 device evidence requires exactly {AndroidArm64DevicePlatformTags.Length} consumer reports, found {reports.Count}.");
+        }
+
+        AssertExactIdentitySet(
+            reports.Select(static report => report.Consumer.PlatformTag),
+            AndroidArm64DevicePlatformTags,
+            "Android ARM64 device consumer identities");
+
+        foreach (var report in reports)
+        {
+            ValidateConsumerPlatformTagConsistency(report.Consumer, $"Android ARM64 device consumer {report.Consumer.PlatformTag}");
+            if (!string.Equals(report.Consumer.ExecutionEnvironment, "physical-device", StringComparison.Ordinal)
+                || !string.Equals(report.Consumer.Os, "android", StringComparison.Ordinal)
+                || !string.Equals(report.Consumer.ProcessArchitecture, "arm64", StringComparison.Ordinal)
+                || !string.Equals(report.Consumer.RuntimeIdentifier, "android-arm64", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Android ARM64 device consumer {report.Consumer.PlatformTag} has inconsistent physical identity: " +
+                    $"environment={report.Consumer.ExecutionEnvironment}, os={report.Consumer.Os}, processArchitecture={report.Consumer.ProcessArchitecture}, runtimeIdentifier={report.Consumer.RuntimeIdentifier}.");
+            }
+        }
+
+        var producerTags = reports
+            .SelectMany(static report => report.Results.Select(static result => result.Producer))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static tag => tag, StringComparer.Ordinal)
+            .ToArray();
+        var desktopReferenceTags = producerTags
+            .Except(AndroidArm64DevicePlatformTags, StringComparer.Ordinal)
+            .ToArray();
+        if (desktopReferenceTags.Length != 1
+            || !AllowedAndroidArm64DeviceDesktopReferenceTags.Contains(desktopReferenceTags[0], StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Android ARM64 device evidence requires exactly one supported ARM64 hosted-desktop reference producer; observed extras=[{string.Join(", ", desktopReferenceTags)}].");
+        }
+
+        var expectedProducers = new[]
+        {
+            desktopReferenceTags[0],
+            AndroidArm64DeviceMonoPlatformTag,
+            AndroidArm64DeviceCoreClrPlatformTag
+        };
+        var expectedFixtureIds = GetExpectedFixtureIds();
+        foreach (var report in reports)
+        {
+            AssertExactIdentitySet(
+                report.Results.Select(static result => result.Consumer),
+                [report.Consumer.PlatformTag],
+                $"Android ARM64 device result consumer identities for {report.Consumer.PlatformTag}");
+            AssertExactIdentitySet(
+                report.Results.Select(static result => result.Producer),
+                expectedProducers,
+                $"Android ARM64 device producer identities for {report.Consumer.PlatformTag}");
+            AssertExactResultKeySet(
+                report,
+                expectedProducers,
+                expectedFixtureIds,
+                $"Android ARM64 device result keys for {report.Consumer.PlatformTag}");
+        }
+
+        AssertAggregateResultCount(
+            reports,
+            AndroidArm64DevicePlatformTags.Length * expectedProducers.Length * expectedFixtureIds.Length,
+            "Android ARM64 device");
+    }
+
+    private static void ValidateConsumerPlatformTagConsistency(RuntimeManifest consumer, string label)
+    {
+        var expected = $"{consumer.Os}-{consumer.ProcessArchitecture}-{consumer.ExecutionEnvironment}-{consumer.RuntimeFamily.ToLowerInvariant()}-net10";
+        if (!string.Equals(consumer.PlatformTag, expected, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"{label} platformTag mismatch: recorded={consumer.PlatformTag}, derived={expected}.");
+        }
+    }
+
+    private static string[] GetExpectedFixtureIds()
+        => FixtureRegistry.All
+            .Select(static fixture => fixture.Id)
+            .OrderBy(static id => id, StringComparer.Ordinal)
+            .ToArray();
+
+    private static void AssertAggregateResultCount(IReadOnlyList<VerificationReport> reports, int expectedTotal, string label)
+    {
         var actualTotal = reports.Sum(static report => report.Results.Count);
         if (actualTotal != expectedTotal)
         {
             throw new InvalidOperationException(
-                $"Documented mobile result count mismatch: expected={expectedTotal}, actual={actualTotal}.");
+                $"{label} result count mismatch: expected={expectedTotal}, actual={actualTotal}.");
         }
     }
-
-    private static bool IsDocumentedMobileEnvironment(string executionEnvironment)
-        => string.Equals(executionEnvironment, "emulator", StringComparison.Ordinal)
-            || string.Equals(executionEnvironment, "simulator", StringComparison.Ordinal);
 
     private static void AssertExactResultKeySet(
         VerificationReport report,
@@ -530,6 +668,8 @@ internal static class Program
         var builder = new StringBuilder();
         builder.AppendLine("# UnsafeBlit compatibility summary");
         builder.AppendLine();
+        builder.AppendLine($"Profile: `{summary.SummaryProfile}`  ");
+        builder.AppendLine($"SharpLink commit: `{summary.SharpLinkCommit}`  ");
         builder.AppendLine($"Generated: `{summary.GeneratedAtUtc:O}`  ");
         builder.AppendLine($"Blocking failures: `{summary.BlockingFailures}`");
         builder.AppendLine();
@@ -627,6 +767,6 @@ internal static class Program
         Console.Error.WriteLine("  SharpLink.CodecCompatibility produce --output <dir>");
         Console.Error.WriteLine("  SharpLink.CodecCompatibility verify --input <producer-root> --output <verification.json>");
         Console.Error.WriteLine("  SharpLink.CodecCompatibility self --output <dir>");
-        Console.Error.WriteLine("  SharpLink.CodecCompatibility summarize --input <verification-root> --output <dir>");
+        Console.Error.WriteLine("  SharpLink.CodecCompatibility summarize --input <verification-root> --output <dir> --profile <desktop|mobile|android-arm64-device>");
     }
 }
