@@ -44,6 +44,9 @@ jobs:
           AVDMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platform-tools" "emulator" "platforms;android-$ANDROID_API" "system-images;android-$ANDROID_API;google_apis;x86_64"
+          export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
           echo no | "$AVDMANAGER" create avd --force --name "$ANDROID_AVD" --package "system-images;android-$ANDROID_API;google_apis;x86_64" --device pixel_6
           nohup "$ANDROID_HOME/emulator/emulator" -avd "$ANDROID_AVD" -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > artifacts-android-emulator.log 2>&1 &
           adb wait-for-device
@@ -62,6 +65,7 @@ jobs:
       - name: Build and run Android Mono producer
         shell: bash
         run: |
+          rm -rf test/SharpLink.CodecCompatibility.Android/bin test/SharpLink.CodecCompatibility.Android/obj
           dotnet build -c Debug -f net10.0-android -r android-x64 \
             test/SharpLink.CodecCompatibility.Android/SharpLink.CodecCompatibility.Android.csproj \
             -t:SignAndroidPackage \
@@ -79,8 +83,7 @@ jobs:
       - name: Build and run Android CoreCLR producer
         shell: bash
         run: |
-          dotnet clean -c Debug -f net10.0-android -r android-x64 \
-            test/SharpLink.CodecCompatibility.Android/SharpLink.CodecCompatibility.Android.csproj
+          rm -rf test/SharpLink.CodecCompatibility.Android/bin test/SharpLink.CodecCompatibility.Android/obj
           dotnet build -c Debug -f net10.0-android -r android-x64 \
             test/SharpLink.CodecCompatibility.Android/SharpLink.CodecCompatibility.Android.csproj \
             -t:SignAndroidPackage \
@@ -161,13 +164,20 @@ jobs:
           PY
           )"
           echo "IOS_SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
-          xcrun simctl list devices | grep "$udid"
+          xcrun simctl boot "$udid" || true
+          for attempt in $(seq 1 90); do
+            state="$(xcrun simctl list devices -j | python3 -c 'import json,sys,os; d=json.load(sys.stdin); u=os.environ["IOS_TARGET"]; print(next((x.get("state","") for xs in d["devices"].values() for x in xs if x.get("udid")==u), ""))' IOS_TARGET="$udid" 2>/dev/null || true)"
+            if [[ "$state" == "Booted" ]]; then
+              break
+            fi
+            sleep 2
+          done
+          xcrun simctl list devices | grep "$udid" | grep '(Booted)'
 
       - name: Build and run iOS x64 simulator producer
         shell: bash
         run: |
+          rm -rf test/SharpLink.CodecCompatibility.iOS/bin test/SharpLink.CodecCompatibility.iOS/obj
           dotnet build -c Debug -f net10.0-ios -r iossimulator-x64 \
             test/SharpLink.CodecCompatibility.iOS/SharpLink.CodecCompatibility.iOS.csproj
           app="$(find test/SharpLink.CodecCompatibility.iOS/bin/Debug -name '*.app' -type d | head -n 1)"
