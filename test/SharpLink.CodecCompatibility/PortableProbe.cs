@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -236,10 +237,33 @@ internal static class PortableProbe
         if (OperatingSystem.IsBrowser() || OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst())
             return "Mono";
 
-        // Android can execute either Mono or the experimental CoreCLR runtime. Keep
-        // this distinction runtime-observed so a packaging/runtime fallback cannot be
-        // mislabeled by the workflow's expected lane name.
+        if (OperatingSystem.IsAndroid())
+            return DetectAndroidRuntimeFamily();
+
         return Type.GetType("Mono.Runtime") is null ? "CoreCLR" : "Mono";
+    }
+
+    private static string DetectAndroidRuntimeFamily()
+    {
+        string processMaps;
+        try
+        {
+            processMaps = File.ReadAllText("/proc/self/maps");
+        }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException("Unable to inspect loaded Android runtime libraries from /proc/self/maps.", exception);
+        }
+
+        var monoLoaded = processMaps.Contains("libmonosgen-2.0.so", StringComparison.Ordinal);
+        var coreClrLoaded = processMaps.Contains("libcoreclr.so", StringComparison.Ordinal);
+        if (monoLoaded == coreClrLoaded)
+        {
+            throw new InvalidOperationException(
+                $"Unable to identify Android runtime from loaded libraries: monoLoaded={monoLoaded}, coreClrLoaded={coreClrLoaded}.");
+        }
+
+        return monoLoaded ? "Mono" : "CoreCLR";
     }
 
     private static string Hash(ReadOnlySpan<byte> bytes)
