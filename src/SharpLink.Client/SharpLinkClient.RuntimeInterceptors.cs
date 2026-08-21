@@ -7,16 +7,20 @@ internal sealed partial class SharpLinkClient
         var candidate = CreateInterceptorSnapshot(interceptors);
         lock (_stateGate)
         {
-            if (Volatile.Read(ref _stopStarted) != 0 ||
-                State is SharpLinkConnectionState.Draining or
-                    SharpLinkConnectionState.Stopped or
-                    SharpLinkConnectionState.Faulted)
+            lock (_readinessGate)
             {
-                throw new InvalidOperationException(
-                    $"Client state '{State}' does not accept runtime interceptor replacement.");
-            }
+                var state = State;
+                if (Volatile.Read(ref _stopStarted) != 0 ||
+                    state is SharpLinkConnectionState.Draining or
+                        SharpLinkConnectionState.Stopped or
+                        SharpLinkConnectionState.Faulted)
+                {
+                    throw new InvalidOperationException(
+                        $"Client state '{state}' does not accept runtime interceptor replacement.");
+                }
 
-            Volatile.Write(ref _clientInterceptors, candidate);
+                Volatile.Write(ref _clientInterceptors, candidate);
+            }
         }
     }
 
