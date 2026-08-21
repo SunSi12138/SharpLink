@@ -132,7 +132,7 @@ public class RuntimeInterceptorReviewCoverageIntegrationTests
     public async Task ConcurrentClientReplacementsShouldNeverMixPublishedGenerations()
     {
         await using var harness = await ReviewCoverageHarness.CreateAsync();
-        var traces = new ConcurrentDictionary<int, ConcurrentQueue<string>>();
+        var traces = new ConcurrentDictionary<SharpLinkClientInvocationContext, ConcurrentQueue<string>>();
         var a = new CorrelatedClientInterceptor("A", traces);
         var b = new CorrelatedClientInterceptor("B", traces);
         var c = new CorrelatedClientInterceptor("C", traces);
@@ -164,14 +164,18 @@ public class RuntimeInterceptorReviewCoverageIntegrationTests
         Ensure(traces.Count == nextRequest,
             $"every client RPC must have exactly one correlated trace; expected {nextRequest}, actual {traces.Count}");
         foreach (var trace in traces)
-            EnsureLegalGeneration(trace.Value, trace.Key.ToString());
+        {
+            EnsureLegalGeneration(
+                trace.Value,
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(trace.Key).ToString());
+        }
     }
 
     [Test]
     public async Task ConcurrentServerReplacementsShouldNeverMixPublishedGenerations()
     {
         await using var harness = await ReviewCoverageHarness.CreateAsync();
-        var traces = new ConcurrentDictionary<long, ConcurrentQueue<string>>();
+        var traces = new ConcurrentDictionary<SharpLinkServerInvocationContext, ConcurrentQueue<string>>();
         var a = new CorrelatedServerInterceptor("A", traces);
         var b = new CorrelatedServerInterceptor("B", traces);
         var c = new CorrelatedServerInterceptor("C", traces);
@@ -203,7 +207,11 @@ public class RuntimeInterceptorReviewCoverageIntegrationTests
         Ensure(traces.Count == nextRequest,
             $"every server RPC must have exactly one correlated trace; expected {nextRequest}, actual {traces.Count}");
         foreach (var trace in traces)
-            EnsureLegalGeneration(trace.Value, trace.Key.ToString());
+        {
+            EnsureLegalGeneration(
+                trace.Value,
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(trace.Key).ToString());
+        }
     }
 
     private static async Task DrainOptionalNullStreamAsync(IAsyncEnumerable<string?> stream)
@@ -310,30 +318,28 @@ public class RuntimeInterceptorReviewCoverageIntegrationTests
 
     private sealed class CorrelatedClientInterceptor(
         string id,
-        ConcurrentDictionary<int, ConcurrentQueue<string>> traces)
+        ConcurrentDictionary<SharpLinkClientInvocationContext, ConcurrentQueue<string>> traces)
         : ISharpLinkClientInterceptor
     {
         public ValueTask<SharpLinkClientInvocationResult> InvokeAsync(
             SharpLinkClientInvocationContext context,
             SharpLinkClientInvocationDelegate next)
         {
-            Ensure(context.Request is int, "client correlated request type");
-            var request = (int)context.Request!;
-            traces.GetOrAdd(request, static _ => new ConcurrentQueue<string>()).Enqueue(id);
+            traces.GetOrAdd(context, static _ => new ConcurrentQueue<string>()).Enqueue(id);
             return next(context);
         }
     }
 
     private sealed class CorrelatedServerInterceptor(
         string id,
-        ConcurrentDictionary<long, ConcurrentQueue<string>> traces)
+        ConcurrentDictionary<SharpLinkServerInvocationContext, ConcurrentQueue<string>> traces)
         : ISharpLinkServerInterceptor
     {
         public ValueTask InvokeAsync(
             SharpLinkServerInvocationContext context,
             SharpLinkServerInvocationDelegate next)
         {
-            traces.GetOrAdd(context.RequestId, static _ => new ConcurrentQueue<string>()).Enqueue(id);
+            traces.GetOrAdd(context, static _ => new ConcurrentQueue<string>()).Enqueue(id);
             return next(context);
         }
     }
