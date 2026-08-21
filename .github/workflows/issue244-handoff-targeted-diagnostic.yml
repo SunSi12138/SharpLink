@@ -1,0 +1,41 @@
+name: Issue 244 Handoff Targeted Diagnostic
+
+on:
+  push:
+    branches:
+      - agent/issue-244-handoff-targeted-diagnostic
+
+permissions:
+  contents: read
+
+jobs:
+  targeted-interceptor-continuation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build integration tests
+        run: dotnet build test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release -v minimal
+
+      - name: Run failing test in fresh processes
+        shell: bash
+        run: |
+          set -euo pipefail
+          for repetition in 1 2 3 4 5 6 7 8 9 10; do
+            echo "=== targeted repetition $repetition ==="
+            dotnet run -c Release --no-build \
+              --project test/SharpLink.IntegrationTests -- \
+              --maximum-parallel-tests 1 \
+              --timeout 30s \
+              --treenode-filter '/*/*/RuntimeInterceptorContinuationIntegrationTests/ServerReplacementBeforeDownstreamNextAdvancesShouldRetainCapturedGeneration'
+          done
