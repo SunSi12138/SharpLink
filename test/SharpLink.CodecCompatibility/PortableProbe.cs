@@ -182,7 +182,7 @@ internal static class PortableProbe
                                 : RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
                                     ? "linux"
                                     : "unknown";
-        var runtimeFamily = Type.GetType("Mono.Runtime") is null ? "CoreCLR" : "Mono";
+        var runtimeFamily = DetectRuntimeFamily();
         if (!string.IsNullOrWhiteSpace(expectedRuntimeFamily)
             && !string.Equals(runtimeFamily, expectedRuntimeFamily, StringComparison.OrdinalIgnoreCase))
         {
@@ -225,6 +225,21 @@ internal static class PortableProbe
             CompilationMode = compilationMode,
             PlatformTag = $"{os}-{processArchitecture}-{executionEnvironment}-{runtimeFamily.ToLowerInvariant()}-net10"
         };
+    }
+
+    private static string DetectRuntimeFamily()
+    {
+        // .NET's browser-wasm and iOS runtime packs execute Mono. Mono.Runtime can be
+        // trimmed from these closed-world applications, so reflection alone is not a
+        // reliable runtime discriminator there. OperatingSystem.* is evaluated by the
+        // running target and cannot be supplied by the workflow harness.
+        if (OperatingSystem.IsBrowser() || OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst())
+            return "Mono";
+
+        // Android can execute either Mono or the experimental CoreCLR runtime. Keep
+        // this distinction runtime-observed so a packaging/runtime fallback cannot be
+        // mislabeled by the workflow's expected lane name.
+        return Type.GetType("Mono.Runtime") is null ? "CoreCLR" : "Mono";
     }
 
     private static string Hash(ReadOnlySpan<byte> bytes)
