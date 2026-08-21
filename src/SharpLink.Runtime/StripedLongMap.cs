@@ -15,17 +15,21 @@ internal sealed class StripedLongMap<TValue> where TValue : class
     public StripedLongMap(RuntimeConcurrencyOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        var snapshot = options.CloneValidated();
-        _locks = new Lock[snapshot.StripeCount];
-        _maps = new Dictionary<long, TValue>[snapshot.StripeCount];
-        _stripeMask = snapshot.StripeCount - 1;
 
-        for (var i = 0; i < snapshot.StripeCount; i++)
+        var stripeCount = options.StripeCount;
+        var initialMapCapacityPerStripe = options.InitialMapCapacityPerStripe;
+        RuntimeConcurrencyOptions.Validate(stripeCount, initialMapCapacityPerStripe);
+
+        _locks = new Lock[stripeCount];
+        _maps = new Dictionary<long, TValue>[stripeCount];
+        _stripeMask = stripeCount - 1;
+
+        for (var i = 0; i < stripeCount; i++)
         {
             _locks[i] = new Lock();
-            _maps[i] = snapshot.InitialMapCapacityPerStripe == 0
+            _maps[i] = initialMapCapacityPerStripe == 0
                 ? []
-                : new Dictionary<long, TValue>(snapshot.InitialMapCapacityPerStripe);
+                : new Dictionary<long, TValue>(initialMapCapacityPerStripe);
         }
     }
 
