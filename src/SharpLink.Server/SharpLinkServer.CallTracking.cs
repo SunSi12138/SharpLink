@@ -24,7 +24,8 @@ internal sealed partial class SharpLinkServer
             _forceStopCts.Token,
             moduleDrainingToken,
             supportsCooperativeCancellation,
-            acceptsRemoteCancellation);
+            acceptsRemoteCancellation,
+            serverStoppingFlowsThroughConnection: true);
         if (admissionLease is not null)
             callState.AttachAdmissionLease(admissionLease);
         requestCancellationMap.Set(requestId, callState);
@@ -53,7 +54,8 @@ internal sealed partial class SharpLinkServer
             _forceStopCts.Token,
             moduleDrainingToken,
             supportsCooperativeCancellation: false,
-            acceptsRemoteCancellation);
+            acceptsRemoteCancellation,
+            serverStoppingFlowsThroughConnection: true);
         requestCancellationMap.Set(requestId, callState);
         connection.DeadlineScheduler.Register(callState);
         return callState;
