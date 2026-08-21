@@ -13,16 +13,49 @@ namespace SharpLink.CodecCompatibility;
 internal static class Program
 {
     private const string BuiltinRawCategory = "builtin-semantic-raw";
+    private const string DesktopLinuxX64PlatformTag = "linux-x64-hosted-desktop-coreclr-net10";
 
     private static readonly string[] GuaranteedDesktopPlatformTags =
     [
-        "linux-x64-hosted-desktop-coreclr-net10",
+        DesktopLinuxX64PlatformTag,
         "linux-arm64-hosted-desktop-coreclr-net10",
         "windows-x64-hosted-desktop-coreclr-net10",
         "windows-arm64-hosted-desktop-coreclr-net10",
         "macos-arm64-hosted-desktop-coreclr-net10",
         "macos-x64-hosted-desktop-coreclr-net10"
     ];
+
+    private static readonly IReadOnlyDictionary<string, string[]> DocumentedMobileProducerTags =
+        new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            ["android-x64-emulator-mono-net10"] =
+            [
+                DesktopLinuxX64PlatformTag,
+                "android-x64-emulator-mono-net10",
+                "android-x64-emulator-coreclr-net10"
+            ],
+            ["android-x64-emulator-coreclr-net10"] =
+            [
+                DesktopLinuxX64PlatformTag,
+                "android-x64-emulator-mono-net10",
+                "android-x64-emulator-coreclr-net10"
+            ],
+            ["ios-x64-simulator-mono-net10"] =
+            [
+                DesktopLinuxX64PlatformTag,
+                "ios-x64-simulator-mono-net10"
+            ],
+            ["ios-arm64-simulator-mono-net10"] =
+            [
+                DesktopLinuxX64PlatformTag,
+                "ios-arm64-simulator-mono-net10"
+            ]
+        };
+
+    private static readonly HashSet<string> TrustedBuiltinRawFixtureIds = FixtureRegistry.All
+        .Where(static fixture => string.Equals(fixture.Category, BuiltinRawCategory, StringComparison.Ordinal))
+        .Select(static fixture => fixture.Id)
+        .ToHashSet(StringComparer.Ordinal);
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -131,7 +164,7 @@ internal static class Program
 
             var producerRoot = Path.GetDirectoryName(manifestFile) ?? throw new InvalidOperationException($"Cannot resolve producer root for {manifestFile}.");
             foreach (var producerCase in producer.Cases
-                         .Where(item => !skipBuiltinRaw || !string.Equals(item.Category, BuiltinRawCategory, StringComparison.Ordinal))
+                         .Where(item => !skipBuiltinRaw || !TrustedBuiltinRawFixtureIds.Contains(item.Id))
                          .OrderBy(static item => item.Id, StringComparer.Ordinal))
             {
                 if (!FixtureRegistry.ById.TryGetValue(producerCase.Id, out var fixture))
@@ -217,6 +250,7 @@ internal static class Program
         }
 
         ValidateGuaranteedDesktopIdentitySet(reports);
+        ValidateDocumentedMobileEdgeGraph(reports);
 
         results = results
             .OrderBy(static result => result.Producer, StringComparer.Ordinal)
@@ -302,10 +336,21 @@ internal static class Program
             return;
         }
 
+        if (reports.Count != GuaranteedDesktopPlatformTags.Length)
+        {
+            throw new InvalidOperationException(
+                $"Guaranteed desktop summary requires exactly {GuaranteedDesktopPlatformTags.Length} consumer reports, found {reports.Count}.");
+        }
+
         AssertExactIdentitySet(
             reports.Select(static report => report.Consumer.PlatformTag),
             GuaranteedDesktopPlatformTags,
             "desktop consumer identities");
+
+        var expectedFixtureIds = FixtureRegistry.All
+            .Select(static fixture => fixture.Id)
+            .OrderBy(static id => id, StringComparer.Ordinal)
+            .ToArray();
 
         foreach (var report in reports)
         {
@@ -317,8 +362,121 @@ internal static class Program
                 report.Results.Select(static result => result.Producer),
                 GuaranteedDesktopPlatformTags,
                 $"producer identities for {report.Consumer.PlatformTag}");
+            AssertExactResultKeySet(
+                report,
+                GuaranteedDesktopPlatformTags,
+                expectedFixtureIds,
+                $"desktop result keys for {report.Consumer.PlatformTag}");
+        }
+
+        var expectedTotal = GuaranteedDesktopPlatformTags.Length
+            * GuaranteedDesktopPlatformTags.Length
+            * expectedFixtureIds.Length;
+        var actualTotal = reports.Sum(static report => report.Results.Count);
+        if (actualTotal != expectedTotal)
+        {
+            throw new InvalidOperationException(
+                $"Guaranteed desktop result count mismatch: expected={expectedTotal}, actual={actualTotal}.");
         }
     }
+
+    private static void ValidateDocumentedMobileEdgeGraph(IReadOnlyList<VerificationReport> reports)
+    {
+        if (reports.Count == 0
+            || reports.Any(static report => !IsDocumentedMobileEnvironment(report.Consumer.ExecutionEnvironment)))
+        {
+            return;
+        }
+
+        if (reports.Count != DocumentedMobileProducerTags.Count)
+        {
+            throw new InvalidOperationException(
+                $"Documented mobile evidence requires exactly {DocumentedMobileProducerTags.Count} consumer reports, found {reports.Count}.");
+        }
+
+        AssertExactIdentitySet(
+            reports.Select(static report => report.Consumer.PlatformTag),
+            DocumentedMobileProducerTags.Keys,
+            "documented mobile consumer identities");
+
+        var expectedFixtureIds = FixtureRegistry.All
+            .Select(static fixture => fixture.Id)
+            .OrderBy(static id => id, StringComparer.Ordinal)
+            .ToArray();
+
+        var expectedTotal = 0;
+        foreach (var report in reports)
+        {
+            if (!DocumentedMobileProducerTags.TryGetValue(report.Consumer.PlatformTag, out var expectedProducers))
+            {
+                throw new InvalidOperationException(
+                    $"Unexpected documented mobile consumer identity: {report.Consumer.PlatformTag}.");
+            }
+
+            AssertExactIdentitySet(
+                report.Results.Select(static result => result.Consumer),
+                [report.Consumer.PlatformTag],
+                $"mobile result consumer identities for {report.Consumer.PlatformTag}");
+            AssertExactIdentitySet(
+                report.Results.Select(static result => result.Producer),
+                expectedProducers,
+                $"mobile producer identities for {report.Consumer.PlatformTag}");
+            AssertExactResultKeySet(
+                report,
+                expectedProducers,
+                expectedFixtureIds,
+                $"mobile result keys for {report.Consumer.PlatformTag}");
+
+            expectedTotal += expectedProducers.Length * expectedFixtureIds.Length;
+        }
+
+        var actualTotal = reports.Sum(static report => report.Results.Count);
+        if (actualTotal != expectedTotal)
+        {
+            throw new InvalidOperationException(
+                $"Documented mobile result count mismatch: expected={expectedTotal}, actual={actualTotal}.");
+        }
+    }
+
+    private static bool IsDocumentedMobileEnvironment(string executionEnvironment)
+        => string.Equals(executionEnvironment, "emulator", StringComparison.Ordinal)
+            || string.Equals(executionEnvironment, "simulator", StringComparison.Ordinal);
+
+    private static void AssertExactResultKeySet(
+        VerificationReport report,
+        IEnumerable<string> expectedProducers,
+        IEnumerable<string> expectedFixtures,
+        string label)
+    {
+        var expectedKeys = expectedProducers
+            .SelectMany(producer => expectedFixtures.Select(fixture => ResultKey(producer, fixture)))
+            .ToHashSet(StringComparer.Ordinal);
+        var actualKeys = report.Results
+            .Select(static result => ResultKey(result.Producer, result.Fixture))
+            .ToArray();
+        var duplicateKeys = actualKeys
+            .GroupBy(static key => key, StringComparer.Ordinal)
+            .Where(static group => group.Count() > 1)
+            .Select(static group => group.Key)
+            .OrderBy(static key => key, StringComparer.Ordinal)
+            .ToArray();
+        if (duplicateKeys.Length != 0)
+        {
+            throw new InvalidOperationException(
+                $"{label} contains duplicate producer/fixture keys: {string.Join(", ", duplicateKeys)}.");
+        }
+
+        var actualKeySet = actualKeys.ToHashSet(StringComparer.Ordinal);
+        if (!actualKeySet.SetEquals(expectedKeys))
+        {
+            var missing = expectedKeys.Except(actualKeySet, StringComparer.Ordinal).OrderBy(static key => key, StringComparer.Ordinal);
+            var unexpected = actualKeySet.Except(expectedKeys, StringComparer.Ordinal).OrderBy(static key => key, StringComparer.Ordinal);
+            throw new InvalidOperationException(
+                $"{label} mismatch: missing=[{string.Join(", ", missing)}], unexpected=[{string.Join(", ", unexpected)}].");
+        }
+    }
+
+    private static string ResultKey(string producer, string fixture) => $"{producer}\u001f{fixture}";
 
     private static void AssertExactIdentitySet(IEnumerable<string> actualValues, IEnumerable<string> expectedValues, string label)
     {
@@ -333,16 +491,7 @@ internal static class Program
 
     private static void ValidateProducerCases(RuntimeManifest producer, string source, bool skipBuiltinRaw)
     {
-        var expectedIds = FixtureRegistry.All
-            .Where(item => !skipBuiltinRaw || !string.Equals(item.Category, BuiltinRawCategory, StringComparison.Ordinal))
-            .Select(static item => item.Id)
-            .OrderBy(static id => id, StringComparer.Ordinal)
-            .ToArray();
-        var relevantCases = producer.Cases
-            .Where(item => !skipBuiltinRaw || !string.Equals(item.Category, BuiltinRawCategory, StringComparison.Ordinal))
-            .ToArray();
-
-        var duplicates = relevantCases
+        var duplicates = producer.Cases
             .GroupBy(static item => item.Id, StringComparer.Ordinal)
             .Where(static group => group.Count() > 1)
             .Select(static group => group.Key)
@@ -350,6 +499,25 @@ internal static class Program
             .ToArray();
         if (duplicates.Length != 0)
             throw new InvalidOperationException($"Producer {producer.PlatformTag} in {source} contains duplicate fixture IDs: {string.Join(", ", duplicates)}.");
+
+        foreach (var producerCase in producer.Cases)
+        {
+            if (FixtureRegistry.ById.TryGetValue(producerCase.Id, out var fixture)
+                && !string.Equals(producerCase.Category, fixture.Category, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Producer {producer.PlatformTag} in {source} has category mismatch for {producerCase.Id}: expected={fixture.Category}, actual={producerCase.Category}.");
+            }
+        }
+
+        var expectedIds = FixtureRegistry.All
+            .Where(item => !skipBuiltinRaw || !TrustedBuiltinRawFixtureIds.Contains(item.Id))
+            .Select(static item => item.Id)
+            .OrderBy(static id => id, StringComparer.Ordinal)
+            .ToArray();
+        var relevantCases = producer.Cases
+            .Where(item => !skipBuiltinRaw || !TrustedBuiltinRawFixtureIds.Contains(item.Id))
+            .ToArray();
 
         var actualIds = relevantCases.Select(static item => item.Id).ToHashSet(StringComparer.Ordinal);
         var missing = expectedIds.Where(id => !actualIds.Contains(id)).ToArray();
