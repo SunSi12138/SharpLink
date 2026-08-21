@@ -143,21 +143,15 @@ internal static class ServerRequestEnvelopeReader
                 "Request metadata entry count exceeds its bounded payload.");
         }
 
-        var decoder = StrictUtf8.GetDecoder();
-        Span<char> characters = stackalloc char[256];
         for (var index = 0; index < count; index++)
         {
             ValidateMetadataUtf8(
                 ref reader,
                 "key",
-                decoder,
-                characters,
                 requireNonWhitespace: true);
             ValidateMetadataUtf8(
                 ref reader,
                 "value",
-                decoder,
-                characters,
                 requireNonWhitespace: false);
         }
 
@@ -172,8 +166,6 @@ internal static class ServerRequestEnvelopeReader
     private static void ValidateMetadataUtf8(
         ref SequenceReader<byte> reader,
         string field,
-        Decoder decoder,
-        scoped Span<char> characters,
         bool requireNonWhitespace)
     {
         if (!ProtocolV2PayloadCodec.TryReadVarUInt32(ref reader, out var lengthBits) ||
@@ -194,10 +186,44 @@ internal static class ServerRequestEnvelopeReader
 
         var bytes = reader.Sequence.Slice(reader.Position, length);
         reader.Advance(length);
+        var hasNonWhitespace = bytes.IsSingleSegment
+            ? ValidateContiguousMetadataUtf8(bytes.FirstSpan, field)
+            : ValidateSegmentedMetadataUtf8(bytes, field);
+
+        if (requireNonWhitespace && !hasNonWhitespace)
+        {
+            throw new SharpLinkProtocolViolationException(
+                ProtocolViolationReason.MalformedFrame,
+                "Request metadata key cannot be empty.");
+        }
+    }
+
+    private static bool ValidateContiguousMetadataUtf8(ReadOnlySpan<byte> bytes, string field)
+    {
         var hasNonWhitespace = false;
+        while (!bytes.IsEmpty)
+        {
+            var status = Rune.DecodeFromUtf8(bytes, out var rune, out var consumed);
+            if (status != System.Buffers.OperationStatus.Done)
+            {
+                throw new SharpLinkProtocolViolationException(
+                    ProtocolViolationReason.MalformedFrame,
+                    $"Request metadata {field} is not valid UTF-8.");
+            }
+
+            hasNonWhitespace |= !Rune.IsWhiteSpace(rune);
+            bytes = bytes[consumed..];
+        }
+        return hasNonWhitespace;
+    }
+
+    private static bool ValidateSegmentedMetadataUtf8(ReadOnlySequence<byte> bytes, string field)
+    {
+        var hasNonWhitespace = false;
+        var decoder = StrictUtf8.GetDecoder();
+        Span<char> characters = stackalloc char[256];
         try
         {
-            decoder.Reset();
             foreach (var segment in bytes)
             {
                 var remaining = segment.Span;
@@ -225,19 +251,13 @@ internal static class ServerRequestEnvelopeReader
                 out _);
             for (var index = 0; index < finalCharsUsed; index++)
                 hasNonWhitespace |= !char.IsWhiteSpace(characters[index]);
+            return hasNonWhitespace;
         }
         catch (DecoderFallbackException)
         {
             throw new SharpLinkProtocolViolationException(
                 ProtocolViolationReason.MalformedFrame,
                 $"Request metadata {field} is not valid UTF-8.");
-        }
-
-        if (requireNonWhitespace && !hasNonWhitespace)
-        {
-            throw new SharpLinkProtocolViolationException(
-                ProtocolViolationReason.MalformedFrame,
-                "Request metadata key cannot be empty.");
         }
     }
 
