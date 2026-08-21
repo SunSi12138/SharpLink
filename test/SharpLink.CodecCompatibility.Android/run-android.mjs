@@ -1,81 +1,88 @@
 import fs from 'node:fs/promises';
-import http from 'node:http';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadEnvelopes, writeCorpus } from '../SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs';
 
+const packageName = 'com.sharplink.codeccompat';
+const inputFile = 'files/sharplink-input.json';
+const resultFile = 'files/sharplink-result.json';
+
 function adb(args, options = {}) {
     const result = spawnSync('adb', args, { encoding: 'utf8', ...options });
     if (result.status !== 0) {
-        throw new Error(`adb ${args.join(' ')} failed (${result.status}):\n${result.stdout}\n${result.stderr}`);
+        throw new Error(`adb ${args.join(' ')} failed (${result.status}):\n${result.stdout ?? ''}\n${result.stderr ?? ''}`);
     }
-    return result.stdout;
+    return result.stdout ?? '';
+}
+
+function adbTry(args, options = {}) {
+    return spawnSync('adb', args, { encoding: 'utf8', ...options });
+}
+
+function delay(milliseconds) {
+    return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+function collectDiagnostics(launchOutput) {
+    const pid = adbTry(['shell', 'pidof', packageName]);
+    const packageDump = adbTry(['shell', 'dumpsys', 'package', packageName]);
+    const logcat = adbTry(['logcat', '-d', '-t', '2000']);
+    const filteredLogcat = `${logcat.stdout ?? ''}\n${logcat.stderr ?? ''}`
+        .split(/\r?\n/)
+        .filter(line => /sharplink|codeccompat|androidruntime|mono|dotnet|system\.(invalidoperationexception|io\.)/i.test(line))
+        .join('\n');
+    const activityLines = `${packageDump.stdout ?? ''}`
+        .split(/\r?\n/)
+        .filter(line => /MainActivity|com\.sharplink\.codeccompat/i.test(line))
+        .slice(0, 120)
+        .join('\n');
+
+    return [
+        `am start output:\n${launchOutput}`,
+        `pidof ${packageName}: ${pid.stdout?.trim() || '(none)'}\n${pid.stderr ?? ''}`,
+        `package/activity excerpt:\n${activityLines}`,
+        `filtered logcat:\n${filteredLogcat || '(no matching lines)'}`
+    ].join('\n\n');
+}
+
+async function waitForResult(launchOutput) {
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+        const exists = adbTry(['shell', 'run-as', packageName, 'test', '-f', resultFile]);
+        if (exists.status === 0) {
+            return adb(['shell', 'run-as', packageName, 'cat', resultFile]);
+        }
+        await delay(250);
+    }
+    throw new Error(`Android probe timed out waiting for app-private result file.\n${collectDiagnostics(launchOutput)}`);
 }
 
 async function runAndroid(mode, producerRoot, outputPath, commit, sdkVersion, runtimeFamily) {
     const input = mode === 'verify' ? JSON.stringify(await loadEnvelopes(producerRoot)) : null;
-    let resolveResult;
-    let rejectResult;
-    const resultPromise = new Promise((resolve, reject) => {
-        resolveResult = resolve;
-        rejectResult = reject;
-    });
 
-    const server = http.createServer(async (request, response) => {
-        try {
-            const url = new URL(request.url, 'http://127.0.0.1');
-            if (request.method === 'GET' && url.pathname === '/input.json') {
-                if (input === null) {
-                    response.writeHead(404);
-                    response.end('no input');
-                    return;
-                }
-                response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-                response.end(input);
-                return;
-            }
-            if (request.method === 'POST' && url.pathname === '/result') {
-                const chunks = [];
-                for await (const chunk of request) chunks.push(chunk);
-                const body = Buffer.concat(chunks).toString('utf8');
-                response.writeHead(204);
-                response.end();
-                resolveResult(body);
-                return;
-            }
-            response.writeHead(404);
-            response.end('not found');
-        } catch (error) {
-            response.writeHead(500);
-            response.end('server error');
-            rejectResult(error);
-        }
-    });
+    adb(['shell', 'am', 'force-stop', packageName]);
+    adb(['shell', 'run-as', packageName, 'mkdir', '-p', 'files']);
+    adbTry(['shell', 'run-as', packageName, 'rm', '-f', inputFile, resultFile]);
+    adbTry(['logcat', '-c']);
 
-    await new Promise((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(8123, '0.0.0.0', resolve);
-    });
+    if (input !== null) {
+        adb(
+            ['shell', 'run-as', packageName, 'sh', '-c', `cat > ${inputFile}`],
+            { input });
+    }
 
-    const endpoint = 'http://10.0.2.2:8123';
-    adb(['shell', 'am', 'force-stop', 'com.sharplink.codeccompat']);
-    adb([
+    const launchOutput = adb([
         'shell', 'am', 'start',
-        '-n', 'com.sharplink.codeccompat/.MainActivity',
+        '-n', `${packageName}/.MainActivity`,
         '--es', 'mode', mode,
-        '--es', 'endpoint', endpoint,
         '--es', 'commit', commit,
         '--es', 'sdk', sdkVersion,
         '--es', 'runtimeFamily', runtimeFamily
     ]);
-
-    const timeout = setTimeout(() => {
-        const logcat = spawnSync('adb', ['logcat', '-d', '-t', '500'], { encoding: 'utf8' });
-        rejectResult(new Error(`Android probe timed out.\n${logcat.stdout}\n${logcat.stderr}`));
-    }, 120_000);
+    console.log(`Android activity launch: ${launchOutput.trim()}`);
 
     try {
-        const resultText = await resultPromise;
+        const resultText = await waitForResult(launchOutput);
         const parsed = JSON.parse(resultText);
         if (parsed?.portableProbeError) {
             throw new Error(parsed.portableProbeError);
@@ -92,9 +99,7 @@ async function runAndroid(mode, producerRoot, outputPath, commit, sdkVersion, ru
             if (blocking !== 0) process.exitCode = 1;
         }
     } finally {
-        clearTimeout(timeout);
-        try { adb(['shell', 'am', 'force-stop', 'com.sharplink.codeccompat']); } catch {}
-        await new Promise(resolve => server.close(resolve));
+        try { adb(['shell', 'am', 'force-stop', packageName]); } catch {}
     }
 }
 
