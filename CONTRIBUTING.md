@@ -40,7 +40,7 @@ dotnet pack Sharplink.slnx -c Release -o artifacts/nuget
 - 单元测试放在 `test/SharpLink.UnitTests`，优先覆盖纯逻辑与边界场景。
 - 集成测试用于验证端到端链路，不替代单元测试。
 - 新增/修改核心功能时，请至少补充一条对应测试。
-- `src/` 的所有编译器警告和公共 API 缺失 XML 注释均视为错误。
+- 仓库内所有项目均执行零警告策略：编译器、分析器和 NuGet audit 警告均视为错误；`src/` 公共 API 缺失 XML 注释同样视为错误。
 - RPC 热路径、传输、生成代码或序列化变更需要记录精确基线和候选配置，并证明无实质性能回退。
 
 ## 代码与提交规范

@@ -51,7 +51,7 @@ internal sealed partial class SharpLinkClient :
     private readonly ILogger _logger;
     private readonly RpcSessionFlushOptions? _rpcSessionFlushOptions;
     private readonly SharpLinkConnectionPoolOptions _connectionPoolOptions;
-    private readonly ISharpLinkClientInterceptor[] _clientInterceptors;
+    private ISharpLinkClientInterceptor[] _clientInterceptors;
     private readonly SharpLinkRetryOptions? _retryOptions;
     private readonly ISharpLinkRetryPolicy? _retryPolicy;
     private readonly ISharpLinkEndpointAdmissionPolicy? _endpointAdmissionPolicy;
