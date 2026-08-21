@@ -22,7 +22,8 @@ internal sealed partial class SharpLinkServer
             allowCompressedCancellationHandoff: true,
             preparedServiceInfo: null,
             reusePreDecodeMetadata: false,
-            preDecodeMetadata: null);
+            preDecodeMetadata: null,
+            preparedRequest: null);
 
     // Keeps the existing dispatch-level unit harness stable while the production request-loop
     // entry point uses the six-argument overload above. SharpLinkServer itself is internal.
@@ -48,7 +49,8 @@ internal sealed partial class SharpLinkServer
             allowCompressedCancellationHandoff: false,
             preparedServiceInfo: null,
             reusePreDecodeMetadata: false,
-            preDecodeMetadata: null);
+            preDecodeMetadata: null,
+            preparedRequest: null);
 
     private ValueTask HandoffCompressedCancellableRpc(
         ServerConnectionState connection,
@@ -61,7 +63,7 @@ internal sealed partial class SharpLinkServer
         ServiceRegistration serviceInfo,
         RpcMethodDescriptor descriptor,
         bool reusePreDecodeMetadata,
-        SharpLinkMetadata? preDecodeMetadata)
+        ServerRequestEnvelope preDecodeRequest)
     {
         IRpcByteBufferWriter? retainedPayload = null;
         try
@@ -82,7 +84,7 @@ internal sealed partial class SharpLinkServer
                 callState,
                 serviceInfo,
                 reusePreDecodeMetadata,
-                preDecodeMetadata);
+                preDecodeRequest);
             retainedPayload = null;
             return ValueTask.CompletedTask;
         }
@@ -106,7 +108,7 @@ internal sealed partial class SharpLinkServer
         ServerCallCancellationState callState,
         ServiceRegistration serviceInfo,
         bool reusePreDecodeMetadata,
-        SharpLinkMetadata? preDecodeMetadata)
+        ServerRequestEnvelope preDecodeRequest)
     {
         var workItem = CompressedCancellableRpcWorkItem.Rent(
             this,
@@ -119,7 +121,7 @@ internal sealed partial class SharpLinkServer
             callState,
             serviceInfo,
             reusePreDecodeMetadata,
-            preDecodeMetadata);
+            preDecodeRequest);
         try
         {
             // QueueUserWorkItem flows the current ExecutionContext so request logging scopes,
@@ -150,7 +152,7 @@ internal sealed partial class SharpLinkServer
         ServerCallCancellationState callState,
         ServiceRegistration serviceInfo,
         bool reusePreDecodeMetadata,
-        SharpLinkMetadata? preDecodeMetadata)
+        ServerRequestEnvelope preDecodeRequest)
     {
         ValueTask dispatch;
         try
@@ -168,7 +170,8 @@ internal sealed partial class SharpLinkServer
                 allowCompressedCancellationHandoff: false,
                 preparedServiceInfo: serviceInfo,
                 reusePreDecodeMetadata: reusePreDecodeMetadata,
-                preDecodeMetadata: preDecodeMetadata);
+                preDecodeMetadata: null,
+                preparedRequest: preDecodeRequest);
         }
         catch (Exception exception)
         {
@@ -295,7 +298,7 @@ internal sealed partial class SharpLinkServer
         private ServerCallCancellationState? _callState;
         private ServiceRegistration? _serviceInfo;
         private bool _reusePreDecodeMetadata;
-        private SharpLinkMetadata? _preDecodeMetadata;
+        private ServerRequestEnvelope _preDecodeRequest;
 
         private CompressedCancellableRpcWorkItem()
         {
@@ -312,7 +315,7 @@ internal sealed partial class SharpLinkServer
             ServerCallCancellationState callState,
             ServiceRegistration serviceInfo,
             bool reusePreDecodeMetadata,
-            SharpLinkMetadata? preDecodeMetadata)
+            ServerRequestEnvelope preDecodeRequest)
         {
             if (!Pool.TryPop(out var workItem))
                 workItem = new CompressedCancellableRpcWorkItem();
@@ -329,7 +332,7 @@ internal sealed partial class SharpLinkServer
             workItem._callState = callState;
             workItem._serviceInfo = serviceInfo;
             workItem._reusePreDecodeMetadata = reusePreDecodeMetadata;
-            workItem._preDecodeMetadata = preDecodeMetadata;
+            workItem._preDecodeRequest = preDecodeRequest;
             return workItem;
         }
 
@@ -348,7 +351,7 @@ internal sealed partial class SharpLinkServer
                     _callState!,
                     _serviceInfo!,
                     _reusePreDecodeMetadata,
-                    _preDecodeMetadata);
+                    _preDecodeRequest);
             }
             finally
             {
@@ -370,7 +373,7 @@ internal sealed partial class SharpLinkServer
             _callState = null;
             _serviceInfo = null;
             _reusePreDecodeMetadata = false;
-            _preDecodeMetadata = null;
+            _preDecodeRequest = default;
 
             var retained = Interlocked.Increment(ref s_retainedCount);
             if (retained <= MaxRetained)
