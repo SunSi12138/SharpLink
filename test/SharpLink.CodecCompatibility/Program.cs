@@ -116,6 +116,7 @@ internal static class Program
             if (producer.SchemaVersion != 1)
                 throw new InvalidOperationException($"Unsupported producer schemaVersion {producer.SchemaVersion} in {manifestFile}.");
 
+            ValidateSameCommit(producer, consumer, manifestFile);
             ValidateProducerCases(producer, manifestFile, skipBuiltinRaw);
 
             var producerRoot = Path.GetDirectoryName(manifestFile) ?? throw new InvalidOperationException($"Cannot resolve producer root for {manifestFile}.");
@@ -265,6 +266,15 @@ internal static class Program
             CompilationMode = compilationMode,
             PlatformTag = $"{os}-{processArchitecture}-{executionEnvironment}-{runtimeFamily.ToLowerInvariant()}-net10"
         };
+    }
+
+    private static void ValidateSameCommit(RuntimeManifest producer, RuntimeManifest consumer, string source)
+    {
+        if (!string.Equals(producer.SharpLinkCommit, consumer.SharpLinkCommit, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"SharpLink commit mismatch for producer {producer.PlatformTag} in {source}: producer={producer.SharpLinkCommit}, consumer={consumer.SharpLinkCommit}.");
+        }
     }
 
     private static void ValidateProducerCases(RuntimeManifest producer, string source, bool skipBuiltinRaw)
