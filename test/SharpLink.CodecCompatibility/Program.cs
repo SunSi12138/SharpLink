@@ -230,6 +230,7 @@ internal static class Program
                 ? "JIT"
                 : "Interpreter";
         var processArchitecture = RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
+        const string executionEnvironment = "hosted-desktop";
 
         return new RuntimeManifest
         {
@@ -242,6 +243,7 @@ internal static class Program
             RuntimeVersion = Environment.Version.ToString(),
             SdkVersion = Environment.GetEnvironmentVariable("SHARPLINK_SDK_VERSION") ?? "unknown",
             RuntimeIdentifier = RuntimeInformation.RuntimeIdentifier,
+            ExecutionEnvironment = executionEnvironment,
             Os = os,
             OsVersion = RuntimeInformation.OSDescription,
             ProcessArchitecture = processArchitecture,
@@ -249,7 +251,7 @@ internal static class Program
             PointerSize = IntPtr.Size,
             IsLittleEndian = BitConverter.IsLittleEndian,
             CompilationMode = compilationMode,
-            PlatformTag = $"{os}-{processArchitecture}-{runtimeFamily.ToLowerInvariant()}-net10"
+            PlatformTag = $"{os}-{processArchitecture}-{executionEnvironment}-{runtimeFamily.ToLowerInvariant()}-net10"
         };
     }
 
